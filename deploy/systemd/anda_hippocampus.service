@@ -1,0 +1,26 @@
+[Unit]
+Description=anda_hippocampus service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/app
+EnvironmentFile=-/home/ec2-user/app/.env
+ExecStart=/home/ec2-user/app/anda_hippocampus
+
+Restart=on-failure
+RestartSec=5
+
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
