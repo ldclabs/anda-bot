@@ -16,9 +16,11 @@ use crate::types::*;
 const SKILL_MARKDOWN: &str = include_str!("../SKILL.md");
 const WEBSITE_MARKDOWN: &str = include_str!("../WEBSITE.md");
 const WEBSITE_CN_MARKDOWN: &str = include_str!("../WEBSITE_cn.md");
+const APP_HTML: &str = include_str!("../app.html");
+const FAVICON: &[u8] = include_bytes!("../favicon.ico");
 
 pub static WEBSITE: LazyLock<String> = LazyLock::new(|| {
-    to_html_with_options(
+    let body = to_html_with_options(
         WEBSITE_MARKDOWN,
         &Options {
             parse: ParseOptions::gfm(),
@@ -31,11 +33,12 @@ pub static WEBSITE: LazyLock<String> = LazyLock::new(|| {
             },
         },
     )
-    .unwrap_or_else(|_| to_html(WEBSITE_MARKDOWN))
+    .unwrap_or_else(|_| to_html(WEBSITE_MARKDOWN));
+    APP_HTML.replace("%sveltekit.body%", &body)
 });
 
 pub static WEBSITE_CN: LazyLock<String> = LazyLock::new(|| {
-    to_html_with_options(
+    let body = to_html_with_options(
         WEBSITE_CN_MARKDOWN,
         &Options {
             parse: ParseOptions::gfm(),
@@ -48,8 +51,16 @@ pub static WEBSITE_CN: LazyLock<String> = LazyLock::new(|| {
             },
         },
     )
-    .unwrap_or_else(|_| to_html(WEBSITE_CN_MARKDOWN))
+    .unwrap_or_else(|_| to_html(WEBSITE_CN_MARKDOWN));
+    APP_HTML.replace("%sveltekit.body%", &body)
 });
+
+pub async fn favicon() -> Response {
+    Response::builder()
+        .header("Content-Type", "image/x-icon")
+        .body(FAVICON.into())
+        .unwrap()
+}
 
 pub async fn get_information(State(app): State<AppState>) -> impl IntoResponse {
     let info = json!({

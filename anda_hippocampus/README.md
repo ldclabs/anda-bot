@@ -355,11 +355,11 @@ The schema is self-describing — all type definitions are stored as nodes withi
 
 ### Storage Backends
 
-| Subcommand | Description                     | Key Env Variables                |
-| ---------- | ------------------------------- | -------------------------------- |
-| *(none)*   | In-memory storage (dev/testing) | —                                |
-| `local`    | Local filesystem storage        | `LOCAL_DB_PATH` (default `./db`) |
-| `aws`      | AWS S3 storage                  | `AWS_BUCKET`, `AWS_REGION`       |
+| Subcommand | Description                     | Key Env Variables                                                        |
+| ---------- | ------------------------------- | ------------------------------------------------------------------------ |
+| *(none)*   | In-memory storage (dev/testing) | —                                                                        |
+| `local`    | Local filesystem storage        | `LOCAL_DB_PATH` (default `./db`)                                         |
+| `aws`      | AWS S3 storage                  | `AWS_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 
 ## Running
 

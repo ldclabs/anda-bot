@@ -6,6 +6,7 @@
 *Give AI a self-evolving cognitive brain.*
 
 [![Product Website](https://img.shields.io/badge/Website-brain.anda.ai-blue?style=for-the-badge)](https://brain.anda.ai/)
+[![GitHub](https://img.shields.io/badge/GitHub-anda--hippocampus-green?style=for-the-badge&logo=github)](https://github.com/ldclabs/anda-hippocampus)
 [![Company](https://img.shields.io/badge/Company-yiwen.ai-black?style=for-the-badge)](https://yiwen.ai/)
 [![Email](https://img.shields.io/badge/Email-hi@yiwen.ai-red?style=for-the-badge)](mailto:hi@yiwen.ai)
 
@@ -139,6 +140,6 @@ We provide enterprise-grade deployment, custom AI brain solutions, and commercia
 ---
 
 <div align="center">
-  <p>Copyright © 亿文网智能科技（上海）有限公司 | LDC Labs</p>
-  <p>Licensed under the MIT or Apache-2.0 license.</p>
+  <p>Copyright © 亿文网智能科技（上海）有限公司</p>
+  <p>Licensed under the Apache-2.0 license.</p>
 </div>

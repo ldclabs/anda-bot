@@ -221,6 +221,7 @@ async fn main() -> Result<(), BoxError> {
 
     let app: Router<AppState> = Router::new()
         .route("/", routing::get(get_website))
+        .route("/favicon.ico", routing::get(favicon))
         .route("/info", routing::get(get_information))
         .route("/SKILL.md", routing::get(get_skill))
         .route("/v1/{space_id}/status", routing::get(get_status))
@@ -249,7 +250,7 @@ async fn main() -> Result<(), BoxError> {
         app_state.start_background_tasks(cancel_token).await;
     });
 
-    log::info!(
+    log::warn!(
         "start service {}@{} on {:?}, sharding_idx: {}, managers: {}.",
         APP_NAME,
         APP_VERSION,
