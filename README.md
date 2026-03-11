@@ -2,6 +2,8 @@
 
 > Give AI a self-evolving cognitive brain.
 
+**[English](./README.md) | [中文](./README_cn.md)**
+
 ## The Memory Bottleneck: From "Storage" to "True Cognition"
 
 We are no longer in the era where "AI has no memory." Today's AI agents use long context windows, vector databases (RAG), and simple Key-Value stores to remember user interactions.
