@@ -1,0 +1,255 @@
+use anda_core::{
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
+    StateFeatures, Tool, Usage,
+};
+use anda_engine::{
+    context::AgentCtx,
+    memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
+    rfc3339_datetime, unix_ms,
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
+
+#[derive(Clone)]
+pub struct MaintenanceAgent {
+    memory: Arc<MemoryManagement>,
+    processing: Arc<AtomicBool>,
+}
+
+impl MaintenanceAgent {
+    pub const NAME: &'static str = "maintenance_memory";
+    pub fn new(memory: Arc<MemoryManagement>) -> Self {
+        Self {
+            memory,
+            processing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl Agent<AgentCtx> for MaintenanceAgent {
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
+    fn description(&self) -> String {
+        "The Hippocampus Maintenance agent operates in Sleep Mode — performing memory metabolism including consolidation, organization, pruning, and health optimization of the Cognitive Nexus during scheduled maintenance cycles.".to_string()
+    }
+
+    fn tool_dependencies(&self) -> Vec<String> {
+        vec![self.memory.name()]
+    }
+
+    /// Receives a trigger envelope (MaintenanceInput JSON), creates a conversation to track the
+    /// maintenance cycle, and runs the sleep cycle workflow.
+    async fn run(
+        &self,
+        ctx: AgentCtx,
+        prompt: String, // MaintenanceInput serialized as JSON string
+        _resources: Vec<Resource>,
+    ) -> Result<AgentOutput, BoxError> {
+        // Prevent concurrent maintenance runs
+        if self
+            .processing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(AgentOutput {
+                content: "Maintenance cycle is already in progress.".to_string(),
+                ..Default::default()
+            });
+        }
+
+        let caller = ctx.caller();
+        let now_ms = unix_ms();
+
+        let mut conversation = Conversation {
+            _id: 0,
+            user: *caller,
+            thread: None,
+            messages: vec![],
+            resources: vec![],
+            artifacts: vec![],
+            status: ConversationStatus::Working,
+            failed_reason: None,
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            usage: Usage::default(),
+            steering_messages: None,
+            follow_up_messages: Some(vec![prompt.clone()]),
+            ancestors: None,
+        };
+
+        let id = self
+            .memory
+            .add_conversation(ConversationRef::from(&conversation))
+            .await?;
+        conversation._id = id;
+
+        let agent = self.clone();
+        let ctx_clone = ctx.clone();
+        tokio::spawn(async move {
+            agent.process_one(&ctx_clone, &mut conversation).await;
+            agent.processing.store(false, Ordering::SeqCst);
+        });
+
+        Ok(AgentOutput {
+            conversation: Some(id),
+            ..Default::default()
+        })
+    }
+}
+
+impl MaintenanceAgent {
+    async fn mark_conversation_failed(&self, conversation: &mut Conversation, reason: String) {
+        log::error!(
+            "Maintenance conversation {} failed: {}",
+            conversation._id,
+            reason
+        );
+        conversation.failed_reason = Some(reason);
+        conversation.status = ConversationStatus::Failed;
+        conversation.updated_at = unix_ms();
+        if let Ok(changes) = conversation.to_changes() {
+            let _ = self
+                .memory
+                .update_conversation(conversation._id, changes)
+                .await;
+        }
+    }
+
+    async fn process_one(&self, ctx: &AgentCtx, conversation: &mut Conversation) {
+        let prompt = match conversation
+            .follow_up_messages
+            .take()
+            .unwrap_or_default()
+            .pop()
+        {
+            Some(p) => p,
+            None => {
+                self.mark_conversation_failed(conversation, "No prompt found".to_string())
+                    .await;
+                return;
+            }
+        };
+
+        let tools = ctx.tool_definitions(Some(&["execute_kip"]));
+        let now_ms = unix_ms();
+        let msg = Message {
+            role: "user".into(),
+            content: vec![
+                format!(
+                    "Current datetime: {}",
+                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                )
+                .into(),
+            ],
+            ..Default::default()
+        };
+
+        let mut runner = ctx.completion_iter(
+            CompletionRequest {
+                instructions: SELF_INSTRUCTIONS.to_string(),
+                prompt,
+                chat_history: vec![msg],
+                tools,
+                tool_choice_required: true,
+                max_output_tokens: Some(10000),
+                ..Default::default()
+            },
+            vec![],
+        );
+
+        let mut first_round = true;
+        loop {
+            match runner.next().await {
+                Ok(None) => break,
+                Ok(Some(mut res)) => {
+                    let now_ms = unix_ms();
+
+                    if first_round {
+                        first_round = false;
+                        conversation.messages.clear();
+                        conversation.append_messages(res.chat_history);
+                    } else {
+                        let existing_len = conversation.messages.len();
+                        if res.chat_history.len() >= existing_len {
+                            res.chat_history.drain(0..existing_len);
+                            conversation.append_messages(res.chat_history);
+                        } else {
+                            conversation.messages.clear();
+                            conversation.append_messages(res.chat_history);
+                        }
+                    }
+
+                    conversation.status = if res.failed_reason.is_some() {
+                        ConversationStatus::Failed
+                    } else if runner.is_done() {
+                        ConversationStatus::Completed
+                    } else {
+                        ConversationStatus::Working
+                    };
+                    conversation.usage = res.usage;
+                    conversation.updated_at = now_ms;
+
+                    if let Some(failed_reason) = res.failed_reason {
+                        conversation.failed_reason = Some(failed_reason);
+                    }
+
+                    // Check if externally cancelled
+                    match self.memory.get_conversation(conversation._id).await {
+                        Ok(old) => {
+                            if old.status == ConversationStatus::Cancelled
+                                && (conversation.status == ConversationStatus::Submitted
+                                    || conversation.status == ConversationStatus::Working)
+                            {
+                                conversation.status = ConversationStatus::Cancelled;
+                            }
+                        }
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to check cancel status for maintenance conversation {}: {:?}",
+                                conversation._id,
+                                err
+                            );
+                        }
+                    }
+
+                    match conversation.to_changes() {
+                        Ok(changes) => {
+                            let _ = self
+                                .memory
+                                .update_conversation(conversation._id, changes)
+                                .await;
+                        }
+                        Err(err) => {
+                            log::error!(
+                                "Failed to serialize maintenance conversation {} changes: {:?}",
+                                conversation._id,
+                                err
+                            );
+                        }
+                    }
+
+                    if conversation.status == ConversationStatus::Cancelled
+                        || conversation.status == ConversationStatus::Failed
+                    {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    self.mark_conversation_failed(
+                        conversation,
+                        format!("CompletionRunner error: {err:?}"),
+                    )
+                    .await;
+                    break;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,24 @@
+name: Dockers
+on:
+  workflow_dispatch:
+    inputs:
+      build_tag:
+        description: "Docker image tag"
+        required: true
+        type: string
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ldclabs/anda_hippocampus
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the Docker image
+        run: |
+          docker login --username ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }} ${{ env.REGISTRY }}
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:${{ inputs.build_tag }}"
+          LATEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}_amd64:latest"
+          TAGS="-t ${IMAGE_TAG} -t ${LATEST_TAG}"
+          docker build -f anda_hippocampus/Dockerfile $TAGS --push .
