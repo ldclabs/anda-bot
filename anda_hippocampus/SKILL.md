@@ -57,7 +57,8 @@ Supporting endpoints:
 
 | Method | Endpoint | Purpose | Auth |
 |--------|----------|---------|------|
-| `GET` | `/` | Service info (name, version, shard) | — |
+| `GET` | `/` | Anda Hippocampus website | — |
+| `GET` | `/info` | Service info (name, version, sharding) | — |
 | `GET` | `/SKILL.md` | This skill description | — |
 | `POST` | `/admin/create_space` | Create a new memory space | manager |
 | `GET` | `/v1/{space_id}/status` | Space status and statistics | `read` |
@@ -102,14 +103,14 @@ The Formation agent extracts three types of memory from conversations:
 
 The underlying knowledge graph consists of:
 
-- **Concept Nodes** — Entities with a type and name (e.g., `Person:Alice`, `Preference:dark_mode`)
-- **Proposition Links** — Directed relationships between concepts (e.g., `(Alice, prefers, dark_mode)`)
+- **Concept Nodes** — Entities with a type and name (e.g., `{type: "Person", name: "Alice"}`, `{type: "Preference", name: "dark_mode"}`)
+- **Proposition Links** — Directed relationships between concepts (e.g., `(Alice, "prefers", dark_mode)`)
 
 ---
 
 ## Authentication
 
-All endpoints (except `/` and `/SKILL.md`) require a Bearer token in the `Authorization` header.
+All endpoints (except `/`,  `/info` and `/SKILL.md`) require a Bearer token in the `Authorization` header.
 
 ```
 Authorization: Bearer <base64_encoded_cose_sign1_token>
@@ -121,12 +122,13 @@ Authorization: Bearer <base64_encoded_cose_sign1_token>
 
 ### Content Negotiation
 
-The API supports dual serialization. Set `Content-Type` and `Accept` headers accordingly:
+The API supports triple serialization. Set `Content-Type` and `Accept` headers accordingly:
 
 - `application/json` — JSON (default)
 - `application/cbor` — CBOR (binary, more compact)
+- `text/markdown` — Markdown (raw text or formatted Markdown)
 
-All responses are wrapped in an RPC envelope:
+All responses are wrapped in an RPC envelope when using JSON or CBOR:
 
 ```json
 {
@@ -134,6 +136,8 @@ All responses are wrapped in an RPC envelope:
   "error": null
 }
 ```
+
+When `Accept: text/markdown` is used, the response is returned as raw text or a Markdown formatted string.
 
 On error:
 
@@ -145,6 +149,33 @@ On error:
     "data": { ... }
   }
 }
+```
+
+#### Markdown Serialization Sample
+
+If `Accept: text/markdown` is specified, the `result` field's content will be directly serialized as the response body.
+
+**Request:**
+```http
+POST /v1/s0-my_space/recall
+Accept: text/markdown
+
+What are Alice's preferences?
+```
+
+**Response (HTTP 200):**
+```markdown
+Status: success
+
+Answer:
+Alice has the following known preferences:
+- **Dark mode** in all applications (confidence: 0.9, since 2025-01-15)
+- **Email communication** preferred over phone calls (confidence: 0.8, since 2025-01-10)
+
+Alice is currently working on **Project Aurora** and was last seen on 2025-01-15 discussing settings preferences.
+
+Gaps:
+- No information found about Alice's language preferences.
 ```
 
 ---
@@ -221,7 +252,7 @@ Content-Type: application/json
 
 ```json
 {
-  "result": { "_id": 1, ... }
+  "result": { "conversation": 1, ... }
 }
 ```
 
@@ -273,9 +304,8 @@ Content-Type: application/json
 ```json
 {
   "result": {
-    "status": "success",
-    "answer": "Alice prefers dark mode for all applications and operates in the UTC+8 timezone.",
-    "gaps": []
+    "content": "Alice prefers dark mode for all applications and operates in the UTC+8 timezone.",
+    ...
   }
 }
 ```
@@ -332,7 +362,7 @@ Content-Type: application/json
 
 ```json
 {
-  "result": { "_id": 8, ... }
+  "result": { "conversation": 8, ... }
 }
 ```
 
@@ -457,7 +487,7 @@ The service is configured via CLI arguments and environment variables:
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
-| `LISTEN_ADDR` | `127.0.0.1:8080` | Listen address |
+| `LISTEN_ADDR` | `127.0.0.1:8042` | Listen address |
 | `ED25519_PUBKEYS` | — | Comma-separated Base64-encoded Ed25519 public keys |
 | `GEMINI_API_KEY` | — | Google Gemini API key |
 | `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL |

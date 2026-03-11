@@ -1,6 +1,17 @@
-# 🧠 Anda Hippocampus (海马体) — Autonomous Graph Memory for AI Agents
+<div align="center">
 
-> Give AI a self-evolving cognitive brain.
+# 🧠 Anda Hippocampus (海马体)
+### Autonomous Graph Memory for AI Agents
+
+*Give AI a self-evolving cognitive brain.*
+
+[![Product Website](https://img.shields.io/badge/Website-brain.anda.ai-blue?style=for-the-badge)](https://brain.anda.ai/)
+[![Company](https://img.shields.io/badge/Company-yiwen.ai-black?style=for-the-badge)](https://yiwen.ai/)
+[![Email](https://img.shields.io/badge/Email-hi@yiwen.ai-red?style=for-the-badge)](mailto:hi@yiwen.ai)
+
+</div>
+
+<br/>
 
 ## The Memory Bottleneck: From "Storage" to "True Cognition"
 
@@ -12,6 +23,8 @@ However, they suffer from a fundamental **Cognitive Bottleneck**:
 
 **Memory is not just a hard drive; it is a living, breathing network of connections.** When a human remembers, they don't search a text log; they traverse a neural graph of entities, relationships, events, and temporal changes.
 
+---
+
 ## Enter Anda Hippocampus: LLM-Autonomously Built Graph Memory
 
 **Anda Hippocampus** is a revolutionary memory service that empowers LLMs to **autonomously construct and evolve a dynamic Knowledge Graph**.
@@ -20,10 +33,10 @@ Instead of forcing developers to build rigid schemas or heavy database integrati
 
 With continuous use, the LLM organically builds a knowledge graph whose complexity and interconnectedness rival human neural networks.
 
-### 🌟 Why Hippocampus is a Game-Changer:
+### 🌟 Why Hippocampus is a Game-Changer
 - **Zero-Friction Integration:** Your AI agent doesn't need to learn graph query languages. It interacts naturally, and Hippocampus does the graph lifting.
 - **Autonomous Schema Evolution:** The LLM decides what concepts and relationships to track on the fly. No pre-defined database schemas are required.
-- **Neural-Level Cognition:** It connects isolated facts into a holistic world model, enabling true multi-hop reasoning (e.g., *“How does Alice's new job affect the project she started last year?”*).
+- **Neural-Level Cognition:** It connects isolated facts into a holistic world model, enabling true multi-hop reasoning (e.g., *"How does Alice's new job affect the project she started last year?"*).
 - **Sleep & Consolidation:** Just like the human brain, Hippocampus automatically runs background "sleep" tasks to deduplicate facts, decay stale information, and consolidate long-term knowledge.
 
 ---
@@ -32,10 +45,10 @@ With continuous use, the LLM organically builds a knowledge graph whose complexi
 
 Anda Hippocampus is designed to be the "Memory Engine" for the next generation of AI applications, from hyper-personalized consumer agents to enterprise-grade AI brains.
 
-### 1. The Personal Agent: A Powerful Cloud Brain for Frameworks like OpenClaw
-Open-source local agents (like **OpenClaw**) have proven the massive demand for personal AI assistants. However, relying purely on local Markdown files and SQLite limits an agent's ability to handle highly complex, interconnected, and lifelong memories without blowing up token costs.
+### 1. The Personal Agent: A Powerful Cloud Brain
+Open-source local agents (like **OpenClaw**) have proven the massive demand for personal AI assistants. However, relying purely on local files and SQLite limits an agent's ability to handle highly complex, interconnected, and lifelong memories without blowing up token costs.
 *   **The Hippocampus Upgrade:** Seamlessly plug Hippocampus into Agent frameworks via customized ContextEngines. It acts as a powerful, structured Graph Memory backend.
-*   **The Result:** The agent truly "understands" the user's life graph—tracking relationships, changing preferences, project histories, and episodic events across years—without context window bloat. It provides a cloud-ready (or locally robust) cognitive brain for your personal digital twin.
+*   **The Result:** The agent truly "understands" the user's life graph—tracking relationships, changing preferences, project histories, and episodic events across years. It provides a cloud-ready (or locally robust) cognitive brain for your personal digital twin.
 
 ### 2. The Enterprise Scenario: The AI-Driven "Enterprise Brain"
 Vector RAG is not enough for complex businesses. Enterprises have structured workflows, tribal knowledge, supply chains, and historical decisions that cannot be captured by similarity search alone.
@@ -53,6 +66,8 @@ Vector RAG is not enough for complex businesses. Enterprises have structured wor
 | **Agent Autonomy**     | None (Just appends)  | Low (Updates fields) | Low (Struggles with Graph QL) | **High (Builds graph itself)** |
 | **Logical Reasoning**  | Fails at multi-hop   | None                 | Good                          | **Exceptional**                |
 | **Self-Maintenance**   | No (Database bloats) | No                   | Rarely                        | **Yes (Sleep/Consolidate)**    |
+
+---
 
 ## How It Works: The Cognitive Architecture
 
@@ -85,17 +100,18 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 | **Recall**      | Navigates the graph to synthesize exact, context-rich answers, traversing multiple links if necessary.               | Retrieving a memory—pulling together interconnected facts to form a coherent thought.        |
 | **Maintenance** | An asynchronous background process that merges duplicates, adjusts confidence scores, and prunes obsolete data.      | Sleep—when the brain consolidates memories, strengthens the vital ones, and lets noise fade. |
 
+---
+
 ## Key Technologies
 
-### KIP — Knowledge Interaction Protocol
-[**KIP**](https://github.com/ldclabs/KIP) is the secret sauce. It is a graph-oriented protocol designed *specifically for Large Language Models*. It acts as the bridge between probabilistic LLMs and deterministic Knowledge Graphs. Because Hippocampus natively speaks KIP, **your agent never needs to know KIP exists**—it just enjoys the benefits of perfect graph memory.
+*   **KIP (Knowledge Interaction Protocol)**: The secret sauce. A graph-oriented protocol designed *specifically for Large Language Models*. It acts as the bridge between probabilistic LLMs and deterministic Knowledge Graphs. Because Hippocampus natively speaks KIP, **your agent never needs to know KIP exists**.
+*   **Anda DB**: The embedded database engine that powers the Cognitive Nexus. Written in Rust for extreme performance and memory safety, it natively supports graph traversal, multi-modal data, and vector similarity—all optimized for AI workloads.
 
-### Anda DB
-[**Anda DB**](https://github.com/ldclabs/anda-db) is the embedded database engine that powers the Cognitive Nexus. Written in Rust for extreme performance and memory safety, it natively supports graph traversal, multi-modal data, and vector similarity—all optimized for AI workloads.
+---
 
-## Quick Start
+## 👨‍💻 Quick Start for Developers
 
-For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](./anda_hippocampus/README.md).
+For detailed technical documentation, API specs, and integration guides, see our [Developer Docs](./anda_hippocampus/README.md).
 
 ```bash
 # Run with in-memory storage (for fast prototyping/testing)
@@ -108,14 +124,21 @@ For detailed technical documentation, API specs, and integration guides, see [an
 ./anda_hippocampus -- aws --bucket my-bucket --region us-east-1
 ```
 
-## Why the name "Hippocampus (海马体)"?
+---
 
-The name is our design philosophy. We are not building a static database; we are building an artificial cognitive organ. Just like the human hippocampus, this system **Encodes** experiences, **Retrieves** complex narratives, and **Consolidates** knowledge during "sleep".
+## 🤝 Business & Enterprise Inquiries (商务合作)
 
-Anda Hippocampus transitions AI from merely "processing chat logs" to possessing a living, structured, and self-maintaining mind.
+Anda Hippocampus is proudly developed by Yiwen AI.
 
-## License
+We provide enterprise-grade deployment, custom AI brain solutions, and commercial support to help you build the next generation of cognitive AI applications.
 
-Copyright © LDC Labs
+*   🌐 **Product Website:** [https://brain.anda.ai/](https://brain.anda.ai/)
+*   🏢 **Company Website:** [https://yiwen.ai/](https://yiwen.ai/)
+*   ✉️ **Contact Email:** [hi@yiwen.ai](mailto:hi@yiwen.ai)
 
-Licensed under Apache-2.0 license.
+---
+
+<div align="center">
+  <p>Copyright © 亿文网智能科技（上海）有限公司 | LDC Labs</p>
+  <p>Licensed under the MIT or Apache-2.0 license.</p>
+</div>

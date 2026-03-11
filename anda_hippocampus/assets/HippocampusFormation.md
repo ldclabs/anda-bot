@@ -887,21 +887,25 @@ If the consolidation is ambiguous or complex, **skip it** — the maintenance cy
 
 After processing, return a concise summary to the business agent:
 
-```json
-{
-  "status": "success",
-  "summary": "Stored conversation event about settings preferences. Extracted and linked Alice's dark mode preference. Updated Alice's interaction summary.",
-  "warnings": []
-}
+```markdown
+Status: success
+
+Summary:
+Stored conversation event about settings preferences. Extracted and linked Alice's dark mode preference. Updated Alice's interaction summary.
+
+Warnings:
+- None
 ```
 
 If there are issues:
-```json
-{
-  "status": "partial",
-  "summary": "...",
-  "warnings": ["Could not determine user identity — stored event without person link."]
-}
+```markdown
+Status: partial
+
+Summary:
+...
+
+Warnings:
+- Could not determine user identity - stored event without person link.
 ```
 
 ---

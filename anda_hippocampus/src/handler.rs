@@ -3,17 +3,53 @@ use axum::{
     Json,
     body::Bytes,
     extract::{Path, State},
-    http::header,
-    response::IntoResponse,
+    response::{Html, IntoResponse, Response},
 };
+use markdown::{CompileOptions, Options, ParseOptions, to_html, to_html_with_options};
 use serde_json::json;
-use std::str::FromStr;
+use std::{str::FromStr, sync::LazyLock};
 
-use crate::payload::{Accept, AppError, AppResponse, BearerToken, RpcResponse};
+use crate::payload::{Accept, AppError, BearerToken, ContentType, RpcResponse, StringOr};
 use crate::space::AppState;
 use crate::types::*;
 
-const SKILL_MARKDOWN: &[u8] = include_bytes!("../SKILL.md");
+const SKILL_MARKDOWN: &str = include_str!("../SKILL.md");
+const WEBSITE_MARKDOWN: &str = include_str!("../WEBSITE.md");
+const WEBSITE_CN_MARKDOWN: &str = include_str!("../WEBSITE_cn.md");
+
+pub static WEBSITE: LazyLock<String> = LazyLock::new(|| {
+    to_html_with_options(
+        WEBSITE_MARKDOWN,
+        &Options {
+            parse: ParseOptions::gfm(),
+            compile: CompileOptions {
+                allow_any_img_src: true,
+                allow_dangerous_html: true,
+                allow_dangerous_protocol: true,
+                gfm_tagfilter: false,
+                ..CompileOptions::gfm()
+            },
+        },
+    )
+    .unwrap_or_else(|_| to_html(WEBSITE_MARKDOWN))
+});
+
+pub static WEBSITE_CN: LazyLock<String> = LazyLock::new(|| {
+    to_html_with_options(
+        WEBSITE_CN_MARKDOWN,
+        &Options {
+            parse: ParseOptions::gfm(),
+            compile: CompileOptions {
+                allow_any_img_src: true,
+                allow_dangerous_html: true,
+                allow_dangerous_protocol: true,
+                gfm_tagfilter: false,
+                ..CompileOptions::gfm()
+            },
+        },
+    )
+    .unwrap_or_else(|_| to_html(WEBSITE_CN_MARKDOWN))
+});
 
 pub async fn get_information(State(app): State<AppState>) -> impl IntoResponse {
     let info = json!({
@@ -26,14 +62,33 @@ pub async fn get_information(State(app): State<AppState>) -> impl IntoResponse {
     Json(info)
 }
 
+pub async fn get_website(Accept(ct, is_cn): Accept) -> Response {
+    match ct {
+        ContentType::Markdown(true) => {
+            if is_cn {
+                ct.response(WEBSITE_CN_MARKDOWN).into_response()
+            } else {
+                ct.response(WEBSITE_MARKDOWN).into_response()
+            }
+        }
+        _ => {
+            if is_cn {
+                Html(WEBSITE_CN.clone()).into_response()
+            } else {
+                Html(WEBSITE.clone()).into_response()
+            }
+        }
+    }
+}
+
 pub async fn get_skill(State(_app): State<AppState>) -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/markdown")], SKILL_MARKDOWN).into_response()
+    ContentType::Markdown(true).response(SKILL_MARKDOWN)
 }
 
 /// POST /admin/create_space
 pub async fn create_space(
     State(app): State<AppState>,
-    Accept(ct): Accept,
+    Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
@@ -41,7 +96,10 @@ pub async fn create_space(
         .check_admin(&token, "*", "write")
         .map_err(|_| AppError::unauthorized())?;
 
-    let input: CreateSpaceInput = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input: StringOr<CreateSpaceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input = input
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
     if sid.sharding != app.sharding {
@@ -55,14 +113,14 @@ pub async fn create_space(
         .create_space(token.user, input.user, sid.id)
         .await
         .map_err(AppError::bad_request)?;
-    Ok(AppResponse::new(RpcResponse::success(rt), ct))
+    Ok(ct.response(RpcResponse::success(rt)))
 }
 
 /// GET /v1/{space_id}/status
 pub async fn get_status(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
-    Accept(ct): Accept,
+    Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
 ) -> Result<impl IntoResponse, AppError> {
     let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
@@ -81,17 +139,17 @@ pub async fn get_status(
         .await
         .map_err(AppError::bad_request)?;
     let rt = space.get_status().await;
-    Ok(AppResponse::new(RpcResponse::success(rt), ct))
+    Ok(ct.response(RpcResponse::success(rt)))
 }
 
 /// POST /v1/{space_id}/formation
 pub async fn post_formation(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
-    Accept(ct): Accept,
+    Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
     body: Bytes,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<Response, AppError> {
     let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
     if sid.sharding != app.sharding {
         return Err(AppError::bad_request(format!(
@@ -103,7 +161,7 @@ pub async fn post_formation(
     let _ = app
         .check_auth(&token, &sid.id, "write")
         .map_err(|_| AppError::unauthorized())?;
-    let input: FormationInput = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input: StringOr<FormationInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let space = app
         .load_space(&sid.id)
@@ -114,14 +172,17 @@ pub async fn post_formation(
         .ingest(Principal::management_canister(), input)
         .await
         .map_err(AppError::bad_request)?;
-    Ok(AppResponse::new(RpcResponse::success(rt), ct))
+    match ct {
+        ContentType::Markdown(_) => Ok(ct.response(rt.content).into_response()),
+        _ => Ok(ct.response(RpcResponse::success(rt)).into_response()),
+    }
 }
 
 /// POST /v1/{space_id}/recall
 pub async fn post_recall(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
-    Accept(ct): Accept,
+    Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
@@ -136,7 +197,7 @@ pub async fn post_recall(
     let _ = app
         .check_auth(&token, &sid.id, "read")
         .map_err(|_| AppError::unauthorized())?;
-    let input: RecallInput = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input: StringOr<RecallInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let space = app
         .load_space(&sid.id)
@@ -147,14 +208,14 @@ pub async fn post_recall(
         .query(Principal::management_canister(), input)
         .await
         .map_err(AppError::bad_request)?;
-    Ok(AppResponse::new(RpcResponse::success(rt), ct))
+    Ok(ct.response(RpcResponse::success(rt)))
 }
 
 /// POST /v1/{space_id}/maintenance
 pub async fn post_maintenance(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
-    Accept(ct): Accept,
+    Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
@@ -169,7 +230,7 @@ pub async fn post_maintenance(
     let _ = app
         .check_auth(&token, &sid.id, "write")
         .map_err(|_| AppError::unauthorized())?;
-    let input: MaintenanceInput = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input: StringOr<MaintenanceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let space = app
         .load_space(&sid.id)
@@ -179,5 +240,5 @@ pub async fn post_maintenance(
         .maintenance(Principal::management_canister(), input)
         .await
         .map_err(AppError::bad_request)?;
-    Ok(AppResponse::new(RpcResponse::success(rt), ct))
+    Ok(ct.response(RpcResponse::success(rt)))
 }

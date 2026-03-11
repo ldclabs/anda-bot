@@ -15,7 +15,7 @@ Business agents interact entirely through natural language and a REST API — no
          ▼
 ┌─────────────────────┐
 │    Hippocampus      │  ← The ONLY layer that understands KIP
-│   (LLM + KIP)      │     Three agents: Formation / Recall / Maintenance
+│   (LLM + KIP)       │     Three agents: Formation / Recall / Maintenance
 └────────┬────────────┘
          │ KIP (KQL / KML / META)
          ▼
@@ -31,7 +31,7 @@ Business agents interact entirely through natural language and a REST API — no
 - **Persistent, structured memory** — Facts, preferences, relationships, events, and patterns encoded into a knowledge graph.
 - **Three operational modes** — Formation (encoding), Recall (retrieval), and Maintenance (consolidation & pruning).
 - **Multi-space isolation** — Each space has its own independent database, knowledge graph, and conversation history.
-- **Dual serialization** — Supports JSON and CBOR for request/response payloads (negotiated via `Content-Type` / `Accept` headers).
+- **Triple serialization** — Supports JSON, CBOR, and Markdown for request/response payloads (negotiated via `Content-Type` / `Accept` headers).
 - **Pluggable storage backends** — Local filesystem, AWS S3, or in-memory (for development/testing).
 
 ## Agents
@@ -97,22 +97,24 @@ Consolidates, prunes, and optimizes the knowledge graph during scheduled or on-d
 
 ## API Endpoints
 
-| Method | Path                         | Description                         | Auth Scope |
-| ------ | ---------------------------- | ----------------------------------- | ---------- |
-| `GET`  | `/`                          | Service info (name, version, shard) | —          |
-| `GET`  | `/SKILL.md`                  | Skill description (Markdown)        | —          |
-| `POST` | `/admin/create_space`        | Create a new space (manager only)   | `write`    |
-| `GET`  | `/v1/{space_id}/status`      | Get space status & statistics       | `read`     |
-| `POST` | `/v1/{space_id}/formation`   | Submit messages for memory encoding | `write`    |
-| `POST` | `/v1/{space_id}/recall`      | Query memory with natural language  | `read`     |
-| `POST` | `/v1/{space_id}/maintenance` | Trigger maintenance cycle           | `write`    |
+| Method | Path                         | Description                            | Auth Scope |
+| ------ | ---------------------------- | -------------------------------------- | ---------- |
+| `GET`  | `/`                          | Anda Hippocampus website               | —          |
+| `GET`  | `/info`                      | Service info (name, version, sharding) | —          |
+| `GET`  | `/SKILL.md`                  | Skill description (Markdown)           | —          |
+| `POST` | `/admin/create_space`        | Create a new space (manager only)      | `write`    |
+| `GET`  | `/v1/{space_id}/status`      | Get space status & statistics          | `read`     |
+| `POST` | `/v1/{space_id}/formation`   | Submit messages for memory encoding    | `write`    |
+| `POST` | `/v1/{space_id}/recall`      | Query memory with natural language     | `read`     |
+| `POST` | `/v1/{space_id}/maintenance` | Trigger maintenance cycle              | `write`    |
 
 ### Content Negotiation
 
-Dual serialization via `Content-Type` / `Accept` headers:
+Triple serialization via `Content-Type` / `Accept` headers:
 
 - `application/json` — JSON (default)
 - `application/cbor` — CBOR (binary, more compact)
+- `text/markdown` — Markdown (human-readable text)
 
 All responses use an RPC envelope:
 
@@ -126,7 +128,7 @@ Pattern: `s{shard_index}-{name}`, e.g. `s0-d688lqjs0946lfo0014g`. The shard inde
 
 ### Authentication
 
-All endpoints (except `/` and `/SKILL.md`) require a Bearer token:
+All endpoints (except `/`, `/info` and `/SKILL.md`) require a Bearer token:
 
 ```
 Authorization: Bearer <base64_encoded_cose_sign1_token>
@@ -154,7 +156,13 @@ Create a new isolated memory space. Requires manager principal.
 
 **Response:**
 ```json
-{"result": true}
+{
+  "result": {
+    "space_id": "s0-my_space_name",
+    "owner": "owner_principal_id",
+    ...
+  }
+}
 ```
 
 ### POST /v1/{space_id}/formation
@@ -198,9 +206,8 @@ Submit conversation messages for memory encoding. Processing is asynchronous —
 ```json
 {
   "result": {
-    "status": "submitted",
-    "summary": "Conversation submitted for memory encoding.",
-    "warnings": []
+    "conversation": 1,
+    ...
   }
 }
 ```
@@ -231,9 +238,8 @@ Query memory with natural language. Returns a synthesized answer from the knowle
 ```json
 {
   "result": {
-    "status": "success",
-    "answer": "Alice prefers dark mode and operates in UTC+8 timezone.",
-    "gaps": []
+    "content": "Alice prefers dark mode and operates in UTC+8 timezone.",
+    ...
   }
 }
 ```
@@ -279,9 +285,8 @@ Trigger a memory maintenance cycle. Runs asynchronously with single-execution gu
 ```json
 {
   "result": {
-    "status": "submitted",
-    "summary": "Maintenance cycle started.",
-    "warnings": []
+    "conversation": 8,
+    ...
   }
 }
 ```
@@ -339,13 +344,13 @@ The schema is self-describing — all type definitions are stored as nodes withi
 
 | Env Variable      | CLI Flag            | Default                                                   | Description                                |
 | ----------------- | ------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| `LISTEN_ADDR`     | `--addr`            | `127.0.0.1:8080`                                          | Listen address                             |
+| `LISTEN_ADDR`     | `--addr`            | `127.0.0.1:8042`                                          | Listen address                             |
 | `ED25519_PUBKEYS` | `--ed25519-pubkeys` | —                                                         | Comma-separated Base64 Ed25519 public keys |
 | `GEMINI_API_KEY`  | `--gemini-api-key`  | —                                                         | Google Gemini API key                      |
 | `GEMINI_API_BASE` | `--gemini-api-base` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL                        |
 | `GEMINI_MODEL`    | `--gemini-model`    | `gemini-3-flash-preview`                                  | LLM model for agents                       |
 | `HTTPS_PROXY`     | `--https-proxy`     | —                                                         | HTTPS proxy URL                            |
-| `SHARDING_IDX`    | `--sharding-idx`    | `999999`                                                  | Shard index for this instance              |
+| `SHARDING_IDX`    | `--sharding-idx`    | `0`                                                       | Shard index for this instance              |
 | `MANAGERS`        | `--managers`        | —                                                         | Comma-separated manager principal IDs      |
 
 ### Storage Backends

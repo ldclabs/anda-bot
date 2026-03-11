@@ -48,14 +48,6 @@ pub struct RecallInput {
     pub context: Option<InputContext>,
 }
 
-#[allow(unused)]
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
-pub struct RecallOutput {
-    pub status: String,
-    pub answer: String,
-    pub gaps: Vec<String>,
-}
-
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct FormationInput {
     pub messages: Vec<Message>,
@@ -63,14 +55,6 @@ pub struct FormationInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<InputContext>,
     pub timestamp: String,
-}
-
-#[allow(unused)]
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
-pub struct FormationOutput {
-    pub status: String,
-    pub summary: String,
-    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]

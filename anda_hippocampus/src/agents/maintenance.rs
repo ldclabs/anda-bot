@@ -79,8 +79,8 @@ impl Agent<AgentCtx> for MaintenanceAgent {
             created_at: now_ms,
             updated_at: now_ms,
             usage: Usage::default(),
-            steering_messages: None,
-            follow_up_messages: Some(vec![prompt.clone()]),
+            steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
+            follow_up_messages: None,
             ancestors: None,
         };
 
@@ -124,7 +124,7 @@ impl MaintenanceAgent {
 
     async fn process_one(&self, ctx: &AgentCtx, conversation: &mut Conversation) {
         let prompt = match conversation
-            .follow_up_messages
+            .steering_messages
             .take()
             .unwrap_or_default()
             .pop()

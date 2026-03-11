@@ -34,6 +34,7 @@ use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::agents::{FormationAgent, MaintenanceAgent, RecallAgent};
+use crate::payload::StringOr;
 use crate::types::{FormationInput, MaintenanceInput, RecallInput, SpaceId};
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -122,6 +123,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         object_store: Arc<dyn ObjectStore>,
         db_config: Arc<DBConfig>,
@@ -363,14 +365,14 @@ impl Space {
     pub async fn ingest(
         &self,
         user: Principal,
-        input: FormationInput,
+        input: StringOr<FormationInput>,
     ) -> Result<AgentOutput, BoxError> {
         self.engine
             .agent_run(
                 user,
                 AgentInput {
                     name: FormationAgent::NAME.to_string(),
-                    prompt: serde_json::to_string(&input)?,
+                    prompt: input.to_string(),
                     resources: vec![],
                     ..Default::default()
                 },
@@ -381,14 +383,14 @@ impl Space {
     pub async fn query(
         &self,
         user: Principal,
-        input: RecallInput,
+        input: StringOr<RecallInput>,
     ) -> Result<AgentOutput, BoxError> {
         self.engine
             .agent_run(
                 user,
                 AgentInput {
                     name: RecallAgent::NAME.to_string(),
-                    prompt: serde_json::to_string(&input)?,
+                    prompt: input.to_string(),
                     resources: vec![],
                     ..Default::default()
                 },
@@ -399,14 +401,14 @@ impl Space {
     pub async fn maintenance(
         &self,
         user: Principal,
-        input: MaintenanceInput,
+        input: StringOr<MaintenanceInput>,
     ) -> Result<AgentOutput, BoxError> {
         self.engine
             .agent_run(
                 user,
                 AgentInput {
                     name: MaintenanceAgent::NAME.to_string(),
-                    prompt: serde_json::to_string(&input)?,
+                    prompt: input.to_string(),
                     resources: vec![],
                     ..Default::default()
                 },

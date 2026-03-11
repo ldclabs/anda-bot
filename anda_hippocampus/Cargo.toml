@@ -27,5 +27,6 @@ log = { workspace = true }
 http = { workspace = true }
 object_store = { workspace = true, features = ["aws", "integration"] }
 tower-http = { workspace = true }
+markdown = "1.0.0"
 
 [dev-dependencies]
