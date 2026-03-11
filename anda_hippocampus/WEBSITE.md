@@ -82,7 +82,7 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
          ▼
 ┌─────────────────────┐
 │    Hippocampus      │  ← The Cognitive Engine. Translates intent into graph
-│   (LLM + KIP)       │     operations autonomously.
+│    (LLM + KIP)      │     operations autonomously.
 └────────┬────────────┘
          │ KIP (Knowledge Interaction Protocol)
          ▼
