@@ -14,6 +14,14 @@ use std::sync::{
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
 
+/// Resets the AtomicBool to false on drop (panic guard for processing flag).
+struct ProcessingGuard(Arc<AtomicBool>);
+impl Drop for ProcessingGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[derive(Clone)]
 pub struct MaintenanceAgent {
     memory: Arc<MemoryManagement>,
@@ -93,8 +101,9 @@ impl Agent<AgentCtx> for MaintenanceAgent {
         let agent = self.clone();
         let ctx_clone = ctx.clone();
         tokio::spawn(async move {
+            // Guard resets processing to false when the task completes or panics.
+            let _guard = ProcessingGuard(agent.processing.clone());
             agent.process_one(&ctx_clone, &mut conversation).await;
-            agent.processing.store(false, Ordering::SeqCst);
         });
 
         Ok(AgentOutput {

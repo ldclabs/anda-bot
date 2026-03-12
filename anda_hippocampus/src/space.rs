@@ -12,7 +12,9 @@ use anda_engine::{
     model::Model,
     unix_ms,
 };
-use anda_kip::{META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml};
+use anda_kip::{
+    KipError, META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml,
+};
 use ic_auth_types::ByteBufB64;
 use ic_cose_types::cose::{cwt::cwt_from, ed25519::VerifyingKey, sign1::cose_sign1_from};
 use object_store::ObjectStore;
@@ -125,6 +127,7 @@ impl AppState {
         }
     }
 
+    // 平台管理员权限
     pub fn check_admin(
         &self,
         token: &str,
@@ -148,6 +151,7 @@ impl AppState {
         Ok(token)
     }
 
+    // 用户权限
     pub fn check_auth(
         &self,
         token: &str,
@@ -510,28 +514,8 @@ impl Space {
         db.set_extension("owner".to_string(), owner.to_string().into());
 
         let db = Arc::new(db);
-        let nexus = CognitiveNexus::connect(db.clone(), async |nexus| {
-            if !nexus
-                .has_concept(&ConceptPK::Object {
-                    r#type: PERSON_TYPE.to_string(),
-                    name: META_SELF_NAME.to_string(),
-                })
-                .await
-            {
-                // uuc56-gyb: Principal::from_slice(&[1])
-                let kml = &[
-                    &PERSON_SELF_KIP.replace("$self_reserved_principal_id", "uuc56-gyb"),
-                    PERSON_SYSTEM_KIP,
-                ]
-                .join("\n");
-
-                let result = nexus.execute_kml(parse_kml(kml)?, false).await?;
-                log::info!(result:serde = result; "Init $self and $system");
-            }
-
-            Ok(())
-        })
-        .await?;
+        let nexus =
+            CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
 
         let nexus = Arc::new(nexus);
         let memory = MemoryManagement::connect(db.clone(), nexus.clone()).await?;
@@ -556,28 +540,8 @@ impl Space {
     ) -> Result<Self, BoxError> {
         let id = db_config.name.clone();
         let db = Arc::new(AndaDB::connect(object_store.clone(), db_config).await?);
-        let nexus = CognitiveNexus::connect(db.clone(), async |nexus| {
-            if !nexus
-                .has_concept(&ConceptPK::Object {
-                    r#type: PERSON_TYPE.to_string(),
-                    name: META_SELF_NAME.to_string(),
-                })
-                .await
-            {
-                // uuc56-gyb: Principal::from_slice(&[1])
-                let kml = &[
-                    &PERSON_SELF_KIP.replace("$self_reserved_principal_id", "uuc56-gyb"),
-                    PERSON_SYSTEM_KIP,
-                ]
-                .join("\n");
-
-                let result = nexus.execute_kml(parse_kml(kml)?, false).await?;
-                log::info!(result:serde = result; "Init $self and $system");
-            }
-
-            Ok(())
-        })
-        .await?;
+        let nexus =
+            CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
 
         let mut memory = MemoryManagement::connect(db.clone(), Arc::new(nexus))
             .await?
@@ -617,4 +581,25 @@ impl Space {
             engine,
         })
     }
+}
+
+async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
+    if !nexus
+        .has_concept(&ConceptPK::Object {
+            r#type: PERSON_TYPE.to_string(),
+            name: META_SELF_NAME.to_string(),
+        })
+        .await
+    {
+        // uuc56-gyb: Principal::from_slice(&[1])
+        let kml = &[
+            &PERSON_SELF_KIP.replace("$self_reserved_principal_id", "uuc56-gyb"),
+            PERSON_SYSTEM_KIP,
+        ]
+        .join("\n");
+
+        let result = nexus.execute_kml(parse_kml(kml)?, false).await?;
+        log::info!(result:serde = result; "Init $self and $system");
+    }
+    Ok(())
 }

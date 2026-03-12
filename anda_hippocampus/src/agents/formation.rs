@@ -15,6 +15,14 @@ use std::sync::{
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
 
+/// Resets the AtomicU64 to 0 on drop (panic guard for processing_conversation).
+struct ProcessingGuard(Arc<AtomicU64>);
+impl Drop for ProcessingGuard {
+    fn drop(&mut self) {
+        self.0.store(0, Ordering::SeqCst);
+    }
+}
+
 #[derive(Clone)]
 pub struct FormationAgent {
     memory: Arc<MemoryManagement>,
@@ -49,8 +57,14 @@ impl FormationAgent {
         }
 
         let agent = self.clone();
+        let pc = self.processing_conversation.clone();
         tokio::spawn(async move {
+            // Guard resets processing_conversation to 0 if the task panics.
+            let guard = ProcessingGuard(pc);
             agent.process_loop(ctx, conversation).await;
+            // Normal exit: process_loop already manages the atomic properly,
+            // so defuse the guard to avoid clobbering a valid value.
+            std::mem::forget(guard);
         });
     }
 
@@ -323,7 +337,8 @@ impl Agent<AgentCtx> for FormationAgent {
                 .and_then(|v| u64::try_from(v).ok())
                 && prev_id + 1 < id
             {
-                if let Some(conv) = self.find_next_submitted(id).await {
+                // Resume from the last processed conversation to catch any missed ones
+                if let Some(conv) = self.find_next_submitted(prev_id).await {
                     self.try_process(ctx, conv);
                 }
             } else {

@@ -22,41 +22,11 @@ const WEBSITE_CN_MARKDOWN: &str = include_str!("../WEBSITE_cn.md");
 const APP_HTML: &str = include_str!("../app.html");
 const FAVICON: &[u8] = include_bytes!("../favicon.ico");
 
-pub static WEBSITE: LazyLock<String> = LazyLock::new(|| {
-    let body = to_html_with_options(
-        WEBSITE_MARKDOWN,
-        &Options {
-            parse: ParseOptions::gfm(),
-            compile: CompileOptions {
-                allow_any_img_src: true,
-                allow_dangerous_html: true,
-                allow_dangerous_protocol: true,
-                gfm_tagfilter: false,
-                ..CompileOptions::gfm()
-            },
-        },
-    )
-    .unwrap_or_else(|_| to_html(WEBSITE_MARKDOWN));
-    APP_HTML.replace("%sveltekit.body%", &body)
-});
+pub static WEBSITE: LazyLock<String> =
+    LazyLock::new(|| APP_HTML.replace("%sveltekit.body%", &markdown_to_html(WEBSITE_MARKDOWN)));
 
-pub static WEBSITE_CN: LazyLock<String> = LazyLock::new(|| {
-    let body = to_html_with_options(
-        WEBSITE_CN_MARKDOWN,
-        &Options {
-            parse: ParseOptions::gfm(),
-            compile: CompileOptions {
-                allow_any_img_src: true,
-                allow_dangerous_html: true,
-                allow_dangerous_protocol: true,
-                gfm_tagfilter: false,
-                ..CompileOptions::gfm()
-            },
-        },
-    )
-    .unwrap_or_else(|_| to_html(WEBSITE_CN_MARKDOWN));
-    APP_HTML.replace("%sveltekit.body%", &body)
-});
+pub static WEBSITE_CN: LazyLock<String> =
+    LazyLock::new(|| APP_HTML.replace("%sveltekit.body%", &markdown_to_html(WEBSITE_CN_MARKDOWN)));
 
 pub async fn favicon() -> Response {
     Response::builder()
@@ -294,8 +264,7 @@ pub async fn post_maintenance(
 /// GET /v1/{space_id}/conversations/{conversation_id}
 pub async fn get_conversation(
     State(app): State<AppState>,
-    Path(space_id): Path<String>,
-    Path(conversation_id): Path<String>,
+    Path((space_id, conversation_id)): Path<(String, String)>,
     Accept(ct, _): Accept,
     BearerToken(token): BearerToken,
 ) -> Result<impl IntoResponse, AppError> {
@@ -440,7 +409,7 @@ pub async fn add_space_token(
 
     let now_ms = unix_ms();
     let _ = app
-        .check_admin(&token, &sid.id, TokenScope::Write, now_ms)
+        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: AddSpaceTokenInput = ct
@@ -481,7 +450,7 @@ pub async fn revoke_space_token(
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: RevokeSpaceTokenInput = ct
@@ -520,7 +489,7 @@ pub async fn set_public(
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: SetSpacePublicInput = ct
@@ -574,4 +543,21 @@ pub async fn create_space(
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
+}
+
+fn markdown_to_html(md: &str) -> String {
+    to_html_with_options(
+        md,
+        &Options {
+            parse: ParseOptions::gfm(),
+            compile: CompileOptions {
+                allow_any_img_src: true,
+                allow_dangerous_html: true,
+                allow_dangerous_protocol: true,
+                gfm_tagfilter: false,
+                ..CompileOptions::gfm()
+            },
+        },
+    )
+    .unwrap_or_else(|_| to_html(md))
 }
