@@ -222,6 +222,7 @@ async fn main() -> Result<(), BoxError> {
     let app: Router<AppState> = Router::new()
         .route("/", routing::get(get_website))
         .route("/favicon.ico", routing::get(favicon))
+        .route("/apple-touch-icon.webp", routing::get(apple_touch_icon))
         .route("/info", routing::get(get_information))
         .route("/SKILL.md", routing::get(get_skill))
         .route("/v1/{space_id}/status", routing::get(get_status))

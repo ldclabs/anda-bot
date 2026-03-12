@@ -21,6 +21,7 @@ const WEBSITE_MARKDOWN: &str = include_str!("../WEBSITE.md");
 const WEBSITE_CN_MARKDOWN: &str = include_str!("../WEBSITE_cn.md");
 const APP_HTML: &str = include_str!("../app.html");
 const FAVICON: &[u8] = include_bytes!("../favicon.ico");
+const APPLE_TOUCH_ICON: &[u8] = include_bytes!("../apple-touch-icon.webp");
 
 pub static WEBSITE: LazyLock<String> =
     LazyLock::new(|| APP_HTML.replace("%sveltekit.body%", &markdown_to_html(WEBSITE_MARKDOWN)));
@@ -32,6 +33,13 @@ pub async fn favicon() -> Response {
     Response::builder()
         .header("Content-Type", "image/x-icon")
         .body(FAVICON.into())
+        .unwrap()
+}
+
+pub async fn apple_touch_icon() -> Response {
+    Response::builder()
+        .header("Content-Type", "image/webp")
+        .body(APPLE_TOUCH_ICON.into())
         .unwrap()
 }
 
