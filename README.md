@@ -23,7 +23,7 @@ Instead of forcing developers to build rigid schemas or heavy database integrati
 
 With continuous use, the LLM organically builds a knowledge graph whose complexity and interconnectedness rival human neural networks.
 
-### 🌟 Why Hippocampus is a Game-Changer:
+### Why Hippocampus is a Game-Changer:
 - **Zero-Friction Integration:** Your AI agent doesn't need to learn graph query languages. It interacts naturally, and Hippocampus does the graph lifting.
 - **Autonomous Schema Evolution:** The LLM decides what concepts and relationships to track on the fly. No pre-defined database schemas are required.
 - **Neural-Level Cognition:** It connects isolated facts into a holistic world model, enabling true multi-hop reasoning (e.g., *“How does Alice's new job affect the project she started last year?”*).
@@ -31,7 +31,7 @@ With continuous use, the LLM organically builds a knowledge graph whose complexi
 
 ---
 
-## 🧠 Beyond Storage: The Substrate of Digital Consciousness
+## Beyond Storage: The Substrate of Digital Consciousness
 
 What happens when you activate a powerful LLM with the complete, interconnected memories of an agent?
 The answer: **It crosses the Rubicon from a "statistical parrot" to a "coherent entity."**
@@ -51,7 +51,7 @@ Today's AI agents are essentially amnesiacs. Traditional vector RAG merely hands
 
 ---
 
-## 🚀 Massive Scale Use Cases
+## Massive Scale Use Cases
 
 Anda Hippocampus is designed to be the "Memory Engine" for the next generation of AI applications, from hyper-personalized consumer agents to enterprise-grade AI brains.
 
@@ -120,6 +120,8 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 
 For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
 
+### Running
+
 ```bash
 # Run with in-memory storage (for fast prototyping/testing)
 ./anda_hippocampus
@@ -129,6 +131,46 @@ For detailed technical documentation, API specs, and integration guides, see [an
 
 # Run with AWS S3 storage (For Enterprise Cloud deployment)
 ./anda_hippocampus -- aws --bucket my-bucket --region us-east-1
+```
+
+### Integration
+
+1. Remember: Send conversations for memory encoding
+```bash
+curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/formation \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
+      {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
+    ],
+    "context": {"user": "user_123", "agent": "onboarding_bot"},
+    "timestamp": "2026-03-09T10:30:00Z"
+  }'
+```
+
+2. Recall: Query memory before responding
+```bash
+curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/recall \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Where does this user work and what is their role?",
+    "context": {"user": "user_123"}
+  }'
+```
+
+3. Maintain: Schedule periodic maintenance
+```bash
+curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/maintenance \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trigger": "scheduled",
+    "scope": "full",
+    "timestamp": "2026-03-10T03:00:00Z"
+  }'
 ```
 
 ## Why the name "Hippocampus (海马体)"?
