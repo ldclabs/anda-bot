@@ -14,12 +14,6 @@
 
 <br/>
 
-# 🧠 Anda Hippocampus (海马体) — Autonomous Graph Memory for AI Agents
-
-> Give AI a self-evolving cognitive brain.
-
-**[English](./README.md) | [中文](./README_cn.md)**
-
 ## The Memory Bottleneck: From "Storage" to "True Cognition"
 
 We are no longer in the era where "AI has no memory." Today's AI agents use long context windows, vector databases (RAG), simple Key-Value stores, and Markdown files (like Agent Skills) to remember user interactions.
@@ -114,7 +108,7 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 
 ## Quick Start
 
-For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](./anda_hippocampus/README.md).
+For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
 
 ```bash
 # Run with in-memory storage (for fast prototyping/testing)

@@ -98,7 +98,7 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 
 ## Quick Start
 
-For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](./anda_hippocampus/README.md).
+For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
 
 ```bash
 # Run with in-memory storage (for fast prototyping/testing)
