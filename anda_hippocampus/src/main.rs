@@ -256,6 +256,7 @@ async fn main() -> Result<(), BoxError> {
             routing::post(set_public),
         )
         .route("/admin/create_space", routing::post(create_space))
+        .route("/admin/update_space_tier", routing::post(update_space_tier))
         .layer(CompressionLayer::new());
 
     let app = app.with_state(app_state.clone());

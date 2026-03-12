@@ -60,6 +60,37 @@ impl FromStr for SpaceId {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct SpaceTier {
+    #[serde(default, alias = "t")]
+    pub tier: u32,
+
+    #[serde(default, alias = "u")]
+    pub updated_at: u64,
+}
+
+impl SpaceTier {
+    pub fn to_ref(&self) -> SpaceTierRef {
+        SpaceTierRef {
+            tier: self.tier,
+            updated_at: self.updated_at,
+        }
+    }
+
+    // tier 0 allows 1k nodes, tier 1 allows 10k, etc.
+    pub fn allow_nodes(&self) -> u64 {
+        10u64.pow(self.tier + 3)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct SpaceTierRef {
+    #[serde(rename = "t", alias = "tier")]
+    pub tier: u32,
+    #[serde(rename = "u", alias = "updated_at")]
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceToken {
     #[serde(alias = "s")]
     pub scope: TokenScope,
@@ -98,8 +129,10 @@ pub struct SpaceTokenRef {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TokenScope {
     #[serde(rename = "read")]
+    #[default]
     Read,
     #[serde(rename = "write")]
     Write,
@@ -113,11 +146,6 @@ impl TokenScope {
     }
 }
 
-impl Default for TokenScope {
-    fn default() -> Self {
-        Self::Read
-    }
-}
 
 impl FromStr for TokenScope {
     type Err = BoxError;
@@ -213,9 +241,10 @@ pub struct MaintenanceParameters {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct CreateSpaceInput {
+pub struct CreateOrUpdateSpaceInput {
     pub user: Principal,
     pub space_id: String,
+    pub tier: u32,
 }
 
 #[cfg(test)]

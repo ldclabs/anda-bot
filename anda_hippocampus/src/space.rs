@@ -35,8 +35,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agents::{FormationAgent, MaintenanceAgent, RecallAgent};
 use crate::payload::StringOr;
 use crate::types::{
-    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceId, SpaceToken, SpaceTokenRef,
-    TokenScope,
+    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceId, SpaceTier,
+    SpaceToken, SpaceTokenRef, TokenScope,
 };
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -181,11 +181,13 @@ impl AppState {
         Ok(token)
     }
 
-    pub async fn create_space(
+    pub async fn admin_create_space(
         &self,
         creator: Principal,
         owner: Principal,
         id: String,
+        tier: u32,
+        now_ms: u64,
     ) -> Result<SpaceStatus, BoxError> {
         {
             let spaces = self.spaces.read().await;
@@ -205,6 +207,8 @@ impl AppState {
             creator,
             owner,
             self.sharding,
+            tier,
+            now_ms,
         )
         .await
     }
@@ -322,6 +326,7 @@ pub struct SpaceStatus {
     pub propositions: usize,
     pub conversations: usize,
     pub public: bool,
+    pub tier: SpaceTier,
 }
 
 impl Space {
@@ -331,6 +336,24 @@ impl Space {
             sharding: self.sharding,
         }
         .to_string()
+    }
+
+    pub fn get_tier(&self) -> SpaceTier {
+        self.db
+            .get_extension("tier")
+            .and_then(|v| v.deserialized::<SpaceTier>().ok())
+            .unwrap_or_default()
+    }
+
+    pub async fn admin_update_tier(&self, tier: u32, now_ms: u64) -> Result<SpaceTier, BoxError> {
+        let tier = SpaceTier {
+            tier,
+            updated_at: now_ms,
+        };
+        self.db
+            .save_extension("tier".to_string(), Fv::serialized(&tier.to_ref(), None)?)
+            .await?;
+        Ok(tier)
     }
 
     pub async fn add_space_token(
@@ -438,6 +461,7 @@ impl Space {
             propositions: self.memory.nexus.propositions.len(),
             conversations: self.memory.conversations.len(),
             public: self.is_public(),
+            tier: self.get_tier(),
         }
     }
 
@@ -446,6 +470,19 @@ impl Space {
         user: Principal,
         input: StringOr<FormationInput>,
     ) -> Result<AgentOutput, BoxError> {
+        let nodes = self.memory.nexus.concepts.len()
+            + self.memory.nexus.propositions.len()
+            + self.memory.conversations.len();
+        let tier = self.get_tier();
+        if tier.allow_nodes() < nodes as u64 {
+            return Err(format!(
+                "node limit exceeded: {} nodes vs tier limit {}",
+                nodes,
+                tier.allow_nodes()
+            )
+            .into());
+        }
+
         self.engine
             .agent_run(
                 user,
@@ -506,12 +543,19 @@ impl Space {
         creator: Principal,
         owner: Principal,
         sharding: u32,
+        tier: u32,
+        now_ms: u64,
     ) -> Result<SpaceStatus, BoxError> {
         let id = db_config.name.clone();
         let db = AndaDB::create(object_store.clone(), db_config).await?;
+        let tier = SpaceTier {
+            tier,
+            updated_at: now_ms,
+        };
 
         db.set_extension("creator".to_string(), creator.to_string().into());
         db.set_extension("owner".to_string(), owner.to_string().into());
+        db.set_extension("tier".to_string(), Fv::serialized(&tier.to_ref(), None)?);
 
         let db = Arc::new(db);
         let nexus =
@@ -527,6 +571,7 @@ impl Space {
             propositions: nexus.propositions.len(),
             conversations: memory.conversations.len(),
             public: false,
+            tier,
         })
     }
 

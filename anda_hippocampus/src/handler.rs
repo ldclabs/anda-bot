@@ -524,7 +524,7 @@ pub async fn create_space(
         .check_admin(&token, "*", TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
-    let input: CreateSpaceInput = ct
+    let input: CreateOrUpdateSpaceInput = ct
         .parse_body(&body)
         .map_err(AppError::bad_request)?
         .value()
@@ -539,7 +539,45 @@ pub async fn create_space(
     }
 
     let rt = app
-        .create_space(token.user, input.user, sid.id)
+        .admin_create_space(token.user, input.user, sid.id, input.tier, now_ms)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// POST /admin/update_space_tier
+pub async fn update_space_tier(
+    State(app): State<AppState>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let now_ms = unix_ms();
+    let _ = app
+        .check_admin(&token, "*", TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: CreateOrUpdateSpaceInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let rt = space
+        .admin_update_tier(input.tier, now_ms)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))

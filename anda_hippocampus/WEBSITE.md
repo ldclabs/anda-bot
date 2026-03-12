@@ -127,12 +127,6 @@ The name is our design philosophy. We are not building a static database; we are
 
 Anda Hippocampus transitions AI from merely "processing chat logs" to possessing a living, structured, and self-maintaining mind.
 
-## License
-
-Copyright © LDC Labs
-
-Licensed under Apache-2.0 license.
-
 ---
 
 ## 🤝 Business & Enterprise Inquiries
