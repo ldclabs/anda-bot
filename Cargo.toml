@@ -3,10 +3,16 @@ resolver = "2"
 members = ["anda_hippocampus"]
 
 [workspace.package]
-description = "Anda is an AI agent framework built with Rust, powered by ICP and TEEs."
-repository = "https://github.com/ldclabs/anda"
-homepage = "https://github.com/ldclabs/anda"
-keywords = ["ai-agent", "icp", "tee"]
+description = "🧠 Anda Hippocampus (海马体) — Autonomous Graph Memory for AI Agents"
+repository = "https://github.com/ldclabs/anda-hippocampus"
+homepage = "https://github.com/ldclabs/anda-hippocampus"
+keywords = [
+  "knowledge-graph",
+  "persistent-memory",
+  "cognitive",
+  "kip",
+  "agent-memory",
+]
 categories = [
   "accessibility",
   "web-programming",
@@ -14,7 +20,7 @@ categories = [
   "text-processing",
 ]
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [workspace.dependencies]
 axum = { version = "0.8", features = [

@@ -6,10 +6,11 @@
 
 ## The Memory Bottleneck: From "Storage" to "True Cognition"
 
-We are no longer in the era where "AI has no memory." Today's AI agents use long context windows, vector databases (RAG), and simple Key-Value stores to remember user interactions.
+We are no longer in the era where "AI has no memory." Today's AI agents use long context windows, vector databases (RAG), simple Key-Value stores, and Markdown files (like Agent Skills) to remember user interactions.
 
 However, they suffer from a fundamental **Cognitive Bottleneck**:
 *   **Vector RAG is just a text pile:** It retrieves messy, isolated chunks of text based on similarity. It cannot connect the dots or perform multi-hop logical reasoning.
+*   **Markdown storage is a manual struggle:** While many modern agents rely on updating Markdown files to store core "Skills" or "Memories," this approach is hard to scale. As the files grow, LLMs struggle to maintain consistency, avoid duplicates, and retrieve relevant context without blowing up the token window.
 *   **Existing Graph solutions are too heavy:** While Knowledge Graphs are the obvious answer to complex reasoning, integrating traditional graph databases (like Neo4j) with AI agents is notoriously difficult. Forcing LLMs to write complex graph query languages (like Cypher) leads to high error rates, rigid schemas, and massive integration friction.
 
 **Memory is not just a hard drive; it is a living, breathing network of connections.** When a human remembers, they don't search a text log; they traverse a neural graph of entities, relationships, events, and temporal changes.
@@ -48,13 +49,13 @@ Vector RAG is not enough for complex businesses. Enterprises have structured wor
 
 ## How Is This Different from the Rest?
 
-| Capability             | Vector RAG (Text)    | Simple Key-Value     | Traditional Graph RAG         | **Anda Hippocampus**           |
-| :--------------------- | :------------------- | :------------------- | :---------------------------- | :----------------------------- |
-| **Data Structure**     | Unstructured blobs   | Rigid schema         | Rigid graph schema            | **Dynamic Cognitive Graph**    |
-| **Integration Effort** | Easy                 | Easy                 | **Extremely Heavy**           | **Easy (Plug & Play)**         |
-| **Agent Autonomy**     | None (Just appends)  | Low (Updates fields) | Low (Struggles with Graph QL) | **High (Builds graph itself)** |
-| **Logical Reasoning**  | Fails at multi-hop   | None                 | Good                          | **Exceptional**                |
-| **Self-Maintenance**   | No (Database bloats) | No                   | Rarely                        | **Yes (Sleep/Consolidate)**    |
+| Capability             | Vector RAG (Text)    | Markdown (Skills)    | Simple Key-Value     | Traditional Graph RAG         | **Anda Hippocampus**           |
+| :--------------------- | :------------------- | :------------------- | :------------------- | :---------------------------- | :----------------------------- |
+| **Data Structure**     | Unstructured blobs   | Semi-structured text | Rigid schema         | Rigid graph schema            | **Dynamic Cognitive Graph**    |
+| **Integration Effort** | Easy                 | Easy                 | Easy                 | **Extremely Heavy**           | **Easy (Plug & Play)**         |
+| **Agent Autonomy**     | None (Just appends)  | High (Self-updates)  | Low (Updates fields) | Low (Struggles with Graph QL) | **High (Builds graph itself)** |
+| **Logical Reasoning**  | Fails at multi-hop   | Moderate             | None                 | Good                          | **Exceptional**                |
+| **Self-Maintenance**   | No (Database bloats) | Manual/LLM-Intensive | No                   | Rarely                        | **Yes (Sleep/Consolidate)**    |
 
 ## How It Works: The Cognitive Architecture
 
@@ -63,19 +64,19 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 ```text
 ┌─────────────────────┐
 │   Your AI Agent     │  ← e.g., OpenClaw, Enterprise Assistant
-│  (No graph setup)   │     Thinks and acts in Natural Language.
+│  (No graph setup)   │    Thinks and acts in Natural Language.
 └────────┬────────────┘
          │ Natural Language / Function Calling
          ▼
 ┌─────────────────────┐
 │    Hippocampus      │  ← The Cognitive Engine. Translates intent into graph
-│    (LLM + KIP)      │     operations autonomously.
+│    (LLM + KIP)      │    operations autonomously.
 └────────┬────────────┘
          │ KIP (Knowledge Interaction Protocol)
          ▼
 ┌─────────────────────┐
 │  Cognitive Nexus    │  ← The underlying Graph Database (Anda DB).
-│  (Knowledge Graph)  │     Stores concepts, propositions, and episodic events.
+│  (Knowledge Graph)  │    Stores concepts, propositions, and episodic events.
 └─────────────────────┘
 ```
 

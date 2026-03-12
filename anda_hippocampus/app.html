@@ -20,11 +20,42 @@
 			text-autospace: normal;
 		}
 
+		pre {
+			white-space: pre-wrap;
+			word-break: break-word;
+			font-family: Consolas, "Courier New", monospace;
+			background-color: #f8f8f8;
+			padding: 8px;
+			border-radius: 8px;
+			overflow-x: auto;
+			box-sizing: border-box;
+			margin: 16px 0;
+			line-height: 1.5;
+			font-size: 14px;
+			color: #181818;
+			border: 1px solid #f8f8f8;
+			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			transition: background-color 0.3s ease, border-color 0.3s ease;
+		}
+
+		pre code {
+			display: block;
+			overflow-wrap: normal;
+			word-break: normal;
+			white-space: pre;
+			background: none;
+			color: inherit;
+			margin: 0;
+			padding: 0;
+			border-radius: 0;
+			font-size: inherit;
+		}
+
 		#app-root {
 			width: 100%;
 			max-width: 768px;
 			margin: 0 auto;
-			padding: 8px;
+			padding: 16px;
 			box-sizing: border-box;
 		}
 	</style>

@@ -9,13 +9,13 @@ Business agents interact entirely through natural language and a REST API — no
 ```
 ┌─────────────────────┐
 │   Business Agent    │  ← Focuses on business logic & user interaction
-│  (No KIP knowledge) │     Only speaks natural language
+│  (No KIP knowledge) │    Only speaks natural language
 └────────┬────────────┘
          │ Natural Language / REST API
          ▼
 ┌─────────────────────┐
 │    Hippocampus      │  ← The ONLY layer that understands KIP
-│   (LLM + KIP)       │     Three agents: Formation / Recall / Maintenance
+│   (LLM + KIP)       │    Three agents: Formation / Recall / Maintenance
 └────────┬────────────┘
          │ KIP (KQL / KML / META)
          ▼

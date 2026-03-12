@@ -84,7 +84,8 @@ pub async fn get_website(Accept(ct, is_cn): Accept) -> Response {
         }
         _ => {
             if is_cn {
-                Html(WEBSITE_CN.clone()).into_response()
+                Html(WEBSITE_CN.replacen("<html lang=\"en\"", "<html lang=\"zh-CN\"", 1))
+                    .into_response()
             } else {
                 Html(WEBSITE.clone()).into_response()
             }
