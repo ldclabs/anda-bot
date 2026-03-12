@@ -1,10 +1,13 @@
 use anda_core::Principal;
+use anda_engine::unix_ms;
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{Html, IntoResponse, Response},
 };
+use ic_auth_types::ByteArrayB64;
+use ic_cose::rand_bytes;
 use markdown::{CompileOptions, Options, ParseOptions, to_html, to_html_with_options};
 use serde_json::json;
 use std::{str::FromStr, sync::LazyLock};
@@ -97,37 +100,6 @@ pub async fn get_skill(State(_app): State<AppState>) -> impl IntoResponse {
     ContentType::Markdown(true).response(SKILL_MARKDOWN)
 }
 
-/// POST /admin/create_space
-pub async fn create_space(
-    State(app): State<AppState>,
-    Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
-    body: Bytes,
-) -> Result<impl IntoResponse, AppError> {
-    let token = app
-        .check_admin(&token, "*", "write")
-        .map_err(|_| AppError::unauthorized())?;
-
-    let input: StringOr<CreateSpaceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
-    let input = input
-        .value()
-        .map_err(|_| AppError::bad_request("invalid input"))?;
-
-    let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
-        return Err(AppError::bad_request(format!(
-            "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
-        )));
-    }
-
-    let rt = app
-        .create_space(token.user, input.user, sid.id)
-        .await
-        .map_err(AppError::bad_request)?;
-    Ok(ct.response(RpcResponse::success(rt)))
-}
-
 /// GET /v1/{space_id}/status
 pub async fn get_status(
     State(app): State<AppState>,
@@ -143,14 +115,30 @@ pub async fn get_status(
         )));
     }
 
-    app.check_auth(&token, &sid.id, "read")
-        .map_err(|_| AppError::unauthorized())?;
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
 
     let space = app
         .load_space(&sid.id)
         .await
         .map_err(AppError::bad_request)?;
-    let rt = space.get_status().await;
+
+    if !space.is_public() && t.is_none() {
+        // 如果空间不是公开的，且没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space.get_status();
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
@@ -170,18 +158,34 @@ pub async fn post_formation(
         )));
     }
 
-    let _ = app
-        .check_auth(&token, &sid.id, "write")
-        .map_err(|_| AppError::unauthorized())?;
     let input: StringOr<FormationInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
 
     let space = app
         .load_space(&sid.id)
         .await
         .map_err(AppError::bad_request)?;
-    // 使用固定的 caller 进行 ingestions 和 queries
+
+    if t.is_none() {
+        // 如果没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Write, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    // 使用匿名 caller 进行 ingestions 和 queries
     let rt = space
-        .ingest(Principal::management_canister(), input)
+        .ingest(Principal::anonymous(), input)
         .await
         .map_err(AppError::bad_request)?;
     match ct {
@@ -206,18 +210,34 @@ pub async fn post_recall(
         )));
     }
 
-    let _ = app
-        .check_auth(&token, &sid.id, "read")
-        .map_err(|_| AppError::unauthorized())?;
     let input: StringOr<RecallInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
 
     let space = app
         .load_space(&sid.id)
         .await
         .map_err(AppError::bad_request)?;
+
+    if !space.is_public() && t.is_none() {
+        // 如果空间不是公开的，且没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
     // 使用固定的 caller 进行 ingestions 和 queries
     let rt = space
-        .query(Principal::management_canister(), input)
+        .query(Principal::anonymous(), input)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
@@ -239,17 +259,318 @@ pub async fn post_maintenance(
         )));
     }
 
-    let _ = app
-        .check_auth(&token, &sid.id, "write")
-        .map_err(|_| AppError::unauthorized())?;
     let input: StringOr<MaintenanceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
 
     let space = app
         .load_space(&sid.id)
         .await
         .map_err(AppError::bad_request)?;
+
+    if t.is_none() {
+        // 如果没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Write, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
     let rt = space
-        .maintenance(Principal::management_canister(), input)
+        .maintenance(Principal::anonymous(), input)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// GET /v1/{space_id}/conversations/{conversation_id}
+pub async fn get_conversation(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Path(conversation_id): Path<String>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+    let conversation_id: u64 = conversation_id
+        .parse()
+        .map_err(|_| AppError::bad_request("invalid conversation_id"))?;
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if !space.is_public() && t.is_none() {
+        // 如果空间不是公开的，且没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space
+        .memory
+        .get_conversation(conversation_id)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// GET /v1/{space_id}/conversations
+pub async fn list_conversations(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Query(pg): Query<Pagination>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        Some(
+            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if !space.is_public() && t.is_none() {
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space
+        .memory
+        .list_conversations_by_user(&Principal::anonymous(), pg.cursor, pg.limit)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    Ok(ct.response(RpcResponse {
+        result: Some(rt.0),
+        error: None,
+        next_cursor: rt.1,
+    }))
+}
+
+/* ===== User management API ===== */
+
+/// GET /v1/{space_id}/management/space_tokens
+pub async fn list_space_tokens(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let rt = space.list_space_tokens().map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// POST /v1/{space_id}/management/add_space_token
+pub async fn add_space_token(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_admin(&token, &sid.id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: AddSpaceTokenInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let data: [u8; 20] = rand_bytes();
+    let token = format!("ST{}", ByteArrayB64(data));
+    space
+        .add_space_token(token.clone(), input.scope, now_ms)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(token)))
+}
+
+/// POST /v1/{space_id}/management/revoke_space_token
+pub async fn revoke_space_token(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: RevokeSpaceTokenInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let rt = space
+        .revoke_space_token(&input.token)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
+/// POST /v1/{space_id}/management/set_public
+pub async fn set_public(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: SetSpacePublicInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let space = app
+        .load_space(&sid.id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    space
+        .set_public(input.public, now_ms)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(true)))
+}
+
+/* ===== Admin API ===== */
+
+/// POST /admin/create_space
+pub async fn create_space(
+    State(app): State<AppState>,
+    Accept(ct, _): Accept,
+    BearerToken(token): BearerToken,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    let now_ms = unix_ms();
+    let token = app
+        .check_admin(&token, "*", TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: CreateSpaceInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
+    if sid.sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sid.sharding, app.sharding
+        )));
+    }
+
+    let rt = app
+        .create_space(token.user, input.user, sid.id)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))

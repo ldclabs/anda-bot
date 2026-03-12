@@ -231,6 +231,30 @@ async fn main() -> Result<(), BoxError> {
             "/v1/{space_id}/maintenance",
             routing::post(post_maintenance),
         )
+        .route(
+            "/v1/{space_id}/conversations/{conversation_id}",
+            routing::get(get_conversation),
+        )
+        .route(
+            "/v1/{space_id}/conversations",
+            routing::get(list_conversations),
+        )
+        .route(
+            "/v1/{space_id}/management/space_tokens",
+            routing::get(list_space_tokens),
+        )
+        .route(
+            "/v1/{space_id}/management/add_space_token",
+            routing::post(add_space_token),
+        )
+        .route(
+            "/v1/{space_id}/management/revoke_space_token",
+            routing::post(revoke_space_token),
+        )
+        .route(
+            "/v1/{space_id}/management/set_public",
+            routing::post(set_public),
+        )
         .route("/admin/create_space", routing::post(create_space))
         .layer(CompressionLayer::new());
 

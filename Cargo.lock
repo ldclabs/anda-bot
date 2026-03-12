@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.14"
+version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b21f9a915d0825cab4e7b041767a681e672fd3849c67455df41a999dec8d81a3"
+checksum = "edd534244b5ca0049130e03202858fae8ec43494edd1a4989d29333ad6d7b5b4"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -336,6 +336,7 @@ dependencies = [
  "dotenv",
  "http",
  "ic_auth_types",
+ "ic_cose",
  "ic_cose_types",
  "log",
  "markdown",

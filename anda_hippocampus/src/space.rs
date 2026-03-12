@@ -2,6 +2,7 @@ use anda_cognitive_nexus::{CognitiveNexus, ConceptPK};
 use anda_core::{AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal};
 use anda_db::{
     database::{AndaDB, DBConfig},
+    query::Fv,
     storage::StorageStats,
 };
 use anda_engine::{
@@ -13,11 +14,7 @@ use anda_engine::{
 };
 use anda_kip::{META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml};
 use ic_auth_types::ByteBufB64;
-use ic_cose_types::cose::{
-    cwt::{ClaimsSet, cwt_from, get_scope},
-    ed25519::VerifyingKey,
-    sign1::cose_sign1_from,
-};
+use ic_cose_types::cose::{cwt::cwt_from, ed25519::VerifyingKey, sign1::cose_sign1_from};
 use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,7 +32,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agents::{FormationAgent, MaintenanceAgent, RecallAgent};
 use crate::payload::StringOr;
-use crate::types::{FormationInput, MaintenanceInput, RecallInput, SpaceId};
+use crate::types::{
+    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceId, SpaceToken, SpaceTokenRef,
+    TokenScope,
+};
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
     serde_json::from_value(json!({
@@ -83,30 +83,6 @@ impl SpaceEntry {
     }
 }
 
-pub struct Token {
-    pub user: Principal,
-    pub audience: String,
-    pub scope: String,
-}
-
-impl Token {
-    pub fn from_claims(claims: ClaimsSet) -> Result<Self, BoxError> {
-        let scope = get_scope(&claims).unwrap_or_default();
-        let user = claims
-            .subject
-            .ok_or("missing 'sub' claim")?
-            .parse::<Principal>()
-            .map_err(|_| "invalid 'sub' claim")?;
-
-        let audience = claims.audience.unwrap_or_default();
-        Ok(Self {
-            user,
-            audience,
-            scope,
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct AppState {
     spaces: Arc<RwLock<BTreeMap<String, Arc<SpaceEntry>>>>,
@@ -149,16 +125,22 @@ impl AppState {
         }
     }
 
-    pub fn check_admin(&self, token: &str, audience: &str, scope: &str) -> Result<Token, BoxError> {
+    pub fn check_admin(
+        &self,
+        token: &str,
+        audience: &str,
+        scope: TokenScope,
+        now_ms: u64,
+    ) -> Result<CWToken, BoxError> {
         if self.ed25519_pubkeys.is_empty() {
-            return Ok(Token {
+            return Ok(CWToken {
                 user: Principal::management_canister(),
                 audience: audience.to_string(),
-                scope: scope.to_string(),
+                scope,
             });
         }
 
-        let token = self.check_auth(token, audience, scope)?;
+        let token = self.check_auth(token, audience, scope, now_ms)?;
         if !self.management.is_manager(&token.user) {
             return Err("admin access required".into());
         }
@@ -166,24 +148,30 @@ impl AppState {
         Ok(token)
     }
 
-    pub fn check_auth(&self, token: &str, audience: &str, scope: &str) -> Result<Token, BoxError> {
+    pub fn check_auth(
+        &self,
+        token: &str,
+        audience: &str,
+        scope: TokenScope,
+        now_ms: u64,
+    ) -> Result<CWToken, BoxError> {
         if self.ed25519_pubkeys.is_empty() {
-            return Ok(Token {
+            return Ok(CWToken {
                 user: Principal::anonymous(),
                 audience: audience.to_string(),
-                scope: scope.to_string(),
+                scope,
             });
         }
 
         let data = ByteBufB64::from_str(token)?;
         let cs1 = cose_sign1_from(&data, &[], &[], &self.ed25519_pubkeys)?;
-        let claims = cwt_from(&cs1.payload.unwrap_or_default(), (unix_ms() / 1000) as i64)?;
-        let token = Token::from_claims(claims)?;
+        let claims = cwt_from(&cs1.payload.unwrap_or_default(), (now_ms / 1000) as i64)?;
+        let token = CWToken::from_claims(claims)?;
         if token.audience != audience && token.audience != "*" {
             return Err("invalid audience".into());
         }
 
-        if !token.scope.contains(scope) && token.scope != "*" {
+        if !token.scope.allows(scope) {
             return Err("insufficient scope".into());
         }
         Ok(token)
@@ -272,7 +260,7 @@ impl AppState {
                     let spaces = self.spaces.read().await;
                     for (id, entry) in spaces.iter() {
                         if let Some(space) = entry.cell.get()
-                            && let Err(err) = space.flush().await {
+                            && let Err(err) = space.db.close().await {
                                 log::error!(space_id = id; "flush on shutdown failed: {err:?}");
                             }
                     }
@@ -289,31 +277,23 @@ impl AppState {
                 spaces.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
             };
 
-            let mut to_evict = Vec::new();
             for (id, entry) in &entries {
                 let Some(space) = entry.cell.get() else {
                     continue;
                 };
 
                 if now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms {
-                    // Flush before eviction
-                    if let Err(err) = space.flush().await {
+                    {
+                        self.spaces.write().await.remove(id);
+                    }
+                    if let Err(err) = space.db.close().await {
                         log::error!(space_id = id; "flush before eviction failed: {err:?}");
                     }
-                    to_evict.push(id.clone());
                 } else {
                     // Periodic flush for active spaces
                     if let Err(err) = space.flush().await {
                         log::error!(space_id = id; "periodic flush failed: {err:?}");
                     }
-                }
-            }
-
-            if !to_evict.is_empty() {
-                let mut spaces = self.spaces.write().await;
-                for id in &to_evict {
-                    spaces.remove(id);
-                    log::info!(space_id = id; "evicted idle space");
                 }
             }
         }
@@ -324,8 +304,9 @@ pub struct Space {
     id: String,
     sharding: u32,
     db: Arc<AndaDB>,
-    memory: Arc<MemoryManagement>,
     engine: Engine,
+
+    pub memory: Arc<MemoryManagement>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -336,6 +317,7 @@ pub struct SpaceStatus {
     pub concepts: usize,
     pub propositions: usize,
     pub conversations: usize,
+    pub public: bool,
 }
 
 impl Space {
@@ -347,7 +329,99 @@ impl Space {
         .to_string()
     }
 
-    pub async fn get_status(&self) -> SpaceStatus {
+    pub async fn add_space_token(
+        &self,
+        token: String,
+        scope: TokenScope,
+        now_ms: u64,
+    ) -> Result<(), BoxError> {
+        let count = self
+            .db
+            .extensions_with(|kv| kv.keys().filter(|k| k.starts_with("ST")).count());
+        if count >= 100 {
+            return Err("space token limit reached".into());
+        }
+
+        self.db
+            .save_extension(
+                token,
+                Fv::serialized(
+                    &SpaceTokenRef {
+                        scope,
+                        usage: 0,
+                        created_at: now_ms,
+                        updated_at: now_ms,
+                    },
+                    None,
+                )?,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub fn verify_space_token(
+        &self,
+        token: String,
+        scope: TokenScope,
+        now_ms: u64,
+    ) -> Result<(), BoxError> {
+        let token = self.db.set_extension_with(token, |v| {
+            if let Some(mut st) = v.and_then(|v| v.clone().deserialized::<SpaceToken>().ok())
+                && st.scope.allows(scope)
+            {
+                st.usage = st.usage.saturating_add(1);
+                st.updated_at = now_ms;
+                return Fv::serialized(&st.to_ref(), None).ok();
+            }
+            None
+        });
+
+        if token.is_none() {
+            return Err("invalid space token".into());
+        }
+        Ok(())
+    }
+
+    pub async fn revoke_space_token(&self, token: &str) -> Result<bool, BoxError> {
+        let rt = self.db.remove_extension(token).await?;
+        Ok(rt.is_some())
+    }
+
+    pub fn list_space_tokens(&self) -> Result<Vec<SpaceToken>, BoxError> {
+        let tokens: Vec<SpaceToken> = self.db.extensions_with(|kvs| {
+            kvs.iter()
+                .filter_map(|(k, v)| {
+                    if k.starts_with("ST")
+                        && let Ok(st) = v.clone().deserialized::<SpaceToken>()
+                    {
+                        Some(st)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        });
+
+        Ok(tokens)
+    }
+
+    pub async fn set_public(&self, public: bool, now_ms: u64) -> Result<(), BoxError> {
+        if public {
+            self.db
+                .save_extension("public".to_string(), now_ms.into())
+                .await?;
+        } else {
+            self.db.remove_extension("public").await?;
+        }
+        Ok(())
+    }
+
+    pub fn is_public(&self) -> bool {
+        let public = self.db.get_extension("public");
+        public.is_some()
+    }
+
+    pub fn get_status(&self) -> SpaceStatus {
         SpaceStatus {
             space_id: self.space_id(),
             owner: self
@@ -359,6 +433,7 @@ impl Space {
             concepts: self.memory.nexus.concepts.len(),
             propositions: self.memory.nexus.propositions.len(),
             conversations: self.memory.conversations.len(),
+            public: self.is_public(),
         }
     }
 
@@ -467,6 +542,7 @@ impl Space {
             concepts: nexus.concepts.len(),
             propositions: nexus.propositions.len(),
             conversations: memory.conversations.len(),
+            public: false,
         })
     }
 

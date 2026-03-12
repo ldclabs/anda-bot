@@ -179,12 +179,16 @@ pub struct RpcRequest<T> {
 }
 
 /// RPC response object.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct RpcResponse<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<T>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 impl<T> RpcResponse<T> {
@@ -193,6 +197,7 @@ impl<T> RpcResponse<T> {
         Self {
             result: Some(result),
             error: None,
+            next_cursor: None,
         }
     }
 
@@ -202,6 +207,7 @@ impl<T> RpcResponse<T> {
         Self {
             result: None,
             error: Some(error),
+            next_cursor: None,
         }
     }
 }

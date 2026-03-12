@@ -18,6 +18,7 @@ ciborium = { workspace = true }
 dotenv = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
+ic_cose = { workspace = true }
 tokio-util = { workspace = true }
 structured-logger = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
