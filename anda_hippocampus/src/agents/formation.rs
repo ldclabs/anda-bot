@@ -156,9 +156,6 @@ impl FormationAgent {
             }
         };
 
-        // Review after formation to ensure quality and correctness
-        conversation.follow_up_messages = Some(vec![REVIEW_INSTRUCTIONS.to_string()]);
-
         let tools = ctx.tool_definitions(Some(&["execute_kip"]));
         let now_ms = unix_ms();
         let msg = Message {
@@ -185,6 +182,9 @@ impl FormationAgent {
             },
             vec![],
         );
+
+        // Review after formation to ensure quality and correctness
+        runner.follow_up(REVIEW_INSTRUCTIONS.to_string());
 
         let mut first_round = true;
         loop {
