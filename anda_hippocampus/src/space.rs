@@ -603,7 +603,7 @@ impl Space {
         fallback_model: Model,
     ) -> Result<Self, BoxError> {
         let id = db_config.name.clone();
-        let db = Arc::new(AndaDB::connect(object_store.clone(), db_config).await?);
+        let db = Arc::new(AndaDB::open(object_store.clone(), db_config).await?);
         let nexus =
             CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
 
