@@ -178,7 +178,9 @@ pub struct FormationInput {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<InputContext>,
-    pub timestamp: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -191,7 +193,8 @@ pub struct MaintenanceInput {
     #[serde(default = "default_scope")]
     pub scope: String,
 
-    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<MaintenanceParameters>,

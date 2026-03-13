@@ -8,6 +8,7 @@
 //! - `Accept: application/json` (default) for JSON responses
 
 use axum::{
+    Json,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -230,14 +231,7 @@ impl RpcError {
     }
 
     pub fn to_response(&self, code: StatusCode) -> Response {
-        match serde_json::to_vec(self) {
-            Ok(bytes) => (code, bytes).into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("JSON serialization error: {e}"),
-            )
-                .into_response(),
-        }
+        (code, Json(self)).into_response()
     }
 }
 
@@ -254,7 +248,8 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for HeaderVals {
         let token = parts
             .headers
             .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok()).map(|s| s.trim_start_matches("Bearer "))
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.trim_start_matches("Bearer "))
             .unwrap_or("")
             .to_string();
         let shard_id = parts
