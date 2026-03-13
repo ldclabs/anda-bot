@@ -19,7 +19,10 @@ use std::{collections::BTreeSet, net::SocketAddr, str::FromStr, sync::Arc, time:
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
-use tower_http::compression::CompressionLayer;
+use tower_http::{
+    compression::CompressionLayer,
+    cors::{AllowHeaders, CorsLayer},
+};
 
 mod agents;
 mod handler;
@@ -67,6 +70,10 @@ struct Cli {
     /// Manager principal IDs, separated by comma
     #[arg(long, env = "MANAGERS", default_value = "")]
     managers: String,
+
+    /// CORS allowed origins, separated by comma. Use "*" to allow all origins.
+    #[arg(long, env = "CORS_ORIGINS", default_value = "")]
+    cors_origins: String,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -263,6 +270,30 @@ async fn main() -> Result<(), BoxError> {
         .route("/admin/create_space", routing::post(create_space))
         .layer(CompressionLayer::new());
 
+    // Configure CORS
+    let cors = if cli.cors_origins.is_empty() {
+        CorsLayer::new()
+    } else if cli.cors_origins.trim() == "*" {
+        CorsLayer::very_permissive()
+    } else {
+        let origins: Vec<http::HeaderValue> = cli
+            .cors_origins
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([
+                http::Method::GET,
+                http::Method::POST,
+                http::Method::PUT,
+                http::Method::PATCH,
+                http::Method::DELETE,
+                http::Method::OPTIONS,
+            ])
+            .allow_headers(AllowHeaders::mirror_request())
+    };
+    let app = app.layer(cors);
     let app = app.with_state(app_state.clone());
 
     let addr: SocketAddr = cli.addr.parse()?;

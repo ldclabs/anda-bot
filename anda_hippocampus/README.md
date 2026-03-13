@@ -357,6 +357,12 @@ The schema is self-describing — all type definitions are stored as nodes withi
 | `HTTPS_PROXY`     | `--https-proxy`     | —                                                         | HTTPS proxy URL                                                                      |
 | `SHARDING_IDX`    | `--sharding-idx`    | `0`                                                       | Shard index for this instance                                                        |
 | `MANAGERS`        | `--managers`        | —                                                         | Comma-separated manager principal IDs                                                |
+| `CORS_ORIGINS`    | `--cors-origins`    | —                                                         | CORS allowed origins: empty = disabled, `*` = allow all, or comma-separated origins  |
+
+`CORS_ORIGINS` examples:
+- `""` (empty): CORS disabled
+- `"*"`: allow all origins
+- `"https://app.example.com,https://admin.example.com"`: allow specific origins
 
 ### Storage Backends
 
