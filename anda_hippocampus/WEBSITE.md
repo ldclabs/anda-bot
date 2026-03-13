@@ -147,7 +147,7 @@ For detailed technical documentation, API specs, and integration guides, see [an
 
 1. Remember: Send conversations for memory encoding
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -162,7 +162,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
 
 2. Recall: Query memory before responding
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -173,7 +173,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
 
 3. Maintain: Schedule periodic maintenance
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/maintenance \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/maintenance \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

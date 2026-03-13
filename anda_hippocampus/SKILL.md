@@ -1,6 +1,5 @@
 ---
 name: anda_hippocampus
-version: 0.1.0
 description: |
   Long-term memory service for LLM agents.
   Provides persistent, structured memory (Cognitive Nexus) through three operations:
@@ -17,17 +16,19 @@ description: |
   - "what did I say last time?", "recall my preferences"
   - "what do we know about X?", "who is X?"
   - "run memory maintenance", "consolidate memory"
-
-keywords:
-  - long-term memory
-  - agent memory
-  - knowledge graph
-  - cognitive nexus
-  - memory formation
-  - memory recall
-  - memory maintenance
-  - KIP
-  - persistent memory
+metadata:
+  version: 0.1.0
+  url: https://brain.anda.ai/SKILL.md
+  keywords:
+    - long-term memory
+    - agent memory
+    - knowledge graph
+    - cognitive nexus
+    - memory formation
+    - memory recall
+    - memory maintenance
+    - KIP
+    - persistent memory
 ---
 
 # 🧠 Anda Hippocampus
@@ -414,12 +415,12 @@ Authorization: Bearer <token>
 
 ## Integration Pattern
 
-A typical integration workflow for a business agent:
+A typical integration workflow for a business agent (use `brain.anda.ai` as the host):
 
-### 1. Prepare: Create a memory space (one-time setup)
+### 1. Prepare: Create a memory space (one-time setup, should be done by an admin or manager)
 
 ```bash
-curl -sX POST https://your-hippocampus-host/admin/create_space \
+curl -sX POST https://brain.anda.ai/admin/create_space \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user": "owner_principal_id", "space_id": "my_space_001", "tier": 0}'
@@ -430,7 +431,7 @@ curl -sX POST https://your-hippocampus-host/admin/create_space \
 After each meaningful conversation with a user, send the messages to Formation:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -448,7 +449,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
 Before generating a response, check if relevant memory exists:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -462,7 +463,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
 Run maintenance to keep memory healthy and relevant:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/maintenance \
+curl -sX POST https://brain.anda.ai/v1/my_space_001/maintenance \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

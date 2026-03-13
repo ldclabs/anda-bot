@@ -34,8 +34,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::payload::StringOr;
 use crate::types::{
-    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken,
-    TokenScope,
+    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken, TokenScope,
 };
 use crate::{
     agents::{FormationAgent, MaintenanceAgent, RecallAgent},
@@ -633,7 +632,12 @@ impl Space {
             .register_agent(formation, None)?
             .register_agent(recall, None)?
             .register_agent(maintenance, None)?
-            .export_tools(vec![MemoryTool::NAME.to_string()]);
+            .export_tools(vec![MemoryTool::NAME.to_string()])
+            .export_agents(vec![
+                RecallAgent::NAME.to_string(),
+                FormationAgent::NAME.to_string(),
+                MaintenanceAgent::NAME.to_string(),
+            ]);
 
         // Initialize and start the server
         let engine = engine.build(RecallAgent::NAME.to_string()).await?;
