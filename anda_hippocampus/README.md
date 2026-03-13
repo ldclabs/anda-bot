@@ -40,7 +40,7 @@ Business agents interact entirely through natural language and a REST API — no
 
 Receives conversation messages and encodes them into structured memory within the Cognitive Nexus via KIP.
 
-**System prompt:** [HippocampusFormation.md](./assets/HippocampusFormation.md)
+**System prompt:** [HippocampusFormation.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/assets/HippocampusFormation.md)
 
 **Processing pipeline:**
 1. Receives `FormationInput` (messages + optional context + timestamp).
@@ -61,7 +61,7 @@ Receives conversation messages and encodes them into structured memory within th
 
 Translates natural language queries into knowledge graph lookups and returns synthesized answers.
 
-**System prompt:** [HippocampusRecall.md](./assets/HippocampusRecall.md)
+**System prompt:** [HippocampusRecall.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/assets/HippocampusRecall.md)
 
 **Processing pipeline:**
 1. Receives `RecallInput` (query + optional context).
@@ -79,7 +79,7 @@ Translates natural language queries into knowledge graph lookups and returns syn
 
 Consolidates, prunes, and optimizes the knowledge graph during scheduled or on-demand cycles.
 
-**System prompt:** [HippocampusMaintenance.md](./assets/HippocampusMaintenance.md)
+**System prompt:** [HippocampusMaintenance.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/assets/HippocampusMaintenance.md)
 
 **Processing phases (full scope):**
 1. **Assessment** — Audit memory health (read-only): `DESCRIBE PRIMER`, pending SleepTasks, unsorted items, orphans, stale events.
@@ -97,16 +97,30 @@ Consolidates, prunes, and optimizes the knowledge graph during scheduled or on-d
 
 ## API Endpoints
 
-| Method | Path                         | Description                            | Auth Scope |
-| ------ | ---------------------------- | -------------------------------------- | ---------- |
-| `GET`  | `/`                          | Anda Hippocampus website               | —          |
-| `GET`  | `/info`                      | Service info (name, version, sharding) | —          |
-| `GET`  | `/SKILL.md`                  | Skill description (Markdown)           | —          |
-| `POST` | `/admin/create_space`        | Create a new space (manager only)      | `write`    |
-| `GET`  | `/v1/{space_id}/status`      | Get space status & statistics          | `read`     |
-| `POST` | `/v1/{space_id}/formation`   | Submit messages for memory encoding    | `write`    |
-| `POST` | `/v1/{space_id}/recall`      | Query memory with natural language     | `read`     |
-| `POST` | `/v1/{space_id}/maintenance` | Trigger maintenance cycle              | `write`    |
+Detailed API docs (with TypeScript request/response types):
+- English: [API.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/API.md)
+- 中文: [API_cn.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/API_cn.md)
+- Agent Skill: [SKILL.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/SKILL.md)
+
+| Method | Path                                             | Description                            | Auth Scope                   |
+| ------ | ------------------------------------------------ | -------------------------------------- | ---------------------------- |
+| `GET`  | `/`                                              | Anda Hippocampus website               | —                            |
+| `GET`  | `/favicon.ico`                                   | Favicon                                | —                            |
+| `GET`  | `/apple-touch-icon.webp`                         | Apple touch icon                       | —                            |
+| `GET`  | `/info`                                          | Service info (name, version, sharding) | —                            |
+| `GET`  | `/SKILL.md`                                      | Skill description (Markdown)           | —                            |
+| `GET`  | `/v1/{space_id}/status`                          | Get space status & statistics          | `read` (CWT or space token)  |
+| `POST` | `/v1/{space_id}/formation`                       | Submit messages for memory encoding    | `write` (CWT or space token) |
+| `POST` | `/v1/{space_id}/recall`                          | Query memory with natural language     | `read` (CWT or space token)  |
+| `POST` | `/v1/{space_id}/maintenance`                     | Trigger maintenance cycle              | `write` (CWT or space token) |
+| `GET`  | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail            | `read` (CWT or space token)` |
+| `GET`  | `/v1/{space_id}/conversations`                   | List conversations (cursor pagination) | `read` (CWT or space token)  |
+| `GET`  | `/v1/{space_id}/management/space_tokens`         | List space tokens                      | `read` (CWT)                 |
+| `POST` | `/v1/{space_id}/management/add_space_token`      | Add a space token                      | `write` (CWT)                |
+| `POST` | `/v1/{space_id}/management/revoke_space_token`   | Revoke a space token                   | `write` (CWT)                |
+| `POST` | `/v1/{space_id}/management/set_public`           | Set space visibility (public/private)  | `write` (CWT)                |
+| `POST` | `/admin/create_space`                            | Create a new space (manager only)      | `write` (CWT)                |
+| `POST` | `/admin/update_space_tier`                       | Update a space tier (manager only)     | `write` (CWT)                |
 
 ### Content Negotiation
 
@@ -134,13 +148,15 @@ All endpoints (except `/`, `/info` and `/SKILL.md`) require a Bearer token:
 Authorization: Bearer <base64_encoded_cose_sign1_token>
 ```
 
+If `ED25519_PUBKEYS` is not provided (empty), authentication is effectively disabled: API requests are accepted without signature verification.
+
 Token format: COSE Sign1 message signed with Ed25519 keys, containing CWT claims:
 
-| Claim   | Purpose                                                         |
-| ------- | --------------------------------------------------------------- |
-| `sub`   | Principal ID (who is making the request)                        |
-| `aud`   | Audience — the space ID being accessed (or `*` for any)         |
-| `scope` | Permission level: `read`, `write`,`read,write` (or `*` for any) |
+| Claim   | Purpose                                                 |
+| ------- | ------------------------------------------------------- |
+| `sub`   | Principal ID (who is making the request)                |
+| `aud`   | Audience — the space ID being accessed (or `*` for any) |
+| `scope` | Permission level: `read`, `write` (or `*` for any)      |
 
 ### POST /admin/create_space
 
@@ -150,7 +166,8 @@ Create a new isolated memory space. Requires manager principal.
 ```json
 {
   "user": "<owner_principal_id>",
-  "space_id": "s0-my_space_name"
+  "space_id": "s0-my_space_name",
+  "tier": 0
 }
 ```
 
@@ -244,14 +261,6 @@ Query memory with natural language. Returns a synthesized answer from the knowle
 }
 ```
 
-**Status values:**
-
-| Status      | Meaning                                                  |
-| ----------- | -------------------------------------------------------- |
-| `success`   | Query fully answered                                     |
-| `partial`   | Partially answered; unfulfilled aspects listed in `gaps` |
-| `not_found` | No relevant memory found                                 |
-
 ### POST /v1/{space_id}/maintenance
 
 Trigger a memory maintenance cycle. Runs asynchronously with single-execution guard.
@@ -311,7 +320,7 @@ Get space statistics and health information.
 
 ## Recall Function Definition
 
-Business agents can register the Recall endpoint as an LLM tool/function call. See [RecallFunctionDefinition.json](./assets/RecallFunctionDefinition.json) for the OpenAI function-calling format.
+Business agents can register the Recall endpoint as an LLM tool/function call. See [RecallFunctionDefinition.json](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/assets/RecallFunctionDefinition.json) for the OpenAI function-calling format.
 
 ## Memory Space Lifecycle
 
@@ -342,16 +351,16 @@ The schema is self-describing — all type definitions are stored as nodes withi
 
 ### CLI Arguments / Environment Variables
 
-| Env Variable      | CLI Flag            | Default                                                   | Description                                |
-| ----------------- | ------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| `LISTEN_ADDR`     | `--addr`            | `127.0.0.1:8042`                                          | Listen address                             |
-| `ED25519_PUBKEYS` | `--ed25519-pubkeys` | —                                                         | Comma-separated Base64 Ed25519 public keys |
-| `GEMINI_API_KEY`  | `--gemini-api-key`  | —                                                         | Google Gemini API key                      |
-| `GEMINI_API_BASE` | `--gemini-api-base` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL                        |
-| `GEMINI_MODEL`    | `--gemini-model`    | `gemini-3-flash-preview`                                  | LLM model for agents                       |
-| `HTTPS_PROXY`     | `--https-proxy`     | —                                                         | HTTPS proxy URL                            |
-| `SHARDING_IDX`    | `--sharding-idx`    | `0`                                                       | Shard index for this instance              |
-| `MANAGERS`        | `--managers`        | —                                                         | Comma-separated manager principal IDs      |
+| Env Variable      | CLI Flag            | Default                                                   | Description                                                                          |
+| ----------------- | ------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `LISTEN_ADDR`     | `--addr`            | `127.0.0.1:8042`                                          | Listen address                                                                       |
+| `ED25519_PUBKEYS` | `--ed25519-pubkeys` | —                                                         | Comma-separated Base64 Ed25519 public keys; if empty, API authentication is disabled |
+| `GEMINI_API_KEY`  | `--gemini-api-key`  | —                                                         | Google Gemini API key                                                                |
+| `GEMINI_API_BASE` | `--gemini-api-base` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL                                                                  |
+| `GEMINI_MODEL`    | `--gemini-model`    | `gemini-3-flash-preview`                                  | LLM model for agents                                                                 |
+| `HTTPS_PROXY`     | `--https-proxy`     | —                                                         | HTTPS proxy URL                                                                      |
+| `SHARDING_IDX`    | `--sharding-idx`    | `0`                                                       | Shard index for this instance                                                        |
+| `MANAGERS`        | `--managers`        | —                                                         | Comma-separated manager principal IDs                                                |
 
 ### Storage Backends
 
@@ -380,7 +389,14 @@ cargo run -p anda_hippocampus -- aws --bucket my-bucket --region us-east-1
 anda_hippocampus/
 ├── Cargo.toml
 ├── README.md                          # This file
+├── API.md                             # API docs (English)
+├── API_cn.md                          # API 文档（中文）
 ├── SKILL.md                           # Skill definition for agent discovery
+├── WEBSITE.md                         # Product website content (English)
+├── WEBSITE_cn.md                      # Product website content (Chinese)
+├── app.html                           # Web page template
+├── favicon.ico                        # Site icon
+├── apple-touch-icon.webp              # Apple touch icon
 ├── assets/
 │   ├── HippocampusFormation.md        # System prompt for Formation agent
 │   ├── HippocampusRecall.md           # System prompt for Recall agent
@@ -411,7 +427,7 @@ Key crates from the Anda ecosystem:
 | `anda_db`              | Persistent database layer (`AndaDB`) with configurable storage |
 | `anda_kip`             | KIP syntax parser and built-in knowledge templates             |
 | `anda_cognitive_nexus` | Cognitive Nexus knowledge graph implementation                 |
-| `anda_object_store`    | Object store abstraction with metadata support                 |
+| `object_store`         | Object store abstraction                                       |
 
 ## License
 

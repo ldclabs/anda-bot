@@ -49,9 +49,9 @@ Three operational modes cover the full memory lifecycle:
 
 | Mode | Endpoint | Purpose | Auth |
 |------|----------|---------|------|
-| **Formation** | `POST /v1/{space_id}/formation` | Encode conversations into structured memory | `write` |
-| **Recall** | `POST /v1/{space_id}/recall` | Query memory with natural language | `read` |
-| **Maintenance** | `POST /v1/{space_id}/maintenance` | Consolidate, prune, and organize memory | `write` |
+| **Formation** | `POST /v1/{space_id}/formation` | Encode conversations into structured memory | `write` (CWT or space token) |
+| **Recall** | `POST /v1/{space_id}/recall` | Query memory with natural language | `read` (CWT or space token) |
+| **Maintenance** | `POST /v1/{space_id}/maintenance` | Consolidate, prune, and organize memory | `write` (CWT or space token) |
 
 Supporting endpoints:
 
@@ -60,8 +60,16 @@ Supporting endpoints:
 | `GET` | `/` | Anda Hippocampus website | — |
 | `GET` | `/info` | Service info (name, version, sharding) | — |
 | `GET` | `/SKILL.md` | This skill description | — |
-| `POST` | `/admin/create_space` | Create a new memory space | manager |
-| `GET` | `/v1/{space_id}/status` | Space status and statistics | `read` |
+| `GET` | `/v1/{space_id}/status` | Space status and statistics | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/conversations` | List conversations (cursor pagination) | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/management/space_tokens` | List space tokens | `read` (CWT) |
+| `POST` | `/v1/{space_id}/management/add_space_token` | Add a space token | `write` (CWT) |
+| `POST` | `/v1/{space_id}/management/revoke_space_token` | Revoke a space token | `write` (CWT) |
+| `POST` | `/v1/{space_id}/management/set_public` | Set space visibility | `write` (CWT) |
+| `POST` | `/admin/create_space` | Create a new memory space | manager (CWT) |
+| `POST` | `/admin/update_space_tier` | Update a space tier | manager (CWT) |
+> Auth scopes in tables apply when authentication is enabled (`ED25519_PUBKEYS` is set).
 
 ---
 
@@ -110,15 +118,23 @@ The underlying knowledge graph consists of:
 
 ## Authentication
 
-All endpoints (except `/`,  `/info` and `/SKILL.md`) require a Bearer token in the `Authorization` header.
+If `ED25519_PUBKEYS` is configured, protected endpoints require a Bearer token in the `Authorization` header.
+
+If `ED25519_PUBKEYS` is empty/not provided, authentication is disabled and requests are accepted without signature verification.
 
 ```
 Authorization: Bearer <base64_encoded_cose_sign1_token>
 ```
 
+Management endpoints (`/v1/{space_id}/management/*`) and admin endpoints (`/admin/*`) still follow their role/scope checks when auth is enabled.
+
 ---
 
 ## API Reference
+
+For complete endpoint and TypeScript schema details, see:
+- `https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/API.md` (English)
+- `https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/API_cn.md` (中文)
 
 ### Content Negotiation
 
@@ -165,9 +181,6 @@ What are Alice's preferences?
 
 **Response (HTTP 200):**
 ```markdown
-Status: success
-
-Answer:
 Alice has the following known preferences:
 - **Dark mode** in all applications (confidence: 0.9, since 2025-01-15)
 - **Email communication** preferred over phone calls (confidence: 0.8, since 2025-01-10)
@@ -195,7 +208,8 @@ Content-Type: application/json
 ```json
 {
   "user": "<owner_principal_id>",
-  "space_id": "s0-my_space_name"
+  "space_id": "s0-my_space_name",
+  "tier": 0
 }
 ```
 
@@ -310,13 +324,7 @@ Content-Type: application/json
 }
 ```
 
-**Status values:**
-
-| Status | Meaning |
-|--------|---------|
-| `success` | Query fully answered from available memory |
-| `partial` | Some aspects answered, but gaps remain (check `gaps` array) |
-| `not_found` | No relevant memory found for this query |
+Note: `result.content` is the primary contract. Additional fields may vary by model/runtime.
 
 **Query examples:**
 
@@ -416,7 +424,7 @@ A typical integration workflow for a business agent:
 curl -sX POST https://your-hippocampus-host/admin/create_space \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"user": "owner_principal_id", "space_id": "s0-my_agent_memory"}'
+  -d '{"user": "owner_principal_id", "space_id": "s0-my_agent_memory", "tier": 0}'
 ```
 
 ### 2. Remember: Send conversations for memory encoding
@@ -472,10 +480,10 @@ curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/maintenance \
 
 | Symptom | Fix |
 |---------|-----|
-| `401 Unauthorized` | Check Bearer token: valid signature, correct `aud` (space ID), and required `scope` (`read` or `write`) |
+| `401 Unauthorized` | If auth is enabled (`ED25519_PUBKEYS` set), check Bearer token signature, `aud` (space ID), and required `scope` (`read`/`write`) |
 | `404 Not Found` on space endpoints | Verify the `space_id` format matches `s{shard}-{name}` and the shard matches the server |
 | Formation returns but nothing in memory | Formation is async — check space status after a few seconds; look at the conversation status |
-| Recall returns `not_found` | Memory may not have been encoded yet, or the query doesn't match stored knowledge; try broader phrasing |
+| Recall seems empty or insufficient | Memory may not be encoded yet, or the query is too narrow; try broader phrasing and include `context` |
 | Maintenance rejected | Only one maintenance cycle can run at a time per space; wait for the current one to finish |
 | Empty recall for new space | Expected — a new space has no memory yet; send conversations via Formation first |
 
@@ -488,7 +496,7 @@ The service is configured via CLI arguments and environment variables:
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
 | `LISTEN_ADDR` | `127.0.0.1:8042` | Listen address |
-| `ED25519_PUBKEYS` | — | Comma-separated Base64-encoded Ed25519 public keys |
+| `ED25519_PUBKEYS` | — | Comma-separated Base64-encoded Ed25519 public keys; if empty, API authentication is disabled |
 | `GEMINI_API_KEY` | — | Google Gemini API key |
 | `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | LLM model for agents |
