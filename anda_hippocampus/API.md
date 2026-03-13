@@ -86,8 +86,10 @@ export interface RevokeSpaceTokenInput {
   token: string;
 }
 
-export interface SetSpacePublicInput {
-  public: boolean;
+export interface UpdateSpaceInput {
+  name?: string;
+  description?: string;
+  public?: boolean;
 }
 
 export interface CreateOrUpdateSpaceInput {
@@ -102,6 +104,7 @@ export interface SpaceTier {
 }
 
 export interface SpaceToken {
+  token: string;
   scope: TokenScope;
   usage: number;
   created_at: number; // Unix timestamp in milliseconds
@@ -113,7 +116,9 @@ export interface StorageStats {
 }
 
 export interface SpaceStatus {
-  space_id: string;
+  id: string;
+  name?: string;
+  description?: string;
   owner: string;
   db_stats: StorageStats;
   concepts: number;
@@ -257,7 +262,7 @@ export interface ServiceInfo {
 - Purpose: Add a Space Token
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `AddSpaceTokenInput`
-- Response: `RpcResponse<string>` (new token, usually prefixed with `ST`)
+- Response: `RpcResponse<SpaceToken>` (new token, usually prefixed with `ST`)
 
 ### POST `/v1/{space_id}/management/revoke_space_token`
 
@@ -266,11 +271,11 @@ export interface ServiceInfo {
 - Request body: `RevokeSpaceTokenInput`
 - Response: `RpcResponse<boolean>` (whether revocation succeeded)
 
-### POST `/v1/{space_id}/management/set_public`
+### POST `/v1/{space_id}/management/update_space`
 
-- Purpose: Set space visibility (public/private)
+- Purpose: Update space information (name, description, public/private)
 - Auth: Must pass CWT `write` (user management-level auth)
-- Request body: `SetSpacePublicInput`
+- Request body: `UpdateSpaceInput`
 - Response: `RpcResponse<true>`
 
 ---
@@ -284,7 +289,7 @@ export interface ServiceInfo {
 - Request body: `CreateOrUpdateSpaceInput`
 - Response: `RpcResponse<SpaceStatus>`
 
-### POST `/admin/update_space_tier`
+### POST `/admin/{space_id}/update_space_tier`
 
 - Purpose: Update space tier
 - Auth: Platform admin + CWT `write`

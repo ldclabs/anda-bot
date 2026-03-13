@@ -66,6 +66,9 @@ pub struct SpaceTierRef {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceToken {
+    #[serde(default)]
+    pub token: String,
+
     #[serde(alias = "s")]
     pub scope: TokenScope,
 
@@ -143,8 +146,10 @@ pub struct RevokeSpaceTokenInput {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct SetSpacePublicInput {
-    pub public: bool,
+pub struct UpdateSpaceInput {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub public: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -281,6 +286,7 @@ mod tests {
     #[test]
     fn space_token_serialize_uses_verbose_field_names() {
         let token = SpaceToken {
+            token: "abc123".to_string(),
             scope: TokenScope::Write,
             usage: 9,
             created_at: 101,
@@ -301,6 +307,7 @@ mod tests {
     #[test]
     fn space_token_ref_serialize_uses_compact_field_names() {
         let token = SpaceToken {
+            token: "abc123".to_string(),
             scope: TokenScope::All,
             usage: 5,
             created_at: 200,

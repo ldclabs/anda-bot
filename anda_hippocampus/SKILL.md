@@ -66,9 +66,9 @@ Supporting endpoints:
 | `GET` | `/v1/{space_id}/management/space_tokens` | List space tokens | `read` (CWT) |
 | `POST` | `/v1/{space_id}/management/add_space_token` | Add a space token | `write` (CWT) |
 | `POST` | `/v1/{space_id}/management/revoke_space_token` | Revoke a space token | `write` (CWT) |
-| `POST` | `/v1/{space_id}/management/set_public` | Set space visibility | `write` (CWT) |
+| `POST` | `/v1/{space_id}/management/update_space` | Update space information (name, description, public/private) | `write` (CWT) |
+| `POST` | `/admin/{space_id}/update_space_tier` | Update a space tier | manager (CWT) |
 | `POST` | `/admin/create_space` | Create a new memory space | manager (CWT) |
-| `POST` | `/admin/update_space_tier` | Update a space tier | manager (CWT) |
 > Auth scopes in tables apply when authentication is enabled (`ED25519_PUBKEYS` is set).
 
 ---

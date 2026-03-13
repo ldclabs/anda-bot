@@ -102,25 +102,25 @@ Detailed API docs (with TypeScript request/response types):
 - 中文: [API_cn.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/API_cn.md)
 - Agent Skill: [SKILL.md](https://github.com/ldclabs/anda-hippocampus/blob/main/anda_hippocampus/SKILL.md)
 
-| Method | Path                                             | Description                            | Auth Scope                   |
-| ------ | ------------------------------------------------ | -------------------------------------- | ---------------------------- |
-| `GET`  | `/`                                              | Anda Hippocampus website               | —                            |
-| `GET`  | `/favicon.ico`                                   | Favicon                                | —                            |
-| `GET`  | `/apple-touch-icon.webp`                         | Apple touch icon                       | —                            |
-| `GET`  | `/info`                                          | Service info (name, version, sharding) | —                            |
-| `GET`  | `/SKILL.md`                                      | Skill description (Markdown)           | —                            |
-| `GET`  | `/v1/{space_id}/status`                          | Get space status & statistics          | `read` (CWT or space token)  |
-| `POST` | `/v1/{space_id}/formation`                       | Submit messages for memory encoding    | `write` (CWT or space token) |
-| `POST` | `/v1/{space_id}/recall`                          | Query memory with natural language     | `read` (CWT or space token)  |
-| `POST` | `/v1/{space_id}/maintenance`                     | Trigger maintenance cycle              | `write` (CWT or space token) |
-| `GET`  | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail            | `read` (CWT or space token)` |
-| `GET`  | `/v1/{space_id}/conversations`                   | List conversations (cursor pagination) | `read` (CWT or space token)  |
-| `GET`  | `/v1/{space_id}/management/space_tokens`         | List space tokens                      | `read` (CWT)                 |
-| `POST` | `/v1/{space_id}/management/add_space_token`      | Add a space token                      | `write` (CWT)                |
-| `POST` | `/v1/{space_id}/management/revoke_space_token`   | Revoke a space token                   | `write` (CWT)                |
-| `POST` | `/v1/{space_id}/management/set_public`           | Set space visibility (public/private)  | `write` (CWT)                |
-| `POST` | `/admin/create_space`                            | Create a new space (manager only)      | `write` (CWT)                |
-| `POST` | `/admin/update_space_tier`                       | Update a space tier (manager only)     | `write` (CWT)                |
+| Method | Path                                             | Description                                                  | Auth Scope                   |
+| ------ | ------------------------------------------------ | ------------------------------------------------------------ | ---------------------------- |
+| `GET`  | `/`                                              | Anda Hippocampus website                                     | —                            |
+| `GET`  | `/favicon.ico`                                   | Favicon                                                      | —                            |
+| `GET`  | `/apple-touch-icon.webp`                         | Apple touch icon                                             | —                            |
+| `GET`  | `/info`                                          | Service info (name, version, sharding)                       | —                            |
+| `GET`  | `/SKILL.md`                                      | Skill description (Markdown)                                 | —                            |
+| `GET`  | `/v1/{space_id}/status`                          | Get space status & statistics                                | `read` (CWT or space token)  |
+| `POST` | `/v1/{space_id}/formation`                       | Submit messages for memory encoding                          | `write` (CWT or space token) |
+| `POST` | `/v1/{space_id}/recall`                          | Query memory with natural language                           | `read` (CWT or space token)  |
+| `POST` | `/v1/{space_id}/maintenance`                     | Trigger maintenance cycle                                    | `write` (CWT or space token) |
+| `GET`  | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail                                  | `read` (CWT or space token)` |
+| `GET`  | `/v1/{space_id}/conversations`                   | List conversations (cursor pagination)                       | `read` (CWT or space token)  |
+| `GET`  | `/v1/{space_id}/management/space_tokens`         | List space tokens                                            | `read` (CWT)                 |
+| `POST` | `/v1/{space_id}/management/add_space_token`      | Add a space token                                            | `write` (CWT)                |
+| `POST` | `/v1/{space_id}/management/revoke_space_token`   | Revoke a space token                                         | `write` (CWT)                |
+| `POST` | `/v1/{space_id}/management/update_space`         | Update space information (name, description, public/private) | `write` (CWT)                |
+| `POST` | `/admin/{space_id}/update_space_tier`            | Update a space tier (manager only)                           | `write` (CWT)                |
+| `POST` | `/admin/create_space`                            | Create a new space (manager only)                            | `write` (CWT)                |
 
 ### Content Negotiation
 

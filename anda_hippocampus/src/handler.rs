@@ -425,11 +425,11 @@ pub async fn add_space_token(
 
     let data: [u8; 20] = rand_bytes();
     let token = format!("ST{}", ByteArrayB64(data));
-    space
+    let rt = space
         .add_space_token(token.clone(), input.scope, now_ms)
         .await
         .map_err(AppError::bad_request)?;
-    Ok(ct.response(RpcResponse::success(token)))
+    Ok(ct.response(RpcResponse::success(rt)))
 }
 
 /// POST /v1/{space_id}/management/revoke_space_token
@@ -470,8 +470,8 @@ pub async fn revoke_space_token(
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
-/// POST /v1/{space_id}/management/set_public
-pub async fn set_public(
+/// PATCH /v1/{space_id}/management/update_space
+pub async fn update_space(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
@@ -490,7 +490,7 @@ pub async fn set_public(
         .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
-    let input: SetSpacePublicInput = ct
+    let input: UpdateSpaceInput = ct
         .parse_body(&body)
         .map_err(AppError::bad_request)?
         .value()
@@ -502,7 +502,7 @@ pub async fn set_public(
         .map_err(AppError::bad_request)?;
 
     space
-        .set_public(input.public, now_ms)
+        .update(input, now_ms)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(true)))
@@ -542,9 +542,10 @@ pub async fn create_space(
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
-/// POST /admin/update_space_tier
+/// POST /admin/{space_id}/update_space_tier
 pub async fn update_space_tier(
     State(app): State<AppState>,
+    Path(space_id): Path<String>,
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
@@ -564,6 +565,13 @@ pub async fn update_space_tier(
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
             sharding, app.sharding
+        )));
+    }
+
+    if input.space_id != space_id {
+        return Err(AppError::bad_request(format!(
+            "space_id in path {} does not match space_id in body {}",
+            space_id, input.space_id
         )));
     }
 

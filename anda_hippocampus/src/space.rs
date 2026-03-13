@@ -32,11 +32,14 @@ use std::{
 use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::agents::{FormationAgent, MaintenanceAgent, RecallAgent};
 use crate::payload::StringOr;
 use crate::types::{
-    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken, SpaceTokenRef,
+    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken,
     TokenScope,
+};
+use crate::{
+    agents::{FormationAgent, MaintenanceAgent, RecallAgent},
+    types::UpdateSpaceInput,
 };
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -314,9 +317,11 @@ pub struct Space {
     pub memory: Arc<MemoryManagement>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceStatus {
     pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
     pub owner: String,
     pub db_stats: StorageStats,
     pub concepts: usize,
@@ -350,7 +355,7 @@ impl Space {
         token: String,
         scope: TokenScope,
         now_ms: u64,
-    ) -> Result<(), BoxError> {
+    ) -> Result<SpaceToken, BoxError> {
         let count = self
             .db
             .extensions_with(|kv| kv.keys().filter(|k| k.starts_with("ST")).count());
@@ -358,21 +363,18 @@ impl Space {
             return Err("space token limit reached".into());
         }
 
+        let sp = SpaceToken {
+            token: token.clone(),
+            scope,
+            usage: 0,
+            created_at: now_ms,
+            updated_at: now_ms,
+        };
+
         self.db
-            .save_extension(
-                token,
-                Fv::serialized(
-                    &SpaceTokenRef {
-                        scope,
-                        usage: 0,
-                        created_at: now_ms,
-                        updated_at: now_ms,
-                    },
-                    None,
-                )?,
-            )
+            .save_extension(token, Fv::serialized(&sp.to_ref(), None)?)
             .await?;
-        Ok(())
+        Ok(sp)
     }
 
     pub fn verify_space_token(
@@ -408,8 +410,9 @@ impl Space {
             kvs.iter()
                 .filter_map(|(k, v)| {
                     if k.starts_with("ST")
-                        && let Ok(st) = v.clone().deserialized::<SpaceToken>()
+                        && let Ok(mut st) = v.clone().deserialized::<SpaceToken>()
                     {
+                        st.token = k.clone();
                         Some(st)
                     } else {
                         None
@@ -421,37 +424,65 @@ impl Space {
         Ok(tokens)
     }
 
-    pub async fn set_public(&self, public: bool, now_ms: u64) -> Result<(), BoxError> {
-        if public {
+    pub async fn update(&self, input: UpdateSpaceInput, now_ms: u64) -> Result<(), BoxError> {
+        let mut changed = false;
+        if let Some(name) = input.name {
+            changed = true;
+            self.db.set_extension("name".to_string(), name.into());
+        }
+        if let Some(description) = input.description {
+            changed = true;
             self.db
-                .save_extension("public".to_string(), now_ms.into())
-                .await?;
-        } else {
-            self.db.remove_extension("public").await?;
+                .set_extension("description".to_string(), description.into());
+        }
+        if let Some(public) = input.public {
+            changed = true;
+            self.db.set_extension("public".to_string(), public.into());
+        }
+        if changed {
+            self.db.flush_metadata(now_ms).await?;
         }
         Ok(())
     }
 
     pub fn is_public(&self) -> bool {
-        let public = self.db.get_extension("public");
-        public.is_some()
+        self.db
+            .get_extension("public")
+            .and_then(|v| bool::try_from(v.clone()).ok())
+            .unwrap_or(false)
     }
 
     pub fn get_status(&self) -> SpaceStatus {
-        SpaceStatus {
+        let mut status = SpaceStatus {
             id: self.id.clone(),
-            owner: self
-                .db
-                .get_extension("owner")
-                .and_then(|v| String::try_from(v).ok())
-                .unwrap_or_default(),
             db_stats: self.db.stats(),
             concepts: self.memory.nexus.concepts.len(),
             propositions: self.memory.nexus.propositions.len(),
             conversations: self.memory.conversations.len(),
-            public: self.is_public(),
-            tier: self.get_tier(),
-        }
+            ..Default::default()
+        };
+
+        self.db.extensions_with(|kv| {
+            status.name = kv
+                .get("name")
+                .and_then(|v| String::try_from(v.clone()).ok());
+            status.description = kv
+                .get("description")
+                .and_then(|v| String::try_from(v.clone()).ok());
+            status.owner = kv
+                .get("owner")
+                .and_then(|v| String::try_from(v.clone()).ok())
+                .unwrap_or_default();
+            status.public = kv
+                .get("public")
+                .and_then(|v| bool::try_from(v.clone()).ok())
+                .unwrap_or(false);
+            status.tier = kv
+                .get("tier")
+                .and_then(|v| v.clone().deserialized::<SpaceTier>().ok())
+                .unwrap_or_default()
+        });
+        status
     }
 
     pub async fn ingest(
@@ -553,6 +584,8 @@ impl Space {
         let memory = MemoryManagement::connect(db.clone(), nexus.clone()).await?;
         Ok(SpaceStatus {
             id: id.clone(),
+            name: None,
+            description: None,
             owner: owner.to_string(),
             db_stats: db.stats(),
             concepts: nexus.concepts.len(),

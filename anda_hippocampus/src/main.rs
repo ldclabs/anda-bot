@@ -253,11 +253,14 @@ async fn main() -> Result<(), BoxError> {
             routing::post(revoke_space_token),
         )
         .route(
-            "/v1/{space_id}/management/set_public",
-            routing::post(set_public),
+            "/v1/{space_id}/management/update_space",
+            routing::patch(update_space),
+        )
+        .route(
+            "/admin/{space_id}/update_space_tier",
+            routing::post(update_space_tier),
         )
         .route("/admin/create_space", routing::post(create_space))
-        .route("/admin/update_space_tier", routing::post(update_space_tier))
         .layer(CompressionLayer::new());
 
     let app = app.with_state(app_state.clone());

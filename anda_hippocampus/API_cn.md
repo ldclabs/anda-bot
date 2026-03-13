@@ -86,8 +86,10 @@ export interface RevokeSpaceTokenInput {
   token: string;
 }
 
-export interface SetSpacePublicInput {
-  public: boolean;
+export interface UpdateSpaceInput {
+  name?: string;
+  description?: string;
+  public?: boolean;
 }
 
 export interface CreateOrUpdateSpaceInput {
@@ -102,6 +104,7 @@ export interface SpaceTier {
 }
 
 export interface SpaceToken {
+  token: string;
   scope: TokenScope;
   usage: number;
   created_at: number; // Unix timestamp in milliseconds
@@ -113,7 +116,9 @@ export interface StorageStats {
 }
 
 export interface SpaceStatus {
-  space_id: string;
+  id: string;
+  name?: string;
+  description?: string;
   owner: string;
   db_stats: StorageStats;
   concepts: number;
@@ -257,7 +262,7 @@ export interface ServiceInfo {
 - 作用：新增 Space Token
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
 - 请求体：`AddSpaceTokenInput`
-- 响应：`RpcResponse<string>`（新 token，前缀通常为 `ST`）
+- 响应：`RpcResponse<SpaceToken>`（新 token，前缀通常为 `ST`）
 
 ### POST `/v1/{space_id}/management/revoke_space_token`
 
@@ -266,11 +271,11 @@ export interface ServiceInfo {
 - 请求体：`RevokeSpaceTokenInput`
 - 响应：`RpcResponse<boolean>`（是否成功吊销）
 
-### POST `/v1/{space_id}/management/set_public`
+### POST `/v1/{space_id}/management/update_space`
 
-- 作用：设置空间公开/私有
+- 作用：更新空间信息（名称、描述、公开/私有）
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
-- 请求体：`SetSpacePublicInput`
+- 请求体：`UpdateSpaceInput`
 - 响应：`RpcResponse<true>`
 
 ---
@@ -284,7 +289,7 @@ export interface ServiceInfo {
 - 请求体：`CreateOrUpdateSpaceInput`
 - 响应：`RpcResponse<SpaceStatus>`
 
-### POST `/admin/update_space_tier`
+### POST `/admin/{space_id}/update_space_tier`
 
 - 作用：更新空间 tier
 - 鉴权：平台管理员 + CWT `write`
