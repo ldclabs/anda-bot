@@ -136,10 +136,6 @@ All responses use an RPC envelope:
 {"result": { ... }, "error": null}
 ```
 
-### Space ID Format
-
-Pattern: `s{shard_index}-{name}`, e.g. `s0-d688lqjs0946lfo0014g`. The shard index must match the server's `SHARDING_IDX`.
-
 ### Authentication
 
 All endpoints (except `/`, `/info` and `/SKILL.md`) require a Bearer token:
@@ -166,7 +162,7 @@ Create a new isolated memory space. Requires manager principal.
 ```json
 {
   "user": "<owner_principal_id>",
-  "space_id": "s0-my_space_name",
+  "space_id": "my_space_001",
   "tier": 0
 }
 ```
@@ -175,7 +171,7 @@ Create a new isolated memory space. Requires manager principal.
 ```json
 {
   "result": {
-    "space_id": "s0-my_space_name",
+    "space_id": "my_space_001",
     "owner": "owner_principal_id",
     ...
   }
@@ -308,7 +304,7 @@ Get space statistics and health information.
 ```json
 {
   "result": {
-    "space_id": "s0-d688lqjs0946lfo0014g",
+    "space_id": "my_space_001",
     "owner": "principal_id",
     "db_stats": { "total_items": 150, "total_bytes": 524288 },
     "concepts": 85,

@@ -91,8 +91,8 @@ export interface SetSpacePublicInput {
 }
 
 export interface CreateOrUpdateSpaceInput {
-  user: string; // Principal
-  space_id: string; // 形如 s{sharding}-{id}
+  user: string;
+  space_id: string;
   tier: number;
 }
 
@@ -198,8 +198,6 @@ export interface ServiceInfo {
 ---
 
 ## 3.2 空间业务接口（`/v1/{space_id}`）
-
-> `space_id` 格式：`s{sharding}-{id}`，且 sharding 必须与服务实例一致。
 
 ### POST `/v1/{space_id}/formation`
 
@@ -318,7 +316,7 @@ async function rpcPost<TReq, TRes>(
 
 // Recall
 const recall = await rpcPost<RecallInput, AgentOutput>(
-  '/v1/s0-demo/recall',
+  '/v1/my_space_001/recall',
   { query: '这个用户的偏好是什么？', context: { user: 'u1' } },
   'YOUR_TOKEN'
 );

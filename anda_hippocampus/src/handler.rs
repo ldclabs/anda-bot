@@ -10,9 +10,9 @@ use ic_auth_types::ByteArrayB64;
 use ic_cose::rand_bytes;
 use markdown::{CompileOptions, Options, ParseOptions, to_html, to_html_with_options};
 use serde_json::json;
-use std::{str::FromStr, sync::LazyLock};
+use std::sync::LazyLock;
 
-use crate::payload::{Accept, AppError, BearerToken, ContentType, RpcResponse, StringOr};
+use crate::payload::{Accept, AppError, ContentType, HeaderVals, RpcResponse, StringOr};
 use crate::space::AppState;
 use crate::types::*;
 
@@ -83,13 +83,12 @@ pub async fn get_status(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
@@ -97,7 +96,7 @@ pub async fn get_status(
     let t = if token.len() > 60 {
         // 如果 token 存在，永远验证它
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -105,7 +104,7 @@ pub async fn get_status(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -125,14 +124,13 @@ pub async fn post_formation(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
@@ -142,7 +140,7 @@ pub async fn post_formation(
     let t = if token.len() > 60 {
         // 如果 token 存在，永远验证它
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Write, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -150,7 +148,7 @@ pub async fn post_formation(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -177,14 +175,13 @@ pub async fn post_recall(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
@@ -194,7 +191,7 @@ pub async fn post_recall(
     let t = if token.len() > 60 {
         // 如果 token 存在，永远验证它
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -202,7 +199,7 @@ pub async fn post_recall(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -226,14 +223,13 @@ pub async fn post_maintenance(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
@@ -243,7 +239,7 @@ pub async fn post_maintenance(
     let t = if token.len() > 60 {
         // 如果 token 存在，永远验证它
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Write, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -251,7 +247,7 @@ pub async fn post_maintenance(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -274,13 +270,12 @@ pub async fn get_conversation(
     State(app): State<AppState>,
     Path((space_id, conversation_id)): Path<(String, String)>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
     let conversation_id: u64 = conversation_id
@@ -291,7 +286,7 @@ pub async fn get_conversation(
     let t = if token.len() > 60 {
         // 如果 token 存在，永远验证它
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -299,7 +294,7 @@ pub async fn get_conversation(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -324,20 +319,19 @@ pub async fn list_conversations(
     Path(space_id): Path<String>,
     Query(pg): Query<Pagination>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let now_ms = unix_ms();
     let t = if token.len() > 60 {
         Some(
-            app.check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
                 .map_err(|_| AppError::unauthorized())?,
         )
     } else {
@@ -345,7 +339,7 @@ pub async fn list_conversations(
     };
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -375,23 +369,22 @@ pub async fn list_space_tokens(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Read, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Read, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -404,20 +397,19 @@ pub async fn add_space_token(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: AddSpaceTokenInput = ct
@@ -427,7 +419,7 @@ pub async fn add_space_token(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -445,20 +437,19 @@ pub async fn revoke_space_token(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: RevokeSpaceTokenInput = ct
@@ -468,7 +459,7 @@ pub async fn revoke_space_token(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -484,20 +475,19 @@ pub async fn set_public(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
-    let sid = SpaceId::from_str(&space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let now_ms = unix_ms();
     let _ = app
-        .check_auth(&token, &sid.id, TokenScope::Write, now_ms)
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
         .map_err(|_| AppError::unauthorized())?;
 
     let input: SetSpacePublicInput = ct
@@ -507,7 +497,7 @@ pub async fn set_public(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&space_id)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -524,7 +514,7 @@ pub async fn set_public(
 pub async fn create_space(
     State(app): State<AppState>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
     let now_ms = unix_ms();
@@ -538,16 +528,15 @@ pub async fn create_space(
         .value()
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
-    let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let rt = app
-        .admin_create_space(token.user, input.user, sid.id, input.tier, now_ms)
+        .admin_create_space(token.user, input.user, input.space_id, input.tier, now_ms)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
@@ -557,7 +546,7 @@ pub async fn create_space(
 pub async fn update_space_tier(
     State(app): State<AppState>,
     Accept(ct, _): Accept,
-    BearerToken(token): BearerToken,
+    HeaderVals(token, sharding): HeaderVals,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
     let now_ms = unix_ms();
@@ -571,16 +560,15 @@ pub async fn update_space_tier(
         .value()
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
-    let sid = SpaceId::from_str(&input.space_id).map_err(AppError::bad_request)?;
-    if sid.sharding != app.sharding {
+    if sharding != app.sharding {
         return Err(AppError::bad_request(format!(
             "space_id sharding {} does not match server sharding {}",
-            sid.sharding, app.sharding
+            sharding, app.sharding
         )));
     }
 
     let space = app
-        .load_space(&sid.id)
+        .load_space(&input.space_id)
         .await
         .map_err(AppError::bad_request)?;
 

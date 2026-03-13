@@ -1,7 +1,7 @@
 use anda_core::{BoxError, Principal, model::Message};
 use ic_cose_types::cose::cwt::{ClaimsSet, get_scope};
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::str::FromStr;
 
 #[derive(Deserialize)]
 pub struct Pagination {
@@ -30,32 +30,6 @@ impl CWToken {
             audience,
             scope,
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SpaceId {
-    pub id: String,
-    pub sharding: u32,
-}
-
-impl fmt::Display for SpaceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "s{}-{}", self.sharding, self.id)
-    }
-}
-
-impl FromStr for SpaceId {
-    type Err = BoxError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.splitn(2, '-').collect();
-        if parts.len() != 2 || !parts[0].starts_with('s') {
-            return Err("invalid space id format".into());
-        }
-        let sharding = parts[0][1..].parse::<u32>()?;
-        let id = parts[1].to_string();
-        Ok(SpaceId { id, sharding })
     }
 }
 
@@ -128,8 +102,7 @@ pub struct SpaceTokenRef {
     pub updated_at: u64,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenScope {
     #[serde(rename = "read")]
     #[default]
@@ -145,7 +118,6 @@ impl TokenScope {
         *self == Self::All || *self == required
     }
 }
-
 
 impl FromStr for TokenScope {
     type Err = BoxError;

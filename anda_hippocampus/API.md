@@ -91,8 +91,8 @@ export interface SetSpacePublicInput {
 }
 
 export interface CreateOrUpdateSpaceInput {
-  user: string; // Principal
-  space_id: string; // format: s{sharding}-{id}
+  user: string;
+  space_id: string;
   tier: number;
 }
 
@@ -198,8 +198,6 @@ export interface ServiceInfo {
 ---
 
 ## 3.2 Space Business Endpoints (`/v1/{space_id}`)
-
-> `space_id` format: `s{sharding}-{id}`, and `sharding` must match the server instance.
 
 ### POST `/v1/{space_id}/formation`
 
@@ -318,7 +316,7 @@ async function rpcPost<TReq, TRes>(
 
 // Recall
 const recall = await rpcPost<RecallInput, AgentOutput>(
-  '/v1/s0-demo/recall',
+  '/v1/my_space_001/recall',
   { query: 'What are this user\'s preferences?', context: { user: 'u1' } },
   'YOUR_TOKEN'
 );

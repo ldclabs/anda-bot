@@ -97,7 +97,7 @@ The service handles all the complexity of knowledge graph management. Your agent
 
 ### Memory Space
 
-Each space is an isolated environment with its own knowledge graph, conversation history, and database. Spaces are identified by IDs in the format `s{shard_index}-{name}`, e.g. `s0-d688lqjs0946lfo0014g`. The shard index must match the server's configured shard.
+Each space is an isolated environment with its own knowledge graph, conversation history, and database. Spaces are identified by a `space_id` string.
 
 ### Memory Types
 
@@ -173,7 +173,7 @@ If `Accept: text/markdown` is specified, the `result` field's content will be di
 
 **Request:**
 ```http
-POST /v1/s0-my_space/recall
+POST /v1/my_space_001/recall
 Accept: text/markdown
 
 What are Alice's preferences?
@@ -208,7 +208,7 @@ Content-Type: application/json
 ```json
 {
   "user": "<owner_principal_id>",
-  "space_id": "s0-my_space_name",
+  "space_id": "my_space_001",
   "tier": 0
 }
 ```
@@ -220,8 +220,6 @@ Content-Type: application/json
   "result": { ... }
 }
 ```
-
-The `space_id` must start with `s{shard_index}-` matching the server's configured shard index (default: `s0-`).
 
 ---
 
@@ -399,7 +397,7 @@ Authorization: Bearer <token>
 ```json
 {
   "result": {
-    "space_id": "s0-d688lqjs0946lfo0014g",
+    "space_id": "my_space_001",
     "owner": "principal_id",
     "db_stats": {
       "total_items": 150,
@@ -424,7 +422,7 @@ A typical integration workflow for a business agent:
 curl -sX POST https://your-hippocampus-host/admin/create_space \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"user": "owner_principal_id", "space_id": "s0-my_agent_memory", "tier": 0}'
+  -d '{"user": "owner_principal_id", "space_id": "my_space_001", "tier": 0}'
 ```
 
 ### 2. Remember: Send conversations for memory encoding
@@ -432,7 +430,7 @@ curl -sX POST https://your-hippocampus-host/admin/create_space \
 After each meaningful conversation with a user, send the messages to Formation:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/formation \
+curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -450,7 +448,7 @@ curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/formation \
 Before generating a response, check if relevant memory exists:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/recall \
+curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -464,7 +462,7 @@ curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/recall \
 Run maintenance to keep memory healthy and relevant:
 
 ```bash
-curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/maintenance \
+curl -sX POST https://your-hippocampus-host/v1/my_space_001/maintenance \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -481,7 +479,7 @@ curl -sX POST https://your-hippocampus-host/v1/s0-my_agent_memory/maintenance \
 | Symptom | Fix |
 |---------|-----|
 | `401 Unauthorized` | If auth is enabled (`ED25519_PUBKEYS` set), check Bearer token signature, `aud` (space ID), and required `scope` (`read`/`write`) |
-| `404 Not Found` on space endpoints | Verify the `space_id` format matches `s{shard}-{name}` and the shard matches the server |
+| `404 Not Found` on space endpoints | Verify the `space_id` exists and the token `aud` matches the target space |
 | Formation returns but nothing in memory | Formation is async — check space status after a few seconds; look at the conversation status |
 | Recall seems empty or insufficient | Memory may not be encoded yet, or the query is too narrow; try broader phrasing and include `context` |
 | Maintenance rejected | Only one maintenance cycle can run at a time per space; wait for the current one to finish |

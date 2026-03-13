@@ -35,8 +35,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agents::{FormationAgent, MaintenanceAgent, RecallAgent};
 use crate::payload::StringOr;
 use crate::types::{
-    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceId, SpaceTier,
-    SpaceToken, SpaceTokenRef, TokenScope,
+    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken, SpaceTokenRef,
+    TokenScope,
 };
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -206,7 +206,6 @@ impl AppState {
             db_config,
             creator,
             owner,
-            self.sharding,
             tier,
             now_ms,
         )
@@ -242,7 +241,6 @@ impl AppState {
                         self.management.clone(),
                         self.model.clone(),
                         self.fallback_model.clone(),
-                        self.sharding,
                     )
                     .await?,
                 ))
@@ -310,7 +308,6 @@ impl AppState {
 
 pub struct Space {
     id: String,
-    sharding: u32,
     db: Arc<AndaDB>,
     engine: Engine,
 
@@ -319,7 +316,7 @@ pub struct Space {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SpaceStatus {
-    pub space_id: String,
+    pub id: String,
     pub owner: String,
     pub db_stats: StorageStats,
     pub concepts: usize,
@@ -330,14 +327,6 @@ pub struct SpaceStatus {
 }
 
 impl Space {
-    pub fn space_id(&self) -> String {
-        SpaceId {
-            id: self.id.clone(),
-            sharding: self.sharding,
-        }
-        .to_string()
-    }
-
     pub fn get_tier(&self) -> SpaceTier {
         self.db
             .get_extension("tier")
@@ -450,7 +439,7 @@ impl Space {
 
     pub fn get_status(&self) -> SpaceStatus {
         SpaceStatus {
-            space_id: self.space_id(),
+            id: self.id.clone(),
             owner: self
                 .db
                 .get_extension("owner")
@@ -542,7 +531,6 @@ impl Space {
         db_config: DBConfig,
         creator: Principal,
         owner: Principal,
-        sharding: u32,
         tier: u32,
         now_ms: u64,
     ) -> Result<SpaceStatus, BoxError> {
@@ -564,7 +552,7 @@ impl Space {
         let nexus = Arc::new(nexus);
         let memory = MemoryManagement::connect(db.clone(), nexus.clone()).await?;
         Ok(SpaceStatus {
-            space_id: SpaceId { id, sharding }.to_string(),
+            id: id.clone(),
             owner: owner.to_string(),
             db_stats: db.stats(),
             concepts: nexus.concepts.len(),
@@ -581,7 +569,6 @@ impl Space {
         management: Arc<dyn Management>,
         model: Model,
         fallback_model: Model,
-        sharding: u32,
     ) -> Result<Self, BoxError> {
         let id = db_config.name.clone();
         let db = Arc::new(AndaDB::connect(object_store.clone(), db_config).await?);
@@ -620,7 +607,6 @@ impl Space {
 
         Ok(Self {
             id,
-            sharding,
             db,
             memory,
             engine,

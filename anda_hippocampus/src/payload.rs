@@ -241,12 +241,10 @@ impl RpcError {
     }
 }
 
-// ─── Bearer Token Extractor ───────────────────────────────────────────────────
+/// Extracts a bearer token from the `Authorization` header and sharding id from the `X-Shard` header.
+pub struct HeaderVals(pub String, pub u32);
 
-/// Extracts a bearer token from the `Authorization` header.
-pub struct BearerToken(pub String);
-
-impl<S: Send + Sync> axum::extract::FromRequestParts<S> for BearerToken {
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for HeaderVals {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(
@@ -256,11 +254,17 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for BearerToken {
         let token = parts
             .headers
             .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "))
+            .and_then(|h| h.to_str().ok()).map(|s| s.trim_start_matches("Bearer "))
             .unwrap_or("")
             .to_string();
-        Ok(BearerToken(token))
+        let shard_id = parts
+            .headers
+            .get("X-Shard")
+            .or_else(|| parts.headers.get("X-Sharding"))
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        Ok(HeaderVals(token, shard_id))
     }
 }
 
@@ -368,7 +372,7 @@ impl<T: Serialize> IntoResponse for AppResponse<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Accept, AppError, BearerToken, ContentType, StringOr, prefers_chinese};
+    use super::{Accept, AppError, ContentType, HeaderVals, StringOr, prefers_chinese};
     use axum::{
         body::to_bytes,
         extract::FromRequestParts,
@@ -507,7 +511,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accept_and_bearer_token_extractors_work() {
+    async fn accept_and_header_vals_extractors_work() {
         let req = Request::builder()
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT_LANGUAGE, "zh-CN,en;q=0.8")
@@ -520,10 +524,31 @@ mod tests {
         assert_eq!(accept.0, ContentType::Json);
         assert!(accept.1);
 
-        let bearer = BearerToken::from_request_parts(&mut parts, &())
+        let HeaderVals(bearer, sharding) = HeaderVals::from_request_parts(&mut parts, &())
             .await
             .unwrap();
-        assert_eq!(bearer.0, "secret-token");
+        assert_eq!(bearer, "secret-token");
+        assert_eq!(sharding, 0);
+
+        let req = Request::builder()
+            .header(header::CONTENT_TYPE, "application/cbor")
+            .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+            .header(header::AUTHORIZATION, "another-token")
+            .header("X-Sharding", "42")
+            .body(())
+            .unwrap();
+
+        let (mut parts, _) = req.into_parts();
+
+        let accept = Accept::from_request_parts(&mut parts, &()).await.unwrap();
+        assert_eq!(accept.0, ContentType::Cbor);
+        assert!(!accept.1);
+
+        let HeaderVals(bearer, sharding) = HeaderVals::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert_eq!(bearer, "another-token");
+        assert_eq!(sharding, 42);
     }
 
     #[tokio::test]
