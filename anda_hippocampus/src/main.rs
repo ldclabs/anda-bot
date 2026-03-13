@@ -174,13 +174,16 @@ async fn main() -> Result<(), BoxError> {
             .completion_model("gemini-3-flash-preview"),
     ));
 
+    let mut db_type = "memory".to_string();
     let object_store: Arc<dyn ObjectStore> = match cli.command {
         Some(Commands::Local { db }) => {
+            db_type = "local".to_string();
             let os = LocalFileSystem::new_with_prefix(db)?;
             let os = MetaStoreBuilder::new(os, 100000).build();
             Arc::new(os)
         }
         Some(Commands::Aws { bucket, region }) => {
+            db_type = "aws".to_string();
             let os = AmazonS3Builder::from_env()
                 .with_bucket_name(bucket)
                 .with_region(region)
@@ -311,12 +314,13 @@ async fn main() -> Result<(), BoxError> {
     });
 
     log::warn!(
-        "start service {}@{} on {:?}, sharding_idx: {}, managers: {}.",
+        "start service {}@{} on {:?}, sharding: {}, managers: {}, DB type: {}.",
         APP_NAME,
         APP_VERSION,
         addr,
         cli.sharding_idx,
-        cli.managers
+        cli.managers,
+        db_type
     );
 
     let _ = tokio::join!(server_handle, spaces_handle);

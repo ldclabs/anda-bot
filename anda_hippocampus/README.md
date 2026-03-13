@@ -385,6 +385,30 @@ cargo run -p anda_hippocampus -- local --db ./data
 cargo run -p anda_hippocampus -- aws --bucket my-bucket --region us-east-1
 ```
 
+### Run with Docker image
+
+```bash
+# Pull image
+docker pull ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+
+# Run with ENV (in-memory by default)
+docker run --rm -p 8042:8042 \
+  -e LISTEN_ADDR=0.0.0.0:8042 \
+  -e GEMINI_API_KEY=your_key \
+  ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+
+# Override startup args (example: local storage)
+docker run --rm -p 8042:8042 \
+  -v $(pwd)/data:/data \
+  ghcr.io/ldclabs/anda_hippocampus_amd64:latest local --db /data
+
+# Override startup args (example: AWS S3 storage)
+docker run --rm -p 8042:8042 \
+  -e AWS_ACCESS_KEY_ID=your_ak \
+  -e AWS_SECRET_ACCESS_KEY=your_sk \
+  ghcr.io/ldclabs/anda_hippocampus_amd64:latest aws --bucket my-bucket --region us-east-1
+```
+
 ## Project Structure
 
 ```
