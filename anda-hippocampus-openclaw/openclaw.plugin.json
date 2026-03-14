@@ -1,0 +1,106 @@
+{
+  "id": "anda-hippocampus",
+  "name": "Anda Hippocampus",
+  "description": "Persistent long-term memory for OpenClaw agents via Anda Hippocampus, with automatic memory formation and natural-language recall.",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "spaceId",
+      "spaceToken"
+    ],
+    "properties": {
+      "spaceId": {
+        "type": "string",
+        "description": "Memory space ID used for formation and recall requests."
+      },
+      "spaceToken": {
+        "type": "string",
+        "description": "Space token used as the Bearer token for API authentication."
+      },
+      "baseUrl": {
+        "type": "string",
+        "description": "Anda Hippocampus base URL. Supports the hosted service and self-hosted or local deployments for privacy-sensitive environments.",
+        "default": "https://brain.anda.ai"
+      },
+      "defaultContext": {
+        "type": "object",
+        "description": "Default context included with every formation and recall request.",
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "Default user identifier."
+          },
+          "agent": {
+            "type": "string",
+            "description": "Default agent identifier."
+          },
+          "session": {
+            "type": "string",
+            "description": "Default session identifier."
+          },
+          "topic": {
+            "type": "string",
+            "description": "Default topic for memory disambiguation."
+          }
+        },
+        "additionalProperties": false
+      },
+      "formationTimeoutMs": {
+        "type": "number",
+        "description": "Timeout in milliseconds for formation requests.",
+        "default": 30000,
+        "minimum": 1
+      },
+      "recallTimeoutMs": {
+        "type": "number",
+        "description": "Timeout in milliseconds for recall requests.",
+        "default": 120000,
+        "minimum": 1
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "spaceId": {
+      "label": "Space ID",
+      "placeholder": "my_space_001"
+    },
+    "spaceToken": {
+      "label": "Space Token",
+      "placeholder": "STxxxxx",
+      "sensitive": true
+    },
+    "baseUrl": {
+      "label": "Base URL",
+      "placeholder": "https://brain.anda.ai or http://localhost:8042"
+    },
+    "defaultContext": {
+      "label": "Default Context"
+    },
+    "defaultContext.user": {
+      "label": "Default User",
+      "placeholder": "user_123"
+    },
+    "defaultContext.agent": {
+      "label": "Default Agent",
+      "placeholder": "assistant"
+    },
+    "defaultContext.session": {
+      "label": "Default Session",
+      "placeholder": "session_001"
+    },
+    "defaultContext.topic": {
+      "label": "Default Topic",
+      "placeholder": "Project Aurora"
+    },
+    "formationTimeoutMs": {
+      "label": "Formation Timeout (ms)",
+      "placeholder": "30000"
+    },
+    "recallTimeoutMs": {
+      "label": "Recall Timeout (ms)",
+      "placeholder": "120000"
+    }
+  }
+}

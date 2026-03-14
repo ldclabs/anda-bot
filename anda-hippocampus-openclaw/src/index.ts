@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox'
 import type { OpenClawPluginApi, AnyAgentTool } from 'openclaw/plugin-sdk'
+import packageJson from '../package.json'
 import { HippocampusClient } from './client.ts'
 import type { HippocampusPluginConfig, InputContext, Message } from './types.ts'
 
@@ -101,119 +102,98 @@ function convertAgentMessages(agentMessages: unknown[]): Message[] {
   return result
 }
 
-// ---------------------------------------------------------------------------
-// Plugin factory
-// ---------------------------------------------------------------------------
+const andaHippocampusPlugin = {
+  id: 'anda-hippocampus',
+  name: 'Anda Hippocampus',
+  description:
+    'Persistent long-term memory via Anda Hippocampus. Encodes conversations and provides recall_memory tool.',
+  version: packageJson.version,
 
-/**
- * Create the Anda Hippocampus OpenClaw plugin.
- *
- * - Registers a `recall_memory` agent tool that queries the Recall endpoint.
- * - Hooks into `agent_end` to send conversation messages to the Formation
- *   endpoint (fire-and-forget) for memory encoding.
- *
- * @example
- * ```ts
- * import { createHippocampusPlugin } from 'anda-hippocampus'
- *
- * export default createHippocampusPlugin({
- *   spaceId: 'my_space_001',
- *   spaceToken: 'ST_xxxxx',
- * })
- * ```
- */
-export function createHippocampusPlugin(config: HippocampusPluginConfig) {
-  const client = new HippocampusClient(config)
-  const defaultContext = config.defaultContext
+  register(api: OpenClawPluginApi) {
+    const config = (api.pluginConfig ?? {}) as any as HippocampusPluginConfig
+    const client = new HippocampusClient(config)
+    const defaultContext = config.defaultContext
+    // ── recall_memory tool ──────────────────────────────────────────
+    const recallTool: AnyAgentTool = {
+      name: 'recall_memory',
+      label: 'Recall Memory',
+      description:
+        "Recall information from your long-term memory (Cognitive Nexus). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, and any other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the user's question.",
+      parameters: RecallParamsSchema,
 
-  return {
-    id: 'anda-hippocampus',
-    name: 'Anda Hippocampus',
-    description:
-      'Persistent long-term memory via Anda Hippocampus. Encodes conversations and provides recall_memory tool.',
-    version: '0.1.0',
-
-    register(api: OpenClawPluginApi) {
-      // ── recall_memory tool ──────────────────────────────────────────
-      const recallTool: AnyAgentTool = {
-        name: 'recall_memory',
-        label: 'Recall Memory',
-        description:
-          "Recall information from your long-term memory (Cognitive Nexus). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, and any other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the user's question.",
-        parameters: RecallParamsSchema,
-
-        async execute(_toolCallId: string, params: RecallParams) {
-          const query = params.query?.trim()
-          if (!query) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: 'Error: "query" parameter is required and must be a non-empty string.'
-                }
-              ],
-              details: { error: true }
-            }
-          }
-
-          const callContext: InputContext = {
-            ...defaultContext,
-            ...(params.context ?? {})
-          }
-
-          const res = await client.recall(query, callContext)
-          if (res.error) {
-            api.logger.error(
-              `[anda-hippocampus] Recall failed: ${res.error.message}`
-            )
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Error recalling memory: ${res.error.message}`
-                }
-              ],
-              details: { error: true }
-            }
-          }
-
+      async execute(_toolCallId: string, params: RecallParams) {
+        const query = params.query?.trim()
+        if (!query) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: res.result?.content ?? 'No relevant memory found.'
+                text: 'Error: "query" parameter is required and must be a non-empty string.'
               }
             ],
-            details: {
-              conversation: res.result?.conversation,
-              model: res.result?.model
+            details: { error: true }
+          }
+        }
+
+        const callContext: InputContext = {
+          ...defaultContext,
+          ...(params.context ?? {})
+        }
+
+        const res = await client.recall(query, callContext)
+        if (res.error) {
+          api.logger.error(
+            `[anda-hippocampus] Recall failed: ${res.error.message}`
+          )
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error recalling memory: ${res.error.message}`
+              }
+            ],
+            details: { error: true }
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: res.result?.content ?? 'No relevant memory found.'
             }
+          ],
+          details: {
+            conversation: res.result?.conversation,
+            model: res.result?.model
           }
         }
       }
-
-      api.registerTool(recallTool)
-
-      // ── agent_end hook → formation (fire-and-forget) ────────────────
-      api.on('agent_end', (event, ctx) => {
-        const originalMessages = (event.messages as unknown[]) ?? []
-        const messages = convertAgentMessages(originalMessages)
-        api.logger.info(
-          `[anda-hippocampus] agent_end: extracted ${messages.length} (${originalMessages.length}) messages for formation.`
-        )
-        if (messages.length === 0) return
-
-        const context: InputContext = {
-          ...defaultContext,
-          agent: ctx.agentId || defaultContext?.agent,
-          session: ctx.sessionKey || ctx.sessionId || defaultContext?.session
-        }
-        client.formation(messages, context).catch((err) => {
-          api.logger.error(
-            `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
-          )
-        })
-      })
     }
+
+    api.registerTool(recallTool)
+
+    // ── agent_end hook → formation (fire-and-forget) ────────────────
+    api.on('agent_end', (event, ctx) => {
+      const originalMessages = (event.messages as unknown[]) ?? []
+      const messages = convertAgentMessages(originalMessages)
+      api.logger.info(
+        `[anda-hippocampus] agent_end: extracted ${messages.length} (${originalMessages.length}) messages for formation.`
+      )
+      if (messages.length === 0) return
+
+      const context: InputContext = {
+        ...defaultContext,
+        agent: ctx.agentId || defaultContext?.agent,
+        session: ctx.sessionKey || ctx.sessionId || defaultContext?.session
+      }
+      client.formation(messages, context).catch((err) => {
+        api.logger.error(
+          `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      })
+    })
   }
 }
+
+export default andaHippocampusPlugin

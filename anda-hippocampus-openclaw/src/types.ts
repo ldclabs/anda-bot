@@ -68,7 +68,7 @@ export interface AgentOutput {
  * Plugin configuration options.
  */
 export interface HippocampusPluginConfig {
-  /** Anda Hippocampus base URL. Default: "https://brain.anda.ai" */
+  /** Anda Hippocampus base URL. Can point to the hosted service or a self-hosted/local deployment. Default: "https://brain.anda.ai" */
   baseUrl?: string
   /** Memory space ID (required) */
   spaceId: string

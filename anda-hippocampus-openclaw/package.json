@@ -1,12 +1,16 @@
 {
   "name": "anda-hippocampus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenClaw plugin for Anda Hippocampus — persistent long-term memory for LLM agents",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
   "files": [
-    "dist"
+    "src"
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",

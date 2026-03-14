@@ -482,23 +482,32 @@ The [`anda-hippocampus`](https://github.com/ldclabs/anda-hippocampus/tree/main/a
 ### Install
 
 ```bash
-pnpm add anda-hippocampus
+openclaw plugins install anda-hippocampus
 ```
 
 ### Setup
 
-Create a plugin file (e.g. `plugins/anda-hippocampus.ts`) and export the plugin:
+Add the plugin to your `openclaw.json` allowlist and provide its config:
 
-```ts
-import { createHippocampusPlugin } from 'anda-hippocampus'
-
-export default createHippocampusPlugin({
-  spaceId: 'my_space_001',       // your memory space ID
-  spaceToken: 'ST_xxxxx',        // space token (write scope)
-  // baseUrl: 'https://brain.anda.ai',  // default
-  // defaultContext: { agent: 'my_agent' },
-})
+```json
+{
+  "plugins": {
+    "allow": [..., "anda-hippocampus"],
+    "entries": {
+      "anda-hippocampus": {
+        "enabled": true,
+        "config": {
+          "spaceId": "my_space_001",
+          "spaceToken": "ST_xxxxx",
+          "baseUrl": "https://brain.anda.ai"
+        }
+      }
+    }
+  }
+}
 ```
+
+Set `baseUrl` to your own deployment if memory traffic must stay on-prem or on localhost. Optional fields such as `defaultContext`, `formationTimeoutMs`, and `recallTimeoutMs` can be added under `config` when needed.
 
 ### What It Does
 
