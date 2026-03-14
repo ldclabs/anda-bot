@@ -1,0 +1,4 @@
+packages:
+  - 'anda-hippocampus-openclaw'
+onlyBuiltDependencies:
+  - esbuild

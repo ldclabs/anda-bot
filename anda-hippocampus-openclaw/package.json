@@ -1,0 +1,42 @@
+{
+  "name": "anda-hippocampus",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for Anda Hippocampus — persistent long-term memory for LLM agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "ncu": "npx npm-check-updates -u"
+  },
+  "keywords": [
+    "openclaw",
+    "hippocampus",
+    "long-term-memory",
+    "agent-memory",
+    "knowledge-graph"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
+    "openclaw": ">=2026.3.7-beta.1"
+  },
+  "devDependencies": {
+    "@types/eslint": "^9.6.1",
+    "@types/node": "24.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.42.0",
+    "@typescript-eslint/parser": "^8.42.0",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.6.2",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.0"
+  }
+}
