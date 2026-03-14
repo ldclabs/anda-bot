@@ -120,6 +120,8 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 
 For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
 
+If you are using OpenClaw, you can have it read the hosted skill document at [https://brain.anda.ai/SKILL.md](https://brain.anda.ai/SKILL.md) to install and configure the Anda Hippocampus plugin directly.
+
 ### Running
 
 ```bash

@@ -475,6 +475,62 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/maintenance \
 
 ---
 
+## OpenClaw Integration
+
+The [`anda-hippocampus`](https://github.com/ldclabs/anda-hippocampus/tree/main/anda-hippocampus-openclaw) plugin integrates Anda Hippocampus into [OpenClaw](https://openclaw.ai/) agents, providing automatic memory encoding and a `recall_memory` tool — no manual API calls needed.
+
+### Install
+
+```bash
+pnpm add anda-hippocampus
+```
+
+### Setup
+
+Create a plugin file (e.g. `plugins/anda-hippocampus.ts`) and export the plugin:
+
+```ts
+import { createHippocampusPlugin } from 'anda-hippocampus'
+
+export default createHippocampusPlugin({
+  spaceId: 'my_space_001',       // your memory space ID
+  spaceToken: 'ST_xxxxx',        // space token (write scope)
+  // baseUrl: 'https://brain.anda.ai',  // default
+  // defaultContext: { agent: 'my_agent' },
+})
+```
+
+### What It Does
+
+| Feature | Mechanism | Description |
+|---------|-----------|-------------|
+| **Memory encoding** | `agent_end` hook | After each agent turn, conversation messages are automatically sent to `POST /v1/{space_id}/formation` (fire-and-forget). |
+| **Memory recall** | `recall_memory` tool | Registered as an agent tool; the LLM can call it with a natural language query to retrieve knowledge via `POST /v1/{space_id}/recall`. |
+
+### Configuration Options
+
+| Option | Type | Required | Default | Description |
+|--------|------|----------|---------|-------------|
+| `spaceId` | `string` | Yes | — | Memory space ID |
+| `spaceToken` | `string` | Yes | — | Space token for API authentication |
+| `baseUrl` | `string` | No | `https://brain.anda.ai` | Anda Hippocampus service URL |
+| `defaultContext` | `InputContext` | No | — | Default context included with every request (`user`, `agent`, `session`, `topic`) |
+| `formationTimeoutMs` | `number` | No | `30000` | Formation request timeout (ms) |
+| `recallTimeoutMs` | `number` | No | `120000` | Recall request timeout (ms) — recall may take 10–100s |
+
+### `recall_memory` Tool Parameters
+
+The plugin registers a `recall_memory` tool that the LLM can invoke:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Natural language question (e.g. "What are Alice's preferences?") |
+| `context.user` | `string` | No | Current user identifier |
+| `context.agent` | `string` | No | Calling agent identifier |
+| `context.topic` | `string` | No | Topic hint for disambiguation |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
