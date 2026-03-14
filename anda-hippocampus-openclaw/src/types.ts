@@ -14,10 +14,10 @@ export interface RpcResponse<T> {
 }
 
 export interface InputContext {
-  user?: string
-  agent?: string
-  session?: string
-  topic?: string
+  user?: string | undefined
+  agent?: string | undefined
+  session?: string | undefined
+  topic?: string | undefined
 }
 
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool'

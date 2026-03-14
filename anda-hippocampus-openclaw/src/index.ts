@@ -163,6 +163,9 @@ export function createHippocampusPlugin(config: HippocampusPluginConfig) {
 
           const res = await client.recall(query, callContext)
           if (res.error) {
+            api.logger.error(
+              `[anda-hippocampus] Recall failed: ${res.error.message}`
+            )
             return {
               content: [
                 {
@@ -192,13 +195,19 @@ export function createHippocampusPlugin(config: HippocampusPluginConfig) {
       api.registerTool(recallTool)
 
       // ── agent_end hook → formation (fire-and-forget) ────────────────
-      api.on('agent_end', (event) => {
-        const messages = convertAgentMessages(
-          (event.messages as unknown[]) ?? []
+      api.on('agent_end', (event, ctx) => {
+        const originalMessages = (event.messages as unknown[]) ?? []
+        const messages = convertAgentMessages(originalMessages)
+        api.logger.info(
+          `[anda-hippocampus] agent_end: extracted ${messages.length} (${originalMessages.length}) messages for formation.`
         )
         if (messages.length === 0) return
 
-        const context: InputContext = { ...defaultContext }
+        const context: InputContext = {
+          ...defaultContext,
+          agent: ctx.agentId || defaultContext?.agent,
+          session: ctx.sessionKey || ctx.sessionId || defaultContext?.session
+        }
         client.formation(messages, context).catch((err) => {
           api.logger.error(
             `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
