@@ -1,7 +1,7 @@
 {
   "name": "anda-hippocampus",
-  "version": "0.3.2",
-  "description": "OpenClaw plugin for Anda Hippocampus — persistent long-term memory for LLM agents",
+  "version": "0.3.3",
+  "description": "Autonomous Graph Memory for OpenClaw agents via Anda Hippocampus, with automatic memory formation and natural-language recall.",
   "type": "module",
   "main": "src/index.ts",
   "openclaw": {
@@ -30,7 +30,7 @@
   "license": "Apache-2.0",
   "dependencies": {},
   "peerDependencies": {
-    "openclaw": ">=2026.3.7-beta.1"
+    "openclaw": ">=2026.3.8"
   },
   "devDependencies": {
     "@types/eslint": "^9.6.1",

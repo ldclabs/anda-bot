@@ -20,7 +20,7 @@ This plugin does not try to replace OpenClaw's full prompt lifecycle. It focuses
 
 ## Prerequisites
 
-- OpenClaw `>=2026.3.7-beta.1`
+- OpenClaw `>=2026.3.8`
 - An Anda Hippocampus space ID and space token
 - Optional: a self-hosted or local Anda Hippocampus deployment if you do not want to use the hosted service
 

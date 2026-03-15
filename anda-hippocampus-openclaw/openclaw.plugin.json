@@ -1,14 +1,9 @@
 {
   "id": "anda-hippocampus",
   "name": "Anda Hippocampus",
-  "description": "Persistent long-term memory for OpenClaw agents via Anda Hippocampus, with automatic memory formation and natural-language recall.",
-  "kind": "memory",
+  "description": "Autonomous Graph Memory for OpenClaw agents via Anda Hippocampus, with automatic memory formation and natural-language recall.",
   "configSchema": {
     "type": "object",
-    "required": [
-      "spaceId",
-      "spaceToken"
-    ],
     "properties": {
       "spaceId": {
         "type": "string",

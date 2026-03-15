@@ -65,11 +65,18 @@ const andaHippocampusPlugin = {
   id: 'anda-hippocampus',
   name: 'Anda Hippocampus',
   description:
-    'Persistent long-term memory via Anda Hippocampus. Encodes conversations and provides recall_memory tool.',
+    'Autonomous graph memory for OpenClaw agents. Encodes conversations to a knowledge graph and provides recall_memory tool to retrieve memory in natural language. https://brain.anda.ai/',
   version: packageJson.version,
 
   register(api: OpenClawPluginApi) {
     const config = (api.pluginConfig ?? {}) as any as HippocampusPluginConfig
+    if (config.spaceId == null || config.spaceToken == null) {
+      api.logger.error(
+        '[anda-hippocampus] Invalid configuration: spaceId and spaceToken are required. You can obtain them at https://anda.ai/brain'
+      )
+      return
+    }
+
     const client = new HippocampusClient(config)
     const defaultContext = config.defaultContext
     // ── recall_memory tool ──────────────────────────────────────────
