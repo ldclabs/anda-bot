@@ -118,9 +118,18 @@ An AI agent using Anda Hippocampus doesn't need to understand any of the underly
 
 ## Quick Start
 
+Anda Hippocampus is [open-source](https://github.com/ldclabs/anda-hippocampus) — you can self-host it or use our cloud SaaS service.
+
+- **Cloud SaaS API endpoint:** [https://brain.anda.ai](https://brain.anda.ai/)
+- **Cloud SaaS Console (manage spaces & API keys):** [https://anda.ai/brain](https://anda.ai/brain)
+
 For detailed technical documentation, API specs, and integration guides, see [anda_hippocampus/README.md](https://github.com/ldclabs/anda-hippocampus/tree/main/anda_hippocampus).
 
-If you are using OpenClaw, you can have it read the hosted skill document at [https://brain.anda.ai/SKILL.md](https://brain.anda.ai/SKILL.md) to install and configure the Anda Hippocampus plugin directly.
+If you are using OpenClaw, follow these steps to get started quickly:
+
+1. Go to the [Anda Hippocampus Console](https://anda.ai/brain), sign in and create a **brain space** (`spaceId`).
+2. In the space settings, create an **API Key** (`spaceToken`).
+3. Have OpenClaw read the hosted skill document at [https://brain.anda.ai/SKILL.md](https://brain.anda.ai/SKILL.md) to install and configure the Anda Hippocampus plugin directly.
 
 ### Running
 

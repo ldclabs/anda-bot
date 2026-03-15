@@ -58,7 +58,7 @@ openclaw plugins install anda-hippocampus
         "enabled": true,
         "config": {
           "spaceId": "my_space_001",
-          "spaceToken": "ST_xxxxx",
+          "spaceToken": "STxxxxx",
           "baseUrl": "https://brain.anda.ai" // or "http://localhost:8042" for self-hosted/local
         }
       }
