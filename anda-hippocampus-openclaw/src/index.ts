@@ -1,48 +1,7 @@
-import { Type, type Static } from '@sinclair/typebox'
 import type { OpenClawPluginApi, AnyAgentTool } from 'openclaw/plugin-sdk'
 import packageJson from '../package.json'
 import { HippocampusClient } from './client.ts'
 import type { HippocampusPluginConfig, InputContext, Message } from './types.ts'
-
-export type { HippocampusPluginConfig, InputContext }
-export { HippocampusClient }
-
-// ---------------------------------------------------------------------------
-// recall_memory tool — TypeBox schema
-// ---------------------------------------------------------------------------
-
-const RecallContextSchema = Type.Optional(
-  Type.Object({
-    user: Type.Optional(
-      Type.String({
-        description:
-          'The identifier of the user currently being interacted with, if applicable.'
-      })
-    ),
-    agent: Type.Optional(
-      Type.String({
-        description:
-          'The identifier of the calling business agent, if applicable.'
-      })
-    ),
-    topic: Type.Optional(
-      Type.String({
-        description:
-          'The topic of the current conversation, to help disambiguate the query.'
-      })
-    )
-  })
-)
-
-const RecallParamsSchema = Type.Object({
-  query: Type.String({
-    description:
-      "A natural language question or description of what information to retrieve from memory. Be specific and include relevant context. Examples: 'What are Alice's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?', 'What decisions were made about the pricing strategy?'"
-  }),
-  context: RecallContextSchema
-})
-
-type RecallParams = Static<typeof RecallParamsSchema>
 
 // ---------------------------------------------------------------------------
 // Message conversion: AgentMessage → Hippocampus Message
@@ -119,9 +78,44 @@ const andaHippocampusPlugin = {
       label: 'Recall Memory',
       description:
         "Recall information from your long-term memory (Cognitive Nexus). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, and any other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the user's question.",
-      parameters: RecallParamsSchema,
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description':
+              "A natural language question or description of what information to retrieve from memory. Be specific and include relevant context. Examples: 'What are Alice's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?', 'What decisions were made about the pricing strategy?'"
+          },
+          'context': {
+            'type': 'object',
+            'description':
+              'Optional current conversational context to help narrow the search. Provide any relevant identifiers or topic hints that could improve retrieval accuracy.',
+            'properties': {
+              'user': {
+                'type': 'string',
+                'description':
+                  'The identifier of the user currently being interacted with, if applicable.'
+              },
+              'agent': {
+                'type': 'string',
+                'description':
+                  'The identifier of the calling business agent, if applicable.'
+              },
+              'topic': {
+                'type': 'string',
+                'description':
+                  'The topic of the current conversation, to help disambiguate the query.'
+              }
+            }
+          }
+        },
+        'required': ['query']
+      },
 
-      async execute(_toolCallId: string, params: RecallParams) {
+      async execute(
+        _toolCallId: string,
+        params: { query?: string; context?: Partial<InputContext> }
+      ) {
         const query = params.query?.trim()
         if (!query) {
           return {
@@ -154,6 +148,10 @@ const andaHippocampusPlugin = {
             ],
             details: { error: true }
           }
+        } else {
+          api.logger.debug?.(
+            `[anda-hippocampus] Recall successful: ${JSON.stringify(res.result)}.`
+          )
         }
 
         return {
@@ -180,18 +178,25 @@ const andaHippocampusPlugin = {
       api.logger.info(
         `[anda-hippocampus] agent_end: extracted ${messages.length} (${originalMessages.length}) messages for formation.`
       )
-      if (messages.length === 0) return
 
+      if (messages.length === 0) return
       const context: InputContext = {
         ...defaultContext,
         agent: ctx.agentId || defaultContext?.agent,
         session: ctx.sessionKey || ctx.sessionId || defaultContext?.session
       }
-      client.formation(messages, context).catch((err) => {
-        api.logger.error(
-          `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
-        )
-      })
+      client
+        .formation(messages, context)
+        .then((res) => {
+          api.logger.info(
+            `[anda-hippocampus] Formation completed: ${JSON.stringify(res.result)}.`
+          )
+        })
+        .catch((err) => {
+          api.logger.error(
+            `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
+          )
+        })
     })
   }
 }
