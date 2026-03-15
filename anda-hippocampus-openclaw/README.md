@@ -44,16 +44,15 @@ Please add plugin "anda-hippocampus" from https://brain.anda.ai/SKILL.md to your
 
 ### 2. Install the plugin via CLI
 
+1. Install the plugin package:
 ```bash
 openclaw plugins install anda-hippocampus
 ```
 
-Enable it in `openclaw.json`, add `anda-hippocampus` to the allowlist, then provide its configuration:
-
+2. Update anda-hippocampus configuration in `openclaw.json`:
 ```json
 {
   "plugins": {
-    "allow": [..., "anda-hippocampus"],
     "entries": {
       "anda-hippocampus": {
         "enabled": true,
@@ -66,6 +65,11 @@ Enable it in `openclaw.json`, add `anda-hippocampus` to the allowlist, then prov
     }
   }
 }
+```
+
+3. Restart OpenClaw Gateway.
+```sh
+openclaw gateway restart
 ```
 
 Required fields:

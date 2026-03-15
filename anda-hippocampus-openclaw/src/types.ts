@@ -35,7 +35,7 @@ export interface Message {
   content: string | MessageContentPart[]
   name?: string | undefined
   user?: string | undefined
-  timestamp?: string | undefined
+  timestamp?: number | undefined
 }
 
 export interface FormationInput {

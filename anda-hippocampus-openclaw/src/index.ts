@@ -35,25 +35,19 @@ function convertAgentMessages(agentMessages: unknown[]): Message[] {
           role: 'user',
           content: text,
           timestamp:
-            typeof m['timestamp'] === 'number'
-              ? new Date(m['timestamp']).toISOString()
-              : undefined
+            typeof m['timestamp'] === 'number' ? m['timestamp'] : undefined
         })
       }
     } else if (role === 'assistant') {
       const parts = m['content']
-      if (Array.isArray(parts)) {
-        const text = extractTextContent(parts)
-        if (text) {
-          result.push({
-            role: 'assistant',
-            content: text,
-            timestamp:
-              typeof m['timestamp'] === 'number'
-                ? new Date(m['timestamp']).toISOString()
-                : undefined
-          })
-        }
+      const text = extractTextContent(parts)
+      if (text) {
+        result.push({
+          role: 'assistant',
+          content: text,
+          timestamp:
+            typeof m['timestamp'] === 'number' ? m['timestamp'] : undefined
+        })
       }
     }
     // Skip toolResult and custom messages — not useful for formation
@@ -183,28 +177,32 @@ const andaHippocampusPlugin = {
       const originalMessages = (event.messages as unknown[]) ?? []
       const messages = convertAgentMessages(originalMessages)
       api.logger.info(
-        `[anda-hippocampus] agent_end: extracted ${messages.length} (${originalMessages.length}) messages for formation.`
+        `[anda-hippocampus] agent_end: extracted ${messages.length} messages for formation.`
       )
 
       if (messages.length === 0) return
       const context: InputContext = {
         ...defaultContext,
         agent: ctx.agentId || defaultContext?.agent,
-        session: ctx.sessionKey || ctx.sessionId || defaultContext?.session
+        session: ctx.sessionKey || defaultContext?.session
       }
       client
         .formation(messages, context)
         .then((res) => {
           api.logger.info(
-            `[anda-hippocampus] Formation completed: ${JSON.stringify(res.result)}.`
+            `[anda-hippocampus] Formation completed: ${JSON.stringify(res)}.`
           )
         })
         .catch((err) => {
           api.logger.error(
-            `[anda-hippocampus] Formation failed: ${err instanceof Error ? err.message : String(err)}`
+            `[anda-hippocampus] Formation failed: ${JSON.stringify(err)}`
           )
         })
     })
+
+    api.logger.info(
+      '[anda-hippocampus] Plugin registered successfully. Ready to encode memories and handle recall_memory tool calls.'
+    )
   }
 }
 

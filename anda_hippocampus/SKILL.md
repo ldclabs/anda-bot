@@ -33,7 +33,7 @@ metadata:
 
 # 🧠 Anda Hippocampus
 
-Persistent long-term memory service for LLM agents, powered by a Knowledge Graph (Cognitive Nexus) and KIP (Knowledge Interaction Protocol).
+Persistent long-term memory service for LLM agents, powered by a Knowledge Graph (Cognitive Nexus) and KIP (Knowledge Interaction Protocol). Anda Hippocampus is [open-source software](https://github.com/ldclabs/anda-hippocampus) — you can self-host it or use the cloud SaaS at `https://brain.anda.ai`.
 
 Business agents interact entirely through **natural language** and a simple REST API — no KIP knowledge required.
 
@@ -479,27 +479,34 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/maintenance \
 
 The [`anda-hippocampus`](https://github.com/ldclabs/anda-hippocampus/tree/main/anda-hippocampus-openclaw) plugin integrates Anda Hippocampus into [OpenClaw](https://openclaw.ai/) agents, providing automatic memory encoding and a `recall_memory` tool — no manual API calls needed.
 
+### Prerequisites: Create a Brain Space (for cloud SaaS users)
+
+Before installing the plugin, you need a `spaceId` and `spaceToken`:
+
+1. Go to the **Anda Hippocampus Console**: [https://anda.ai/brain](https://anda.ai/brain)
+2. Sign in and **create a new brain space** — you will get your `spaceId`.
+3. In the space settings, **create an API Key** — this is your `spaceToken`.
+
+> If you are self-hosting Anda Hippocampus, create spaces via the admin API instead (see [Integration Pattern](#integration-pattern) above).
+
 ### Install
 
+1. Install the plugin package:
 ```bash
 openclaw plugins install anda-hippocampus
 ```
 
-### Setup
-
-Add the plugin to your `openclaw.json` allowlist and provide its config:
-
+2. Update anda-hippocampus configuration in `openclaw.json` with the `spaceId` and `spaceToken` obtained from the console:
 ```json
 {
   "plugins": {
-    "allow": [..., "anda-hippocampus"],
     "entries": {
       "anda-hippocampus": {
         "enabled": true,
         "config": {
           "spaceId": "my_space_001",
-          "spaceToken": "ST_xxxxx",
-          "baseUrl": "https://brain.anda.ai"
+          "spaceToken": "STxxxxx",
+          "baseUrl": "https://brain.anda.ai" // or "http://localhost:8042" for self-hosted/local
         }
       }
     }
@@ -507,7 +514,16 @@ Add the plugin to your `openclaw.json` allowlist and provide its config:
 }
 ```
 
-Set `baseUrl` to your own deployment if memory traffic must stay on-prem or on localhost. Optional fields such as `defaultContext`, `formationTimeoutMs`, and `recallTimeoutMs` can be added under `config` when needed.
+3. Restart OpenClaw Gateway.
+```sh
+openclaw gateway restart
+```
+
+Required fields:
+
+- `spaceId`: your Hippocampus space ID (created at [anda.ai/brain](https://anda.ai/brain))
+- `spaceToken`: your space API Key (created at [anda.ai/brain](https://anda.ai/brain))
+- `baseUrl`: optional, defaults to `https://brain.anda.ai`; set this to your own deployment for self-hosted or local use
 
 ### What It Does
 

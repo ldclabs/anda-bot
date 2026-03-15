@@ -50,7 +50,7 @@ export interface Message {
   content: string | MessageContentPart[];
   name?: string;  // user 或 tool 的名称
   user?: string;  // user ID
-  timestamp?: string; // ISO 8601
+  timestamp?: number; // Unix timestamp in milliseconds
 }
 
 export interface FormationInput {
