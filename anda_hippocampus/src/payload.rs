@@ -230,8 +230,12 @@ impl RpcError {
         }
     }
 
-    pub fn to_response(&self, code: StatusCode) -> Response {
-        (code, Json(self)).into_response()
+    pub fn into_response(self, code: Option<StatusCode>) -> Response {
+        (
+            code.unwrap_or(StatusCode::OK),
+            Json(RpcResponse::<()>::error(self)),
+        )
+            .into_response()
     }
 }
 
@@ -254,8 +258,8 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for HeaderVals {
             .to_string();
         let shard_id = parts
             .headers
-            .get("X-Shard")
-            .or_else(|| parts.headers.get("X-Sharding"))
+            .get("Shard-Id")
+            .or_else(|| parts.headers.get("X-Shard"))
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(0);
@@ -289,7 +293,7 @@ impl AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        RpcError::new(self.message).to_response(self.status)
+        RpcError::new(self.message).into_response(Some(self.status))
     }
 }
 
@@ -529,7 +533,7 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/cbor")
             .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
             .header(header::AUTHORIZATION, "another-token")
-            .header("X-Sharding", "42")
+            .header("shard-id", "42")
             .body(())
             .unwrap();
 
@@ -554,7 +558,7 @@ mod tests {
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            v.get("message").and_then(|v| v.as_str()),
+            v.pointer("/error/message").and_then(|v| v.as_str()),
             Some("authentication failed")
         );
     }

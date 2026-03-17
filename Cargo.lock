@@ -101,9 +101,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3782c1aef0bc5e97337993d2e991f2576509e0ecfcf474ef3fa9ba54094c2067"
+checksum = "aace07e8f04469824cde529840b31efb30175b05822b27ec61c56bdadf5150db"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -351,9 +351,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa14143b3cab52eda1f0a21e49a50beaa1f21b638fa84a32030a0a6a020c20dd"
+checksum = "01b25f5c143f4125d3412630237738025b825b97422de5ec3b61ed2ceb4aa3de"
 dependencies = [
  "async-trait",
  "chrono",
@@ -810,9 +810,9 @@ dependencies = [
 
 [[package]]
 name = "candid"
-version = "0.10.24"
+version = "0.10.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "601b519700ec333a2a2c7eb3e8e1eca89177055e3e1fb24ca42cbbb025986696"
+checksum = "259bc749d63e6177a22f2cd3aa48e03b3426a12dfa9573021f5895ab1de93fd3"
 dependencies = [
  "anyhow",
  "binread",
@@ -833,9 +833,9 @@ dependencies = [
 
 [[package]]
 name = "candid_derive"
-version = "0.10.24"
+version = "0.10.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f195a40cd3d199191fc8b534165fadd78c08a1f9666222addaf9f58593002a73"
+checksum = "ba137ee83e51735380f2d051f4c09d573f5de93b45746822faea58b25a8f6d00"
 dependencies = [
  "lazy_static",
  "proc-macro2",
@@ -2574,9 +2574,9 @@ dependencies = [
 
 [[package]]
 name = "icrc-ledger-types"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aafb78e620b2cc2b000cd745c0504dfb23a828acc3dd6f1baef208cd6c471e32"
+checksum = "263acc94fa47008ad00f76b8d3694efe7f8361870c9ec92cddcc588b571518b7"
 dependencies = [
  "base32",
  "candid",
@@ -2584,7 +2584,6 @@ dependencies = [
  "hex",
  "ic-stable-structures 0.6.9",
  "icrc-cbor",
- "itertools 0.12.1",
  "minicbor",
  "num-bigint",
  "num-traits",
@@ -2798,15 +2797,6 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itertools"
@@ -3264,7 +3254,7 @@ dependencies = [
  "http-body-util",
  "humantime",
  "hyper",
- "itertools 0.14.0",
+ "itertools",
  "md-5",
  "parking_lot",
  "percent-encoding",
@@ -4738,7 +4728,7 @@ dependencies = [
  "fs4",
  "htmlescape",
  "hyperloglogplus",
- "itertools 0.14.0",
+ "itertools",
  "levenshtein_automata",
  "log",
  "lru",
@@ -4786,7 +4776,7 @@ checksum = "8b628488ae936c83e92b5c4056833054ca56f76c0e616aee8339e24ac89119cd"
 dependencies = [
  "downcast-rs",
  "fastdivide",
- "itertools 0.14.0",
+ "itertools",
  "serde",
  "tantivy-bitpacker",
  "tantivy-common",
@@ -4847,7 +4837,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8292095d1a8a2c2b36380ec455f910ab52dde516af36321af332c93f20ab7d5"
 dependencies = [
  "futures-util",
- "itertools 0.14.0",
+ "itertools",
  "tantivy-bitpacker",
  "tantivy-common",
  "tantivy-fst",
