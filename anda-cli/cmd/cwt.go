@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ldclabs/cose/cose"
@@ -31,6 +32,8 @@ Example:
 		scope, _ := cmd.Flags().GetString("scope")
 		issuer, _ := cmd.Flags().GetString("issuer")
 		expSec, _ := cmd.Flags().GetInt64("expiration")
+
+		warnIfLikelyGlobExpanded(cmd, audience, scope)
 
 		if keyB64 == "" {
 			exitError(fmt.Errorf("--key is required"))
@@ -105,6 +108,37 @@ Example:
 			fmt.Printf("Expires At: %s\n", now.Add(time.Duration(expSec)*time.Second).UTC().Format(time.RFC3339))
 		}
 	},
+}
+
+func warnIfLikelyGlobExpanded(cmd *cobra.Command, audience, scope string) {
+	matches, err := filepath.Glob("*")
+	if err != nil || len(matches) == 0 {
+		return
+	}
+	isExpandedValue := func(value string) bool {
+		for _, m := range matches {
+			if value == m {
+				return true
+			}
+		}
+		return false
+	}
+
+	if cmd.Flags().Changed("audience") && audience != "" && audience != "*" && isExpandedValue(audience) {
+		fmt.Fprintf(
+			os.Stderr,
+			"Warning: --audience=%q looks like shell glob expansion. If you meant wildcard, use quoted '*' (for example: --audience '*').\n",
+			audience,
+		)
+	}
+
+	if cmd.Flags().Changed("scope") && scope != "" && scope != "*" && isExpandedValue(scope) {
+		fmt.Fprintf(
+			os.Stderr,
+			"Warning: --scope=%q looks like shell glob expansion. If you meant wildcard, use quoted '*' (for example: --scope '*').\n",
+			scope,
+		)
+	}
 }
 
 func init() {

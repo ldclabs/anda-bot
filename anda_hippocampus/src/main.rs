@@ -7,8 +7,8 @@ use anda_engine::{
 use anda_object_store::MetaStoreBuilder;
 use axum::{Router, routing};
 use clap::{Parser, Subcommand};
-use ic_auth_types::ByteArrayB64;
-use ic_cose_types::cose::ed25519::VerifyingKey;
+use ic_auth_types::ByteBufB64;
+use ic_cose_types::cose::{CborSerializable, CoseKey, ed25519::VerifyingKey, get_cose_key_public};
 use object_store::{
     ObjectStore,
     aws::{AmazonS3Builder, S3CopyIfNotExists},
@@ -207,15 +207,10 @@ async fn main() -> Result<(), BoxError> {
         lock: None,
     };
 
-    let ed25519_pubkeys = cli
-        .ed25519_pubkeys
-        .split(',')
-        .filter_map(|s| {
-            ByteArrayB64::from_str(s)
-                .ok()
-                .and_then(|d| VerifyingKey::from_bytes(&d).ok())
-        })
-        .collect();
+    let ed25519_pubkeys = parse_ed25519_pubkeys(&cli.ed25519_pubkeys);
+    if ed25519_pubkeys.len() != cli.ed25519_pubkeys.split(',').count() {
+        return Err("some ED25519_PUBKEYS entries are invalid".into());
+    }
 
     let app_state = AppState::new(
         object_store,
@@ -352,6 +347,41 @@ async fn shutdown_signal(cancel_token: CancellationToken) {
 
     log::warn!("received termination signal, starting graceful shutdown");
     cancel_token.cancel();
+}
+
+fn parse_ed25519_pubkeys(input: &str) -> Vec<VerifyingKey> {
+    input
+        .split(',')
+        .filter_map(|item| {
+            let item = item.trim();
+            if item.is_empty() {
+                return None;
+            }
+
+            match parse_ed25519_pubkey(item) {
+                Some(key) => Some(key),
+                None => {
+                    log::warn!("ignore invalid ED25519_PUBKEYS entry");
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn parse_ed25519_pubkey(input: &str) -> Option<VerifyingKey> {
+    let data = ByteBufB64::from_str(input).ok()?;
+
+    if data.len() == 32 {
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&data);
+        return VerifyingKey::from_bytes(&bytes).ok();
+    }
+
+    let cose_key = CoseKey::from_slice(data.as_slice()).ok()?;
+    let public_key = get_cose_key_public(cose_key).ok()?;
+    let bytes: [u8; 32] = public_key.try_into().ok()?;
+    VerifyingKey::from_bytes(&bytes).ok()
 }
 
 async fn create_reuse_port_listener(addr: SocketAddr) -> Result<tokio::net::TcpListener, BoxError> {

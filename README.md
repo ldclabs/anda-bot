@@ -197,6 +197,28 @@ For detailed technical documentation, API specs, and integration guides, see [an
 2. Generate an **API Key** (`spaceToken`).
 3. Call the Formation / Recall / Maintenance APIs, or have your agent framework read [SKILL.md](https://brain.anda.ai/SKILL.md) for one-click integration.
 
+### CLI (anda-cli)
+
+For complete CLI usage, see [anda-cli/README.md](./anda-cli/README.md).
+
+```bash
+# Submit memory formation (JSON messages)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --messages '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi!"}]'
+
+# Submit memory formation (plain text)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --messages 'Hello, this is a plain text memory.'
+
+# Submit memory formation from file (JSON or plain text)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --file ./message.txt
+
+# Pipe plain text from stdin
+echo 'Hello from stdin plain text' | \
+  anda-cli --space-id my_space --token $TOKEN formation
+```
+
 ### Running
 
 ```bash

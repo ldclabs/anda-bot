@@ -2560,9 +2560,9 @@ dependencies = [
 
 [[package]]
 name = "ic_cose_types"
-version = "0.9.5"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2878b54250b244dde9a2b1381386f312d8ae7988e2e0c3e754f25dbd5e26176"
+checksum = "085a57bbc6e54d286cacbd7c7f0682bbcd7468140ecc7be9b0e52399f0e6a2eb"
 dependencies = [
  "aes-gcm",
  "candid",

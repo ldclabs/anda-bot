@@ -32,7 +32,7 @@ Configuration can be provided via flags or environment variables:
 | `--key`      | `ANDA_CWT_KEY`      | Ed25519 private key (base64url CBOR) |         |
 | `--subject`  | `ANDA_CWT_SUBJECT`  | Subject claim - user/principal ID    |         |
 | `--audience` | `ANDA_CWT_AUDIENCE` | Audience claim - space ID or `*`     |         |
-| `--scope`    | `ANDA_CWT_SCOPE`    | Scope claim: read, write, *          | `read`  |
+| `--scope`    | `ANDA_CWT_SCOPE`    | Scope claim: read, write or `*`      | `read`  |
 | `--issuer`   | `ANDA_CWT_ISSUER`   | Issuer claim                         |         |
 
 ## Commands
@@ -65,9 +65,49 @@ anda-cli info
 anda-cli --space-id my_space --token $TOKEN formation \
   --messages '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi!"}]'
 
+# Submit memory formation with plain text (--messages)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --messages 'Hello, this is a plain text memory.'
+
+# Submit memory formation from file (JSON or plain text)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --file ./message.txt
+
 # Or pipe from stdin
 echo '[{"role":"user","content":"Hello"}]' | \
   anda-cli --space-id my_space --token $TOKEN formation
+
+# Or pipe plain text from stdin
+echo 'Hello from stdin plain text' | \
+  anda-cli --space-id my_space --token $TOKEN formation
+
+# Batch submit files by exact filename (recursive)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --batch-dir ./docs \
+  --batch-file-name Skill.md
+
+# Batch submit files by extension (recursive)
+anda-cli --space-id my_space --token $TOKEN formation \
+  --batch-dir ./docs \
+  --batch-ext .md
+
+# Resume from checklist and retry only previously failed files
+anda-cli --space-id my_space --token $TOKEN formation \
+  --batch-dir ./docs \
+  --batch-ext .md \
+  --batch-retry-failed
+
+# Use a custom checklist path
+anda-cli --space-id my_space --token $TOKEN formation \
+  --batch-dir ./docs \
+  --batch-file-name Skill.md \
+  --batch-report ./tmp/formation-batch-checklist.json
+
+# Dry run: only scan and print matched files, no formation submission
+anda-cli --space-id my_space --token $TOKEN formation \
+  --batch-dir ./docs \
+  --batch-ext .md \
+  --batch-dry-run
 
 # Recall memory
 anda-cli --space-id my_space --token $TOKEN recall "What are the user's preferences?"
