@@ -63,10 +63,11 @@ jobs:
 
       - name: Build Go binary
         working-directory: anda-cli
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
         run: |
-          export GOOS=${{ matrix.goos }}
-          export GOARCH=${{ matrix.goarch }}
-          export CGO_ENABLED=0
           go build -trimpath -ldflags "-s -w" -o anda-cli${{ matrix.exe_ext }} .
 
       - name: Collect artifacts
@@ -87,11 +88,28 @@ jobs:
             echo "$hash  $(basename "$file")" > "${file}.sha256"
           done
           bundle="release/anda-bundle-${{ matrix.target }}.zip"
-          bsdtar -a -cf "$bundle" -C release \
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}" \
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}.sha256" \
-            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}" \
+          bundle_name="$(basename "$bundle")"
+          files=(
+            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
+            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
+            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
             "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
+          )
+
+          if command -v bsdtar >/dev/null 2>&1; then
+            bsdtar -a -cf "$bundle" -C release "${files[@]}"
+          elif command -v zip >/dev/null 2>&1; then
+            (
+              cd release
+              zip -q "$bundle_name" "${files[@]}"
+            )
+          else
+            PYTHON_BIN="python3"
+            if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+              PYTHON_BIN="python"
+            fi
+            "$PYTHON_BIN" -c 'import sys,zipfile; out=sys.argv[1]; items=sys.argv[2:]; z=zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED); [z.write(p, p.split("/")[-1]) for p in items]; z.close()' "$bundle" "release/${files[0]}" "release/${files[1]}" "release/${files[2]}" "release/${files[3]}"
+          fi
 
           if command -v sha256sum >/dev/null 2>&1; then
             bundle_hash="$(sha256sum "$bundle" | awk '{print $1}')"
