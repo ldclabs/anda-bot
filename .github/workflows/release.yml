@@ -1,30 +1,151 @@
 name: Release
 on:
   workflow_dispatch:
-  # push:
-  #   tags:
-  #     - 'v*'
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
 jobs:
   build-binary:
-    runs-on: ubuntu-latest
-    container: clux/muslrust:stable
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            goos: linux
+            goarch: amd64
+            exe_ext: ""
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+            goos: linux
+            goarch: arm64
+            exe_ext: ""
+          - os: windows-2022
+            target: windows-x86_64
+            rust_target: x86_64-pc-windows-msvc
+            goos: windows
+            goarch: amd64
+            exe_ext: ".exe"
+          - os: macos-13
+            target: macos-x86_64
+            rust_target: x86_64-apple-darwin
+            goos: darwin
+            goarch: amd64
+            exe_ext: ""
+          - os: macos-14
+            target: macos-arm64
+            rust_target: aarch64-apple-darwin
+            goos: darwin
+            goarch: arm64
+            exe_ext: ""
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.rust_target }}
+
       - uses: Swatinem/rust-cache@v2
-      - name: Build linux binary
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: anda-cli/go.mod
+
+      - name: Build Rust binary
         run: |
-          mkdir -p out
-          rustup update --no-self-update stable-x86_64-unknown-linux-musl
-          export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-s"
-          for PACK in anda_hippocampus
-          do
-            cargo build --release --locked -p $PACK --target x86_64-unknown-linux-musl
-            cp "target/x86_64-unknown-linux-musl/release/$PACK" "out/"
-            SHA256="$(sha256sum < "out/$PACK" | sed 's/ .*$//g')"
-            echo $SHA256 > "out/$PACK.$SHA256.txt"
+          cargo build --release --locked -p anda_hippocampus --target ${{ matrix.rust_target }}
+
+      - name: Build Go binary
+        working-directory: anda-cli
+        run: |
+          export GOOS=${{ matrix.goos }}
+          export GOARCH=${{ matrix.goarch }}
+          export CGO_ENABLED=0
+          go build -trimpath -ldflags "-s -w" -o anda-cli${{ matrix.exe_ext }} .
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p release
+          cp "target/${{ matrix.rust_target }}/release/anda_hippocampus${{ matrix.exe_ext }}" "release/anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
+          cp "anda-cli/anda-cli${{ matrix.exe_ext }}" "release/anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
+
+          for file in release/*; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              hash="$(sha256sum "$file" | awk '{print $1}')"
+            elif command -v shasum >/dev/null 2>&1; then
+              hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+            else
+              hash="$(openssl dgst -sha256 "$file" | awk '{print $NF}')"
+            fi
+            echo "$hash  $(basename "$file")" > "${file}.sha256"
           done
-          ls -lah out
-      - name: Release
+
+          PYTHON_BIN="python3"
+          if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+            PYTHON_BIN="python"
+          fi
+
+          bundle="release/anda-bundle-${{ matrix.target }}.zip"
+          "$PYTHON_BIN" - "$bundle" <<'PY'
+            import os
+            import sys
+            import zipfile
+
+            bundle = sys.argv[1]
+            release_dir = os.path.dirname(bundle)
+            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for name in sorted(os.listdir(release_dir)):
+                if name.endswith(".zip"):
+                  continue
+                path = os.path.join(release_dir, name)
+                if os.path.isfile(path):
+                  zf.write(path, arcname=name)
+            PY
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            bundle_hash="$(sha256sum "$bundle" | awk '{print $1}')"
+          elif command -v shasum >/dev/null 2>&1; then
+            bundle_hash="$(shasum -a 256 "$bundle" | awk '{print $1}')"
+          else
+            bundle_hash="$(openssl dgst -sha256 "$bundle" | awk '{print $NF}')"
+          fi
+          echo "$bundle_hash  $(basename "$bundle")" > "${bundle}.sha256"
+
+          ls -lah release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    needs: build-binary
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*
+          files: release/*
