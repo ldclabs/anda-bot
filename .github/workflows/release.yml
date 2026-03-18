@@ -86,28 +86,12 @@ jobs:
             fi
             echo "$hash  $(basename "$file")" > "${file}.sha256"
           done
-
-          PYTHON_BIN="python3"
-          if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-            PYTHON_BIN="python"
-          fi
-
           bundle="release/anda-bundle-${{ matrix.target }}.zip"
-          "$PYTHON_BIN" - "$bundle" <<'PY'
-            import os
-            import sys
-            import zipfile
-
-            bundle = sys.argv[1]
-            release_dir = os.path.dirname(bundle)
-            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-              for name in sorted(os.listdir(release_dir)):
-                if name.endswith(".zip"):
-                  continue
-                path = os.path.join(release_dir, name)
-                if os.path.isfile(path):
-                  zf.write(path, arcname=name)
-            PY
+          bsdtar -a -cf "$bundle" -C release \
+            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}" \
+            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}.sha256" \
+            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}" \
+            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
 
           if command -v sha256sum >/dev/null 2>&1; then
             bundle_hash="$(sha256sum "$bundle" | awk '{print $1}')"

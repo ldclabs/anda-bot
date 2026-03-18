@@ -390,7 +390,9 @@ async fn create_reuse_port_listener(addr: SocketAddr) -> Result<tokio::net::TcpL
         SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
     };
 
-    socket.set_reuseport(true)?;
+    #[cfg(unix)]
+    let _ = socket.set_reuseport(true);
+
     socket.bind(addr)?;
     let listener = socket.listen(1024)?;
     Ok(listener)
