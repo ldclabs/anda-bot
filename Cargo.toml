@@ -46,7 +46,7 @@ serde_json = { version = "1" }
 ic_cose_types = "0.9"
 ic_cose = "0.9"
 ic-oss-types = "1.2"
-ic_auth_types = "0.7"
+ic_auth_types = "0.8"
 object_store = { version = "0.13" }
 tokio-util = "0.7"
 tokio = { version = "1", features = ["full"] }
