@@ -36,6 +36,7 @@ anda_core = { version = "0.9" }
 anda_engine = { version = "0.9" }
 anda_object_store = "0.3"
 anda_db = { version = "0.7", features = ["full"] }
+anda_db_tfs = { version = "0.5", features = ["full"] }
 anda_cognitive_nexus = "0.7"
 anda_kip = "0.7"
 ciborium = "0.2"

@@ -1,14 +1,17 @@
 use anda_cognitive_nexus::{CognitiveNexus, ConceptPK};
 use anda_core::{AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal, Usage};
 use anda_db::{
+    collection::CollectionConfig,
     database::{AndaDB, DBConfig},
+    error::DBError,
     query::Fv,
     storage::StorageStats,
 };
+use anda_db_tfs::jieba_tokenizer;
 use anda_engine::{
     engine::Engine,
     management::Management,
-    memory::{MemoryManagement, MemoryReadonly, MemoryTool, SearchConversationsTool},
+    memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool, SearchConversationsTool},
     model::Model,
     unix_ms,
 };
@@ -668,13 +671,39 @@ impl Space {
             .with_kip_function_definitions(FUNCTION_DEFINITION.clone());
         memory.disable_kip_logging();
 
+        let mut schema = Conversation::schema()?;
+        schema.with_version(1);
+
+        let recall_conversations = db
+            .open_or_create_collection(
+                schema,
+                CollectionConfig {
+                    name: "recall".to_string(),
+                    description: "Recall conversations collection".to_string(),
+                },
+                async |collection| {
+                    // set tokenizer
+                    collection.set_tokenizer(jieba_tokenizer());
+                    // create BTree indexes if not exists
+                    collection.create_btree_index_nx(&["user"]).await?;
+                    collection.create_btree_index_nx(&["thread"]).await?;
+                    collection.create_btree_index_nx(&["period"]).await?;
+                    collection
+                        .create_bm25_index_nx(&["messages", "resources", "artifacts"])
+                        .await?;
+
+                    Ok::<(), DBError>(())
+                },
+            )
+            .await?;
+
         let memory = Arc::new(memory);
         let memory_r = MemoryReadonly::new(memory.clone());
         let memory_tool = MemoryTool::new(memory.clone());
         let search_conversations_tool = SearchConversationsTool::new(memory.clone());
 
         let formation = FormationAgent::new(memory.clone(), 655350);
-        let recall = RecallAgent::new(65535);
+        let recall = RecallAgent::new(recall_conversations, 65535);
         let maintenance = MaintenanceAgent::new(memory.clone());
         // Build agent engine with all configured components
         let engine = Engine::builder()

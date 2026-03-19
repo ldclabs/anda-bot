@@ -1,14 +1,17 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest,
-    FunctionDefinition, Message, Resource,
+    FunctionDefinition, Message, Resource, StateFeatures, Usage,
 };
+use anda_db::collection::Collection;
 use anda_engine::{
     context::AgentCtx,
-    memory::{MemoryReadonly, SearchConversationsTool},
+    memory::{
+        Conversation, ConversationRef, ConversationStatus, MemoryReadonly, SearchConversationsTool,
+    },
     rfc3339_datetime, unix_ms,
 };
 use serde_json::json;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
@@ -51,14 +54,18 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
 
 #[derive(Clone)]
 pub struct RecallAgent {
+    conversations: Arc<Collection>,
     #[allow(dead_code)]
     max_input_tokens: usize,
 }
 
 impl RecallAgent {
     pub const NAME: &'static str = "recall_memory";
-    pub fn new(max_input_tokens: usize) -> Self {
-        Self { max_input_tokens }
+    pub fn new(conversations: Arc<Collection>, max_input_tokens: usize) -> Self {
+        Self {
+            conversations,
+            max_input_tokens,
+        }
     }
 }
 
@@ -92,7 +99,9 @@ impl Agent<AgentCtx> for RecallAgent {
         prompt: String, // RecallInput serialized as JSON string
         _resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
+        let caller = ctx.caller();
         let now_ms = unix_ms();
+
         let msg = Message {
             role: "user".into(),
             content: vec![
@@ -105,19 +114,90 @@ impl Agent<AgentCtx> for RecallAgent {
             ..Default::default()
         };
 
-        ctx.completion(
-            CompletionRequest {
-                instructions: SELF_INSTRUCTIONS.to_string(),
-                prompt,
-                chat_history: vec![msg],
-                tools: ctx
-                    .tool_definitions(Some(&[MemoryReadonly::NAME, SearchConversationsTool::NAME])),
-                tool_choice_required: true,
-                max_output_tokens: Some(20000),
+        let mut conversation = Conversation {
+            _id: 0,
+            user: *caller,
+            thread: None,
+            messages: vec![serde_json::json!(Message {
+                role: "user".into(),
+                content: vec![prompt.clone().into()],
+                timestamp: Some(now_ms),
                 ..Default::default()
-            },
-            vec![],
-        )
-        .await
+            })],
+            resources: vec![],
+            artifacts: vec![],
+            status: ConversationStatus::Working,
+            failed_reason: None,
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            usage: Usage::default(),
+            steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
+            follow_up_messages: None,
+            ancestors: None,
+        };
+
+        let id = self
+            .conversations
+            .add_from(&ConversationRef::from(&conversation))
+            .await?;
+        self.conversations.flush(now_ms).await?;
+        conversation._id = id;
+
+        match ctx
+            .completion(
+                CompletionRequest {
+                    instructions: SELF_INSTRUCTIONS.to_string(),
+                    prompt,
+                    chat_history: vec![msg],
+                    tools: ctx.tool_definitions(Some(&[
+                        MemoryReadonly::NAME,
+                        SearchConversationsTool::NAME,
+                    ])),
+                    tool_choice_required: true,
+                    max_output_tokens: Some(20000),
+                    ..Default::default()
+                },
+                vec![],
+            )
+            .await
+        {
+            Ok(mut output) => {
+                // Mark conversation as completed successfully
+                conversation.messages.clear();
+                conversation.append_messages(output.chat_history.clone());
+                conversation.status = if output.failed_reason.is_some() {
+                    ConversationStatus::Failed
+                } else {
+                    ConversationStatus::Completed
+                };
+                conversation.usage = output.usage.clone();
+                conversation.updated_at = now_ms;
+
+                if let Some(ref failed_reason) = output.failed_reason {
+                    conversation.failed_reason = Some(failed_reason.clone());
+                }
+
+                if let Ok(changes) = conversation.to_changes() {
+                    let _ = self.conversations.update(conversation._id, changes).await;
+                    self.conversations.flush(conversation.updated_at).await?;
+                }
+                output.conversation = Some(conversation._id);
+                Ok(output)
+            }
+            Err(err) => {
+                conversation.status = ConversationStatus::Failed;
+                conversation.failed_reason = Some(err.to_string());
+                conversation.updated_at = unix_ms();
+                if let Ok(changes) = conversation.to_changes() {
+                    let _ = self.conversations.update(conversation._id, changes).await;
+                }
+                if let Ok(changes) = conversation.to_changes() {
+                    let _ = self.conversations.update(conversation._id, changes).await;
+                    self.conversations.flush(conversation.updated_at).await?;
+                }
+                Err(err)
+            }
+        }
     }
 }

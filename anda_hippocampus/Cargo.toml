@@ -12,6 +12,7 @@ anda_db = { workspace = true }
 anda_kip = { workspace = true }
 anda_cognitive_nexus = { workspace = true }
 anda_object_store = { workspace = true }
+anda_db_tfs = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
 ciborium = { workspace = true }

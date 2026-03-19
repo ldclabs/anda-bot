@@ -327,6 +327,7 @@ dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
  "anda_db",
+ "anda_db_tfs",
  "anda_engine",
  "anda_kip",
  "anda_object_store",
