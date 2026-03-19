@@ -2,7 +2,7 @@ use anda_core::{BoxError, Principal};
 use anda_db::{database::DBConfig, storage::StorageConfig};
 use anda_engine::{
     management::{BaseManagement, Visibility},
-    model::{Model, Proxy, gemini, request_client_builder, reqwest},
+    model::{Model, Proxy, gemini, mimo, request_client_builder, reqwest},
 };
 use anda_object_store::MetaStoreBuilder;
 use axum::{Router, routing};
@@ -60,6 +60,12 @@ struct Cli {
 
     #[arg(long, env = "GEMINI_MODEL", default_value = "gemini-3-flash-preview")]
     gemini_model: String,
+
+    #[arg(long, env = "MIMO_API_KEY", default_value = "")]
+    mimo_api_key: String,
+
+    #[arg(long, env = "MIMO_MODEL", default_value = "mimo-v2-pro")]
+    mimo_model: String,
 
     #[arg(long, env = "HTTPS_PROXY")]
     https_proxy: Option<String>,
@@ -168,10 +174,11 @@ async fn main() -> Result<(), BoxError> {
             .completion_model(&cli.gemini_model),
     ));
 
-    let gemini_flash = Model::with_completer(Arc::new(
-        gemini::Client::new(&cli.gemini_api_key, Some(cli.gemini_api_base))
-            .with_client(http_client.clone())
-            .completion_model("gemini-3-flash-preview"),
+    // Mimo
+    let mimo_pro = Model::with_completer(Arc::new(
+        mimo::Client::new(&cli.mimo_api_key, None)
+            .with_client(http_client)
+            .completion_model(&cli.mimo_model),
     ));
 
     let mut db_type = "memory".to_string();
@@ -216,8 +223,12 @@ async fn main() -> Result<(), BoxError> {
         object_store,
         Arc::new(db_config),
         management.clone(),
+        if cli.mimo_api_key.is_empty() {
+            gemini_default.clone()
+        } else {
+            mimo_pro
+        },
         gemini_default,
-        gemini_flash,
         ed25519_pubkeys,
         APP_NAME.to_string(),
         APP_VERSION.to_string(),
