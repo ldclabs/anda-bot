@@ -50,9 +50,9 @@ impl SpaceTier {
         }
     }
 
-    // tier 0 allows 1k nodes, tier 1 allows 10k, etc.
+    // tier 0 (free) allows 100 nodes, tier 1 allows 1k, etc.
     pub fn allow_nodes(&self) -> u64 {
-        10u64.pow(self.tier + 3)
+        10u64.pow(self.tier + 2)
     }
 }
 

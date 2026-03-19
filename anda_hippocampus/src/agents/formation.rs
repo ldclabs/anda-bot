@@ -14,6 +14,7 @@ use std::sync::{
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
+const MAX_FORMATION_BYTES: usize = 100_000;
 
 /// Resets the AtomicU64 to 0 on drop (panic guard for processing_conversation).
 struct ProcessingGuard(Arc<AtomicU64>);
@@ -299,6 +300,15 @@ impl Agent<AgentCtx> for FormationAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
+
+        if prompt.len() > MAX_FORMATION_BYTES {
+            return Err(format!(
+                "Input too large: {} bytes, max allowed is {} bytes",
+                prompt.len(),
+                MAX_FORMATION_BYTES
+            )
+            .into());
+        }
 
         let mut conversation = Conversation {
             _id: 0,
