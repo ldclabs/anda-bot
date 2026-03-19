@@ -1,5 +1,5 @@
 use anda_cognitive_nexus::{CognitiveNexus, ConceptPK};
-use anda_core::{AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal};
+use anda_core::{AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal, Usage};
 use anda_db::{
     database::{AndaDB, DBConfig},
     query::Fv,
@@ -328,6 +328,9 @@ pub struct SpaceStatus {
     pub conversations: usize,
     pub public: bool,
     pub tier: SpaceTier,
+    pub formation_usage: Usage,
+    pub recall_usage: Usage,
+    pub maintenance_usage: Usage,
 }
 
 impl Space {
@@ -479,7 +482,19 @@ impl Space {
             status.tier = kv
                 .get("tier")
                 .and_then(|v| v.clone().deserialized::<SpaceTier>().ok())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            status.formation_usage = kv
+                .get("formation_usage")
+                .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                .unwrap_or_default();
+            status.recall_usage = kv
+                .get("recall_usage")
+                .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                .unwrap_or_default();
+            status.maintenance_usage = kv
+                .get("maintenance_usage")
+                .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                .unwrap_or_default();
         });
         status
     }
@@ -502,7 +517,8 @@ impl Space {
             .into());
         }
 
-        self.engine
+        let rt = self
+            .engine
             .agent_run(
                 user,
                 AgentInput {
@@ -512,7 +528,20 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await
+            .await;
+        if let Ok(o) = &rt {
+            // Update formation usage on success
+            let _ = self
+                .db
+                .set_extension_with("formation_usage".to_string(), |v| {
+                    let mut usage = v
+                        .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                        .unwrap_or_default();
+                    usage.accumulate(&o.usage);
+                    Fv::serialized(&usage, None).ok()
+                });
+        }
+        rt
     }
 
     pub async fn query(
@@ -520,7 +549,8 @@ impl Space {
         user: Principal,
         input: StringOr<RecallInput>,
     ) -> Result<AgentOutput, BoxError> {
-        self.engine
+        let rt = self
+            .engine
             .agent_run(
                 user,
                 AgentInput {
@@ -530,7 +560,18 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await
+            .await;
+        if let Ok(o) = &rt {
+            // Update recall usage on success
+            let _ = self.db.set_extension_with("recall_usage".to_string(), |v| {
+                let mut usage = v
+                    .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                    .unwrap_or_default();
+                usage.accumulate(&o.usage);
+                Fv::serialized(&usage, None).ok()
+            });
+        }
+        rt
     }
 
     pub async fn maintenance(
@@ -538,7 +579,8 @@ impl Space {
         user: Principal,
         input: StringOr<MaintenanceInput>,
     ) -> Result<AgentOutput, BoxError> {
-        self.engine
+        let rt = self
+            .engine
             .agent_run(
                 user,
                 AgentInput {
@@ -548,7 +590,20 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await
+            .await;
+        if let Ok(o) = &rt {
+            // Update maintenance usage on success
+            let _ = self
+                .db
+                .set_extension_with("maintenance_usage".to_string(), |v| {
+                    let mut usage = v
+                        .and_then(|v| v.clone().deserialized::<Usage>().ok())
+                        .unwrap_or_default();
+                    usage.accumulate(&o.usage);
+                    Fv::serialized(&usage, None).ok()
+                });
+        }
+        rt
     }
 
     async fn flush(&self) -> Result<(), BoxError> {
@@ -592,6 +647,7 @@ impl Space {
             conversations: memory.conversations.len(),
             public: false,
             tier,
+            ..Default::default()
         })
     }
 
