@@ -56,7 +56,7 @@ type FormationInput struct {
 }
 
 type RecallInput struct {
-	Query   string       `json:"query"`
+	Query   string        `json:"query"`
 	Context *InputContext `json:"context,omitempty"`
 }
 
@@ -75,7 +75,9 @@ type MaintenanceInput struct {
 }
 
 type AddSpaceTokenInput struct {
-	Scope TokenScope `json:"scope"`
+	Scope     TokenScope `json:"scope"`
+	Name      string     `json:"name"`
+	ExpiresAt *int64     `json:"expires_at,omitempty"`
 }
 
 type RevokeSpaceTokenInput struct {
@@ -86,6 +88,10 @@ type UpdateSpaceInput struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
 	Public      *bool   `json:"public,omitempty"`
+}
+
+type RestartFormationInput struct {
+	Conversation *uint64 `json:"conversation,omitempty"`
 }
 
 type CreateOrUpdateSpaceInput struct {

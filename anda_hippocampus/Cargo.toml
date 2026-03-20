@@ -1,11 +1,12 @@
 [package]
 name = "anda_hippocampus"
 publish = false
-version = "0.2.6"
+version = "0.3.0"
 description.workspace = true
 edition.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
 anda_core = { workspace = true }
 anda_engine = { workspace = true }
 anda_db = { workspace = true }

@@ -4,6 +4,7 @@ use anda_db::{
     collection::CollectionConfig,
     database::{AndaDB, DBConfig},
     error::DBError,
+    index::BTree,
     query::Fv,
     storage::StorageStats,
 };
@@ -37,10 +38,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::payload::StringOr;
 use crate::types::{
-    CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier, SpaceToken, TokenScope,
+    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier,
+    SpaceToken, TokenScope,
 };
 use crate::{
-    agents::{FormationAgent, MaintenanceAgent, RecallAgent},
+    agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
     types::UpdateSpaceInput,
 };
 
@@ -315,6 +317,8 @@ pub struct Space {
     id: String,
     db: Arc<AndaDB>,
     engine: Engine,
+    formation: FormationAgent,
+    recall: RecallAgent,
 
     pub memory: Arc<MemoryManagement>,
 }
@@ -358,7 +362,7 @@ impl Space {
     pub async fn add_space_token(
         &self,
         token: String,
-        scope: TokenScope,
+        input: AddSpaceTokenInput,
         now_ms: u64,
     ) -> Result<SpaceToken, BoxError> {
         let count = self
@@ -370,10 +374,12 @@ impl Space {
 
         let sp = SpaceToken {
             token: token.clone(),
-            scope,
-            usage: 0,
+            scope: input.scope,
+            name: input.name,
+            expires_at: input.expires_at,
             created_at: now_ms,
             updated_at: now_ms,
+            ..Default::default()
         };
 
         self.db
@@ -388,16 +394,19 @@ impl Space {
         scope: TokenScope,
         now_ms: u64,
     ) -> Result<(), BoxError> {
-        let token = self.db.set_extension_with(token, |v| {
-            if let Some(mut st) = v.and_then(|v| v.clone().deserialized::<SpaceToken>().ok())
-                && st.scope.allows(scope)
-            {
-                st.usage = st.usage.saturating_add(1);
-                st.updated_at = now_ms;
-                return Fv::serialized(&st.to_ref(), None).ok();
-            }
-            None
-        });
+        let token = self
+            .db
+            .set_extension_from_with::<_, SpaceToken>(token, |v| {
+                if let Some(mut st) = v
+                    && st.expires_at.map(|exp| exp > now_ms).unwrap_or(true)
+                    && st.scope.allows(scope)
+                {
+                    st.usage = st.usage.saturating_add(1);
+                    st.updated_at = now_ms;
+                    return Some(st);
+                }
+                None
+            });
 
         if token.is_none() {
             return Err("invalid space token".into());
@@ -433,16 +442,16 @@ impl Space {
         let mut changed = false;
         if let Some(name) = input.name {
             changed = true;
-            self.db.set_extension("name".to_string(), name.into());
+            self.db.set_extension_from("name".to_string(), name);
         }
         if let Some(description) = input.description {
             changed = true;
             self.db
-                .set_extension("description".to_string(), description.into());
+                .set_extension_from("description".to_string(), description);
         }
         if let Some(public) = input.public {
             changed = true;
-            self.db.set_extension("public".to_string(), public.into());
+            self.db.set_extension_from("public".to_string(), public);
         }
         if changed {
             self.db.flush_metadata(now_ms).await?;
@@ -520,8 +529,7 @@ impl Space {
             .into());
         }
 
-        let rt = self
-            .engine
+        self.engine
             .agent_run(
                 user,
                 AgentInput {
@@ -531,20 +539,7 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await;
-        if let Ok(o) = &rt {
-            // Update formation usage on success
-            let _ = self
-                .db
-                .set_extension_with("formation_usage".to_string(), |v| {
-                    let mut usage = v
-                        .and_then(|v| v.clone().deserialized::<Usage>().ok())
-                        .unwrap_or_default();
-                    usage.accumulate(&o.usage);
-                    Fv::serialized(&usage, None).ok()
-                });
-        }
-        rt
+            .await
     }
 
     pub async fn query(
@@ -552,8 +547,7 @@ impl Space {
         user: Principal,
         input: StringOr<RecallInput>,
     ) -> Result<AgentOutput, BoxError> {
-        let rt = self
-            .engine
+        self.engine
             .agent_run(
                 user,
                 AgentInput {
@@ -563,18 +557,7 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await;
-        if let Ok(o) = &rt {
-            // Update recall usage on success
-            let _ = self.db.set_extension_with("recall_usage".to_string(), |v| {
-                let mut usage = v
-                    .and_then(|v| v.clone().deserialized::<Usage>().ok())
-                    .unwrap_or_default();
-                usage.accumulate(&o.usage);
-                Fv::serialized(&usage, None).ok()
-            });
-        }
-        rt
+            .await
     }
 
     pub async fn maintenance(
@@ -582,8 +565,7 @@ impl Space {
         user: Principal,
         input: StringOr<MaintenanceInput>,
     ) -> Result<AgentOutput, BoxError> {
-        let rt = self
-            .engine
+        self.engine
             .agent_run(
                 user,
                 AgentInput {
@@ -593,20 +575,73 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await;
-        if let Ok(o) = &rt {
-            // Update maintenance usage on success
-            let _ = self
-                .db
-                .set_extension_with("maintenance_usage".to_string(), |v| {
-                    let mut usage = v
-                        .and_then(|v| v.clone().deserialized::<Usage>().ok())
-                        .unwrap_or_default();
-                    usage.accumulate(&o.usage);
-                    Fv::serialized(&usage, None).ok()
-                });
-        }
-        rt
+            .await
+    }
+
+    pub async fn restart_formation(
+        &self,
+        user: Principal,
+        conversation: u64,
+    ) -> Result<(), BoxError> {
+        let ctx = self.engine.ctx_with(
+            user,
+            "formation_memory",
+            "formation_memory",
+            Default::default(),
+        )?;
+        self.formation.start_process(ctx, conversation).await
+    }
+
+    pub async fn get_conversation(
+        &self,
+        collection: Option<String>,
+        id: u64,
+    ) -> Result<Conversation, BoxError> {
+        let collection = match collection {
+            Some(name) if name == "recall" => self.recall.conversations.clone(),
+            _ => self.memory.conversations.clone(),
+        };
+
+        let rt: Conversation = collection.get_as(id).await?;
+        Ok(rt)
+    }
+
+    pub async fn list_conversations(
+        &self,
+        collection: Option<String>,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<(Vec<Conversation>, Option<String>), BoxError> {
+        use anda_db::query::{Filter, Query, RangeQuery};
+
+        let collection = match collection {
+            Some(name) if name == "recall" => self.recall.conversations.clone(),
+            _ => self.memory.conversations.clone(),
+        };
+        let limit = limit.unwrap_or(10).min(100);
+        let cursor = match BTree::from_cursor::<u64>(&cursor)? {
+            Some(cursor) => cursor,
+            None => collection.max_document_id() + 1,
+        };
+
+        let filter = Some(Filter::Field((
+            "_id".to_string(),
+            RangeQuery::Lt(Fv::U64(cursor)),
+        )));
+
+        let rt: Vec<Conversation> = collection
+            .search_as(Query {
+                search: None,
+                filter,
+                limit: Some(limit),
+            })
+            .await?;
+        let cursor = if rt.len() >= limit {
+            BTree::to_cursor(&rt.first().unwrap()._id)
+        } else {
+            None
+        };
+        Ok((rt, cursor))
     }
 
     async fn flush(&self) -> Result<(), BoxError> {
@@ -629,9 +664,9 @@ impl Space {
             updated_at: now_ms,
         };
 
-        db.set_extension("creator".to_string(), creator.to_string().into());
-        db.set_extension("owner".to_string(), owner.to_string().into());
-        db.set_extension("tier".to_string(), Fv::serialized(&tier.to_ref(), None)?);
+        db.set_extension_from("creator".to_string(), creator.to_string());
+        db.set_extension_from("owner".to_string(), owner.to_string());
+        db.set_extension_from("tier".to_string(), &tier);
 
         let db = Arc::new(db);
         let nexus =
@@ -702,9 +737,10 @@ impl Space {
         let memory_tool = MemoryTool::new(memory.clone());
         let search_conversations_tool = SearchConversationsTool::new(memory.clone());
 
-        let formation = FormationAgent::new(memory.clone(), 655350);
-        let recall = RecallAgent::new(recall_conversations, 65535);
-        let maintenance = MaintenanceAgent::new(memory.clone());
+        let hooks = Arc::new(Hooks { db: db.clone() });
+        let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
+        let recall = RecallAgent::new(recall_conversations, hooks.clone(), 65535);
+        let maintenance = MaintenanceAgent::new(memory.clone(), hooks.clone());
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
@@ -714,8 +750,8 @@ impl Space {
             .register_tool(memory_r)?
             .register_tool(memory_tool)?
             .register_tool(search_conversations_tool)?
-            .register_agent(formation, None)?
-            .register_agent(recall, None)?
+            .register_agent(formation.clone(), None)?
+            .register_agent(recall.clone(), None)?
             .register_agent(maintenance, None)?
             .export_tools(vec![MemoryTool::NAME.to_string()])
             .export_agents(vec![
@@ -730,9 +766,51 @@ impl Space {
         Ok(Self {
             id,
             db,
+            formation,
+            recall,
             memory,
             engine,
         })
+    }
+}
+
+struct Hooks {
+    db: Arc<AndaDB>,
+}
+
+#[async_trait::async_trait]
+impl AgentHooks for Hooks {
+    async fn on_conversation_end(&self, agent_name: &str, conversation: &Conversation) {
+        match agent_name {
+            "recall_memory" => {
+                let _ = self
+                    .db
+                    .set_extension_from_with("recall_memory".to_string(), |v| {
+                        let mut usage: Usage = v.unwrap_or_default();
+                        usage.accumulate(&conversation.usage);
+                        Some(usage)
+                    });
+            }
+            "maintenance_memory" => {
+                let _ = self
+                    .db
+                    .set_extension_from_with("maintenance_usage".to_string(), |v| {
+                        let mut usage: Usage = v.unwrap_or_default();
+                        usage.accumulate(&conversation.usage);
+                        Some(usage)
+                    });
+            }
+            "formation_memory" => {
+                let _ = self
+                    .db
+                    .set_extension_from_with("formation_usage".to_string(), |v| {
+                        let mut usage: Usage = v.unwrap_or_default();
+                        usage.accumulate(&conversation.usage);
+                        Some(usage)
+                    });
+            }
+            _ => {}
+        }
     }
 }
 

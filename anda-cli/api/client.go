@@ -154,8 +154,15 @@ func (c *Client) GetStatus(ctx context.Context) (*RpcResponse[SpaceStatus], erro
 }
 
 // GetConversation returns a single conversation.
-func (c *Client) GetConversation(ctx context.Context, conversationID int) (*RpcResponse[Conversation], error) {
+func (c *Client) GetConversation(ctx context.Context, conversationID int, collection string) (*RpcResponse[Conversation], error) {
 	path := fmt.Sprintf("%s/conversations/%d", c.spacePath(""), conversationID)
+	params := url.Values{}
+	if collection != "" {
+		params.Set("collection", collection)
+	}
+	if len(params) > 0 {
+		path += "?" + params.Encode()
+	}
 	data, err := c.doJSON(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -168,7 +175,7 @@ func (c *Client) GetConversation(ctx context.Context, conversationID int) (*RpcR
 }
 
 // ListConversations lists conversations with pagination.
-func (c *Client) ListConversations(ctx context.Context, cursor string, limit int) (*RpcResponse[[]Conversation], error) {
+func (c *Client) ListConversations(ctx context.Context, cursor string, limit int, collection string) (*RpcResponse[[]Conversation], error) {
 	path := c.spacePath("/conversations")
 	params := url.Values{}
 	if cursor != "" {
@@ -176,6 +183,9 @@ func (c *Client) ListConversations(ctx context.Context, cursor string, limit int
 	}
 	if limit > 0 {
 		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if collection != "" {
+		params.Set("collection", collection)
 	}
 	if len(params) > 0 {
 		path += "?" + params.Encode()
@@ -206,8 +216,7 @@ func (c *Client) ListSpaceTokens(ctx context.Context) (*RpcResponse[[]SpaceToken
 }
 
 // AddSpaceToken adds a space token (management).
-func (c *Client) AddSpaceToken(ctx context.Context, scope TokenScope) (*RpcResponse[SpaceToken], error) {
-	input := AddSpaceTokenInput{Scope: scope}
+func (c *Client) AddSpaceToken(ctx context.Context, input *AddSpaceTokenInput) (*RpcResponse[SpaceToken], error) {
 	data, err := c.doJSON(ctx, http.MethodPost, c.spacePath("/management/add_space_token"), input)
 	if err != nil {
 		return nil, err
@@ -235,7 +244,19 @@ func (c *Client) RevokeSpaceToken(ctx context.Context, token string) (*RpcRespon
 
 // UpdateSpace updates space information (management).
 func (c *Client) UpdateSpace(ctx context.Context, input *UpdateSpaceInput) (*RpcResponse[bool], error) {
-	data, err := c.doJSON(ctx, http.MethodPost, c.spacePath("/management/update_space"), input)
+	data, err := c.doJSON(ctx, http.MethodPatch, c.spacePath("/management/update_space"), input)
+	if err != nil {
+		return nil, err
+	}
+	var resp RpcResponse[bool]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
+func (c *Client) RestartFormation(ctx context.Context, input *RestartFormationInput) (*RpcResponse[bool], error) {
+	data, err := c.doJSON(ctx, http.MethodPatch, c.spacePath("/management/restart_formation"), input)
 	if err != nil {
 		return nil, err
 	}

@@ -23,6 +23,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+async-trait = "0.1"
 axum = { version = "0.8", features = [
   "http1",
   "http2",

@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool, Usage,
+    StateFeatures, Tool,
 };
 use anda_engine::{
     context::AgentCtx,
@@ -11,6 +11,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
+use super::AgentHooks;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
 
@@ -26,14 +28,16 @@ impl Drop for ProcessingGuard {
 pub struct MaintenanceAgent {
     memory: Arc<MemoryManagement>,
     processing: Arc<AtomicBool>,
+    hooks: Arc<dyn AgentHooks>,
 }
 
 impl MaintenanceAgent {
     pub const NAME: &'static str = "maintenance_memory";
-    pub fn new(memory: Arc<MemoryManagement>) -> Self {
+    pub fn new(memory: Arc<MemoryManagement>, hooks: Arc<dyn AgentHooks>) -> Self {
         Self {
             memory,
             processing: Arc::new(AtomicBool::new(false)),
+            hooks,
         }
     }
 }
@@ -75,21 +79,14 @@ impl Agent<AgentCtx> for MaintenanceAgent {
         let now_ms = unix_ms();
 
         let mut conversation = Conversation {
-            _id: 0,
             user: *caller,
-            thread: None,
-            messages: vec![],
-            resources: vec![],
-            artifacts: vec![],
             status: ConversationStatus::Working,
-            failed_reason: None,
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            usage: Usage::default(),
             steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
-            follow_up_messages: None,
-            ancestors: None,
+            label: Some("maintenance".to_string()),
+            ..Default::default()
         };
 
         let id = self
@@ -104,6 +101,10 @@ impl Agent<AgentCtx> for MaintenanceAgent {
             // Guard resets processing to false when the task completes or panics.
             let _guard = ProcessingGuard(agent.processing.clone());
             agent.process_one(&ctx_clone, &mut conversation).await;
+            agent
+                .hooks
+                .on_conversation_end(MaintenanceAgent::NAME, &conversation)
+                .await;
         });
 
         Ok(AgentOutput {

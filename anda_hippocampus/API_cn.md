@@ -80,6 +80,8 @@ export interface MaintenanceInput {
 
 export interface AddSpaceTokenInput {
   scope: TokenScope;
+  name: string;
+  expires_at?: number; // Unix timestamp in milliseconds
 }
 
 export interface RevokeSpaceTokenInput {
@@ -90,6 +92,10 @@ export interface UpdateSpaceInput {
   name?: string;
   description?: string;
   public?: boolean;
+}
+
+export interface FormationRestartInput {
+  conversation: number;
 }
 
 export interface CreateOrUpdateSpaceInput {
@@ -105,10 +111,12 @@ export interface SpaceTier {
 
 export interface SpaceToken {
   token: string;
+  name: string;
   scope: TokenScope;
   usage: number;
   created_at: number; // Unix timestamp in milliseconds
   updated_at: number; // Unix timestamp in milliseconds
+  expires_at?: number; // Unix timestamp in milliseconds
 }
 
 export interface StorageStats {
@@ -154,6 +162,7 @@ export interface Conversation {
   _id: number;
   user: string;
   thread?: string;
+  label?: string;
   messages: Message[];
   resources: unknown[];
   artifacts: unknown[];
@@ -232,17 +241,20 @@ export interface ServiceInfo {
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
 - 响应：`RpcResponse<SpaceStatus>`
 
-### GET `/v1/{space_id}/conversations/{conversation_id}`
+### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 
 - 作用：获取单条会话详情
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- Query:
+  - `collection?: string` // 使用 "recall" 区分召回 vs 记忆会话
 - 响应：`RpcResponse<Conversation>`
 
-### GET `/v1/{space_id}/conversations?cursor=<cursor>&limit=<n>`
+### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
 
 - 作用：分页列出会话
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
 - Query:
+  - `collection?: string` // 使用 "recall" 区分召回 vs 记忆会话
   - `cursor?: string`
   - `limit?: number`
 - 响应：`RpcResponse<Conversation[]>`（并通过 `next_cursor` 给出下一页游标）
@@ -276,6 +288,13 @@ export interface ServiceInfo {
 - 作用：更新空间信息（名称、描述、公开/私有）
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
 - 请求体：`UpdateSpaceInput`
+- 响应：`RpcResponse<true>`
+
+### POST `/v1/{space_id}/management/restart_formation`
+
+- 作用：通过会话 ID 重启记忆写入任务（用于失败/过期的写入任务）
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`FormationRestartInput`
 - 响应：`RpcResponse<true>`
 
 ---

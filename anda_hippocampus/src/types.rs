@@ -7,6 +7,8 @@ use std::str::FromStr;
 pub struct Pagination {
     pub cursor: Option<String>,
     pub limit: Option<usize>,
+    /// Conversation collection: `"recall"`
+    pub collection: Option<String>,
 }
 
 pub struct CWToken {
@@ -69,6 +71,9 @@ pub struct SpaceToken {
     #[serde(default)]
     pub token: String,
 
+    #[serde(default, alias = "n")]
+    pub name: String,
+
     #[serde(alias = "s")]
     pub scope: TokenScope,
 
@@ -80,21 +85,28 @@ pub struct SpaceToken {
 
     #[serde(default, alias = "ua")]
     pub updated_at: u64,
+
+    #[serde(default, alias = "ea")]
+    pub expires_at: Option<u64>,
 }
 
 impl SpaceToken {
     pub fn to_ref(&self) -> SpaceTokenRef {
         SpaceTokenRef {
+            name: self.name.clone(),
             scope: self.scope,
             usage: self.usage,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            expires_at: self.expires_at,
         }
     }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceTokenRef {
+    #[serde(rename = "n", alias = "name")]
+    pub name: String,
     #[serde(rename = "s", alias = "scope")]
     pub scope: TokenScope,
     #[serde(rename = "u", alias = "usage")]
@@ -103,6 +115,8 @@ pub struct SpaceTokenRef {
     pub created_at: u64,
     #[serde(rename = "ua", alias = "updated_at")]
     pub updated_at: u64,
+    #[serde(rename = "ea", alias = "expires_at")]
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -138,6 +152,9 @@ impl FromStr for TokenScope {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AddSpaceTokenInput {
     pub scope: TokenScope,
+    #[serde(default)]
+    pub name: String,
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -181,6 +198,11 @@ pub struct FormationInput {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct FormationRestartInput {
+    pub conversation: u64,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -294,6 +316,7 @@ mod tests {
             usage: 9,
             created_at: 101,
             updated_at: 102,
+            ..Default::default()
         };
 
         let value = serde_json::to_value(&token).unwrap();
@@ -315,6 +338,7 @@ mod tests {
             usage: 5,
             created_at: 200,
             updated_at: 201,
+            ..Default::default()
         };
 
         let token_ref = token.to_ref();

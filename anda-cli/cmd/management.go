@@ -33,9 +33,19 @@ var addTokenCmd = &cobra.Command{
 	Short: "Add a space token",
 	Run: func(cmd *cobra.Command, args []string) {
 		scope, _ := cmd.Flags().GetString("scope")
+		name, _ := cmd.Flags().GetString("name")
+		if scope != "read" && scope != "write" && scope != "*" {
+			exitError(fmt.Errorf("invalid scope: %s", scope))
+		}
+		if name == "" {
+			exitError(fmt.Errorf("--name is required"))
+		}
 
 		client := newClient()
-		resp, err := client.AddSpaceToken(cmd.Context(), api.TokenScope(scope))
+		resp, err := client.AddSpaceToken(cmd.Context(), &api.AddSpaceTokenInput{
+			Scope: api.TokenScope(scope),
+			Name:  name,
+		})
 		if err != nil {
 			exitError(err)
 		}
@@ -102,8 +112,34 @@ var updateSpaceCmd = &cobra.Command{
 	},
 }
 
+var restartFormationCmd = &cobra.Command{
+	Use:   "restart-formation",
+	Short: "Restart a formation task (manager only)",
+	Run: func(cmd *cobra.Command, args []string) {
+		input := &api.RestartFormationInput{}
+
+		v, _ := cmd.Flags().GetUint64("conversation")
+		if v == 0 {
+			exitError(fmt.Errorf("--conversation is required"))
+		}
+
+		input.Conversation = &v
+		client := newClient()
+		resp, err := client.RestartFormation(cmd.Context(), input)
+		if err != nil {
+			exitError(err)
+		}
+		if resp.Error != nil {
+			exitError(resp.Error)
+		}
+		fmt.Println("Formation restarted successfully")
+	},
+}
+
 func init() {
-	addTokenCmd.Flags().String("scope", "read", "Token scope: read, write, *")
+	addTokenCmd.Flags().String("name", "", "Token name (required)")
+	addTokenCmd.Flags().String("scope", "*", "Token scope: read, write, *")
+	restartFormationCmd.Flags().Uint64("conversation", 0, "Conversation ID")
 
 	updateSpaceCmd.Flags().String("name", "", "Space name")
 	updateSpaceCmd.Flags().String("description", "", "Space description")
@@ -113,5 +149,6 @@ func init() {
 	managementCmd.AddCommand(addTokenCmd)
 	managementCmd.AddCommand(revokeTokenCmd)
 	managementCmd.AddCommand(updateSpaceCmd)
+	managementCmd.AddCommand(restartFormationCmd)
 	rootCmd.AddCommand(managementCmd)
 }

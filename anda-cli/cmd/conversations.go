@@ -18,9 +18,10 @@ var listConversationsCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cursor, _ := cmd.Flags().GetString("cursor")
 		limit, _ := cmd.Flags().GetInt("limit")
+		collection, _ := cmd.Flags().GetString("collection")
 
 		client := newClient()
-		resp, err := client.ListConversations(cmd.Context(), cursor, limit)
+		resp, err := client.ListConversations(cmd.Context(), cursor, limit, collection)
 		if err != nil {
 			exitError(err)
 		}
@@ -44,8 +45,10 @@ var getConversationCmd = &cobra.Command{
 			exitError(fmt.Errorf("invalid conversation ID: %w", err))
 		}
 
+		collection, _ := cmd.Flags().GetString("collection")
+
 		client := newClient()
-		resp, err := client.GetConversation(cmd.Context(), id)
+		resp, err := client.GetConversation(cmd.Context(), id, collection)
 		if err != nil {
 			exitError(err)
 		}
@@ -59,6 +62,9 @@ var getConversationCmd = &cobra.Command{
 func init() {
 	listConversationsCmd.Flags().String("cursor", "", "Pagination cursor")
 	listConversationsCmd.Flags().Int("limit", 0, "Number of conversations to return")
+	listConversationsCmd.Flags().String("collection", "", "Collection name")
+
+	getConversationCmd.Flags().String("collection", "", "Collection name, empty or 'recall'")
 
 	conversationsCmd.AddCommand(listConversationsCmd)
 	conversationsCmd.AddCommand(getConversationCmd)

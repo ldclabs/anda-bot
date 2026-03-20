@@ -119,6 +119,7 @@ Detailed API docs (with TypeScript request/response types):
 | `POST` | `/v1/{space_id}/management/add_space_token`      | Add a space token                                            | `write` (CWT)                |
 | `POST` | `/v1/{space_id}/management/revoke_space_token`   | Revoke a space token                                         | `write` (CWT)                |
 | `POST` | `/v1/{space_id}/management/update_space`         | Update space information (name, description, public/private) | `write` (CWT)                |
+| `POST` | `/v1/{space_id}/management/restart_formation`    | Restart a formation task (manager only)                      | `write` (CWT)                |
 | `POST` | `/admin/{space_id}/update_space_tier`            | Update a space tier (manager only)                           | `write` (CWT)                |
 | `POST` | `/admin/create_space`                            | Create a new space (manager only)                            | `write` (CWT)                |
 

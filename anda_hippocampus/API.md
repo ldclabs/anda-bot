@@ -80,6 +80,8 @@ export interface MaintenanceInput {
 
 export interface AddSpaceTokenInput {
   scope: TokenScope;
+  name: string;
+  expires_at?: number; // Unix timestamp in milliseconds
 }
 
 export interface RevokeSpaceTokenInput {
@@ -90,6 +92,10 @@ export interface UpdateSpaceInput {
   name?: string;
   description?: string;
   public?: boolean;
+}
+
+export interface FormationRestartInput {
+  conversation: number;
 }
 
 export interface CreateOrUpdateSpaceInput {
@@ -105,10 +111,12 @@ export interface SpaceTier {
 
 export interface SpaceToken {
   token: string;
+  name: string;
   scope: TokenScope;
   usage: number;
   created_at: number; // Unix timestamp in milliseconds
   updated_at: number; // Unix timestamp in milliseconds
+  expires_at?: number; // Unix timestamp in milliseconds
 }
 
 export interface StorageStats {
@@ -154,6 +162,7 @@ export interface Conversation {
   _id: number;
   user: string;
   thread?: string;
+  label?: string;
   messages: Message[];
   resources: unknown[];
   artifacts: unknown[];
@@ -232,17 +241,20 @@ export interface ServiceInfo {
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
 - Response: `RpcResponse<SpaceStatus>`
 
-### GET `/v1/{space_id}/conversations/{conversation_id}`
+### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 
 - Purpose: Get a single conversation detail
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
+- Query:
+  - `collection?: string` // use "recall" to distinguish recall vs memory conversations
 - Response: `RpcResponse<Conversation>`
 
-### GET `/v1/{space_id}/conversations?cursor=<cursor>&limit=<n>`
+### GET `/v1/{space_id}/conversations?collection=<collection>&cursor=<cursor>&limit=<n>`
 
 - Purpose: List conversations with pagination
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
 - Query:
+  - `collection?: string` // use "recall" to distinguish recall vs memory conversations
   - `cursor?: string`
   - `limit?: number`
 - Response: `RpcResponse<Conversation[]>` (next page cursor is returned via `next_cursor`)
@@ -276,6 +288,12 @@ export interface ServiceInfo {
 - Purpose: Update space information (name, description, public/private)
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `UpdateSpaceInput`
+- Response: `RpcResponse<true>`
+
+### POST `/v1/{space_id}/management/restart_formation`
+- Purpose: Restart a formation task by conversation ID (for failed/stale formations)
+- Auth: Must pass CWT `write` (user management-level auth)
+- Request body: `FormationRestartInput`
 - Response: `RpcResponse<true>`
 
 ---

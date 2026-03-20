@@ -269,6 +269,7 @@ pub async fn post_maintenance(
 pub async fn get_conversation(
     State(app): State<AppState>,
     Path((space_id, conversation_id)): Path<(String, String)>,
+    Query(pg): Query<Pagination>,
     Accept(ct, _): Accept,
     HeaderVals(token, sharding): HeaderVals,
 ) -> Result<impl IntoResponse, AppError> {
@@ -306,8 +307,7 @@ pub async fn get_conversation(
     }
 
     let rt = space
-        .memory
-        .get_conversation(conversation_id)
+        .get_conversation(pg.collection, conversation_id)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
@@ -350,8 +350,7 @@ pub async fn list_conversations(
     }
 
     let rt = space
-        .memory
-        .list_conversations_by_user(&Principal::anonymous(), pg.cursor, pg.limit)
+        .list_conversations(pg.collection, pg.cursor, pg.limit)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -426,7 +425,7 @@ pub async fn add_space_token(
     let data: [u8; 20] = rand_bytes();
     let token = format!("ST{}", ByteArrayB64(data));
     let rt = space
-        .add_space_token(token.clone(), input.scope, now_ms)
+        .add_space_token(token.clone(), input, now_ms)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
@@ -503,6 +502,44 @@ pub async fn update_space(
 
     space
         .update(input, now_ms)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(true)))
+}
+
+/// PATCH /v1/{space_id}/management/restart_formation
+pub async fn restart_formation(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: FormationRestartInput = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let space = app
+        .load_space(&space_id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    space
+        .restart_formation(Principal::anonymous(), input.conversation)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(true)))

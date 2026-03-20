@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.18"
+version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e4b3c9d16d7e472dadb88ab37cf15f8c97c75ba3b9d475b7da88dc975e937a9"
+checksum = "d1eea01d2575fc6798c4d7fc6eda7d6dc0ad22f48d3286728b4468ec7d1d4f47"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -277,9 +277,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.9.27"
+version = "0.9.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bdcb58276b98df5b332f673e2fef477a53024b0ce0d90a05c28d4a2c3a1b106"
+checksum = "fcd839f866589233bc5b74c7e049dc68d6d22f34bc0e25186a6dae575e70548a"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -288,6 +288,7 @@ dependencies = [
  "anda_db_schema",
  "anda_db_tfs",
  "anda_kip",
+ "arc-swap",
  "async-trait",
  "bytes",
  "candid",
@@ -322,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -331,6 +332,7 @@ dependencies = [
  "anda_engine",
  "anda_kip",
  "anda_object_store",
+ "async-trait",
  "axum",
  "ciborium",
  "clap",
@@ -578,9 +580,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -588,9 +590,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -2885,9 +2887,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jieba-macros"
@@ -6024,18 +6026,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2578b716f8a7a858b7f02d5bd870c14bf4ddbbcf3a4c05414ba6503640505e3"
+checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e6cc098ea4d3bd6246687de65af3f920c430e236bee1e3bf2e441463f08a02f"
+checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",

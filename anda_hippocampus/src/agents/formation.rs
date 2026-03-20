@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool, Usage,
+    StateFeatures, Tool,
 };
 use anda_engine::{
     context::AgentCtx,
@@ -11,6 +11,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
+
+use super::AgentHooks;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
@@ -28,6 +30,7 @@ impl Drop for ProcessingGuard {
 pub struct FormationAgent {
     memory: Arc<MemoryManagement>,
     processing_conversation: Arc<AtomicU64>,
+    hooks: Arc<dyn AgentHooks>,
 
     #[allow(dead_code)]
     max_input_tokens: usize,
@@ -35,12 +38,48 @@ pub struct FormationAgent {
 
 impl FormationAgent {
     pub const NAME: &'static str = "formation_memory";
-    pub fn new(memory: Arc<MemoryManagement>, max_input_tokens: usize) -> Self {
+    pub fn new(
+        memory: Arc<MemoryManagement>,
+        hooks: Arc<dyn AgentHooks>,
+        max_input_tokens: usize,
+    ) -> Self {
         Self {
             max_input_tokens,
             memory,
             processing_conversation: Arc::new(AtomicU64::new(0)),
+            hooks,
         }
+    }
+
+    pub async fn start_process(&self, ctx: AgentCtx, conversation: u64) -> Result<(), BoxError> {
+        if self.processing_conversation.load(Ordering::SeqCst) != 0 {
+            return Err("FormationAgent is already processing another conversation".into());
+        }
+        let conv = self.memory.get_conversation(conversation).await?;
+        if let Some(label) = &conv.label
+            && label != "formation"
+        {
+            return Err(format!(
+                "Conversation {} has label {:?}, not eligible for formation processing",
+                conversation, label
+            )
+            .into());
+        }
+
+        if conv
+            .steering_messages
+            .as_ref()
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
+        {
+            return Err(format!(
+                "Conversation {} has no steering messages, cannot process",
+                conversation
+            )
+            .into());
+        }
+        self.try_process(ctx, conv);
+        Ok(())
     }
 
     pub fn try_process(&self, ctx: AgentCtx, conversation: Conversation) {
@@ -72,7 +111,29 @@ impl FormationAgent {
     async fn process_loop(&self, ctx: AgentCtx, mut conversation: Conversation) {
         loop {
             let conv_id = conversation._id;
+
             self.process_one(&ctx, &mut conversation).await;
+            self.hooks
+                .on_conversation_end(Self::NAME, &conversation)
+                .await;
+            if conversation.status == ConversationStatus::Failed {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await; // 避免快速失败循环
+                // 重试一次
+                self.process_one(&ctx, &mut conversation).await;
+                self.hooks
+                    .on_conversation_end(Self::NAME, &conversation)
+                    .await;
+            }
+
+            if conversation.status != ConversationStatus::Completed {
+                log::error!(
+                    "Conversation {} ended with status {:?}, not marking as processed",
+                    conv_id,
+                    conversation.status
+                );
+                // 上游异常，退出循环等待外部干预（如修复问题后重试或人工分析）或后续请求自动触发
+                break;
+            }
 
             self.memory
                 .conversations
@@ -122,7 +183,19 @@ impl FormationAgent {
         while id < self.memory.max_conversation_id() {
             id += 1;
             match self.memory.get_conversation(id).await {
-                Ok(conv) if conv.status == ConversationStatus::Submitted => return Some(conv),
+                Ok(conv) => {
+                    if conv.status != ConversationStatus::Submitted
+                        && conv.status != ConversationStatus::Failed
+                    {
+                        continue;
+                    }
+                    if let Some(label) = &conv.label
+                        && label != "formation"
+                    {
+                        continue; // 只处理 label 为 "formation" 的 conversation，跳过其他类型
+                    }
+                    return Some(conv);
+                }
                 _ => continue,
             }
         }
@@ -134,6 +207,7 @@ impl FormationAgent {
         conversation.failed_reason = Some(reason);
         conversation.status = ConversationStatus::Failed;
         conversation.updated_at = unix_ms();
+
         if let Ok(changes) = conversation.to_changes() {
             let _ = self
                 .memory
@@ -174,7 +248,7 @@ impl FormationAgent {
         let mut runner = ctx.completion_iter(
             CompletionRequest {
                 instructions: SELF_INSTRUCTIONS.to_string(),
-                prompt,
+                prompt: prompt.clone(),
                 chat_history: vec![msg],
                 tools,
                 tool_choice_required: true,
@@ -266,6 +340,8 @@ impl FormationAgent {
                     }
                 }
                 Err(err) => {
+                    // 保存原始 prompt 以便后续重试或分析
+                    conversation.steering_messages = Some(vec![prompt]);
                     self.mark_conversation_failed(
                         conversation,
                         format!("CompletionRunner error: {err:?}"),
@@ -311,21 +387,13 @@ impl Agent<AgentCtx> for FormationAgent {
         }
 
         let mut conversation = Conversation {
-            _id: 0,
             user: *caller,
-            thread: None,
-            messages: vec![],
-            resources: vec![],
-            artifacts: vec![],
-            status: ConversationStatus::Submitted,
-            failed_reason: None,
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            usage: Usage::default(),
             steering_messages: Some(vec![prompt]), // 原始输入作为 steering message，供 process_loop 处理
-            follow_up_messages: None,
-            ancestors: None,
+            label: Some("formation".to_string()),
+            ..Default::default()
         };
 
         let id = self

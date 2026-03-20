@@ -273,6 +273,10 @@ async fn main() -> Result<(), BoxError> {
             routing::patch(update_space),
         )
         .route(
+            "/v1/{space_id}/management/restart_formation",
+            routing::patch(restart_formation),
+        )
+        .route(
             "/admin/{space_id}/update_space_tier",
             routing::post(update_space_tier),
         )

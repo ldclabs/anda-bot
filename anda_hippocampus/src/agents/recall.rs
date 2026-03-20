@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest,
-    FunctionDefinition, Message, Resource, StateFeatures, Usage,
+    FunctionDefinition, Message, Resource, StateFeatures,
 };
 use anda_db::collection::Collection;
 use anda_engine::{
@@ -12,6 +12,8 @@ use anda_engine::{
 };
 use serde_json::json;
 use std::sync::{Arc, LazyLock};
+
+use super::AgentHooks;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
@@ -54,16 +56,22 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
 
 #[derive(Clone)]
 pub struct RecallAgent {
-    conversations: Arc<Collection>,
+    pub conversations: Arc<Collection>,
+    hooks: Arc<dyn AgentHooks>,
     #[allow(dead_code)]
     max_input_tokens: usize,
 }
 
 impl RecallAgent {
     pub const NAME: &'static str = "recall_memory";
-    pub fn new(conversations: Arc<Collection>, max_input_tokens: usize) -> Self {
+    pub fn new(
+        conversations: Arc<Collection>,
+        hooks: Arc<dyn AgentHooks>,
+        max_input_tokens: usize,
+    ) -> Self {
         Self {
             conversations,
+            hooks,
             max_input_tokens,
         }
     }
@@ -115,26 +123,20 @@ impl Agent<AgentCtx> for RecallAgent {
         };
 
         let mut conversation = Conversation {
-            _id: 0,
             user: *caller,
-            thread: None,
             messages: vec![serde_json::json!(Message {
                 role: "user".into(),
                 content: vec![prompt.clone().into()],
                 timestamp: Some(now_ms),
                 ..Default::default()
             })],
-            resources: vec![],
-            artifacts: vec![],
             status: ConversationStatus::Working,
-            failed_reason: None,
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            usage: Usage::default(),
             steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
-            follow_up_messages: None,
-            ancestors: None,
+            label: Some("recall".to_string()),
+            ..Default::default()
         };
 
         let id = self
@@ -182,6 +184,9 @@ impl Agent<AgentCtx> for RecallAgent {
                     let _ = self.conversations.update(conversation._id, changes).await;
                     self.conversations.flush(conversation.updated_at).await?;
                 }
+                self.hooks
+                    .on_conversation_end(Self::NAME, &conversation)
+                    .await;
                 output.conversation = Some(conversation._id);
                 Ok(output)
             }
@@ -196,6 +201,9 @@ impl Agent<AgentCtx> for RecallAgent {
                     let _ = self.conversations.update(conversation._id, changes).await;
                     self.conversations.flush(conversation.updated_at).await?;
                 }
+                self.hooks
+                    .on_conversation_end(Self::NAME, &conversation)
+                    .await;
                 Err(err)
             }
         }
