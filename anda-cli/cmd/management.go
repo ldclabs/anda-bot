@@ -136,6 +136,22 @@ var restartFormationCmd = &cobra.Command{
 	},
 }
 
+var getBYOKCmd = &cobra.Command{
+	Use:   "get-byok",
+	Short: "Get BYOK (Bring Your Own Key) configuration (manager only)",
+	Run: func(cmd *cobra.Command, args []string) {
+		client := newClient()
+		resp, err := client.GetBYOK(cmd.Context())
+		if err != nil {
+			exitError(err)
+		}
+		if resp.Error != nil {
+			exitError(resp.Error)
+		}
+		printJSON(resp.Result)
+	},
+}
+
 var updateBYOKCmd = &cobra.Command{
 	Use:   "update-byok",
 	Short: "Update BYOK (Bring Your Own Key) configuration (manager only)",
@@ -193,5 +209,6 @@ func init() {
 	managementCmd.AddCommand(updateSpaceCmd)
 	managementCmd.AddCommand(restartFormationCmd)
 	managementCmd.AddCommand(updateBYOKCmd)
+	managementCmd.AddCommand(getBYOKCmd)
 	rootCmd.AddCommand(managementCmd)
 }

@@ -346,6 +346,7 @@ pub struct SpaceStatus {
     pub formation_usage: Usage,
     pub recall_usage: Usage,
     pub maintenance_usage: Usage,
+    pub formation_processed_id: u64,
 }
 
 impl Space {
@@ -471,6 +472,10 @@ impl Space {
         Ok(())
     }
 
+    pub fn get_byok(&self) -> Option<ModelConfig> {
+        self.db.get_extension_as("byok")
+    }
+
     pub async fn update_byok(&self, model_config: ModelConfig) -> Result<(), BoxError> {
         self.db
             .save_extension_from("byok".to_string(), &model_config.to_ref())
@@ -494,6 +499,7 @@ impl Space {
             concepts: self.memory.nexus.concepts.len(),
             propositions: self.memory.nexus.propositions.len(),
             conversations: self.memory.conversations.len(),
+            formation_processed_id: self.formation.get_processed().unwrap_or_default(),
             ..Default::default()
         };
 
@@ -804,7 +810,7 @@ impl Space {
         if let Some(conversation) = this.formation.get_processed() {
             // Resume formation process if it was interrupted before
             let _ = this
-                .restart_formation(Principal::anonymous(), conversation)
+                .restart_formation(Principal::anonymous(), conversation + 1)
                 .await;
         }
         Ok(this)

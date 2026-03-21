@@ -267,8 +267,20 @@ func (c *Client) RestartFormation(ctx context.Context, input *RestartFormationIn
 	return &resp, nil
 }
 
+func (c *Client) GetBYOK(ctx context.Context) (*RpcResponse[ModelConfig], error) {
+	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/management/space_byok"), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp RpcResponse[ModelConfig]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
 func (c *Client) UpdateBYOK(ctx context.Context, input *ModelConfig) (*RpcResponse[bool], error) {
-	data, err := c.doJSON(ctx, http.MethodPatch, c.spacePath("/management/update_byok"), input)
+	data, err := c.doJSON(ctx, http.MethodPatch, c.spacePath("/management/space_byok"), input)
 	if err != nil {
 		return nil, err
 	}

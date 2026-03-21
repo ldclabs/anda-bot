@@ -545,7 +545,35 @@ pub async fn restart_formation(
     Ok(ct.response(RpcResponse::success(true)))
 }
 
-/// PATCH /v1/{space_id}/management/update_byok
+/// GET /v1/{space_id}/management/space_byok
+pub async fn get_byok(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let space = app
+        .load_space(&space_id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    let byok = space.get_byok();
+    Ok(ct.response(RpcResponse::success(byok)))
+}
+
+/// PATCH /v1/{space_id}/management/space_byok
 pub async fn update_byok(
     State(app): State<AppState>,
     Path(space_id): Path<String>,

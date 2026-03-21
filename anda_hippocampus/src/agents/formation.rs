@@ -63,9 +63,15 @@ impl FormationAgent {
     }
 
     pub async fn start_process(&self, ctx: AgentCtx, conversation: u64) -> Result<(), BoxError> {
-        if self.processing_conversation.load(Ordering::SeqCst) != 0 {
-            return Err("FormationAgent is already processing another conversation".into());
+        let current = self.processing_conversation.load(Ordering::SeqCst);
+        if current != 0 {
+            return Err(format!(
+                "FormationAgent is already processing conversation {}",
+                current
+            )
+            .into());
         }
+
         let conv = self.memory.get_conversation(conversation).await?;
         if let Some(label) = &conv.label
             && label != "formation"
@@ -196,8 +202,8 @@ impl FormationAgent {
             id += 1;
             match self.memory.get_conversation(id).await {
                 Ok(conv) => {
-                    if conv.status != ConversationStatus::Submitted
-                        && conv.status != ConversationStatus::Failed
+                    if conv.status == ConversationStatus::Completed
+                        || conv.status == ConversationStatus::Cancelled
                     {
                         continue;
                     }
@@ -238,9 +244,10 @@ impl FormationAgent {
 
         if prompt.is_none()
             && let Some(msg) = conversation.messages.first()
-                && let Ok(msg) = serde_json::from_value::<Message>(msg.clone()) {
-                    prompt = msg.text();
-                }
+            && let Ok(msg) = serde_json::from_value::<Message>(msg.clone())
+        {
+            prompt = msg.text();
+        }
 
         let prompt = match prompt {
             Some(p) => p,

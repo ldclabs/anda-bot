@@ -142,6 +142,10 @@ export interface SpaceStatus {
   conversations: number;
   public: boolean;
   tier: SpaceTier;
+  formation_usage: Usage;
+  recall_usage: Usage;
+  maintenance_usage: Usage;
+  formation_processed_id: number;
 }
 
 export interface Usage {
@@ -305,7 +309,13 @@ export interface ServiceInfo {
 - 请求体：`FormationRestartInput`
 - 响应：`RpcResponse<true>`
 
-### PATCH `/v1/{space_id}/management/update_byok`
+### GET `/v1/{space_id}/management/space_byok`
+
+- 作用：获取 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
+- 鉴权：必须通过 CWT `read`（用户管理级鉴权）
+- 响应：`RpcResponse<ModelConfig>`
+
+### PATCH `/v1/{space_id}/management/space_byok`
 
 - 作用：更新 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）

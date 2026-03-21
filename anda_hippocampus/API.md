@@ -142,6 +142,10 @@ export interface SpaceStatus {
   conversations: number;
   public: boolean;
   tier: SpaceTier;
+  formation_usage: Usage;
+  recall_usage: Usage;
+  maintenance_usage: Usage;
+  formation_processed_id: number;
 }
 
 export interface Usage {
@@ -304,7 +308,12 @@ export interface ServiceInfo {
 - Request body: `FormationRestartInput`
 - Response: `RpcResponse<true>`
 
-### PATCH `/v1/{space_id}/management/update_byok`
+### GET `/v1/{space_id}/management/space_byok`
+- Purpose: Get BYOK (Bring Your Own Key) configuration, i.e., use custom model configuration
+- Auth: Must pass CWT `read` (user management-level auth)
+- Response: `RpcResponse<ModelConfig>`
+
+### PATCH `/v1/{space_id}/management/space_byok`
 - Purpose: Update BYOK (Bring Your Own Key) configuration, i.e., use custom model configuration
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `ModelConfig`

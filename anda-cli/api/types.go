@@ -114,32 +114,38 @@ type SpaceTier struct {
 }
 
 type SpaceToken struct {
+	Name      string     `json:"name"`
 	Token     string     `json:"token"`
 	Scope     TokenScope `json:"scope"`
 	Usage     int        `json:"usage"`
 	CreatedAt int64      `json:"created_at"`
 	UpdatedAt int64      `json:"updated_at"`
+	ExpiresAt *int64     `json:"expires_at,omitempty"`
 }
 
 type StorageStats map[string]any
 
 type SpaceStatus struct {
-	ID            string       `json:"id"`
-	Name          string       `json:"name,omitempty"`
-	Description   string       `json:"description,omitempty"`
-	Owner         string       `json:"owner"`
-	DBStats       StorageStats `json:"db_stats"`
-	Concepts      int          `json:"concepts"`
-	Propositions  int          `json:"propositions"`
-	Conversations int          `json:"conversations"`
-	Public        bool         `json:"public"`
-	Tier          SpaceTier    `json:"tier"`
+	ID                   string       `json:"id"`
+	Name                 string       `json:"name,omitempty"`
+	Description          string       `json:"description,omitempty"`
+	Owner                string       `json:"owner"`
+	DBStats              StorageStats `json:"db_stats"`
+	Concepts             int          `json:"concepts"`
+	Propositions         int          `json:"propositions"`
+	Conversations        int          `json:"conversations"`
+	Public               bool         `json:"public"`
+	Tier                 SpaceTier    `json:"tier"`
+	FormationUsage       Usage        `json:"formation_usage"`
+	RecallUsage          Usage        `json:"recall_usage"`
+	MaintenanceUsage     Usage        `json:"maintenance_usage"`
+	FormationProcessedID int64        `json:"formation_processed_id"`
 }
 
 type Usage struct {
-	InputTokens  *int `json:"input_tokens,omitempty"`
-	OutputTokens *int `json:"output_tokens,omitempty"`
-	TotalTokens  *int `json:"total_tokens,omitempty"`
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+	Requests     int `json:"requests,omitempty"`
 }
 
 type AgentOutput struct {
@@ -163,6 +169,7 @@ const (
 type Conversation struct {
 	ID               int                `json:"_id"`
 	User             string             `json:"user"`
+	Label            *string            `json:"label,omitempty"`
 	Thread           string             `json:"thread,omitempty"`
 	Messages         []Message          `json:"messages"`
 	Resources        []any              `json:"resources"`
