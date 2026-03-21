@@ -51,6 +51,10 @@ impl FormationAgent {
         }
     }
 
+    pub fn is_processing(&self) -> bool {
+        self.processing_conversation.load(Ordering::SeqCst) != 0
+    }
+
     pub async fn start_process(&self, ctx: AgentCtx, conversation: u64) -> Result<(), BoxError> {
         if self.processing_conversation.load(Ordering::SeqCst) != 0 {
             return Err("FormationAgent is already processing another conversation".into());

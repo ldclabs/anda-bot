@@ -296,12 +296,16 @@ impl AppState {
                     continue;
                 };
 
-                if now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms {
+                if now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms
+                    && !space.is_processing()
+                {
                     {
                         self.spaces.write().await.remove(id);
                     }
                     if let Err(err) = space.db.close().await {
                         log::error!(space_id = id; "flush before eviction failed: {err:?}");
+                    } else {
+                        log::warn!(space_id = id; "space evicted due to inactivity");
                     }
                 } else {
                     // Periodic flush for active spaces
@@ -320,8 +324,9 @@ pub struct Space {
     engine: Engine,
     http_client: reqwest::Client,
     models: Arc<Models>,
-    formation: FormationAgent,
     recall: RecallAgent,
+    formation: FormationAgent,
+    maintenance: MaintenanceAgent,
 
     pub memory: Arc<MemoryManagement>,
 }
@@ -344,6 +349,10 @@ pub struct SpaceStatus {
 }
 
 impl Space {
+    fn is_processing(&self) -> bool {
+        self.formation.is_processing() || self.maintenance.is_processing()
+    }
+
     pub fn get_tier(&self) -> SpaceTier {
         self.db
             .get_extension("tier")
@@ -766,7 +775,7 @@ impl Space {
             .register_tool(search_conversations_tool)?
             .register_agent(formation.clone(), None)?
             .register_agent(recall.clone(), None)?
-            .register_agent(maintenance, None)?
+            .register_agent(maintenance.clone(), None)?
             .export_tools(vec![MemoryTool::NAME.to_string()])
             .export_agents(vec![
                 RecallAgent::NAME.to_string(),
@@ -783,6 +792,7 @@ impl Space {
             models,
             formation,
             recall,
+            maintenance,
             memory,
             engine,
         };

@@ -40,6 +40,10 @@ impl MaintenanceAgent {
             hooks,
         }
     }
+
+    pub fn is_processing(&self) -> bool {
+        self.processing.load(Ordering::SeqCst)
+    }
 }
 
 impl Agent<AgentCtx> for MaintenanceAgent {
