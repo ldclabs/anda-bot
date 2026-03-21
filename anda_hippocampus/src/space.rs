@@ -801,6 +801,12 @@ impl Space {
             let model = build_model(this.http_client.clone(), cfg);
             this.models.set_model(model);
         }
+        if let Some(conversation) = this.formation.get_processed() {
+            // Resume formation process if it was interrupted before
+            let _ = this
+                .restart_formation(Principal::anonymous(), conversation)
+                .await;
+        }
         Ok(this)
     }
 }

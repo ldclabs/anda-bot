@@ -7,6 +7,7 @@ use anda_engine::{
     memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
     rfc3339_datetime, unix_ms,
 };
+use serde_json::json;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -55,6 +56,12 @@ impl FormationAgent {
         self.processing_conversation.load(Ordering::SeqCst) != 0
     }
 
+    pub fn get_processed(&self) -> Option<u64> {
+        self.memory
+            .conversations
+            .get_extension_as::<u64>("hippocampus_processed")
+    }
+
     pub async fn start_process(&self, ctx: AgentCtx, conversation: u64) -> Result<(), BoxError> {
         if self.processing_conversation.load(Ordering::SeqCst) != 0 {
             return Err("FormationAgent is already processing another conversation".into());
@@ -70,14 +77,15 @@ impl FormationAgent {
             .into());
         }
 
-        if conv
-            .steering_messages
-            .as_ref()
-            .map(|v| v.is_empty())
-            .unwrap_or(true)
+        if conv.messages.is_empty()
+            && conv
+                .steering_messages
+                .as_ref()
+                .map(|v| v.is_empty())
+                .unwrap_or(true)
         {
             return Err(format!(
-                "Conversation {} has no steering messages, cannot process",
+                "Conversation {} has no messages, cannot process",
                 conversation
             )
             .into());
@@ -221,12 +229,20 @@ impl FormationAgent {
     }
 
     async fn process_one(&self, ctx: &AgentCtx, conversation: &mut Conversation) {
-        let prompt = match conversation
+        // Deprecated
+        let mut prompt = conversation
             .steering_messages
             .take()
             .unwrap_or_default()
-            .pop()
-        {
+            .pop();
+
+        if prompt.is_none()
+            && let Some(msg) = conversation.messages.first()
+                && let Ok(msg) = serde_json::from_value::<Message>(msg.clone()) {
+                    prompt = msg.text();
+                }
+
+        let prompt = match prompt {
             Some(p) => p,
             None => {
                 self.mark_conversation_failed(conversation, "No prompt found".to_string())
@@ -344,8 +360,6 @@ impl FormationAgent {
                     }
                 }
                 Err(err) => {
-                    // 保存原始 prompt 以便后续重试或分析
-                    conversation.steering_messages = Some(vec![prompt]);
                     self.mark_conversation_failed(
                         conversation,
                         format!("CompletionRunner error: {err:?}"),
@@ -392,10 +406,14 @@ impl Agent<AgentCtx> for FormationAgent {
 
         let mut conversation = Conversation {
             user: *caller,
+            messages: vec![json!(Message {
+                role: "user".into(),
+                content: vec![prompt.clone().into()],
+                ..Default::default()
+            })],
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            steering_messages: Some(vec![prompt]), // 原始输入作为 steering message，供 process_loop 处理
             label: Some("formation".to_string()),
             ..Default::default()
         };
@@ -412,11 +430,7 @@ impl Agent<AgentCtx> for FormationAgent {
 
         let is_idle = self.processing_conversation.load(Ordering::SeqCst) == 0;
         if is_idle {
-            if let Some(prev_id) = self
-                .memory
-                .conversations
-                .get_extension("hippocampus_processed")
-                .and_then(|v| u64::try_from(v).ok())
+            if let Some(prev_id) = self.get_processed()
                 && prev_id + 1 < id
             {
                 // Resume from the last processed conversation to catch any missed ones
