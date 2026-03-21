@@ -90,6 +90,14 @@ type UpdateSpaceInput struct {
 	Public      *bool   `json:"public,omitempty"`
 }
 
+type ModelConfig struct {
+	Family   string `json:"family"` // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
+	Model    string `json:"model"`
+	APIBase  string `json:"api_base"`
+	APIKey   string `json:"api_key"`
+	Disabled *bool  `json:"disabled,omitempty"`
+}
+
 type RestartFormationInput struct {
 	Conversation *uint64 `json:"conversation,omitempty"`
 }

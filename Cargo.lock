@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.19"
+version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1eea01d2575fc6798c4d7fc6eda7d6dc0ad22f48d3286728b4468ec7d1d4f47"
+checksum = "a2ef448dcdb7b5567878aecd178a578877861ff94eb8cdcd27decea05afcfab1"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -277,9 +277,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.9.28"
+version = "0.9.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcd839f866589233bc5b74c7e049dc68d6d22f34bc0e25186a6dae575e70548a"
+checksum = "862c88772d1ac0dad74b05ae4a7cf2a66e3f901e0eeb1a780d522f64f4100e96"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -4158,9 +4158,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",

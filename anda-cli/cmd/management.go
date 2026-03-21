@@ -136,6 +136,42 @@ var restartFormationCmd = &cobra.Command{
 	},
 }
 
+var updateBYOKCmd = &cobra.Command{
+	Use:   "update-byok",
+	Short: "Update BYOK (Bring Your Own Key) configuration (manager only)",
+	Run: func(cmd *cobra.Command, args []string) {
+		input := &api.ModelConfig{}
+
+		family, _ := cmd.Flags().GetString("family")
+		model, _ := cmd.Flags().GetString("model")
+		apiBase, _ := cmd.Flags().GetString("api-base")
+		apiKey, _ := cmd.Flags().GetString("api-key")
+
+		if family == "" || model == "" || apiBase == "" || apiKey == "" {
+			exitError(fmt.Errorf("--family, --model, --api-base, and --api-key are required"))
+		}
+
+		input.Family = family
+		input.Model = model
+		input.APIBase = apiBase
+		input.APIKey = apiKey
+		if cmd.Flags().Changed("disabled") {
+			disabled, _ := cmd.Flags().GetBool("disabled")
+			input.Disabled = &disabled
+		}
+
+		client := newClient()
+		resp, err := client.UpdateBYOK(cmd.Context(), input)
+		if err != nil {
+			exitError(err)
+		}
+		if resp.Error != nil {
+			exitError(resp.Error)
+		}
+		fmt.Println("BYOK configuration updated successfully")
+	},
+}
+
 func init() {
 	addTokenCmd.Flags().String("name", "", "Token name (required)")
 	addTokenCmd.Flags().String("scope", "*", "Token scope: read, write, *")
@@ -145,10 +181,17 @@ func init() {
 	updateSpaceCmd.Flags().String("description", "", "Space description")
 	updateSpaceCmd.Flags().Bool("public", false, "Whether space is public")
 
+	updateBYOKCmd.Flags().String("family", "", "Model family (e.g. gemini, anthropic, openai, deepseek, mimo) (required)")
+	updateBYOKCmd.Flags().String("model", "", "Model name (required)")
+	updateBYOKCmd.Flags().String("api-base", "", "Model API base URL (required)")
+	updateBYOKCmd.Flags().String("api-key", "", "Model API key (required)")
+	updateBYOKCmd.Flags().Bool("disabled", false, "Whether the BYOK config is disabled")
+
 	managementCmd.AddCommand(listTokensCmd)
 	managementCmd.AddCommand(addTokenCmd)
 	managementCmd.AddCommand(revokeTokenCmd)
 	managementCmd.AddCommand(updateSpaceCmd)
 	managementCmd.AddCommand(restartFormationCmd)
+	managementCmd.AddCommand(updateBYOKCmd)
 	rootCmd.AddCommand(managementCmd)
 }

@@ -2,7 +2,7 @@ use anda_core::{BoxError, Principal};
 use anda_db::{database::DBConfig, storage::StorageConfig};
 use anda_engine::{
     management::{BaseManagement, Visibility},
-    model::{Model, Proxy, gemini, mimo, request_client_builder, reqwest},
+    model::{Models, Proxy, request_client_builder, reqwest},
 };
 use anda_object_store::MetaStoreBuilder;
 use axum::{Router, routing};
@@ -26,12 +26,15 @@ use tower_http::{
 
 mod agents;
 mod handler;
+mod model;
 mod payload;
 mod space;
 mod types;
 
 use handler::*;
 use space::AppState;
+
+use crate::{model::build_model, types::ModelConfig};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -47,26 +50,27 @@ struct Cli {
     #[arg(long, env = "ED25519_PUBKEYS", default_value = "")]
     ed25519_pubkeys: String,
 
-    /// Gemini API key for AI model
-    #[arg(long, env = "GEMINI_API_KEY", default_value = "")]
-    gemini_api_key: String,
+    /// AI model family (e.g., "gemini", "anthropic", "openai", "deepseek", "mimo")
+    #[arg(long, env = "MODEL_FAMILY", default_value = "gemini")]
+    model_family: String,
 
+    /// AI model name (e.g., "gemini-3-flash-preview", "claude-sonnet-4-6")
+    #[arg(long, env = "MODEL_NAME", default_value = "gemini-3-flash-preview")]
+    model_name: String,
+
+    /// API key for AI model
+    #[arg(long, env = "MODEL_API_KEY", default_value = "")]
+    model_api_key: String,
+
+    /// API base URL for AI model
     #[arg(
         long,
-        env = "GEMINI_API_BASE",
+        env = "MODEL_API_BASE",
         default_value = "https://generativelanguage.googleapis.com/v1beta/models"
     )]
-    gemini_api_base: String,
+    model_api_base: String,
 
-    #[arg(long, env = "GEMINI_MODEL", default_value = "gemini-3-flash-preview")]
-    gemini_model: String,
-
-    #[arg(long, env = "MIMO_API_KEY", default_value = "")]
-    mimo_api_key: String,
-
-    #[arg(long, env = "MIMO_MODEL", default_value = "mimo-v2-pro")]
-    mimo_model: String,
-
+    /// Optional HTTPS proxy URL (e.g., "http://localhost:8080")
     #[arg(long, env = "HTTPS_PROXY")]
     https_proxy: Option<String>,
 
@@ -166,19 +170,16 @@ async fn main() -> Result<(), BoxError> {
     });
 
     // Configure AI model
-
-    // Gemini
-    let gemini_default = Model::with_completer(Arc::new(
-        gemini::Client::new(&cli.gemini_api_key, Some(cli.gemini_api_base.clone()))
-            .with_client(http_client.clone())
-            .completion_model(&cli.gemini_model),
-    ));
-
-    // Mimo
-    let mimo_pro = Model::with_completer(Arc::new(
-        mimo::Client::new(&cli.mimo_api_key, None)
-            .with_client(http_client)
-            .completion_model(&cli.mimo_model),
+    let models = Models::default();
+    models.set_model(build_model(
+        http_client.clone(),
+        ModelConfig {
+            family: cli.model_family.clone(),
+            model: cli.model_name.clone(),
+            api_key: cli.model_api_key.clone(),
+            api_base: cli.model_api_base.clone(),
+            disabled: cli.model_api_key.is_empty(),
+        },
     ));
 
     let mut db_type = "memory".to_string();
@@ -223,12 +224,8 @@ async fn main() -> Result<(), BoxError> {
         object_store,
         Arc::new(db_config),
         management.clone(),
-        if cli.mimo_api_key.is_empty() {
-            gemini_default.clone()
-        } else {
-            mimo_pro
-        },
-        gemini_default,
+        http_client.clone(),
+        Arc::new(models),
         ed25519_pubkeys,
         APP_NAME.to_string(),
         APP_VERSION.to_string(),
@@ -275,6 +272,10 @@ async fn main() -> Result<(), BoxError> {
         .route(
             "/v1/{space_id}/management/restart_formation",
             routing::patch(restart_formation),
+        )
+        .route(
+            "/v1/{space_id}/management/update_byok",
+            routing::patch(update_byok),
         )
         .route(
             "/admin/{space_id}/update_space_tier",
@@ -324,13 +325,14 @@ async fn main() -> Result<(), BoxError> {
     });
 
     log::warn!(
-        "start service {}@{} on {:?}, sharding: {}, managers: {}, DB type: {}.",
+        "start service {}@{} on {:?}, sharding: {}, managers: {}, DB type: {}, Model: {}.",
         APP_NAME,
         APP_VERSION,
         addr,
         cli.sharding_idx,
         cli.managers,
-        db_type
+        db_type,
+        cli.model_name
     );
 
     let _ = tokio::join!(server_handle, spaces_handle);

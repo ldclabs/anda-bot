@@ -104,6 +104,14 @@ export interface CreateOrUpdateSpaceInput {
   tier: number;
 }
 
+export interface ModelConfig {
+  family: string; // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
+  model: string;
+  api_base: string;
+  api_key: string;
+  disabled: boolean;
+}
+
 export interface SpaceTier {
   tier: number;
   updated_at: number; // Unix timestamp in milliseconds
@@ -283,18 +291,25 @@ export interface ServiceInfo {
 - 请求体：`RevokeSpaceTokenInput`
 - 响应：`RpcResponse<boolean>`（是否成功吊销）
 
-### POST `/v1/{space_id}/management/update_space`
+### PATCH `/v1/{space_id}/management/update_space`
 
 - 作用：更新空间信息（名称、描述、公开/私有）
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
 - 请求体：`UpdateSpaceInput`
 - 响应：`RpcResponse<true>`
 
-### POST `/v1/{space_id}/management/restart_formation`
+### PATCH `/v1/{space_id}/management/restart_formation`
 
 - 作用：通过会话 ID 重启记忆写入任务（用于失败/过期的写入任务）
 - 鉴权：必须通过 CWT `write`（用户管理级鉴权）
 - 请求体：`FormationRestartInput`
+- 响应：`RpcResponse<true>`
+
+### PATCH `/v1/{space_id}/management/update_byok`
+
+- 作用：更新 BYOK（Bring Your Own Key）配置，即使用自定义模型配置
+- 鉴权：必须通过 CWT `write`（用户管理级鉴权）
+- 请求体：`ModelConfig`
 - 响应：`RpcResponse<true>`
 
 ---

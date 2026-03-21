@@ -148,6 +148,16 @@ anda-cli --space-id my_space --token $CWT_TOKEN management revoke-token ST_xxx
 
 # Update space info
 anda-cli --space-id my_space --token $CWT_TOKEN management update-space --name "My Space" --public
+
+# Restart formation for a conversation
+anda-cli --space-id my_space --token $CWT_TOKEN management restart-formation --conversation 42
+
+# Update BYOK configuration
+anda-cli --space-id my_space --token $CWT_TOKEN management update-byok \
+  --family anthropic \
+  --model claude-opus-4-6 \
+  --api-base https://api.anthropic.com/v1 \
+  --api-key sk-xxx
 ```
 
 ### Admin (requires platform admin auth)

@@ -267,6 +267,18 @@ func (c *Client) RestartFormation(ctx context.Context, input *RestartFormationIn
 	return &resp, nil
 }
 
+func (c *Client) UpdateBYOK(ctx context.Context, input *ModelConfig) (*RpcResponse[bool], error) {
+	data, err := c.doJSON(ctx, http.MethodPatch, c.spacePath("/management/update_byok"), input)
+	if err != nil {
+		return nil, err
+	}
+	var resp RpcResponse[bool]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
 // CreateSpace creates a space (admin).
 func (c *Client) CreateSpace(ctx context.Context, input *CreateOrUpdateSpaceInput) (*RpcResponse[SpaceStatus], error) {
 	data, err := c.doJSON(ctx, http.MethodPost, "/admin/create_space", input)

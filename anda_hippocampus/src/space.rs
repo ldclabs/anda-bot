@@ -13,7 +13,7 @@ use anda_engine::{
     engine::Engine,
     management::Management,
     memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool, SearchConversationsTool},
-    model::Model,
+    model::{Models, reqwest},
     unix_ms,
 };
 use anda_kip::{
@@ -38,11 +38,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::payload::StringOr;
 use crate::types::{
-    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, RecallInput, SpaceTier,
-    SpaceToken, TokenScope,
+    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, ModelConfig, RecallInput,
+    SpaceTier, SpaceToken, TokenScope,
 };
 use crate::{
     agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
+    model::build_model,
     types::UpdateSpaceInput,
 };
 
@@ -97,8 +98,8 @@ pub struct AppState {
     spaces: Arc<RwLock<BTreeMap<String, Arc<SpaceEntry>>>>,
     object_store: Arc<dyn ObjectStore>,
     db_config: Arc<DBConfig>,
-    model: Model,
-    fallback_model: Model,
+    http_client: reqwest::Client,
+    models: Arc<Models>,
     ed25519_pubkeys: Vec<VerifyingKey>,
     management: Arc<dyn Management>,
 
@@ -113,8 +114,8 @@ impl AppState {
         object_store: Arc<dyn ObjectStore>,
         db_config: Arc<DBConfig>,
         management: Arc<dyn Management>,
-        model: Model,
-        fallback_model: Model,
+        http_client: reqwest::Client,
+        models: Arc<Models>,
         ed25519_pubkeys: Vec<VerifyingKey>,
         app_name: String,
         app_version: String,
@@ -125,8 +126,8 @@ impl AppState {
             object_store,
             db_config,
             management,
-            model,
-            fallback_model,
+            http_client,
+            models,
             ed25519_pubkeys,
             app_name,
             app_version,
@@ -246,8 +247,8 @@ impl AppState {
                         self.object_store.clone(),
                         db_config,
                         self.management.clone(),
-                        self.model.clone(),
-                        self.fallback_model.clone(),
+                        self.http_client.clone(),
+                        self.models.clone(),
                     )
                     .await?,
                 ))
@@ -317,6 +318,8 @@ pub struct Space {
     id: String,
     db: Arc<AndaDB>,
     engine: Engine,
+    http_client: reqwest::Client,
+    models: Arc<Models>,
     formation: FormationAgent,
     recall: RecallAgent,
 
@@ -456,6 +459,15 @@ impl Space {
         if changed {
             self.db.flush_metadata(now_ms).await?;
         }
+        Ok(())
+    }
+
+    pub async fn update_byok(&self, model_config: ModelConfig) -> Result<(), BoxError> {
+        self.db
+            .save_extension_from("byok".to_string(), &model_config.to_ref())
+            .await?;
+        let model = build_model(self.http_client.clone(), model_config);
+        self.models.set_model(model);
         Ok(())
     }
 
@@ -693,8 +705,8 @@ impl Space {
         object_store: Arc<dyn ObjectStore>,
         db_config: DBConfig,
         management: Arc<dyn Management>,
-        model: Model,
-        fallback_model: Model,
+        http_client: reqwest::Client,
+        models: Arc<Models>,
     ) -> Result<Self, BoxError> {
         let id = db_config.name.clone();
         let db = Arc::new(AndaDB::open(object_store.clone(), db_config).await?);
@@ -732,6 +744,8 @@ impl Space {
             )
             .await?;
 
+        // create a new models instance for each space to allow per-space customization in the future (e.g., different model providers or credentials)
+        let models = Arc::new(Models::from_clone(models.as_ref()));
         let memory = Arc::new(memory);
         let memory_r = MemoryReadonly::new(memory.clone());
         let memory_tool = MemoryTool::new(memory.clone());
@@ -741,11 +755,11 @@ impl Space {
         let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
         let recall = RecallAgent::new(recall_conversations, hooks.clone(), 65535);
         let maintenance = MaintenanceAgent::new(memory.clone(), hooks.clone());
+
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
-            .with_model(model)
-            .with_fallback_model(fallback_model)
+            .set_models(models.clone())
             .register_tool(memory.clone())?
             .register_tool(memory_r)?
             .register_tool(memory_tool)?
@@ -762,15 +776,22 @@ impl Space {
 
         // Initialize and start the server
         let engine = engine.build(RecallAgent::NAME.to_string()).await?;
-
-        Ok(Self {
+        let this = Self {
             id,
-            db,
+            db: db.clone(),
+            http_client,
+            models,
             formation,
             recall,
             memory,
             engine,
-        })
+        };
+
+        if let Some(cfg) = db.get_extension_as::<ModelConfig>("byok") {
+            let model = build_model(this.http_client.clone(), cfg);
+            this.models.set_model(model);
+        }
+        Ok(this)
     }
 }
 

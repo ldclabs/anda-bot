@@ -104,6 +104,14 @@ export interface CreateOrUpdateSpaceInput {
   tier: number;
 }
 
+export interface ModelConfig {
+  family: string; // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
+  model: string;
+  api_base: string;
+  api_key: string;
+  disabled: boolean;
+}
+
 export interface SpaceTier {
   tier: number;
   updated_at: number; // Unix timestamp in milliseconds
@@ -283,17 +291,23 @@ export interface ServiceInfo {
 - Request body: `RevokeSpaceTokenInput`
 - Response: `RpcResponse<boolean>` (whether revocation succeeded)
 
-### POST `/v1/{space_id}/management/update_space`
+### PATCH `/v1/{space_id}/management/update_space`
 
 - Purpose: Update space information (name, description, public/private)
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `UpdateSpaceInput`
 - Response: `RpcResponse<true>`
 
-### POST `/v1/{space_id}/management/restart_formation`
+### PATCH `/v1/{space_id}/management/restart_formation`
 - Purpose: Restart a formation task by conversation ID (for failed/stale formations)
 - Auth: Must pass CWT `write` (user management-level auth)
 - Request body: `FormationRestartInput`
+- Response: `RpcResponse<true>`
+
+### PATCH `/v1/{space_id}/management/update_byok`
+- Purpose: Update BYOK (Bring Your Own Key) configuration, i.e., use custom model configuration
+- Auth: Must pass CWT `write` (user management-level auth)
+- Request body: `ModelConfig`
 - Response: `RpcResponse<true>`
 
 ---

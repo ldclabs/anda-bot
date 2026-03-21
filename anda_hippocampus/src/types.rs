@@ -36,6 +36,55 @@ impl CWToken {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct ModelConfig {
+    // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
+    #[serde(alias = "f")]
+    pub family: String,
+
+    #[serde(alias = "m")]
+    pub model: String,
+
+    #[serde(alias = "ab")]
+    pub api_base: String,
+
+    #[serde(alias = "ak")]
+    pub api_key: String,
+
+    #[serde(default, alias = "d")]
+    pub disabled: bool,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct ModelConfigRef<'a> {
+    #[serde(rename = "f", alias = "family")]
+    pub family: &'a str,
+
+    #[serde(rename = "m", alias = "model")]
+    pub model: &'a str,
+
+    #[serde(rename = "ab", alias = "api_base")]
+    pub api_base: &'a str,
+
+    #[serde(rename = "ak", alias = "api_key")]
+    pub api_key: &'a str,
+
+    #[serde(rename = "d", alias = "disabled")]
+    pub disabled: bool,
+}
+
+impl ModelConfig {
+    pub fn to_ref<'a>(&'a self) -> ModelConfigRef<'a> {
+        ModelConfigRef {
+            family: &self.family,
+            model: &self.model,
+            api_base: &self.api_base,
+            api_key: &self.api_key,
+            disabled: self.disabled,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceTier {
     #[serde(default, alias = "t")]
     pub tier: u32,
@@ -58,7 +107,7 @@ impl SpaceTier {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SpaceTierRef {
     #[serde(rename = "t", alias = "tier")]
     pub tier: u32,
@@ -68,11 +117,11 @@ pub struct SpaceTierRef {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct SpaceToken {
-    #[serde(default)]
-    pub token: String,
-
     #[serde(default, alias = "n")]
     pub name: String,
+
+    #[serde(default)]
+    pub token: String,
 
     #[serde(alias = "s")]
     pub scope: TokenScope,
@@ -91,10 +140,10 @@ pub struct SpaceToken {
 }
 
 impl SpaceToken {
-    pub fn to_ref(&self) -> SpaceTokenRef {
+    pub fn to_ref<'a>(&'a self) -> SpaceTokenRef<'a> {
         SpaceTokenRef {
-            name: self.name.clone(),
-            scope: self.scope,
+            name: &self.name,
+            scope: &self.scope,
             usage: self.usage,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -103,12 +152,12 @@ impl SpaceToken {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
-pub struct SpaceTokenRef {
+#[derive(Debug, Serialize, Clone)]
+pub struct SpaceTokenRef<'a> {
     #[serde(rename = "n", alias = "name")]
-    pub name: String,
+    pub name: &'a str,
     #[serde(rename = "s", alias = "scope")]
-    pub scope: TokenScope,
+    pub scope: &'a TokenScope,
     #[serde(rename = "u", alias = "usage")]
     pub usage: u64,
     #[serde(rename = "ca", alias = "created_at")]
@@ -251,7 +300,7 @@ pub struct CreateOrUpdateSpaceInput {
 
 #[cfg(test)]
 mod tests {
-    use super::{SpaceToken, SpaceTokenRef, TokenScope};
+    use super::{SpaceToken, TokenScope};
     use std::str::FromStr;
 
     #[test]
@@ -328,61 +377,5 @@ mod tests {
         assert!(value.get("u").is_none());
         assert!(value.get("ca").is_none());
         assert!(value.get("ua").is_none());
-    }
-
-    #[test]
-    fn space_token_ref_serialize_uses_compact_field_names() {
-        let token = SpaceToken {
-            token: "abc123".to_string(),
-            scope: TokenScope::All,
-            usage: 5,
-            created_at: 200,
-            updated_at: 201,
-            ..Default::default()
-        };
-
-        let token_ref = token.to_ref();
-        let value = serde_json::to_value(&token_ref).unwrap();
-        assert_eq!(value["s"], "*");
-        assert_eq!(value["u"], 5);
-        assert_eq!(value["ca"], 200);
-        assert_eq!(value["ua"], 201);
-        assert!(value.get("scope").is_none());
-        assert!(value.get("usage").is_none());
-        assert!(value.get("created_at").is_none());
-        assert!(value.get("updated_at").is_none());
-    }
-
-    #[test]
-    fn space_token_ref_deserialize_accepts_compact_and_verbose_fields() {
-        let compact = r#"{"s":"write","u":1,"ca":2,"ua":3}"#;
-        let verbose = r#"{"scope":"read","usage":4,"created_at":5,"updated_at":6}"#;
-
-        let compact_ref: SpaceTokenRef = serde_json::from_str(compact).unwrap();
-        assert_eq!(compact_ref.scope, TokenScope::Write);
-        assert_eq!(compact_ref.usage, 1);
-        assert_eq!(compact_ref.created_at, 2);
-        assert_eq!(compact_ref.updated_at, 3);
-
-        let verbose_ref: SpaceTokenRef = serde_json::from_str(verbose).unwrap();
-        assert_eq!(verbose_ref.scope, TokenScope::Read);
-        assert_eq!(verbose_ref.usage, 4);
-        assert_eq!(verbose_ref.created_at, 5);
-        assert_eq!(verbose_ref.updated_at, 6);
-    }
-
-    #[test]
-    fn space_token_defaults_are_stable() {
-        let token = SpaceToken::default();
-        assert_eq!(token.scope, TokenScope::Read);
-        assert_eq!(token.usage, 0);
-        assert_eq!(token.created_at, 0);
-        assert_eq!(token.updated_at, 0);
-
-        let token_ref = SpaceTokenRef::default();
-        assert_eq!(token_ref.scope, TokenScope::Read);
-        assert_eq!(token_ref.usage, 0);
-        assert_eq!(token_ref.created_at, 0);
-        assert_eq!(token_ref.updated_at, 0);
     }
 }

@@ -545,6 +545,44 @@ pub async fn restart_formation(
     Ok(ct.response(RpcResponse::success(true)))
 }
 
+/// PATCH /v1/{space_id}/management/update_byok
+pub async fn update_byok(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let _ = app
+        .check_auth(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let input: ModelConfig = ct
+        .parse_body(&body)
+        .map_err(AppError::bad_request)?
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let space = app
+        .load_space(&space_id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    space
+        .update_byok(input)
+        .await
+        .map_err(AppError::bad_request)?;
+    Ok(ct.response(RpcResponse::success(true)))
+}
+
 /* ===== Admin API ===== */
 
 /// POST /admin/create_space

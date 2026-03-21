@@ -67,7 +67,9 @@ Supporting endpoints:
 | `GET` | `/v1/{space_id}/management/space_tokens` | List space tokens | `read` (CWT) |
 | `POST` | `/v1/{space_id}/management/add_space_token` | Add a space token | `write` (CWT) |
 | `POST` | `/v1/{space_id}/management/revoke_space_token` | Revoke a space token | `write` (CWT) |
-| `POST` | `/v1/{space_id}/management/update_space` | Update space information (name, description, public/private) | `write` (CWT) |
+| `PATCH` | `/v1/{space_id}/management/update_space` | Update space information (name, description, public/private) | `write` (CWT) |
+| `PATCH` | `/v1/{space_id}/management/restart_formation` | Restart formation for a conversation (re-encode with updated model/config) | `write` (CWT) |
+| `PATCH` | `/v1/{space_id}/management/update_byok` | Update BYOK configuration for the space | `write` (CWT) |
 | `POST` | `/admin/{space_id}/update_space_tier` | Update a space tier | manager (CWT) |
 | `POST` | `/admin/create_space` | Create a new memory space | manager (CWT) |
 > Auth scopes in tables apply when authentication is enabled (`ED25519_PUBKEYS` is set).
@@ -577,9 +579,10 @@ The service is configured via CLI arguments and environment variables:
 |--------------|---------|-------------|
 | `LISTEN_ADDR` | `127.0.0.1:8042` | Listen address |
 | `ED25519_PUBKEYS` | — | Comma-separated Base64-encoded Ed25519 public keys; if empty, API authentication is disabled |
-| `GEMINI_API_KEY` | — | Google Gemini API key |
-| `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL |
-| `GEMINI_MODEL` | `gemini-3-flash-preview` | LLM model for agents |
+| `MODEL_FAMILY` | `gemini` | Model family to use for encoding and recall (e.g., `gemini`, `anthropic`, `openai`) |
+| `MODEL_API_KEY` | — | Google Gemini API key |
+| `MODEL_API_BASE` | `https://generativelanguage.googleapis.com/v1beta/models` | Gemini API base URL |
+| `MODEL_NAME` | `gemini-3-flash-preview` | LLM model for agents |
 | `HTTPS_PROXY` | — | HTTPS proxy URL |
 | `SHARDING_IDX` | `0` | Shard index for this instance |
 | `MANAGERS` | — | Comma-separated manager principal IDs |
