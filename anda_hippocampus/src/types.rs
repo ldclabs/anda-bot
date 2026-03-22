@@ -1,4 +1,5 @@
-use anda_core::{BoxError, Principal, model::Message};
+use anda_core::{BoxError, Principal, Usage, model::Message};
+use anda_db::storage::StorageStats;
 use ic_cose_types::cose::cwt::{ClaimsSet, get_scope};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -9,6 +10,24 @@ pub struct Pagination {
     pub limit: Option<usize>,
     /// Conversation collection: `"recall"`
     pub collection: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct SpaceStatus {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub owner: String,
+    pub db_stats: StorageStats,
+    pub concepts: usize,
+    pub propositions: usize,
+    pub conversations: usize,
+    pub public: bool,
+    pub tier: SpaceTier,
+    pub formation_usage: Usage,
+    pub recall_usage: Usage,
+    pub maintenance_usage: Usage,
+    pub formation_processed_id: u64,
 }
 
 pub struct CWToken {

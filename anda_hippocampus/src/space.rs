@@ -6,7 +6,6 @@ use anda_db::{
     error::DBError,
     index::BTree,
     query::Fv,
-    storage::StorageStats,
 };
 use anda_db_tfs::jieba_tokenizer;
 use anda_engine::{
@@ -22,7 +21,6 @@ use anda_kip::{
 use ic_auth_types::ByteBufB64;
 use ic_cose_types::cose::{cwt::cwt_from, ed25519::VerifyingKey, sign1::cose_sign1_from};
 use object_store::ObjectStore;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::BTreeMap,
@@ -36,15 +34,14 @@ use std::{
 use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::payload::StringOr;
 use crate::types::{
     AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, ModelConfig, RecallInput,
-    SpaceTier, SpaceToken, TokenScope,
+    SpaceStatus, SpaceTier, SpaceToken, TokenScope, UpdateSpaceInput,
 };
 use crate::{
     agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
     model::build_model,
-    types::UpdateSpaceInput,
+    payload::StringOr,
 };
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -265,7 +262,7 @@ impl AppState {
     /// - Evicts spaces idle for over 20 minutes.
     pub async fn start_background_tasks(&self, cancel_token: CancellationToken) {
         let flush_interval = Duration::from_secs(5 * 60);
-        let idle_timeout_ms: u64 = 20 * 60 * 1000;
+        let idle_timeout_ms: u64 = 9 * 60 * 1000;
 
         loop {
             tokio::select! {
@@ -329,24 +326,6 @@ pub struct Space {
     maintenance: MaintenanceAgent,
 
     pub memory: Arc<MemoryManagement>,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
-pub struct SpaceStatus {
-    pub id: String,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub owner: String,
-    pub db_stats: StorageStats,
-    pub concepts: usize,
-    pub propositions: usize,
-    pub conversations: usize,
-    pub public: bool,
-    pub tier: SpaceTier,
-    pub formation_usage: Usage,
-    pub recall_usage: Usage,
-    pub maintenance_usage: Usage,
-    pub formation_processed_id: u64,
 }
 
 impl Space {
@@ -734,7 +713,7 @@ impl Space {
         memory.disable_kip_logging();
 
         let mut schema = Conversation::schema()?;
-        schema.with_version(1);
+        schema.with_version(2);
 
         let recall_conversations = db
             .open_or_create_collection(
