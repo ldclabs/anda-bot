@@ -240,6 +240,10 @@ async fn main() -> Result<(), BoxError> {
         .route("/SKILL.md", routing::get(get_skill))
         .route("/v1/{space_id}/info", routing::get(get_info))
         .route("/v1/{space_id}/status", routing::get(get_info))
+        .route(
+            "/v1/{space_id}/formation_status",
+            routing::get(get_formation_status),
+        )
         .route("/v1/{space_id}/formation", routing::post(post_formation))
         .route("/v1/{space_id}/recall", routing::post(post_recall))
         .route(

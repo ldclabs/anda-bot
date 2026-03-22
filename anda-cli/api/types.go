@@ -597,6 +597,18 @@ type SpaceInfo struct {
 	MaintenanceAt          MaintenanceAt `json:"maintenance_at"`
 }
 
+type FormationStatus struct {
+	ID                     string        `json:"id"`
+	Concepts               int           `json:"concepts"`
+	Propositions           int           `json:"propositions"`
+	Conversations          int           `json:"conversations"`
+	FormationProcessing    bool          `json:"formation_processing"`
+	MaintenanceProcessing  bool          `json:"maintenance_processing"`
+	FormationProcessedID   int64         `json:"formation_processed_id"`
+	MaintenanceProcessedID int64         `json:"maintenance_processed_id"`
+	MaintenanceAt          MaintenanceAt `json:"maintenance_at"`
+}
+
 type MaintenanceAt struct {
 	Daydream int64 `json:"daydream"`
 	Full     int64 `json:"full"`

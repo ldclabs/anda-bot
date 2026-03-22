@@ -150,6 +150,18 @@ export interface SpaceInfo {
   maintenance_at: MaintenanceAt;
 }
 
+export interface FormationStatus {
+  id: string;
+  concepts: number;
+  propositions: number;
+  conversations: number;
+  formation_processing: boolean;
+  maintenance_processing: boolean;
+  formation_processed_id: number;
+  maintenance_processed_id: number;
+  maintenance_at: MaintenanceAt;
+}
+
 export interface MaintenanceAt {
   daydream: number;
   full: number;
@@ -260,6 +272,12 @@ export interface ServiceInfo {
 - Purpose: Get space status and statistics
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
 - Response: `RpcResponse<SpaceInfo>`
+
+### GET `/v1/{space_id}/formation_status`
+
+- Purpose: Get formation status
+- Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
+- Response: `RpcResponse<FormationStatus>`
 
 ### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 

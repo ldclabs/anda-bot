@@ -32,6 +32,19 @@ pub struct SpaceInfo {
     pub maintenance_at: MaintenanceAt,
 }
 
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct FormationStatus {
+    pub id: String,
+    pub concepts: usize,
+    pub propositions: usize,
+    pub conversations: usize,
+    pub formation_processing: bool,
+    pub maintenance_processing: bool,
+    pub formation_processed_id: u64,
+    pub maintenance_processed_id: u64,
+    pub maintenance_at: MaintenanceAt,
+}
+
 pub struct CWToken {
     pub user: Principal,
     pub audience: String,

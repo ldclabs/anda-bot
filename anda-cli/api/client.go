@@ -140,13 +140,25 @@ func (c *Client) Maintenance(ctx context.Context, input *MaintenanceInput) (*Rpc
 	return &resp, nil
 }
 
-// GetStatus returns space status.
-func (c *Client) GetStatus(ctx context.Context) (*RpcResponse[SpaceInfo], error) {
+// GetSpaceInfo returns space information.
+func (c *Client) GetSpaceInfo(ctx context.Context) (*RpcResponse[SpaceInfo], error) {
 	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/info"), nil)
 	if err != nil {
 		return nil, err
 	}
 	var resp RpcResponse[SpaceInfo]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
+func (c *Client) GetFormationStatus(ctx context.Context) (*RpcResponse[FormationStatus], error) {
+	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/formation_status"), nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp RpcResponse[FormationStatus]
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}

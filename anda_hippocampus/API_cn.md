@@ -150,6 +150,18 @@ export interface SpaceInfo {
   maintenance_at: MaintenanceAt;
 }
 
+export interface FormationStatus {
+  id: string;
+  concepts: number;
+  propositions: number;
+  conversations: number;
+  formation_processing: boolean;
+  maintenance_processing: boolean;
+  formation_processed_id: number;
+  maintenance_processed_id: number;
+  maintenance_at: MaintenanceAt;
+}
+
 export interface MaintenanceAt {
   daydream: number;
   full: number;
@@ -260,6 +272,12 @@ export interface ServiceInfo {
 - 作用：获取空间状态和统计
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
 - 响应：`RpcResponse<SpaceInfo>`
+
+### GET `/v1/{space_id}/formation_status`
+
+- 作用：获取记忆写入状态（更轻量级的接口，专门用于监控记忆写入进度）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- 响应：`RpcResponse<FormationStatus>`
 
 ### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 

@@ -119,6 +119,47 @@ pub async fn get_info(
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
+/// GET /v1/{space_id}/formation_status
+pub async fn get_formation_status(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let now_ms = unix_ms();
+    let t = if token.len() > 60 {
+        // 如果 token 存在，永远验证它
+        Some(
+            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
+                .map_err(|_| AppError::unauthorized())?,
+        )
+    } else {
+        None
+    };
+
+    let space = app
+        .load_space(&space_id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if !space.is_public() && t.is_none() {
+        // 如果空间不是公开的，且没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Read, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space.formation_status();
+    Ok(ct.response(RpcResponse::success(rt)))
+}
+
 /// POST /v1/{space_id}/formation
 pub async fn post_formation(
     State(app): State<AppState>,

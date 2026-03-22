@@ -36,8 +36,9 @@ use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::types::{
-    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, MaintenanceScope, ModelConfig,
-    RecallInput, SpaceInfo, SpaceTier, SpaceToken, TokenScope, UpdateSpaceInput,
+    AddSpaceTokenInput, CWToken, FormationInput, FormationStatus, MaintenanceInput,
+    MaintenanceScope, ModelConfig, RecallInput, SpaceInfo, SpaceTier, SpaceToken, TokenScope,
+    UpdateSpaceInput,
 };
 use crate::{
     agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
@@ -518,6 +519,20 @@ impl Space {
         info
     }
 
+    pub fn formation_status(&self) -> FormationStatus {
+        FormationStatus {
+            id: self.id.clone(),
+            concepts: self.memory.nexus.concepts.len(),
+            propositions: self.memory.nexus.propositions.len(),
+            conversations: self.memory.conversations.len(),
+            formation_processing: self.formation.is_processing(),
+            maintenance_processing: self.maintenance.is_processing(),
+            formation_processed_id: self.formation.get_processed().unwrap_or_default(),
+            maintenance_processed_id: self.maintenance.get_processed().unwrap_or_default(),
+            maintenance_at: self.maintenance.get_processed_at(),
+        }
+    }
+
     pub async fn ingest(
         &self,
         user: Principal,
@@ -912,14 +927,14 @@ impl AgentHooks for Hooks {
                 timestamp,
                 parameters: None,
             })
-        } else if formation_id >= at.quick + 42 {
+        } else if formation_id >= at.quick.max(at.full) + 42 {
             Some(MaintenanceInput {
                 trigger: "scheduled".to_string(),
                 scope: MaintenanceScope::Quick,
                 timestamp,
                 parameters: None,
             })
-        } else if formation_id >= at.daydream + 21 {
+        } else if formation_id >= at.daydream.max(at.quick).max(at.full) + 21 {
             Some(MaintenanceInput {
                 trigger: "scheduled".to_string(),
                 scope: MaintenanceScope::Daydream,

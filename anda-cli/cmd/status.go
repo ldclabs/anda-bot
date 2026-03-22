@@ -6,17 +6,14 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Get space status and statistics",
+	Short: "Get service status and statistics",
 	Run: func(cmd *cobra.Command, args []string) {
 		client := newClient()
-		resp, err := client.GetStatus(cmd.Context())
+		info, err := client.GetInfo(cmd.Context())
 		if err != nil {
 			exitError(err)
 		}
-		if resp.Error != nil {
-			exitError(resp.Error)
-		}
-		printJSON(resp.Result)
+		printJSON(info)
 	},
 }
 
