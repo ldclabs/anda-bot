@@ -21,7 +21,7 @@ use tokio::signal;
 use tokio_util::sync::CancellationToken;
 use tower_http::{
     compression::CompressionLayer,
-    cors::{AllowHeaders, CorsLayer},
+    cors::{AllowHeaders, AllowMethods, CorsLayer},
 };
 
 mod agents;
@@ -306,15 +306,10 @@ async fn main() -> Result<(), BoxError> {
             .collect();
         CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods([
-                http::Method::GET,
-                http::Method::POST,
-                http::Method::PUT,
-                http::Method::PATCH,
-                http::Method::DELETE,
-                http::Method::OPTIONS,
-            ])
+            .allow_credentials(true)
+            .max_age(Duration::from_secs(86400))
             .allow_headers(AllowHeaders::mirror_request())
+            .allow_methods(AllowMethods::mirror_request())
     };
     let app = app.layer(cors);
     let app = app.with_state(app_state.clone());
