@@ -77,30 +77,17 @@ impl FormationAgent {
             .into());
         }
 
-        let conv = self.memory.get_conversation(conversation).await?;
-        if let Some(label) = &conv.label
-            && label != "formation"
-        {
-            return Err(format!(
-                "Conversation {} has label {:?}, not eligible for formation processing",
-                conversation, label
-            )
-            .into());
-        }
+        // Find the next valid pending conversation starting from the given ID (inclusive)
+        let conv = self
+            .find_next_submitted(conversation.saturating_sub(1))
+            .await
+            .ok_or_else(|| {
+                format!(
+                    "No pending formation conversation found starting from {}",
+                    conversation
+                )
+            })?;
 
-        if conv.messages.is_empty()
-            && conv
-                .steering_messages
-                .as_ref()
-                .map(|v| v.is_empty())
-                .unwrap_or(true)
-        {
-            return Err(format!(
-                "Conversation {} has no messages, cannot process",
-                conversation
-            )
-            .into());
-        }
         self.try_process(ctx, conv);
         Ok(())
     }
@@ -154,7 +141,8 @@ impl FormationAgent {
                     conv_id,
                     conversation.status
                 );
-                // 上游异常，退出循环等待外部干预（如修复问题后重试或人工分析）或后续请求自动触发
+                // 上游异常，重置 processing 状态以允许外部干预或后续请求自动触发
+                self.processing_conversation.store(0, Ordering::SeqCst);
                 break;
             }
 
@@ -171,6 +159,8 @@ impl FormationAgent {
                     id
                 );
 
+                // 重置 processing 状态，以便 maintenance 完成后 try_start_formation 能重新启动
+                self.processing_conversation.store(0, Ordering::SeqCst);
                 break; // 交由 maintenance agent 处理后续流程，退出循环
             }
 
