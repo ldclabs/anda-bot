@@ -8,12 +8,12 @@ use std::str::FromStr;
 pub struct Pagination {
     pub cursor: Option<String>,
     pub limit: Option<usize>,
-    /// Conversation collection: `"recall"`
+    /// Conversation collection: "recall", "maintenance".
     pub collection: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
-pub struct SpaceStatus {
+pub struct SpaceInfo {
     pub id: String,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -28,6 +28,8 @@ pub struct SpaceStatus {
     pub recall_usage: Usage,
     pub maintenance_usage: Usage,
     pub formation_processed_id: u64,
+    pub maintenance_processed_id: u64,
+    pub maintenance_at: MaintenanceAt,
 }
 
 pub struct CWToken {
@@ -273,15 +275,56 @@ pub struct FormationRestartInput {
     pub conversation: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MaintenanceScope {
+    #[serde(rename = "daydream")]
+    #[default]
+    Daydream,
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "quick")]
+    Quick,
+}
+
+impl FromStr for MaintenanceScope {
+    type Err = BoxError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "full" => Ok(Self::Full),
+            "quick" => Ok(Self::Quick),
+            "daydream" => Ok(Self::Daydream),
+            _ => Err("invalid scope".into()),
+        }
+    }
+}
+
+impl std::fmt::Display for MaintenanceScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Full => "full",
+            Self::Quick => "quick",
+            Self::Daydream => "daydream",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct MaintenanceAt {
+    pub daydream: u64,
+    pub full: u64,
+    pub quick: u64,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct MaintenanceInput {
     /// `"scheduled"` | `"threshold"` | `"on_demand"`
     #[serde(default = "default_trigger")]
     pub trigger: String,
 
-    /// `"full"` (complete maintenance cycle) | `"quick"` (lightweight check only)
-    #[serde(default = "default_scope")]
-    pub scope: String,
+    /// `"full"` (complete sleep cycle) | `"quick"` (lightweight check only) | `"daydream"` (idle-time salience scoring and micro-consolidation).
+    pub scope: MaintenanceScope,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
@@ -292,10 +335,6 @@ pub struct MaintenanceInput {
 
 fn default_trigger() -> String {
     "on_demand".to_string()
-}
-
-fn default_scope() -> String {
-    "full".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

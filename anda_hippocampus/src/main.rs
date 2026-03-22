@@ -238,7 +238,8 @@ async fn main() -> Result<(), BoxError> {
         .route("/apple-touch-icon.webp", routing::get(apple_touch_icon))
         .route("/info", routing::get(get_information))
         .route("/SKILL.md", routing::get(get_skill))
-        .route("/v1/{space_id}/status", routing::get(get_status))
+        .route("/v1/{space_id}/info", routing::get(get_info))
+        .route("/v1/{space_id}/status", routing::get(get_info))
         .route("/v1/{space_id}/formation", routing::post(post_formation))
         .route("/v1/{space_id}/recall", routing::post(post_recall))
         .route(

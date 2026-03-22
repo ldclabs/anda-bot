@@ -109,7 +109,7 @@ Detailed API docs (with TypeScript request/response types):
 | `GET`   | `/apple-touch-icon.webp`                         | Apple touch icon                                              | —                            |
 | `GET`   | `/info`                                          | Service info (name, version, sharding)                        | —                            |
 | `GET`   | `/SKILL.md`                                      | Skill description (Markdown)                                  | —                            |
-| `GET`   | `/v1/{space_id}/status`                          | Get space status & statistics                                 | `read` (CWT or space token)  |
+| `GET`   | `/v1/{space_id}/info`                            | Get space status & statistics                                 | `read` (CWT or space token)  |
 | `POST`  | `/v1/{space_id}/formation`                       | Submit messages for memory encoding                           | `write` (CWT or space token) |
 | `POST`  | `/v1/{space_id}/recall`                          | Query memory with natural language                            | `read` (CWT or space token)  |
 | `POST`  | `/v1/{space_id}/maintenance`                     | Trigger maintenance cycle                                     | `write` (CWT or space token) |
@@ -299,7 +299,7 @@ Trigger a memory maintenance cycle. Runs asynchronously with single-execution gu
 }
 ```
 
-### GET /v1/{space_id}/status
+### GET /v1/{space_id}/info
 
 Get space statistics and health information.
 
@@ -312,7 +312,8 @@ Get space statistics and health information.
     "db_stats": { "total_items": 150, "total_bytes": 524288 },
     "concepts": 85,
     "propositions": 120,
-    "conversations": 12
+    "conversations": 12,
+    ...
   }
 }
 ```

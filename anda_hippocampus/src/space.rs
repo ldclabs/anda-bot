@@ -6,6 +6,7 @@ use anda_db::{
     error::DBError,
     index::BTree,
     query::Fv,
+    schema::DocumentId,
 };
 use anda_db_tfs::jieba_tokenizer;
 use anda_engine::{
@@ -13,7 +14,7 @@ use anda_engine::{
     management::Management,
     memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool, SearchConversationsTool},
     model::{Models, reqwest},
-    unix_ms,
+    rfc3339_datetime_now, unix_ms,
 };
 use anda_kip::{
     KipError, META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml,
@@ -26,7 +27,7 @@ use std::{
     collections::BTreeMap,
     str::FromStr,
     sync::{
-        Arc, LazyLock,
+        Arc, LazyLock, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -35,8 +36,8 @@ use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::types::{
-    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, ModelConfig, RecallInput,
-    SpaceStatus, SpaceTier, SpaceToken, TokenScope, UpdateSpaceInput,
+    AddSpaceTokenInput, CWToken, FormationInput, MaintenanceInput, MaintenanceScope, ModelConfig,
+    RecallInput, SpaceInfo, SpaceTier, SpaceToken, TokenScope, UpdateSpaceInput,
 };
 use crate::{
     agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
@@ -193,7 +194,7 @@ impl AppState {
         id: String,
         tier: u32,
         now_ms: u64,
-    ) -> Result<SpaceStatus, BoxError> {
+    ) -> Result<SpaceInfo, BoxError> {
         {
             let spaces = self.spaces.read().await;
             if spaces
@@ -239,16 +240,14 @@ impl AppState {
             .get_or_try_init(|| async {
                 let mut db_config = (*self.db_config).clone();
                 db_config.name = space_id.to_string();
-                Ok::<Arc<Space>, BoxError>(Arc::new(
-                    Space::connect(
+                Space::connect(
                         self.object_store.clone(),
                         db_config,
                         self.management.clone(),
                         self.http_client.clone(),
                         self.models.clone(),
                     )
-                    .await?,
-                ))
+                    .await
             })
             .await
             .cloned()?;
@@ -471,50 +470,52 @@ impl Space {
             .unwrap_or(false)
     }
 
-    pub fn get_status(&self) -> SpaceStatus {
-        let mut status = SpaceStatus {
+    pub fn get_info(&self) -> SpaceInfo {
+        let mut info = SpaceInfo {
             id: self.id.clone(),
             db_stats: self.db.stats(),
             concepts: self.memory.nexus.concepts.len(),
             propositions: self.memory.nexus.propositions.len(),
             conversations: self.memory.conversations.len(),
             formation_processed_id: self.formation.get_processed().unwrap_or_default(),
+            maintenance_processed_id: self.maintenance.get_processed().unwrap_or_default(),
+            maintenance_at: self.maintenance.get_processed_at(),
             ..Default::default()
         };
 
         self.db.extensions_with(|kv| {
-            status.name = kv
+            info.name = kv
                 .get("name")
                 .and_then(|v| String::try_from(v.clone()).ok());
-            status.description = kv
+            info.description = kv
                 .get("description")
                 .and_then(|v| String::try_from(v.clone()).ok());
-            status.owner = kv
+            info.owner = kv
                 .get("owner")
                 .and_then(|v| String::try_from(v.clone()).ok())
                 .unwrap_or_default();
-            status.public = kv
+            info.public = kv
                 .get("public")
                 .and_then(|v| bool::try_from(v.clone()).ok())
                 .unwrap_or(false);
-            status.tier = kv
+            info.tier = kv
                 .get("tier")
                 .and_then(|v| v.clone().deserialized::<SpaceTier>().ok())
                 .unwrap_or_default();
-            status.formation_usage = kv
+            info.formation_usage = kv
                 .get("formation_usage")
                 .and_then(|v| v.clone().deserialized::<Usage>().ok())
                 .unwrap_or_default();
-            status.recall_usage = kv
+            info.recall_usage = kv
                 .get("recall_usage")
                 .and_then(|v| v.clone().deserialized::<Usage>().ok())
                 .unwrap_or_default();
-            status.maintenance_usage = kv
+            info.maintenance_usage = kv
                 .get("maintenance_usage")
                 .and_then(|v| v.clone().deserialized::<Usage>().ok())
                 .unwrap_or_default();
         });
-        status
+        info
     }
 
     pub async fn ingest(
@@ -571,7 +572,9 @@ impl Space {
         user: Principal,
         input: StringOr<MaintenanceInput>,
     ) -> Result<AgentOutput, BoxError> {
-        self.engine
+        let scope = input.as_value().map(|v| v.scope).unwrap_or_default();
+        let rt = self
+            .engine
             .agent_run(
                 user,
                 AgentInput {
@@ -581,7 +584,11 @@ impl Space {
                     ..Default::default()
                 },
             )
-            .await
+            .await?;
+        if let Some(id) = self.formation.get_processed() {
+            self.maintenance.set_processed_at(scope, id);
+        }
+        Ok(rt)
     }
 
     pub async fn restart_formation(
@@ -605,6 +612,7 @@ impl Space {
     ) -> Result<Conversation, BoxError> {
         let collection = match collection {
             Some(name) if name == "recall" => self.recall.conversations.clone(),
+            Some(name) if name == "maintenance" => self.maintenance.conversations.clone(),
             _ => self.memory.conversations.clone(),
         };
 
@@ -622,6 +630,7 @@ impl Space {
 
         let collection = match collection {
             Some(name) if name == "recall" => self.recall.conversations.clone(),
+            Some(name) if name == "maintenance" => self.maintenance.conversations.clone(),
             _ => self.memory.conversations.clone(),
         };
         let limit = limit.unwrap_or(10).min(100);
@@ -662,7 +671,7 @@ impl Space {
         owner: Principal,
         tier: u32,
         now_ms: u64,
-    ) -> Result<SpaceStatus, BoxError> {
+    ) -> Result<SpaceInfo, BoxError> {
         let id = db_config.name.clone();
         let db = AndaDB::create(object_store.clone(), db_config).await?;
         let tier = SpaceTier {
@@ -680,7 +689,7 @@ impl Space {
 
         let nexus = Arc::new(nexus);
         let memory = MemoryManagement::connect(db.clone(), nexus.clone()).await?;
-        Ok(SpaceStatus {
+        Ok(SpaceInfo {
             id: id.clone(),
             name: None,
             description: None,
@@ -701,7 +710,7 @@ impl Space {
         management: Arc<dyn Management>,
         http_client: reqwest::Client,
         models: Arc<Models>,
-    ) -> Result<Self, BoxError> {
+    ) -> Result<Arc<Self>, BoxError> {
         let id = db_config.name.clone();
         let db = Arc::new(AndaDB::open(object_store.clone(), db_config).await?);
         let nexus =
@@ -717,10 +726,33 @@ impl Space {
 
         let recall_conversations = db
             .open_or_create_collection(
-                schema,
+                schema.clone(),
                 CollectionConfig {
                     name: "recall".to_string(),
                     description: "Recall conversations collection".to_string(),
+                },
+                async |collection| {
+                    // set tokenizer
+                    collection.set_tokenizer(jieba_tokenizer());
+                    // create BTree indexes if not exists
+                    collection.create_btree_index_nx(&["user"]).await?;
+                    collection.create_btree_index_nx(&["thread"]).await?;
+                    collection.create_btree_index_nx(&["period"]).await?;
+                    collection
+                        .create_bm25_index_nx(&["messages", "resources", "artifacts"])
+                        .await?;
+
+                    Ok::<(), DBError>(())
+                },
+            )
+            .await?;
+
+        let maintenance_conversations = db
+            .open_or_create_collection(
+                schema,
+                CollectionConfig {
+                    name: "maintenance".to_string(),
+                    description: "Maintenance conversations collection".to_string(),
                 },
                 async |collection| {
                     // set tokenizer
@@ -745,10 +777,10 @@ impl Space {
         let memory_tool = MemoryTool::new(memory.clone());
         let search_conversations_tool = SearchConversationsTool::new(memory.clone());
 
-        let hooks = Arc::new(Hooks { db: db.clone() });
+        let hooks = Arc::new(Hooks::new(db.clone()));
         let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
         let recall = RecallAgent::new(recall_conversations, hooks.clone(), 65535);
-        let maintenance = MaintenanceAgent::new(memory.clone(), hooks.clone());
+        let maintenance = MaintenanceAgent::new(maintenance_conversations, hooks.clone());
 
         // Build agent engine with all configured components
         let engine = Engine::builder()
@@ -770,7 +802,7 @@ impl Space {
 
         // Initialize and start the server
         let engine = engine.build(RecallAgent::NAME.to_string()).await?;
-        let this = Self {
+        let this = Arc::new(Self {
             id,
             db: db.clone(),
             http_client,
@@ -780,7 +812,8 @@ impl Space {
             maintenance,
             memory,
             engine,
-        };
+        });
+        hooks.bind_space(Arc::downgrade(&this));
 
         if let Some(cfg) = db.get_extension_as::<ModelConfig>("byok") {
             let model = build_model(this.http_client.clone(), cfg);
@@ -798,6 +831,24 @@ impl Space {
 
 struct Hooks {
     db: Arc<AndaDB>,
+    space: OnceLock<Weak<Space>>,
+}
+
+impl Hooks {
+    fn new(db: Arc<AndaDB>) -> Self {
+        Self {
+            db,
+            space: OnceLock::new(),
+        }
+    }
+
+    fn bind_space(&self, space: Weak<Space>) {
+        let _ = self.space.set(space);
+    }
+
+    fn space(&self) -> Option<Arc<Space>> {
+        self.space.get().and_then(Weak::upgrade)
+    }
 }
 
 #[async_trait::async_trait]
@@ -833,6 +884,69 @@ impl AgentHooks for Hooks {
             }
             _ => {}
         }
+    }
+
+    async fn try_start_formation(&self) {
+        let space = match self.space() {
+            Some(space) => space,
+            None => return,
+        };
+
+        if let Some(id) = space.formation.get_processed() {
+            let _ = space
+                .restart_formation(Principal::anonymous(), id + 1)
+                .await;
+        }
+    }
+
+    async fn try_start_maintenance(&self, formation_id: DocumentId) -> Option<DocumentId> {
+        let space = match self.space() {
+            Some(space) => space,
+            None => return None,
+        };
+
+        let at = space.maintenance.get_processed_at();
+        let timestamp = Some(rfc3339_datetime_now());
+        let input = if formation_id >= at.full + 168 {
+            Some(MaintenanceInput {
+                trigger: "scheduled".to_string(),
+                scope: MaintenanceScope::Full,
+                timestamp,
+                parameters: None,
+            })
+        } else if formation_id >= at.quick + 42 {
+            Some(MaintenanceInput {
+                trigger: "scheduled".to_string(),
+                scope: MaintenanceScope::Quick,
+                timestamp,
+                parameters: None,
+            })
+        } else if formation_id >= at.daydream + 21 {
+            Some(MaintenanceInput {
+                trigger: "scheduled".to_string(),
+                scope: MaintenanceScope::Daydream,
+                timestamp,
+                parameters: None,
+            })
+        } else {
+            None
+        };
+
+        if let Some(input) = input {
+            match space
+                .maintenance(Principal::anonymous(), StringOr::Value(input))
+                .await
+            {
+                Ok(rt) => {
+                    return rt.conversation;
+                }
+                Err(err) => {
+                    log::error!(formation_id; "scheduled maintenance failed to start: {}", err);
+                }
+            }
+        }
+
+        None
     }
 }
 

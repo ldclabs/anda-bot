@@ -2,6 +2,7 @@ use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
     StateFeatures, Tool,
 };
+use anda_db::schema::DocumentId;
 use anda_engine::{
     context::AgentCtx,
     memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
@@ -56,13 +57,17 @@ impl FormationAgent {
         self.processing_conversation.load(Ordering::SeqCst) != 0
     }
 
-    pub fn get_processed(&self) -> Option<u64> {
+    pub fn get_processed(&self) -> Option<DocumentId> {
         self.memory
             .conversations
-            .get_extension_as::<u64>("hippocampus_processed")
+            .get_extension_as::<DocumentId>("hippocampus_processed")
     }
 
-    pub async fn start_process(&self, ctx: AgentCtx, conversation: u64) -> Result<(), BoxError> {
+    pub async fn start_process(
+        &self,
+        ctx: AgentCtx,
+        conversation: DocumentId,
+    ) -> Result<(), BoxError> {
         let current = self.processing_conversation.load(Ordering::SeqCst);
         if current != 0 {
             return Err(format!(
@@ -158,6 +163,16 @@ impl FormationAgent {
                 .save_extension("hippocampus_processed".to_string(), conv_id.into())
                 .await
                 .ok();
+
+            if let Some(id) = self.hooks.try_start_maintenance(conv_id).await {
+                log::info!(
+                    "Triggered maintenance for conversation {}, new maintenance conversation {}",
+                    conv_id,
+                    id
+                );
+
+                break; // 交由 maintenance agent 处理后续流程，退出循环
+            }
 
             // 查找下一个待处理的 conversation
             match self.find_next_submitted(conv_id).await {

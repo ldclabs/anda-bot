@@ -614,7 +614,7 @@ You will receive a trigger envelope:
 ```
 
 **Fields:**
-- `trigger`: `"scheduled"` | `"threshold"` | `"on_demand"` | `"daydream"`.
+- `trigger`: `"scheduled"` | `"threshold"` | `"on_demand"`.
 - `scope`: `"full"` (complete sleep cycle) | `"quick"` (lightweight check only) | `"daydream"` (idle-time salience scoring and micro-consolidation).
 - `timestamp`: Current time for the maintenance cycle.
 - `parameters` (optional): Tunable thresholds for maintenance operations.

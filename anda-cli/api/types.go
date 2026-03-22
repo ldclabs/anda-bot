@@ -578,21 +578,29 @@ type SpaceToken struct {
 
 type StorageStats map[string]any
 
-type SpaceStatus struct {
-	ID                   string       `json:"id"`
-	Name                 string       `json:"name,omitempty"`
-	Description          string       `json:"description,omitempty"`
-	Owner                string       `json:"owner"`
-	DBStats              StorageStats `json:"db_stats"`
-	Concepts             int          `json:"concepts"`
-	Propositions         int          `json:"propositions"`
-	Conversations        int          `json:"conversations"`
-	Public               bool         `json:"public"`
-	Tier                 SpaceTier    `json:"tier"`
-	FormationUsage       Usage        `json:"formation_usage"`
-	RecallUsage          Usage        `json:"recall_usage"`
-	MaintenanceUsage     Usage        `json:"maintenance_usage"`
-	FormationProcessedID int64        `json:"formation_processed_id"`
+type SpaceInfo struct {
+	ID                     string        `json:"id"`
+	Name                   string        `json:"name,omitempty"`
+	Description            string        `json:"description,omitempty"`
+	Owner                  string        `json:"owner"`
+	DBStats                StorageStats  `json:"db_stats"`
+	Concepts               int           `json:"concepts"`
+	Propositions           int           `json:"propositions"`
+	Conversations          int           `json:"conversations"`
+	Public                 bool          `json:"public"`
+	Tier                   SpaceTier     `json:"tier"`
+	FormationUsage         Usage         `json:"formation_usage"`
+	RecallUsage            Usage         `json:"recall_usage"`
+	MaintenanceUsage       Usage         `json:"maintenance_usage"`
+	FormationProcessedID   int64         `json:"formation_processed_id"`
+	MaintenanceProcessedID int64         `json:"maintenance_processed_id"`
+	MaintenanceAt          MaintenanceAt `json:"maintenance_at"`
+}
+
+type MaintenanceAt struct {
+	Daydream int64 `json:"daydream"`
+	Full     int64 `json:"full"`
+	Quick    int64 `json:"quick"`
 }
 
 type Usage struct {

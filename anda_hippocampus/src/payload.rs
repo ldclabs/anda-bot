@@ -39,6 +39,13 @@ impl<T> StringOr<T> {
             StringOr::Value(v) => Ok(v),
         }
     }
+
+    pub fn as_value(&self) -> Option<&T> {
+        match self {
+            StringOr::String(_) => None,
+            StringOr::Value(v) => Some(v),
+        }
+    }
 }
 
 impl<T> fmt::Display for StringOr<T>

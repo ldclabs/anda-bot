@@ -131,7 +131,7 @@ export interface StorageStats {
   [k: string]: number | string | boolean | null;
 }
 
-export interface SpaceStatus {
+export interface SpaceInfo {
   id: string;
   name?: string;
   description?: string;
@@ -146,6 +146,14 @@ export interface SpaceStatus {
   recall_usage: Usage;
   maintenance_usage: Usage;
   formation_processed_id: number;
+  maintenance_processed_id: number;
+  maintenance_at: MaintenanceAt;
+}
+
+export interface MaintenanceAt {
+  daydream: number;
+  full: number;
+  quick: number;
 }
 
 export interface Usage {
@@ -247,11 +255,11 @@ export interface ServiceInfo {
 - Request body: `MaintenanceInput` (raw string is also accepted in Markdown mode)
 - Response: `RpcResponse<AgentOutput>`
 
-### GET `/v1/{space_id}/status`
+### GET `/v1/{space_id}/info`
 
 - Purpose: Get space status and statistics
 - Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
-- Response: `RpcResponse<SpaceStatus>`
+- Response: `RpcResponse<SpaceInfo>`
 
 ### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 
@@ -328,7 +336,7 @@ export interface ServiceInfo {
 - Purpose: Create a space
 - Auth: Platform admin + CWT `write`
 - Request body: `CreateOrUpdateSpaceInput`
-- Response: `RpcResponse<SpaceStatus>`
+- Response: `RpcResponse<SpaceInfo>`
 
 ### POST `/admin/{space_id}/update_space_tier`
 

@@ -78,8 +78,8 @@ pub async fn get_skill(State(_app): State<AppState>) -> impl IntoResponse {
     ContentType::Markdown(true).response(SKILL_MARKDOWN)
 }
 
-/// GET /v1/{space_id}/status
-pub async fn get_status(
+/// GET /v1/{space_id}/info
+pub async fn get_info(
     State(app): State<AppState>,
     Path(space_id): Path<String>,
     Accept(ct, _): Accept,
@@ -115,7 +115,7 @@ pub async fn get_status(
             .map_err(|_| AppError::unauthorized())?;
     }
 
-    let rt = space.get_status();
+    let rt = space.get_info();
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
@@ -262,6 +262,7 @@ pub async fn post_maintenance(
         .maintenance(Principal::anonymous(), input)
         .await
         .map_err(AppError::bad_request)?;
+
     Ok(ct.response(RpcResponse::success(rt)))
 }
 

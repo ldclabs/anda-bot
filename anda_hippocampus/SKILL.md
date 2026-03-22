@@ -61,7 +61,7 @@ Supporting endpoints:
 | `GET` | `/` | Anda Hippocampus website | — |
 | `GET` | `/info` | Service info (name, version, sharding) | — |
 | `GET` | `/SKILL.md` | This skill description | — |
-| `GET` | `/v1/{space_id}/status` | Space status and statistics | `read` (CWT or space token) |
+| `GET` | `/v1/{space_id}/info` | Space status and statistics | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/conversations` | List conversations (cursor pagination) | `read` (CWT or space token) |
 | `GET` | `/v1/{space_id}/management/space_tokens` | List space tokens | `read` (CWT) |
@@ -391,7 +391,7 @@ Content-Type: application/json
 Get statistics and health information for a memory space.
 
 ```
-GET /v1/{space_id}/status
+GET /v1/{space_id}/info
 Authorization: Bearer <token>
 ```
 
@@ -408,7 +408,8 @@ Authorization: Bearer <token>
     },
     "concepts": 85,
     "propositions": 120,
-    "conversations": 12
+    "conversations": 12,
+    ...
   }
 }
 ```

@@ -131,7 +131,7 @@ export interface StorageStats {
   [k: string]: number | string | boolean | null;
 }
 
-export interface SpaceStatus {
+export interface SpaceInfo {
   id: string;
   name?: string;
   description?: string;
@@ -146,6 +146,14 @@ export interface SpaceStatus {
   recall_usage: Usage;
   maintenance_usage: Usage;
   formation_processed_id: number;
+  maintenance_processed_id: number;
+  maintenance_at: MaintenanceAt;
+}
+
+export interface MaintenanceAt {
+  daydream: number;
+  full: number;
+  quick: number;
 }
 
 export interface Usage {
@@ -247,11 +255,11 @@ export interface ServiceInfo {
 - 请求体：`MaintenanceInput`（Markdown 模式下也允许原始字符串）
 - 响应：`RpcResponse<AgentOutput>`
 
-### GET `/v1/{space_id}/status`
+### GET `/v1/{space_id}/info`
 
 - 作用：获取空间状态和统计
 - 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
-- 响应：`RpcResponse<SpaceStatus>`
+- 响应：`RpcResponse<SpaceInfo>`
 
 ### GET `/v1/{space_id}/conversations/{conversation_id}?collection=<collection>`
 
@@ -331,7 +339,7 @@ export interface ServiceInfo {
 - 作用：创建空间
 - 鉴权：平台管理员 + CWT `write`
 - 请求体：`CreateOrUpdateSpaceInput`
-- 响应：`RpcResponse<SpaceStatus>`
+- 响应：`RpcResponse<SpaceInfo>`
 
 ### POST `/admin/{space_id}/update_space_tier`
 

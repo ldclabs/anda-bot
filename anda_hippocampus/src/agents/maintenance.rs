@@ -1,10 +1,10 @@
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource, StateFeatures,
 };
+use anda_db::{collection::Collection, schema::DocumentId};
 use anda_engine::{
     context::AgentCtx,
-    memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
+    memory::{Conversation, ConversationRef, ConversationStatus},
     rfc3339_datetime, unix_ms,
 };
 use std::sync::{
@@ -13,6 +13,7 @@ use std::sync::{
 };
 
 use super::AgentHooks;
+use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
 
@@ -26,16 +27,16 @@ impl Drop for ProcessingGuard {
 
 #[derive(Clone)]
 pub struct MaintenanceAgent {
-    memory: Arc<MemoryManagement>,
+    pub conversations: Arc<Collection>,
     processing: Arc<AtomicBool>,
     hooks: Arc<dyn AgentHooks>,
 }
 
 impl MaintenanceAgent {
     pub const NAME: &'static str = "maintenance_memory";
-    pub fn new(memory: Arc<MemoryManagement>, hooks: Arc<dyn AgentHooks>) -> Self {
+    pub fn new(conversations: Arc<Collection>, hooks: Arc<dyn AgentHooks>) -> Self {
         Self {
-            memory,
+            conversations,
             processing: Arc::new(AtomicBool::new(false)),
             hooks,
         }
@@ -43,6 +44,40 @@ impl MaintenanceAgent {
 
     pub fn is_processing(&self) -> bool {
         self.processing.load(Ordering::SeqCst)
+    }
+
+    pub fn get_processed(&self) -> Option<DocumentId> {
+        match self.conversations.max_document_id() {
+            0 => None,
+            id => Some(id),
+        }
+    }
+
+    pub fn get_processed_at(&self) -> MaintenanceAt {
+        let mut rt = MaintenanceAt::default();
+        self.conversations.extensions_with(|kv| {
+            if let Some(v) = kv.get("full")
+                && let Ok(id) = v.try_into()
+            {
+                rt.full = id;
+            }
+            if let Some(v) = kv.get("quick")
+                && let Ok(id) = v.try_into()
+            {
+                rt.quick = id;
+            }
+            if let Some(v) = kv.get("daydream")
+                && let Ok(id) = v.try_into()
+            {
+                rt.daydream = id;
+            }
+        });
+        rt
+    }
+
+    pub fn set_processed_at(&self, scope: MaintenanceScope, formation_id: DocumentId) {
+        self.conversations
+            .set_extension_from(scope.to_string(), formation_id);
     }
 }
 
@@ -56,7 +91,7 @@ impl Agent<AgentCtx> for MaintenanceAgent {
     }
 
     fn tool_dependencies(&self) -> Vec<String> {
-        vec![self.memory.name()]
+        vec!["execute_kip".to_string()]
     }
 
     /// Receives a trigger envelope (MaintenanceInput JSON), creates a conversation to track the
@@ -94,8 +129,8 @@ impl Agent<AgentCtx> for MaintenanceAgent {
         };
 
         let id = self
-            .memory
-            .add_conversation(ConversationRef::from(&conversation))
+            .conversations
+            .add_from(&ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
 
@@ -109,6 +144,8 @@ impl Agent<AgentCtx> for MaintenanceAgent {
                 .hooks
                 .on_conversation_end(MaintenanceAgent::NAME, &conversation)
                 .await;
+            // Trigger formation after maintenance completes
+            agent.hooks.try_start_formation().await;
         });
 
         Ok(AgentOutput {
@@ -129,10 +166,7 @@ impl MaintenanceAgent {
         conversation.status = ConversationStatus::Failed;
         conversation.updated_at = unix_ms();
         if let Ok(changes) = conversation.to_changes() {
-            let _ = self
-                .memory
-                .update_conversation(conversation._id, changes)
-                .await;
+            let _ = self.conversations.update(conversation._id, changes).await;
         }
     }
 
@@ -215,7 +249,11 @@ impl MaintenanceAgent {
                     }
 
                     // Check if externally cancelled
-                    match self.memory.get_conversation(conversation._id).await {
+                    match self
+                        .conversations
+                        .get_as::<Conversation>(conversation._id)
+                        .await
+                    {
                         Ok(old) => {
                             if old.status == ConversationStatus::Cancelled
                                 && (conversation.status == ConversationStatus::Submitted
@@ -235,10 +273,7 @@ impl MaintenanceAgent {
 
                     match conversation.to_changes() {
                         Ok(changes) => {
-                            let _ = self
-                                .memory
-                                .update_conversation(conversation._id, changes)
-                                .await;
+                            let _ = self.conversations.update(conversation._id, changes).await;
                         }
                         Err(err) => {
                             log::error!(

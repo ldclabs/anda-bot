@@ -141,12 +141,12 @@ func (c *Client) Maintenance(ctx context.Context, input *MaintenanceInput) (*Rpc
 }
 
 // GetStatus returns space status.
-func (c *Client) GetStatus(ctx context.Context) (*RpcResponse[SpaceStatus], error) {
-	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/status"), nil)
+func (c *Client) GetStatus(ctx context.Context) (*RpcResponse[SpaceInfo], error) {
+	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/info"), nil)
 	if err != nil {
 		return nil, err
 	}
-	var resp RpcResponse[SpaceStatus]
+	var resp RpcResponse[SpaceInfo]
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
@@ -292,12 +292,12 @@ func (c *Client) UpdateBYOK(ctx context.Context, input *ModelConfig) (*RpcRespon
 }
 
 // CreateSpace creates a space (admin).
-func (c *Client) CreateSpace(ctx context.Context, input *CreateOrUpdateSpaceInput) (*RpcResponse[SpaceStatus], error) {
+func (c *Client) CreateSpace(ctx context.Context, input *CreateOrUpdateSpaceInput) (*RpcResponse[SpaceInfo], error) {
 	data, err := c.doJSON(ctx, http.MethodPost, "/admin/create_space", input)
 	if err != nil {
 		return nil, err
 	}
-	var resp RpcResponse[SpaceStatus]
+	var resp RpcResponse[SpaceInfo]
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
