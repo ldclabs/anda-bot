@@ -149,13 +149,13 @@ func parseMessagesInput(raw string) ([]api.Message, error) {
 
 	return []api.Message{{
 		Role:    "user",
-		Content: raw,
+		Content: api.MessageContentFromText(raw),
 	}}, nil
 }
 
 func validateMessageContentLength(messages []api.Message) error {
 	for idx, message := range messages {
-		contentBytes := len([]byte(message.Content))
+		contentBytes := message.Content.SizeBytes()
 		if contentBytes > maxMessageContentBytes {
 			return fmt.Errorf("message[%d] content is %d bytes, exceeds %d-byte limit", idx, contentBytes, maxMessageContentBytes)
 		}

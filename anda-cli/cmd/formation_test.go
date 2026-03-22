@@ -18,7 +18,8 @@ func TestParseMessagesInput_JSONArray(t *testing.T) {
 	if len(messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || messages[0].Content != "Hello" {
+	text, ok := messages[0].Content.FirstText()
+	if messages[0].Role != "user" || !ok || text != "Hello" {
 		t.Fatalf("unexpected first message: %+v", messages[0])
 	}
 }
@@ -31,7 +32,8 @@ func TestParseMessagesInput_JSONObject(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || messages[0].Content != "Only one" {
+	text, ok := messages[0].Content.FirstText()
+	if messages[0].Role != "user" || !ok || text != "Only one" {
 		t.Fatalf("unexpected message: %+v", messages[0])
 	}
 }
@@ -44,7 +46,8 @@ func TestParseMessagesInput_PlainTextFallback(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(messages))
 	}
-	if messages[0].Role != "user" || messages[0].Content != "plain text input" {
+	text, ok := messages[0].Content.FirstText()
+	if messages[0].Role != "user" || !ok || text != "plain text input" {
 		t.Fatalf("unexpected message: %+v", messages[0])
 	}
 }
@@ -58,13 +61,13 @@ func TestParseMessagesInput_EmptyInput(t *testing.T) {
 
 func TestValidateMessageContentLength(t *testing.T) {
 	okContent := strings.Repeat("a", maxMessageContentBytes)
-	err := validateMessageContentLength([]api.Message{{Role: "user", Content: okContent}})
+	err := validateMessageContentLength([]api.Message{{Role: "user", Content: api.MessageContentFromText(okContent)}})
 	if err != nil {
 		t.Fatalf("expected no error at %d bytes, got: %v", maxMessageContentBytes, err)
 	}
 
 	tooLongContent := strings.Repeat("a", maxMessageContentBytes+1)
-	err = validateMessageContentLength([]api.Message{{Role: "user", Content: tooLongContent}})
+	err = validateMessageContentLength([]api.Message{{Role: "user", Content: api.MessageContentFromText(tooLongContent)}})
 	if err == nil {
 		t.Fatalf("expected error for content over %d bytes", maxMessageContentBytes)
 	}

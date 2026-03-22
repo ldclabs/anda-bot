@@ -1,5 +1,12 @@
 package api
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
 // RpcError represents an API error.
 type RpcError struct {
 	Message string `json:"message"`
@@ -42,11 +49,457 @@ const (
 )
 
 type Message struct {
-	Role      MessageRole `json:"role"`
-	Content   string      `json:"content"`
-	Name      string      `json:"name,omitempty"`
-	User      string      `json:"user,omitempty"`
-	Timestamp *int64      `json:"timestamp,omitempty"`
+	Role      MessageRole    `json:"role"`
+	Content   MessageContent `json:"content"`
+	Name      string         `json:"name,omitempty"`
+	User      string         `json:"user,omitempty"`
+	Timestamp *int64         `json:"timestamp,omitempty"`
+}
+
+type ContentPartType string
+
+const (
+	ContentPartText       ContentPartType = "Text"
+	ContentPartReasoning  ContentPartType = "Reasoning"
+	ContentPartFileData   ContentPartType = "FileData"
+	ContentPartInlineData ContentPartType = "InlineData"
+	ContentPartToolCall   ContentPartType = "ToolCall"
+	ContentPartToolOutput ContentPartType = "ToolOutput"
+	ContentPartAction     ContentPartType = "Action"
+	ContentPartAny        ContentPartType = "Any"
+)
+
+type ContentPart interface {
+	contentPartType() ContentPartType
+}
+
+type TextPart struct {
+	Type ContentPartType `json:"type"`
+	Text string          `json:"text"`
+}
+
+func (TextPart) contentPartType() ContentPartType { return ContentPartText }
+
+type ReasoningPart struct {
+	Type ContentPartType `json:"type"`
+	Text string          `json:"text"`
+}
+
+func (ReasoningPart) contentPartType() ContentPartType { return ContentPartReasoning }
+
+type FileDataPart struct {
+	Type     ContentPartType `json:"type"`
+	FileURI  string          `json:"fileUri"`
+	MimeType *string         `json:"mimeType,omitempty"`
+}
+
+func (FileDataPart) contentPartType() ContentPartType { return ContentPartFileData }
+
+type InlineDataPart struct {
+	Type     ContentPartType `json:"type"`
+	MimeType string          `json:"mimeType"`
+	Data     any             `json:"data"`
+}
+
+func (InlineDataPart) contentPartType() ContentPartType { return ContentPartInlineData }
+
+type ToolCallPart struct {
+	Type   ContentPartType `json:"type"`
+	Name   string          `json:"name"`
+	Args   any             `json:"args"`
+	CallID *string         `json:"callId,omitempty"`
+}
+
+func (ToolCallPart) contentPartType() ContentPartType { return ContentPartToolCall }
+
+type ToolOutputPart struct {
+	Type     ContentPartType `json:"type"`
+	Name     string          `json:"name"`
+	Output   any             `json:"output"`
+	CallID   *string         `json:"callId,omitempty"`
+	RemoteID *string         `json:"remoteId,omitempty"`
+}
+
+func (ToolOutputPart) contentPartType() ContentPartType { return ContentPartToolOutput }
+
+type ActionPart struct {
+	Type       ContentPartType `json:"type"`
+	Name       string          `json:"name"`
+	Payload    any             `json:"payload"`
+	Recipients []string        `json:"recipients,omitempty"`
+	Signature  *string         `json:"signature,omitempty"`
+}
+
+func (ActionPart) contentPartType() ContentPartType { return ContentPartAction }
+
+type AnyPart struct {
+	Raw json.RawMessage
+}
+
+func (AnyPart) contentPartType() ContentPartType { return ContentPartAny }
+
+func (p AnyPart) MarshalJSON() ([]byte, error) {
+	if len(p.Raw) > 0 {
+		return p.Raw, nil
+	}
+	return json.Marshal(map[string]any{"type": string(ContentPartAny)})
+}
+
+type MessageContent []ContentPart
+
+func NewTextContentPart(text string) ContentPart {
+	return TextPart{Type: ContentPartText, Text: text}
+}
+
+func MessageContentFromText(text string) MessageContent {
+	return MessageContent{NewTextContentPart(text)}
+}
+
+func parseContentPart(raw json.RawMessage) (ContentPart, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return nil, err
+		}
+		return TextPart{Type: ContentPartText, Text: text}, nil
+	}
+
+	if trimmed[0] != '{' {
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &fields); err != nil {
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+
+	metaRaw, ok := fields["type"]
+	if !ok {
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+
+	var partType ContentPartType
+	if err := json.Unmarshal(metaRaw, &partType); err != nil {
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+
+	hasField := func(name string) bool {
+		_, ok := fields[name]
+		return ok
+	}
+
+	switch partType {
+	case ContentPartText:
+		if !hasField("text") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part TextPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartText
+		return part, nil
+	case ContentPartReasoning:
+		if !hasField("text") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part ReasoningPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartReasoning
+		return part, nil
+	case ContentPartFileData:
+		if !hasField("fileUri") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part FileDataPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartFileData
+		return part, nil
+	case ContentPartInlineData:
+		if !hasField("mimeType") || !hasField("data") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part InlineDataPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartInlineData
+		return part, nil
+	case ContentPartToolCall:
+		if !hasField("name") || !hasField("args") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part ToolCallPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartToolCall
+		return part, nil
+	case ContentPartToolOutput:
+		if !hasField("name") || !hasField("output") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part ToolOutputPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartToolOutput
+		return part, nil
+	case ContentPartAction:
+		if !hasField("name") || !hasField("payload") {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		var part ActionPart
+		if err := json.Unmarshal(trimmed, &part); err != nil {
+			return nil, fmt.Errorf("invalid ContentPart")
+		}
+		part.Type = ContentPartAction
+		return part, nil
+	default:
+		return AnyPart{Raw: append(json.RawMessage(nil), trimmed...)}, nil
+	}
+}
+
+func marshalContentPart(part ContentPart) ([]byte, error) {
+	switch p := part.(type) {
+	case TextPart:
+		if p.Type == "" {
+			p.Type = ContentPartText
+		}
+		return json.Marshal(p)
+	case *TextPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartText
+		}
+		return json.Marshal(v)
+	case ReasoningPart:
+		if p.Type == "" {
+			p.Type = ContentPartReasoning
+		}
+		return json.Marshal(p)
+	case *ReasoningPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartReasoning
+		}
+		return json.Marshal(v)
+	case FileDataPart:
+		if p.Type == "" {
+			p.Type = ContentPartFileData
+		}
+		return json.Marshal(p)
+	case *FileDataPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartFileData
+		}
+		return json.Marshal(v)
+	case InlineDataPart:
+		if p.Type == "" {
+			p.Type = ContentPartInlineData
+		}
+		return json.Marshal(p)
+	case *InlineDataPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartInlineData
+		}
+		return json.Marshal(v)
+	case ToolCallPart:
+		if p.Type == "" {
+			p.Type = ContentPartToolCall
+		}
+		return json.Marshal(p)
+	case *ToolCallPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartToolCall
+		}
+		return json.Marshal(v)
+	case ToolOutputPart:
+		if p.Type == "" {
+			p.Type = ContentPartToolOutput
+		}
+		return json.Marshal(p)
+	case *ToolOutputPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartToolOutput
+		}
+		return json.Marshal(v)
+	case ActionPart:
+		if p.Type == "" {
+			p.Type = ContentPartAction
+		}
+		return json.Marshal(p)
+	case *ActionPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		v := *p
+		if v.Type == "" {
+			v.Type = ContentPartAction
+		}
+		return json.Marshal(v)
+	case AnyPart:
+		return json.Marshal(p)
+	case *AnyPart:
+		if p == nil {
+			return json.Marshal(nil)
+		}
+		return json.Marshal(*p)
+	default:
+		return nil, fmt.Errorf("unsupported ContentPart type")
+	}
+}
+
+func (c *MessageContent) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		*c = MessageContent{}
+		return nil
+	}
+
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return err
+		}
+		*c = MessageContent{NewTextContentPart(text)}
+		return nil
+	}
+
+	if trimmed[0] == '[' {
+		var rawItems []json.RawMessage
+		if err := json.Unmarshal(trimmed, &rawItems); err != nil {
+			return err
+		}
+		items := make([]ContentPart, 0, len(rawItems))
+		for _, raw := range rawItems {
+			part, err := parseContentPart(raw)
+			if err != nil {
+				return err
+			}
+			items = append(items, part)
+		}
+		*c = MessageContent(items)
+		return nil
+	}
+
+	return fmt.Errorf("message content must be a string or array")
+}
+
+func (c MessageContent) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return []byte("[]"), nil
+	}
+	rawItems := make([]json.RawMessage, 0, len(c))
+	for _, part := range c {
+		encoded, err := marshalContentPart(part)
+		if err != nil {
+			return nil, err
+		}
+		rawItems = append(rawItems, json.RawMessage(encoded))
+	}
+	return json.Marshal(rawItems)
+}
+
+func (c MessageContent) SizeBytes() int {
+	total := 0
+	allText := len(c) > 0
+
+	for _, part := range c {
+		switch p := part.(type) {
+		case TextPart:
+			total += len([]byte(p.Text))
+			continue
+		case *TextPart:
+			if p != nil {
+				total += len([]byte(p.Text))
+				continue
+			}
+		case ReasoningPart:
+			total += len([]byte(p.Text))
+			continue
+		case *ReasoningPart:
+			if p != nil {
+				total += len([]byte(p.Text))
+				continue
+			}
+		}
+
+		allText = false
+		break
+	}
+
+	if allText {
+		return total
+	}
+
+	b, err := json.Marshal(c)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+func (c MessageContent) Text() (string, bool) {
+	texts := c.textParts()
+	if len(texts) == 0 {
+		return "", false
+	}
+	return strings.Join(texts, "\n"), true
+}
+
+func (c MessageContent) FirstText() (string, bool) {
+	texts := c.textParts()
+	if len(texts) == 0 {
+		return "", false
+	}
+	return texts[0], true
+}
+
+func (c MessageContent) textParts() []string {
+	texts := make([]string, 0, len(c))
+	for _, part := range c {
+		switch p := part.(type) {
+		case TextPart:
+			texts = append(texts, p.Text)
+		case *TextPart:
+			if p != nil {
+				texts = append(texts, p.Text)
+			}
+		}
+	}
+	return texts
 }
 
 type FormationInput struct {
