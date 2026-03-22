@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.21"
+version = "0.7.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2155dda9ddf33ec3ba1bd8b6196cd00f9ffdc33e8f2c88b78511b0e47ed24480"
+checksum = "608d7dfbd5d500903c8cf98e32afcbf3de869a523750157107424c548a750c52"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -181,9 +181,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc8c241fd7392e0537b7bf2266d159b2fd8e10db44bb75cbd89012196738f0d1"
+checksum = "3e2a2a15b3709afa454735fd3fcbb0b8d26ee881f1af1ed150c34d5d92edd4aa"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -247,9 +247,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90981df8a56cd8d152c8b7fd90b34449b1d0a9c0939b232c863c9101556f3398"
+checksum = "6ad3149f3197e470d6237a1b5acedc3727c97cfa5b41cd8e419cec9ff2c43e49"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -3219,9 +3219,9 @@ dependencies = [
 
 [[package]]
 name = "moka"
-version = "0.12.14"
+version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85f8024e1c8e71c778968af91d43700ce1d11b219d127d79fb2934153b82b42b"
+checksum = "957228ad12042ee839f93c8f257b62b4c0ab5eaae1d4fa60de53b27c9d7c5046"
 dependencies = [
  "async-lock",
  "crossbeam-channel",

@@ -241,13 +241,13 @@ impl AppState {
                 let mut db_config = (*self.db_config).clone();
                 db_config.name = space_id.to_string();
                 Space::connect(
-                        self.object_store.clone(),
-                        db_config,
-                        self.management.clone(),
-                        self.http_client.clone(),
-                        self.models.clone(),
-                    )
-                    .await
+                    self.object_store.clone(),
+                    db_config,
+                    self.management.clone(),
+                    self.http_client.clone(),
+                    self.models.clone(),
+                )
+                .await
             })
             .await
             .cloned()?;
@@ -769,7 +769,6 @@ impl Space {
                 },
             )
             .await?;
-
         // create a new models instance for each space to allow per-space customization in the future (e.g., different model providers or credentials)
         let models = Arc::new(Models::from_clone(models.as_ref()));
         let memory = Arc::new(memory);
@@ -781,7 +780,6 @@ impl Space {
         let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
         let recall = RecallAgent::new(recall_conversations, hooks.clone(), 65535);
         let maintenance = MaintenanceAgent::new(maintenance_conversations, hooks.clone());
-
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
