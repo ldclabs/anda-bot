@@ -101,9 +101,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32b69526fbb2ade58c3a58a05d7be56ada74d854d87efa9c809bc59c079b084c"
+checksum = "6f8398a75eddf5b756b63253a5a5d58aeb6597e2372cc697df445c47e410b6bc"
 dependencies = [
  "anda_db",
  "anda_db_schema",
