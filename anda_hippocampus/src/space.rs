@@ -159,6 +159,29 @@ impl AppState {
     }
 
     // 用户权限
+    pub fn check_auth_if(
+        &self,
+        token: &str,
+        audience: &str,
+        scope: TokenScope,
+        now_ms: u64,
+    ) -> Result<Option<CWToken>, BoxError> {
+        if self.ed25519_pubkeys.is_empty() {
+            return Ok(Some(CWToken {
+                user: Principal::anonymous(),
+                audience: audience.to_string(),
+                scope,
+            }));
+        }
+
+        if token.len() < 60 {
+            return Ok(None);
+        }
+
+        let token = self.check_auth(token, audience, scope, now_ms)?;
+        Ok(Some(token))
+    }
+
     pub fn check_auth(
         &self,
         token: &str,
@@ -334,10 +357,7 @@ impl Space {
     }
 
     pub fn get_tier(&self) -> SpaceTier {
-        self.db
-            .get_extension("tier")
-            .and_then(|v| v.deserialized::<SpaceTier>().ok())
-            .unwrap_or_default()
+        self.db.get_extension_as("tier").unwrap_or_default()
     }
 
     pub async fn admin_update_tier(&self, tier: u32, now_ms: u64) -> Result<SpaceTier, BoxError> {
@@ -346,7 +366,7 @@ impl Space {
             updated_at: now_ms,
         };
         self.db
-            .save_extension("tier".to_string(), Fv::serialized(&tier.to_ref(), None)?)
+            .save_extension_from("tier".to_string(), &tier.to_ref())
             .await?;
         Ok(tier)
     }
@@ -374,9 +394,7 @@ impl Space {
             ..Default::default()
         };
 
-        self.db
-            .save_extension(token, Fv::serialized(&sp.to_ref(), None)?)
-            .await?;
+        self.db.save_extension_from(token, &sp.to_ref()).await?;
         Ok(sp)
     }
 
@@ -465,10 +483,7 @@ impl Space {
     }
 
     pub fn is_public(&self) -> bool {
-        self.db
-            .get_extension("public")
-            .and_then(|v| bool::try_from(v.clone()).ok())
-            .unwrap_or(false)
+        self.db.get_extension_as("public").unwrap_or(false)
     }
 
     pub fn get_info(&self) -> SpaceInfo {

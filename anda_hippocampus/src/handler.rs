@@ -93,15 +93,9 @@ pub async fn get_info(
     }
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -134,15 +128,9 @@ pub async fn get_formation_status(
     }
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -178,15 +166,9 @@ pub async fn post_formation(
     let input: StringOr<FormationInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Write, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -229,15 +211,9 @@ pub async fn post_recall(
     let input: StringOr<RecallInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -277,15 +253,9 @@ pub async fn post_maintenance(
     let input: StringOr<MaintenanceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Write, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -326,15 +296,9 @@ pub async fn get_conversation(
         .map_err(|_| AppError::bad_request("invalid conversation_id"))?;
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        // 如果 token 存在，永远验证它
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)
@@ -371,14 +335,9 @@ pub async fn list_conversations(
     }
 
     let now_ms = unix_ms();
-    let t = if token.len() > 60 {
-        Some(
-            app.check_auth(&token, &space_id, TokenScope::Read, now_ms)
-                .map_err(|_| AppError::unauthorized())?,
-        )
-    } else {
-        None
-    };
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Read, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
 
     let space = app
         .load_space(&space_id)

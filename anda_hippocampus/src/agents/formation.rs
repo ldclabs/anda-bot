@@ -127,7 +127,7 @@ impl FormationAgent {
                 .on_conversation_end(Self::NAME, &conversation)
                 .await;
             if conversation.status == ConversationStatus::Failed {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await; // 避免快速失败循环
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await; // 避免快速失败循环
                 // 重试一次
                 self.process_one(&ctx, &mut conversation).await;
                 self.hooks

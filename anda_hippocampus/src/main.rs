@@ -215,10 +215,7 @@ async fn main() -> Result<(), BoxError> {
         lock: None,
     };
 
-    let ed25519_pubkeys = parse_ed25519_pubkeys(&cli.ed25519_pubkeys);
-    if ed25519_pubkeys.len() != cli.ed25519_pubkeys.split(',').count() {
-        return Err("some ED25519_PUBKEYS entries are invalid".into());
-    }
+    let ed25519_pubkeys = parse_ed25519_pubkeys(&cli.ed25519_pubkeys)?;
 
     let app_state = AppState::new(
         object_store,
@@ -370,24 +367,18 @@ async fn shutdown_signal(cancel_token: CancellationToken) {
     cancel_token.cancel();
 }
 
-fn parse_ed25519_pubkeys(input: &str) -> Vec<VerifyingKey> {
+fn parse_ed25519_pubkeys(input: &str) -> Result<Vec<VerifyingKey>, BoxError> {
+    if input.is_empty() {
+        return Ok(vec![]);
+    }
+
     input
         .split(',')
-        .filter_map(|item| {
-            let item = item.trim();
-            if item.is_empty() {
-                return None;
-            }
-
-            match parse_ed25519_pubkey(item) {
-                Some(key) => Some(key),
-                None => {
-                    log::warn!("ignore invalid ED25519_PUBKEYS entry");
-                    None
-                }
-            }
+        .map(|item| match parse_ed25519_pubkey(item.trim()) {
+            Some(key) => Ok(key),
+            None => Err("invalid ED25519_PUBKEYS entry".into()),
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn parse_ed25519_pubkey(input: &str) -> Option<VerifyingKey> {
