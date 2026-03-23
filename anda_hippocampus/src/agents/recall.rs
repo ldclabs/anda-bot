@@ -6,7 +6,8 @@ use anda_db::collection::Collection;
 use anda_engine::{
     context::AgentCtx,
     memory::{
-        Conversation, ConversationRef, ConversationStatus, MemoryReadonly, SearchConversationsTool,
+        Conversation, ConversationRef, ConversationStatus, MemoryManagement, MemoryReadonly,
+        SearchConversationsTool,
     },
     rfc3339_datetime, unix_ms,
 };
@@ -57,6 +58,7 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
 #[derive(Clone)]
 pub struct RecallAgent {
     pub conversations: Arc<Collection>,
+    memory: Arc<MemoryManagement>,
     hooks: Arc<dyn AgentHooks>,
     #[allow(dead_code)]
     max_input_tokens: usize,
@@ -65,12 +67,14 @@ pub struct RecallAgent {
 impl RecallAgent {
     pub const NAME: &'static str = "recall_memory";
     pub fn new(
+        memory: Arc<MemoryManagement>,
         conversations: Arc<Collection>,
         hooks: Arc<dyn AgentHooks>,
         max_input_tokens: usize,
     ) -> Self {
         Self {
             conversations,
+            memory,
             hooks,
             max_input_tokens,
         }
@@ -110,17 +114,25 @@ impl Agent<AgentCtx> for RecallAgent {
         let caller = ctx.caller();
         let now_ms = unix_ms();
 
-        let msg = Message {
-            role: "user".into(),
-            content: vec![
-                format!(
-                    "Current datetime: {}",
-                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-                )
-                .into(),
-            ],
-            ..Default::default()
-        };
+        let primer = self.memory.describe_primer().await.unwrap_or_default();
+        let chat_history = vec![
+            Message {
+                role: "user".into(),
+                content: vec![format!("`DESCRIBE PRIMER` result:\n{}", primer).into()],
+                ..Default::default()
+            },
+            Message {
+                role: "user".into(),
+                content: vec![
+                    format!(
+                        "Current datetime: {}",
+                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                    )
+                    .into(),
+                ],
+                ..Default::default()
+            },
+        ];
 
         let mut conversation = Conversation {
             user: *caller,
@@ -151,7 +163,7 @@ impl Agent<AgentCtx> for RecallAgent {
                 CompletionRequest {
                     instructions: SELF_INSTRUCTIONS.to_string(),
                     prompt,
-                    chat_history: vec![msg],
+                    chat_history,
                     tools: ctx.tool_definitions(Some(&[
                         MemoryReadonly::NAME,
                         SearchConversationsTool::NAME,

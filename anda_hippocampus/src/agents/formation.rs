@@ -263,25 +263,34 @@ impl FormationAgent {
             }
         };
 
+        let primer = self.memory.describe_primer().await.unwrap_or_default();
         let tools = ctx.tool_definitions(Some(&["execute_kip"]));
         let now_ms = unix_ms();
-        let msg = Message {
-            role: "user".into(),
-            content: vec![
-                format!(
-                    "Current datetime: {}",
-                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-                )
-                .into(),
-            ],
-            ..Default::default()
-        };
+
+        let chat_history = vec![
+            Message {
+                role: "user".into(),
+                content: vec![format!("`DESCRIBE PRIMER` result:\n{}", primer).into()],
+                ..Default::default()
+            },
+            Message {
+                role: "user".into(),
+                content: vec![
+                    format!(
+                        "Current datetime: {}",
+                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                    )
+                    .into(),
+                ],
+                ..Default::default()
+            },
+        ];
 
         let mut runner = ctx.completion_iter(
             CompletionRequest {
                 instructions: SELF_INSTRUCTIONS.to_string(),
                 prompt: prompt.clone(),
-                chat_history: vec![msg],
+                chat_history,
                 tools,
                 tool_choice_required: true,
                 max_output_tokens: Some(10000),

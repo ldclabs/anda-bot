@@ -793,8 +793,9 @@ impl Space {
 
         let hooks = Arc::new(Hooks::new(db.clone()));
         let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
-        let recall = RecallAgent::new(recall_conversations, hooks.clone(), 65535);
-        let maintenance = MaintenanceAgent::new(maintenance_conversations, hooks.clone());
+        let recall = RecallAgent::new(memory.clone(), recall_conversations, hooks.clone(), 65535);
+        let maintenance =
+            MaintenanceAgent::new(memory.clone(), maintenance_conversations, hooks.clone());
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
