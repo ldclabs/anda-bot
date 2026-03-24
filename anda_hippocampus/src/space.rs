@@ -20,7 +20,9 @@ use anda_kip::{
     KipError, META_SELF_NAME, PERSON_SELF_KIP, PERSON_SYSTEM_KIP, PERSON_TYPE, parse_kml,
 };
 use ic_auth_types::ByteBufB64;
-use ic_cose_types::cose::{cwt::cwt_from, ed25519::VerifyingKey, sign1::cose_sign1_from};
+use ic_cose_types::cose::{
+    SIGN1_TAG, cwt::cwt_from, ed25519::VerifyingKey, sign1::cose_sign1_from, skip_prefix,
+};
 use object_store::ObjectStore;
 use serde_json::json;
 use std::{
@@ -198,7 +200,8 @@ impl AppState {
         }
 
         let data = ByteBufB64::from_str(token)?;
-        let cs1 = cose_sign1_from(&data, &[], &[], &self.ed25519_pubkeys)?;
+        let data = skip_prefix(&SIGN1_TAG, &data);
+        let cs1 = cose_sign1_from(data, &[], &[], &self.ed25519_pubkeys)?;
         let claims = cwt_from(&cs1.payload.unwrap_or_default(), (now_ms / 1000) as i64)?;
         let token = CWToken::from_claims(claims)?;
         if token.audience != audience && token.audience != "*" {
