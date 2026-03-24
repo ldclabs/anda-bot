@@ -39,7 +39,7 @@ mkdir db
 下载与你系统匹配的 `anda-cli` 可执行文件后：
 
 ```bash
-wget -O anda-cli https://github.com/ldclabs/anda-hippocampus/releases/download/v0.3.1/anda-cli-macos-arm64
+wget -O anda-cli https://github.com/ldclabs/anda-hippocampus/releases/download/v0.3.2/anda-cli-macos-arm64
 chmod +x anda-cli
 ```
 
@@ -111,10 +111,15 @@ cd ../anda-brain/
 
 #### B1. 直接拉取远端镜像（推荐）
 
-```bash
-docker pull ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+在 Apple Silicon（M1/M2/M3）macOS 上，建议显式指定平台，避免出现
+`requested image's platform (linux/amd64) does not match ...` 警告：
 
-docker run --rm -p 8042:8042 \
+```bash
+export DOCKER_PLATFORM=linux/amd64
+
+docker pull --platform $DOCKER_PLATFORM ghcr.io/ldclabs/anda_hippocampus_amd64:latest
+
+docker run --rm --platform $DOCKER_PLATFORM -p 8042:8042 \
 	-v "$(pwd)/db:/app/db" \
   -v "$(pwd)/.env:/app/.env" \
 	ghcr.io/ldclabs/anda_hippocampus_amd64:latest local --db /app/db
@@ -123,7 +128,8 @@ docker run --rm -p 8042:8042 \
 #### B2. 本地构建 Docker 镜像
 
 ```bash
-docker build -f anda_hippocampus/Dockerfile -t anda_hippocampus:local .
+# Apple Silicon 推荐构建 arm64 本地镜像
+docker buildx build --platform linux/arm64 -f anda_hippocampus/Dockerfile -t anda_hippocampus:local --load .
 ```
 
 ### 4.2 验证服务可用
