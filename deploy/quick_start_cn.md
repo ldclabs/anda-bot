@@ -179,6 +179,21 @@ export ANDA_TOKEN="$(./anda-cli cwt \
 	--json | jq
 ```
 
+创建 Space token 用于 Openclaw 或其它 agent 集成：
+```bash
+./anda-cli --space-id demo management add-token --scope "*" --name openclaw
+```
+
+查看在用的 Space tokens：
+```bash
+./anda-cli --space-id demo management list-tokens
+```
+
+撤销 Space token：
+```bash
+./anda-cli --space-id demo management revoke-token STxxx
+```
+
 查看 Space 信息：
 ```bash
 ./anda-cli --space-id demo info
