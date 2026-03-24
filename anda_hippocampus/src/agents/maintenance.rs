@@ -12,7 +12,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use super::AgentHooks;
+use super::AgentHook;
 use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
@@ -30,7 +30,7 @@ pub struct MaintenanceAgent {
     pub conversations: Arc<Collection>,
     memory: Arc<MemoryManagement>,
     processing: Arc<AtomicBool>,
-    hooks: Arc<dyn AgentHooks>,
+    hook: Arc<dyn AgentHook>,
 }
 
 impl MaintenanceAgent {
@@ -38,13 +38,13 @@ impl MaintenanceAgent {
     pub fn new(
         memory: Arc<MemoryManagement>,
         conversations: Arc<Collection>,
-        hooks: Arc<dyn AgentHooks>,
+        hook: Arc<dyn AgentHook>,
     ) -> Self {
         Self {
             memory,
             conversations,
             processing: Arc::new(AtomicBool::new(false)),
-            hooks,
+            hook,
         }
     }
 
@@ -147,11 +147,11 @@ impl Agent<AgentCtx> for MaintenanceAgent {
             let _guard = ProcessingGuard(agent.processing.clone());
             agent.process_one(&ctx_clone, &mut conversation).await;
             agent
-                .hooks
+                .hook
                 .on_conversation_end(MaintenanceAgent::NAME, &conversation)
                 .await;
             // Trigger formation after maintenance completes
-            agent.hooks.try_start_formation().await;
+            agent.hook.try_start_formation().await;
         });
 
         Ok(AgentOutput {

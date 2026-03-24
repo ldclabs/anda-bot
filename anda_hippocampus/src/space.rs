@@ -41,7 +41,7 @@ use crate::types::{
     UpdateSpaceInput,
 };
 use crate::{
-    agents::{AgentHooks, FormationAgent, MaintenanceAgent, RecallAgent},
+    agents::{AgentHook, FormationAgent, MaintenanceAgent, RecallAgent},
     model::build_model,
     payload::StringOr,
 };
@@ -881,7 +881,7 @@ impl Hooks {
 }
 
 #[async_trait::async_trait]
-impl AgentHooks for Hooks {
+impl AgentHook for Hooks {
     async fn on_conversation_end(&self, agent_name: &str, conversation: &Conversation) {
         match agent_name {
             "recall_memory" => {

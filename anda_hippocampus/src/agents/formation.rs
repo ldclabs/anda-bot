@@ -14,7 +14,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::AgentHooks;
+use super::AgentHook;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
@@ -32,7 +32,7 @@ impl Drop for ProcessingGuard {
 pub struct FormationAgent {
     memory: Arc<MemoryManagement>,
     processing_conversation: Arc<AtomicU64>,
-    hooks: Arc<dyn AgentHooks>,
+    hook: Arc<dyn AgentHook>,
 
     #[allow(dead_code)]
     max_input_tokens: usize,
@@ -42,14 +42,14 @@ impl FormationAgent {
     pub const NAME: &'static str = "formation_memory";
     pub fn new(
         memory: Arc<MemoryManagement>,
-        hooks: Arc<dyn AgentHooks>,
+        hook: Arc<dyn AgentHook>,
         max_input_tokens: usize,
     ) -> Self {
         Self {
             max_input_tokens,
             memory,
             processing_conversation: Arc::new(AtomicU64::new(0)),
-            hooks,
+            hook,
         }
     }
 
@@ -123,14 +123,14 @@ impl FormationAgent {
             let conv_id = conversation._id;
 
             self.process_one(&ctx, &mut conversation).await;
-            self.hooks
+            self.hook
                 .on_conversation_end(Self::NAME, &conversation)
                 .await;
             if conversation.status == ConversationStatus::Failed {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await; // 避免快速失败循环
                 // 重试一次
                 self.process_one(&ctx, &mut conversation).await;
-                self.hooks
+                self.hook
                     .on_conversation_end(Self::NAME, &conversation)
                     .await;
             }
@@ -152,7 +152,7 @@ impl FormationAgent {
                 .await
                 .ok();
 
-            if let Some(id) = self.hooks.try_start_maintenance(conv_id).await {
+            if let Some(id) = self.hook.try_start_maintenance(conv_id).await {
                 log::info!(
                     "Triggered maintenance for conversation {}, new maintenance conversation {}",
                     conv_id,

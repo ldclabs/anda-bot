@@ -14,7 +14,7 @@ use anda_engine::{
 use serde_json::json;
 use std::sync::{Arc, LazyLock};
 
-use super::AgentHooks;
+use super::AgentHook;
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
@@ -59,7 +59,7 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
 pub struct RecallAgent {
     pub conversations: Arc<Collection>,
     memory: Arc<MemoryManagement>,
-    hooks: Arc<dyn AgentHooks>,
+    hook: Arc<dyn AgentHook>,
     #[allow(dead_code)]
     max_input_tokens: usize,
 }
@@ -69,13 +69,13 @@ impl RecallAgent {
     pub fn new(
         memory: Arc<MemoryManagement>,
         conversations: Arc<Collection>,
-        hooks: Arc<dyn AgentHooks>,
+        hook: Arc<dyn AgentHook>,
         max_input_tokens: usize,
     ) -> Self {
         Self {
             conversations,
             memory,
-            hooks,
+            hook,
             max_input_tokens,
         }
     }
@@ -196,7 +196,7 @@ impl Agent<AgentCtx> for RecallAgent {
                     let _ = self.conversations.update(conversation._id, changes).await;
                     self.conversations.flush(conversation.updated_at).await?;
                 }
-                self.hooks
+                self.hook
                     .on_conversation_end(Self::NAME, &conversation)
                     .await;
                 output.conversation = Some(conversation._id);
@@ -213,7 +213,7 @@ impl Agent<AgentCtx> for RecallAgent {
                     let _ = self.conversations.update(conversation._id, changes).await;
                     self.conversations.flush(conversation.updated_at).await?;
                 }
-                self.hooks
+                self.hook
                     .on_conversation_end(Self::NAME, &conversation)
                     .await;
                 Err(err)
