@@ -215,6 +215,27 @@ export interface ServiceInfo {
   sharding: number;
   description: string;
 }
+
+export type KipCommandItem = string | { command: string; parameters: Record<string, unknown> };
+
+export interface KipRequest {
+  commands: KipCommandItem[];
+  parameters?: Record<string, unknown>;
+  dry_run?: boolean; // if true, the request will be parsed and validated but not executed (no side effects)
+}
+
+export interface KipError {
+  code: string;
+  message: string;
+  hint?: string;
+  data?: unknown;
+}
+
+export interface KipResponse<T> {
+  result?: T;
+  error?: KipError;
+  next_cursor?: string;
+}
 ```
 
 ---
@@ -266,6 +287,13 @@ export interface ServiceInfo {
 - Auth: SpaceToken/CWT `write`
 - Request body: `MaintenanceInput` (raw string is also accepted in Markdown mode)
 - Response: `RpcResponse<AgentOutput>`
+
+### POST `/v1/{space_id}/execute_kip_readonly`
+
+- Purpose: Execute a KIP request (read-only mode, suitable for queries)
+- Auth: SpaceToken/CWT `read` (public spaces are unauthenticated; private spaces require a valid token)
+- Request body: `KipRequest`
+- Response: `KipResponse<T>` (returns different result types based on the commands
 
 ### GET `/v1/{space_id}/info`
 

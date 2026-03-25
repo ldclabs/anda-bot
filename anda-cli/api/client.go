@@ -140,6 +140,19 @@ func (c *Client) Maintenance(ctx context.Context, input *MaintenanceInput) (*Rpc
 	return &resp, nil
 }
 
+// ExecuteKIPReadonly executes a KIP request in read-only mode.
+func (c *Client) ExecuteKIPReadonly(ctx context.Context, input *KipRequest) (*KipResponse[any], error) {
+	data, err := c.doJSON(ctx, http.MethodPost, c.spacePath("/execute_kip_readonly"), input)
+	if err != nil {
+		return nil, err
+	}
+	var resp KipResponse[any]
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &resp, nil
+}
+
 // GetSpaceInfo returns space information.
 func (c *Client) GetSpaceInfo(ctx context.Context) (*RpcResponse[SpaceInfo], error) {
 	data, err := c.doJSON(ctx, http.MethodGet, c.spacePath("/info"), nil)

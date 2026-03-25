@@ -119,6 +119,16 @@ anda-cli --space-id my_space --token $TOKEN recall \
 # Trigger maintenance
 anda-cli --space-id my_space --token $TOKEN maintenance
 anda-cli --space-id my_space --token $TOKEN maintenance --trigger on_demand --scope full
+
+# Execute read-only KIP request from inline JSON
+anda-cli --space-id my_space --token $TOKEN execute-kip-readonly \
+  --request '{"commands":[{"command":"query_domain","parameters":{"query":"user preferences"}}]}'
+
+# Execute read-only KIP request from file
+anda-cli --space-id my_space --token $TOKEN execute-kip-readonly --file ./kip_request.json
+
+# Execute read-only KIP request from stdin
+cat ./kip_request.json | anda-cli --space-id my_space --token $TOKEN execute-kip-readonly
 ```
 
 ### Space Status & Conversations

@@ -215,6 +215,27 @@ export interface ServiceInfo {
   sharding: number;
   description: string;
 }
+
+export type KipCommandItem = string | { command: string; parameters: Record<string, unknown> };
+
+export interface KipRequest {
+  commands: KipCommandItem[];
+  parameters?: Record<string, unknown>;
+  dry_run?: boolean; // if true, the request will be parsed and validated but not executed (no side effects)
+}
+
+export interface KipError {
+  code: string;
+  message: string;
+  hint?: string;
+  data?: unknown;
+}
+
+export interface KipResponse<T> {
+  result?: T;
+  error?: KipError;
+  next_cursor?: string;
+}
 ```
 
 ---
@@ -266,6 +287,13 @@ export interface ServiceInfo {
 - 鉴权：SpaceToken/CWT `write`
 - 请求体：`MaintenanceInput`（Markdown 模式下也允许原始字符串）
 - 响应：`RpcResponse<AgentOutput>`
+
+### POST `/v1/{space_id}/execute_kip_readonly`
+
+- 作用：执行 KIP 请求（只读模式，适用于查询）
+- 鉴权：SpaceToken/CWT `read`（公开空间免鉴权，私有空间需有效 token）
+- 请求体：`KipRequest`
+- 响应：`KipResponse<T>`（根据请求中的命令不同，返回不同的结果类型）
 
 ### GET `/v1/{space_id}/info`
 

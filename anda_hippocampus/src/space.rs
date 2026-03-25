@@ -638,6 +638,15 @@ impl Space {
         self.formation.start_process(ctx, conversation).await
     }
 
+    pub async fn execute_kip_readonly(
+        &self,
+        mut req: anda_kip::Request,
+    ) -> Result<anda_kip::Response, BoxError> {
+        req.readonly = true;
+        let (_, res) = req.execute(self.memory.nexus.as_ref()).await;
+        Ok(res)
+    }
+
     pub async fn get_conversation(
         &self,
         collection: Option<String>,

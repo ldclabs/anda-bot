@@ -420,16 +420,7 @@ Authorization: Bearer <token>
 
 A typical integration workflow for a business agent (use `brain.anda.ai` as the host):
 
-### 1. Prepare: Create a memory space (one-time setup, should be done by an admin or manager)
-
-```bash
-curl -sX POST https://brain.anda.ai/admin/create_space \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"user": "owner_principal_id", "space_id": "my_space_001", "tier": 0}'
-```
-
-### 2. Remember: Send conversations for memory encoding
+### 1. Remember: Send conversations for memory encoding
 
 After each meaningful conversation with a user, send the messages to Formation:
 
@@ -447,7 +438,7 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
   }'
 ```
 
-### 3. Recall: Query memory before responding
+### 2. Recall: Query memory before responding
 
 Before generating a response, check if relevant memory exists:
 
@@ -458,21 +449,6 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
   -d '{
     "query": "Where does this user work and what is their role?",
     "context": {"user": "user_123"}
-  }'
-```
-
-### 4. Maintain: Schedule periodic maintenance
-
-Run maintenance to keep memory healthy and relevant:
-
-```bash
-curl -sX POST https://brain.anda.ai/v1/my_space_001/maintenance \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trigger": "scheduled",
-    "scope": "full",
-    "timestamp": "2026-03-10T03:00:00Z"
   }'
 ```
 

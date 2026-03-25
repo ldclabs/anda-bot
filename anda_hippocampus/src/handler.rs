@@ -277,6 +277,51 @@ pub async fn post_maintenance(
     Ok(ct.response(RpcResponse::success(rt)))
 }
 
+/// POST /v1/{space_id}/execute_kip_readonly
+pub async fn execute_kip_readonly(
+    State(app): State<AppState>,
+    Path(space_id): Path<String>,
+    Accept(ct, _): Accept,
+    HeaderVals(token, sharding): HeaderVals,
+    body: Bytes,
+) -> Result<impl IntoResponse, AppError> {
+    if sharding != app.sharding {
+        return Err(AppError::bad_request(format!(
+            "space_id sharding {} does not match server sharding {}",
+            sharding, app.sharding
+        )));
+    }
+
+    let input: StringOr<anda_kip::Request> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input = input
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
+
+    let now_ms = unix_ms();
+    let t = app
+        .check_auth_if(&token, &space_id, TokenScope::Write, now_ms)
+        .map_err(|_| AppError::unauthorized())?;
+
+    let space = app
+        .load_space(&space_id)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if t.is_none() {
+        // 如果没有验证 CWToken，则验证 SpaceToken
+        space
+            .verify_space_token(token, TokenScope::Write, now_ms)
+            .map_err(|_| AppError::unauthorized())?;
+    }
+
+    let rt = space
+        .execute_kip_readonly(input)
+        .await
+        .map_err(AppError::bad_request)?;
+
+    Ok(ct.response(rt))
+}
+
 /// GET /v1/{space_id}/conversations/{conversation_id}
 pub async fn get_conversation(
     State(app): State<AppState>,

@@ -664,3 +664,92 @@ type ServiceInfo struct {
 	Sharding    int    `json:"sharding"`
 	Description string `json:"description"`
 }
+
+type KipCommandObject struct {
+	Command    string         `json:"command"`
+	Parameters map[string]any `json:"parameters"`
+}
+
+type KipCommandItem struct {
+	String *string
+	Object *KipCommandObject
+}
+
+func (item *KipCommandItem) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("kip command item cannot be empty")
+	}
+
+	if trimmed[0] == '"' {
+		var command string
+		if err := json.Unmarshal(trimmed, &command); err != nil {
+			return fmt.Errorf("invalid kip command string: %w", err)
+		}
+		command = strings.TrimSpace(command)
+		if command == "" {
+			return fmt.Errorf("kip command string cannot be empty")
+		}
+		item.String = &command
+		item.Object = nil
+		return nil
+	}
+
+	if trimmed[0] == '{' {
+		var commandObject KipCommandObject
+		if err := json.Unmarshal(trimmed, &commandObject); err != nil {
+			return fmt.Errorf("invalid kip command object: %w", err)
+		}
+		commandObject.Command = strings.TrimSpace(commandObject.Command)
+		if commandObject.Command == "" {
+			return fmt.Errorf("kip command object requires non-empty command")
+		}
+		if commandObject.Parameters == nil {
+			return fmt.Errorf("kip command object requires parameters")
+		}
+		item.Object = &commandObject
+		item.String = nil
+		return nil
+	}
+
+	return fmt.Errorf("kip command item must be string or object")
+}
+
+func (item KipCommandItem) MarshalJSON() ([]byte, error) {
+	if item.String != nil {
+		return json.Marshal(*item.String)
+	}
+	if item.Object != nil {
+		return json.Marshal(item.Object)
+	}
+	return nil, fmt.Errorf("invalid kip command item")
+}
+
+type KipRequest struct {
+	Commands   []KipCommandItem `json:"commands"`
+	Parameters map[string]any   `json:"parameters,omitempty"`
+	DryRun     bool             `json:"dry_run,omitempty"`
+}
+
+type KipError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
+	Data    any    `json:"data,omitempty"`
+}
+
+func (e *KipError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Code != "" {
+		return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	}
+	return e.Message
+}
+
+type KipResponse[T any] struct {
+	Result     *T        `json:"result,omitempty"`
+	Error      *KipError `json:"error,omitempty"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+}

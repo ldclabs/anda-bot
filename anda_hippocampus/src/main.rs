@@ -248,6 +248,10 @@ async fn main() -> Result<(), BoxError> {
             routing::post(post_maintenance),
         )
         .route(
+            "/v1/{space_id}/execute_kip_readonly",
+            routing::post(execute_kip_readonly),
+        )
+        .route(
             "/v1/{space_id}/conversations/{conversation_id}",
             routing::get(get_conversation),
         )

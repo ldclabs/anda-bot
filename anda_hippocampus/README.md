@@ -114,6 +114,7 @@ Detailed API docs (with TypeScript request/response types):
 | `POST`  | `/v1/{space_id}/formation`                       | Submit messages for memory encoding                                           | `write` (CWT or space token) |
 | `POST`  | `/v1/{space_id}/recall`                          | Query memory with natural language                                            | `read` (CWT or space token)  |
 | `POST`  | `/v1/{space_id}/maintenance`                     | Trigger maintenance cycle                                                     | `write` (CWT or space token) |
+| `POST`  | `/v1/{space_id}/execute_kip_readonly`            | Execute a KIP request (read-only mode, suitable for queries)                  | `read` (CWT or space token)  |
 | `GET`   | `/v1/{space_id}/conversations/{conversation_id}` | Get one conversation detail                                                   | `read` (CWT or space token)` |
 | `GET`   | `/v1/{space_id}/conversations`                   | List conversations (cursor pagination)                                        | `read` (CWT or space token)  |
 | `GET`   | `/v1/{space_id}/management/space_tokens`         | List space tokens                                                             | `read` (CWT)                 |
