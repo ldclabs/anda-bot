@@ -101,9 +101,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.7"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6082e3fa2675f4f3def48f9dff92ca1d648b4a108c087b8b402cd9761b371852"
+checksum = "5a5aee8a8f92d8a9e6cce38ad62e69e8264145542dfeb9cad798cb59302e568e"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -150,9 +150,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.22"
+version = "0.7.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "608d7dfbd5d500903c8cf98e32afcbf3de869a523750157107424c548a750c52"
+checksum = "1900f8c1ee6d16331d2bbeafedc1e93a43a402463104db4111a508923e2aa298"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -354,9 +354,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "076623585b18adde4f3bea1620c43631f06afa5d803799a9d9028e88256d019e"
+checksum = "254158c06be32579286af65b98a1f4d1a88443f9ed4fcddaef984c750322a022"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3306,9 +3306,9 @@ dependencies = [
 
 [[package]]
 name = "num-conv"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf97ec579c3c42f953ef76dbf8d55ac91fb219dde70e49aa4a6b7d74e9919050"
+checksum = "c6673768db2d862beb9b39a78fdcb1a69439615d5794a1be50caa9bc92c81967"
 
 [[package]]
 name = "num-integer"
@@ -3340,16 +3340,18 @@ dependencies = [
 
 [[package]]
 name = "object_store"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2858065e55c148d294a9f3aae3b0fa9458edadb41a108397094566f4e3c0dfb"
+checksum = "622acbc9100d3c10e2ee15804b0caa40e55c933d5aa53814cd520805b7958a49"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
  "chrono",
  "form_urlencoded",
- "futures",
+ "futures-channel",
+ "futures-core",
+ "futures-util",
  "http",
  "http-body-util",
  "humantime",
@@ -3359,7 +3361,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "quick-xml",
- "rand 0.9.2",
+ "rand 0.10.0",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -3705,9 +3707,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
+version = "0.39.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+checksum = "958f21e8e7ceb5a1aa7fa87fab28e7c75976e0bfe7e23ff069e0a260f894067d"
 dependencies = [
  "memchr",
  "serde",

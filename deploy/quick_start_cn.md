@@ -269,3 +269,45 @@ anda-cli --space-id demo conversations --collection recall get 1
 ./anda-cli --space-id demo \
 	conversations get <conversation_id>
 ```
+
+
+
+## 10. 集成
+
+### 10.1 直接使用 HTTP API
+
+1. 记忆：发送对话以进行记忆编码
+```bash
+curl -sX POST http://localhost:8042/v1/demo/formation \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
+      {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
+    ],
+    "context": {"user": "user_123", "agent": "onboarding_bot"},
+    "timestamp": "2026-03-25T10:30:00Z"
+  }'
+```
+
+2. 召回：在响应前查询记忆
+```bash
+curl -sX POST http://localhost:8042/v1/demo/recall \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Where does this user work and what is their role?",
+    "context": {"user": "user_123"}
+  }'
+```
+
+### 10.2 与 OpenClaw 集成
+
+安装提示词：
+```txt
+从 https://brain.anda.ai/SKILL.md 安装插件：
+spaceId: your_space_id
+spaceToken: your_space_token
+baseUrl: "http://localhost:8042"
+```
