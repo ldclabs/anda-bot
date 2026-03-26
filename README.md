@@ -260,18 +260,6 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
   }'
 ```
 
-3. Maintain: Schedule periodic maintenance
-```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/maintenance \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trigger": "scheduled",
-    "scope": "full",
-    "timestamp": "2026-03-10T03:00:00Z"
-  }'
-```
-
 ## Why the name "Hippocampus (海马体)"?
 
 The name is our design philosophy. We are not building a static database; we are building an artificial cognitive organ. Just like the human hippocampus, this system **Encodes** experiences during the day, **Consolidates** knowledge during the night, and wakes up to **Recall** memories with sharper cognition.

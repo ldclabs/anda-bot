@@ -1,5 +1,5 @@
 ---
-name: anda_hippocampus
+name: anda-hippocampus
 description: |
   Long-term memory service for LLM agents.
   Provides persistent, structured memory (Cognitive Nexus) through three operations:
@@ -52,7 +52,6 @@ Three operational modes cover the full memory lifecycle:
 |------|----------|---------|------|
 | **Formation** | `POST /v1/{space_id}/formation` | Encode conversations into structured memory | `write` (CWT or space token) |
 | **Recall** | `POST /v1/{space_id}/recall` | Query memory with natural language | `read` (CWT or space token) |
-| **Maintenance** | `POST /v1/{space_id}/maintenance` | Consolidate, prune, and organize memory | `write` (CWT or space token) |
 
 Supporting endpoints:
 
@@ -338,51 +337,6 @@ Note: `result.content` is the primary contract. Additional fields may vary by mo
 | Domain exploration | "What do we know about Project Aurora?" |
 | Pattern detection | "Does Alice prefer email or chat?" |
 | Existence check | "Have we discussed the pricing strategy?" |
-
----
-
-### Maintenance — Memory Consolidation
-
-Trigger a maintenance cycle to consolidate, prune, and optimize the knowledge graph. This runs asynchronously in the background with a single-execution guard (only one maintenance cycle can run at a time per space).
-
-```
-POST /v1/{space_id}/maintenance
-Authorization: Bearer <write_token>
-Content-Type: application/json
-```
-
-**Request:**
-
-```json
-{
-  "trigger": "on_demand",
-  "scope": "full",
-  "timestamp": "2026-03-10T03:00:00Z",
-  "parameters": {
-    "stale_event_threshold_days": 7,
-    "confidence_decay_factor": 0.95,
-    "unsorted_max_backlog": 20,
-    "orphan_max_count": 10
-  }
-}
-```
-
-**Response:**
-
-```json
-{
-  "result": { "conversation": 8, ... }
-}
-```
-
-**Fields:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `trigger` | `string` | Yes | `scheduled` / `threshold` / `on_demand` |
-| `scope` | `string` | Yes | `full` (all phases) / `quick` (assessment + urgent tasks only) |
-| `timestamp` | `string` | Yes | ISO 8601 timestamp |
-| `parameters` | `object` | No | Override default thresholds |
 
 ---
 

@@ -260,18 +260,6 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
   }'
 ```
 
-3. 维护：定期维护记忆
-```bash
-curl -sX POST https://your-hippocampus-host/v1/my_space_001/maintenance \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "trigger": "scheduled",
-    "scope": "full",
-    "timestamp": "2026-03-10T03:00:00Z"
-  }'
-```
-
 ## 为什么起名"Hippocampus (海马体)"？
 
 这个名字代表了我们的设计理念。我们构建的不是一个静态的数据库，而是一个人工认知器官。正如人类的海马体一样，这个系统在白天**编码 (Encode)** 体验，在夜间**巩固 (Consolidate)** 知识，醒来后以更精确的认知**召回 (Recall)** 记忆。

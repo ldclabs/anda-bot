@@ -344,6 +344,10 @@ pub struct MaintenanceInput {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<MaintenanceParameters>,
+
+    /// The ID of the formation conversation that processed.
+    #[serde(default)]
+    pub formation_id: u64,
 }
 
 fn default_trigger() -> String {

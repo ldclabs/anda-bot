@@ -56,6 +56,8 @@ structured-logger = "1"
 log = { version = "0.4", features = ["kv_serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
+markdown = "1"
+mimalloc = { version = "*", features = ["v3"] }
 
 [profile.release]
 debug = false

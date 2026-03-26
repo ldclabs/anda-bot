@@ -251,6 +251,9 @@ pub async fn post_maintenance(
     }
 
     let input: StringOr<MaintenanceInput> = ct.parse_body(&body).map_err(AppError::bad_request)?;
+    let input = input
+        .value()
+        .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let now_ms = unix_ms();
     let t = app
@@ -267,6 +270,12 @@ pub async fn post_maintenance(
         space
             .verify_space_token(token, TokenScope::Write, now_ms)
             .map_err(|_| AppError::unauthorized())?;
+    }
+
+    if space.is_processing() {
+        return Err(AppError::bad_request(
+            "Formation or Maintenance is processing, cannot start maintenance. It will automatically start after some time when the current formation/maintenance is finished.",
+        ));
     }
 
     let rt = space

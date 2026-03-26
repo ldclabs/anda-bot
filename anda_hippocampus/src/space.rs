@@ -355,7 +355,7 @@ pub struct Space {
 }
 
 impl Space {
-    fn is_processing(&self) -> bool {
+    pub fn is_processing(&self) -> bool {
         self.formation.is_processing() || self.maintenance.is_processing()
     }
 
@@ -556,11 +556,14 @@ impl Space {
         user: Principal,
         input: StringOr<FormationInput>,
     ) -> Result<AgentOutput, BoxError> {
-        let nodes = self.memory.nexus.concepts.len()
-            + self.memory.nexus.propositions.len()
-            + self.memory.conversations.len();
+        let nodes = self
+            .memory
+            .nexus
+            .concepts
+            .len()
+            .max(self.memory.conversations.len()) as u64;
         let tier = self.get_tier();
-        if tier.allow_nodes() < nodes as u64 {
+        if tier.allow_nodes() < nodes {
             return Err(format!(
                 "node limit exceeded: {} nodes vs tier limit {}",
                 nodes,
@@ -603,24 +606,25 @@ impl Space {
     pub async fn maintenance(
         &self,
         user: Principal,
-        input: StringOr<MaintenanceInput>,
+        mut input: MaintenanceInput,
     ) -> Result<AgentOutput, BoxError> {
-        let scope = input.as_value().map(|v| v.scope).unwrap_or_default();
+        input.formation_id = self.formation.get_processed().unwrap_or_default();
         let rt = self
             .engine
             .agent_run(
                 user,
                 AgentInput {
                     name: MaintenanceAgent::NAME.to_string(),
-                    prompt: input.to_string(),
+                    prompt: StringOr::Value(&input).to_string(),
                     resources: vec![],
                     ..Default::default()
                 },
             )
             .await?;
-        if let Some(id) = self.formation.get_processed() {
-            self.maintenance.set_processed_at(scope, id);
-        }
+
+        self.maintenance
+            .set_processed_at(input.scope, input.formation_id);
+
         Ok(rt)
     }
 
@@ -954,6 +958,7 @@ impl AgentHook for Hooks {
                 scope: MaintenanceScope::Full,
                 timestamp,
                 parameters: None,
+                formation_id,
             })
         } else if formation_id >= at.quick.max(at.full) + 42 {
             Some(MaintenanceInput {
@@ -961,6 +966,7 @@ impl AgentHook for Hooks {
                 scope: MaintenanceScope::Quick,
                 timestamp,
                 parameters: None,
+                formation_id,
             })
         } else if formation_id >= at.daydream.max(at.quick).max(at.full) + 21 {
             Some(MaintenanceInput {
@@ -968,16 +974,14 @@ impl AgentHook for Hooks {
                 scope: MaintenanceScope::Daydream,
                 timestamp,
                 parameters: None,
+                formation_id,
             })
         } else {
             None
         };
 
         if let Some(input) = input {
-            match space
-                .maintenance(Principal::anonymous(), StringOr::Value(input))
-                .await
-            {
+            match space.maintenance(Principal::anonymous(), input).await {
                 Ok(rt) => {
                     return rt.conversation;
                 }
