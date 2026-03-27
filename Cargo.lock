@@ -277,9 +277,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.9.34"
+version = "0.9.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88141743fbe851d40451590018ccef731caaf3687a74577f9f876e582b04f6fa"
+checksum = "c27166070e1c93492035cab55e5057287d4d629fe97158d19d5d652dd9f6e091"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -1043,9 +1043,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cmake"
-version = "0.1.57"
+version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
 dependencies = [
  "cc",
 ]
@@ -5339,9 +5339,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.22.0"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
+checksum = "5ac8b6f42ead25368cf5b098aeb3dc8a1a2c05a3eee8a9a1a68c640edbfc79d9"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
