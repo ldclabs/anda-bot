@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/ldclabs/anda-hippocampus/anda-cli/api"
 	"github.com/spf13/cobra"
 )
@@ -41,7 +39,7 @@ Example:
 			exitError(resp.Error)
 		}
 		if resp.Result != nil {
-			fmt.Println(resp.Result.Content)
+			printJSON(resp.Result)
 		}
 	},
 }

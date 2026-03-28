@@ -69,7 +69,7 @@ var revokeTokenCmd = &cobra.Command{
 		if resp.Error != nil {
 			exitError(resp.Error)
 		}
-		fmt.Printf("Revoked: %v\n", *resp.Result)
+		printJSON(resp.Result)
 	},
 }
 

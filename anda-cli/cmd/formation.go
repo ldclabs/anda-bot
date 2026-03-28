@@ -123,7 +123,7 @@ Example:
 			exitError(resp.Error)
 		}
 		if resp.Result != nil {
-			fmt.Println(resp.Result.Content)
+			printJSON(resp.Result)
 		}
 	},
 }

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/ldclabs/anda-hippocampus/anda-cli/api"
@@ -39,7 +38,7 @@ Example:
 			exitError(resp.Error)
 		}
 		if resp.Result != nil {
-			fmt.Println(resp.Result.Content)
+			printJSON(resp.Result)
 		}
 	},
 }
