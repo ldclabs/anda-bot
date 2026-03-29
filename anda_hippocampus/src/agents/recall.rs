@@ -169,7 +169,7 @@ impl Agent<AgentCtx> for RecallAgent {
                         SearchConversationsTool::NAME,
                     ])),
                     tool_choice_required: true,
-                    max_output_tokens: Some(20000),
+                    max_output_tokens: Some(8192),
                     ..Default::default()
                 },
                 vec![],

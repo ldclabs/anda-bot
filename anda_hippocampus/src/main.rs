@@ -134,6 +134,7 @@ async fn main() -> Result<(), BoxError> {
     let global_cancel_token = CancellationToken::new();
 
     let mut http_client = request_client_builder()
+        .https_only(false)
         .timeout(Duration::from_secs(600))
         .retry(
             reqwest::retry::for_host(AnyHost)

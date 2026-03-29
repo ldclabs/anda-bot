@@ -293,7 +293,7 @@ impl FormationAgent {
                 chat_history,
                 tools,
                 tool_choice_required: true,
-                max_output_tokens: Some(10000),
+                max_output_tokens: Some(8192),
                 ..Default::default()
             },
             vec![],

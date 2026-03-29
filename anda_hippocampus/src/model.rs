@@ -1,6 +1,6 @@
 use anda_engine::{
     model::{Model, reqwest},
-    model::{anthropic, deepseek, gemini, mimo, openai},
+    model::{anthropic, deepseek, gemini, kimi, mimo, openai},
 };
 use std::sync::Arc;
 
@@ -18,11 +18,14 @@ pub fn build_model(http_client: reqwest::Client, cfg: ModelConfig) -> Model {
                 .with_client(http_client)
                 .completion_model(&cfg.model),
         )),
-        "anthropic" => Model::with_completer(Arc::new(
-            anthropic::Client::new(&cfg.api_key, Some(cfg.api_base))
-                .with_client(http_client)
-                .completion_model(&cfg.model),
-        )),
+        "anthropic" => {
+            let mut cli =
+                anthropic::Client::new(&cfg.api_key, Some(cfg.api_base)).with_client(http_client);
+            if cfg.model.contains("mimo") {
+                cli = cli.with_bearer_auth(true);
+            }
+            Model::with_completer(Arc::new(cli.completion_model(&cfg.model)))
+        }
         "openai" => Model::with_completer(Arc::new(
             openai::Client::new(&cfg.api_key, Some(cfg.api_base))
                 .with_client(http_client)
@@ -35,6 +38,11 @@ pub fn build_model(http_client: reqwest::Client, cfg: ModelConfig) -> Model {
         )),
         "mimo" => Model::with_completer(Arc::new(
             mimo::Client::new(&cfg.api_key, Some(cfg.api_base))
+                .with_client(http_client)
+                .completion_model(&cfg.model),
+        )),
+        "kimi" => Model::with_completer(Arc::new(
+            kimi::Client::new(&cfg.api_key, Some(cfg.api_base))
                 .with_client(http_client)
                 .completion_model(&cfg.model),
         )),
