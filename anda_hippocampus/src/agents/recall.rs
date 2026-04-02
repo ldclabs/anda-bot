@@ -14,7 +14,7 @@ use anda_engine::{
 use serde_json::json;
 use std::sync::{Arc, LazyLock};
 
-use super::AgentHook;
+use super::{AgentHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
@@ -115,25 +115,6 @@ impl Agent<AgentCtx> for RecallAgent {
         let now_ms = unix_ms();
 
         let primer = self.memory.describe_primer().await.unwrap_or_default();
-        let chat_history = vec![
-            Message {
-                role: "user".into(),
-                content: vec![format!("`DESCRIBE PRIMER` result:\n{}", primer).into()],
-                ..Default::default()
-            },
-            Message {
-                role: "user".into(),
-                content: vec![
-                    format!(
-                        "Current datetime: {}",
-                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-                    )
-                    .into(),
-                ],
-                ..Default::default()
-            },
-        ];
-
         let mut conversation = Conversation {
             user: *caller,
             messages: vec![serde_json::json!(Message {
@@ -146,7 +127,6 @@ impl Agent<AgentCtx> for RecallAgent {
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
             label: Some("recall".to_string()),
             ..Default::default()
         };
@@ -161,9 +141,15 @@ impl Agent<AgentCtx> for RecallAgent {
         match ctx
             .completion(
                 CompletionRequest {
-                    instructions: SELF_INSTRUCTIONS.to_string(),
+                    instructions: format!(
+                        "{}\n\n{}\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                        SELF_INSTRUCTIONS,
+                        SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+                        primer,
+                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                    ),
                     prompt,
-                    chat_history,
+
                     tools: ctx.tool_definitions(Some(&[
                         MemoryReadonly::NAME,
                         SearchConversationsTool::NAME,

@@ -15,3 +15,5 @@ pub trait AgentHook: Send + Sync {
     async fn try_start_formation(&self);
     async fn try_start_maintenance(&self, formation_id: DocumentId) -> Option<DocumentId>;
 }
+
+pub static SYSTEM_PROMPT_DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";

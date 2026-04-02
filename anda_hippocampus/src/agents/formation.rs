@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool,
+    StateFeatures, Tool, evaluate_tokens,
 };
 use anda_db::schema::DocumentId;
 use anda_engine::{
@@ -14,11 +14,11 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::AgentHook;
+use super::{AgentHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
-const MAX_FORMATION_BYTES: usize = 100_000;
+const MAX_FORMATION_TOKENS: usize = 100_000;
 
 /// Resets the AtomicU64 to 0 on drop (panic guard for processing_conversation).
 struct ProcessingGuard(Arc<AtomicU64>);
@@ -267,30 +267,16 @@ impl FormationAgent {
         let tools = ctx.tool_definitions(Some(&["execute_kip"]));
         let now_ms = unix_ms();
 
-        let chat_history = vec![
-            Message {
-                role: "user".into(),
-                content: vec![format!("`DESCRIBE PRIMER` result:\n{}", primer).into()],
-                ..Default::default()
-            },
-            Message {
-                role: "user".into(),
-                content: vec![
-                    format!(
-                        "Current datetime: {}",
-                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-                    )
-                    .into(),
-                ],
-                ..Default::default()
-            },
-        ];
-
         let mut runner = ctx.completion_iter(
             CompletionRequest {
-                instructions: SELF_INSTRUCTIONS.to_string(),
+                instructions: format!(
+                    "{}\n\n{}\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                    SELF_INSTRUCTIONS,
+                    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+                    primer,
+                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                ),
                 prompt: prompt.clone(),
-                chat_history,
                 tools,
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
@@ -324,19 +310,20 @@ impl FormationAgent {
                         }
                     }
 
-                    conversation.status = if res.failed_reason.is_some() {
-                        ConversationStatus::Failed
+                    if let Some(failed_reason) = res.failed_reason {
+                        conversation.status = ConversationStatus::Failed;
+                        conversation.failed_reason = Some(failed_reason);
                     } else if runner.is_done() {
-                        ConversationStatus::Completed
+                        conversation.status = ConversationStatus::Completed;
+                        // 成功完成时清除之前的失败原因（如果有的话）
+                        conversation.failed_reason = None;
                     } else {
-                        ConversationStatus::Working
-                    };
+                        conversation.status = ConversationStatus::Working;
+                        // 成功完成时清除之前的失败原因（如果有的话）
+                        conversation.failed_reason = None;
+                    }
                     conversation.usage = res.usage;
                     conversation.updated_at = now_ms;
-
-                    if let Some(failed_reason) = res.failed_reason {
-                        conversation.failed_reason = Some(failed_reason);
-                    }
 
                     // 检查是否被外部取消，get_conversation 失败不中断处理
                     match self.memory.get_conversation(conversation._id).await {
@@ -415,12 +402,11 @@ impl Agent<AgentCtx> for FormationAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
-
-        if prompt.len() > MAX_FORMATION_BYTES {
+        let token_count = evaluate_tokens(&prompt);
+        if token_count > MAX_FORMATION_TOKENS {
             return Err(format!(
-                "Input too large: {} bytes, max allowed is {} bytes",
-                prompt.len(),
-                MAX_FORMATION_BYTES
+                "Input too large: {} tokens (estimated), max allowed is {} tokens",
+                token_count, MAX_FORMATION_TOKENS
             )
             .into());
         }
@@ -429,7 +415,7 @@ impl Agent<AgentCtx> for FormationAgent {
             user: *caller,
             messages: vec![json!(Message {
                 role: "user".into(),
-                content: vec![prompt.clone().into()],
+                content: vec![prompt.into()],
                 ..Default::default()
             })],
             period: now_ms / 3600 / 1000,

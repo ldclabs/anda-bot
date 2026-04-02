@@ -7,12 +7,13 @@ use anda_engine::{
     memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
     rfc3339_datetime, unix_ms,
 };
+use serde_json::json;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 
-use super::AgentHook;
+use super::{AgentHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
@@ -125,11 +126,15 @@ impl Agent<AgentCtx> for MaintenanceAgent {
 
         let mut conversation = Conversation {
             user: *caller,
+            messages: vec![json!(Message {
+                role: "user".into(),
+                content: vec![prompt.into()],
+                ..Default::default()
+            })],
             status: ConversationStatus::Working,
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            steering_messages: Some(vec![prompt.clone()]), // 原始输入作为 steering message，供 process_loop 处理
             label: Some("maintenance".to_string()),
             ..Default::default()
         };
@@ -178,10 +183,10 @@ impl MaintenanceAgent {
 
     async fn process_one(&self, ctx: &AgentCtx, conversation: &mut Conversation) {
         let prompt = match conversation
-            .steering_messages
-            .take()
-            .unwrap_or_default()
-            .pop()
+            .messages
+            .first()
+            .and_then(|v| serde_json::from_value::<Message>(v.clone()).ok())
+            .and_then(|v| v.text())
         {
             Some(p) => p,
             None => {
@@ -194,30 +199,17 @@ impl MaintenanceAgent {
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let tools = ctx.tool_definitions(Some(&["execute_kip"]));
         let now_ms = unix_ms();
-        let chat_history = vec![
-            Message {
-                role: "user".into(),
-                content: vec![format!("`DESCRIBE PRIMER` result:\n{}", primer).into()],
-                ..Default::default()
-            },
-            Message {
-                role: "user".into(),
-                content: vec![
-                    format!(
-                        "Current datetime: {}",
-                        rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-                    )
-                    .into(),
-                ],
-                ..Default::default()
-            },
-        ];
 
         let mut runner = ctx.completion_iter(
             CompletionRequest {
-                instructions: SELF_INSTRUCTIONS.to_string(),
+                instructions: format!(
+                    "{}\n\n{}\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                    SELF_INSTRUCTIONS,
+                    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+                    primer,
+                    rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+                ),
                 prompt,
-                chat_history,
                 tools,
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
