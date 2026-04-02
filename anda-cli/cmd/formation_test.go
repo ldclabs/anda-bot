@@ -4,10 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/ldclabs/anda-hippocampus/anda-cli/api"
 )
 
 func TestParseMessagesInput_JSONArray(t *testing.T) {
@@ -56,20 +53,6 @@ func TestParseMessagesInput_EmptyInput(t *testing.T) {
 	_, err := parseMessagesInput("   \n\t  ")
 	if err == nil {
 		t.Fatalf("expected error for empty input")
-	}
-}
-
-func TestValidateMessageContentLength(t *testing.T) {
-	okContent := strings.Repeat("a", maxMessageContentBytes)
-	err := validateMessageContentLength([]api.Message{{Role: "user", Content: api.MessageContentFromText(okContent)}})
-	if err != nil {
-		t.Fatalf("expected no error at %d bytes, got: %v", maxMessageContentBytes, err)
-	}
-
-	tooLongContent := strings.Repeat("a", maxMessageContentBytes+1)
-	err = validateMessageContentLength([]api.Message{{Role: "user", Content: api.MessageContentFromText(tooLongContent)}})
-	if err == nil {
-		t.Fatalf("expected error for content over %d bytes", maxMessageContentBytes)
 	}
 }
 

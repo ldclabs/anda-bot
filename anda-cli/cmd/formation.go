@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const maxMessageContentBytes = 100_000
+const maxMessageContentTokens = 100_000
 
 var formationCmd = &cobra.Command{
 	Use:   "formation",
@@ -155,9 +155,9 @@ func parseMessagesInput(raw string) ([]api.Message, error) {
 
 func validateMessageContentLength(messages []api.Message) error {
 	for idx, message := range messages {
-		contentBytes := message.Content.SizeBytes()
-		if contentBytes > maxMessageContentBytes {
-			return fmt.Errorf("message[%d] content is %d bytes, exceeds %d-byte limit", idx, contentBytes, maxMessageContentBytes)
+		contentTokens := message.Content.SizeBytes() / 3
+		if contentTokens > maxMessageContentTokens {
+			return fmt.Errorf("message[%d] content is %d tokens (estimated), exceeds %d-token limit", idx, contentTokens, maxMessageContentTokens)
 		}
 	}
 	return nil
