@@ -309,12 +309,11 @@ Behind this is a **Data Flywheel**: Business Agents generate conversations durin
 
 ## Further Reading
 
-*(Note: The following articles are currently in Chinese)*
-- [AI Memory Must Be Able to Sleep—And Only Knowledge Graphs Can Put It to Sleep](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/AI_Memory_Must_Sleep_CN.md)
-- [Deep Dive into Claude Code's Memory System: How Does AI "Remember" You?](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Claude_Code_Memory_Research_CN.md)
-- [When AI Learns Ontological Modeling: Anda Hippocampus Grows an Enterprise AI Brain](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain_CN.md)
-- [AI's Second Type of Training—Forging Memory Graphs with Tokens](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus_CN.md)
-- [Building a Company as an Intelligence Requires a "Hippocampus"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence_CN.md)
+- [AI Memory Must Sleep — And Only Knowledge Graphs Can Make That Happen](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/AI_Memory_Must_Sleep.md)
+- [A Deep Dive into Claude Code's Memory System: How Does AI "Remember" You?](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Claude_Code_Memory_Research.md)
+- [When AI Learns Ontology Modeling: Anda Hippocampus Lets Enterprises "Grow" Their Own Intelligent Brains](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain.md)
+- [The Second Training of AI: Forging Memory Graphs with Tokens](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus.md)
+- [Building a Company as an Intelligence Requires a "Hippocampus"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence.md)
 
 ## License
 
