@@ -8,7 +8,7 @@
 
 Have you ever experienced this? Every time you start a new conversation with an AI assistant, it acts like it has amnesia. It completely forgets what you said last time, what your job is, or what answering style you prefer. You find yourself repeating the same information over and over again.
 
-This happens because Large Language Models (LLMs) are inherently "stateless"—every conversation is a brand-new beginning. They don't possess true "memory," only the context within the current chat window.
+This happens because Large Language Models (LLMs) are inherently "stateless"—every conversation is a brand-new beginning. They don't possess true "memory", only the context within the current chat window.
 
 Anthropic's Claude Code (a command-line-based AI coding assistant) has designed an elegant **file-based memory system** to solve this problem. Even more fascinating is a feature it implements called **autoDream**—allowing the AI to automatically organize and consolidate memories behind the scenes, much like human dreaming during sleep.
 
@@ -52,34 +52,34 @@ Their relationship can be understood through a simple analogy:
 The system categorizes memory contents strictly rather than hoarding everything. The four types are:
 
 ### 🧑 User Memory (`user`)
-Information about "who you are." For example, your professional role, tech background, or working habits.
+Information about "who you are". For example, your professional role, tech background, or working habits.
 
-> Example: "The user is a data scientist currently focusing on observability and logging systems."
-> Example: "The user has 10 years of Go experience but is touching React frontend for the first time."
+> Example: "The user is a data scientist currently focusing on observability and logging systems".
+> Example: "The user has 10 years of Go experience but is touching React frontend for the first time".
 
 A senior engineer and a coding beginner require completely different communication styles—this type of memory enables the AI to adapt accordingly.
 
 ### 💬 Feedback Memory (`feedback`)
 Your corrections or approvals of how the AI works. This is one of the most critical memory types.
 
-> Example: "Do not mock the database in tests—we had an incident last quarter where mock tests passed but the production migration failed."
-> Example: "Do not summarize at the end of every answer; the user said they will read the diff themselves."
+> Example: "Do not mock the database in tests—we had an incident last quarter where mock tests passed but the production migration failed".
+> Example: "Do not summarize at the end of every answer; the user said they will read the diff themselves".
 
 **Key Design:** The system records not only corrections ("don't do this") but also approvals ("yes, do it exactly like this"). If it only remembers mistakes, the AI becomes overly cautious and abandons proven strategies. Every piece of feedback must include the **Why**, allowing the AI to make flexible judgments in edge cases rather than applying rules blindly.
 
 ### 📋 Project Memory (`project`)
 Dynamic information about the current project—things that cannot be deduced from the codebase or Git history.
 
-> Example: "Code merge freeze starts on 2026-03-05 because the mobile team is cutting a release branch."
-> Example: "Replacing the legacy auth middleware is driven by legal compliance requirements, not technical debt."
+> Example: "Code merge freeze starts on 2026-03-05 because the mobile team is cutting a release branch".
+> Example: "Replacing the legacy auth middleware is driven by legal compliance requirements, not technical debt".
 
 Notice a subtle yet brilliant detail: The system is instructed to convert relative dates (like "Thursday" or "next week") into absolute dates. Because a memory might be read weeks later, "Thursday" would become meaningless.
 
 ### 📌 Reference Memory (`reference`)
 Pointers to external systems.
 
-> Example: "Pipeline-related bugs are tracked in the Linear project 'INGEST'."
-> Example: "grafana.internal/d/api-latency is the on-call latency dashboard."
+> Example: "Pipeline-related bugs are tracked in the Linear project 'INGEST'".
+> Example: "grafana.internal/d/api-latency is the on-call latency dashboard".
 
 ### Equally Important: What NOT to Remember
 
@@ -90,7 +90,7 @@ The system explicitly defines what **should not** be saved:
 - ❌ Debugging steps—the fix is already in the code.
 - ❌ Temporary task states—useless once the current chat ends.
 
-Even if a user explicitly says, "Remember this list of PRs," the system is instructed to push back and ask: *"What part of this is **unexpected** or **non-obvious**? Only that part is worth keeping."*
+Even if a user explicitly says, "Remember this list of PRs", the system is instructed to push back and ask: *"What part of this is **unexpected** or **non-obvious**? Only that part is worth keeping".*
 
 ---
 
@@ -126,7 +126,7 @@ Simultaneously, an entry is added to the `MEMORY.md` index file:
 When a user initiates a new request, the system doesn't dump all memories into the context. Instead:
 
 1. **Scans** the frontmatter of all memory files (filename, description, type, last modified).
-2. Sends this "catalog list," along with the user's current prompt, to a lightweight AI model (Sonnet).
+2. Sends this "catalog list", along with the user's current prompt, to a lightweight AI model (Sonnet).
 3. The model selects a **maximum of 5** most relevant memories.
 4. Only the full text of these selected memories is read and injected into the main conversation context.
 
@@ -136,7 +136,7 @@ It's like asking a librarian to pick out the 5 most relevant books for your ques
 
 The system calculates how many days have passed since a memory was created. Memories older than 1 day get a warning attached:
 
-> "This memory is 47 days old. Memory is a snapshot in time, not live state—details about code behavior or file locations may be outdated. Please verify before citing as fact."
+> "This memory is 47 days old. Memory is a snapshot in time, not live state—details about code behavior or file locations may be outdated. Please verify before citing as fact".
 
 This prevents the AI from treating stale information as gospel.
 
@@ -157,7 +157,7 @@ After every complete Q&A turn, the `extractMemories` module runs automatically i
 
 A few key design choices:
 
-- **Mutex Mechanism**: If the main AI already proactively wrote a memory during the chat (e.g., the user said "Remember this..."), the background stenographer skips this round to prevent duplication.
+- **Mutex Mechanism**: If the main AI already proactively wrote a memory during the chat (e.g., the user said "Remember this..".), the background stenographer skips this round to prevent duplication.
 - **Least Privilege**: The stenographer can only read files and write *inside* the memory directory. It cannot execute write commands or modify the codebase.
 - **Budget Control**: Capped at 5 back-and-forth turns to prevent infinite verification loops.
 - **Efficiency First**: It parallelizes reading all potentially relevant files, then parallelizes writing—completing the task in just two steps.
@@ -252,16 +252,16 @@ Because the memory system involves file I/O, security is paramount. The codebase
 
 ## 7. The Philosophy of Memory "Reliability"
 
-The most intriguing aspect of the codebase is its deep contemplation of "memory reliability." The system constantly reinforces a core philosophy:
+The most intriguing aspect of the codebase is its deep contemplation of "memory reliability". The system constantly reinforces a core philosophy:
 
-> **"Memory saying X exists != X currently exists."**
+> **"Memory saying X exists != X currently exists".**
 
 This manifests in several ways:
 
 1. **Verify First**: If a memory mentions a function name, `grep` to confirm it's still there before using it.
 2. **Reality Wins**: If memory contradicts current code, the code is the ultimate truth, and the memory must be updated.
-3. **Staleness Markers**: Memories over 1 day old are automatically flagged as "potentially outdated."
-4. **Respect Forgetting**: When a user says "ignore that memory," the AI should completely drop it, avoiding passive-aggressive responses like "Although my memory says X, I will ignore it."
+3. **Staleness Markers**: Memories over 1 day old are automatically flagged as "potentially outdated".
+4. **Respect Forgetting**: When a user says "ignore that memory", the AI should completely drop it, avoiding passive-aggressive responses like "Although my memory says X, I will ignore it".
 
 This reflects mature design thinking: **Memory is an auxiliary tool, not an authoritative source. It helps the AI work with better context, but it must always bow to objective reality.**
 
@@ -298,14 +298,14 @@ There are three structural tensions to note:
 
 **1. More memories mean higher maintenance costs.** Every retrieval scans all frontmatters; every dream reads the index and related files. The 200-line `MEMORY.md` is a hard ceiling. Once memories hit this roof, compressing the index degrades retrieval accuracy. This is a cycle of **more files → higher cost → lower accuracy**. It is more than adequate for project-scoped memory, but trying to sustain years of cognitive history would crush it under its own weight.
 
-**2. Files lack "relationships."** Suppose the AI separately remembers "Alice manages Project Aurora," "Aurora migrated from MySQL to PostgreSQL," and "Alice excels at DB optimization." In a human brain, these three facts instantly form a web, deducing: "Alice is the best person for an Aurora DB issue." But in Markdown, they are isolated in three files without explicit links. The AI must rely entirely on NLP to "guess" the connection. This kind of **multi-hop reasoning** along relationship chains is the blind spot of flat file structures.
+**2. Files lack "relationships".** Suppose the AI separately remembers "Alice manages Project Aurora", "Aurora migrated from MySQL to PostgreSQL", and "Alice excels at DB optimization". In a human brain, these three facts instantly form a web, deducing: "Alice is the best person for an Aurora DB issue". But in Markdown, they are isolated in three files without explicit links. The AI must rely entirely on NLP to "guess" the connection. This kind of **multi-hop reasoning** along relationship chains is the blind spot of flat file structures.
 
 **3. Conflict resolution erases evolutionary tracks.** When `autoDream` spots an outdated memory, it modifies or deletes it. It's simple and effective, but the timeline of *"We used MySQL 3 months ago and moved to PostgreSQL last week"* is lost. If someone later asks, "What shifts has our tech stack undergone?", the answer is gone.
 
-These are not "flaws" in Claude Code—in its intended use case, these are highly pragmatic engineering trade-offs. However, they point to a deeper truth: **For AI to possess true long-term memory, the underlying data structure likely needs to evolve from "files" to "graphs."** A network woven from entities (nodes) and relationships (edges) naturally supports traversal, tracking evolutionary contradictions, and cross-event pattern extraction.
+These are not "flaws" in Claude Code—in its intended use case, these are highly pragmatic engineering trade-offs. However, they point to a deeper truth: **For AI to possess true long-term memory, the underlying data structure likely needs to evolve from "files" to "graphs".** A network woven from entities (nodes) and relationships (edges) naturally supports traversal, tracking evolutionary contradictions, and cross-event pattern extraction.
 
 If you are interested in this direction, check out [**Anda Hippocampus**](https://github.com/ldclabs/anda-hippocampus)—an open-source project that draws inspiration from the human hippocampus, substituting Markdown files with Knowledge Graphs for AI memory consolidation. Its core philosophy is: **Consumed tokens should not simply evaporate; they should crystallize into reusable, transferable, structured cognitive assets that are not bound to any specific model.**
 
 ---
 
-Moving from "every chat is a stranger" to "a collaborative partner who remembers you, understands you, and continuously grows"—Claude Code's memory system takes a solid, elegant step in this direction. The `autoDream` metaphor is a brilliant intersection of engineering aesthetics and cognitive science, proving one thing: **Even a machine, if it wishes to remember well, occasionally needs to "stop and think."**
+Moving from "every chat is a stranger" to "a collaborative partner who remembers you, understands you, and continuously grows"—Claude Code's memory system takes a solid, elegant step in this direction. The `autoDream` metaphor is a brilliant intersection of engineering aesthetics and cognitive science, proving one thing: **Even a machine, if it wishes to remember well, occasionally needs to "stop and think".**

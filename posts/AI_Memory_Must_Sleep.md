@@ -1,8 +1,6 @@
-
-
 # AI Memory Must Sleep — And Only Knowledge Graphs Can Make That Happen
 
-> The real bottleneck of AI memory isn't "not remembering enough" — it's "not digesting." Anda Hippocampus uses knowledge graphs to implement a sleep mechanism that makes AI memory truly evolve and grow.
+> The real bottleneck of AI memory isn't "not remembering enough" — it's "not digesting". Anda Hippocampus uses knowledge graphs to implement a sleep mechanism that makes AI memory truly evolve and grow.
 
 ---
 
@@ -14,19 +12,19 @@ Your AI assistant remembers every word you've ever said. Its vector database hol
 
 Then one day, you ask it to recommend a restaurant. It enthusiastically suggests a Brazilian steakhouse — even though you told it just last month that you've gone vegetarian.
 
-This isn't a retrieval problem. It did retrieve your two-year-old statement "I love barbecue." The problem is that it *also* retrieved last month's "I'm vegetarian now," but has no ability to judge which one is current and which has expired. More precisely, these two pieces of information hold perfectly equal status in its storage — two points in vector space with no timeline, no causality, no supersession relationship.
+This isn't a retrieval problem. It did retrieve your two-year-old statement "I love barbecue". The problem is that it *also* retrieved last month's "I'm vegetarian now", but has no ability to judge which one is current and which has expired. More precisely, these two pieces of information hold perfectly equal status in its storage — two points in vector space with no timeline, no causality, no supersession relationship.
 
-It's 2026, and the AI memory arms race has been answering one question: **"How to remember more."** Bigger context windows, finer embedding models, faster retrieval algorithms. But almost no one is seriously answering the other question:
+It's 2026, and the AI memory arms race has been answering one question: **"How to remember more".** Bigger context windows, finer embedding models, faster retrieval algorithms. But almost no one is seriously answering the other question:
 
 **After remembering, how do you digest?**
 
 ### The Answer Lies in Four Hundred Million Years of Evolution
 
-Neuroscience answered this long ago. The human brain doesn't process memory as "store-retrieve" — it's "encode-**sleep**-consolidate." Those eight hours we dismiss as "shutting down to rest" are actually the brain's busiest working shift. It does three things that can't be done while awake:
+Neuroscience answered this long ago. The human brain doesn't process memory as "store-retrieve" — it's "encode-**sleep**-consolidate". Those eight hours we dismiss as "shutting down to rest" are actually the brain's busiest working shift. It does three things that can't be done while awake:
 
-**Compression: Distilling rules from fragments.** During the day, you experience half a dozen small incidents related to food. During deep sleep (NREM), the brain performs synaptic pruning, compressing them into one actionable cognition: "This person likes noodles." A hundred fragments are useless for decision-making; one rule can directly drive action. This is the leap from **information to knowledge**.
+**Compression: Distilling rules from fragments.** During the day, you experience half a dozen small incidents related to food. During deep sleep (NREM), the brain performs synaptic pruning, compressing them into one actionable cognition: "This person likes noodles". A hundred fragments are useless for decision-making; one rule can directly drive action. This is the leap from **information to knowledge**.
 
-**Evolution: Gracefully "retiring" old knowledge.** During REM sleep, the brain runs stress tests — splicing unrelated memories together to detect contradictions in the cognitive system. When it discovers "he used to be vegetarian" conflicts with "he now eats meat," it doesn't crudely delete the old record. Instead, it marks it as "superseded" — preserving the complete timeline. Forgetting isn't erasure; it's **state evolution**.
+**Evolution: Gracefully "retiring" old knowledge.** During REM sleep, the brain runs stress tests — splicing unrelated memories together to detect contradictions in the cognitive system. When it discovers "he used to be vegetarian" conflicts with "he now eats meat", it doesn't crudely delete the old record. Instead, it marks it as "superseded" — preserving the complete timeline. Forgetting isn't erasure; it's **state evolution**.
 
 **Daydreaming: Real-time memory triage.** You don't even need to fall asleep. During idle moments of zoning out, the brain performs "awake replay" — scanning recent experiences at 20x speed, assigning each memory a **salience score**: casual small talk gets 1 point and is discarded; a user explicitly correcting you scores 100 and gets priority processing. This low-power pre-screening determines where scarce deep-consolidation resources should go.
 
@@ -34,11 +32,11 @@ Neuroscience answered this long ago. The human brain doesn't process memory as "
 
 Understanding the nature of sleep, let's look back at current AI memory approaches — the problem becomes clear: **their underlying data structures fundamentally cannot support the operations that sleep requires.**
 
-**Vector RAG:** "Salmon," "sea urchin," and "sushi" are three independent points in vector space. You can't "merge" them — because vector space has no concept of "preferences belonging to the same person in the same category." You can't mark "vegetarianism" as superseded by "meat-eating" — because there's no timeline relationship between two vectors. Compression and evolution are simply undefined in vector space.
+**Vector RAG:** "Salmon", "sea urchin", and "sushi" are three independent points in vector space. You can't "merge" them — because vector space has no concept of "preferences belonging to the same person in the same category". You can't mark "vegetarianism" as superseded by "meat-eating" — because there's no timeline relationship between two vectors. Compression and evolution are simply undefined in vector space.
 
 **Markdown files:** In theory, an LLM can scan the full text for deduplication and consolidation. But each maintenance pass requires loading the entire file into the context window. The longer the file, the more expensive and less accurate maintenance becomes — a **self-reinforcing downward spiral**: harder to maintain → more redundancy → longer file → harder to maintain.
 
-**Key-value stores:** `alice.diet = "vegetarian"` gets overwritten by `alice.diet = "omnivore"`, and the old value vanishes. No historical trace of "used to be vegetarian, then stopped."
+**Key-value stores:** `alice.diet = "vegetarian"` gets overwritten by `alice.diet = "omnivore"`, and the old value vanishes. No historical trace of "used to be vegetarian, then stopped".
 
 See the common thread?
 
@@ -72,7 +70,7 @@ The hippocampus in the human brain is the hub of the memory system. It encodes n
 | **Recall**      | Retrieve and synthesize answers from the graph                                | Retrieving and combining memories   |
 | **Maintenance** | Background consolidation, deduplication, evolution, and pruning               | **Sleep and consolidation**         |
 
-The third mode — Maintenance — is the core of how Anda Hippocampus implements "AI sleep."
+The third mode — Maintenance — is the core of how Anda Hippocampus implements "AI sleep".
 
 ### The Graph: Infrastructure That Makes Sleep Possible
 
@@ -98,7 +96,7 @@ Anda Hippocampus's Maintenance mode runs a complete sleep cycle, directly inspir
 
 This is where memory compression happens. The system scans unprocessed Event nodes in the graph and performs **Gist Extraction**:
 
-**Single-event consolidation**: For each stale, unprocessed Event node, the system analyzes its content and linked entities, extracting stable knowledge that can stand on its own. An Event recording "Alice said she likes using dark theme" gets consolidated into a persistent `Preference` concept node with a `prefers` relationship to Alice, and the original Event is marked as "consolidated."
+**Single-event consolidation**: For each stale, unprocessed Event node, the system analyzes its content and linked entities, extracting stable knowledge that can stand on its own. An Event recording "Alice said she likes using dark theme" gets consolidated into a persistent `Preference` concept node with a `prefers` relationship to Alice, and the original Event is marked as "consolidated".
 
 **Cross-event pattern extraction** — this is the most critical step. Individual conversation fragments may seem unremarkable, but when multiple related events are aggregated, they can reveal higher-order patterns that no single event could express:
 
@@ -110,7 +108,7 @@ Each extracted pattern is written to the graph as a new concept node, carrying `
 
 This stage also performs **deduplication** (merging "JS" and "JavaScript" nodes), **inbox triage** (assigning concepts from the Unsorted domain to proper topic domains), and **confidence decay** (gradually lowering the confidence of old knowledge that hasn't been recently verified).
 
-> In vector approaches, the above operations are simply impossible — you can't "merge," "deduplicate," or "extract cross-fragment patterns" from a pile of vector fragments. In Markdown approaches, it's theoretically possible, but the LLM needs to full-text scan the entire file every time to find associations — extremely expensive and unreliable. Graphs natively support these operations because relationships are first-class citizens.
+> In vector approaches, the above operations are simply impossible — you can't "merge", "deduplicate", or "extract cross-fragment patterns" from a pile of vector fragments. In Markdown approaches, it's theoretically possible, but the LLM needs to full-text scan the entire file every time to find associations — extremely expensive and unreliable. Graphs natively support these operations because relationships are first-class citizens.
 
 #### Stage II: REM Dreaming — Contradiction Detection and Cognitive Evolution
 
@@ -154,9 +152,9 @@ It quickly scans recent Event nodes and scores them by importance:
 | New information / new relationships     | 40–60       | "I recently joined Project Aurora"                       |
 | Casual greetings / repetitions          | 1–20        | "Hello" / "Nice weather"                                 |
 
-High-scoring events are flagged as "priority consolidation targets," reserved for the next deep sleep. Low-scoring events can be archived immediately. This pre-screening mechanism dramatically reduces the cost of full consolidation — you don't need deep analysis for every memory; you only pay for the high-value ones.
+High-scoring events are flagged as "priority consolidation targets", reserved for the next deep sleep. Low-scoring events can be archived immediately. This pre-screening mechanism dramatically reduces the cost of full consolidation — you don't need deep analysis for every memory; you only pay for the high-value ones.
 
-This is the "work – daydream – deep sleep" three-state model: far smarter than the binary of "always online or completely offline."
+This is the "work – daydream – deep sleep" three-state model: far smarter than the binary of "always online or completely offline".
 
 ### Why Your Agent Doesn't Need to Know Any of This
 

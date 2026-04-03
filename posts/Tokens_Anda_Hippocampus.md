@@ -12,7 +12,7 @@ So, after consuming all these tokens, what is the target outcome of this "raisin
 
 Obviously, every inference yields directly usable results: an article, a piece of code, an analysis report. These results are immediately taken by the user, and their value is undeniable. However, in this process, another type of product is almost entirely overlooked by everyone—**Memory**.
 
-The cognition that an agent accumulates through repeated interactions: your technical preferences, your project context, your logical habits in decision-making, every mistake of its that you've corrected... These are not "final products," but rather **intermediate products**. They determine the quality of the next interaction. An agent you've "raised" for three months is more useful than a brand-new one not because the underlying model has changed, but because its memories have accumulated.
+The cognition that an agent accumulates through repeated interactions: your technical preferences, your project context, your logical habits in decision-making, every mistake of its that you've corrected... These are not "final products", but rather **intermediate products**. They determine the quality of the next interaction. An agent you've "raised" for three months is more useful than a brand-new one not because the underlying model has changed, but because its memories have accumulated.
 
 But the problem is: **where do these memories settle today?**
 
@@ -46,10 +46,10 @@ Why can only a knowledge graph act as this receptacle?
 
 Because the core operations of memory—compression, evolution, and consolidation—are fundamentally **operations on a relational network**. Vectors are points, Markdown is lines, Key-Value caches are grids; only graphs are networks. Only on a network can you perform traversals, merges, contradiction detection, and timeline tracking.
 
-Take the human hippocampus as a reference: it is not a "storage drive" but a "digestive organ." During the day, it encodes new experiences as short-term memory, and during sleep, it executes three distinct processes:
+Take the human hippocampus as a reference: it is not a "storage drive" but a "digestive organ". During the day, it encodes new experiences as short-term memory, and during sleep, it executes three distinct processes:
 
-1.  **Compression** (Deep Sleep): A user mentioned React, Next.js, and Vercel deployment experiences in different conversations. These three isolated fragments are compressed into one higher-order cognition: "This user is proficient in React full-stack development." A hundred fragments do not constitute knowledge; one distilled pattern does.
-2.  **Evolution** (Dreaming): It discovers that the user said "we use MySQL" three months ago, but last week said "we migrated to PostgreSQL." Instead of deleting the old knowledge, it marks it as "superseded," preserving a complete timeline of the tech stack's evolution.
+1.  **Compression** (Deep Sleep): A user mentioned React, Next.js, and Vercel deployment experiences in different conversations. These three isolated fragments are compressed into one higher-order cognition: "This user is proficient in React full-stack development". A hundred fragments do not constitute knowledge; one distilled pattern does.
+2.  **Evolution** (Dreaming): It discovers that the user said "we use MySQL" three months ago, but last week said "we migrated to PostgreSQL". Instead of deleting the old knowledge, it marks it as "superseded", preserving a complete timeline of the tech stack's evolution.
 3.  **Prioritization** (Trance/Daydreaming): When a user explicitly corrects the agent, saying, "I don't use Java anymore, I write entirely in Rust now" → Saliency score: 90, prioritized for consolidation. Conversely, a daily greeting like "Nice weather today" → Saliency score: 5, directly archived.
 
 This is exactly what [**Anda Hippocampus**](https://github.com/ldclabs/anda-hippocampus) does. It is not a database, but a **cognitive organ**: it receives raw fragments from agent interactions and digests them through a "sleep mechanism" into a structured knowledge graph—what we call the **Cognitive Nexus**.
@@ -64,7 +64,7 @@ Both crystallizations consume tokens, but each makes the knowledge density highe
 
 Let’s zoom out and look at a symmetrical structure that the industry has largely ignored.
 
-Over the past three years, almost all attention and capital have rushed toward one thing: **Training Large Models**. Consuming massive amounts of electricity and compute power to train a giant neural network on internet corpora. This network encodes the probability distribution of human language in the form of parameter weights—it is a **Neural Network Ontology**: probabilistic, black-box, and generalized. It gives AI powerful reasoning capabilities, but this capability treats all users equally; it holds zero memory about *"you."*
+Over the past three years, almost all attention and capital have rushed toward one thing: **Training Large Models**. Consuming massive amounts of electricity and compute power to train a giant neural network on internet corpora. This network encodes the probability distribution of human language in the form of parameter weights—it is a **Neural Network Ontology**: probabilistic, black-box, and generalized. It gives AI powerful reasoning capabilities, but this capability treats all users equally; it holds zero memory about *"you".*
 
 But the other half of the AI cognition puzzle is missing.
 
@@ -89,11 +89,11 @@ It endows AI with four things that no neural network, no matter how powerful, ca
 
 This is no longer a distant academic concept. It is becoming an engineering reality in Anda Hippocampus: The LLM (Neural Layer) is responsible for understanding messy natural language and translating it into graph operations; the Knowledge Graph (Symbolic Layer) is responsible for storing deterministic factual relations, handling contradictions, and preserving evolutionary timelines.
 
-The neural layer provides a generalized reasoning engine, while the symbolic layer provides anchored, personalized cognition. Or more intuitively: **Large models give AI the ability to think, while knowledge graphs give AI the foundation of thought—the deterministic cognition of "who I am, what I have experienced, and how my world works."**
+The neural layer provides a generalized reasoning engine, while the symbolic layer provides anchored, personalized cognition. Or more intuitively: **Large models give AI the ability to think, while knowledge graphs give AI the foundation of thought—the deterministic cognition of "who I am, what I have experienced, and how my world works".**
 
 ## V. The Token Processing Chain: From Raw Ore to Alloy
 
-There is an accurate assessment circulating in the industry: "The true dividend of the AI era belongs to those who can process cheap tokens into high-value tokens and sell them." In the context of memory graphs, this value chain can be clearly visualized:
+There is an accurate assessment circulating in the industry: "The true dividend of the AI era belongs to those who can process cheap tokens into high-value tokens and sell them". In the context of memory graphs, this value chain can be clearly visualized:
 
 ```
 Raw Tokens (Conversations, Events, Documents)
@@ -123,7 +123,7 @@ This means token consumption acquires **investment properties**—they are not j
 
 ## VII. Standardized Memory: A New Business Format in the Token Economy
 
-If we accept the premise that "memory is the intermediate product of token consumption," a new business format surfaces.
+If we accept the premise that "memory is the intermediate product of token consumption", a new business format surfaces.
 
 We are already familiar with the primary business models of the current token economy: closed-source model direct sales, open-source model hosting, API aggregation and distribution... Essentially, they are all selling *inference services*.
 
@@ -140,7 +140,7 @@ More importantly, Anda Hippocampus ensures this memory precipitation is **standa
 
 Back to the question at the beginning: Where did the memories of the agent you "raised" go?
 
-If your answer is "scattered across Markdown files and vector databases," then your tokens are evaporating. If your answer is "precipitating in an ever-growing knowledge graph," then you are forging a new kind of digital asset.
+If your answer is "scattered across Markdown files and vector databases", then your tokens are evaporating. If your answer is "precipitating in an ever-growing knowledge graph", then you are forging a new kind of digital asset.
 
 The AI industry has poured hundreds of billions of dollars into the first kind of training—using electricity to train large models, resulting in a "brain" that can think. But the second kind of training has just begun—using tokens to train memory graphs, cultivating a "hippocampus" that can host identity, experience, and logic.
 
