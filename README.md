@@ -314,6 +314,7 @@ Behind this is a **Data Flywheel**: Business Agents generate conversations durin
 - [When AI Learns Ontology Modeling: Anda Hippocampus Lets Enterprises "Grow" Their Own Intelligent Brains](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain.md)
 - [The Second Training of AI: Forging Memory Graphs with Tokens](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus.md)
 - [Building a Company as an Intelligence Requires a "Hippocampus"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence.md)
+- [From "Compiling Knowledge" to "Forging the Hippocampus" —— Anda Hippocampus Responds to Karpathy's "LLM Knowledge Bases"](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/LLM_Knowledge_Bases.md)
 
 ## License
 

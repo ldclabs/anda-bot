@@ -307,11 +307,12 @@ echo '来自 stdin 的纯文本记忆' | \
 
 ## 延伸阅读
 
-- [AI 的记忆必须能睡眠——而只有知识图谱能让它入睡](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/AI_Memory_Must_Sleep_CN.md)
-- [Claude Code 记忆系统深度解读：AI 是如何「记住」你的？](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Claude_Code_Memory_Research_CN.md)
-- [当 AI 学会本体建模：Anda Hippocampus 让企业“长”出自己的智能大脑](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain_CN.md)
-- [AI 的第二种训练——用词元铸造记忆图谱](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus_CN.md)
-- [将公司构建为一个智能体，需要一颗“海马体”](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence_CN.md)
+- [AI 的记忆必须能睡眠——而只有知识图谱能让它入睡](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/AI_Memory_Must_Sleep_cn.md)
+- [Claude Code 记忆系统深度解读：AI 是如何「记住」你的？](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Claude_Code_Memory_Research_cn.md)
+- [当 AI 学会本体建模：Anda Hippocampus 让企业“长”出自己的智能大脑](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Enterprise_AI_Brain_cn.md)
+- [AI 的第二种训练——用词元铸造记忆图谱](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Tokens_Anda_Hippocampus_cn.md)
+- [将公司构建为一个智能体，需要一颗“海马体”](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/Company_Built_As_Intelligence_cn.md)
+- [从“编译知识”到“铸造海马体”——Anda Hippocampus 回应 Karpathy 的 “LLM Knowledge Bases”](https://github.com/ldclabs/anda-hippocampus/blob/main/posts/LLM_Knowledge_Bases_cn.md)
 
 ## 许可证
 
