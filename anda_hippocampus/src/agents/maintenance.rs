@@ -203,7 +203,7 @@ impl MaintenanceAgent {
         let mut runner = ctx.completion_iter(
             CompletionRequest {
                 instructions: format!(
-                    "{}\n\n{}\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
                     SELF_INSTRUCTIONS,
                     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                     primer,

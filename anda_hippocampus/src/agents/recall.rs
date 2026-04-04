@@ -5,10 +5,7 @@ use anda_core::{
 use anda_db::collection::Collection;
 use anda_engine::{
     context::AgentCtx,
-    memory::{
-        Conversation, ConversationRef, ConversationStatus, MemoryManagement, MemoryReadonly,
-        SearchConversationsTool,
-    },
+    memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement, MemoryReadonly},
     rfc3339_datetime, unix_ms,
 };
 use serde_json::json;
@@ -99,10 +96,7 @@ impl Agent<AgentCtx> for RecallAgent {
 
     /// Returns a list of tool names that this agent depends on
     fn tool_dependencies(&self) -> Vec<String> {
-        vec![
-            MemoryReadonly::NAME.to_string(),
-            SearchConversationsTool::NAME.to_string(),
-        ]
+        vec![MemoryReadonly::NAME.to_string()]
     }
 
     async fn run(
@@ -142,7 +136,7 @@ impl Agent<AgentCtx> for RecallAgent {
             .completion(
                 CompletionRequest {
                     instructions: format!(
-                        "{}\n\n{}\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                        "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
                         SELF_INSTRUCTIONS,
                         SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                         primer,
@@ -152,7 +146,6 @@ impl Agent<AgentCtx> for RecallAgent {
 
                     tools: ctx.tool_definitions(Some(&[
                         MemoryReadonly::NAME,
-                        SearchConversationsTool::NAME,
                     ])),
                     tool_choice_required: true,
                     max_output_tokens: Some(8192),

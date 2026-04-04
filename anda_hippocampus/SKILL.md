@@ -255,7 +255,7 @@ Content-Type: application/json
   "context": {
     "user": "alice_principal_id",
     "agent": "customer_bot_001",
-    "session": "sess_2026-03-09_abc",
+    "source": "source_123",
     "topic": "settings"
   },
   "timestamp": "2026-03-09T10:30:00Z"

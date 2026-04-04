@@ -183,8 +183,7 @@ const andaHippocampusPlugin = {
       if (messages.length === 0) return
       const context: InputContext = {
         ...defaultContext,
-        agent: ctx.agentId || defaultContext?.agent,
-        session: ctx.sessionKey || defaultContext?.session
+        agent: ctx.agentId || defaultContext?.agent
       }
       client
         .formation(messages, context)

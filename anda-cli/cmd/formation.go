@@ -38,10 +38,10 @@ Example:
 		batchDryRun, _ := cmd.Flags().GetBool("batch-dry-run")
 		contextUser, _ := cmd.Flags().GetString("context-user")
 		contextAgent, _ := cmd.Flags().GetString("context-agent")
-		contextSession, _ := cmd.Flags().GetString("context-session")
+		contextSource, _ := cmd.Flags().GetString("context-source")
 		contextTopic, _ := cmd.Flags().GetString("context-topic")
 
-		ctx := buildInputContext(contextUser, contextAgent, contextSession, contextTopic)
+		ctx := buildInputContext(contextUser, contextAgent, contextSource, contextTopic)
 
 		if batchDir != "" {
 			if messagesJSON != "" || messagesFile != "" {
@@ -84,6 +84,10 @@ Example:
 			messages, err = parseMessagesInput(string(data))
 			if err != nil {
 				exitError(fmt.Errorf("parse file input: %w", err))
+			}
+
+			if ctx.Source == "" {
+				ctx.Source = messagesFile
 			}
 		} else {
 			stat, _ := os.Stdin.Stat()
@@ -163,15 +167,15 @@ func validateMessageContentLength(messages []api.Message) error {
 	return nil
 }
 
-func buildInputContext(user, agent, session, topic string) *api.InputContext {
-	if user == "" && agent == "" && session == "" && topic == "" {
+func buildInputContext(user, agent, source, topic string) *api.InputContext {
+	if user == "" && agent == "" && source == "" && topic == "" {
 		return nil
 	}
 	return &api.InputContext{
-		User:    user,
-		Agent:   agent,
-		Session: session,
-		Topic:   topic,
+		User:   user,
+		Agent:  agent,
+		Source: source,
+		Topic:  topic,
 	}
 }
 
@@ -186,7 +190,7 @@ func init() {
 	formationCmd.Flags().Bool("batch-dry-run", false, "Dry run: scan and report matched files without submitting formation")
 	formationCmd.Flags().String("context-user", "", "Context user")
 	formationCmd.Flags().String("context-agent", "", "Context agent")
-	formationCmd.Flags().String("context-session", "", "Context session")
+	formationCmd.Flags().String("context-source", "", "Context source")
 	formationCmd.Flags().String("context-topic", "", "Context topic")
 	rootCmd.AddCommand(formationCmd)
 }

@@ -15,6 +15,8 @@ var (
 	token   string
 )
 
+const Version = "0.4.0"
+
 func newClient() *api.Client {
 	return api.NewClient(baseURL, spaceID, token)
 }
@@ -34,9 +36,10 @@ func exitError(err error) {
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "anda-cli",
-	Short: "CLI tool for Anda Hippocampus API",
-	Long:  "A command-line interface for interacting with the Anda Hippocampus memory service.",
+	Use:     "anda-cli",
+	Short:   "CLI tool for Anda Hippocampus API",
+	Long:    "A command-line interface for interacting with the Anda Hippocampus memory service.",
+	Version: Version,
 }
 
 func Execute() {

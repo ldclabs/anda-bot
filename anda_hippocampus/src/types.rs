@@ -71,7 +71,7 @@ impl CWToken {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct ModelConfig {
-    // "gemini", "anthropic", "openai", "deepseek", "mimo" etc.
+    // "gemini", "anthropic", "openai", "deepseek" etc.
     #[serde(alias = "f")]
     pub family: String,
 
@@ -259,7 +259,7 @@ pub struct InputContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session: Option<String>,
+    pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
 }

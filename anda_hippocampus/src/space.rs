@@ -1,5 +1,7 @@
 use anda_cognitive_nexus::{CognitiveNexus, ConceptPK};
-use anda_core::{AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal, Usage};
+use anda_core::{
+    AgentInput, AgentOutput, BoxError, FunctionDefinition, Principal, Resource, Usage,
+};
 use anda_db::{
     collection::CollectionConfig,
     database::{AndaDB, DBConfig},
@@ -12,7 +14,7 @@ use anda_db_tfs::jieba_tokenizer;
 use anda_engine::{
     engine::Engine,
     management::Management,
-    memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool, SearchConversationsTool},
+    memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool},
     model::{Models, reqwest},
     rfc3339_datetime_now, unix_ms,
 };
@@ -761,14 +763,32 @@ impl Space {
         let db = Arc::new(AndaDB::open(object_store.clone(), db_config).await?);
         let nexus =
             CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
-
-        let mut memory = MemoryManagement::connect(db.clone(), Arc::new(nexus))
-            .await?
-            .with_kip_function_definitions(FUNCTION_DEFINITION.clone());
-        memory.disable_kip_logging();
-
         let mut schema = Conversation::schema()?;
         schema.with_version(2);
+
+        let conversations = db
+            .open_or_create_collection(
+                schema.clone(),
+                CollectionConfig {
+                    name: "conversations".to_string(),
+                    description: "conversations collection".to_string(),
+                },
+                async |collection| {
+                    // set tokenizer
+                    collection.set_tokenizer(jieba_tokenizer());
+                    // create BTree index if not exists
+                    collection.create_btree_index_nx(&["user"]).await?;
+                    // remove old indexes if exists
+                    collection.remove_btree_index(&["thread"]).await?;
+                    collection.remove_btree_index(&["period"]).await?;
+                    collection
+                        .remove_bm25_index(&["messages", "resources", "artifacts"])
+                        .await?;
+
+                    Ok::<(), DBError>(())
+                },
+            )
+            .await?;
 
         let recall_conversations = db
             .open_or_create_collection(
@@ -780,12 +800,13 @@ impl Space {
                 async |collection| {
                     // set tokenizer
                     collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree indexes if not exists
+                    // create BTree index if not exists
                     collection.create_btree_index_nx(&["user"]).await?;
-                    collection.create_btree_index_nx(&["thread"]).await?;
-                    collection.create_btree_index_nx(&["period"]).await?;
+                    // remove old indexes if exists
+                    collection.remove_btree_index(&["thread"]).await?;
+                    collection.remove_btree_index(&["period"]).await?;
                     collection
-                        .create_bm25_index_nx(&["messages", "resources", "artifacts"])
+                        .remove_bm25_index(&["messages", "resources", "artifacts"])
                         .await?;
 
                     Ok::<(), DBError>(())
@@ -795,7 +816,7 @@ impl Space {
 
         let maintenance_conversations = db
             .open_or_create_collection(
-                schema,
+                schema.clone(),
                 CollectionConfig {
                     name: "maintenance".to_string(),
                     description: "Maintenance conversations collection".to_string(),
@@ -803,24 +824,56 @@ impl Space {
                 async |collection| {
                     // set tokenizer
                     collection.set_tokenizer(jieba_tokenizer());
-                    // create BTree indexes if not exists
+                    // create BTree index if not exists
                     collection.create_btree_index_nx(&["user"]).await?;
-                    collection.create_btree_index_nx(&["thread"]).await?;
-                    collection.create_btree_index_nx(&["period"]).await?;
+                    // remove old indexes if exists
+                    collection.remove_btree_index(&["thread"]).await?;
+                    collection.remove_btree_index(&["period"]).await?;
                     collection
-                        .create_bm25_index_nx(&["messages", "resources", "artifacts"])
+                        .remove_bm25_index(&["messages", "resources", "artifacts"])
                         .await?;
 
                     Ok::<(), DBError>(())
                 },
             )
             .await?;
+
+        let resources = db
+            .open_or_create_collection(
+                Resource::schema()?,
+                CollectionConfig {
+                    name: "resources".to_string(),
+                    description: "Resources collection".to_string(),
+                },
+                async |collection| {
+                    // set tokenizer
+                    collection.set_tokenizer(jieba_tokenizer());
+                    // create BTree indexes if not exists
+                    collection.create_btree_index_nx(&["tags"]).await?;
+                    collection.create_btree_index_nx(&["hash"]).await?;
+                    collection.create_btree_index_nx(&["mime_type"]).await?;
+                    // remove old BM25 index if exists
+                    collection
+                        .remove_bm25_index(&["name", "description", "metadata"])
+                        .await?;
+
+                    Ok::<(), DBError>(())
+                },
+            )
+            .await?;
+
+        let memory = MemoryManagement {
+            nexus: Arc::new(nexus),
+            conversations,
+            resources,
+            kip_function_definitions: FUNCTION_DEFINITION.clone(),
+        };
+
         // create a new models instance for each space to allow per-space customization in the future (e.g., different model providers or credentials)
         let models = Arc::new(Models::from_clone(models.as_ref()));
         let memory = Arc::new(memory);
         let memory_r = MemoryReadonly::new(memory.clone());
         let memory_tool = MemoryTool::new(memory.clone());
-        let search_conversations_tool = SearchConversationsTool::new(memory.clone());
 
         let hooks = Arc::new(Hooks::new(db.clone()));
         let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
@@ -834,7 +887,6 @@ impl Space {
             .register_tool(memory.clone())?
             .register_tool(memory_r)?
             .register_tool(memory_tool)?
-            .register_tool(search_conversations_tool)?
             .register_agent(formation.clone(), None)?
             .register_agent(recall.clone(), None)?
             .register_agent(maintenance.clone(), None)?

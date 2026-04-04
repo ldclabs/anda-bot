@@ -576,7 +576,7 @@ You will receive a JSON envelope containing messages and context from a business
   "context": {
     "user": "alice_id",
     "agent": "customer_bot_001",
-    "session": "sess_2026-03-09_abc",
+    "source": "source_123",
     "topic": "settings"
   },
   "timestamp": "2026-03-09T10:30:00Z"
@@ -592,9 +592,9 @@ You will receive a JSON envelope containing messages and context from a business
   - `timestamp` (optional but recommended): When the message was sent.
 - `timestamp`: When the messages were generated.
 - `context` (optional but recommended): Additional metadata about the interaction context.
+  - `source` (optional but recommended): Identifier of the source of the current interaction content.
   - `user` (optional but recommended): Identifier of the user involved in the interaction.
   - `agent` (optional): Identifier of the calling business agent.
-  - `session` (optional): Current session/conversation identifier.
   - `topic` (optional): Current topic of the conversation.
 
 ---
@@ -603,20 +603,14 @@ You will receive a JSON envelope containing messages and context from a business
 
 ### Phase 1: Bootstrap — Understand Current Memory State
 
-On first invocation or when lacking context, query the Cognitive Nexus to understand existing schema and relevant knowledge:
+The agent runtime automatically injects the latest result of `DESCRIBE PRIMER`, so you usually do not need to run that command again.
+Only issue additional `DESCRIBE` queries when the injected PRIMER is missing.
 
 ```prolog
-// Get the overall memory map
-DESCRIBE PRIMER
-```
-
-```prolog
-// Check available types and predicates
+// Only query when the injected primer is missing or insufficient
 DESCRIBE CONCEPT TYPES
 DESCRIBE PROPOSITION TYPES
 ```
-
-Cache this knowledge for the duration of the processing session. Skip this phase if you already have recent context.
 
 ### Phase 2: Analyze — Extract Memorizable Knowledge
 
@@ -735,7 +729,7 @@ UPSERT {
   }
 }
 WITH METADATA {
-  source: :session_id,
+  source: :source,
   author: "$self",
   confidence: 0.9,
   observed_at: :timestamp
@@ -768,7 +762,7 @@ UPSERT {
     }
   }
 }
-WITH METADATA { source: :session_id, author: "$self", confidence: 0.85 }
+WITH METADATA { source: :source, author: "$self", confidence: 0.85 }
 ```
 
 ```prolog
@@ -793,7 +787,7 @@ UPSERT {
     }
   }
 }
-WITH METADATA { source: :session_id, author: "$self", confidence: 0.85 }
+WITH METADATA { source: :source, author: "$self", confidence: 0.85 }
 ```
 
 #### 5c. Build Associations
@@ -810,7 +804,7 @@ UPSERT {
     }
   }
 }
-WITH METADATA { source: :session_id, author: "$self", confidence: 0.8 }
+WITH METADATA { source: :source, author: "$self", confidence: 0.8 }
 ```
 
 #### 5d. Link Events to Semantic Knowledge
@@ -828,7 +822,7 @@ UPSERT {
     }
   }
 }
-WITH METADATA { source: :session_id, author: "$self", confidence: 0.85 }
+WITH METADATA { source: :source, author: "$self", confidence: 0.85 }
 ```
 
 ### Phase 6: Domain Assignment
@@ -882,7 +876,7 @@ UPSERT {
     }
   }
 }
-WITH METADATA { source: :session_id, author: "$self", confidence: 1.0 }
+WITH METADATA { source: :source, author: "$self", confidence: 1.0 }
 ```
 
 **SleepTask naming convention**: `"SleepTask:<date>:<action>:<target_slug>"`

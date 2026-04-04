@@ -22,6 +22,10 @@
         "type": "object",
         "description": "Default context included with every formation and recall request.",
         "properties": {
+          "source": {
+            "type": "string",
+            "description": "Identifier of the source of the current interaction content."
+          },
           "user": {
             "type": "string",
             "description": "Default user identifier."
@@ -29,10 +33,6 @@
           "agent": {
             "type": "string",
             "description": "Default agent identifier."
-          },
-          "session": {
-            "type": "string",
-            "description": "Default session identifier."
           },
           "topic": {
             "type": "string",

@@ -18,14 +18,13 @@ Example:
 	Run: func(cmd *cobra.Command, args []string) {
 		contextUser, _ := cmd.Flags().GetString("context-user")
 		contextAgent, _ := cmd.Flags().GetString("context-agent")
-		contextSession, _ := cmd.Flags().GetString("context-session")
 		contextTopic, _ := cmd.Flags().GetString("context-topic")
 
 		input := &api.RecallInput{
 			Query: args[0],
 		}
 
-		ctx := buildInputContext(contextUser, contextAgent, contextSession, contextTopic)
+		ctx := buildInputContext(contextUser, contextAgent, "", contextTopic)
 		if ctx != nil {
 			input.Context = ctx
 		}
@@ -47,7 +46,6 @@ Example:
 func init() {
 	recallCmd.Flags().String("context-user", "", "Context user")
 	recallCmd.Flags().String("context-agent", "", "Context agent")
-	recallCmd.Flags().String("context-session", "", "Context session")
 	recallCmd.Flags().String("context-topic", "", "Context topic")
 	rootCmd.AddCommand(recallCmd)
 }

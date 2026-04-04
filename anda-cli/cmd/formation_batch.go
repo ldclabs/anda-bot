@@ -93,6 +93,9 @@ func runFileFormationBatch(ctx context.Context, client *api.Client, opts fileFor
 	wouldProcess := 0
 	succeeded := 0
 	failed := 0
+	if opts.InputContext != nil {
+		opts.InputContext = &api.InputContext{}
+	}
 
 	for idx, targetFile := range targetFiles {
 		if ctx.Err() != nil {
@@ -157,10 +160,12 @@ func runFileFormationBatch(ctx context.Context, client *api.Client, opts fileFor
 			continue
 		}
 
+		inputContext := *opts.InputContext
+		inputContext.Source = targetFile
 		input := &api.FormationInput{
 			Messages:  messages,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			Context:   opts.InputContext,
+			Context:   &inputContext,
 		}
 
 		resp, err := client.Formation(ctx, input)

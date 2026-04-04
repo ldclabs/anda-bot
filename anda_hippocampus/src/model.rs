@@ -1,6 +1,6 @@
 use anda_engine::{
     model::{Model, reqwest},
-    model::{anthropic, deepseek, gemini, kimi, mimo, openai},
+    model::{anthropic, deepseek, gemini, openai},
 };
 use std::sync::Arc;
 
@@ -33,16 +33,6 @@ pub fn build_model(http_client: reqwest::Client, cfg: ModelConfig) -> Model {
         )),
         "deepseek" => Model::with_completer(Arc::new(
             deepseek::Client::new(&cfg.api_key, Some(cfg.api_base))
-                .with_client(http_client)
-                .completion_model(&cfg.model),
-        )),
-        "mimo" => Model::with_completer(Arc::new(
-            mimo::Client::new(&cfg.api_key, Some(cfg.api_base))
-                .with_client(http_client)
-                .completion_model(&cfg.model),
-        )),
-        "kimi" => Model::with_completer(Arc::new(
-            kimi::Client::new(&cfg.api_key, Some(cfg.api_base))
                 .with_client(http_client)
                 .completion_model(&cfg.model),
         )),

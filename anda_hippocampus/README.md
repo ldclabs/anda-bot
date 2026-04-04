@@ -73,7 +73,6 @@ Translates natural language queries into knowledge graph lookups and returns syn
 
 **Available tools:**
 - `MemoryReadonly` — Read-only access to the knowledge graph
-- `SearchConversationsTool` — Search conversation history for context
 
 ### Maintenance — Memory Metabolism (`maintenance_memory`)
 
@@ -204,21 +203,21 @@ Submit conversation messages for memory encoding. Processing is asynchronous —
   "context": {
     "user": "alice_principal_id",
     "agent": "customer_bot_001",
-    "session": "sess_2026-03-09_abc",
+    "source": "source_123",
     "topic": "settings"
   },
   "timestamp": "2026-03-09T10:30:00Z"
 }
 ```
 
-| Field             | Type        | Required | Description                                                     |
-| ----------------- | ----------- | -------- | --------------------------------------------------------------- |
-| `messages`        | `Message[]` | Yes      | Conversation messages (`role`: `user` / `assistant` / `system`) |
-| `context.user`    | `string`    | No       | User identifier                                                 |
-| `context.agent`   | `string`    | No       | Calling agent identifier                                        |
-| `context.session` | `string`    | No       | Session identifier                                              |
-| `context.topic`   | `string`    | No       | Conversation topic                                              |
-| `timestamp`       | `string`    | Yes      | ISO 8601 timestamp                                              |
+| Field            | Type        | Required | Description                                                     |
+| ---------------- | ----------- | -------- | --------------------------------------------------------------- |
+| `messages`       | `Message[]` | Yes      | Conversation messages (`role`: `user` / `assistant` / `system`) |
+| `context.user`   | `string`    | No       | User identifier                                                 |
+| `context.agent`  | `string`    | No       | Calling agent identifier                                        |
+| `context.source` | `string`    | No       | Identifier of the source of the current interaction content     |
+| `context.topic`  | `string`    | No       | Conversation topic                                              |
+| `timestamp`      | `string`    | Yes      | ISO 8601 timestamp                                              |
 
 **Response:**
 ```json
