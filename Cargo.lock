@@ -277,9 +277,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a92ef4ae4ed87ab014b7fc475599c0f322a7acc60851f7d870e638a48a2178"
+checksum = "40e93060f5f119fa871bcbc96f33d78ceb3fd924a904379493ec64669c6c2b5a"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -355,9 +355,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.5"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "254158c06be32579286af65b98a1f4d1a88443f9ed4fcddaef984c750322a022"
+checksum = "ff651922befc50b30d33044bbd7b111476c2ab4c9807f675d7d8de805fed422f"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1245,9 +1245,9 @@ dependencies = [
 
 [[package]]
 name = "crypto-common"
-version = "0.1.7"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
+checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "rand_core 0.6.4",
@@ -1637,9 +1637,9 @@ checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
 
 [[package]]
 name = "fastrand"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+checksum = "a043dc74da1e37d6afe657061213aa6f425f855399a11d3463c6ecccc4dfda1f"
 
 [[package]]
 name = "ff"
@@ -1806,9 +1806,9 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.14.7"
+version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
 dependencies = [
  "typenum",
  "version_check",
