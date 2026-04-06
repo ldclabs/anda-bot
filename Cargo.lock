@@ -101,9 +101,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.10"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72d8e7faa65558b1eee8c155706ae873f0269d04bc92237b1868ee94e0c68540"
+checksum = "efd5be5fc372e38bd288a417d171158e7df4ab10478664b73512a73082d2a888"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -355,9 +355,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.6"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff651922befc50b30d33044bbd7b111476c2ab4c9807f675d7d8de805fed422f"
+checksum = "3dcf9be6cee60ea1411027e4e9bc9b6efddfde38e2fe3594ea8bc83ee0e936f5"
 dependencies = [
  "async-trait",
  "chrono",
