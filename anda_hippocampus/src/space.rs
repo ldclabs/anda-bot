@@ -349,9 +349,9 @@ pub struct Space {
     engine: Engine,
     http_client: reqwest::Client,
     models: Arc<Models>,
-    recall: RecallAgent,
-    formation: FormationAgent,
-    maintenance: MaintenanceAgent,
+    recall: Arc<RecallAgent>,
+    formation: Arc<FormationAgent>,
+    maintenance: Arc<MaintenanceAgent>,
 
     pub memory: Arc<MemoryManagement>,
 }
@@ -876,17 +876,25 @@ impl Space {
         let memory_tool = MemoryTool::new(memory.clone());
 
         let hooks = Arc::new(Hooks::new(db.clone()));
-        let formation = FormationAgent::new(memory.clone(), hooks.clone(), 655350);
-        let recall = RecallAgent::new(memory.clone(), recall_conversations, hooks.clone(), 65535);
-        let maintenance =
-            MaintenanceAgent::new(memory.clone(), maintenance_conversations, hooks.clone());
+        let formation = Arc::new(FormationAgent::new(memory.clone(), hooks.clone(), 655350));
+        let recall = Arc::new(RecallAgent::new(
+            memory.clone(),
+            recall_conversations,
+            hooks.clone(),
+            65535,
+        ));
+        let maintenance = Arc::new(MaintenanceAgent::new(
+            memory.clone(),
+            maintenance_conversations,
+            hooks.clone(),
+        ));
         // Build agent engine with all configured components
         let engine = Engine::builder()
             .with_management(management)
             .set_models(models.clone())
             .register_tool(memory.clone())?
-            .register_tool(memory_r)?
-            .register_tool(memory_tool)?
+            .register_tool(Arc::new(memory_r))?
+            .register_tool(Arc::new(memory_tool))?
             .register_agent(formation.clone(), None)?
             .register_agent(recall.clone(), None)?
             .register_agent(maintenance.clone(), None)?

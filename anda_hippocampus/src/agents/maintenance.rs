@@ -197,10 +197,10 @@ impl MaintenanceAgent {
         };
 
         let primer = self.memory.describe_primer().await.unwrap_or_default();
-        let tools = ctx.tool_definitions(Some(&["execute_kip"]));
+        let tools = ctx.tool_definitions(Some(&["execute_kip".to_string()]));
         let now_ms = unix_ms();
 
-        let mut runner = ctx.completion_iter(
+        let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
                     "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",

@@ -145,7 +145,7 @@ impl Agent<AgentCtx> for RecallAgent {
                     prompt,
 
                     tools: ctx.tool_definitions(Some(&[
-                        MemoryReadonly::NAME,
+                        MemoryReadonly::NAME.to_string(),
                     ])),
                     tool_choice_required: true,
                     max_output_tokens: Some(8192),
