@@ -253,7 +253,7 @@ Content-Type: application/json
     }
   ],
   "context": {
-    "user": "alice_principal_id",
+    "counterparty": "alice_principal_id",
     "agent": "customer_bot_001",
     "source": "source_123",
     "topic": "settings"
@@ -276,9 +276,9 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `messages` | `Message[]` | Yes | Conversation messages (role: `user` / `assistant` / `system`) |
 | `context` | `InputContext` | No | Contextual metadata to help with encoding |
-| `context.user` | `string` | No | User identifier |
+| `context.counterparty` | `string` | No | User identifier |
 | `context.agent` | `string` | No | Calling agent identifier |
-| `context.session` | `string` | No | Session identifier |
+| `context.source` | `string` | No | Identifier of the source of the current interaction content |
 | `context.topic` | `string` | No | Conversation topic |
 | `timestamp` | `string` | Yes | ISO 8601 timestamp of the conversation |
 
@@ -307,7 +307,7 @@ Content-Type: application/json
 {
   "query": "What are Alice's preferences?",
   "context": {
-    "user": "alice_principal_id",
+    "counterparty": "alice_principal_id",
     "topic": "settings"
   }
 }
@@ -387,7 +387,7 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/formation \
       {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
       {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
     ],
-    "context": {"user": "user_123", "agent": "onboarding_bot"},
+    "context": {"counterparty": "user_123", "agent": "onboarding_bot"},
     "timestamp": "2026-03-09T10:30:00Z"
   }'
 ```
@@ -402,7 +402,7 @@ curl -sX POST https://brain.anda.ai/v1/my_space_001/recall \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Where does this user work and what is their role?",
-    "context": {"user": "user_123"}
+    "context": {"counterparty": "user_123"}
   }'
 ```
 
@@ -472,7 +472,7 @@ Required fields:
 | `spaceId` | `string` | Yes | — | Memory space ID |
 | `spaceToken` | `string` | Yes | — | Space token for API authentication |
 | `baseUrl` | `string` | No | `https://brain.anda.ai` | Anda Hippocampus service URL |
-| `defaultContext` | `InputContext` | No | — | Default context included with every request (`user`, `agent`, `session`, `topic`) |
+| `defaultContext` | `InputContext` | No | — | Default context included with every request (`counterparty`, `agent`, `source`, `topic`) |
 | `formationTimeoutMs` | `number` | No | `30000` | Formation request timeout (ms) |
 | `recallTimeoutMs` | `number` | No | `120000` | Recall request timeout (ms) — recall may take 10–100s |
 
@@ -483,7 +483,7 @@ The plugin registers a `recall_memory` tool that the LLM can invoke:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | `string` | Yes | Natural language question (e.g. "What are Alice's preferences?") |
-| `context.user` | `string` | No | Current user identifier |
+| `context.counterparty` | `string` | No | Current user identifier |
 | `context.agent` | `string` | No | Calling agent identifier |
 | `context.topic` | `string` | No | Topic hint for disambiguation |
 

@@ -1,6 +1,6 @@
 {
   "name": "anda-hippocampus",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "description": "Autonomous Graph Memory for OpenClaw agents via Anda Hippocampus, with automatic memory formation and natural-language recall.",
   "type": "module",
   "main": "src/index.ts",

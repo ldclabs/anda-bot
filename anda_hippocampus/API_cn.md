@@ -29,9 +29,9 @@ export interface RpcResponse<T> {
 }
 
 export interface InputContext {
-  user?: string;
+  counterparty?: string;
   agent?: string;
-  session?: string;
+  source?: string;
   topic?: string;
 }
 
@@ -420,7 +420,7 @@ async function rpcPost<TReq, TRes>(
 // Recall
 const recall = await rpcPost<RecallInput, AgentOutput>(
   '/v1/my_space_001/recall',
-  { query: '这个用户的偏好是什么？', context: { user: 'u1' } },
+  { query: '这个用户的偏好是什么？', context: { counterparty: 'user_1' } },
   'YOUR_TOKEN'
 );
 

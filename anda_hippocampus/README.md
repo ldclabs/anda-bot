@@ -201,7 +201,7 @@ Submit conversation messages for memory encoding. Processing is asynchronous —
     }
   ],
   "context": {
-    "user": "alice_principal_id",
+    "counterparty": "alice_principal_id",
     "agent": "customer_bot_001",
     "source": "source_123",
     "topic": "settings"
@@ -210,14 +210,14 @@ Submit conversation messages for memory encoding. Processing is asynchronous —
 }
 ```
 
-| Field            | Type        | Required | Description                                                     |
-| ---------------- | ----------- | -------- | --------------------------------------------------------------- |
-| `messages`       | `Message[]` | Yes      | Conversation messages (`role`: `user` / `assistant` / `system`) |
-| `context.user`   | `string`    | No       | User identifier                                                 |
-| `context.agent`  | `string`    | No       | Calling agent identifier                                        |
-| `context.source` | `string`    | No       | Identifier of the source of the current interaction content     |
-| `context.topic`  | `string`    | No       | Conversation topic                                              |
-| `timestamp`      | `string`    | Yes      | ISO 8601 timestamp                                              |
+| Field                  | Type        | Required | Description                                                     |
+| ---------------------- | ----------- | -------- | --------------------------------------------------------------- |
+| `messages`             | `Message[]` | Yes      | Conversation messages (`role`: `user` / `assistant` / `system`) |
+| `context.counterparty` | `string`    | No       | User identifier                                                 |
+| `context.agent`        | `string`    | No       | Calling agent identifier                                        |
+| `context.source`       | `string`    | No       | Identifier of the source of the current interaction content     |
+| `context.topic`        | `string`    | No       | Conversation topic                                              |
+| `timestamp`            | `string`    | Yes      | ISO 8601 timestamp                                              |
 
 **Response:**
 ```json
@@ -238,18 +238,18 @@ Query memory with natural language. Returns a synthesized answer from the knowle
 {
   "query": "What are Alice's preferences?",
   "context": {
-    "user": "alice_principal_id",
+    "counterparty": "alice_principal_id",
     "topic": "settings"
   }
 }
 ```
 
-| Field           | Type     | Required | Description                   |
-| --------------- | -------- | -------- | ----------------------------- |
-| `query`         | `string` | Yes      | Natural language question     |
-| `context.user`  | `string` | No       | User identifier               |
-| `context.agent` | `string` | No       | Calling agent identifier      |
-| `context.topic` | `string` | No       | Topic hint for disambiguation |
+| Field                  | Type     | Required | Description                   |
+| ---------------------- | -------- | -------- | ----------------------------- |
+| `query`                | `string` | Yes      | Natural language question     |
+| `context.counterparty` | `string` | No       | User identifier               |
+| `context.agent`        | `string` | No       | Calling agent identifier      |
+| `context.topic`        | `string` | No       | Topic hint for disambiguation |
 
 **Response:**
 ```json

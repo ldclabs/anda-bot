@@ -36,7 +36,7 @@ Example:
 		batchReport, _ := cmd.Flags().GetString("batch-report")
 		batchRetryFailed, _ := cmd.Flags().GetBool("batch-retry-failed")
 		batchDryRun, _ := cmd.Flags().GetBool("batch-dry-run")
-		contextUser, _ := cmd.Flags().GetString("context-user")
+		contextUser, _ := cmd.Flags().GetString("context-counterparty")
 		contextAgent, _ := cmd.Flags().GetString("context-agent")
 		contextSource, _ := cmd.Flags().GetString("context-source")
 		contextTopic, _ := cmd.Flags().GetString("context-topic")
@@ -172,10 +172,10 @@ func buildInputContext(user, agent, source, topic string) *api.InputContext {
 		return nil
 	}
 	return &api.InputContext{
-		User:   user,
-		Agent:  agent,
-		Source: source,
-		Topic:  topic,
+		Counterparty: user,
+		Agent:        agent,
+		Source:       source,
+		Topic:        topic,
 	}
 }
 
@@ -188,7 +188,7 @@ func init() {
 	formationCmd.Flags().String("batch-report", "", "Batch checklist JSON path (default: <batch-dir>/.formation-batch-checklist.json)")
 	formationCmd.Flags().Bool("batch-retry-failed", false, "Retry files previously marked as failed in checklist")
 	formationCmd.Flags().Bool("batch-dry-run", false, "Dry run: scan and report matched files without submitting formation")
-	formationCmd.Flags().String("context-user", "", "Context user")
+	formationCmd.Flags().String("context-counterparty", "", "Context counterparty (e.g. user ID)")
 	formationCmd.Flags().String("context-agent", "", "Context agent")
 	formationCmd.Flags().String("context-source", "", "Context source")
 	formationCmd.Flags().String("context-topic", "", "Context topic")

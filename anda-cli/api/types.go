@@ -33,10 +33,10 @@ const (
 )
 
 type InputContext struct {
-	User   string `json:"user,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Source string `json:"source,omitempty"`
-	Topic  string `json:"topic,omitempty"`
+	Counterparty string `json:"counterparty,omitempty"`
+	Agent        string `json:"agent,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Topic        string `json:"topic,omitempty"`
 }
 
 type MessageRole string

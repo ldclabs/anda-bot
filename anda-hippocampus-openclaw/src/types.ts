@@ -14,9 +14,9 @@ export interface RpcResponse<T> {
 }
 
 export interface InputContext {
-  user?: string | undefined
+  counterparty?: string | undefined
   agent?: string | undefined
-  session?: string | undefined
+  source?: string | undefined
   topic?: string | undefined
 }
 

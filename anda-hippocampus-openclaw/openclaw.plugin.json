@@ -26,9 +26,9 @@
             "type": "string",
             "description": "Identifier of the source of the current interaction content."
           },
-          "user": {
+          "counterparty": {
             "type": "string",
-            "description": "Default user identifier."
+            "description": "Preferred. Durable identifier of the current external person or organization interacting with the business agent. Useful for resolving implicit references such as 'the current user', 'they', or omitted subjects."
           },
           "agent": {
             "type": "string",
@@ -73,17 +73,17 @@
     "defaultContext": {
       "label": "Default Context"
     },
-    "defaultContext.user": {
-      "label": "Default User",
+    "defaultContext.counterparty": {
+      "label": "Default Counterparty",
       "placeholder": "user_123"
     },
     "defaultContext.agent": {
       "label": "Default Agent",
       "placeholder": "assistant"
     },
-    "defaultContext.session": {
-      "label": "Default Session",
-      "placeholder": "session_001"
+    "defaultContext.source": {
+      "label": "Default Source",
+      "placeholder": "source_001"
     },
     "defaultContext.topic": {
       "label": "Default Topic",

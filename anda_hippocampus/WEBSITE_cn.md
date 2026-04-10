@@ -269,7 +269,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/formation \
       {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
       {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
     ],
-    "context": {"user": "user_123", "agent": "onboarding_bot"},
+    "context": {"counterparty": "user_123", "agent": "onboarding_bot"},
     "timestamp": "2026-03-09T10:30:00Z"
   }'
 ```
@@ -281,7 +281,7 @@ curl -sX POST https://your-hippocampus-host/v1/my_space_001/recall \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Where does this user work and what is their role?",
-    "context": {"user": "user_123"}
+    "context": {"counterparty": "user_123"}
   }'
 ```
 

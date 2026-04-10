@@ -255,7 +255,8 @@ pub struct UpdateSpaceInput {
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct InputContext {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
+    #[serde(alias = "user")]
+    pub counterparty: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

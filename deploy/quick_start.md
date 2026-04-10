@@ -282,7 +282,7 @@ curl -sX POST http://localhost:8042/v1/demo/formation \
       {"role": "user", "content": "I work at Acme Corp as a senior engineer."},
       {"role": "assistant", "content": "Nice to meet you! Noted that you are a senior engineer at Acme Corp."}
     ],
-    "context": {"user": "user_123", "agent": "onboarding_bot"},
+    "context": {"counterparty": "user_123", "agent": "onboarding_bot"},
     "timestamp": "2026-03-25T10:30:00Z"
   }'
 ```
@@ -294,7 +294,7 @@ curl -sX POST http://localhost:8042/v1/demo/recall \
   -H "Content-Type: application/json" \
   -d '{
     "query": "Where does this user work and what is their role?",
-    "context": {"user": "user_123"}
+    "context": {"counterparty": "user_123"}
   }'
 ```
 

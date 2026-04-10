@@ -95,9 +95,9 @@ If memory data must stay inside your network, set `baseUrl` to your own Anda Hip
 
 ```ts
 interface InputContext {
-  user?: string
+  counterparty?: string
   agent?: string
-  session?: string
+  source?: string
   topic?: string
 }
 ```
@@ -105,7 +105,7 @@ interface InputContext {
 Notes:
 
 - `defaultContext` is merged with per-call recall context
-- during `agent_end`, the plugin fills `agent` and `session` from the OpenClaw runtime when available
+- during `agent_end`, the plugin fills `agent` and `source` from the OpenClaw runtime when available
 - `baseUrl` has trailing slashes removed automatically
 
 ## How It Works
