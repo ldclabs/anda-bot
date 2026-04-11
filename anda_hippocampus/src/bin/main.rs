@@ -25,17 +25,7 @@ use tower_http::{
     cors::{AllowHeaders, AllowMethods, CorsLayer},
 };
 
-mod agents;
-mod handler;
-mod model;
-mod payload;
-mod space;
-mod types;
-
-use handler::*;
-use space::AppState;
-
-use crate::{model::build_model, types::ModelConfig};
+use anda_hippocampus::{handler::*, model::build_model, space::AppState, types::ModelConfig};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;

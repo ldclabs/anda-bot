@@ -1,9 +1,20 @@
 [package]
 name = "anda_hippocampus"
-publish = false
-version = "0.4.3"
+publish = true
+version = "0.4.4"
 description.workspace = true
 edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+
+[lib]
+
+[[bin]]
+name = "anda_hippocampus"
+path = "src/bin/main.rs"
 
 [dependencies]
 async-trait = { workspace = true }
