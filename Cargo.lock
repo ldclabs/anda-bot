@@ -84,6 +84,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
 
 [[package]]
+name = "anda_bot"
+version = "0.1.0"
+dependencies = [
+ "anda_core",
+ "anda_db",
+ "anda_engine",
+ "anda_engine_server",
+ "anda_hippocampus",
+ "anda_kip",
+ "anda_object_store",
+ "anda_web3_client",
+ "axum",
+ "clap",
+ "coset",
+ "dotenv",
+ "http",
+ "ic_auth_types",
+ "ic_cose_types",
+ "log",
+ "mimalloc",
+ "object_store",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "sha3",
+ "structured-logger",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+]
+
+[[package]]
 name = "anda_cloud_cdk"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,9 +156,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.11.0"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "043518d1bfaa4f3434bf6b7cdbd2674fa6f3d9863db5e5a0ca6521338935ce5e"
+checksum = "b17f0aa1d4040c3b754be9a6121a707954ede78530e06b3c81fdbc65ccde2b89"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -222,7 +254,7 @@ dependencies = [
  "ordered-float",
  "papaya",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rustc-hash",
  "serde",
  "smallvec",
@@ -278,9 +310,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.1"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dfe44b9e37db95dc05d258e465c95740d942ead98f24155e19fcb4df867c490"
+checksum = "bd60c108326ad6afefb74c0a9188c0cf9886f2a19a4854da7d5488087fe44c95"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -312,7 +344,7 @@ dependencies = [
  "moka",
  "object_store",
  "parking_lot",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "schemars",
  "serde",
@@ -324,6 +356,30 @@ dependencies = [
  "tokio-util",
  "url",
  "which",
+]
+
+[[package]]
+name = "anda_engine_server"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6517b298377a3f3984d82f472cb740d7aa33592d07f270fe736650c81ed39b8d"
+dependencies = [
+ "anda_core",
+ "anda_engine",
+ "axum",
+ "candid",
+ "ciborium",
+ "http",
+ "ic_auth_types",
+ "ic_auth_verifier",
+ "ic_tee_agent",
+ "log",
+ "serde",
+ "serde_json",
+ "structured-logger",
+ "tokio",
+ "tokio-util",
+ "tower-http",
 ]
 
 [[package]]
@@ -388,11 +444,34 @@ dependencies = [
  "futures",
  "moka",
  "object_store",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde_bytes",
  "sha3",
  "tokio",
+]
+
+[[package]]
+name = "anda_web3_client"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53cf9683046c5c6dde26f14b4d298efc9a9ada2eb7e68916dcdaba05941e6681"
+dependencies = [
+ "anda_core",
+ "anda_engine",
+ "candid",
+ "ciborium",
+ "futures",
+ "hex",
+ "http",
+ "ic-agent",
+ "ic_auth_types",
+ "ic_auth_verifier",
+ "ic_cose",
+ "ic_cose_types",
+ "ic_tee_gateway_sdk",
+ "reqwest 0.13.2",
+ "serde",
 ]
 
 [[package]]
@@ -980,7 +1059,7 @@ checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -1893,7 +1972,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
 ]
@@ -2137,16 +2216,15 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.7"
+version = "0.27.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
+checksum = "c2b52f86d1d4bc0d6b4e6826d960b1b333217e07d36b882dca570a5e1c48895b"
 dependencies = [
  "http",
  "hyper",
  "hyper-util",
  "rustls",
  "rustls-native-certs",
- "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -2234,7 +2312,7 @@ dependencies = [
  "p256",
  "pem 3.0.6",
  "pkcs8",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rangemap",
  "reqwest 0.13.2",
  "sec1",
@@ -2569,7 +2647,7 @@ dependencies = [
  "ic_auth_types",
  "k256",
  "p256",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde",
  "serde_bytes",
  "serde_cbor",
@@ -2607,7 +2685,7 @@ dependencies = [
  "ic-vetkeys",
  "ic_auth_types",
  "ic_cose_types",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde_bytes",
  "x25519-dalek",
 ]
@@ -2649,6 +2727,28 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "ic_tee_agent"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d090ec51df5f275fb3a71562e3355b49dda39003e29ba0d0dfc1ccda63abf46"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "candid",
+ "ciborium",
+ "http",
+ "ic-agent",
+ "ic_auth_types",
+ "ic_auth_verifier",
+ "ic_cose",
+ "ic_cose_types",
+ "mime",
+ "serde",
+ "serde_bytes",
+ "serde_json",
 ]
 
 [[package]]
@@ -3099,9 +3199,9 @@ checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 
 [[package]]
 name = "libc"
-version = "0.2.184"
+version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
+checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 
 [[package]]
 name = "libflate"
@@ -3458,7 +3558,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "quick-xml",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -3679,9 +3779,9 @@ dependencies = [
 
 [[package]]
 name = "pkg-config"
-version = "0.3.32"
+version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "polyval"
@@ -3836,7 +3936,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.2",
+ "rand 0.9.3",
  "ring",
  "rustc-hash",
  "rustls",
@@ -3896,9 +3996,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -3906,13 +4006,13 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc266eb313df6c5c09c1c7b1fbe2510961e5bcd3add930c1e31f7ed9da0feff8"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
  "getrandom 0.4.2",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -3955,9 +4055,9 @@ dependencies = [
 
 [[package]]
 name = "rand_core"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rangemap"
@@ -4199,9 +4299,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
+version = "0.23.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
+checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
 dependencies = [
  "aws-lc-rs",
  "once_cell",

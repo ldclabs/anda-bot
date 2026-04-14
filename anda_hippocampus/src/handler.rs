@@ -98,7 +98,7 @@ pub async fn get_info(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -133,7 +133,7 @@ pub async fn get_formation_status(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -171,7 +171,7 @@ pub async fn post_formation(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -216,7 +216,7 @@ pub async fn post_recall(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -261,7 +261,7 @@ pub async fn post_maintenance(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -312,7 +312,7 @@ pub async fn execute_kip_readonly(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -355,7 +355,7 @@ pub async fn get_conversation(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -394,7 +394,7 @@ pub async fn list_conversations(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -438,7 +438,7 @@ pub async fn list_space_tokens(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -473,7 +473,7 @@ pub async fn add_space_token(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -513,7 +513,7 @@ pub async fn revoke_space_token(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -551,7 +551,7 @@ pub async fn update_space(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -589,7 +589,7 @@ pub async fn restart_formation(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -620,7 +620,7 @@ pub async fn get_byok(
         .map_err(|_| AppError::unauthorized())?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -655,7 +655,7 @@ pub async fn update_byok(
         .map_err(|_| AppError::bad_request("invalid input"))?;
 
     let space = app
-        .load_space(&space_id)
+        .load_space(&space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -734,7 +734,7 @@ pub async fn update_space_tier(
     }
 
     let space = app
-        .load_space(&input.space_id)
+        .load_space(&input.space_id, false)
         .await
         .map_err(AppError::bad_request)?;
 

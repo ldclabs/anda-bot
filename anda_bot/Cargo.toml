@@ -2,35 +2,39 @@
 name = "anda_bot"
 publish = false
 version = "0.1.0"
-description.workspace = true
+description = "Just A Rather Very Intelligent Bot."
 edition.workspace = true
 
+[[bin]]
+name = "anda"
+path = "src/main.rs"
+
 [dependencies]
-async-trait = { workspace = true }
+anda_hippocampus = { path = "../anda_hippocampus", version = "0.4" }
 anda_core = { workspace = true }
 anda_engine = { workspace = true }
+anda_engine_server = { workspace = true }
+anda_web3_client = { workspace = true }
 anda_db = { workspace = true }
 anda_kip = { workspace = true }
-anda_cognitive_nexus = { workspace = true }
 anda_object_store = { workspace = true }
-anda_db_tfs = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
-ciborium = { workspace = true }
+coset = { workspace = true }
 dotenv = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
-ic_cose = { workspace = true }
 tokio-util = { workspace = true }
 structured-logger = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sha3 = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
 http = { workspace = true }
 object_store = { workspace = true, features = ["aws", "integration"] }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }
-markdown = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]

@@ -247,7 +247,7 @@ impl AppState {
         .await
     }
 
-    pub async fn load_space(&self, space_id: &str) -> Result<Arc<Space>, BoxError> {
+    pub async fn load_space(&self, space_id: &str, pinned: bool) -> Result<Arc<Space>, BoxError> {
         let entry = {
             let spaces = self.spaces.read().await;
             spaces.get(space_id).cloned()
@@ -275,6 +275,7 @@ impl AppState {
                     self.management.clone(),
                     self.http_client.clone(),
                     self.models.clone(),
+                    pinned,
                 )
                 .await
             })
@@ -321,7 +322,8 @@ impl AppState {
                     continue;
                 };
 
-                if now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms
+                if !space.pinned
+                    && now.saturating_sub(entry.last_access_ms()) > idle_timeout_ms
                     && !space.is_processing()
                 {
                     {
@@ -345,14 +347,14 @@ impl AppState {
 
 pub struct Space {
     id: String,
-    db: Arc<AndaDB>,
     engine: Engine,
     http_client: reqwest::Client,
     models: Arc<Models>,
     recall: Arc<RecallAgent>,
     formation: Arc<FormationAgent>,
     maintenance: Arc<MaintenanceAgent>,
-
+    pinned: bool,
+    pub db: Arc<AndaDB>,
     pub memory: Arc<MemoryManagement>,
 }
 
@@ -758,13 +760,14 @@ impl Space {
         management: Arc<dyn Management>,
         http_client: reqwest::Client,
         models: Arc<Models>,
+        pinned: bool,
     ) -> Result<Arc<Self>, BoxError> {
         let id = db_config.name.clone();
         let db = Arc::new(AndaDB::open(object_store.clone(), db_config).await?);
         let nexus =
             CognitiveNexus::connect(db.clone(), async |nexus| init_nexus_kip(nexus).await).await?;
         let mut schema = Conversation::schema()?;
-        schema.with_version(2);
+        schema.with_version(3);
 
         let conversations = db
             .open_or_create_collection(
@@ -917,6 +920,7 @@ impl Space {
             maintenance,
             memory,
             engine,
+            pinned,
         });
         hooks.bind_space(Arc::downgrade(&this));
 

@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool, evaluate_tokens,
+    StateFeatures, Tool, estimate_tokens,
 };
 use anda_db::schema::DocumentId;
 use anda_engine::{
@@ -402,7 +402,7 @@ impl Agent<AgentCtx> for FormationAgent {
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         let now_ms = unix_ms();
-        let token_count = evaluate_tokens(&prompt);
+        let token_count = estimate_tokens(&prompt);
         if token_count > MAX_FORMATION_TOKENS {
             return Err(format!(
                 "Input too large: {} tokens (estimated), max allowed is {} tokens",
