@@ -10,7 +10,7 @@ Run the daemon in the foreground:
 cargo run -p anda_bot -- daemon
 ```
 
-Run the unified `anda` binary in interactive CLI mode. It will auto-start the local daemon in the background when needed:
+Run the unified `anda` binary in interactive TUI mode. It will try to auto-start the local daemon in the background when possible:
 
 ```bash
 cargo run -p anda_bot --

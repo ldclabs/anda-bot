@@ -37,5 +37,8 @@ tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
 libc = "0.2"
+# TUI (ratatui + crossterm)
+ratatui = { version = "0.30", default-features = true }
+crossterm = { version = "0.29", features = ["event-stream"] }
 
 [dev-dependencies]

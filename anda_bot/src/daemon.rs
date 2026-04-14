@@ -5,12 +5,26 @@ use anda_object_store::MetaStoreBuilder;
 use anda_web3_client::client::identity_from_secret;
 use clap::Args;
 use object_store::{ObjectStore, local::LocalFileSystem};
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::{
+    collections::BTreeSet,
+    fs::OpenOptions as StdOpenOptions,
+    io,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::Arc,
+    time::Duration,
+};
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
-use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+use tokio::{
+    fs::OpenOptions,
+    io::AsyncWriteExt,
+    time::{Instant, sleep},
+};
 use tokio_util::sync::CancellationToken;
 
-use crate::{brain, cron, engine, gateway, util};
+use crate::{brain, cron, engine, gateway, util, util::env::*};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
 const DAEMON_LOG_FILE: &str = "anda-daemon.log";
@@ -28,7 +42,12 @@ pub struct Daemon {
     pub cfg: DaemonArgs,
 }
 
-#[derive(Args, Clone, Debug)]
+pub struct BackgroundDaemon {
+    pub pid: u32,
+    pub log_path: PathBuf,
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
 pub struct DaemonArgs {
     #[clap(long, env = ENV_GATEWAY_ADDR, default_value = DEFAULT_GATEWAY_ADDR)]
     pub addr: String,
@@ -58,6 +77,32 @@ pub struct DaemonArgs {
 }
 
 impl DaemonArgs {
+    pub async fn save_to_env_file(&self, path: &Path) -> Result<(), BoxError> {
+        let existing = match tokio::fs::read_to_string(path).await {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err.into()),
+        };
+
+        let merged = merge_env_file(&existing, &self.env_updates());
+        tokio::fs::write(path, merged).await?;
+        Ok(())
+    }
+
+    pub fn apply_command_env(&self, command: &mut Command) {
+        command.env(ENV_GATEWAY_ADDR, &self.addr);
+        command.env(ENV_SANDBOX, if self.sandbox { "true" } else { "false" });
+        command.env(ENV_MODEL_FAMILY, &self.model_family);
+        command.env(ENV_MODEL_NAME, &self.model_name);
+        command.env(ENV_MODEL_API_KEY, &self.model_api_key);
+        command.env(ENV_MODEL_API_BASE, &self.model_api_base);
+        if let Some(proxy) = self.https_proxy.as_deref() {
+            command.env(ENV_HTTPS_PROXY, proxy);
+        } else {
+            command.env_remove(ENV_HTTPS_PROXY);
+        }
+    }
+
     pub fn from_env() -> Self {
         Self {
             addr: env_string(ENV_GATEWAY_ADDR, DEFAULT_GATEWAY_ADDR),
@@ -87,6 +132,21 @@ impl DaemonArgs {
     pub fn brain_base_url(&self) -> String {
         format!("http://{}/v1/{}", self.addr, brain::ANDA_BOT_SPACE_ID)
     }
+
+    fn env_updates(&self) -> Vec<EnvUpdate> {
+        vec![
+            EnvUpdate::set(ENV_GATEWAY_ADDR, self.addr.clone()),
+            EnvUpdate::set(
+                ENV_SANDBOX,
+                if self.sandbox { "true" } else { "false" }.to_string(),
+            ),
+            EnvUpdate::set(ENV_MODEL_FAMILY, self.model_family.clone()),
+            EnvUpdate::set(ENV_MODEL_NAME, self.model_name.clone()),
+            EnvUpdate::set(ENV_MODEL_API_KEY, self.model_api_key.clone()),
+            EnvUpdate::set(ENV_MODEL_API_BASE, self.model_api_base.clone()),
+            EnvUpdate::optional(ENV_HTTPS_PROXY, self.https_proxy.clone()),
+        ]
+    }
 }
 
 impl Daemon {
@@ -96,6 +156,10 @@ impl Daemon {
 
     pub fn base_url(&self) -> String {
         self.cfg.base_url()
+    }
+
+    pub fn env_file_path(&self) -> PathBuf {
+        self.workspace.join(".env")
     }
 
     pub fn pid_file_path(&self) -> PathBuf {
@@ -147,6 +211,74 @@ impl Daemon {
         tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
         tokio::fs::create_dir_all(self.logs_dir_path()).await?;
         Ok(())
+    }
+
+    pub async fn persist_config(&self) -> Result<(), BoxError> {
+        self.cfg.save_to_env_file(&self.env_file_path()).await
+    }
+
+    pub fn spawn_background(&self) -> Result<BackgroundDaemon, BoxError> {
+        let exe = std::env::current_exe()?;
+        let logs_dir = self.logs_dir_path();
+        std::fs::create_dir_all(&logs_dir)?;
+
+        let log_path = self.log_file_path();
+        let stdout = StdOpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        let stderr = StdOpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+
+        let mut command = Command::new(exe);
+        command
+            .arg("--workspace")
+            .arg(&self.workspace)
+            .arg("daemon")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        self.cfg.apply_command_env(&mut command);
+        configure_background_daemon_command(&mut command);
+
+        let child = command.spawn()?;
+
+        Ok(BackgroundDaemon {
+            pid: child.id(),
+            log_path,
+        })
+    }
+
+    pub async fn stop_background(&self, timeout: Duration) -> Result<bool, BoxError> {
+        let pid_path = self.pid_file_path();
+        let Some(pid) = self.read_pid_file().await? else {
+            return Ok(false);
+        };
+
+        if !process_exists(pid) {
+            let _ = tokio::fs::remove_file(&pid_path).await;
+            return Ok(false);
+        }
+
+        terminate_process(pid)?;
+        if wait_for_process_exit(pid, timeout).await {
+            let _ = tokio::fs::remove_file(&pid_path).await;
+            return Ok(true);
+        }
+
+        force_kill_process(pid)?;
+        if wait_for_process_exit(pid, Duration::from_secs(2)).await {
+            let _ = tokio::fs::remove_file(&pid_path).await;
+            return Ok(true);
+        }
+
+        Err(format!(
+            "anda daemon with pid {pid} did not stop within {:?}",
+            timeout
+        )
+        .into())
     }
 
     pub async fn serve(self, ed25519_secret: [u8; 32]) -> Result<(), BoxError> {
@@ -254,30 +386,89 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
     }
 }
 
-fn env_string(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
-}
+async fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !process_exists(pid) {
+            return true;
+        }
 
-fn env_option(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| (!value.trim().is_empty()).then_some(value))
-}
+        if Instant::now() >= deadline {
+            return false;
+        }
 
-fn env_bool(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| (!value.trim().is_empty()).then_some(value))
-        .map(|value| value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-pub fn process_exists(pid: u32) -> bool {
-    process_exists_impl(pid)
+        sleep(Duration::from_millis(250)).await;
+    }
 }
 
 #[cfg(unix)]
-fn process_exists_impl(pid: u32) -> bool {
+fn configure_background_daemon_command(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_background_daemon_command(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> Result<(), BoxError> {
+    send_signal(pid, libc::SIGTERM)
+}
+
+#[cfg(not(unix))]
+fn terminate_process(pid: u32) -> Result<(), BoxError> {
+    taskkill(pid, false)
+}
+
+#[cfg(unix)]
+fn force_kill_process(pid: u32) -> Result<(), BoxError> {
+    send_signal(pid, libc::SIGKILL)
+}
+
+#[cfg(not(unix))]
+fn force_kill_process(pid: u32) -> Result<(), BoxError> {
+    taskkill(pid, true)
+}
+
+#[cfg(unix)]
+fn send_signal(pid: u32, signal: i32) -> Result<(), BoxError> {
+    let rt = unsafe { libc::kill(pid as i32, signal) };
+    if rt == 0 {
+        return Ok(());
+    }
+
+    let err = io::Error::last_os_error();
+    if matches!(err.raw_os_error(), Some(code) if code == libc::ESRCH) {
+        return Ok(());
+    }
+
+    Err(err.into())
+}
+
+#[cfg(not(unix))]
+fn taskkill(pid: u32, force: bool) -> Result<(), BoxError> {
+    let mut command = Command::new("taskkill");
+    command.arg("/PID").arg(pid.to_string()).arg("/T");
+    if force {
+        command.arg("/F");
+    }
+
+    let status = command.status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill failed for pid {pid} with status {status}").into())
+    }
+}
+
+#[cfg(unix)]
+pub fn process_exists(pid: u32) -> bool {
     // Unix 的一个约定：当信号值是 0 时，kill(pid, 0) 不会真的发送信号，只会让内核检查两件事：
     // 1. 这个 pid 对应的进程是否存在。
     // 2. 当前进程有没有权限向它发信号。
@@ -290,6 +481,57 @@ fn process_exists_impl(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn process_exists_impl(_pid: u32) -> bool {
+pub fn process_exists(_pid: u32) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_env_file_preserves_unknown_lines_and_updates_targets() {
+        let args = DaemonArgs {
+            addr: "127.0.0.1:9999".to_string(),
+            sandbox: true,
+            model_family: "anthropic".to_string(),
+            model_name: "claude-sonnet-4-6".to_string(),
+            model_api_key: "secret".to_string(),
+            model_api_base: "https://example.com/v1".to_string(),
+            https_proxy: Some("http://127.0.0.1:7890".to_string()),
+        };
+        let existing = "# comment\nOTHER=keep\nMODEL_NAME=old\nHTTPS_PROXY=http://old\n";
+
+        let merged = merge_env_file(existing, &args.env_updates());
+
+        assert!(merged.contains("# comment"));
+        assert!(merged.contains("OTHER=keep"));
+        assert!(merged.contains("GATEWAY_ADDR=127.0.0.1:9999"));
+        assert!(merged.contains("SANDBOX=true"));
+        assert!(merged.contains("MODEL_NAME=claude-sonnet-4-6"));
+        assert!(merged.contains("MODEL_API_BASE=https://example.com/v1"));
+        assert!(merged.contains("HTTPS_PROXY=http://127.0.0.1:7890"));
+        assert!(!merged.contains("MODEL_NAME=old"));
+        assert!(!merged.contains("HTTPS_PROXY=http://old"));
+    }
+
+    #[test]
+    fn merge_env_file_removes_optional_values_when_cleared() {
+        let args = DaemonArgs {
+            addr: DEFAULT_GATEWAY_ADDR.to_string(),
+            sandbox: false,
+            model_family: String::new(),
+            model_name: String::new(),
+            model_api_key: String::new(),
+            model_api_base: String::new(),
+            https_proxy: None,
+        };
+        let existing = "HTTPS_PROXY=http://127.0.0.1:7890\nMODEL_API_KEY=abc\n";
+
+        let merged = merge_env_file(existing, &args.env_updates());
+
+        assert!(!merged.contains("HTTPS_PROXY="));
+        assert!(merged.contains("MODEL_API_KEY=''"));
+        assert!(merged.contains("MODEL_FAMILY=''"));
+    }
 }

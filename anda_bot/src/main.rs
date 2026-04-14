@@ -9,6 +9,7 @@ mod cron;
 mod daemon;
 mod engine;
 mod gateway;
+mod tui;
 mod util;
 
 #[global_allocator]
