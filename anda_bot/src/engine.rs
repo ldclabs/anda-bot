@@ -3,6 +3,7 @@ use anda_db::database::AndaDB;
 use anda_engine::{
     context::Web3SDK,
     engine::Engine,
+    extension::{fs, shell, skill},
     management::{BaseManagement, Visibility},
     memory::Conversations,
     model::Models,
@@ -15,7 +16,8 @@ use anda_web3_client::client::{Client as Web3Client, identity_from_secret};
 use axum::{Router, routing};
 use sha3::{Digest, Sha3_384};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -33,8 +35,10 @@ pub struct EngineConfig {
     pub ed25519_secret: [u8; 32],
     pub model: ModelConfig,
     pub brain_base_url: String,
+    pub workspace_dir: PathBuf,
+    pub skills_dir: PathBuf,
+    pub sandbox_dir: Option<PathBuf>,
     pub https_proxy: Option<String>,
-    pub sandbox: Option<String>,
 }
 
 impl Engines {
@@ -69,19 +73,52 @@ impl Engines {
 
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();
-        let brain_client = brain::Client::new(cfg.brain_base_url, None);
+        let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
+        let brain_client =
+            brain::Client::new(cfg.brain_base_url, None).with_http_client(brain_http_client);
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
-        let bot = AndaBot::new(brain_client, conversations, 65535);
+        let bot = AndaBot::new(brain_client.clone(), conversations, 65535);
+
+        let shell_tool = {
+            let runtime: Arc<dyn shell::Executor> = if let Some(sandbox) = cfg.sandbox_dir {
+                Arc::new(shell::sandbox::SandboxRuntime::new(sandbox).await?)
+            } else {
+                Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()))
+            };
+            shell::ShellTool::new(runtime, HashMap::new(), None)
+        };
+
         let engine = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
             .with_management(management)
             .set_models(Arc::new(models))
-            .register_agent(Arc::new(bot), None)?
-            .export_tools(vec![AndaBot::NAME.to_string()]);
+            .register_tool(Arc::new(brain_client))?
+            .register_tool(Arc::new(shell_tool))?
+            .register_tool(Arc::new(fs::ReadFileTool::new(
+                cfg.workspace_dir.clone(),
+                None,
+            )))?
+            .register_tool(Arc::new(fs::SearchFileTool::new(
+                cfg.workspace_dir.clone(),
+                None,
+            )))?
+            .register_tool(Arc::new(fs::EditFileTool::new(
+                cfg.workspace_dir.clone(),
+                None,
+            )))?
+            .register_tool(Arc::new(fs::WriteFileTool::new(
+                cfg.workspace_dir.clone(),
+                None,
+            )))?
+            .register_agent(Arc::new(bot), None)?;
 
         // Initialize and start the server
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
+        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
+        skills_tool.load().await?;
+
+        engine.sub_agents_manager().insert(skills_tool);
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
         engines.insert(default_engine, engine);
@@ -98,7 +135,7 @@ impl Engines {
 
     pub fn into_router(self) -> Router<()> {
         let app: Router<()> = Router::new()
-            .route("/{*id}", routing::post(anda_engine))
+            .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state);
         app
     }

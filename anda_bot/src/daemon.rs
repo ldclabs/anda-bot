@@ -1,46 +1,295 @@
 use anda_core::BoxError;
 use anda_engine_server::shutdown_signal;
+use anda_hippocampus::types::ModelConfig;
 use anda_object_store::MetaStoreBuilder;
+use anda_web3_client::client::identity_from_secret;
+use clap::Args;
 use object_store::{ObjectStore, local::LocalFileSystem};
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::{brain, cron, engine, gateway};
+use crate::{brain, cron, engine, gateway, util};
 
-pub async fn serve(
-    workspace: PathBuf,
-    gateway_addr: String,
-    brain_cfg: brain::HippocampusConfig,
-    engine_cfg: engine::EngineConfig,
-) -> Result<(), BoxError> {
-    // Initialize structured logging with JSON format
-    Builder::with_level(&get_env_level().to_string())
-        .with_target_writer("*", new_writer(tokio::io::stdout()))
-        .init();
+const DAEMON_PID_FILE: &str = "anda-daemon.pid";
+const DAEMON_LOG_FILE: &str = "anda-daemon.log";
+const DEFAULT_GATEWAY_ADDR: &str = "127.0.0.1:8042";
+const ENV_GATEWAY_ADDR: &str = "GATEWAY_ADDR";
+const ENV_SANDBOX: &str = "SANDBOX";
+const ENV_MODEL_FAMILY: &str = "MODEL_FAMILY";
+const ENV_MODEL_NAME: &str = "MODEL_NAME";
+const ENV_MODEL_API_KEY: &str = "MODEL_API_KEY";
+const ENV_MODEL_API_BASE: &str = "MODEL_API_BASE";
+const ENV_HTTPS_PROXY: &str = "HTTPS_PROXY";
 
-    // Create global cancellation token for graceful shutdown
-    let global_cancel_token = CancellationToken::new();
+pub struct Daemon {
+    pub workspace: PathBuf,
+    pub cfg: DaemonArgs,
+}
 
-    let object_store: Arc<dyn ObjectStore> = {
-        let db_path = workspace.join("db");
-        let os = LocalFileSystem::new_with_prefix(db_path)?;
-        let os = MetaStoreBuilder::new(os, 100000).build();
-        Arc::new(os)
-    };
+#[derive(Args, Clone, Debug)]
+pub struct DaemonArgs {
+    #[clap(long, env = ENV_GATEWAY_ADDR, default_value = DEFAULT_GATEWAY_ADDR)]
+    pub addr: String,
 
-    let cron_handle = cron::serve(global_cancel_token.child_token()).await?;
-    let gateway_handle = gateway::serve(
-        global_cancel_token.child_token(),
-        object_store,
-        gateway_addr,
-        brain_cfg,
-        engine_cfg,
-    )
-    .await?;
+    #[arg(long, env = ENV_SANDBOX, default_value = "false")]
+    pub sandbox: bool,
 
-    let terminate_handle = shutdown_signal(global_cancel_token);
-    let _ = tokio::join!(cron_handle, gateway_handle, terminate_handle);
+    /// AI model family (e.g., "gemini", "anthropic", "openai", "deepseek")
+    #[arg(long, env = ENV_MODEL_FAMILY, default_value = "")]
+    pub model_family: String,
 
-    Ok(())
+    /// AI model name (e.g., "gemini-3-flash-preview", "claude-sonnet-4-6")
+    #[arg(long, env = ENV_MODEL_NAME, default_value = "")]
+    pub model_name: String,
+
+    /// API key for AI model
+    #[arg(long, env = ENV_MODEL_API_KEY, default_value = "")]
+    pub model_api_key: String,
+
+    /// API base URL for AI model
+    #[arg(long, env = ENV_MODEL_API_BASE, default_value = "")]
+    pub model_api_base: String,
+
+    /// Optional HTTPS proxy URL (e.g., "http://127.0.0.1:23456")
+    #[arg(long, env = ENV_HTTPS_PROXY)]
+    pub https_proxy: Option<String>,
+}
+
+impl DaemonArgs {
+    pub fn from_env() -> Self {
+        Self {
+            addr: env_string(ENV_GATEWAY_ADDR, DEFAULT_GATEWAY_ADDR),
+            sandbox: env_bool(ENV_SANDBOX),
+            model_family: env_string(ENV_MODEL_FAMILY, ""),
+            model_name: env_string(ENV_MODEL_NAME, ""),
+            model_api_key: env_string(ENV_MODEL_API_KEY, ""),
+            model_api_base: env_string(ENV_MODEL_API_BASE, ""),
+            https_proxy: env_option(ENV_HTTPS_PROXY),
+        }
+    }
+
+    pub fn model_config(&self) -> ModelConfig {
+        ModelConfig {
+            family: self.model_family.clone(),
+            model: self.model_name.clone(),
+            api_base: self.model_api_base.clone(),
+            api_key: self.model_api_key.clone(),
+            disabled: false,
+        }
+    }
+
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    pub fn brain_base_url(&self) -> String {
+        format!("http://{}/v1/{}", self.addr, brain::ANDA_BOT_SPACE_ID)
+    }
+}
+
+impl Daemon {
+    pub fn new(workspace: PathBuf, cfg: DaemonArgs) -> Self {
+        Daemon { workspace, cfg }
+    }
+
+    pub fn base_url(&self) -> String {
+        self.cfg.base_url()
+    }
+
+    pub fn pid_file_path(&self) -> PathBuf {
+        self.workspace.join(DAEMON_PID_FILE)
+    }
+
+    pub fn keys_dir_path(&self) -> PathBuf {
+        self.workspace.join("keys")
+    }
+
+    pub fn db_dir_path(&self) -> PathBuf {
+        self.workspace.join("db")
+    }
+
+    pub fn skills_dir_path(&self) -> PathBuf {
+        self.workspace.join("skills")
+    }
+
+    pub fn workspace_dir_path(&self) -> PathBuf {
+        self.workspace.join("workspace")
+    }
+
+    pub fn sandbox_dir_path(&self) -> PathBuf {
+        self.workspace.join("sandbox")
+    }
+
+    pub fn logs_dir_path(&self) -> PathBuf {
+        self.workspace.join("logs")
+    }
+
+    pub fn log_file_path(&self) -> PathBuf {
+        self.logs_dir_path().join(DAEMON_LOG_FILE)
+    }
+
+    pub async fn read_pid_file(&self) -> Result<Option<u32>, BoxError> {
+        let pid_path = self.pid_file_path();
+        match tokio::fs::read_to_string(pid_path).await {
+            Ok(content) => Ok(content.trim().parse::<u32>().ok()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub async fn ensure_directories(&self) -> Result<(), BoxError> {
+        tokio::fs::create_dir_all(self.keys_dir_path()).await?;
+        tokio::fs::create_dir_all(self.db_dir_path()).await?;
+        tokio::fs::create_dir_all(self.skills_dir_path()).await?;
+        tokio::fs::create_dir_all(self.workspace_dir_path()).await?;
+        tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
+        tokio::fs::create_dir_all(self.logs_dir_path()).await?;
+        Ok(())
+    }
+
+    pub async fn serve(self, ed25519_secret: [u8; 32]) -> Result<(), BoxError> {
+        // Initialize structured logging with JSON format
+        Builder::with_level(&get_env_level().to_string())
+            .with_target_writer("*", new_writer(tokio::io::stdout()))
+            .init();
+
+        let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
+
+        // Create global cancellation token for graceful shutdown
+        let global_cancel_token = CancellationToken::new();
+
+        let ed25519_pubkey = util::cose::to_ed25519_pubkey(&ed25519_secret);
+        let id = identity_from_secret(ed25519_secret).sender().unwrap();
+
+        let brain_cfg = brain::HippocampusConfig {
+            ed25519_pubkey,
+            model: self.cfg.model_config(),
+            managers: BTreeSet::from_iter([id]),
+            https_proxy: self.cfg.https_proxy.clone(),
+        };
+        let engine_cfg = engine::EngineConfig {
+            ed25519_secret,
+            model: self.cfg.model_config(),
+            brain_base_url: self.cfg.brain_base_url(),
+            workspace_dir: self.workspace_dir_path(),
+            skills_dir: self.skills_dir_path(),
+            sandbox_dir: if self.cfg.sandbox {
+                Some(self.sandbox_dir_path())
+            } else {
+                None
+            },
+            https_proxy: self.cfg.https_proxy.clone(),
+        };
+        let db_path = self.db_dir_path();
+        let object_store: Arc<dyn ObjectStore> = {
+            let os = LocalFileSystem::new_with_prefix(db_path)?;
+            let os = MetaStoreBuilder::new(os, 100000).build();
+            Arc::new(os)
+        };
+
+        let cron_handle = cron::serve(global_cancel_token.child_token()).await?;
+        let gateway_handle = gateway::serve(
+            global_cancel_token.child_token(),
+            object_store,
+            self.cfg.addr.clone(),
+            brain_cfg,
+            engine_cfg,
+        )
+        .await?;
+
+        let terminate_handle = shutdown_signal(global_cancel_token);
+        let _ = tokio::join!(cron_handle, gateway_handle, terminate_handle);
+
+        Ok(())
+    }
+}
+
+struct PidFileGuard {
+    path: PathBuf,
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
+    loop {
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&pid_path)
+            .await
+        {
+            Ok(mut file) => {
+                let pid = std::process::id().to_string();
+                if let Err(err) = file.write_all(pid.as_bytes()).await {
+                    let _ = tokio::fs::remove_file(&pid_path).await;
+                    return Err(err.into());
+                }
+                return Ok(PidFileGuard { path: pid_path });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                match tokio::fs::read_to_string(&pid_path).await {
+                    Ok(content) => {
+                        let existing_pid = content.trim().parse::<u32>().ok();
+                        if let Some(pid) = existing_pid
+                            && process_exists(pid)
+                        {
+                            return Err(
+                                format!("anda daemon is already running with pid {pid}").into()
+                            );
+                        }
+                        let _ = tokio::fs::remove_file(&pid_path).await;
+                    }
+                    Err(read_err) if read_err.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(read_err) => return Err(read_err.into()),
+                }
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+fn env_string(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn env_option(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| (!value.trim().is_empty()).then_some(value))
+}
+
+fn env_bool(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| (!value.trim().is_empty()).then_some(value))
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+pub fn process_exists(pid: u32) -> bool {
+    process_exists_impl(pid)
+}
+
+#[cfg(unix)]
+fn process_exists_impl(pid: u32) -> bool {
+    // Unix 的一个约定：当信号值是 0 时，kill(pid, 0) 不会真的发送信号，只会让内核检查两件事：
+    // 1. 这个 pid 对应的进程是否存在。
+    // 2. 当前进程有没有权限向它发信号。
+    let rt = unsafe { libc::kill(pid as i32, 0) };
+    if rt == 0 {
+        return true;
+    }
+
+    matches!(std::io::Error::last_os_error().raw_os_error(), Some(code) if code == libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn process_exists_impl(_pid: u32) -> bool {
+    false
 }

@@ -32,8 +32,8 @@ pub async fn serve(
     let server_cancel_token = cancel_token.clone();
     let background_cancel_token = cancel_token.clone();
     let app = Router::new()
-        .nest("/bot", engines.into_router())
-        .nest("/brain", hippocampus.into_router())
+        .merge(engines.into_router())
+        .merge(hippocampus.into_router())
         .layer(CompressionLayer::new());
 
     log::warn!(

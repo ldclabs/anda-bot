@@ -25,6 +25,7 @@ pub struct AndaBot {
     brain: brain::Client,
     conversations: Conversations,
     tools: Vec<String>,
+    full_tools: Vec<String>,
     max_input_tokens: usize,
 }
 
@@ -39,6 +40,16 @@ impl AndaBot {
             brain,
             conversations,
             tools: vec![
+                brain::Client::NAME.to_string(),
+                TOOLS_SEARCH_NAME.to_string(),
+                TOOLS_SELECT_NAME.to_string(),
+                ShellTool::NAME.to_string(),
+                ReadFileTool::NAME.to_string(),
+                SearchFileTool::NAME.to_string(),
+                EditFileTool::NAME.to_string(),
+                WriteFileTool::NAME.to_string(),
+            ],
+            full_tools: vec![
                 brain::Client::NAME.to_string(),
                 TOOLS_SEARCH_NAME.to_string(),
                 TOOLS_SELECT_NAME.to_string(),
@@ -251,7 +262,7 @@ impl Agent<AgentCtx> for AndaBot {
                 instructions,
                 prompt,
                 chat_history,
-                tools: ctx.definitions(Some(&self.tools)).await,
+                tools: ctx.definitions(Some(&self.full_tools)).await,
                 tool_choice_required: false,
                 max_output_tokens: Some(50000),
                 ..Default::default()

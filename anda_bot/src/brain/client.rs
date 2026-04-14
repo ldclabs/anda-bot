@@ -103,13 +103,24 @@ impl Client {
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
-        let url = format!("{}{}", self.base_url, path);
-        let req = if let Some(token) = &self.auth_token {
-            self.http.post(url).bearer_auth(token)
-        } else {
-            self.http.post(url)
-        };
+        let req = self.request(reqwest::Method::POST, path);
         let response = req.json(&input).send().await?;
+        self.decode_response(response).await
+    }
+
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let url = format!("{}{}", self.base_url, path);
+        if let Some(token) = &self.auth_token {
+            self.http.request(method, url).bearer_auth(token)
+        } else {
+            self.http.request(method, url)
+        }
+    }
+
+    async fn decode_response<O>(&self, response: reqwest::Response) -> Result<O, BoxError>
+    where
+        O: serde::de::DeserializeOwned,
+    {
         if response.status().is_success() {
             let text = response.text().await?;
 

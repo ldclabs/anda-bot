@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anda_hippocampus = { path = "../anda_hippocampus", version = "0.4" }
 anda_core = { workspace = true }
-anda_engine = { workspace = true }
+anda_engine = { workspace = true, features = ["sandbox"] }
 anda_engine_server = { workspace = true }
 anda_web3_client = { workspace = true }
 anda_db = { workspace = true }
@@ -36,5 +36,6 @@ object_store = { workspace = true, features = ["aws", "integration"] }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
+libc = "0.2"
 
 [dev-dependencies]

@@ -63,6 +63,9 @@ markdown = "1"
 mimalloc = { version = "0.1", features = ["v3"] }
 rand = "0.10"
 
+[patch.crates-io]
+boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }
+
 [profile.release]
 debug = false
 lto = true

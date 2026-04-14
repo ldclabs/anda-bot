@@ -29,7 +29,6 @@ pub struct HippocampusConfig {
 }
 
 pub struct Hippocampus {
-    cfg: HippocampusConfig,
     pub state: AppState,
     pub db: Arc<AndaDB>,
 }
@@ -51,7 +50,7 @@ impl Hippocampus {
         models.set_model(build_model(http_client.clone(), cfg.model.clone()));
 
         let db_config = DBConfig {
-            name: "anda_brain_db".to_string(),
+            name: "brain_db".to_string(),
             description: "Anda Hippocampus database".to_string(),
             storage: StorageConfig {
                 cache_max_capacity: 100000,
@@ -113,13 +112,14 @@ impl Hippocampus {
         };
         Ok(Self {
             state: app_state,
-            cfg,
             db: space.db.clone(),
         })
     }
 
     pub fn into_router(self) -> Router<()> {
         let app: Router<()> = Router::new()
+            .route("/", routing::get(get_information))
+            .route("/SKILL.md", routing::get(get_skill))
             .route("/v1/{space_id}/info", routing::get(get_info))
             .route("/v1/{space_id}/status", routing::get(get_info))
             .route(
