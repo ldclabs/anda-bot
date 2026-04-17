@@ -618,6 +618,7 @@ type MaintenanceAt struct {
 type Usage struct {
 	InputTokens  int `json:"input_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
+	CachedTokens int `json:"cached_tokens,omitempty"`
 	Requests     int `json:"requests,omitempty"`
 }
 

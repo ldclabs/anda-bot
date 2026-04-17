@@ -62,10 +62,7 @@ impl MaintenanceAgent {
             .conversations
             .list_conversations_by_user(&Principal::anonymous(), None, Some(2))
             .await?;
-        *self.history.write() = conversations
-            .into_iter()
-            .map(Document::from)
-            .collect();
+        *self.history.write() = conversations.into_iter().map(Document::from).collect();
         Ok(())
     }
 
@@ -221,7 +218,6 @@ impl MaintenanceAgent {
         };
 
         let primer = self.memory.describe_primer().await.unwrap_or_default();
-        let tools = ctx.tool_definitions(Some(&["execute_kip".to_string()]));
         let now_ms = unix_ms();
         let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
 
@@ -252,8 +248,8 @@ impl MaintenanceAgent {
                     rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                 ),
                 prompt,
-                tools,
                 chat_history,
+                tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
                 ..Default::default()

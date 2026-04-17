@@ -168,9 +168,6 @@ func validateMessageContentLength(messages []api.Message) error {
 }
 
 func buildInputContext(user, agent, source, topic string) *api.InputContext {
-	if user == "" && agent == "" && source == "" && topic == "" {
-		return nil
-	}
 	return &api.InputContext{
 		Counterparty: user,
 		Agent:        agent,

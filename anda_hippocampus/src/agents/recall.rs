@@ -90,10 +90,7 @@ impl RecallAgent {
             .conversations
             .list_conversations_by_user(&Principal::anonymous(), None, Some(3))
             .await?;
-        *self.history.write() = conversations
-            .into_iter()
-            .map(Document::from)
-            .collect();
+        *self.history.write() = conversations.into_iter().map(Document::from).collect();
         Ok(())
     }
 }
@@ -183,9 +180,7 @@ impl Agent<AgentCtx> for RecallAgent {
                     ),
                     prompt,
                     chat_history,
-                    tools: ctx.tool_definitions(Some(&[
-                        MemoryReadonly::NAME.to_string(),
-                    ])),
+                    tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                     tool_choice_required: true,
                     max_output_tokens: Some(8192),
                     ..Default::default()

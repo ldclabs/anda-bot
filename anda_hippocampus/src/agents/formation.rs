@@ -280,8 +280,6 @@ impl FormationAgent {
             }]
         };
         let primer = self.memory.describe_primer().await.unwrap_or_default();
-        let tools = ctx.tool_definitions(Some(&["execute_kip".to_string()]));
-
         let notes = load_notes(ctx).await.unwrap_or_default();
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
@@ -295,7 +293,7 @@ impl FormationAgent {
                 ),
                 prompt: prompt.clone(),
                 chat_history,
-                tools,
+                tools: ctx.tool_definitions(Some(&self.tool_dependencies())),
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
                 ..Default::default()
