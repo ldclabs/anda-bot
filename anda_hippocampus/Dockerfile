@@ -12,8 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
-COPY anda_hippocampus ./anda_hippocampus
+COPY . .
 
 RUN cargo build --release -p anda_hippocampus
 
