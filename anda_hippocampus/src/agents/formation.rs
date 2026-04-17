@@ -1,20 +1,25 @@
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource,
-    StateFeatures, Tool, estimate_tokens,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
+    Resource, StateFeatures, Tool, estimate_tokens,
 };
 use anda_db::schema::DocumentId;
 use anda_engine::{
     context::AgentCtx,
+    extension::note::{NoteTool, load_notes},
     memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
     rfc3339_datetime, unix_ms,
 };
+use parking_lot::RwLock;
 use serde_json::json;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
-use super::{AgentHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormation.md");
 const REVIEW_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusFormationReview.md");
@@ -32,8 +37,8 @@ impl Drop for ProcessingGuard {
 pub struct FormationAgent {
     memory: Arc<MemoryManagement>,
     processing_conversation: Arc<AtomicU64>,
-    hook: Arc<dyn AgentHook>,
-
+    hook: Arc<dyn HippocampusHook>,
+    history: Arc<RwLock<VecDeque<Document>>>,
     #[allow(dead_code)]
     max_input_tokens: usize,
 }
@@ -42,13 +47,14 @@ impl FormationAgent {
     pub const NAME: &'static str = "formation_memory";
     pub fn new(
         memory: Arc<MemoryManagement>,
-        hook: Arc<dyn AgentHook>,
+        hook: Arc<dyn HippocampusHook>,
         max_input_tokens: usize,
     ) -> Self {
         Self {
             max_input_tokens,
             memory,
             processing_conversation: Arc::new(AtomicU64::new(0)),
+            history: Arc::new(RwLock::new(VecDeque::new())),
             hook,
         }
     }
@@ -240,21 +246,12 @@ impl FormationAgent {
     }
 
     async fn process_one(&self, ctx: &AgentCtx, conversation: &mut Conversation) {
-        // Deprecated
-        let mut prompt = conversation
-            .steering_messages
-            .take()
-            .unwrap_or_default()
-            .pop();
-
-        if prompt.is_none()
-            && let Some(msg) = conversation.messages.first()
-            && let Ok(msg) = serde_json::from_value::<Message>(msg.clone())
+        let prompt = match conversation
+            .messages
+            .first()
+            .and_then(|v| serde_json::from_value::<Message>(v.clone()).ok())
+            .and_then(|v| v.text())
         {
-            prompt = msg.text();
-        }
-
-        let prompt = match prompt {
             Some(p) => p,
             None => {
                 self.mark_conversation_failed(conversation, "No prompt found".to_string())
@@ -263,20 +260,41 @@ impl FormationAgent {
             }
         };
 
+        let now_ms = unix_ms();
+        // add history conversations to provide more context for recall
+        let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
+
+        let chat_history = if chat_history.is_empty() {
+            vec![]
+        } else {
+            vec![Message {
+                role: "user".into(),
+                content: vec![
+                    Documents::new("history_formation".to_string(), chat_history)
+                        .to_string()
+                        .into(),
+                ],
+                name: Some("$system".into()),
+                timestamp: Some(now_ms),
+                ..Default::default()
+            }]
+        };
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let tools = ctx.tool_definitions(Some(&["execute_kip".to_string()]));
-        let now_ms = unix_ms();
 
+        let notes = load_notes(ctx).await.unwrap_or_default();
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
-                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
                     SELF_INSTRUCTIONS,
                     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                     primer,
+                    serde_json::to_string(&notes.notes).unwrap_or_default(),
                     rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                 ),
                 prompt: prompt.clone(),
+                chat_history,
                 tools,
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
@@ -310,37 +328,25 @@ impl FormationAgent {
                         }
                     }
 
-                    if let Some(failed_reason) = res.failed_reason {
-                        conversation.status = ConversationStatus::Failed;
-                        conversation.failed_reason = Some(failed_reason);
+                    conversation.status = if res.failed_reason.is_some() {
+                        ConversationStatus::Failed
                     } else if runner.is_done() {
-                        conversation.status = ConversationStatus::Completed;
-                        // 成功完成时清除之前的失败原因（如果有的话）
-                        conversation.failed_reason = None;
+                        ConversationStatus::Completed
                     } else {
-                        conversation.status = ConversationStatus::Working;
-                        // 成功完成时清除之前的失败原因（如果有的话）
-                        conversation.failed_reason = None;
-                    }
+                        ConversationStatus::Working
+                    };
                     conversation.usage = res.usage;
                     conversation.updated_at = now_ms;
 
-                    // 检查是否被外部取消，get_conversation 失败不中断处理
-                    match self.memory.get_conversation(conversation._id).await {
-                        Ok(old) => {
-                            if old.status == ConversationStatus::Cancelled
-                                && (conversation.status == ConversationStatus::Submitted
-                                    || conversation.status == ConversationStatus::Working)
-                            {
-                                conversation.status = ConversationStatus::Cancelled;
-                            }
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to check cancel status for conversation {}: {:?}",
-                                conversation._id,
-                                err
-                            );
+                    if let Some(failed_reason) = res.failed_reason {
+                        conversation.failed_reason = Some(failed_reason);
+                    } else {
+                        let doc: Document = conversation.clone().into();
+                        let mut history = self.history.write();
+                        history.push_back(doc);
+                        let len = history.len();
+                        if len > 2 {
+                            history.drain(0..(len - 2));
                         }
                     }
 
@@ -354,7 +360,7 @@ impl FormationAgent {
                         }
                         Err(err) => {
                             log::error!(
-                                "Failed to serialize conversation {} changes: {:?}",
+                                "Failed to serialize formation conversation {} changes: {:?}",
                                 conversation._id,
                                 err
                             );
@@ -390,7 +396,7 @@ impl Agent<AgentCtx> for FormationAgent {
     }
 
     fn tool_dependencies(&self) -> Vec<String> {
-        vec![self.memory.name()]
+        vec![self.memory.name(), NoteTool::NAME.to_string()]
     }
 
     // 接收来自外部的 FormationInput，创建一个新的 Conversation，并启动处理流程。

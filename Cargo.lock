@@ -419,6 +419,7 @@ dependencies = [
  "markdown",
  "mimalloc",
  "object_store",
+ "parking_lot",
  "serde",
  "serde_json",
  "structured-logger",

@@ -1,19 +1,25 @@
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Message, Resource, StateFeatures,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
+    Principal, Resource, StateFeatures,
 };
-use anda_db::{collection::Collection, schema::DocumentId};
+use anda_db::schema::DocumentId;
 use anda_engine::{
     context::AgentCtx,
-    memory::{Conversation, ConversationRef, ConversationStatus, MemoryManagement},
+    extension::note::{NoteTool, load_notes},
+    memory::{Conversation, ConversationRef, ConversationStatus, Conversations, MemoryManagement},
     rfc3339_datetime, unix_ms,
 };
+use parking_lot::RwLock;
 use serde_json::json;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use super::{AgentHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
@@ -28,25 +34,39 @@ impl Drop for ProcessingGuard {
 
 #[derive(Clone)]
 pub struct MaintenanceAgent {
-    pub conversations: Arc<Collection>,
+    pub conversations: Conversations,
     memory: Arc<MemoryManagement>,
     processing: Arc<AtomicBool>,
-    hook: Arc<dyn AgentHook>,
+    hook: Arc<dyn HippocampusHook>,
+    history: Arc<RwLock<VecDeque<Document>>>,
 }
 
 impl MaintenanceAgent {
     pub const NAME: &'static str = "maintenance_memory";
     pub fn new(
         memory: Arc<MemoryManagement>,
-        conversations: Arc<Collection>,
-        hook: Arc<dyn AgentHook>,
+        conversations: Conversations,
+        hook: Arc<dyn HippocampusHook>,
     ) -> Self {
         Self {
             memory,
             conversations,
             processing: Arc::new(AtomicBool::new(false)),
             hook,
+            history: Arc::new(RwLock::new(VecDeque::new())),
         }
+    }
+
+    pub async fn init(&self) -> Result<(), BoxError> {
+        let (conversations, _) = self
+            .conversations
+            .list_conversations_by_user(&Principal::anonymous(), None, Some(2))
+            .await?;
+        *self.history.write() = conversations
+            .into_iter()
+            .map(Document::from)
+            .collect();
+        Ok(())
     }
 
     pub fn is_processing(&self) -> bool {
@@ -54,7 +74,7 @@ impl MaintenanceAgent {
     }
 
     pub fn get_processed(&self) -> Option<DocumentId> {
-        match self.conversations.max_document_id() {
+        match self.conversations.conversations.max_document_id() {
             0 => None,
             id => Some(id),
         }
@@ -62,7 +82,7 @@ impl MaintenanceAgent {
 
     pub fn get_processed_at(&self) -> MaintenanceAt {
         let mut rt = MaintenanceAt::default();
-        self.conversations.extensions_with(|kv| {
+        self.conversations.conversations.extensions_with(|kv| {
             if let Some(v) = kv.get("full")
                 && let Ok(id) = v.try_into()
             {
@@ -84,6 +104,7 @@ impl MaintenanceAgent {
 
     pub fn set_processed_at(&self, scope: MaintenanceScope, formation_id: DocumentId) {
         self.conversations
+            .conversations
             .set_extension_from(scope.to_string(), formation_id);
     }
 }
@@ -98,7 +119,7 @@ impl Agent<AgentCtx> for MaintenanceAgent {
     }
 
     fn tool_dependencies(&self) -> Vec<String> {
-        vec!["execute_kip".to_string()]
+        vec!["execute_kip".to_string(), NoteTool::NAME.to_string()]
     }
 
     /// Receives a trigger envelope (MaintenanceInput JSON), creates a conversation to track the
@@ -141,7 +162,7 @@ impl Agent<AgentCtx> for MaintenanceAgent {
 
         let id = self
             .conversations
-            .add_from(&ConversationRef::from(&conversation))
+            .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
 
@@ -177,7 +198,10 @@ impl MaintenanceAgent {
         conversation.status = ConversationStatus::Failed;
         conversation.updated_at = unix_ms();
         if let Ok(changes) = conversation.to_changes() {
-            let _ = self.conversations.update(conversation._id, changes).await;
+            let _ = self
+                .conversations
+                .update_conversation(conversation._id, changes)
+                .await;
         }
     }
 
@@ -199,18 +223,37 @@ impl MaintenanceAgent {
         let primer = self.memory.describe_primer().await.unwrap_or_default();
         let tools = ctx.tool_definitions(Some(&["execute_kip".to_string()]));
         let now_ms = unix_ms();
+        let chat_history: Vec<Document> = { self.history.read().iter().cloned().collect() };
 
+        let chat_history = if chat_history.is_empty() {
+            vec![]
+        } else {
+            vec![Message {
+                role: "user".into(),
+                content: vec![
+                    Documents::new("history_maintenance".to_string(), chat_history)
+                        .to_string()
+                        .into(),
+                ],
+                name: Some("$system".into()),
+                timestamp: Some(now_ms),
+                ..Default::default()
+            }]
+        };
+        let notes = load_notes(ctx).await.unwrap_or_default();
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions: format!(
-                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n# Current Datetime: {}",
+                    "{}\n\n{}\n\n---\n\n# `DESCRIBE PRIMER` Result:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
                     SELF_INSTRUCTIONS,
                     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
                     primer,
+                    serde_json::to_string(&notes.notes).unwrap_or_default(),
                     rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
                 ),
                 prompt,
                 tools,
+                chat_history,
                 tool_choice_required: true,
                 max_output_tokens: Some(8192),
                 ..Default::default()
@@ -252,34 +295,22 @@ impl MaintenanceAgent {
 
                     if let Some(failed_reason) = res.failed_reason {
                         conversation.failed_reason = Some(failed_reason);
-                    }
-
-                    // Check if externally cancelled
-                    match self
-                        .conversations
-                        .get_as::<Conversation>(conversation._id)
-                        .await
-                    {
-                        Ok(old) => {
-                            if old.status == ConversationStatus::Cancelled
-                                && (conversation.status == ConversationStatus::Submitted
-                                    || conversation.status == ConversationStatus::Working)
-                            {
-                                conversation.status = ConversationStatus::Cancelled;
-                            }
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to check cancel status for maintenance conversation {}: {:?}",
-                                conversation._id,
-                                err
-                            );
+                    } else {
+                        let doc: Document = conversation.clone().into();
+                        let mut history = self.history.write();
+                        history.push_back(doc);
+                        let len = history.len();
+                        if len > 3 {
+                            history.drain(0..(len - 2));
                         }
                     }
 
                     match conversation.to_changes() {
                         Ok(changes) => {
-                            let _ = self.conversations.update(conversation._id, changes).await;
+                            let _ = self
+                                .conversations
+                                .update_conversation(conversation._id, changes)
+                                .await;
                         }
                         Err(err) => {
                             log::error!(

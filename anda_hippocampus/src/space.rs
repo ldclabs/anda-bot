@@ -13,8 +13,9 @@ use anda_db::{
 use anda_db_tfs::jieba_tokenizer;
 use anda_engine::{
     engine::Engine,
+    extension::note::NoteTool,
     management::Management,
-    memory::{Conversation, MemoryManagement, MemoryReadonly, MemoryTool},
+    memory::{Conversation, Conversations, MemoryManagement, MemoryReadonly, MemoryTool},
     model::{Models, reqwest},
     rfc3339_datetime_now, unix_ms,
 };
@@ -45,7 +46,7 @@ use crate::types::{
     UpdateSpaceInput,
 };
 use crate::{
-    agents::{AgentHook, FormationAgent, MaintenanceAgent, RecallAgent},
+    agents::{FormationAgent, HippocampusHook, MaintenanceAgent, RecallAgent},
     model::build_model,
     payload::StringOr,
 };
@@ -70,7 +71,8 @@ pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| 
                 },
             },
             "required": ["commands"]
-        }
+        },
+        "strict": true
     })).unwrap()
 });
 
@@ -660,13 +662,16 @@ impl Space {
         collection: Option<String>,
         id: u64,
     ) -> Result<Conversation, BoxError> {
-        let collection = match collection {
-            Some(name) if name == "recall" => self.recall.conversations.clone(),
-            Some(name) if name == "maintenance" => self.maintenance.conversations.clone(),
-            _ => self.memory.conversations.clone(),
+        let rt = match collection {
+            Some(name) if name == "recall" => {
+                self.recall.conversations.get_conversation(id).await?
+            }
+            Some(name) if name == "maintenance" => {
+                self.maintenance.conversations.get_conversation(id).await?
+            }
+            _ => self.memory.get_conversation(id).await?,
         };
 
-        let rt: Conversation = collection.get_as(id).await?;
         Ok(rt)
     }
 
@@ -679,8 +684,10 @@ impl Space {
         use anda_db::query::{Filter, Query, RangeQuery};
 
         let collection = match collection {
-            Some(name) if name == "recall" => self.recall.conversations.clone(),
-            Some(name) if name == "maintenance" => self.maintenance.conversations.clone(),
+            Some(name) if name == "recall" => self.recall.conversations.conversations.clone(),
+            Some(name) if name == "maintenance" => {
+                self.maintenance.conversations.conversations.clone()
+            }
             _ => self.memory.conversations.clone(),
         };
         let limit = limit.unwrap_or(10).min(100);
@@ -877,18 +884,27 @@ impl Space {
         let memory = Arc::new(memory);
         let memory_r = MemoryReadonly::new(memory.clone());
         let memory_tool = MemoryTool::new(memory.clone());
+        let note_tool = NoteTool::new();
 
         let hooks = Arc::new(Hooks::new(db.clone()));
-        let formation = Arc::new(FormationAgent::new(memory.clone(), hooks.clone(), 655350));
+        let formation = Arc::new(FormationAgent::new(
+            memory.clone(),
+            hooks.clone(),
+            65535 * 5,
+        ));
         let recall = Arc::new(RecallAgent::new(
             memory.clone(),
-            recall_conversations,
+            Conversations {
+                conversations: recall_conversations,
+            },
             hooks.clone(),
             65535,
         ));
         let maintenance = Arc::new(MaintenanceAgent::new(
             memory.clone(),
-            maintenance_conversations,
+            Conversations {
+                conversations: maintenance_conversations,
+            },
             hooks.clone(),
         ));
         // Build agent engine with all configured components
@@ -898,6 +914,7 @@ impl Space {
             .register_tool(memory.clone())?
             .register_tool(Arc::new(memory_r))?
             .register_tool(Arc::new(memory_tool))?
+            .register_tool(Arc::new(note_tool))?
             .register_agent(formation.clone(), None)?
             .register_agent(recall.clone(), None)?
             .register_agent(maintenance.clone(), None)?
@@ -928,12 +945,19 @@ impl Space {
             let model = build_model(this.http_client.clone(), cfg);
             this.models.set_model(model);
         }
-        if let Some(conversation) = this.formation.get_processed() {
-            // Resume formation process if it was interrupted before
-            let _ = this
-                .restart_formation(Principal::anonymous(), conversation + 1)
-                .await;
-        }
+
+        let this_clone = this.clone();
+        tokio::spawn(async move {
+            let _ = this_clone.maintenance.init().await;
+            let _ = this_clone.recall.init().await;
+            if let Some(conversation) = this_clone.formation.get_processed() {
+                // Resume formation process if it was interrupted before
+                let _ = this_clone
+                    .restart_formation(Principal::anonymous(), conversation + 1)
+                    .await;
+            }
+        });
+
         Ok(this)
     }
 }
@@ -961,7 +985,7 @@ impl Hooks {
 }
 
 #[async_trait::async_trait]
-impl AgentHook for Hooks {
+impl HippocampusHook for Hooks {
     async fn on_conversation_end(&self, agent_name: &str, conversation: &Conversation) {
         match agent_name {
             "recall_memory" => {
