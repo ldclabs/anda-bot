@@ -218,7 +218,7 @@ async fn main() -> Result<(), BoxError> {
         management.clone(),
         http_client.clone(),
         Arc::new(models),
-        ed25519_pubkeys,
+        Arc::new(ed25519_pubkeys),
         APP_NAME.to_string(),
         APP_VERSION.to_string(),
         cli.sharding_idx,

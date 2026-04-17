@@ -178,10 +178,6 @@ impl Daemon {
         self.workspace.join("skills")
     }
 
-    pub fn workspace_dir_path(&self) -> PathBuf {
-        self.workspace.join("workspace")
-    }
-
     pub fn sandbox_dir_path(&self) -> PathBuf {
         self.workspace.join("sandbox")
     }
@@ -207,7 +203,6 @@ impl Daemon {
         tokio::fs::create_dir_all(self.keys_dir_path()).await?;
         tokio::fs::create_dir_all(self.db_dir_path()).await?;
         tokio::fs::create_dir_all(self.skills_dir_path()).await?;
-        tokio::fs::create_dir_all(self.workspace_dir_path()).await?;
         tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
         tokio::fs::create_dir_all(self.logs_dir_path()).await?;
         Ok(())
@@ -305,7 +300,7 @@ impl Daemon {
             ed25519_secret,
             model: self.cfg.model_config(),
             brain_base_url: self.cfg.brain_base_url(),
-            workspace_dir: self.workspace_dir_path(),
+            work_dir: std::env::current_dir()?,
             skills_dir: self.skills_dir_path(),
             sandbox_dir: if self.cfg.sandbox {
                 Some(self.sandbox_dir_path())

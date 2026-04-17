@@ -3,7 +3,7 @@ use anda_db::database::AndaDB;
 use anda_engine::{
     context::Web3SDK,
     engine::Engine,
-    extension::{fs, shell, skill},
+    extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
     model::Models,
@@ -24,7 +24,7 @@ use std::{
 mod agent;
 
 use crate::brain;
-use crate::util::http_client::build_http_client;
+use crate::util::{cose::to_ed25519_pubkey, http_client::build_http_client};
 use agent::*;
 
 pub struct Engines {
@@ -35,7 +35,7 @@ pub struct EngineConfig {
     pub ed25519_secret: [u8; 32],
     pub model: ModelConfig,
     pub brain_base_url: String,
-    pub workspace_dir: PathBuf,
+    pub work_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub sandbox_dir: Option<PathBuf>,
     pub https_proxy: Option<String>,
@@ -43,6 +43,7 @@ pub struct EngineConfig {
 
 impl Engines {
     pub async fn new(cfg: EngineConfig, db: Arc<AndaDB>) -> Result<Self, BoxError> {
+        let ed25519_pubkey = to_ed25519_pubkey(&cfg.ed25519_secret);
         let identity = identity_from_secret(cfg.ed25519_secret);
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
@@ -77,15 +78,15 @@ impl Engines {
         let brain_client =
             brain::Client::new(cfg.brain_base_url, None).with_http_client(brain_http_client);
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
-        let bot = AndaBot::new(brain_client.clone(), conversations, 65535);
+        let bot = AndaBot::new(brain_client.clone(), conversations);
 
         let shell_tool = {
             let runtime: Arc<dyn shell::Executor> = if let Some(sandbox) = cfg.sandbox_dir {
                 Arc::new(shell::sandbox::SandboxRuntime::new(sandbox).await?)
             } else {
-                Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()))
+                Arc::new(shell::NativeRuntime::new(cfg.work_dir.clone()))
             };
-            shell::ShellTool::new(runtime, HashMap::new(), None)
+            shell::ShellTool::new(runtime, HashMap::new())
         };
 
         let engine = Engine::builder()
@@ -95,22 +96,12 @@ impl Engines {
             .set_models(Arc::new(models))
             .register_tool(Arc::new(brain_client))?
             .register_tool(Arc::new(shell_tool))?
-            .register_tool(Arc::new(fs::ReadFileTool::new(
-                cfg.workspace_dir.clone(),
-                None,
-            )))?
-            .register_tool(Arc::new(fs::SearchFileTool::new(
-                cfg.workspace_dir.clone(),
-                None,
-            )))?
-            .register_tool(Arc::new(fs::EditFileTool::new(
-                cfg.workspace_dir.clone(),
-                None,
-            )))?
-            .register_tool(Arc::new(fs::WriteFileTool::new(
-                cfg.workspace_dir.clone(),
-                None,
-            )))?
+            .register_tool(Arc::new(note::NoteTool::new()))?
+            .register_tool(Arc::new(todo::TodoTool::new()))?
+            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.work_dir.clone())))?
+            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.work_dir.clone())))?
+            .register_tool(Arc::new(fs::EditFileTool::new(cfg.work_dir.clone())))?
+            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.work_dir.clone())))?
             .register_agent(Arc::new(bot), None)?;
 
         // Initialize and start the server
@@ -129,6 +120,7 @@ impl Engines {
             default_engine,
             start_time_ms: unix_ms(),
             extra_info: Arc::new(BTreeMap::new()),
+            ed25519_pubkeys: Arc::new(vec![ed25519_pubkey]),
         };
         Ok(Self { state })
     }

@@ -2,10 +2,13 @@ use anda_core::BoxError;
 use coset::{CoseKeyBuilder, RegisteredLabel, iana};
 use ic_auth_types::ByteBufB64;
 use ic_cose_types::cose::{
-    CborSerializable, CoseKey, ed25519::SigningKey, get_cose_key_public, get_cose_key_secret,
+    CborSerializable, CoseKey,
+    ed25519::{SigningKey, VerifyingKey},
+    get_cose_key_public, get_cose_key_secret,
 };
 use std::str::FromStr;
 
+#[allow(unused)]
 pub fn parse_ed25519_pubkey(input: &str) -> Result<[u8; 32], BoxError> {
     let data = ByteBufB64::from_str(input)?;
 
@@ -24,9 +27,9 @@ pub fn parse_ed25519_pubkey(input: &str) -> Result<[u8; 32], BoxError> {
     Ok(bytes)
 }
 
-pub fn to_ed25519_pubkey(bytes: &[u8; 32]) -> [u8; 32] {
+pub fn to_ed25519_pubkey(bytes: &[u8; 32]) -> VerifyingKey {
     let sk = SigningKey::from_bytes(bytes);
-    sk.verifying_key().to_bytes()
+    sk.verifying_key()
 }
 
 pub fn parse_ed25519_privkey(input: &str) -> Result<[u8; 32], BoxError> {

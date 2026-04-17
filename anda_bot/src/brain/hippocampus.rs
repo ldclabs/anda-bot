@@ -22,7 +22,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static ANDA_BOT_SPACE_ID: &str = "anda_bot";
 
 pub struct HippocampusConfig {
-    pub ed25519_pubkey: [u8; 32],
+    pub ed25519_pubkey: VerifyingKey,
     pub https_proxy: Option<String>,
     pub managers: BTreeSet<Principal>,
     pub model: ModelConfig,
@@ -62,14 +62,13 @@ impl Hippocampus {
             lock: None,
         };
 
-        let ed25519_pubkeys = vec![VerifyingKey::from_bytes(&cfg.ed25519_pubkey)?];
         let app_state = AppState::new(
             object_store,
             Arc::new(db_config),
             management.clone(),
             http_client.clone(),
             Arc::new(models),
-            ed25519_pubkeys,
+            Arc::new(vec![cfg.ed25519_pubkey]),
             APP_NAME.to_string(),
             APP_VERSION.to_string(),
             0,

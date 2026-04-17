@@ -273,6 +273,23 @@ pub struct RecallInput {
     pub context: Option<InputContext>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct RecallInputRef<'a> {
+    pub query: &'a str,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: &'a Option<InputContext>,
+}
+
+impl<'a> From<&'a RecallInput> for RecallInputRef<'a> {
+    fn from(input: &'a RecallInput) -> Self {
+        Self {
+            query: &input.query,
+            context: &input.context,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct FormationInput {
     pub messages: Vec<Message>,
@@ -282,6 +299,27 @@ pub struct FormationInput {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct FormationInputRef<'a> {
+    pub messages: &'a [Message],
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: &'a Option<InputContext>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: &'a Option<String>,
+}
+
+impl<'a> From<&'a FormationInput> for FormationInputRef<'a> {
+    fn from(input: &'a FormationInput) -> Self {
+        Self {
+            messages: &input.messages,
+            context: &input.context,
+            timestamp: &input.timestamp,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]

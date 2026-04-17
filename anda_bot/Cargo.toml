@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anda_hippocampus = { path = "../anda_hippocampus", version = "0.4" }
+async-trait = { workspace = true }
 anda_core = { workspace = true }
 anda_engine = { workspace = true, features = ["sandbox"] }
 anda_engine_server = { workspace = true }
@@ -24,6 +25,7 @@ coset = { workspace = true }
 dotenv = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
+parking_lot = { workspace = true }
 tokio-util = { workspace = true }
 structured-logger = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

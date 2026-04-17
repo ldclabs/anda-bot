@@ -103,7 +103,7 @@ pub struct AppState {
     db_config: Arc<DBConfig>,
     http_client: reqwest::Client,
     models: Arc<Models>,
-    ed25519_pubkeys: Vec<VerifyingKey>,
+    ed25519_pubkeys: Arc<Vec<VerifyingKey>>,
     management: Arc<dyn Management>,
 
     pub app_name: String,
@@ -119,7 +119,7 @@ impl AppState {
         management: Arc<dyn Management>,
         http_client: reqwest::Client,
         models: Arc<Models>,
-        ed25519_pubkeys: Vec<VerifyingKey>,
+        ed25519_pubkeys: Arc<Vec<VerifyingKey>>,
         app_name: String,
         app_version: String,
         sharding: u32,

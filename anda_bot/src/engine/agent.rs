@@ -1,46 +1,75 @@
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CacheExpiry, CacheFeatures, CompletionRequest,
-    Document, Documents, Message, Resource, StateFeatures, estimate_tokens,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
+    Principal, Resource, StateFeatures, ToolOutput, Usage,
 };
 use anda_engine::{
     ANONYMOUS,
-    context::{AgentCtx, SubAgentManager, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
+    context::{AgentCtx, BaseCtx, SubAgentManager, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
-        shell::ShellTool,
+        note::{NoteTool, load_notes},
+        shell::{ExecArgs, ExecOutput, ShellTool, ShellToolHook},
         skill::SkillManager,
+        todo::TodoTool,
     },
-    memory::{Conversation, ConversationRef, ConversationState, ConversationStatus, Conversations},
+    hook::{AgentHook, DynAgentHook, ToolHook},
+    memory::{Conversation, ConversationRef, ConversationStatus, Conversations},
     rfc3339_datetime, unix_ms,
 };
-use anda_hippocampus::agents::SYSTEM_PROMPT_DYNAMIC_BOUNDARY;
-use std::{collections::BTreeMap, time::Duration};
+use anda_hippocampus::{
+    agents::SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+    types::{FormationInputRef, InputContext},
+};
+use async_trait::async_trait;
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use crate::brain;
 
+const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
+const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
 static SELF_INSTRUCTIONS: &str = "You are $self, an AI agent created for the user. You have a unique identity and memory. Always think step by step. Use tools when necessary. Your goal is to assist the user in any way you can.";
 
 #[derive(Clone)]
 pub struct AndaBot {
     brain: brain::Client,
     conversations: Conversations,
+    tool_dependencies: Vec<String>,
     tools: Vec<String>,
-    full_tools: Vec<String>,
-    max_input_tokens: usize,
+    processing_conversations: Arc<ProcessingConversations>,
 }
+
+type ProcessingConversations = RwLock<HashMap<(Principal, u64), Arc<ConversationTask>>>;
 
 impl AndaBot {
     pub const NAME: &'static str = "anda_bot";
-    pub fn new(
-        brain: brain::Client,
-        conversations: Conversations,
-        max_input_tokens: usize,
-    ) -> Self {
+
+    pub fn new(brain: brain::Client, conversations: Conversations) -> Self {
         Self {
             brain,
             conversations,
+            tool_dependencies: vec![
+                brain::Client::NAME.to_string(),
+                NoteTool::NAME.to_string(),
+                TOOLS_SEARCH_NAME.to_string(),
+                TOOLS_SELECT_NAME.to_string(),
+                ShellTool::NAME.to_string(),
+                ReadFileTool::NAME.to_string(),
+                SearchFileTool::NAME.to_string(),
+                EditFileTool::NAME.to_string(),
+                WriteFileTool::NAME.to_string(),
+                TodoTool::NAME.to_string(),
+            ],
             tools: vec![
                 brain::Client::NAME.to_string(),
+                NoteTool::NAME.to_string(),
                 TOOLS_SEARCH_NAME.to_string(),
                 TOOLS_SELECT_NAME.to_string(),
                 ShellTool::NAME.to_string(),
@@ -48,21 +77,42 @@ impl AndaBot {
                 SearchFileTool::NAME.to_string(),
                 EditFileTool::NAME.to_string(),
                 WriteFileTool::NAME.to_string(),
-            ],
-            full_tools: vec![
-                brain::Client::NAME.to_string(),
-                TOOLS_SEARCH_NAME.to_string(),
-                TOOLS_SELECT_NAME.to_string(),
-                ShellTool::NAME.to_string(),
-                ReadFileTool::NAME.to_string(),
-                SearchFileTool::NAME.to_string(),
-                EditFileTool::NAME.to_string(),
-                WriteFileTool::NAME.to_string(),
+                TodoTool::NAME.to_string(),
                 SubAgentManager::NAME.to_string(),
                 SkillManager::NAME.to_string(),
             ],
-            max_input_tokens,
+            processing_conversations: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    fn get_processing_task(&self, key: &(Principal, u64)) -> Option<Arc<ConversationTask>> {
+        let mut processing = self.processing_conversations.write();
+        processing.retain(|_, task| !task.sender.is_closed());
+        processing.get(key).cloned()
+    }
+
+    fn insert_processing_task(&self, key: (Principal, u64), task: Arc<ConversationTask>) {
+        self.processing_conversations.write().insert(key, task);
+    }
+
+    fn remove_processing_task(&self, key: &(Principal, u64)) {
+        self.processing_conversations.write().remove(key);
+    }
+
+    async fn submit_formation(
+        &self,
+        messages: &[Message],
+        context: &Option<InputContext>,
+        timestamp: &Option<String>,
+    ) -> Result<(), BoxError> {
+        let input = FormationInputRef {
+            messages,
+            context,
+            timestamp,
+        };
+
+        let _ = self.brain.formation(input).await?;
+        Ok(())
     }
 }
 
@@ -80,7 +130,7 @@ impl Agent<AgentCtx> for AndaBot {
 
     /// Returns a list of tool names that this agent depends on
     fn tool_dependencies(&self) -> Vec<String> {
-        self.tools.clone()
+        self.tool_dependencies.clone()
     }
 
     fn supported_resource_tags(&self) -> Vec<String> {
@@ -98,27 +148,95 @@ impl Agent<AgentCtx> for AndaBot {
             return Err("anonymous caller not allowed".into());
         }
 
-        let caller_key = format!("Running:{}", caller);
+        let user = caller.to_string();
         let now_ms = unix_ms();
-        let ok = ctx
-            .cache_set_if_not_exists(
-                &caller_key,
-                (now_ms, Some(CacheExpiry::TTL(Duration::from_secs(300)))),
-            )
-            .await;
-        if !ok {
-            return Err("Only one prompt can run at a time for you".into());
+        let current_conversation_id = ctx.meta().get_extra_as::<u64>("conversation").unwrap_or(0);
+        let mut input = ConversationInput {
+            prompt,
+            resources,
+            usage: Usage::default(),
+        };
+        if current_conversation_id > 0
+            && let Some(task) = self.get_processing_task(&(*caller, current_conversation_id))
+        {
+            match task.sender.send(input).await {
+                Ok(_) => {
+                    return Ok(AgentOutput {
+                        conversation: Some(current_conversation_id),
+                        ..Default::default()
+                    });
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Failed to enqueue prompt for processing conversation {}",
+                        current_conversation_id,
+                    );
+                    self.remove_processing_task(&(*caller, current_conversation_id));
+                    input = err.0;
+                }
+            }
         }
 
-        let _conversation = ctx
-            .meta()
-            .extra
-            .get("conversation")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let ConversationInput {
+            prompt, resources, ..
+        } = input;
+
+        if prompt.trim().is_empty() {
+            return Err("prompt cannot be empty".into());
+        }
+
+        let current_conversation = if current_conversation_id > 0 {
+            self.conversations
+                .get_conversation(current_conversation_id)
+                .await
+                .ok()
+                .filter(|conversation| &conversation.user == caller)
+        } else {
+            None
+        };
+
+        let (ancestors, parent_conversation) = if let Some(conv) = current_conversation {
+            let mut ancestors = conv.ancestors.clone().unwrap_or_default();
+            if ancestors.len() > 10 {
+                ancestors.drain(0..ancestors.len() - 10);
+            }
+
+            ancestors.push(conv._id);
+            (Some(ancestors), Some(conv))
+        } else {
+            let (mut conversations, _cursor) = self
+                .conversations
+                .list_conversations_by_user(caller, None, Some(1))
+                .await?;
+            if let Some(conv) = conversations.pop() {
+                let mut ancestors = conv.ancestors.clone().unwrap_or_default();
+                if ancestors.len() > 10 {
+                    ancestors.drain(0..ancestors.len() - 10);
+                }
+
+                ancestors.push(conv._id);
+                (Some(ancestors), Some(conv))
+            } else {
+                (None, None)
+            }
+        };
+
+        let mut user_conversations: Vec<Document> = Vec::new();
+        if let Some(parent) = parent_conversation {
+            user_conversations.push(Document::from(parent));
+        }
 
         let primer = self.brain.describe_primer().await?;
         let caller_info = self.brain.user_info(caller.to_string()).await;
+        let notes = load_notes(&ctx).await.unwrap_or_default();
+        let instructions = format!(
+            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
+            SELF_INSTRUCTIONS,
+            SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+            primer,
+            serde_json::to_string(&notes.notes).unwrap_or_default(),
+            rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
+        );
 
         let mut msg = Message {
             role: "user".into(),
@@ -127,55 +245,6 @@ impl Agent<AgentCtx> for AndaBot {
             timestamp: Some(now_ms),
             ..Default::default()
         };
-
-        let (mut conversations, _cursor) = self
-            .conversations
-            .list_conversations_by_user(caller, None, Some(7))
-            .await?;
-        for c in &mut conversations {
-            if c.status == ConversationStatus::Failed && c.messages.len() > 1 {
-                c.messages.pop(); // remove the failing message
-            }
-        }
-
-        let instructions = format!(
-            "{}\n\n{}\n\n---\n\n# Identity & Domains:\n{}\n\n# Current Datetime: {}",
-            SELF_INSTRUCTIONS,
-            SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-            primer,
-            rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-        );
-        let max_history_bytes = self.max_input_tokens.saturating_sub(
-            ((estimate_tokens(&instructions) + estimate_tokens(&prompt)) as f64 * 1.2) as usize,
-        ) * 3; // Rough estimate of bytes per token
-        let mut writer: Vec<u8> = Vec::with_capacity(256);
-        let mut history_bytes = if serde_json::to_writer(&mut writer, &conversations).is_ok() {
-            writer.len()
-        } else {
-            0
-        };
-
-        // Keep the most recent conversations; remove the oldest first.
-        while history_bytes > max_history_bytes && !conversations.is_empty() {
-            let oldest_idx = conversations
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, c)| c.created_at)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-
-            writer.clear();
-            if serde_json::to_writer(&mut writer, &conversations[oldest_idx]).is_ok() {
-                history_bytes = history_bytes.saturating_sub(writer.len());
-            } else {
-                break;
-            }
-
-            conversations.remove(oldest_idx);
-        }
-
-        let mut user_conversations: Vec<Document> = Vec::with_capacity(conversations.len());
-        user_conversations.extend(conversations.into_iter().map(Document::from));
 
         if !user_conversations.is_empty() {
             msg.content.push(
@@ -189,18 +258,7 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         if !resources.is_empty() {
-            let mut user_resources: Vec<Document> = Vec::with_capacity(resources.len());
-            for r in resources.iter() {
-                if r.tags.iter().any(|t| t == "text" || t == "md")
-                    && let Some(content) = r
-                        .blob
-                        .as_ref()
-                        .and_then(|b| String::from_utf8(b.0.clone()).ok())
-                {
-                    user_resources.push(Document::from_text(r._id.to_string().as_str(), &content));
-                }
-            }
-
+            let user_resources = text_resource_documents(&resources);
             if !user_resources.is_empty() {
                 msg.content.push(
                     Documents::new("user_resources".to_string(), user_resources)
@@ -219,7 +277,7 @@ impl Agent<AgentCtx> for AndaBot {
                         ("type".to_string(), "Person".into()),
                         (
                             "description".to_string(),
-                            "The latest user's profile (KIP concept node)".into(),
+                            "The latest user's profile in the Cognitive Nexus".into(),
                         ),
                     ]),
                 }],
@@ -229,7 +287,6 @@ impl Agent<AgentCtx> for AndaBot {
         );
 
         let chat_history = vec![msg];
-
         let mut conversation = Conversation {
             user: *caller,
             messages: vec![serde_json::json!(Message {
@@ -238,7 +295,7 @@ impl Agent<AgentCtx> for AndaBot {
                 timestamp: Some(now_ms),
                 ..Default::default()
             })],
-            resources,
+            ancestors,
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
@@ -250,11 +307,28 @@ impl Agent<AgentCtx> for AndaBot {
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
-        ctx.base.set_state(ConversationState::from(&conversation));
+
         let res = AgentOutput {
             conversation: Some(id),
             ..Default::default()
         };
+
+        let task_key = (*caller, id);
+        let (sender, mut rx) = tokio::sync::mpsc::channel::<ConversationInput>(7);
+        let conversation_task = Arc::new(ConversationTask {
+            sender,
+            background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            submit_formation_at: AtomicU64::new(0),
+            active_at: AtomicU64::new(unix_ms()),
+        });
+
+        let agent_hook = DynAgentHook::new(conversation_task.clone());
+        ctx.base.set_state(agent_hook);
+
+        let shell_hook = ShellToolHook::new(conversation_task.clone());
+        ctx.base.set_state(shell_hook);
+
+        self.insert_processing_task(task_key, conversation_task.clone());
 
         let assistant = self.clone();
         let mut runner = ctx.clone().completion_iter(
@@ -262,7 +336,7 @@ impl Agent<AgentCtx> for AndaBot {
                 instructions,
                 prompt,
                 chat_history,
-                tools: ctx.definitions(Some(&self.full_tools)).await,
+                tools: ctx.definitions(Some(&assistant.tools)).await,
                 tool_choice_required: false,
                 max_output_tokens: Some(50000),
                 ..Default::default()
@@ -270,18 +344,99 @@ impl Agent<AgentCtx> for AndaBot {
             vec![],
         );
 
+        let source = ctx
+            .meta()
+            .get_extra_as::<String>("source")
+            .unwrap_or_else(|| format!("conversation:{id}"));
+        let context = Some(InputContext {
+            counterparty: Some(user),
+            agent: Some(AndaBot::NAME.to_string()),
+            source: Some(source),
+            topic: None,
+        });
+
+        runner.set_unbound(true);
         tokio::spawn(async move {
-            let mut rt = async || {
+            let task_result = async {
                 let mut first_round = true;
                 loop {
+                    let mut inputs = Vec::new();
+
+                    while let Ok(input) = rx.try_recv() {
+                        inputs.push(input);
+                    }
+
+                    if !inputs.is_empty() {
+                        conversation_task
+                            .active_at
+                            .store(unix_ms(), Ordering::SeqCst);
+                    }
+
+                    for input in inputs {
+                        runner.accumulate(&input.usage);
+
+                        if input.prompt.trim().is_empty() {
+                            // PING from the user to keep the conversation alive, update the active_at timestamp and continue without sending a new prompt to the runner.
+                            continue;
+                        }
+
+                        // Cancel the conversation if the user sends "/stop" or "/cancel" without any additional prompt.
+                        if input.prompt.trim().eq_ignore_ascii_case("/stop")
+                            || input.prompt.trim().eq_ignore_ascii_case("/cancel")
+                        {
+                            ctx.cancellation_token().cancel();
+                            break;
+                        }
+
+                        let prompt = prompt_with_resources(
+                            input.prompt.trim().to_string(),
+                            &input.resources,
+                        );
+                        if prompt.starts_with("/steer")
+                            || prompt.starts_with("/stop")
+                            || prompt.starts_with("/cancel")
+                        {
+                            runner.steer(prompt.clone());
+                        } else {
+                            runner.follow_up(prompt.clone());
+                        }
+                    }
+
                     match runner.next().await {
-                        Ok(None) => break,
+                        Ok(None) => {
+                            let now_ms = unix_ms();
+                            let idle = now_ms
+                                .saturating_sub(conversation_task.active_at.load(Ordering::SeqCst));
+                            let has_background_tasks =
+                                !conversation_task.background_tasks.read().is_empty();
+
+                            if idle > CONVERSATION_IDLE_MS && !has_background_tasks
+                                || (idle > CONVERSATION_WAIT_BACKGROUND_TASK_MS
+                                    && has_background_tasks)
+                            {
+                                conversation.status = ConversationStatus::Completed;
+                                conversation.updated_at = now_ms;
+                                persist_conversation_state(&assistant.conversations, &conversation)
+                                    .await;
+                                break;
+                            } else {
+                                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                continue;
+                            }
+                        }
+
                         Ok(Some(mut res)) => {
                             let now_ms = unix_ms();
+                            conversation_task.active_at.store(now_ms, Ordering::SeqCst);
+
+                            let is_done = runner.is_done();
+                            if !is_done {
+                                runner.prune_raw_history_if(11, 7);
+                            }
 
                             if first_round {
                                 first_round = false;
-                                conversation.messages.clear(); // clear the first pending message.
+                                conversation.messages.clear();
                                 conversation.append_messages(res.chat_history);
                             } else {
                                 let existing_len = conversation.messages.len();
@@ -289,8 +444,6 @@ impl Agent<AgentCtx> for AndaBot {
                                     res.chat_history.drain(0..existing_len);
                                     conversation.append_messages(res.chat_history);
                                 } else {
-                                    // Unexpected: runner returned shorter full history.
-                                    // Fall back to replacing stored messages.
                                     conversation.messages.clear();
                                     conversation.append_messages(res.chat_history);
                                 }
@@ -298,71 +451,223 @@ impl Agent<AgentCtx> for AndaBot {
 
                             conversation.status = if res.failed_reason.is_some() {
                                 ConversationStatus::Failed
-                            } else if runner.is_done() {
+                            } else if is_done {
                                 ConversationStatus::Completed
                             } else {
                                 ConversationStatus::Working
                             };
                             conversation.usage = res.usage;
                             conversation.updated_at = now_ms;
+                            conversation.failed_reason = res.failed_reason.take();
 
-                            if let Some(failed_reason) = res.failed_reason {
-                                conversation.failed_reason = Some(failed_reason);
-                            }
-
-                            let old = assistant
-                                .conversations
-                                .get_conversation(conversation._id)
-                                .await?;
-                            if old.status == ConversationStatus::Cancelled
-                                && (conversation.status == ConversationStatus::Submitted
-                                    || conversation.status == ConversationStatus::Working)
-                            {
-                                conversation.status = ConversationStatus::Cancelled;
-                            }
-
-                            let _ = assistant
-                                .conversations
-                                .update_conversation(id, conversation.to_changes()?)
+                            persist_conversation_state(&assistant.conversations, &conversation)
                                 .await;
 
-                            ctx.base.set_state(ConversationState::from(&conversation));
+                            let timestamp = rfc3339_datetime(now_ms);
+                            let submit_formation_at = conversation.messages.len();
+                            let messages = conversation_chat_history(
+                                &conversation,
+                                conversation_task.submit_formation_at.load(Ordering::SeqCst)
+                                    as usize,
+                            );
+                            if let Err(err) = assistant
+                                .submit_formation(&messages, &context, &timestamp)
+                                .await
+                            {
+                                log::error!(
+                                    "Failed to send formation for conversation {id}: {:?}",
+                                    err
+                                );
+                            } else {
+                                conversation_task
+                                    .submit_formation_at
+                                    .store(submit_formation_at as u64, Ordering::SeqCst);
+                            }
 
                             if conversation.status == ConversationStatus::Cancelled
                                 || conversation.status == ConversationStatus::Failed
+                                || is_done
                             {
                                 break;
                             }
                         }
+
                         Err(err) => {
                             log::error!("Conversation {id} in CompletionRunner error: {:?}", err);
-                            let now_ms = unix_ms();
                             conversation.failed_reason = Some(err.to_string());
                             conversation.status = ConversationStatus::Failed;
-                            conversation.updated_at = now_ms;
-                            let _ = assistant
-                                .conversations
-                                .update_conversation(id, conversation.to_changes()?)
+                            conversation.updated_at = unix_ms();
+                            persist_conversation_state(&assistant.conversations, &conversation)
                                 .await;
-
-                            ctx.base.set_state(ConversationState::from(&conversation));
                             break;
                         }
                     }
                 }
 
                 Ok::<(), BoxError>(())
-            };
+            }
+            .await;
 
-            ctx.cache_delete(&caller_key).await;
-            match rt().await {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("Error occurred in conversation {id}: {:?}", err);
-                }
+            assistant.remove_processing_task(&task_key);
+            if let Err(err) = task_result {
+                log::error!("Error occurred in conversation {id}: {:?}", err);
             }
         });
 
         Ok(res)
+    }
+}
+
+struct ConversationTask {
+    sender: tokio::sync::mpsc::Sender<ConversationInput>,
+    background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
+    submit_formation_at: AtomicU64,
+    active_at: AtomicU64,
+}
+
+#[async_trait]
+impl AgentHook for ConversationTask {
+    async fn on_background_start(&self, ctx: &AgentCtx, task_id: &str, _req: &CompletionRequest) {
+        self.background_tasks.write().insert(
+            task_id.to_string(),
+            BackgroundTaskInfo {
+                agent_name: ctx.base.agent.clone(),
+                tool_name: None,
+                progress_message: None,
+            },
+        );
+    }
+
+    async fn on_background_end(&self, _ctx: AgentCtx, task_id: String, output: AgentOutput) {
+        {
+            self.background_tasks.write().remove(&task_id);
+        }
+
+        let prompt = if !output.content.is_empty() {
+            format!("Background task {task_id} completed:\n\n{}", output.content)
+        } else if let Some(failed_reason) = output.failed_reason {
+            format!(
+                "Background task {task_id} failed with reason: {:?}",
+                failed_reason
+            )
+        } else {
+            format!("Background task {task_id} completed")
+        };
+        self.sender
+            .send(ConversationInput {
+                prompt,
+                resources: vec![],
+                usage: output.usage,
+            })
+            .await
+            .ok();
+    }
+}
+
+#[async_trait]
+impl ToolHook<ExecArgs, ExecOutput> for ConversationTask {
+    async fn on_background_start(&self, ctx: &BaseCtx, task_id: &str, _args: &ExecArgs) {
+        self.background_tasks.write().insert(
+            task_id.to_string(),
+            BackgroundTaskInfo {
+                agent_name: ctx.agent.clone(),
+                tool_name: Some(ShellTool::NAME.to_string()),
+                progress_message: None,
+            },
+        );
+    }
+
+    async fn on_background_end(
+        &self,
+        _ctx: BaseCtx,
+        task_id: String,
+        output: ToolOutput<ExecOutput>,
+    ) {
+        {
+            self.background_tasks.write().remove(&task_id);
+        }
+
+        self.sender
+            .send(ConversationInput {
+                prompt: format!(
+                    "Background task {task_id} completed:\n\n{}",
+                    serde_json::to_string(&output.output).unwrap_or_default()
+                ),
+                usage: output.usage,
+                resources: output.artifacts,
+            })
+            .await
+            .ok();
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct BackgroundTaskInfo {
+    pub agent_name: String,
+    pub tool_name: Option<String>,
+    pub progress_message: Option<String>,
+}
+
+#[derive(Default, Clone)]
+struct ConversationInput {
+    prompt: String,
+    resources: Vec<Resource>,
+    usage: Usage,
+}
+
+fn text_resource_documents(resources: &[Resource]) -> Vec<Document> {
+    let mut user_resources: Vec<Document> = Vec::with_capacity(resources.len());
+    for resource in resources {
+        if resource.tags.iter().any(|tag| tag == "text" || tag == "md")
+            && let Some(content) = resource
+                .blob
+                .as_ref()
+                .and_then(|blob| String::from_utf8(blob.0.clone()).ok())
+        {
+            user_resources.push(Document::from_text(
+                resource._id.to_string().as_str(),
+                &content,
+            ));
+        }
+    }
+
+    user_resources
+}
+
+fn prompt_with_resources(prompt: String, resources: &[Resource]) -> String {
+    let user_resources = text_resource_documents(resources);
+    if user_resources.is_empty() {
+        prompt
+    } else {
+        format!(
+            "{prompt}\n\n{}",
+            Documents::new("user_resources".to_string(), user_resources)
+        )
+    }
+}
+
+fn conversation_chat_history(conversation: &Conversation, skip: usize) -> Vec<Message> {
+    conversation
+        .messages
+        .iter()
+        .skip(skip)
+        .filter_map(|raw| serde_json::from_value::<Message>(raw.clone()).ok())
+        .collect()
+}
+
+async fn persist_conversation_state(conversations: &Conversations, conversation: &Conversation) {
+    match conversation.to_changes() {
+        Ok(changes) => {
+            let _ = conversations
+                .update_conversation(conversation._id, changes)
+                .await;
+        }
+        Err(err) => {
+            log::error!(
+                "Failed to serialize conversation {} changes: {:?}",
+                conversation._id,
+                err
+            );
+        }
     }
 }

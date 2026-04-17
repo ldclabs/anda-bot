@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub use anda_hippocampus::{
     payload::RpcResponse,
-    types::{FormationInput, RecallInput},
+    types::{FormationInputRef, RecallInput, RecallInputRef},
 };
 
 #[derive(Clone)]
@@ -31,7 +31,10 @@ impl Client {
         self
     }
 
-    pub async fn formation(&self, input: FormationInput) -> Result<AgentOutput, BoxError> {
+    pub async fn formation<'a>(
+        &self,
+        input: FormationInputRef<'a>,
+    ) -> Result<AgentOutput, BoxError> {
         let rt: RpcResponse<AgentOutput> = self.post("/formation", &input).await?;
         if let Some(result) = rt.result {
             Ok(result)
@@ -44,7 +47,7 @@ impl Client {
         }
     }
 
-    pub async fn recall(&self, input: RecallInput) -> Result<AgentOutput, BoxError> {
+    pub async fn recall<'a>(&self, input: RecallInputRef<'a>) -> Result<AgentOutput, BoxError> {
         let rt: RpcResponse<AgentOutput> = self.post("/recall", &input).await?;
         if let Some(result) = rt.result {
             Ok(result)
@@ -205,7 +208,7 @@ impl Tool<BaseCtx> for Client {
         request: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let rt = self.recall(request).await?;
+        let rt = self.recall((&request).into()).await?;
         Ok(ToolOutput::new(rt.content))
     }
 }
