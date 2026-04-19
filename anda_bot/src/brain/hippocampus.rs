@@ -9,11 +9,10 @@ use anda_engine::{
     model::Models,
 };
 use axum::{Router, routing};
-use ic_cose_types::cose::ed25519::VerifyingKey;
 use object_store::ObjectStore;
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
-use crate::util::http_client::build_http_client;
+use crate::util::{http_client::build_http_client, key::Ed25519PubKey};
 use anda_hippocampus::{handler::*, model::build_model, space::AppState, types::ModelConfig};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -22,9 +21,8 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static ANDA_BOT_SPACE_ID: &str = "anda_bot";
 
 pub struct HippocampusConfig {
-    pub ed25519_pubkey: VerifyingKey,
+    pub managers: Vec<Ed25519PubKey>,
     pub https_proxy: Option<String>,
-    pub managers: BTreeSet<Principal>,
     pub model: ModelConfig,
 }
 
@@ -41,7 +39,7 @@ impl Hippocampus {
         let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
         let management = Arc::new(BaseManagement {
             controller: Principal::management_canister(),
-            managers: cfg.managers.clone(),
+            managers: cfg.managers.iter().map(|k| k.id()).collect(),
             visibility: Visibility::Protected,
         });
 
@@ -62,13 +60,18 @@ impl Hippocampus {
             lock: None,
         };
 
+        let admin = cfg
+            .managers
+            .first()
+            .map(|k| k.id())
+            .ok_or("At least one manager is required")?;
         let app_state = AppState::new(
             object_store,
             Arc::new(db_config),
             management.clone(),
             http_client.clone(),
             Arc::new(models),
-            Arc::new(vec![cfg.ed25519_pubkey]),
+            Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
             APP_NAME.to_string(),
             APP_VERSION.to_string(),
             0,
@@ -83,12 +86,7 @@ impl Hippocampus {
                         "Space '{}' not found, creating a new one",
                         ANDA_BOT_SPACE_ID
                     );
-                    let admin = cfg
-                        .managers
-                        .iter()
-                        .next()
-                        .cloned()
-                        .ok_or("At least one manager is required")?;
+
                     let _ = app_state
                         .admin_create_space(
                             admin,
@@ -117,8 +115,6 @@ impl Hippocampus {
 
     pub fn into_router(self) -> Router<()> {
         let app: Router<()> = Router::new()
-            .route("/", routing::get(get_information))
-            .route("/SKILL.md", routing::get(get_skill))
             .route("/v1/{space_id}/info", routing::get(get_info))
             .route("/v1/{space_id}/status", routing::get(get_info))
             .route(

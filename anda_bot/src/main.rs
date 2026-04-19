@@ -18,9 +18,9 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Path to workspace directory for storing data (defaults to '~/.anda')
-    #[arg(long, short)]
-    workspace: Option<String>,
+    /// Path to a directory for storing state (defaults to '~/.anda')
+    #[arg(long)]
+    home: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -37,37 +37,44 @@ pub enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
-    let workspace = if let Some(ws) = cli.workspace {
-        PathBuf::from(ws)
+    let home = if let Some(home) = cli.home {
+        PathBuf::from(home)
     } else {
-        default_workspace()
+        default_home()
     };
 
-    let env_path = workspace.join(".env");
+    let env_path = home.join(".env");
     dotenv::from_path(env_path).ok();
     // Load configuration from environment variables again.
     let cfg = Cli::parse();
 
-    tokio::fs::create_dir_all(&workspace).await?;
+    tokio::fs::create_dir_all(&home).await?;
     match cfg.command {
         Some(Commands::Daemon(args)) => {
-            let daemon = daemon::Daemon::new(workspace, args);
+            let daemon = daemon::Daemon::new(home, args);
             daemon.ensure_directories().await?;
 
             let ed25519_secret =
                 load_or_init_ed25519_secret(&daemon.keys_dir_path().join("anda_bot.key")).await?;
-            daemon.serve(ed25519_secret).await?
+            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
+            let user_secret =
+                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+            let user_key = util::key::Ed25519Key::new(user_secret);
+            daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         None => {
-            let daemon = daemon::Daemon::new(workspace, daemon::DaemonArgs::from_env());
-            let cli = cli::Cli::new(daemon);
+            let daemon = daemon::Daemon::new(home, daemon::DaemonArgs::from_env());
+            let ed25519_secret =
+                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
+            let cli = cli::Cli::new(ed25519_key, daemon);
             cli.run().await?
         }
     }
     Ok(())
 }
 
-fn default_workspace() -> PathBuf {
+fn default_home() -> PathBuf {
     std::env::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".anda")
@@ -76,7 +83,7 @@ fn default_workspace() -> PathBuf {
 async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], BoxError> {
     match tokio::fs::read_to_string(key_path).await {
         Ok(content) => {
-            let secret = util::cose::parse_ed25519_privkey(content.trim())?;
+            let secret = util::key::parse_ed25519_privkey(content.trim())?;
             Ok(secret)
         }
         Err(err) => {
@@ -88,8 +95,8 @@ async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], Box
                 "ED25519 private key not found at {:?}, generating a new one",
                 key_path
             );
-            let secret = util::cose::random_ed25519_privkey();
-            let encoded = util::cose::encode_ed25519_privkey(&secret)?;
+            let secret = util::key::random_ed25519_privkey();
+            let encoded = util::key::encode_ed25519_privkey(&secret)?;
             tokio::fs::write(key_path, encoded).await?;
             Ok(secret)
         }

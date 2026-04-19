@@ -23,6 +23,7 @@ axum = { workspace = true }
 clap = { workspace = true }
 coset = { workspace = true }
 dotenv = { workspace = true }
+ic-ed25519 = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
 parking_lot = { workspace = true }

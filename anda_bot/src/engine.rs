@@ -12,11 +12,12 @@ use anda_engine::{
 };
 use anda_engine_server::handler::{AppState, anda_engine};
 use anda_hippocampus::{model::build_model, types::ModelConfig};
-use anda_web3_client::client::{Client as Web3Client, identity_from_secret};
-use axum::{Router, routing};
+use anda_web3_client::client::Client as Web3Client;
+use axum::{Json, Router, response::IntoResponse, routing};
+use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::Arc,
 };
@@ -24,15 +25,22 @@ use std::{
 mod agent;
 
 use crate::brain;
-use crate::util::{cose::to_ed25519_pubkey, http_client::build_http_client};
+use crate::util::{
+    http_client::build_http_client,
+    key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
+};
 use agent::*;
+
+pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Engines {
     state: AppState,
 }
 
 pub struct EngineConfig {
-    pub ed25519_secret: [u8; 32],
+    pub id_key: Ed25519Key,
+    pub managers: Vec<Ed25519PubKey>,
     pub model: ModelConfig,
     pub brain_base_url: String,
     pub work_dir: PathBuf,
@@ -43,18 +51,16 @@ pub struct EngineConfig {
 
 impl Engines {
     pub async fn new(cfg: EngineConfig, db: Arc<AndaDB>) -> Result<Self, BoxError> {
-        let ed25519_pubkey = to_ed25519_pubkey(&cfg.ed25519_secret);
-        let identity = identity_from_secret(cfg.ed25519_secret);
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
-            hasher.update(cfg.ed25519_secret);
+            hasher.update(cfg.id_key.as_bytes());
             hasher.finalize().into()
         };
         let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
 
         // Initialize Web3 client for ICP network interaction
         let web3 = Web3Client::builder()
-            .with_identity(Arc::new(identity))
+            .with_identity(cfg.id_key.identity())
             .with_root_secret(root_secret)
             .with_http_client(http_client.clone())
             .build()
@@ -62,7 +68,7 @@ impl Engines {
         let web3 = Arc::new(web3);
         let my_principal = web3.get_principal();
 
-        let managers = BTreeSet::new();
+        let managers = cfg.managers.iter().map(|k| k.id()).collect();
         let management = Arc::new(BaseManagement {
             controller: my_principal,
             managers,
@@ -74,9 +80,17 @@ impl Engines {
 
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();
+
+        let brain_token = cfg.id_key.sign_cwt(
+            ClaimsSetBuilder::new()
+                .audience("*".to_string())
+                .claim(iana::CwtClaimName::Scope, "*".into())
+                .build(),
+        )?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
-        let brain_client =
-            brain::Client::new(cfg.brain_base_url, None).with_http_client(brain_http_client);
+        let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
+            .with_http_client(brain_http_client);
+
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let bot = AndaBot::new(brain_client.clone(), conversations);
 
@@ -120,15 +134,25 @@ impl Engines {
             default_engine,
             start_time_ms: unix_ms(),
             extra_info: Arc::new(BTreeMap::new()),
-            ed25519_pubkeys: Arc::new(vec![ed25519_pubkey]),
+            ed25519_pubkeys: Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
         };
         Ok(Self { state })
     }
 
     pub fn into_router(self) -> Router<()> {
         let app: Router<()> = Router::new()
+            .route("/", routing::get(get_version))
             .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state);
         app
     }
+}
+
+pub async fn get_version() -> impl IntoResponse {
+    let info = json!({
+        "name": APP_NAME,
+        "version": APP_VERSION,
+
+    });
+    Json(info)
 }

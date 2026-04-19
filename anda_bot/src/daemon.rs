@@ -2,13 +2,9 @@ use anda_core::BoxError;
 use anda_engine_server::shutdown_signal;
 use anda_hippocampus::types::ModelConfig;
 use anda_object_store::MetaStoreBuilder;
-use anda_web3_client::client::identity_from_secret;
 use clap::Args;
 use object_store::{ObjectStore, local::LocalFileSystem};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::{
-    collections::BTreeSet,
     fs::OpenOptions as StdOpenOptions,
     io,
     path::{Path, PathBuf},
@@ -24,6 +20,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use crate::{brain, cron, engine, gateway, util, util::env::*};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
@@ -38,7 +37,7 @@ const ENV_MODEL_API_BASE: &str = "MODEL_API_BASE";
 const ENV_HTTPS_PROXY: &str = "HTTPS_PROXY";
 
 pub struct Daemon {
-    pub workspace: PathBuf,
+    pub home: PathBuf,
     pub cfg: DaemonArgs,
 }
 
@@ -150,8 +149,8 @@ impl DaemonArgs {
 }
 
 impl Daemon {
-    pub fn new(workspace: PathBuf, cfg: DaemonArgs) -> Self {
-        Daemon { workspace, cfg }
+    pub fn new(home: PathBuf, cfg: DaemonArgs) -> Self {
+        Daemon { home, cfg }
     }
 
     pub fn base_url(&self) -> String {
@@ -159,31 +158,31 @@ impl Daemon {
     }
 
     pub fn env_file_path(&self) -> PathBuf {
-        self.workspace.join(".env")
+        self.home.join(".env")
     }
 
     pub fn pid_file_path(&self) -> PathBuf {
-        self.workspace.join(DAEMON_PID_FILE)
+        self.home.join(DAEMON_PID_FILE)
     }
 
     pub fn keys_dir_path(&self) -> PathBuf {
-        self.workspace.join("keys")
+        self.home.join("keys")
     }
 
     pub fn db_dir_path(&self) -> PathBuf {
-        self.workspace.join("db")
+        self.home.join("db")
     }
 
     pub fn skills_dir_path(&self) -> PathBuf {
-        self.workspace.join("skills")
+        self.home.join("skills")
     }
 
     pub fn sandbox_dir_path(&self) -> PathBuf {
-        self.workspace.join("sandbox")
+        self.home.join("sandbox")
     }
 
     pub fn logs_dir_path(&self) -> PathBuf {
-        self.workspace.join("logs")
+        self.home.join("logs")
     }
 
     pub fn log_file_path(&self) -> PathBuf {
@@ -229,8 +228,8 @@ impl Daemon {
 
         let mut command = Command::new(exe);
         command
-            .arg("--workspace")
-            .arg(&self.workspace)
+            .arg("--home")
+            .arg(&self.home)
             .arg("daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
@@ -276,7 +275,11 @@ impl Daemon {
         .into())
     }
 
-    pub async fn serve(self, ed25519_secret: [u8; 32]) -> Result<(), BoxError> {
+    pub async fn serve(
+        self,
+        id_key: util::key::Ed25519Key,
+        user_pubkey: util::key::Ed25519PubKey,
+    ) -> Result<(), BoxError> {
         // Initialize structured logging with JSON format
         Builder::with_level(&get_env_level().to_string())
             .with_target_writer("*", new_writer(tokio::io::stdout()))
@@ -287,17 +290,14 @@ impl Daemon {
         // Create global cancellation token for graceful shutdown
         let global_cancel_token = CancellationToken::new();
 
-        let ed25519_pubkey = util::cose::to_ed25519_pubkey(&ed25519_secret);
-        let id = identity_from_secret(ed25519_secret).sender().unwrap();
-
         let brain_cfg = brain::HippocampusConfig {
-            ed25519_pubkey,
+            managers: vec![id_key.pubkey(), user_pubkey.clone()],
             model: self.cfg.model_config(),
-            managers: BTreeSet::from_iter([id]),
             https_proxy: self.cfg.https_proxy.clone(),
         };
         let engine_cfg = engine::EngineConfig {
-            ed25519_secret,
+            id_key,
+            managers: vec![user_pubkey],
             model: self.cfg.model_config(),
             brain_base_url: self.cfg.brain_base_url(),
             work_dir: std::env::current_dir()?,

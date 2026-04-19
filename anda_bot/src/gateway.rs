@@ -9,8 +9,8 @@ use tower_http::compression::CompressionLayer;
 
 use crate::{brain, engine};
 
-const APP_NAME: &str = env!("CARGO_PKG_NAME");
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+mod client;
+pub use client::*;
 
 pub async fn serve(
     cancel_token: CancellationToken,
@@ -21,10 +21,6 @@ pub async fn serve(
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
     let hippocampus = brain::Hippocampus::new(object_store.clone(), brain_cfg).await?;
     let hippocampus_state = hippocampus.state.clone();
-    let engine_cfg = engine::EngineConfig {
-        brain_base_url: format!("http://{}/v1/{}", addr, brain::ANDA_BOT_SPACE_ID),
-        ..engine_cfg
-    };
     let engines = engine::Engines::new(engine_cfg, hippocampus.db.clone()).await?;
 
     let addr: SocketAddr = addr.parse()?;
@@ -39,8 +35,8 @@ pub async fn serve(
     log::warn!(
         name = "gateway";
         "start service {}@{} on {:?}.",
-        APP_NAME,
-        APP_VERSION,
+        engine::APP_NAME,
+        engine::APP_VERSION,
         addr,
     );
 

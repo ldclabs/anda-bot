@@ -1,0 +1,124 @@
+use anda_core::{
+    AgentInput, AgentOutput, BoxError, ByteBufB64, Json, ToolInput, ToolOutput,
+    http::{RPCRequestRef, RPCResponse},
+};
+use anda_engine::model::reqwest;
+use anda_kip::{Request as KipRequest, Response as KipResponse};
+
+#[derive(Clone)]
+pub struct Client {
+    http: reqwest::Client,
+    engine_url: String,
+    base_url: String,
+    auth_token: String,
+}
+
+impl Client {
+    pub fn new(base_url: String, auth_token: String) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            engine_url: format!("{}/engine/default", base_url),
+            base_url,
+            auth_token,
+        }
+    }
+
+    pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
+        self.http = http;
+        self
+    }
+
+    pub async fn status(&self) -> Result<Json, BoxError> {
+        self.get_json("").await
+    }
+
+    pub async fn execute_kip_readonly(&self, req: &KipRequest) -> Result<KipResponse, BoxError> {
+        self.post_json("/v1/anda_bot/execute_kip_readonly", &req)
+            .await
+    }
+
+    pub async fn agent_run(&self, input: &AgentInput) -> Result<AgentOutput, BoxError> {
+        let params = serde_json::to_vec(&(input,))?;
+        let rt: RPCResponse = self
+            .post_json(
+                &self.engine_url,
+                &RPCRequestRef {
+                    method: "agent_run",
+                    params: &ByteBufB64(params),
+                },
+            )
+            .await?;
+        let rt: AgentOutput = serde_json::from_slice(&(rt?))?;
+        Ok(rt)
+    }
+
+    pub async fn tool_call<I, O>(&self, input: &ToolInput<I>) -> Result<ToolOutput<O>, BoxError>
+    where
+        I: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
+        let params = serde_json::to_vec(&(input,))?;
+        let rt: RPCResponse = self
+            .post_json(
+                &self.engine_url,
+                &RPCRequestRef {
+                    method: "tool_call",
+                    params: &ByteBufB64(params),
+                },
+            )
+            .await?;
+        let rt: ToolOutput<O> = serde_json::from_slice(&(rt?))?;
+        Ok(rt)
+    }
+
+    async fn post_json<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>
+    where
+        I: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
+        let req = self.request(reqwest::Method::POST, path);
+        let response = req.json(&input).send().await?;
+        self.decode_response(response).await
+    }
+
+    async fn get_json<O>(&self, path: &str) -> Result<O, BoxError>
+    where
+        O: serde::de::DeserializeOwned,
+    {
+        let req = self.request(reqwest::Method::GET, path);
+        let response = req.send().await?;
+        self.decode_response(response).await
+    }
+
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let url = format!("{}{}", self.base_url, path);
+        self.http.request(method, url).bearer_auth(&self.auth_token)
+    }
+
+    async fn decode_response<O>(&self, response: reqwest::Response) -> Result<O, BoxError>
+    where
+        O: serde::de::DeserializeOwned,
+    {
+        if response.status().is_success() {
+            let text = response.text().await?;
+
+            match serde_json::from_str::<O>(&text) {
+                Ok(res) => Ok(res),
+                Err(err) => Err(format!(
+                    "[GatewayClient] Invalid response, error: {}, body: {}",
+                    err, text
+                )
+                .into()),
+            }
+        } else {
+            let status = response.status();
+            let msg = response.text().await?;
+            log::error!("[GatewayClient] request failed: {status}, body: {msg}");
+            Err(format!(
+                "[GatewayClient] request failed, status: {}, body: {}",
+                status, msg
+            )
+            .into())
+        }
+    }
+}

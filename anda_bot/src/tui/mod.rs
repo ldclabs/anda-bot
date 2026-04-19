@@ -2,7 +2,6 @@ mod theme;
 mod widgets;
 
 use anda_core::BoxError;
-use anda_engine::model::reqwest;
 use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -22,7 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::daemon::{self, BackgroundDaemon, Daemon, DaemonArgs};
+use crate::{
+    daemon::{self, BackgroundDaemon, Daemon, DaemonArgs},
+    gateway,
+};
 
 use self::widgets::{Banner, InfoPanel};
 
@@ -35,11 +37,11 @@ const ACTION_QUIT: usize = FIELD_COUNT + 4;
 const TOTAL_ITEMS: usize = FIELD_COUNT + 5;
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
-pub async fn run(daemon: Daemon, http: reqwest::Client) -> Result<(), BoxError> {
+pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
     #[cfg(unix)]
     reopen_stdin_from_tty()?;
 
-    let mut app = App::new(daemon.workspace, daemon.cfg, http);
+    let mut app = App::new(daemon.home, daemon.cfg, client);
     app.bootstrap().await;
 
     enable_raw_mode()?;
@@ -59,8 +61,8 @@ pub async fn run(daemon: Daemon, http: reqwest::Client) -> Result<(), BoxError> 
 }
 
 struct App {
-    workspace: PathBuf,
-    http: reqwest::Client,
+    home: PathBuf,
+    client: gateway::Client,
     runtime_cfg: DaemonArgs,
     persisted_cfg: DaemonArgs,
     draft_cfg: DaemonArgs,
@@ -73,11 +75,11 @@ struct App {
 }
 
 impl App {
-    fn new(workspace: PathBuf, cfg: DaemonArgs, http: reqwest::Client) -> Self {
+    fn new(home: PathBuf, cfg: DaemonArgs, client: gateway::Client) -> Self {
         let base_url = cfg.base_url();
         Self {
-            workspace,
-            http,
+            home,
+            client,
             runtime_cfg: cfg.clone(),
             persisted_cfg: cfg.clone(),
             draft_cfg: cfg,
@@ -91,7 +93,7 @@ impl App {
     }
 
     async fn bootstrap(&mut self) {
-        match ensure_daemon_running(&self.http, &self.runtime_daemon()).await {
+        match ensure_daemon_running(&self.client, &self.runtime_daemon()).await {
             Ok(LaunchState::AlreadyRunning) => {
                 self.notice = format!(
                     "Connected to anda daemon at {}.",
@@ -116,11 +118,11 @@ impl App {
     }
 
     fn runtime_daemon(&self) -> Daemon {
-        Daemon::new(self.workspace.clone(), self.runtime_cfg.clone())
+        Daemon::new(self.home.clone(), self.runtime_cfg.clone())
     }
 
     fn draft_daemon(&self) -> Daemon {
-        Daemon::new(self.workspace.clone(), self.draft_cfg.clone())
+        Daemon::new(self.home.clone(), self.draft_cfg.clone())
     }
 
     fn is_dirty(&self) -> bool {
@@ -331,8 +333,8 @@ impl App {
             self.pid = None;
         }
 
-        match probe_daemon_status(&self.http, &daemon.base_url()).await {
-            Ok(()) => {
+        match self.client.status().await {
+            Ok(_) => {
                 self.daemon_running = true;
                 self.status_message = format!("Daemon is serving {}.", daemon.base_url());
             }
@@ -382,9 +384,7 @@ impl App {
             .await?;
 
         let child = daemon.spawn_background()?;
-        if let Err(err) =
-            wait_for_daemon_ready(&self.http, &daemon.base_url(), Duration::from_secs(20)).await
-        {
+        if let Err(err) = wait_for_daemon_ready(&self.client, Duration::from_secs(20)).await {
             self.notice = format!(
                 "Daemon did not become ready. Inspect {}.",
                 child.log_path.display()
@@ -769,8 +769,8 @@ fn render_selection_panel(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(app.selected_help()),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Workspace: ", theme::dim_style()),
-            Span::styled(app.workspace.display().to_string(), theme::body_style()),
+            Span::styled("Home: ", theme::dim_style()),
+            Span::styled(app.home.display().to_string(), theme::body_style()),
         ]),
     ];
     frame.render_widget(
@@ -905,25 +905,24 @@ fn mask_secret(value: &str) -> String {
 }
 
 async fn ensure_daemon_running(
-    http: &reqwest::Client,
+    client: &gateway::Client,
     daemon: &Daemon,
 ) -> Result<LaunchState, BoxError> {
-    if probe_daemon_status(http, &daemon.base_url()).await.is_ok() {
+    if client.status().await.is_ok() {
         return Ok(LaunchState::AlreadyRunning);
     }
 
     let pid_path = daemon.pid_file_path();
     if let Some(pid) = daemon.read_pid_file().await? {
         if daemon::process_exists(pid) {
-            wait_for_daemon_ready(http, &daemon.base_url(), Duration::from_secs(10)).await?;
+            wait_for_daemon_ready(client, Duration::from_secs(10)).await?;
             return Ok(LaunchState::AlreadyRunning);
         }
         let _ = tokio::fs::remove_file(&pid_path).await;
     }
 
     let child = daemon.spawn_background()?;
-    if let Err(err) = wait_for_daemon_ready(http, &daemon.base_url(), Duration::from_secs(20)).await
-    {
+    if let Err(err) = wait_for_daemon_ready(client, Duration::from_secs(20)).await {
         return Err(format!(
             "{}; inspect {} for daemon logs",
             err,
@@ -936,14 +935,13 @@ async fn ensure_daemon_running(
 }
 
 async fn wait_for_daemon_ready(
-    http: &reqwest::Client,
-    base_url: &str,
+    client: &gateway::Client,
     timeout: Duration,
 ) -> Result<(), BoxError> {
     let deadline = Instant::now() + timeout;
     let detail = loop {
-        match probe_daemon_status(http, base_url).await {
-            Ok(()) => return Ok(()),
+        match client.status().await {
+            Ok(_) => return Ok(()),
             Err(err) if Instant::now() >= deadline => break err.to_string(),
             Err(_) => {}
         }
@@ -952,21 +950,10 @@ async fn wait_for_daemon_ready(
     };
 
     Err(format!(
-        "anda daemon did not become ready on {base_url} within {:?}: {detail}",
+        "anda daemon did not become ready within {:?}: {detail}",
         timeout
     )
     .into())
-}
-
-async fn probe_daemon_status(http: &reqwest::Client, base_url: &str) -> Result<(), BoxError> {
-    let response = http.get(base_url).send().await?;
-    match response.status() {
-        http::StatusCode::OK => Ok(()),
-        status => {
-            let body = response.text().await.unwrap_or_default();
-            Err(format!("status probe failed, status: {status}, body: {body}").into())
-        }
-    }
 }
 
 #[cfg(unix)]
