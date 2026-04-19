@@ -9,7 +9,9 @@ use tower_http::compression::CompressionLayer;
 
 use crate::{brain, engine};
 
+mod chat;
 mod client;
+pub use chat::*;
 pub use client::*;
 
 pub async fn serve(

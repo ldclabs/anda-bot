@@ -4,11 +4,13 @@ use anda_core::{
 };
 use anda_engine::model::reqwest;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
+use std::time::{Duration, Instant};
+
+use crate::daemon::{BackgroundDaemon, Daemon, process_exists};
 
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    engine_url: String,
     base_url: String,
     auth_token: String,
 }
@@ -17,7 +19,6 @@ impl Client {
     pub fn new(base_url: String, auth_token: String) -> Self {
         Self {
             http: reqwest::Client::new(),
-            engine_url: format!("{}/engine/default", base_url),
             base_url,
             auth_token,
         }
@@ -41,7 +42,7 @@ impl Client {
         let params = serde_json::to_vec(&(input,))?;
         let rt: RPCResponse = self
             .post_json(
-                &self.engine_url,
+                "/engine/default",
                 &RPCRequestRef {
                     method: "agent_run",
                     params: &ByteBufB64(params),
@@ -60,7 +61,7 @@ impl Client {
         let params = serde_json::to_vec(&(input,))?;
         let rt: RPCResponse = self
             .post_json(
-                &self.engine_url,
+                "/engine/default",
                 &RPCRequestRef {
                     method: "tool_call",
                     params: &ByteBufB64(params),
@@ -69,6 +70,41 @@ impl Client {
             .await?;
         let rt: ToolOutput<O> = serde_json::from_slice(&(rt?))?;
         Ok(rt)
+    }
+
+    pub async fn ensure_daemon_running(&self, daemon: &Daemon) -> Result<LaunchState, BoxError> {
+        if self.status().await.is_ok() {
+            return Ok(LaunchState::AlreadyRunning);
+        }
+
+        let pid_path = daemon.pid_file_path();
+        if let Some(pid) = daemon.read_pid_file().await? {
+            if process_exists(pid) {
+                self.wait_for_daemon_ready(Duration::from_secs(10)).await?;
+                return Ok(LaunchState::AlreadyRunning);
+            }
+            let _ = tokio::fs::remove_file(&pid_path).await;
+        }
+
+        let child = daemon.spawn_background()?;
+        if let Err(err) = self.wait_for_daemon_ready(Duration::from_secs(20)).await {
+            return Err(format!("{err}; logs: {}", child.log_path.display()).into());
+        }
+
+        Ok(LaunchState::Started(child))
+    }
+
+    pub async fn wait_for_daemon_ready(&self, timeout: Duration) -> Result<(), BoxError> {
+        let deadline = Instant::now() + timeout;
+        let detail = loop {
+            match self.status().await {
+                Ok(_) => return Ok(()),
+                Err(err) if Instant::now() >= deadline => break err.to_string(),
+                Err(_) => {}
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        Err(format!("Daemon not ready within {timeout:?}: {detail}").into())
     }
 
     async fn post_json<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>
@@ -121,4 +157,9 @@ impl Client {
             .into())
         }
     }
+}
+
+pub enum LaunchState {
+    AlreadyRunning,
+    Started(BackgroundDaemon),
 }

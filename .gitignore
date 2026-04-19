@@ -22,6 +22,7 @@ target
 #.idea/
 
 .claude/
+.vscode/
 node_modules/
 dist/
 anda-brain

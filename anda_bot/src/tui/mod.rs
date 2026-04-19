@@ -1,7 +1,5 @@
-mod theme;
-mod widgets;
-
 use anda_core::BoxError;
+use anda_engine::memory::ConversationStatus;
 use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -11,31 +9,38 @@ use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 use std::{
     io::{self, IsTerminal},
     path::PathBuf,
     time::{Duration, Instant},
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    daemon::{self, BackgroundDaemon, Daemon, DaemonArgs},
+    daemon::{Daemon, DaemonArgs, process_exists},
     gateway,
 };
 
-use self::widgets::{Banner, InfoPanel};
+mod theme;
+mod widgets;
 
+use self::widgets::InfoPanel;
+
+// ── Config form constants ──────────────────────────────────────────────
 const FIELD_COUNT: usize = 7;
 const ACTION_SAVE: usize = FIELD_COUNT;
 const ACTION_APPLY: usize = FIELD_COUNT + 1;
 const ACTION_STOP: usize = FIELD_COUNT + 2;
 const ACTION_RELOAD: usize = FIELD_COUNT + 3;
-const ACTION_QUIT: usize = FIELD_COUNT + 4;
-const TOTAL_ITEMS: usize = FIELD_COUNT + 5;
-const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+const ACTION_CHAT: usize = FIELD_COUNT + 4;
+const ACTION_QUIT: usize = FIELD_COUNT + 5;
+const TOTAL_CONFIG_ITEMS: usize = FIELD_COUNT + 6;
+
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
 pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
     #[cfg(unix)]
@@ -60,60 +65,83 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     run_result
 }
 
+// ── View mode ──────────────────────────────────────────────────────────
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Config,
+    Chat,
+}
+
+// ── Application state ──────────────────────────────────────────────────
 struct App {
+    // common
     home: PathBuf,
     client: gateway::Client,
+    mode: Mode,
+    should_quit: bool,
+    notice: String,
+    pid: Option<u32>,
+    daemon_running: bool,
+
+    // ── config mode ────────────────────────────────────────────────────
     runtime_cfg: DaemonArgs,
     persisted_cfg: DaemonArgs,
     draft_cfg: DaemonArgs,
     selected: usize,
-    should_quit: bool,
-    pid: Option<u32>,
-    daemon_running: bool,
-    status_message: String,
-    notice: String,
+
+    // ── chat mode ──────────────────────────────────────────────────────
+    chat: gateway::ChatSession,
+    input_buf: String,
+    input_cursor: usize,
+    scroll_offset: usize,
 }
 
 impl App {
     fn new(home: PathBuf, cfg: DaemonArgs, client: gateway::Client) -> Self {
-        let base_url = cfg.base_url();
         Self {
             home,
-            client,
+            client: client.clone(),
+            mode: Mode::Config,
+            should_quit: false,
+            notice: String::new(),
+            pid: None,
+            daemon_running: false,
+
             runtime_cfg: cfg.clone(),
             persisted_cfg: cfg.clone(),
             draft_cfg: cfg,
             selected: 0,
-            should_quit: false,
-            pid: None,
-            daemon_running: false,
-            status_message: "Waiting for status refresh...".to_string(),
-            notice: format!("Opening daemon control for {base_url}"),
+
+            input_buf: String::new(),
+            input_cursor: 0,
+            scroll_offset: 0,
+            chat: gateway::ChatSession::new(client.clone()),
         }
     }
 
+    // ── bootstrap ──────────────────────────────────────────────────────
     async fn bootstrap(&mut self) {
-        match ensure_daemon_running(&self.client, &self.runtime_daemon()).await {
-            Ok(LaunchState::AlreadyRunning) => {
-                self.notice = format!(
-                    "Connected to anda daemon at {}.",
-                    self.runtime_cfg.base_url()
-                )
+        match self
+            .client
+            .ensure_daemon_running(&self.runtime_daemon())
+            .await
+        {
+            Ok(gateway::LaunchState::AlreadyRunning) => {
+                self.notice = format!("Connected to daemon at {}.", self.runtime_cfg.base_url());
             }
-            Ok(LaunchState::Started(child)) => {
+            Ok(gateway::LaunchState::Started(child)) => {
                 self.notice = format!(
-                    "Started anda daemon in the background (pid {}). Logs: {}",
+                    "Started daemon (pid {}). Logs: {}",
                     child.pid,
                     child.log_path.display()
-                )
+                );
             }
             Err(err) => {
                 self.notice = format!("Auto-start failed: {err}");
             }
         }
-
         if let Err(err) = self.refresh_status().await {
-            self.status_message = format!("Status refresh failed: {err}");
+            self.notice = format!("Status refresh failed: {err}");
         }
     }
 
@@ -129,64 +157,17 @@ impl App {
         self.draft_cfg != self.persisted_cfg
     }
 
+    // ── Config navigation helpers ──────────────────────────────────────
     fn next_item(&mut self) {
-        self.selected = (self.selected + 1) % TOTAL_ITEMS;
+        self.selected = (self.selected + 1) % TOTAL_CONFIG_ITEMS;
     }
 
     fn prev_item(&mut self) {
         self.selected = if self.selected == 0 {
-            TOTAL_ITEMS - 1
+            TOTAL_CONFIG_ITEMS - 1
         } else {
             self.selected - 1
         };
-    }
-
-    fn is_action_selected(&self) -> bool {
-        self.selected >= ACTION_SAVE
-    }
-
-    fn selected_help(&self) -> &'static str {
-        match self.selected {
-            0 => "Gateway listen address for the local daemon, for example 127.0.0.1:8042.",
-            1 => "Enable the sandbox workspace for tool execution. Press Space or Enter to toggle.",
-            2 => "Model family used by anda_bot, such as gemini, anthropic, openai, or deepseek.",
-            3 => "Concrete model identifier sent to the provider.",
-            4 => "Provider API key. The value is masked in the TUI.",
-            5 => "Optional base URL for provider or proxy endpoints.",
-            6 => "Optional HTTPS proxy URL. Clear this field to remove the proxy.",
-            ACTION_SAVE => {
-                "Write the draft configuration to workspace/.env without restarting the daemon."
-            }
-            ACTION_APPLY => {
-                "Persist the draft config, then start or restart the daemon with the updated DaemonArgs."
-            }
-            ACTION_STOP => {
-                "Stop the running background daemon and clear stale pid state if needed."
-            }
-            ACTION_RELOAD => {
-                "Discard local edits and reload the last saved draft from this TUI session."
-            }
-            ACTION_QUIT => "Leave the TUI. The daemon keeps running unless you stop it first.",
-            _ => "",
-        }
-    }
-
-    fn selection_title(&self) -> String {
-        match self.selected {
-            0 => "addr".to_string(),
-            1 => "sandbox".to_string(),
-            2 => "model_family".to_string(),
-            3 => "model_name".to_string(),
-            4 => "model_api_key".to_string(),
-            5 => "model_api_base".to_string(),
-            6 => "https_proxy".to_string(),
-            ACTION_SAVE => "save".to_string(),
-            ACTION_APPLY => "apply".to_string(),
-            ACTION_STOP => "stop".to_string(),
-            ACTION_RELOAD => "reload".to_string(),
-            ACTION_QUIT => "quit".to_string(),
-            _ => String::new(),
-        }
     }
 
     fn field_label(index: usize) -> &'static str {
@@ -233,25 +214,21 @@ impl App {
                 .draft_cfg
                 .https_proxy
                 .as_deref()
-                .is_none_or(|value| value.is_empty()),
+                .is_none_or(|v| v.is_empty()),
             _ => true,
         }
     }
 
-    fn action_label(&self, index: usize) -> String {
+    fn action_label(&self, index: usize) -> &'static str {
         match index {
-            ACTION_SAVE => "[ Save draft ]".to_string(),
-            ACTION_APPLY => {
-                if self.daemon_running || self.pid.is_some() {
-                    "[ Apply + restart ]".to_string()
-                } else {
-                    "[ Apply + start ]".to_string()
-                }
-            }
-            ACTION_STOP => "[ Stop daemon ]".to_string(),
-            ACTION_RELOAD => "[ Reload saved ]".to_string(),
-            ACTION_QUIT => "[ Quit ]".to_string(),
-            _ => String::new(),
+            ACTION_SAVE => "[ Save ]",
+            ACTION_APPLY if self.daemon_running || self.pid.is_some() => "[ Apply+Restart ]",
+            ACTION_APPLY => "[ Apply+Start ]",
+            ACTION_STOP => "[ Stop ]",
+            ACTION_RELOAD => "[ Reload ]",
+            ACTION_CHAT => "[ Chat ]",
+            ACTION_QUIT => "[ Quit ]",
+            _ => "",
         }
     }
 
@@ -265,7 +242,6 @@ impl App {
         if ch.is_control() {
             return;
         }
-
         match self.selected {
             0 => self.draft_cfg.addr.push(ch),
             2 => self.draft_cfg.model_family.push(ch),
@@ -323,35 +299,24 @@ impl App {
         }
     }
 
+    // ── daemon operations ──────────────────────────────────────────────
     async fn refresh_status(&mut self) -> Result<(), BoxError> {
         let daemon = self.runtime_daemon();
         self.pid = daemon.read_pid_file().await?;
         if let Some(pid) = self.pid
-            && !daemon::process_exists(pid)
+            && !process_exists(pid)
         {
             let _ = tokio::fs::remove_file(daemon.pid_file_path()).await;
             self.pid = None;
         }
-
         match self.client.status().await {
             Ok(_) => {
                 self.daemon_running = true;
-                self.status_message = format!("Daemon is serving {}.", daemon.base_url());
             }
-            Err(err) => {
+            Err(_) => {
                 self.daemon_running = false;
-                self.status_message = if let Some(pid) = self.pid {
-                    format!(
-                        "PID {pid} exists but {} is not ready: {}",
-                        daemon.base_url(),
-                        err
-                    )
-                } else {
-                    format!("No reachable daemon at {}: {}", daemon.base_url(), err)
-                };
             }
         }
-
         Ok(())
     }
 
@@ -359,17 +324,7 @@ impl App {
         let daemon = self.draft_daemon();
         daemon.persist_config().await?;
         self.persisted_cfg = self.draft_cfg.clone();
-        self.notice = if self.runtime_cfg == self.persisted_cfg {
-            format!(
-                "Saved daemon config to {}.",
-                daemon.env_file_path().display()
-            )
-        } else {
-            format!(
-                "Saved daemon config to {}. Restart the daemon to apply changes.",
-                daemon.env_file_path().display()
-            )
-        };
+        self.notice = format!("Saved to {}.", daemon.env_file_path().display());
         Ok(())
     }
 
@@ -378,42 +333,23 @@ impl App {
         daemon.persist_config().await?;
         self.persisted_cfg = self.draft_cfg.clone();
 
-        let had_running_daemon = self.daemon_running || self.pid.is_some();
         self.runtime_daemon()
             .stop_background(Duration::from_secs(10))
             .await?;
 
         let child = daemon.spawn_background()?;
-        if let Err(err) = wait_for_daemon_ready(&self.client, Duration::from_secs(20)).await {
-            self.notice = format!(
-                "Daemon did not become ready. Inspect {}.",
-                child.log_path.display()
-            );
+        if let Err(err) = self
+            .client
+            .wait_for_daemon_ready(Duration::from_secs(20))
+            .await
+        {
+            self.notice = format!("Daemon not ready. Logs: {}", child.log_path.display());
             let _ = self.refresh_status().await;
-            return Err(format!(
-                "{}; inspect {} for daemon logs",
-                err,
-                child.log_path.display()
-            )
-            .into());
+            return Err(format!("{err}; logs: {}", child.log_path.display()).into());
         }
 
         self.runtime_cfg = self.draft_cfg.clone();
-        self.notice = if had_running_daemon {
-            format!(
-                "Restarted anda daemon (pid {}) on {}. Logs: {}",
-                child.pid,
-                daemon.base_url(),
-                child.log_path.display()
-            )
-        } else {
-            format!(
-                "Started anda daemon (pid {}) on {}. Logs: {}",
-                child.pid,
-                daemon.base_url(),
-                child.log_path.display()
-            )
-        };
+        self.notice = format!("Daemon (pid {}) on {}.", child.pid, daemon.base_url());
         self.refresh_status().await?;
         Ok(())
     }
@@ -424,9 +360,9 @@ impl App {
             .stop_background(Duration::from_secs(10))
             .await?;
         self.notice = if stopped {
-            "Stopped anda daemon.".to_string()
+            "Daemon stopped.".to_string()
         } else {
-            "anda daemon was not running.".to_string()
+            "Daemon was not running.".to_string()
         };
         self.refresh_status().await?;
         Ok(())
@@ -434,38 +370,11 @@ impl App {
 
     fn reload_saved(&mut self) {
         self.draft_cfg = self.persisted_cfg.clone();
-        self.notice = "Reloaded saved daemon config into the draft editor.".to_string();
+        self.notice = "Reloaded saved config.".to_string();
     }
 
-    async fn activate_selected(&mut self) -> Result<(), BoxError> {
-        match self.selected {
-            ACTION_SAVE => self.save_only().await,
-            ACTION_APPLY => self.apply_and_restart().await,
-            ACTION_STOP => self.stop_daemon().await,
-            ACTION_RELOAD => {
-                self.reload_saved();
-                Ok(())
-            }
-            ACTION_QUIT => {
-                self.should_quit = true;
-                Ok(())
-            }
-            _ => {
-                self.toggle_selected_bool();
-                Ok(())
-            }
-        }
-    }
-
-    async fn handle_key(&mut self, key: KeyEvent) {
-        let result = self.handle_key_inner(key).await;
-        if let Err(err) = result {
-            self.notice = err.to_string();
-            let _ = self.refresh_status().await;
-        }
-    }
-
-    async fn handle_key_inner(&mut self, key: KeyEvent) -> Result<(), BoxError> {
+    // ── config mode key handler ────────────────────────────────────────
+    async fn handle_config_key(&mut self, key: KeyEvent) -> Result<(), BoxError> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') | KeyCode::Char('q') => {
@@ -488,73 +397,189 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Up | KeyCode::Char('k') => self.prev_item(),
-            KeyCode::Down | KeyCode::Char('j') => self.next_item(),
-            KeyCode::Tab => self.next_item(),
-            KeyCode::BackTab => self.prev_item(),
-            KeyCode::Enter => {
-                self.activate_selected().await?;
-            }
-            KeyCode::Char(' ') => {
-                if self.selected == 1 {
-                    self.toggle_selected_bool();
-                } else if self.is_action_selected() {
-                    self.activate_selected().await?;
-                } else {
-                    self.push_char(' ');
+            KeyCode::Char('q') if self.selected >= FIELD_COUNT => self.should_quit = true,
+            KeyCode::Up | KeyCode::BackTab => self.prev_item(),
+            KeyCode::Down | KeyCode::Tab => self.next_item(),
+            KeyCode::Enter | KeyCode::Char(' ') if self.selected >= ACTION_SAVE => {
+                match self.selected {
+                    ACTION_SAVE => self.save_only().await?,
+                    ACTION_APPLY => self.apply_and_restart().await?,
+                    ACTION_STOP => self.stop_daemon().await?,
+                    ACTION_RELOAD => self.reload_saved(),
+                    ACTION_CHAT => {
+                        if !self.daemon_running {
+                            self.notice = "Daemon not running. Start it first.".to_string();
+                        } else {
+                            self.mode = Mode::Chat;
+                            self.notice.clear();
+                        }
+                    }
+                    ACTION_QUIT => self.should_quit = true,
+                    _ => {}
                 }
             }
-            KeyCode::Backspace => self.pop_char(),
-            KeyCode::Delete => self.clear_selected_field(),
-            KeyCode::Char(ch) if !key.modifiers.intersects(KeyModifiers::ALT) => {
+            KeyCode::Enter | KeyCode::Char(' ') if self.selected == 1 => {
+                self.toggle_selected_bool();
+            }
+            KeyCode::Backspace if self.selected < FIELD_COUNT => self.pop_char(),
+            KeyCode::Delete if self.selected < FIELD_COUNT => self.clear_selected_field(),
+            KeyCode::Char(ch) if self.selected < FIELD_COUNT => {
                 if self.selected == 1 {
                     match ch {
                         't' | 'T' | 'y' | 'Y' | '1' => self.draft_cfg.sandbox = true,
                         'f' | 'F' | 'n' | 'N' | '0' => self.draft_cfg.sandbox = false,
-                        _ => self.push_char(ch),
+                        _ => {}
                     }
-                } else {
+                } else if !key.modifiers.intersects(KeyModifiers::ALT) {
                     self.push_char(ch);
                 }
             }
             _ => {}
         }
-
         Ok(())
     }
 
-    fn status_label(&self) -> &'static str {
-        if self.daemon_running {
-            "RUNNING"
-        } else if self.pid.is_some() {
-            "UNHEALTHY"
-        } else {
-            "STOPPED"
-        }
+    // ── chat operations ────────────────────────────────────────────────
+    fn new_conversation(&mut self) {
+        self.chat.reset();
+        self.scroll_offset = 0;
+        self.input_buf.clear();
+        self.input_cursor = 0;
+        self.notice = "New conversation.".to_string();
     }
 
-    fn status_style(&self) -> Style {
-        if self.daemon_running {
-            theme::success_style()
-        } else if self.pid.is_some() {
-            theme::warn_style()
-        } else {
-            theme::danger_style()
+    // ── chat mode key handler ──────────────────────────────────────────
+    async fn handle_chat_key(&mut self, key: KeyEvent) -> Result<(), BoxError> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('c') | KeyCode::Char('q') => {
+                    self.should_quit = true;
+                    return Ok(());
+                }
+                KeyCode::Char('n') => {
+                    self.new_conversation();
+                    return Ok(());
+                }
+                KeyCode::Char('d') => {
+                    self.mode = Mode::Config;
+                    return Ok(());
+                }
+                KeyCode::Char('u') => {
+                    self.input_buf.clear();
+                    self.input_cursor = 0;
+                    return Ok(());
+                }
+                KeyCode::Char('a') => {
+                    self.input_cursor = 0;
+                    return Ok(());
+                }
+                KeyCode::Char('e') => {
+                    self.input_cursor = self.input_buf.chars().count();
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Config;
+            }
+            KeyCode::Enter => {
+                if !self.chat.sending {
+                    let text = self.input_buf.trim().to_string();
+                    if !text.is_empty() {
+                        self.input_buf.clear();
+                        self.input_cursor = 0;
+                        self.scroll_offset = usize::MAX;
+                        if let Some(err) = self.chat.send(text).await {
+                            self.notice = err;
+                        } else {
+                            self.notice.clear();
+                        }
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if self.input_cursor > 0 {
+                    let chars: Vec<char> = self.input_buf.chars().collect();
+                    let pos = self.input_cursor - 1;
+                    self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
+                    self.input_cursor -= 1;
+                }
+            }
+            KeyCode::Delete => {
+                let chars: Vec<char> = self.input_buf.chars().collect();
+                if self.input_cursor < chars.len() {
+                    self.input_buf = chars[..self.input_cursor]
+                        .iter()
+                        .chain(chars[self.input_cursor + 1..].iter())
+                        .collect();
+                }
+            }
+            KeyCode::Left => {
+                if self.input_cursor > 0 {
+                    self.input_cursor -= 1;
+                }
+            }
+            KeyCode::Right => {
+                let len = self.input_buf.chars().count();
+                if self.input_cursor < len {
+                    self.input_cursor += 1;
+                }
+            }
+            KeyCode::Home => self.input_cursor = 0,
+            KeyCode::End => self.input_cursor = self.input_buf.chars().count(),
+            KeyCode::Up => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.scroll_offset = self.scroll_offset.saturating_add(1);
+            }
+            KeyCode::PageUp => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                self.scroll_offset = self.scroll_offset.saturating_add(10);
+            }
+            KeyCode::Char(ch) => {
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+                {
+                    let chars: Vec<char> = self.input_buf.chars().collect();
+                    let mut new = String::with_capacity(self.input_buf.len() + ch.len_utf8());
+                    new.extend(&chars[..self.input_cursor]);
+                    new.push(ch);
+                    new.extend(&chars[self.input_cursor..]);
+                    self.input_buf = new;
+                    self.input_cursor += 1;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // ── unified key handler ────────────────────────────────────────────
+    async fn handle_key(&mut self, key: KeyEvent) {
+        let result = match self.mode {
+            Mode::Config => self.handle_config_key(key).await,
+            Mode::Chat => self.handle_chat_key(key).await,
+        };
+        if let Err(err) = result {
+            self.notice = err.to_string();
         }
     }
 }
 
-enum LaunchState {
-    AlreadyRunning,
-    Started(BackgroundDaemon),
-}
+// ── Event loop ─────────────────────────────────────────────────────────
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<(), BoxError> {
-    let mut last_refresh = Instant::now();
+    let mut last_status_refresh = Instant::now();
     loop {
         terminal.draw(|frame| render(frame, app))?;
 
@@ -562,14 +587,22 @@ async fn run_app(
             break;
         }
 
-        if last_refresh.elapsed() >= STATUS_REFRESH_INTERVAL {
-            if let Err(err) = app.refresh_status().await {
-                app.notice = format!("Status refresh failed: {err}");
-            }
-            last_refresh = Instant::now();
+        // Periodic background work
+        if last_status_refresh.elapsed() >= STATUS_REFRESH_INTERVAL && app.mode == Mode::Config {
+            let _ = app.refresh_status().await;
+            last_status_refresh = Instant::now();
         }
 
-        if !event::poll(Duration::from_millis(200))? {
+        if app.mode == Mode::Chat {
+            if app.chat.poll().await {
+                app.scroll_offset = usize::MAX;
+            }
+            if let Some(reason) = app.chat.failed_reason.take() {
+                app.notice = format!("Failed: {reason}");
+            }
+        }
+
+        if !event::poll(Duration::from_millis(150))? {
             continue;
         }
 
@@ -580,301 +613,332 @@ async fn run_app(
             app.handle_key(key).await;
         }
     }
-
     Ok(())
 }
 
-fn render(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-    if area.width < 90 || area.height < 26 {
-        render_small_terminal(frame, area);
-        return;
-    }
+// ════════════════════════════════════════════════════════════════════════
+//  Rendering
+// ════════════════════════════════════════════════════════════════════════
 
-    let outer = Layout::default()
+fn render(frame: &mut Frame, app: &mut App) {
+    match app.mode {
+        Mode::Config => render_config(frame, app),
+        Mode::Chat => render_chat(frame, app),
+    }
+}
+
+// ── Config view ────────────────────────────────────────────────────────
+fn render_config(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),
-            Constraint::Min(14),
-            Constraint::Length(4),
+            Constraint::Length(1), // title bar
+            Constraint::Min(4),    // form
+            Constraint::Length(2), // notice
         ])
         .split(area);
 
-    frame.render_widget(
-        Banner {
-            subtitle: "Edit DaemonArgs, save them into .env, and start or restart the local daemon.",
-        },
-        outer[0],
-    );
+    // Title bar
+    let status_label = if app.daemon_running {
+        Span::styled(" RUNNING ", theme::success_style())
+    } else if app.pid.is_some() {
+        Span::styled(" UNHEALTHY ", theme::warn_style())
+    } else {
+        Span::styled(" STOPPED ", theme::danger_style())
+    };
+    let dirty_label = if app.is_dirty() {
+        Span::styled(" *modified", theme::warn_style())
+    } else {
+        Span::raw("")
+    };
+    let title_line = Line::from(vec![
+        Span::styled(" ANDA ", theme::title_style()),
+        Span::styled("Config", theme::heading_style()),
+        Span::raw(" │ "),
+        status_label,
+        Span::raw(" "),
+        Span::styled(app.runtime_cfg.base_url(), theme::dim_style()),
+        dirty_label,
+    ]);
+    frame.render_widget(Paragraph::new(title_line), chunks[0]);
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(outer[1]);
-
-    render_form_panel(frame, app, body[0]);
-
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(11),
-            Constraint::Length(10),
-            Constraint::Min(8),
-        ])
-        .split(body[1]);
-
-    render_status_panel(frame, app, right[0]);
-    render_selection_panel(frame, app, right[1]);
-    render_shortcuts_panel(frame, app, right[2]);
-    render_footer(frame, app, outer[2]);
-}
-
-fn render_small_terminal(frame: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border_style())
-        .title(Span::styled(" anda ", theme::heading_style()));
-    let paragraph = Paragraph::new(vec![
-        Line::from(Span::styled(
-            "Terminal is too small for the anda TUI.",
-            theme::warn_style(),
-        )),
-        Line::from("Resize to at least 90x26 and re-open the interface."),
-    ])
-    .block(block)
-    .wrap(Wrap { trim: false });
-    frame.render_widget(paragraph, area);
-}
-
-fn render_form_panel(frame: &mut Frame, app: &App, area: Rect) {
+    // Form
     let mut lines = Vec::new();
-    for index in 0..FIELD_COUNT {
-        let selected = app.selected == index;
-        let label_style = if selected {
+    for i in 0..FIELD_COUNT {
+        let sel = app.selected == i;
+        let lbl_style = if sel {
             theme::selected_style()
         } else {
             theme::body_style().add_modifier(Modifier::BOLD)
         };
-        let value_style = if selected {
+        let val_style = if sel {
             theme::selected_style()
-        } else if app.field_is_empty(index) {
+        } else if app.field_is_empty(i) {
             theme::dim_style()
         } else {
             theme::input_style()
         };
-
         lines.push(Line::from(vec![
-            Span::styled(if selected { "> " } else { "  " }, label_style),
-            Span::styled(format!("{:<16}", App::field_label(index)), label_style),
-            Span::styled(app.field_value(index), value_style),
+            Span::styled(if sel { "▸ " } else { "  " }, lbl_style),
+            Span::styled(format!("{:<16}", App::field_label(i)), lbl_style),
+            Span::styled(app.field_value(i), val_style),
         ]));
     }
-
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Actions", theme::heading_style())));
-
-    for index in ACTION_SAVE..TOTAL_ITEMS {
-        let selected = app.selected == index;
-        let style = if selected {
+    for i in ACTION_SAVE..TOTAL_CONFIG_ITEMS {
+        let sel = app.selected == i;
+        let style = if sel {
             theme::selected_style()
         } else {
-            match index {
+            match i {
                 ACTION_APPLY => theme::accent_style(),
                 ACTION_STOP => theme::danger_style(),
+                ACTION_CHAT => theme::heading_style(),
                 _ => theme::body_style(),
             }
         };
-
         lines.push(Line::from(Span::styled(
-            format!(
-                "{}{}",
-                if selected { "> " } else { "  " },
-                app.action_label(index)
-            ),
+            format!("{}{}", if sel { "▸ " } else { "  " }, app.action_label(i)),
             style,
         )));
     }
 
-    let title = if app.is_dirty() {
-        "Daemon Draft (modified)"
-    } else {
-        "Daemon Draft"
-    };
-    frame.render_widget(InfoPanel { title, lines }, area);
+    frame.render_widget(InfoPanel { title: "", lines }, chunks[1]);
+
+    // Notice / shortcuts
+    render_config_footer(frame, app, chunks[2]);
 }
 
-fn render_status_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("State: ", theme::dim_style()),
-            Span::styled(app.status_label(), app.status_style()),
-        ]),
-        Line::from(vec![
-            Span::styled("PID:   ", theme::dim_style()),
-            Span::styled(
-                app.pid
-                    .map(|pid| pid.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                theme::body_style(),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Live:  ", theme::dim_style()),
-            Span::styled(app.runtime_cfg.base_url(), theme::body_style()),
-        ]),
-        Line::from(vec![
-            Span::styled("Draft: ", theme::dim_style()),
-            Span::styled(app.draft_cfg.base_url(), theme::body_style()),
-        ]),
-        Line::from(vec![
-            Span::styled("Env:   ", theme::dim_style()),
-            Span::styled(
-                app.draft_daemon().env_file_path().display().to_string(),
-                theme::body_style(),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Logs:  ", theme::dim_style()),
-            Span::styled(
-                app.runtime_daemon().log_file_path().display().to_string(),
-                theme::body_style(),
-            ),
-        ]),
-    ];
-
-    if app.runtime_cfg != app.draft_cfg {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Draft differs from the running daemon.",
-            theme::warn_style(),
-        )));
-    }
-
-    frame.render_widget(
-        InfoPanel {
-            title: "Status",
-            lines,
-        },
-        area,
-    );
-}
-
-fn render_selection_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Selected: ", theme::dim_style()),
-            Span::styled(app.selection_title(), theme::heading_style()),
-        ]),
-        Line::from(""),
-        Line::from(app.selected_help()),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Home: ", theme::dim_style()),
-            Span::styled(app.home.display().to_string(), theme::body_style()),
-        ]),
-    ];
-    frame.render_widget(
-        InfoPanel {
-            title: "Selection",
-            lines,
-        },
-        area,
-    );
-}
-
-fn render_shortcuts_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("Up/Down, Tab", theme::heading_style()),
-            Span::raw(" move between fields and actions"),
-        ]),
-        Line::from(vec![
-            Span::styled("Type / Backspace", theme::heading_style()),
-            Span::raw(" edit the selected text field"),
-        ]),
-        Line::from(vec![
-            Span::styled("Space / Enter", theme::heading_style()),
-            Span::raw(" toggle sandbox or run the selected action"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+S", theme::heading_style()),
-            Span::raw(" save the draft to .env"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+R", theme::heading_style()),
-            Span::raw(" apply the draft and restart the daemon"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+X", theme::heading_style()),
-            Span::raw(" stop the background daemon"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+L", theme::heading_style()),
-            Span::raw(" reload the last saved draft"),
-        ]),
-        Line::from(vec![
-            Span::styled("Ctrl+U or Delete", theme::heading_style()),
-            Span::raw(" clear the selected field"),
-        ]),
-        Line::from(vec![
-            Span::styled("Q or Ctrl+Q", theme::heading_style()),
-            Span::raw(" quit the TUI"),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            &app.status_message,
-            if app.daemon_running {
-                theme::success_style()
-            } else {
-                theme::dim_style()
-            },
-        )),
-    ];
-
-    if app.is_dirty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Unsaved edits are present in the draft.",
-            theme::warn_style(),
-        )));
-    }
-
-    frame.render_widget(
-        InfoPanel {
-            title: "Keys",
-            lines,
-        },
-        area,
-    );
-}
-
-fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let footer = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("Notice: ", theme::heading_style()),
+fn render_config_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let mut lines = Vec::new();
+    if !app.notice.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(" notice: ", theme::dim_style()),
             Span::styled(&app.notice, theme::body_style()),
-        ]),
-        Line::from(vec![
-            Span::styled("Saved state: ", theme::dim_style()),
-            Span::styled(
-                if app.is_dirty() { "modified" } else { "clean" },
-                if app.is_dirty() {
-                    theme::warn_style()
-                } else {
-                    theme::success_style()
-                },
-            ),
-        ]),
-    ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border_style())
-            .title(Span::styled(" Notice ", theme::heading_style())),
-    )
-    .wrap(Wrap { trim: false });
-    frame.render_widget(footer, area);
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        " ↑↓ nav │ Enter activate │ ^S save │ ^R apply │ ^X stop │ q quit",
+        theme::dim_style(),
+    )));
+    frame.render_widget(Paragraph::new(lines), area);
 }
+
+// ── Chat view ──────────────────────────────────────────────────────────
+fn render_chat(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // title bar
+            Constraint::Min(3),    // message area
+            Constraint::Length(3), // input box
+            Constraint::Length(1), // status line
+        ])
+        .split(area);
+
+    // Title bar
+    let conv_label = if let Some(id) = app.chat.conversation_id {
+        format!("#{id}")
+    } else {
+        "new".to_string()
+    };
+    let status_style = match &app.chat.conv_status {
+        Some(ConversationStatus::Working) | Some(ConversationStatus::Submitted) => {
+            theme::warn_style()
+        }
+        Some(ConversationStatus::Completed) => theme::success_style(),
+        Some(ConversationStatus::Failed) | Some(ConversationStatus::Cancelled) => {
+            theme::danger_style()
+        }
+        None => theme::dim_style(),
+    };
+    let title_line = Line::from(vec![
+        Span::styled(" ANDA ", theme::title_style()),
+        Span::styled("Chat", theme::heading_style()),
+        Span::raw(" │ "),
+        Span::styled(&conv_label, theme::body_style()),
+        Span::raw(" "),
+        Span::styled(app.chat.status_label(), status_style),
+        Span::raw("  "),
+        Span::styled("Esc:config ^N:new ^Q:quit", theme::dim_style()),
+    ]);
+    frame.render_widget(Paragraph::new(title_line), chunks[0]);
+
+    // Messages
+    render_messages(frame, app, chunks[1]);
+
+    // Input
+    render_input(frame, app, chunks[2]);
+
+    // Status line
+    let status_line = if !app.notice.is_empty() {
+        Line::from(Span::styled(
+            format!(" {}", &app.notice),
+            theme::warn_style(),
+        ))
+    } else {
+        Line::from(Span::styled(
+            " /steer, /stop, /cancel │ ↑↓ scroll │ Enter send",
+            theme::dim_style(),
+        ))
+    };
+    frame.render_widget(Paragraph::new(status_line), chunks[3]);
+}
+
+fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border_style());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if app.chat.messages.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "Type a message and press Enter to start.",
+                theme::dim_style(),
+            )),
+            inner,
+        );
+        return;
+    }
+
+    let width = inner.width as usize;
+    let mut rendered_lines: Vec<Line> = Vec::new();
+
+    for msg in &app.chat.messages {
+        let (prefix, style) = match msg.role.as_str() {
+            "user" => ("▶ You: ", theme::accent_style()),
+            "assistant" => ("◀ Bot: ", theme::success_style()),
+            "system" => ("● Sys: ", theme::warn_style()),
+            _ => ("  ", theme::dim_style()),
+        };
+
+        let wrap_w = width.saturating_sub(2).max(1);
+        let mut first = true;
+
+        for text_line in msg.text.lines() {
+            if text_line.is_empty() {
+                rendered_lines.push(if first {
+                    first = false;
+                    Line::from(Span::styled(prefix.to_string(), style))
+                } else {
+                    Line::from("")
+                });
+                continue;
+            }
+
+            let mut remaining = text_line;
+            while !remaining.is_empty() {
+                let take = if remaining.len() > wrap_w {
+                    let mut end = wrap_w;
+                    while end > 0 && !remaining.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    if end == 0 {
+                        wrap_w.min(remaining.len())
+                    } else {
+                        end
+                    }
+                } else {
+                    remaining.len()
+                };
+                let chunk = &remaining[..take];
+                remaining = &remaining[take..];
+
+                if first {
+                    first = false;
+                    rendered_lines.push(Line::from(vec![
+                        Span::styled(prefix.to_string(), style),
+                        Span::styled(chunk.to_string(), theme::body_style()),
+                    ]));
+                } else {
+                    rendered_lines.push(Line::from(Span::styled(
+                        format!("  {chunk}"),
+                        theme::body_style(),
+                    )));
+                }
+            }
+        }
+
+        // Add a blank separator between messages
+        rendered_lines.push(Line::from(""));
+    }
+
+    let visible_h = inner.height as usize;
+    let total = rendered_lines.len();
+
+    // Clamp scroll offset
+    if total <= visible_h {
+        app.scroll_offset = 0;
+    } else if app.scroll_offset >= total.saturating_sub(visible_h) {
+        app.scroll_offset = total.saturating_sub(visible_h);
+    }
+
+    let visible: Vec<Line> = rendered_lines
+        .into_iter()
+        .skip(app.scroll_offset)
+        .take(visible_h)
+        .collect();
+
+    frame.render_widget(Paragraph::new(visible), inner);
+
+    // Scrollbar
+    if total > visible_h {
+        let mut scrollbar_state =
+            ScrollbarState::new(total.saturating_sub(visible_h)).position(app.scroll_offset);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            area,
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn render_input(frame: &mut Frame, app: &App, area: Rect) {
+    let prompt = if app.chat.sending {
+        " Sending… "
+    } else if app.chat.is_active() {
+        " ▸ follow-up "
+    } else {
+        " ▸ "
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(if app.chat.sending {
+            theme::dim_style()
+        } else {
+            theme::accent_style()
+        })
+        .title(Span::styled(prompt, theme::heading_style()));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let paragraph = Paragraph::new(app.input_buf.as_str())
+        .style(theme::body_style())
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, inner);
+
+    // Cursor position: calculate display width of chars before cursor
+    let display_col: u16 = app
+        .input_buf
+        .chars()
+        .take(app.input_cursor)
+        .map(|c| c.width().unwrap_or(0) as u16)
+        .sum();
+    let cursor_x = inner.x + display_col;
+    if cursor_x < inner.x + inner.width {
+        frame.set_cursor_position((cursor_x, inner.y));
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Helpers
+// ════════════════════════════════════════════════════════════════════════
 
 fn display_value(value: &str) -> String {
     if value.trim().is_empty() {
@@ -886,7 +950,7 @@ fn display_value(value: &str) -> String {
 
 fn display_optional(value: Option<&str>) -> String {
     match value {
-        Some(value) if !value.trim().is_empty() => value.to_string(),
+        Some(v) if !v.trim().is_empty() => v.to_string(),
         _ => "(unset)".to_string(),
     }
 }
@@ -899,61 +963,8 @@ fn mask_secret(value: &str) -> String {
     if chars.len() <= 4 {
         return "*".repeat(chars.len());
     }
-
-    let tail = chars[chars.len() - 4..].iter().collect::<String>();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
     format!("{}{}", "*".repeat(chars.len() - 4), tail)
-}
-
-async fn ensure_daemon_running(
-    client: &gateway::Client,
-    daemon: &Daemon,
-) -> Result<LaunchState, BoxError> {
-    if client.status().await.is_ok() {
-        return Ok(LaunchState::AlreadyRunning);
-    }
-
-    let pid_path = daemon.pid_file_path();
-    if let Some(pid) = daemon.read_pid_file().await? {
-        if daemon::process_exists(pid) {
-            wait_for_daemon_ready(client, Duration::from_secs(10)).await?;
-            return Ok(LaunchState::AlreadyRunning);
-        }
-        let _ = tokio::fs::remove_file(&pid_path).await;
-    }
-
-    let child = daemon.spawn_background()?;
-    if let Err(err) = wait_for_daemon_ready(client, Duration::from_secs(20)).await {
-        return Err(format!(
-            "{}; inspect {} for daemon logs",
-            err,
-            child.log_path.display()
-        )
-        .into());
-    }
-
-    Ok(LaunchState::Started(child))
-}
-
-async fn wait_for_daemon_ready(
-    client: &gateway::Client,
-    timeout: Duration,
-) -> Result<(), BoxError> {
-    let deadline = Instant::now() + timeout;
-    let detail = loop {
-        match client.status().await {
-            Ok(_) => return Ok(()),
-            Err(err) if Instant::now() >= deadline => break err.to_string(),
-            Err(_) => {}
-        }
-
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    };
-
-    Err(format!(
-        "anda daemon did not become ready within {:?}: {detail}",
-        timeout
-    )
-    .into())
 }
 
 #[cfg(unix)]

@@ -23,6 +23,7 @@ use std::{
 };
 
 mod agent;
+mod conversation_tool;
 
 use crate::brain;
 use crate::util::{
@@ -30,6 +31,7 @@ use crate::util::{
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use agent::*;
+use conversation_tool::*;
 
 pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -92,6 +94,7 @@ impl Engines {
             .with_http_client(brain_http_client);
 
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
+        let conversations_tool = ConversationsTool::new(conversations.clone());
         let bot = AndaBot::new(brain_client.clone(), conversations);
 
         let shell_tool = {
@@ -116,7 +119,9 @@ impl Engines {
             .register_tool(Arc::new(fs::SearchFileTool::new(cfg.work_dir.clone())))?
             .register_tool(Arc::new(fs::EditFileTool::new(cfg.work_dir.clone())))?
             .register_tool(Arc::new(fs::WriteFileTool::new(cfg.work_dir.clone())))?
-            .register_agent(Arc::new(bot), None)?;
+            .register_tool(Arc::new(conversations_tool))?
+            .register_agent(Arc::new(bot), None)?
+            .export_tools(vec![ConversationsTool::NAME.to_string()]);
 
         // Initialize and start the server
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
