@@ -35,7 +35,7 @@ use crate::brain;
 
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
-static SELF_INSTRUCTIONS: &str = "You are $self, an AI agent created for the user. You have a unique identity and memory. Always think step by step. Use tools when necessary. Your goal is to assist the user in any way you can.";
+static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 
 #[derive(Clone)]
 pub struct AndaBot {
