@@ -27,13 +27,13 @@ Configuration can be provided via flags or environment variables:
 
 **CWT command flags:**
 
-| Flag         | Env Variable        | Description                          | Default |
-| ------------ | ------------------- | ------------------------------------ | ------- |
-| `--key`      | `ANDA_CWT_KEY`      | Ed25519 private key (base64url CBOR) |         |
-| `--subject`  | `ANDA_CWT_SUBJECT`  | Subject claim - user/principal ID    |         |
-| `--audience` | `ANDA_CWT_AUDIENCE` | Audience claim - space ID or `*`     |         |
-| `--scope`    | `ANDA_CWT_SCOPE`    | Scope claim: read, write or `*`      | `read`  |
-| `--issuer`   | `ANDA_CWT_ISSUER`   | Issuer claim                         |         |
+| Flag         | Env Variable        | Description                                                         | Default |
+| ------------ | ------------------- | ------------------------------------------------------------------- | ------- |
+| `--key`      | `ANDA_CWT_KEY`      | Ed25519 private key (base64/base64url CBOR, or file path / `@file`) |         |
+| `--subject`  | `ANDA_CWT_SUBJECT`  | Subject claim - user/principal ID                                   |         |
+| `--audience` | `ANDA_CWT_AUDIENCE` | Audience claim - space ID or `*`                                    |         |
+| `--scope`    | `ANDA_CWT_SCOPE`    | Scope claim: read, write or `*`                                     | `read`  |
+| `--issuer`   | `ANDA_CWT_ISSUER`   | Issuer claim                                                        |         |
 
 ## Commands
 
@@ -46,6 +46,10 @@ anda-cli keygen --json
 
 # Create a CWT (CBOR Web Token) signed with Ed25519 private key
 anda-cli cwt --key <base64url_private_key> --subject <user_id> --audience <space_id> --scope write
+
+# Create a CWT using a key stored in a file (base64 or base64url content)
+anda-cli cwt --key ./private_key.txt --subject <user_id> --audience <space_id> --scope write
+anda-cli cwt --key @./private_key.txt --subject <user_id> --audience <space_id> --scope write
 
 # Create a CWT with wildcard audience and 2-hour expiration
 anda-cli cwt --key <base64url_private_key> --subject <user_id> --audience "*" --scope "*" --expiration 7200

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	DefaultBaseURL = "https://brain.anda.ai"
+	DefaultBaseURL = "http://127.0.0.1:8042"
 	DefaultTimeout = 120 * time.Second
 )
 
