@@ -6,7 +6,7 @@ use anda_engine::model::reqwest;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use std::time::{Duration, Instant};
 
-use crate::daemon::{BackgroundDaemon, Daemon, process_exists};
+use crate::daemon::{Daemon, LaunchState, process_exists};
 
 #[derive(Clone)]
 pub struct Client {
@@ -163,9 +163,4 @@ impl Client {
             .into())
         }
     }
-}
-
-pub enum LaunchState {
-    AlreadyRunning,
-    Started(BackgroundDaemon),
 }

@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
@@ -46,6 +47,17 @@ pub struct Daemon {
 pub struct BackgroundDaemon {
     pub pid: u32,
     pub log_path: PathBuf,
+}
+
+pub enum LaunchState {
+    AlreadyRunning,
+    Started(BackgroundDaemon),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopState {
+    NotRunning,
+    Stopped(u32),
 }
 
 #[derive(Args, Clone, Debug, PartialEq, Eq)]
@@ -290,6 +302,31 @@ impl Daemon {
             log_path,
         })
     }
+
+    #[cfg(unix)]
+    pub async fn stop_background(&self, timeout: Duration) -> Result<StopState, BoxError> {
+        let pid_path = self.pid_file_path();
+        let Some(pid) = self.read_pid_file().await? else {
+            remove_file_if_exists(&pid_path).await?;
+            return Ok(StopState::NotRunning);
+        };
+
+        if !process_exists(pid) {
+            remove_file_if_exists(&pid_path).await?;
+            return Ok(StopState::NotRunning);
+        }
+
+        terminate_process(pid)?;
+        wait_for_process_exit(pid, timeout).await?;
+        remove_file_if_exists(&pid_path).await?;
+        Ok(StopState::Stopped(pid))
+    }
+
+    #[cfg(not(unix))]
+    pub async fn stop_background(&self, _timeout: Duration) -> Result<StopState, BoxError> {
+        Err("anda daemon stop/restart is only supported on unix platforms".into())
+    }
+
     pub async fn serve(
         self,
         id_key: util::key::Ed25519Key,
@@ -393,6 +430,48 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
             }
             Err(err) => return Err(err.into()),
         }
+    }
+}
+
+async fn remove_file_if_exists(path: &Path) -> Result<(), BoxError> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> Result<(), BoxError> {
+    let rt = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if rt == 0 {
+        return Ok(());
+    }
+
+    let err = io::Error::last_os_error();
+    if matches!(err.raw_os_error(), Some(code) if code == libc::ESRCH) {
+        return Ok(());
+    }
+
+    Err(err.into())
+}
+
+#[cfg(unix)]
+async fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), BoxError> {
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if !process_exists(pid) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for anda daemon pid {pid} to stop after {timeout:?}"
+            )
+            .into());
+        }
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 

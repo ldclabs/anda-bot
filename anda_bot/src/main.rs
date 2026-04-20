@@ -1,7 +1,7 @@
 use anda_core::BoxError;
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 mod brain;
 mod cli;
@@ -28,7 +28,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Run the anda daemon in the foreground.
     Daemon(daemon::DaemonArgs),
+    /// Stop the anda daemon if it's running.
+    Stop,
+    /// Restart the anda daemon. If the daemon is not running, this will start it.
+    Restart,
 }
 
 /// ```bash
@@ -63,6 +68,48 @@ async fn main() -> Result<(), BoxError> {
             let user_key = util::key::Ed25519Key::new(user_secret);
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
+        Some(Commands::Stop) => {
+            let daemon =
+                daemon::Daemon::new(home, daemon::DaemonArgs::from_env_file(&env_path).await?);
+            match daemon.stop_background(Duration::from_secs(10)).await? {
+                daemon::StopState::NotRunning => println!("anda daemon is not running"),
+                daemon::StopState::Stopped(pid) => {
+                    println!("Stopped anda daemon (pid {pid})")
+                }
+            }
+        }
+        Some(Commands::Restart) => {
+            let daemon =
+                daemon::Daemon::new(home, daemon::DaemonArgs::from_env_file(&env_path).await?);
+            let stop_state = daemon.stop_background(Duration::from_secs(10)).await?;
+            let client = build_control_client(&daemon).await?;
+
+            match (stop_state, client.ensure_daemon_running(&daemon).await?) {
+                (daemon::StopState::Stopped(old_pid), daemon::LaunchState::Started(child)) => {
+                    println!(
+                        "Restarted anda daemon (old pid {old_pid}, new pid {}). Logs: {}",
+                        child.pid,
+                        child.log_path.display()
+                    );
+                }
+                (daemon::StopState::NotRunning, daemon::LaunchState::Started(child)) => {
+                    println!(
+                        "Started anda daemon (pid {}). Logs: {}",
+                        child.pid,
+                        child.log_path.display()
+                    );
+                }
+                (daemon::StopState::Stopped(old_pid), daemon::LaunchState::AlreadyRunning) => {
+                    println!(
+                        "Stopped anda daemon (pid {old_pid}) and connected to daemon at {}",
+                        daemon.base_url()
+                    );
+                }
+                (daemon::StopState::NotRunning, daemon::LaunchState::AlreadyRunning) => {
+                    println!("anda daemon is already running at {}", daemon.base_url());
+                }
+            }
+        }
         None => {
             let daemon =
                 daemon::Daemon::new(home, daemon::DaemonArgs::from_env_file(&env_path).await?);
@@ -80,6 +127,21 @@ fn default_home() -> PathBuf {
     std::env::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".anda")
+}
+
+async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
+    daemon.ensure_directories().await?;
+
+    let user_secret = load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_key = util::key::Ed25519Key::new(user_secret);
+    let gateway_token = user_key.sign_cwt(
+        util::key::ClaimsSetBuilder::new()
+            .claim(util::key::iana::CwtClaimName::Scope, "*".into())
+            .build(),
+    )?;
+    let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
+
+    Ok(gateway::Client::new(daemon.base_url(), gateway_token).with_http_client(http_client))
 }
 
 async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], BoxError> {

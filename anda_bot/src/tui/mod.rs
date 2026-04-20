@@ -19,7 +19,7 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    daemon::{Daemon, DaemonArgs, process_exists},
+    daemon::{Daemon, DaemonArgs, LaunchState, process_exists},
     gateway,
 };
 
@@ -180,10 +180,10 @@ impl App {
             .ensure_daemon_running(&self.runtime_daemon())
             .await
         {
-            Ok(gateway::LaunchState::AlreadyRunning) => {
+            Ok(LaunchState::AlreadyRunning) => {
                 self.notice = format!("Connected to daemon at {}.", self.runtime_cfg.base_url());
             }
-            Ok(gateway::LaunchState::Started(child)) => {
+            Ok(LaunchState::Started(child)) => {
                 self.notice = format!(
                     "Started daemon (pid {}). Logs: {}",
                     child.pid,
