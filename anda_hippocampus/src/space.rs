@@ -40,15 +40,15 @@ use std::{
 use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::types::{
-    AddSpaceTokenInput, CWToken, FormationInput, FormationStatus, MaintenanceInput,
-    MaintenanceScope, ModelConfig, RecallInput, SpaceInfo, SpaceTier, SpaceToken, TokenScope,
-    UpdateSpaceInput,
-};
 use crate::{
-    agents::{FormationAgent, HippocampusHook, MaintenanceAgent, RecallAgent},
+    agents::{FormationAgent, HippocampusHook, MaintenanceAgent, RecallAgent, SELF_USER_ID},
     model::build_model,
     payload::StringOr,
+    types::{
+        AddSpaceTokenInput, CWToken, FormationInput, FormationStatus, MaintenanceInput,
+        MaintenanceScope, ModelConfig, RecallInput, SpaceInfo, SpaceTier, SpaceToken, TokenScope,
+        UpdateSpaceInput,
+    },
 };
 
 pub static FUNCTION_DEFINITION: LazyLock<FunctionDefinition> = LazyLock::new(|| {
@@ -174,7 +174,7 @@ impl AppState {
     ) -> Result<Option<CWToken>, BoxError> {
         if self.ed25519_pubkeys.is_empty() {
             return Ok(Some(CWToken {
-                user: Principal::anonymous(),
+                user: SELF_USER_ID,
                 audience: audience.to_string(),
                 scope,
             }));
@@ -197,7 +197,7 @@ impl AppState {
     ) -> Result<CWToken, BoxError> {
         if self.ed25519_pubkeys.is_empty() {
             return Ok(CWToken {
-                user: Principal::anonymous(),
+                user: SELF_USER_ID,
                 audience: audience.to_string(),
                 scope,
             });
@@ -953,7 +953,7 @@ impl Space {
             if let Some(conversation) = this_clone.formation.get_processed() {
                 // Resume formation process if it was interrupted before
                 let _ = this_clone
-                    .restart_formation(Principal::anonymous(), conversation + 1)
+                    .restart_formation(SELF_USER_ID, conversation + 1)
                     .await;
             }
         });
@@ -1026,9 +1026,7 @@ impl HippocampusHook for Hooks {
         };
 
         if let Some(id) = space.formation.get_processed() {
-            let _ = space
-                .restart_formation(Principal::anonymous(), id + 1)
-                .await;
+            let _ = space.restart_formation(SELF_USER_ID, id + 1).await;
         }
     }
 
@@ -1069,7 +1067,7 @@ impl HippocampusHook for Hooks {
         };
 
         if let Some(input) = input {
-            match space.maintenance(Principal::anonymous(), input).await {
+            match space.maintenance(SELF_USER_ID, input).await {
                 Ok(rt) => {
                     return rt.conversation;
                 }

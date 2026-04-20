@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, Document,
-    Documents, FunctionDefinition, Message, Principal, Resource, StateFeatures,
+    Documents, FunctionDefinition, Message, Resource, StateFeatures,
 };
 use anda_engine::{
     context::AgentCtx,
@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use super::{HippocampusHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SELF_USER_ID, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusRecall.md");
 
@@ -88,7 +88,7 @@ impl RecallAgent {
     pub async fn init(&self) -> Result<(), BoxError> {
         let (conversations, _) = self
             .conversations
-            .list_conversations_by_user(&Principal::anonymous(), None, Some(3))
+            .list_conversations_by_user(&SELF_USER_ID, None, Some(3))
             .await?;
         *self.history.write() = conversations.into_iter().map(Document::from).collect();
         Ok(())

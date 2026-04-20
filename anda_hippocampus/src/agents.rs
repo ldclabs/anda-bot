@@ -2,6 +2,7 @@ mod formation;
 mod maintenance;
 mod recall;
 
+use anda_core::Principal;
 use anda_db::schema::DocumentId;
 use anda_engine::memory::Conversation;
 
@@ -16,4 +17,6 @@ pub trait HippocampusHook: Send + Sync {
     async fn try_start_maintenance(&self, formation_id: DocumentId) -> Option<DocumentId>;
 }
 
+/// Principal ID: uuc56-gyb
+pub static SELF_USER_ID: Principal = Principal::from_slice(&[1]);
 pub static SYSTEM_PROMPT_DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";

@@ -1,4 +1,3 @@
-use anda_core::Principal;
 use anda_engine::unix_ms;
 use axum::{
     Json,
@@ -12,9 +11,12 @@ use markdown::{CompileOptions, Options, ParseOptions, to_html, to_html_with_opti
 use serde_json::json;
 use std::sync::LazyLock;
 
-use crate::payload::{Accept, AppError, ContentType, HeaderVals, RpcResponse, StringOr};
-use crate::space::AppState;
-use crate::types::*;
+use crate::{
+    agents::SELF_USER_ID,
+    payload::{Accept, AppError, ContentType, HeaderVals, RpcResponse, StringOr},
+    space::AppState,
+    types::*,
+};
 
 const SKILL_MARKDOWN: &str = include_str!("../SKILL.md");
 const WEBSITE_MARKDOWN: &str = include_str!("../WEBSITE.md");
@@ -184,7 +186,7 @@ pub async fn post_formation(
 
     // 使用匿名 caller 进行 ingestions 和 queries
     let rt = space
-        .ingest(Principal::anonymous(), input)
+        .ingest(SELF_USER_ID, input)
         .await
         .map_err(AppError::bad_request)?;
     match ct {
@@ -229,7 +231,7 @@ pub async fn post_recall(
 
     // 使用固定的 caller 进行 ingestions 和 queries
     let rt = space
-        .query(Principal::anonymous(), input)
+        .query(SELF_USER_ID, input)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(rt)))
@@ -279,7 +281,7 @@ pub async fn post_maintenance(
     }
 
     let rt = space
-        .maintenance(Principal::anonymous(), input)
+        .maintenance(SELF_USER_ID, input)
         .await
         .map_err(AppError::bad_request)?;
 
@@ -594,7 +596,7 @@ pub async fn restart_formation(
         .map_err(AppError::bad_request)?;
 
     space
-        .restart_formation(Principal::anonymous(), input.conversation)
+        .restart_formation(SELF_USER_ID, input.conversation)
         .await
         .map_err(AppError::bad_request)?;
     Ok(ct.response(RpcResponse::success(true)))

@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
-    Principal, Resource, StateFeatures,
+    Resource, StateFeatures,
 };
 use anda_db::schema::DocumentId;
 use anda_engine::{
@@ -19,7 +19,7 @@ use std::{
     },
 };
 
-use super::{HippocampusHook, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
+use super::{HippocampusHook, SELF_USER_ID, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
 use crate::types::{MaintenanceAt, MaintenanceScope};
 
 const SELF_INSTRUCTIONS: &str = include_str!("../../assets/HippocampusMaintenance.md");
@@ -60,7 +60,7 @@ impl MaintenanceAgent {
     pub async fn init(&self) -> Result<(), BoxError> {
         let (conversations, _) = self
             .conversations
-            .list_conversations_by_user(&Principal::anonymous(), None, Some(2))
+            .list_conversations_by_user(&SELF_USER_ID, None, Some(2))
             .await?;
         *self.history.write() = conversations.into_iter().map(Document::from).collect();
         Ok(())

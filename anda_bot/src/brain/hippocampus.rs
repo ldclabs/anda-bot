@@ -1,4 +1,4 @@
-use anda_core::{BoxError, Principal};
+use anda_core::BoxError;
 use anda_db::{
     database::{AndaDB, DBConfig},
     storage::StorageConfig,
@@ -13,7 +13,9 @@ use object_store::ObjectStore;
 use std::sync::Arc;
 
 use crate::util::{http_client::build_http_client, key::Ed25519PubKey};
-use anda_hippocampus::{handler::*, model::build_model, space::AppState, types::ModelConfig};
+use anda_hippocampus::{
+    agents::SELF_USER_ID, handler::*, model::build_model, space::AppState, types::ModelConfig,
+};
 
 const APP_NAME: &str = env!("CARGO_PKG_NAME");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -38,7 +40,7 @@ impl Hippocampus {
     ) -> Result<Self, BoxError> {
         let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
         let management = Arc::new(BaseManagement {
-            controller: Principal::management_canister(),
+            controller: SELF_USER_ID,
             managers: cfg.managers.iter().map(|k| k.id()).collect(),
             visibility: Visibility::Protected,
         });

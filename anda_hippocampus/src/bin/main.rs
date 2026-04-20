@@ -25,7 +25,9 @@ use tower_http::{
     cors::{AllowHeaders, AllowMethods, CorsLayer},
 };
 
-use anda_hippocampus::{handler::*, model::build_model, space::AppState, types::ModelConfig};
+use anda_hippocampus::{
+    agents::SELF_USER_ID, handler::*, model::build_model, space::AppState, types::ModelConfig,
+};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -159,7 +161,7 @@ async fn main() -> Result<(), BoxError> {
         }
     }
     let management = Arc::new(BaseManagement {
-        controller: Principal::management_canister(),
+        controller: SELF_USER_ID,
         managers,
         visibility: Visibility::Public,
     });
