@@ -10,10 +10,31 @@ Run the daemon in the foreground:
 cargo run -p anda_bot -- daemon
 ```
 
-Run the unified `anda` binary in interactive TUI mode. It will try to auto-start the local daemon in the background when possible:
+Run the unified `anda` binary in interactive TUI mode:
 
 ```bash
 cargo run -p anda_bot --
+```
+
+On first launch, `anda` creates a default `.env` file in the local home directory (`~/.anda/.env` by default) with detailed setup notes.
+
+The TUI is chat-focused now. It no longer edits configuration inline. If required model settings are missing, the UI will pause in setup mode and ask you to edit `.env`, then reload with `Ctrl+R` or restart `anda`.
+
+Required `.env` keys for chat:
+
+```env
+MODEL_FAMILY=
+MODEL_NAME=
+MODEL_API_KEY=
+MODEL_API_BASE=
+```
+
+Optional keys:
+
+```env
+GATEWAY_ADDR=127.0.0.1:8042
+SANDBOX=false
+# HTTPS_PROXY=
 ```
 
 ## License

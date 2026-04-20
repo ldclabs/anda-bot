@@ -29,6 +29,12 @@ impl Client {
         self
     }
 
+    pub fn rebased(&self, base_url: String) -> Self {
+        let mut client = self.clone();
+        client.base_url = base_url;
+        client
+    }
+
     pub async fn status(&self) -> Result<Json, BoxError> {
         self.get_json("").await
     }

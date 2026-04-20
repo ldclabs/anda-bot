@@ -33,6 +33,7 @@ impl Widget for InfoPanel<'_> {
 }
 
 pub struct Banner<'a> {
+    pub headline: &'a str,
     pub subtitle: &'a str,
 }
 
@@ -53,7 +54,7 @@ impl Widget for Banner<'_> {
             }
         }
         lines.push(Line::from(Span::styled(
-            "Daemon control and configuration",
+            self.headline,
             theme::accent_style(),
         )));
         lines.push(Line::from(Span::styled(self.subtitle, theme::dim_style())));

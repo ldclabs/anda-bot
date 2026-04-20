@@ -43,12 +43,13 @@ async fn main() -> Result<(), BoxError> {
         default_home()
     };
 
+    tokio::fs::create_dir_all(&home).await?;
+
     let env_path = home.join(".env");
-    dotenv::from_path(env_path).ok();
+    dotenv::from_path(&env_path).ok();
     // Load configuration from environment variables again.
     let cfg = Cli::parse();
 
-    tokio::fs::create_dir_all(&home).await?;
     match cfg.command {
         Some(Commands::Daemon(args)) => {
             let daemon = daemon::Daemon::new(home, args);
@@ -63,7 +64,8 @@ async fn main() -> Result<(), BoxError> {
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         None => {
-            let daemon = daemon::Daemon::new(home, daemon::DaemonArgs::from_env());
+            let daemon =
+                daemon::Daemon::new(home, daemon::DaemonArgs::from_env_file(&env_path).await?);
             let ed25519_secret =
                 load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
             let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);

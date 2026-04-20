@@ -5,7 +5,6 @@ pub const FROST_CYAN: Color = Color::Rgb(138, 220, 255);
 pub const FROST_WHITE: Color = Color::Rgb(226, 240, 255);
 pub const FROST_DIM: Color = Color::Rgb(112, 136, 168);
 pub const FROST_BG: Color = Color::Rgb(10, 18, 34);
-pub const FROST_PANEL: Color = Color::Rgb(22, 34, 56);
 pub const SUCCESS_GREEN: Color = Color::Rgb(92, 214, 126);
 pub const WARN_AMBER: Color = Color::Rgb(255, 208, 92);
 pub const ERROR_RED: Color = Color::Rgb(255, 110, 110);
@@ -24,13 +23,6 @@ pub fn body_style() -> Style {
 
 pub fn dim_style() -> Style {
     Style::default().fg(FROST_DIM)
-}
-
-pub fn selected_style() -> Style {
-    Style::default()
-        .fg(FROST_WHITE)
-        .bg(FROST_PANEL)
-        .add_modifier(Modifier::BOLD)
 }
 
 pub fn accent_style() -> Style {
@@ -53,8 +45,4 @@ pub fn danger_style() -> Style {
 
 pub fn border_style() -> Style {
     Style::default().fg(FROST_BLUE).bg(FROST_BG)
-}
-
-pub fn input_style() -> Style {
-    Style::default().fg(FROST_WHITE)
 }

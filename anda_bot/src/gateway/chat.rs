@@ -81,15 +81,16 @@ impl ChatSession {
         let mut input = AgentInput::new(String::new(), text);
 
         if let Some(conv_id) = self.conversation_id
-            && self.is_active() {
-                let mut extra = Map::new();
-                extra.insert("conversation".to_string(), json!(conv_id));
-                input.meta = Some(RequestMeta {
-                    engine: None,
-                    user: None,
-                    extra,
-                });
-            }
+            && self.is_active()
+        {
+            let mut extra = Map::new();
+            extra.insert("conversation".to_string(), json!(conv_id));
+            input.meta = Some(RequestMeta {
+                engine: None,
+                user: None,
+                extra,
+            });
+        }
 
         let notice = match self.client.agent_run(&input).await {
             Ok(output) => {
@@ -170,21 +171,23 @@ impl ChatSession {
         }
 
         if let Some(reason) = data.get("failed_reason").and_then(|v| v.as_str())
-            && !reason.is_empty() {
-                self.failed_reason = Some(reason.to_string());
-            }
+            && !reason.is_empty()
+        {
+            self.failed_reason = Some(reason.to_string());
+        }
 
         let mut has_new = false;
         if let Some(msgs) = data.get("messages").and_then(|v| v.as_array())
-            && msgs.len() > self.last_msg_count {
-                for msg_json in &msgs[self.last_msg_count..] {
-                    if let Some(cm) = parse_message(msg_json) {
-                        self.messages.push(cm);
-                    }
+            && msgs.len() > self.last_msg_count
+        {
+            for msg_json in &msgs[self.last_msg_count..] {
+                if let Some(cm) = parse_message(msg_json) {
+                    self.messages.push(cm);
                 }
-                self.last_msg_count = msgs.len();
-                has_new = true;
             }
+            self.last_msg_count = msgs.len();
+            has_new = true;
+        }
         has_new
     }
 }

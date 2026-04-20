@@ -10,20 +10,15 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
-    time::Duration,
 };
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
-use tokio::{
-    fs::OpenOptions,
-    io::AsyncWriteExt,
-    time::{Instant, sleep},
-};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::{brain, cron, engine, gateway, util, util::env::*};
+use crate::{brain, cron, engine, gateway, util};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
 const DAEMON_LOG_FILE: &str = "anda-daemon.log";
@@ -35,6 +30,13 @@ const ENV_MODEL_NAME: &str = "MODEL_NAME";
 const ENV_MODEL_API_KEY: &str = "MODEL_API_KEY";
 const ENV_MODEL_API_BASE: &str = "MODEL_API_BASE";
 const ENV_HTTPS_PROXY: &str = "HTTPS_PROXY";
+#[cfg(test)]
+const REQUIRED_MODEL_ENV_KEYS: [&str; 4] = [
+    ENV_MODEL_FAMILY,
+    ENV_MODEL_NAME,
+    ENV_MODEL_API_KEY,
+    ENV_MODEL_API_BASE,
+];
 
 pub struct Daemon {
     pub home: PathBuf,
@@ -75,17 +77,29 @@ pub struct DaemonArgs {
     pub https_proxy: Option<String>,
 }
 
+impl Default for DaemonArgs {
+    fn default() -> Self {
+        Self {
+            addr: DEFAULT_GATEWAY_ADDR.to_string(),
+            sandbox: false,
+            model_family: String::new(),
+            model_name: String::new(),
+            model_api_key: String::new(),
+            model_api_base: String::new(),
+            https_proxy: None,
+        }
+    }
+}
+
 impl DaemonArgs {
-    pub async fn save_to_env_file(&self, path: &Path) -> Result<(), BoxError> {
-        let existing = match tokio::fs::read_to_string(path).await {
+    pub async fn from_env_file(path: &Path) -> Result<Self, BoxError> {
+        let content = match tokio::fs::read_to_string(path).await {
             Ok(content) => content,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(err.into()),
         };
 
-        let merged = merge_env_file(&existing, &self.env_updates());
-        tokio::fs::write(path, merged).await?;
-        Ok(())
+        Ok(Self::from_env_contents(&content))
     }
 
     pub fn apply_command_env(&self, command: &mut Command) {
@@ -102,16 +116,25 @@ impl DaemonArgs {
         }
     }
 
-    pub fn from_env() -> Self {
-        Self {
-            addr: env_string(ENV_GATEWAY_ADDR, DEFAULT_GATEWAY_ADDR),
-            sandbox: env_bool(ENV_SANDBOX),
-            model_family: env_string(ENV_MODEL_FAMILY, ""),
-            model_name: env_string(ENV_MODEL_NAME, ""),
-            model_api_key: env_string(ENV_MODEL_API_KEY, ""),
-            model_api_base: env_string(ENV_MODEL_API_BASE, ""),
-            https_proxy: env_option(ENV_HTTPS_PROXY),
+    pub fn missing_required_fields(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if self.model_family.trim().is_empty() {
+            missing.push(ENV_MODEL_FAMILY);
         }
+        if self.model_name.trim().is_empty() {
+            missing.push(ENV_MODEL_NAME);
+        }
+        if self.model_api_key.trim().is_empty() {
+            missing.push(ENV_MODEL_API_KEY);
+        }
+        if self.model_api_base.trim().is_empty() {
+            missing.push(ENV_MODEL_API_BASE);
+        }
+        missing
+    }
+
+    pub fn is_ready_for_chat(&self) -> bool {
+        self.missing_required_fields().is_empty()
     }
 
     pub fn model_config(&self) -> ModelConfig {
@@ -132,19 +155,29 @@ impl DaemonArgs {
         format!("http://{}/v1/{}", self.addr, brain::ANDA_BOT_SPACE_ID)
     }
 
-    fn env_updates(&self) -> Vec<EnvUpdate> {
-        vec![
-            EnvUpdate::set(ENV_GATEWAY_ADDR, self.addr.clone()),
-            EnvUpdate::set(
-                ENV_SANDBOX,
-                if self.sandbox { "true" } else { "false" }.to_string(),
-            ),
-            EnvUpdate::set(ENV_MODEL_FAMILY, self.model_family.clone()),
-            EnvUpdate::set(ENV_MODEL_NAME, self.model_name.clone()),
-            EnvUpdate::set(ENV_MODEL_API_KEY, self.model_api_key.clone()),
-            EnvUpdate::set(ENV_MODEL_API_BASE, self.model_api_base.clone()),
-            EnvUpdate::optional(ENV_HTTPS_PROXY, self.https_proxy.clone()),
-        ]
+    fn from_env_contents(content: &str) -> Self {
+        let mut args = Self::default();
+
+        for line in content.lines() {
+            let Some((key, value)) = parse_env_assignment(line) else {
+                continue;
+            };
+
+            match key {
+                ENV_GATEWAY_ADDR if !value.trim().is_empty() => args.addr = value,
+                ENV_SANDBOX => args.sandbox = value.eq_ignore_ascii_case("true"),
+                ENV_MODEL_FAMILY => args.model_family = value,
+                ENV_MODEL_NAME => args.model_name = value,
+                ENV_MODEL_API_KEY => args.model_api_key = value,
+                ENV_MODEL_API_BASE => args.model_api_base = value,
+                ENV_HTTPS_PROXY => {
+                    args.https_proxy = (!value.trim().is_empty()).then_some(value);
+                }
+                _ => {}
+            }
+        }
+
+        args
     }
 }
 
@@ -159,6 +192,10 @@ impl Daemon {
 
     pub fn env_file_path(&self) -> PathBuf {
         self.home.join(".env")
+    }
+
+    pub fn default_env_template() -> &'static str {
+        include_str!("../assets/default.env")
     }
 
     pub fn pid_file_path(&self) -> PathBuf {
@@ -207,8 +244,17 @@ impl Daemon {
         Ok(())
     }
 
-    pub async fn persist_config(&self) -> Result<(), BoxError> {
-        self.cfg.save_to_env_file(&self.env_file_path()).await
+    pub async fn ensure_env_file_exists(&self) -> Result<bool, BoxError> {
+        let env_path = self.env_file_path();
+        match tokio::fs::metadata(&env_path).await {
+            Ok(_) => Ok(false),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir_all(&self.home).await?;
+                tokio::fs::write(&env_path, Self::default_env_template()).await?;
+                Ok(true)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     pub fn spawn_background(&self) -> Result<BackgroundDaemon, BoxError> {
@@ -244,37 +290,6 @@ impl Daemon {
             log_path,
         })
     }
-
-    pub async fn stop_background(&self, timeout: Duration) -> Result<bool, BoxError> {
-        let pid_path = self.pid_file_path();
-        let Some(pid) = self.read_pid_file().await? else {
-            return Ok(false);
-        };
-
-        if !process_exists(pid) {
-            let _ = tokio::fs::remove_file(&pid_path).await;
-            return Ok(false);
-        }
-
-        terminate_process(pid)?;
-        if wait_for_process_exit(pid, timeout).await {
-            let _ = tokio::fs::remove_file(&pid_path).await;
-            return Ok(true);
-        }
-
-        force_kill_process(pid)?;
-        if wait_for_process_exit(pid, Duration::from_secs(2)).await {
-            let _ = tokio::fs::remove_file(&pid_path).await;
-            return Ok(true);
-        }
-
-        Err(format!(
-            "anda daemon with pid {pid} did not stop within {:?}",
-            timeout
-        )
-        .into())
-    }
-
     pub async fn serve(
         self,
         id_key: util::key::Ed25519Key,
@@ -381,21 +396,6 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
     }
 }
 
-async fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if !process_exists(pid) {
-            return true;
-        }
-
-        if Instant::now() >= deadline {
-            return false;
-        }
-
-        sleep(Duration::from_millis(250)).await;
-    }
-}
-
 #[cfg(unix)]
 fn configure_background_daemon_command(command: &mut Command) {
     unsafe {
@@ -410,57 +410,6 @@ fn configure_background_daemon_command(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn configure_background_daemon_command(_command: &mut Command) {}
-
-#[cfg(unix)]
-fn terminate_process(pid: u32) -> Result<(), BoxError> {
-    send_signal(pid, libc::SIGTERM)
-}
-
-#[cfg(not(unix))]
-fn terminate_process(pid: u32) -> Result<(), BoxError> {
-    taskkill(pid, false)
-}
-
-#[cfg(unix)]
-fn force_kill_process(pid: u32) -> Result<(), BoxError> {
-    send_signal(pid, libc::SIGKILL)
-}
-
-#[cfg(not(unix))]
-fn force_kill_process(pid: u32) -> Result<(), BoxError> {
-    taskkill(pid, true)
-}
-
-#[cfg(unix)]
-fn send_signal(pid: u32, signal: i32) -> Result<(), BoxError> {
-    let rt = unsafe { libc::kill(pid as i32, signal) };
-    if rt == 0 {
-        return Ok(());
-    }
-
-    let err = io::Error::last_os_error();
-    if matches!(err.raw_os_error(), Some(code) if code == libc::ESRCH) {
-        return Ok(());
-    }
-
-    Err(err.into())
-}
-
-#[cfg(not(unix))]
-fn taskkill(pid: u32, force: bool) -> Result<(), BoxError> {
-    let mut command = Command::new("taskkill");
-    command.arg("/PID").arg(pid.to_string()).arg("/T");
-    if force {
-        command.arg("/F");
-    }
-
-    let status = command.status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("taskkill failed for pid {pid} with status {status}").into())
-    }
-}
 
 #[cfg(unix)]
 pub fn process_exists(pid: u32) -> bool {
@@ -480,53 +429,102 @@ pub fn process_exists(_pid: u32) -> bool {
     false
 }
 
+fn parse_env_assignment(line: &str) -> Option<(&str, String)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+    let (key, value) = trimmed.split_once('=')?;
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    Some((key, parse_env_value(value)))
+}
+
+fn parse_env_value(raw: &str) -> String {
+    let value = strip_inline_comment(raw).trim().to_string();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        let first = bytes[0];
+        let last = bytes[value.len() - 1];
+        if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value
+}
+
+fn strip_inline_comment(raw: &str) -> String {
+    let mut out = String::new();
+    let mut quote = None;
+
+    for ch in raw.chars() {
+        match quote {
+            Some(current) if ch == current => {
+                quote = None;
+                out.push(ch);
+            }
+            Some(_) => out.push(ch),
+            None if ch == '#' => break,
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            None => out.push(ch),
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn merge_env_file_preserves_unknown_lines_and_updates_targets() {
-        let args = DaemonArgs {
-            addr: "127.0.0.1:9999".to_string(),
-            sandbox: true,
-            model_family: "anthropic".to_string(),
-            model_name: "claude-sonnet-4-6".to_string(),
-            model_api_key: "secret".to_string(),
-            model_api_base: "https://example.com/v1".to_string(),
-            https_proxy: Some("http://127.0.0.1:7890".to_string()),
-        };
-        let existing = "# comment\nOTHER=keep\nMODEL_NAME=old\nHTTPS_PROXY=http://old\n";
+    fn parse_env_contents_reads_known_fields_and_missing_keys() {
+        let args = DaemonArgs::from_env_contents(
+            r##"
+                # local anda config
+                GATEWAY_ADDR=127.0.0.1:9000
+                SANDBOX=true
+                MODEL_FAMILY='anthropic'
+                MODEL_NAME="claude-sonnet-4-6"
+                MODEL_API_KEY=sk-test
+                MODEL_API_BASE="https://api.anthropic.com/v1" # required
+                HTTPS_PROXY=http://127.0.0.1:7890
+            "##,
+        );
 
-        let merged = merge_env_file(existing, &args.env_updates());
-
-        assert!(merged.contains("# comment"));
-        assert!(merged.contains("OTHER=keep"));
-        assert!(merged.contains("GATEWAY_ADDR=127.0.0.1:9999"));
-        assert!(merged.contains("SANDBOX=true"));
-        assert!(merged.contains("MODEL_NAME=claude-sonnet-4-6"));
-        assert!(merged.contains("MODEL_API_BASE=https://example.com/v1"));
-        assert!(merged.contains("HTTPS_PROXY=http://127.0.0.1:7890"));
-        assert!(!merged.contains("MODEL_NAME=old"));
-        assert!(!merged.contains("HTTPS_PROXY=http://old"));
+        assert_eq!(args.addr, "127.0.0.1:9000");
+        assert!(args.sandbox);
+        assert_eq!(args.model_family, "anthropic");
+        assert_eq!(args.model_name, "claude-sonnet-4-6");
+        assert_eq!(args.model_api_key, "sk-test");
+        assert_eq!(args.model_api_base, "https://api.anthropic.com/v1");
+        assert_eq!(args.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
+        assert!(args.is_ready_for_chat());
     }
 
     #[test]
-    fn merge_env_file_removes_optional_values_when_cleared() {
-        let args = DaemonArgs {
-            addr: DEFAULT_GATEWAY_ADDR.to_string(),
-            sandbox: false,
-            model_family: String::new(),
-            model_name: String::new(),
-            model_api_key: String::new(),
-            model_api_base: String::new(),
-            https_proxy: None,
-        };
-        let existing = "HTTPS_PROXY=http://127.0.0.1:7890\nMODEL_API_KEY=abc\n";
+    fn missing_required_fields_reports_all_unset_model_keys() {
+        let args = DaemonArgs::default();
 
-        let merged = merge_env_file(existing, &args.env_updates());
+        assert_eq!(args.missing_required_fields(), REQUIRED_MODEL_ENV_KEYS);
+    }
 
-        assert!(!merged.contains("HTTPS_PROXY="));
-        assert!(merged.contains("MODEL_API_KEY=''"));
-        assert!(merged.contains("MODEL_FAMILY=''"));
+    #[test]
+    fn default_env_template_contains_setup_guidance() {
+        let template = Daemon::default_env_template();
+
+        for key in REQUIRED_MODEL_ENV_KEYS {
+            assert!(template.contains(key));
+        }
+        assert!(template.contains("Ctrl+R"));
+        assert!(template.contains("HTTPS_PROXY"));
     }
 }
