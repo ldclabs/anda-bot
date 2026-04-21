@@ -1,4 +1,9 @@
 use anda_core::BoxError;
+use anda_db::{
+    database::{AndaDB, DBConfig},
+    storage::StorageConfig,
+};
+use anda_engine::engine::EngineRef;
 use anda_engine_server::shutdown_signal;
 use anda_hippocampus::types::ModelConfig;
 use anda_object_store::MetaStoreBuilder;
@@ -341,7 +346,8 @@ impl Daemon {
 
         // Create global cancellation token for graceful shutdown
         let global_cancel_token = CancellationToken::new();
-
+        let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
+        let engine_id = id_key.id();
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
             model: self.cfg.model_config(),
@@ -368,13 +374,31 @@ impl Daemon {
             Arc::new(os)
         };
 
-        let cron_handle = cron::serve(global_cancel_token.child_token()).await?;
+        let db_config = DBConfig {
+            name: "bot_db".to_string(),
+            description: "Anda Hippocampus database".to_string(),
+            storage: StorageConfig {
+                cache_max_capacity: 100000,
+                compress_level: 3,
+                object_chunk_size: 256 * 1024,
+                bucket_overload_size: 1024 * 1024,
+                max_small_object_size: 1024 * 1024 * 10,
+            },
+            lock: None,
+        };
+        let bot_db = AndaDB::connect(object_store, db_config).await?;
+        let bot_db = Arc::new(bot_db);
+
+        let cron = Arc::new(cron::Cron::connect(engine_ref.clone(), bot_db.clone(), engine_id).await?);
+        let cron_handle = cron.as_ref().clone().serve(global_cancel_token.child_token()).await?;
         let gateway_handle = gateway::serve(
             global_cancel_token.child_token(),
-            object_store,
+            bot_db,
             self.cfg.addr.clone(),
             brain_cfg,
             engine_cfg,
+            engine_ref,
+            cron,
         )
         .await?;
 

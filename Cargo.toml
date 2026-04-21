@@ -45,6 +45,7 @@ anda_kip = "0.7"
 ciborium = "0.2"
 coset = "0.4"
 dotenv = "0.15"
+futures-util = "0.3"
 http = "1.3"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
@@ -72,4 +73,6 @@ boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }
 debug = false
 lto = true
 strip = true
-opt-level = 's'
+opt-level = 'z'
+codegen-units = 1
+panic = "abort"

@@ -1,9 +1,5 @@
 use anda_core::BoxError;
-use anda_db::{
-    database::{AndaDB, DBConfig},
-    storage::StorageConfig,
-    unix_ms,
-};
+use anda_db::{database::DBConfig, storage::StorageConfig, unix_ms};
 use anda_engine::{
     management::{BaseManagement, Visibility},
     model::Models,
@@ -30,7 +26,6 @@ pub struct HippocampusConfig {
 
 pub struct Hippocampus {
     pub state: AppState,
-    pub db: Arc<AndaDB>,
 }
 
 impl Hippocampus {
@@ -79,7 +74,7 @@ impl Hippocampus {
             0,
         );
 
-        let space = match app_state.load_space(ANDA_BOT_SPACE_ID, true).await {
+        let _ = match app_state.load_space(ANDA_BOT_SPACE_ID, true).await {
             Ok(space) => space,
             Err(e) => {
                 if e.to_string().contains("not found") {
@@ -109,10 +104,7 @@ impl Hippocampus {
                 }
             }
         };
-        Ok(Self {
-            state: app_state,
-            db: space.db.clone(),
-        })
+        Ok(Self { state: app_state })
     }
 
     pub fn into_router(self) -> Router<()> {

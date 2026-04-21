@@ -31,7 +31,7 @@ use std::{
     },
 };
 
-use crate::brain;
+use crate::{brain, cron};
 
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
@@ -66,6 +66,10 @@ impl AndaBot {
                 EditFileTool::NAME.to_string(),
                 WriteFileTool::NAME.to_string(),
                 TodoTool::NAME.to_string(),
+                cron::CreateCronTool::NAME.to_string(),
+                cron::ManageCronJobTool::NAME.to_string(),
+                cron::ListCronJobsTool::NAME.to_string(),
+                cron::ListCronRunsTool::NAME.to_string(),
             ],
             tools: vec![
                 brain::Client::NAME.to_string(),
@@ -80,6 +84,8 @@ impl AndaBot {
                 TodoTool::NAME.to_string(),
                 SubAgentManager::NAME.to_string(),
                 SkillManager::NAME.to_string(),
+                cron::CreateCronTool::NAME.to_string(),
+                cron::ManageCronJobTool::NAME.to_string(),
             ],
             processing_conversations: Arc::new(RwLock::new(HashMap::new())),
         }

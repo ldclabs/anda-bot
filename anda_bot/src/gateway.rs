@@ -1,13 +1,14 @@
 use anda_core::BoxError;
+use anda_db::database::AndaDB;
+use anda_engine::engine::EngineRef;
 use anda_engine_server::create_reuse_port_listener;
 use axum::Router;
-use object_store::ObjectStore;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::compression::CompressionLayer;
 
-use crate::{brain, engine};
+use crate::{brain, cron, engine};
 
 mod chat;
 mod client;
@@ -16,14 +17,16 @@ pub use client::*;
 
 pub async fn serve(
     cancel_token: CancellationToken,
-    object_store: Arc<dyn ObjectStore>,
+    db: Arc<AndaDB>,
     addr: String,
     brain_cfg: brain::HippocampusConfig,
     engine_cfg: engine::EngineConfig,
+    engine_ref: Arc<EngineRef>,
+    cron: Arc<cron::Cron>,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
-    let hippocampus = brain::Hippocampus::new(object_store.clone(), brain_cfg).await?;
+    let hippocampus = brain::Hippocampus::new(db.object_store(), brain_cfg).await?;
     let hippocampus_state = hippocampus.state.clone();
-    let engines = engine::Engines::new(engine_cfg, hippocampus.db.clone()).await?;
+    let engines = engine::Engines::new(engine_cfg, db, engine_ref, cron).await?;
 
     let addr: SocketAddr = addr.parse()?;
     let listener = create_reuse_port_listener(addr).await?;

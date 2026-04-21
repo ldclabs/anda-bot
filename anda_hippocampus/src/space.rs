@@ -1090,11 +1090,7 @@ async fn init_nexus_kip(nexus: &CognitiveNexus) -> Result<(), KipError> {
         .await
     {
         // uuc56-gyb: Principal::from_slice(&[1])
-        let kml = &[
-            &PERSON_SELF_KIP.replace("$self_reserved_principal_id", "uuc56-gyb"),
-            PERSON_SYSTEM_KIP,
-        ]
-        .join("\n");
+        let kml = &[PERSON_SELF_KIP, PERSON_SYSTEM_KIP].join("\n");
 
         let result = nexus.execute_kml(parse_kml(kml)?, false).await?;
         log::info!(result:serde = result; "Init $self and $system");

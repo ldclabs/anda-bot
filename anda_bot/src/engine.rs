@@ -2,7 +2,7 @@ use anda_core::BoxError;
 use anda_db::database::AndaDB;
 use anda_engine::{
     context::Web3SDK,
-    engine::Engine,
+    engine::{Engine, EngineRef},
     extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
@@ -13,7 +13,7 @@ use anda_engine::{
 use anda_engine_server::handler::{AppState, anda_engine};
 use anda_hippocampus::{model::build_model, types::ModelConfig};
 use anda_web3_client::client::Client as Web3Client;
-use axum::{Json, Router, response::IntoResponse, routing};
+use axum::{Router, response::IntoResponse, routing};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
@@ -25,11 +25,11 @@ use std::{
 mod agent;
 mod conversation_tool;
 
-use crate::brain;
 use crate::util::{
     http_client::build_http_client,
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
+use crate::{brain, cron};
 use agent::*;
 use conversation_tool::*;
 
@@ -52,7 +52,12 @@ pub struct EngineConfig {
 }
 
 impl Engines {
-    pub async fn new(cfg: EngineConfig, db: Arc<AndaDB>) -> Result<Self, BoxError> {
+    pub async fn new(
+        cfg: EngineConfig,
+        db: Arc<AndaDB>,
+        engine_ref: Arc<EngineRef>,
+        cron_runtime: Arc<cron::Cron>,
+    ) -> Result<Self, BoxError> {
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
             hasher.update(cfg.id_key.as_bytes());
@@ -120,11 +125,17 @@ impl Engines {
             .register_tool(Arc::new(fs::EditFileTool::new(cfg.work_dir.clone())))?
             .register_tool(Arc::new(fs::WriteFileTool::new(cfg.work_dir.clone())))?
             .register_tool(Arc::new(conversations_tool))?
+            .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
             .register_agent(Arc::new(bot), None)?
             .export_tools(vec![ConversationsTool::NAME.to_string()]);
 
         // Initialize and start the server
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
+        let engine = Arc::new(engine);
+        engine_ref.bind(Arc::downgrade(&engine));
         let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
         skills_tool.load().await?;
 
@@ -159,5 +170,5 @@ pub async fn get_version() -> impl IntoResponse {
         "version": APP_VERSION,
 
     });
-    Json(info)
+    axum::Json(info)
 }
