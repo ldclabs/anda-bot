@@ -10,6 +10,7 @@ use anda_object_store::MetaStoreBuilder;
 use clap::Args;
 use object_store::{ObjectStore, local::LocalFileSystem};
 use std::{
+    collections::HashMap,
     fs::OpenOptions as StdOpenOptions,
     io,
     path::{Path, PathBuf},
@@ -24,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::{brain, cron, engine, gateway, util};
+use crate::{brain, channel, cron, engine, gateway, util};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
 const DAEMON_LOG_FILE: &str = "anda-daemon.log";
@@ -348,6 +349,7 @@ impl Daemon {
         let global_cancel_token = CancellationToken::new();
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let engine_id = id_key.id();
+        let user_id = user_pubkey.id();
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
             model: self.cfg.model_config(),
@@ -389,8 +391,27 @@ impl Daemon {
         let bot_db = AndaDB::connect(object_store, db_config).await?;
         let bot_db = Arc::new(bot_db);
 
-        let cron = Arc::new(cron::Cron::connect(engine_ref.clone(), bot_db.clone(), engine_id).await?);
-        let cron_handle = cron.as_ref().clone().serve(global_cancel_token.child_token()).await?;
+        let cron_runtime = Arc::new(
+            cron::CronRuntime::connect(engine_ref.clone(), bot_db.clone(), engine_id).await?,
+        );
+        let cron_handle = cron_runtime
+            .as_ref()
+            .clone()
+            .serve(global_cancel_token.child_token())
+            .await?;
+
+        let channel_runtime = channel::ChannelRuntime::connect(
+            bot_db.clone(),
+            engine_ref.clone(),
+            user_id,
+            HashMap::new(),
+        )
+        .await?;
+        let channel_hook = channel_runtime.hook();
+        let channel_handle = channel_runtime
+            .serve(global_cancel_token.child_token())
+            .await?;
+
         let gateway_handle = gateway::serve(
             global_cancel_token.child_token(),
             bot_db,
@@ -398,12 +419,18 @@ impl Daemon {
             brain_cfg,
             engine_cfg,
             engine_ref,
-            cron,
+            cron_runtime,
+            vec![channel_hook],
         )
         .await?;
 
         let terminate_handle = shutdown_signal(global_cancel_token);
-        let _ = tokio::join!(cron_handle, gateway_handle, terminate_handle);
+        let _ = tokio::join!(
+            cron_handle,
+            channel_handle,
+            gateway_handle,
+            terminate_handle
+        );
 
         Ok(())
     }

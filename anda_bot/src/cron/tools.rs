@@ -5,17 +5,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{service::Cron, types::CreateCronJobArgs};
+use super::{runtime::CronRuntime, types::CreateCronJobArgs};
 
 #[derive(Clone)]
 pub struct CreateCronTool {
-    cron: Arc<Cron>,
+    cron: Arc<CronRuntime>,
 }
 
 impl CreateCronTool {
     pub const NAME: &'static str = "create_cron_job";
 
-    pub fn new(cron: Arc<Cron>) -> Self {
+    pub fn new(cron: Arc<CronRuntime>) -> Self {
         Self { cron }
     }
 }
@@ -127,13 +127,13 @@ where
 
 #[derive(Clone)]
 pub struct ManageCronJobTool {
-    cron: Arc<Cron>,
+    cron: Arc<CronRuntime>,
 }
 
 impl ManageCronJobTool {
     pub const NAME: &'static str = "manage_cron_job";
 
-    pub fn new(cron: Arc<Cron>) -> Self {
+    pub fn new(cron: Arc<CronRuntime>) -> Self {
         Self { cron }
     }
 }
@@ -215,13 +215,13 @@ impl Tool<BaseCtx> for ManageCronJobTool {
 
 #[derive(Clone)]
 pub struct ListCronJobsTool {
-    cron: Arc<Cron>,
+    cron: Arc<CronRuntime>,
 }
 
 impl ListCronJobsTool {
     pub const NAME: &'static str = "list_cron_jobs";
 
-    pub fn new(cron: Arc<Cron>) -> Self {
+    pub fn new(cron: Arc<CronRuntime>) -> Self {
         Self { cron }
     }
 }
@@ -274,13 +274,13 @@ impl Tool<BaseCtx> for ListCronJobsTool {
 
 #[derive(Clone)]
 pub struct ListCronRunsTool {
-    cron: Arc<Cron>,
+    cron: Arc<CronRuntime>,
 }
 
 impl ListCronRunsTool {
     pub const NAME: &'static str = "list_cron_runs";
 
-    pub fn new(cron: Arc<Cron>) -> Self {
+    pub fn new(cron: Arc<CronRuntime>) -> Self {
         Self { cron }
     }
 }

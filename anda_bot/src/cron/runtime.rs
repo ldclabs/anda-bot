@@ -1,7 +1,7 @@
 use anda_core::{AgentInput, BoxError, Principal, ToolInput};
 use anda_db::{database::AndaDB, unix_ms};
 use anda_engine::{
-    engine::EngineRef,
+    engine::{Engine, EngineRef},
     extension::shell::{ExecArgs, ShellTool},
 };
 use futures_util::{StreamExt, stream};
@@ -23,7 +23,7 @@ const STALE_RUNNING_MS: u64 = 10 * 60 * 1000;
 use super::{store::*, types::*};
 
 #[derive(Clone)]
-pub struct Cron {
+pub struct CronRuntime {
     pub store: CronStore,
     engine: Arc<EngineRef>,
     controller: Principal,
@@ -31,7 +31,7 @@ pub struct Cron {
     running_jobs: Arc<Mutex<BTreeMap<u64, u64>>>,
 }
 
-impl Cron {
+impl CronRuntime {
     pub async fn connect(
         engine: Arc<EngineRef>,
         db: Arc<AndaDB>,
@@ -46,7 +46,7 @@ impl Cron {
         })
     }
 
-    async fn process_due_jobs_once(self) -> Result<usize, BoxError> {
+    async fn process_due_jobs_once(self, engine: Arc<Engine>) -> Result<usize, BoxError> {
         let now_ms = unix_ms();
         let running_ids = {
             let mut running_jobs = self.running_jobs.lock();
@@ -93,20 +93,20 @@ impl Cron {
         self.store.flush(unix_ms()).await?;
         let len = runs.len();
 
-        let this = self.clone();
+        let store = self.store.clone();
         let mut in_flight = stream::iter(runs.into_iter().map(move |(job, run)| {
             let this = self.clone();
+            let engine = engine.clone();
             async move {
-                this.process_due_job(job, run).await;
+                this.process_due_job(engine, job, run).await;
             }
         }))
         .buffer_unordered(available_slots);
-
         tokio::spawn(async move {
             while let Some(()) = in_flight.next().await {
                 // nothing to do here, just drive the stream
             }
-            if let Err(err) = this.store.flush(unix_ms()).await {
+            if let Err(err) = store.flush(unix_ms()).await {
                 log::error!(name = "cron"; "failed to flush cron store: {err}");
             }
         });
@@ -114,17 +114,7 @@ impl Cron {
         Ok(len)
     }
 
-    async fn process_due_job(&self, job: CronJob, run: CronRun) {
-        let Some(engine) = self.engine.get() else {
-            let error = format!("engine is not available, cannot run cron job {}", job._id);
-            log::error!(name = "cron"; "{error}");
-            if let Err(err) = self.store.job_abort(run, unix_ms(), error).await {
-                log::error!(name = "cron"; "failed to abort cron job {}: {err}", job._id);
-            }
-            self.running_jobs.lock().remove(&job._id);
-            return;
-        };
-
+    async fn process_due_job(&self, engine: Arc<Engine>, job: CronJob, run: CronRun) {
         let result: CronJobResult = match job.job_kind {
             JobKind::Shell => match engine
                 .tool_call(
@@ -184,12 +174,11 @@ impl Cron {
                         return Ok(());
                     }
                     _ = interval.tick() => {
-                        if self.engine.get().is_none() {
-                            log::warn!(name = "cron"; "engine is not available, skipping cron tick");
-                            continue;
-                        }
-
-                        if let Err(err) = self.clone().process_due_jobs_once().await {
+                        let Some(engine) = self.engine.get() else {
+                             log::warn!(name = "cron"; "engine is not available, skipping cron tick");
+                             continue;
+                        };
+                        if let Err(err) = self.clone().process_due_jobs_once(engine).await {
                             log::error!(name = "cron"; "cron tick failed: {err}");
                         }
                     }

@@ -21,6 +21,7 @@ use anda_hippocampus::{
     types::{FormationInputRef, InputContext},
 };
 use async_trait::async_trait;
+use futures::future::join_all;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,7 +32,7 @@ use std::{
     },
 };
 
-use crate::{brain, cron};
+use crate::{brain, cron, engine::CompletionHook};
 
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
@@ -39,11 +40,16 @@ static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md"
 
 #[derive(Clone)]
 pub struct AndaBot {
+    inner: Arc<AndaBotInner>,
+}
+
+struct AndaBotInner {
     brain: brain::Client,
     conversations: Conversations,
     tool_dependencies: Vec<String>,
     tools: Vec<String>,
-    processing_conversations: Arc<ProcessingConversations>,
+    processing_conversations: ProcessingConversations,
+    completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
 }
 
 type ProcessingConversations = RwLock<HashMap<(Principal, u64), Arc<ConversationTask>>>;
@@ -51,58 +57,70 @@ type ProcessingConversations = RwLock<HashMap<(Principal, u64), Arc<Conversation
 impl AndaBot {
     pub const NAME: &'static str = "anda_bot";
 
-    pub fn new(brain: brain::Client, conversations: Conversations) -> Self {
+    pub fn new(
+        brain: brain::Client,
+        conversations: Conversations,
+        completion_hooks: Vec<Arc<dyn CompletionHook>>,
+    ) -> Self {
         Self {
-            brain,
-            conversations,
-            tool_dependencies: vec![
-                brain::Client::NAME.to_string(),
-                NoteTool::NAME.to_string(),
-                TOOLS_SEARCH_NAME.to_string(),
-                TOOLS_SELECT_NAME.to_string(),
-                ShellTool::NAME.to_string(),
-                ReadFileTool::NAME.to_string(),
-                SearchFileTool::NAME.to_string(),
-                EditFileTool::NAME.to_string(),
-                WriteFileTool::NAME.to_string(),
-                TodoTool::NAME.to_string(),
-                cron::CreateCronTool::NAME.to_string(),
-                cron::ManageCronJobTool::NAME.to_string(),
-                cron::ListCronJobsTool::NAME.to_string(),
-                cron::ListCronRunsTool::NAME.to_string(),
-            ],
-            tools: vec![
-                brain::Client::NAME.to_string(),
-                NoteTool::NAME.to_string(),
-                TOOLS_SEARCH_NAME.to_string(),
-                TOOLS_SELECT_NAME.to_string(),
-                ShellTool::NAME.to_string(),
-                ReadFileTool::NAME.to_string(),
-                SearchFileTool::NAME.to_string(),
-                EditFileTool::NAME.to_string(),
-                WriteFileTool::NAME.to_string(),
-                TodoTool::NAME.to_string(),
-                SubAgentManager::NAME.to_string(),
-                SkillManager::NAME.to_string(),
-                cron::CreateCronTool::NAME.to_string(),
-                cron::ManageCronJobTool::NAME.to_string(),
-            ],
-            processing_conversations: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(AndaBotInner {
+                brain,
+                conversations,
+                tool_dependencies: vec![
+                    brain::Client::NAME.to_string(),
+                    NoteTool::NAME.to_string(),
+                    TOOLS_SEARCH_NAME.to_string(),
+                    TOOLS_SELECT_NAME.to_string(),
+                    ShellTool::NAME.to_string(),
+                    ReadFileTool::NAME.to_string(),
+                    SearchFileTool::NAME.to_string(),
+                    EditFileTool::NAME.to_string(),
+                    WriteFileTool::NAME.to_string(),
+                    TodoTool::NAME.to_string(),
+                    SubAgentManager::NAME.to_string(),
+                    SkillManager::NAME.to_string(),
+                    cron::CreateCronTool::NAME.to_string(),
+                    cron::ManageCronJobTool::NAME.to_string(),
+                    cron::ListCronJobsTool::NAME.to_string(),
+                    cron::ListCronRunsTool::NAME.to_string(),
+                ],
+                tools: vec![
+                    brain::Client::NAME.to_string(),
+                    NoteTool::NAME.to_string(),
+                    TOOLS_SEARCH_NAME.to_string(),
+                    TOOLS_SELECT_NAME.to_string(),
+                    ShellTool::NAME.to_string(),
+                    ReadFileTool::NAME.to_string(),
+                    SearchFileTool::NAME.to_string(),
+                    EditFileTool::NAME.to_string(),
+                    WriteFileTool::NAME.to_string(),
+                    TodoTool::NAME.to_string(),
+                    SubAgentManager::NAME.to_string(),
+                    SkillManager::NAME.to_string(),
+                    cron::CreateCronTool::NAME.to_string(),
+                    cron::ManageCronJobTool::NAME.to_string(),
+                ],
+                processing_conversations: RwLock::new(HashMap::new()),
+                completion_hooks: Arc::new(completion_hooks),
+            }),
         }
     }
 
     fn get_processing_task(&self, key: &(Principal, u64)) -> Option<Arc<ConversationTask>> {
-        let mut processing = self.processing_conversations.write();
+        let mut processing = self.inner.processing_conversations.write();
         processing.retain(|_, task| !task.sender.is_closed());
         processing.get(key).cloned()
     }
 
     fn insert_processing_task(&self, key: (Principal, u64), task: Arc<ConversationTask>) {
-        self.processing_conversations.write().insert(key, task);
+        self.inner
+            .processing_conversations
+            .write()
+            .insert(key, task);
     }
 
     fn remove_processing_task(&self, key: &(Principal, u64)) {
-        self.processing_conversations.write().remove(key);
+        self.inner.processing_conversations.write().remove(key);
     }
 
     async fn submit_formation(
@@ -117,7 +135,7 @@ impl AndaBot {
             timestamp,
         };
 
-        let _ = self.brain.formation(input).await?;
+        let _ = self.inner.brain.formation(input).await?;
         Ok(())
     }
 }
@@ -136,7 +154,7 @@ impl Agent<AgentCtx> for AndaBot {
 
     /// Returns a list of tool names that this agent depends on
     fn tool_dependencies(&self) -> Vec<String> {
-        self.tool_dependencies.clone()
+        self.inner.tool_dependencies.clone()
     }
 
     fn supported_resource_tags(&self) -> Vec<String> {
@@ -192,7 +210,8 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let current_conversation = if current_conversation_id > 0 {
-            self.conversations
+            self.inner
+                .conversations
                 .get_conversation(current_conversation_id)
                 .await
                 .ok()
@@ -211,6 +230,7 @@ impl Agent<AgentCtx> for AndaBot {
             (Some(ancestors), Some(conv))
         } else {
             let (mut conversations, _cursor) = self
+                .inner
                 .conversations
                 .list_conversations_by_user(caller, None, Some(1))
                 .await?;
@@ -232,8 +252,8 @@ impl Agent<AgentCtx> for AndaBot {
             user_conversations.push(Document::from(parent));
         }
 
-        let primer = self.brain.describe_primer().await?;
-        let caller_info = self.brain.user_info(caller.to_string()).await;
+        let primer = self.inner.brain.describe_primer().await?;
+        let caller_info = self.inner.brain.user_info(caller.to_string()).await;
         let notes = load_notes(&ctx).await.unwrap_or_default();
         let instructions = format!(
             "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
@@ -309,6 +329,7 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let id = self
+            .inner
             .conversations
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
@@ -324,6 +345,7 @@ impl Agent<AgentCtx> for AndaBot {
         let conversation_task = Arc::new(ConversationTask {
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
             active_at: AtomicU64::new(unix_ms()),
         });
@@ -342,7 +364,7 @@ impl Agent<AgentCtx> for AndaBot {
                 instructions,
                 prompt,
                 chat_history,
-                tools: ctx.definitions(Some(&assistant.tools)).await,
+                tools: ctx.definitions(Some(&assistant.inner.tools)).await,
                 tool_choice_required: false,
                 max_output_tokens: Some(50000),
                 ..Default::default()
@@ -422,8 +444,11 @@ impl Agent<AgentCtx> for AndaBot {
                             {
                                 conversation.status = ConversationStatus::Completed;
                                 conversation.updated_at = now_ms;
-                                persist_conversation_state(&assistant.conversations, &conversation)
-                                    .await;
+                                persist_conversation_state(
+                                    &assistant.inner.conversations,
+                                    &conversation,
+                                )
+                                .await;
                                 break;
                             } else {
                                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -434,6 +459,7 @@ impl Agent<AgentCtx> for AndaBot {
                         Ok(Some(mut res)) => {
                             let now_ms = unix_ms();
                             conversation_task.active_at.store(now_ms, Ordering::SeqCst);
+                            conversation_task.on_completion(&ctx, &res).await;
 
                             let is_done = runner.is_done();
                             if !is_done {
@@ -466,8 +492,11 @@ impl Agent<AgentCtx> for AndaBot {
                             conversation.updated_at = now_ms;
                             conversation.failed_reason = res.failed_reason.take();
 
-                            persist_conversation_state(&assistant.conversations, &conversation)
-                                .await;
+                            persist_conversation_state(
+                                &assistant.inner.conversations,
+                                &conversation,
+                            )
+                            .await;
 
                             let timestamp = rfc3339_datetime(now_ms);
                             let submit_formation_at = conversation.messages.len();
@@ -503,8 +532,11 @@ impl Agent<AgentCtx> for AndaBot {
                             conversation.failed_reason = Some(err.to_string());
                             conversation.status = ConversationStatus::Failed;
                             conversation.updated_at = unix_ms();
-                            persist_conversation_state(&assistant.conversations, &conversation)
-                                .await;
+                            persist_conversation_state(
+                                &assistant.inner.conversations,
+                                &conversation,
+                            )
+                            .await;
                             break;
                         }
                     }
@@ -527,8 +559,21 @@ impl Agent<AgentCtx> for AndaBot {
 struct ConversationTask {
     sender: tokio::sync::mpsc::Sender<ConversationInput>,
     background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
+    completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     submit_formation_at: AtomicU64,
     active_at: AtomicU64,
+}
+
+#[async_trait]
+impl CompletionHook for ConversationTask {
+    async fn on_completion(&self, _ctx: &AgentCtx, _output: &AgentOutput) {
+        join_all(
+            self.completion_hooks
+                .iter()
+                .map(|hook| hook.on_completion(_ctx, _output)),
+        )
+        .await;
+    }
 }
 
 #[async_trait]

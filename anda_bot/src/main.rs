@@ -4,6 +4,7 @@ use mimalloc::MiMalloc;
 use std::{path::PathBuf, time::Duration};
 
 mod brain;
+mod channel;
 mod cli;
 mod cron;
 mod daemon;

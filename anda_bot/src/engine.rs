@@ -1,7 +1,7 @@
-use anda_core::BoxError;
+use anda_core::{AgentOutput, BoxError};
 use anda_db::database::AndaDB;
 use anda_engine::{
-    context::Web3SDK,
+    context::{AgentCtx, Web3SDK},
     engine::{Engine, EngineRef},
     extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
@@ -13,6 +13,7 @@ use anda_engine::{
 use anda_engine_server::handler::{AppState, anda_engine};
 use anda_hippocampus::{model::build_model, types::ModelConfig};
 use anda_web3_client::client::Client as Web3Client;
+use async_trait::async_trait;
 use axum::{Router, response::IntoResponse, routing};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
@@ -40,6 +41,11 @@ pub struct Engines {
     state: AppState,
 }
 
+#[async_trait]
+pub trait CompletionHook: Send + Sync {
+    async fn on_completion(&self, _ctx: &AgentCtx, _output: &AgentOutput) {}
+}
+
 pub struct EngineConfig {
     pub id_key: Ed25519Key,
     pub managers: Vec<Ed25519PubKey>,
@@ -56,7 +62,8 @@ impl Engines {
         cfg: EngineConfig,
         db: Arc<AndaDB>,
         engine_ref: Arc<EngineRef>,
-        cron_runtime: Arc<cron::Cron>,
+        cron_runtime: Arc<cron::CronRuntime>,
+        completion_hooks: Vec<Arc<dyn CompletionHook>>,
     ) -> Result<Self, BoxError> {
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
@@ -100,7 +107,7 @@ impl Engines {
 
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let conversations_tool = ConversationsTool::new(conversations.clone());
-        let bot = AndaBot::new(brain_client.clone(), conversations);
+        let bot = AndaBot::new(brain_client.clone(), conversations, completion_hooks);
 
         let shell_tool = {
             let runtime: Arc<dyn shell::Executor> = if let Some(sandbox) = cfg.sandbox_dir {
@@ -111,6 +118,7 @@ impl Engines {
             shell::ShellTool::new(runtime, HashMap::new())
         };
 
+        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
         let engine = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
@@ -118,6 +126,7 @@ impl Engines {
             .set_models(Arc::new(models))
             .register_tool(Arc::new(brain_client))?
             .register_tool(Arc::new(shell_tool))?
+            .register_tool(skills_tool.clone())?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
             .register_tool(Arc::new(fs::ReadFileTool::new(cfg.work_dir.clone())))?
@@ -136,10 +145,9 @@ impl Engines {
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
         let engine = Arc::new(engine);
         engine_ref.bind(Arc::downgrade(&engine));
-        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
         skills_tool.load().await?;
-
         engine.sub_agents_manager().insert(skills_tool);
+
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
         engines.insert(default_engine, engine);
