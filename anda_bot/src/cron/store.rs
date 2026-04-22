@@ -322,18 +322,13 @@ mod tests {
         database::{AndaDB, DBConfig},
         storage::StorageConfig,
     };
-    use anda_object_store::MetaStoreBuilder;
     use chrono::{Duration, Utc};
-    use object_store::{ObjectStore, local::LocalFileSystem};
+    use object_store::{ObjectStore, memory::InMemory};
     use tempfile::tempdir;
 
     async fn test_store() -> (tempfile::TempDir, CronStore) {
         let dir = tempdir().unwrap();
-        let object_store: Arc<dyn ObjectStore> = {
-            let os = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
-            let os = MetaStoreBuilder::new(os, 1024).build();
-            Arc::new(os)
-        };
+        let object_store: Arc<dyn ObjectStore> = { Arc::new(InMemory::new()) };
         let db = AndaDB::connect(
             object_store,
             DBConfig {

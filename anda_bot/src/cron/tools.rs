@@ -32,7 +32,8 @@ impl Tool<BaseCtx> for CreateCronTool {
         concat!(
             "Creates a scheduled cron job with the specified parameters. ",
             "Example 1: {\"job_kind\":\"shell\",\"job\":\"echo hello\",\"schedule_kind\":\"cron\",\"schedule\":\"0 9 * * 1-5\",\"tz\":\"Asia/Shanghai\"}. ",
-            "Example 2: {\"job_kind\":\"agent\",\"job\":\"Send the daily summary to me\",\"schedule_kind\":\"every\",\"schedule\":\"30m\",\"name\":\"daily-summary\"}."
+            "Example 2: {\"job_kind\":\"agent\",\"job\":\"Send the daily summary to me\",\"schedule_kind\":\"every\",\"schedule\":\"30m\",\"name\":\"daily-summary\"}.",
+            "Relevant tools: manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_select."
         )
         .to_string()
     }
