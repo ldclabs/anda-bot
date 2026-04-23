@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::compression::CompressionLayer;
 
-use crate::{brain, cron, engine};
+use crate::{brain, config, cron, engine};
 
 mod chat;
 mod client;
@@ -42,8 +42,8 @@ pub async fn serve(
     log::warn!(
         name = "gateway";
         "start service {}@{} on {:?}.",
-        engine::APP_NAME,
-        engine::APP_VERSION,
+        config::APP_NAME,
+        config::APP_VERSION,
         addr,
     );
 

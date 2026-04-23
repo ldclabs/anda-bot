@@ -30,12 +30,9 @@ use crate::util::{
     http_client::build_http_client,
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
-use crate::{brain, cron};
+use crate::{brain, config, cron};
 use agent::*;
 use conversation_tool::*;
-
-pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Engines {
     state: AppState,
@@ -174,8 +171,8 @@ impl Engines {
 
 pub async fn get_version() -> impl IntoResponse {
     let info = json!({
-        "name": APP_NAME,
-        "version": APP_VERSION,
+        "name": config::APP_NAME,
+        "version": config::APP_VERSION,
 
     });
     axum::Json(info)

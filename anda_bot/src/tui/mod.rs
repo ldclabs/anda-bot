@@ -19,7 +19,8 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    daemon::{Daemon, DaemonArgs, LaunchState, process_exists},
+    config::Config,
+    daemon::{Daemon, LaunchState, process_exists},
     gateway,
 };
 
@@ -56,12 +57,12 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
 #[derive(Default)]
 struct SetupState {
     template_created: bool,
-    missing_fields: Vec<&'static str>,
+    issues: Vec<String>,
 }
 
 impl SetupState {
     fn is_ready(&self) -> bool {
-        self.missing_fields.is_empty()
+        self.issues.is_empty()
     }
 }
 
@@ -72,7 +73,7 @@ struct App {
     notice: String,
     pid: Option<u32>,
     daemon_running: bool,
-    runtime_cfg: DaemonArgs,
+    runtime_cfg: Config,
     setup: SetupState,
     chat: gateway::ChatSession,
     input_buf: String,
@@ -81,7 +82,7 @@ struct App {
 }
 
 impl App {
-    fn new(home: PathBuf, cfg: DaemonArgs, client: gateway::Client) -> Self {
+    fn new(home: PathBuf, cfg: Config, client: gateway::Client) -> Self {
         Self {
             home,
             client: client.clone(),
@@ -102,8 +103,8 @@ impl App {
         Daemon::new(self.home.clone(), self.runtime_cfg.clone())
     }
 
-    fn env_file_path(&self) -> PathBuf {
-        self.home.join(".env")
+    fn config_file_path(&self) -> PathBuf {
+        self.home.join("config.yaml")
     }
 
     fn log_file_path(&self) -> PathBuf {
@@ -134,40 +135,43 @@ impl App {
         self.setup = SetupState::default();
 
         let daemon = self.runtime_daemon();
-        self.setup.template_created = match daemon.ensure_env_file_exists().await {
+        let config_created = match daemon.ensure_config_file_exists().await {
             Ok(created) => created,
             Err(err) => {
                 self.notice = format!(
                     "Failed to prepare {}: {err}",
-                    daemon.env_file_path().display()
+                    daemon.config_file_path().display()
                 );
                 return;
             }
         };
+        self.setup.template_created = config_created;
 
-        let env_path = daemon.env_file_path();
-        self.runtime_cfg = match DaemonArgs::from_env_file(&env_path).await {
+        self.runtime_cfg = match daemon.load_config_from_disk().await {
             Ok(cfg) => cfg,
             Err(err) => {
-                self.notice = format!("Failed to read {}: {err}", env_path.display());
+                self.notice = format!(
+                    "Failed to read {}: {err}",
+                    self.config_file_path().display()
+                );
                 return;
             }
         };
-        self.setup.missing_fields = self.runtime_cfg.missing_required_fields();
+        self.setup.issues = self.runtime_cfg.setup_issues();
         self.rebind_client();
 
         if self.setup_required() {
-            let missing = self.setup.missing_fields.join(", ");
+            let missing = self.setup.issues.join(", ");
             self.notice = if self.setup.template_created {
                 format!(
                     "Created {}. Fill in {} and press Ctrl+R.",
-                    env_path.display(),
+                    self.config_file_path().display(),
                     missing
                 )
             } else {
                 format!(
                     "Edit {} and fill in {}. Press Ctrl+R after saving.",
-                    env_path.display(),
+                    self.config_file_path().display(),
                     missing
                 )
             };
@@ -259,8 +263,8 @@ impl App {
                 self.notice = if self.setup_required() {
                     format!(
                         "Edit {} and fill in {}. Press Ctrl+R when ready.",
-                        self.env_file_path().display(),
-                        self.setup.missing_fields.join(", ")
+                        self.config_file_path().display(),
+                        self.setup.issues.join(", ")
                     )
                 } else {
                     format!(
@@ -368,8 +372,9 @@ async fn run_app(
             let was_running = app.daemon_running;
             let _ = app.refresh_status().await;
             if app.setup.is_ready() && was_running && !app.daemon_running && app.notice.is_empty() {
-                app.notice = "Daemon connection lost. Press Ctrl+R to reload .env and reconnect."
-                    .to_string();
+                app.notice =
+                    "Daemon connection lost. Press Ctrl+R to reload config.yaml and reconnect."
+                        .to_string();
             }
             last_status_refresh = Instant::now();
         }
@@ -450,7 +455,7 @@ fn render_title(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(app.runtime_cfg.base_url(), theme::dim_style()),
         Span::raw(" │ "),
         Span::styled(
-            format!(".env {}", app.env_file_path().display()),
+            format!("cfg {}", app.config_file_path().display()),
             theme::dim_style(),
         ),
     ]);
@@ -463,8 +468,8 @@ fn render_main_panel(frame: &mut Frame, app: &mut App, area: Rect) {
             frame,
             area,
             "Setup",
-            "Chat needs a complete .env file",
-            "Fill the provider settings, save, then press Ctrl+R.",
+            "Chat needs a complete config.yaml",
+            "Edit config.yaml, save, then press Ctrl+R.",
             setup_lines(app),
         );
         return;
@@ -476,7 +481,7 @@ fn render_main_panel(frame: &mut Frame, app: &mut App, area: Rect) {
             area,
             "Connection",
             "The local daemon is not ready",
-            "Check the log file or reload the .env settings.",
+            "Check the log file or reload config.yaml.",
             daemon_unavailable_lines(app),
         );
         return;
@@ -638,7 +643,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         (
             " Setup required ",
             theme::warn_style(),
-            "Edit .env, save the file, then press Ctrl+R to enable chat.",
+            "Edit config.yaml, save, then press Ctrl+R to enable chat.",
         )
     } else if !app.daemon_running {
         (
@@ -700,12 +705,12 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
         ))
     } else if app.chat_enabled() {
         Line::from(Span::styled(
-            " Ctrl+N new conversation │ Ctrl+R reload .env │ /steer /stop /cancel │ Ctrl+Q quit",
+            " Ctrl+N new conversation │ Ctrl+R reload config │ /steer /stop /cancel │ Ctrl+Q quit",
             theme::dim_style(),
         ))
     } else {
         Line::from(Span::styled(
-            " Edit .env, save, then press Ctrl+R to retry │ Ctrl+Q quit",
+            " Edit config.yaml, save, then press Ctrl+R to retry │ Ctrl+Q quit",
             theme::dim_style(),
         ))
     };
@@ -714,22 +719,22 @@ fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
 
 fn setup_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from("This TUI only handles chat now; configuration lives in the .env file."),
+        Line::from("All startup and runtime settings now live in config.yaml."),
         Line::from(""),
-        Line::from(Span::styled("Required keys", theme::heading_style())),
+        Line::from(Span::styled("Config path", theme::heading_style())),
+        Line::from(format!("config.yaml: {}", app.config_file_path().display())),
+        Line::from(""),
+        Line::from(Span::styled("Current issues", theme::heading_style())),
     ];
 
-    for key in &app.setup.missing_fields {
-        lines.push(Line::from(format!("  {key}=...")));
+    for issue in &app.setup.issues {
+        lines.push(Line::from(format!("  {issue}")));
     }
 
     lines.extend([
         Line::from(""),
-        Line::from(format!(
-            "Environment file: {}",
-            app.env_file_path().display()
-        )),
-        Line::from("Optional keys: GATEWAY_ADDR, SANDBOX, HTTPS_PROXY"),
+        Line::from("Top-level keys: addr, sandbox, https_proxy, model, channels"),
+        Line::from("Model keys: model.active and model.providers.*"),
         Line::from("After saving the file, press Ctrl+R to reload and auto-start the daemon."),
     ]);
 
@@ -738,12 +743,12 @@ fn setup_lines(app: &App) -> Vec<Line<'static>> {
 
 fn daemon_unavailable_lines(app: &App) -> Vec<Line<'static>> {
     vec![
-        Line::from("The .env file looks complete, but the local daemon is not responding."),
+        Line::from("The configuration looks complete, but the local daemon is not responding."),
         Line::from(""),
         Line::from(format!("Gateway: {}", app.runtime_cfg.base_url())),
         Line::from(format!("Log file: {}", app.log_file_path().display())),
         Line::from(""),
-        Line::from("Press Ctrl+R after fixing the .env file or once the daemon becomes healthy."),
+        Line::from("Press Ctrl+R after fixing config.yaml or once the daemon becomes healthy."),
     ]
 }
 
@@ -765,27 +770,27 @@ fn empty_chat_lines(app: &App) -> Vec<Line<'static>> {
 
 fn sidebar_setup_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(Span::styled("Environment file", theme::heading_style())),
-        Line::from(app.env_file_path().display().to_string()),
+        Line::from(Span::styled("Config file", theme::heading_style())),
+        Line::from(app.config_file_path().display().to_string()),
         Line::from(""),
-        Line::from(Span::styled("Missing keys", theme::heading_style())),
+        Line::from(Span::styled("Issues", theme::heading_style())),
     ];
 
-    for key in &app.setup.missing_fields {
-        lines.push(Line::from(format!("- {key}")));
+    for issue in &app.setup.issues {
+        lines.push(Line::from(format!("- {issue}")));
     }
 
     if app.setup.template_created {
         lines.extend([
             Line::from(""),
-            Line::from("A default template was created for you."),
+            Line::from("Default templates were created if missing."),
         ]);
     }
 
     lines.extend([
         Line::from(""),
         Line::from(Span::styled("Workflow", theme::heading_style())),
-        Line::from("1. Edit .env"),
+        Line::from("1. Edit config.yaml"),
         Line::from("2. Save the file"),
         Line::from("3. Press Ctrl+R"),
         Line::from("4. Start chatting"),
@@ -804,7 +809,7 @@ fn sidebar_connection_lines(app: &App) -> Vec<Line<'static>> {
         Line::from(Span::styled("Logs", theme::heading_style())),
         Line::from(app.log_file_path().display().to_string()),
         Line::from(""),
-        Line::from("Ctrl+R reload .env and reconnect"),
+        Line::from("Ctrl+R reload config and reconnect"),
         Line::from("Ctrl+Q quit"),
     ]
 }
@@ -827,7 +832,7 @@ fn sidebar_session_lines(app: &App) -> Vec<Line<'static>> {
         Line::from(Span::styled("Controls", theme::heading_style())),
         Line::from("Enter send"),
         Line::from("Ctrl+N new chat"),
-        Line::from("Ctrl+R reload .env"),
+        Line::from("Ctrl+R reload config"),
         Line::from("Ctrl+Q quit"),
     ]
 }

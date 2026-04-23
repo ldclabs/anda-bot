@@ -2,12 +2,13 @@ use anda_core::BoxError;
 use anda_db::unix_ms;
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::types::{Channel, ChannelMessage, SendMessage};
+use crate::config;
 
 // Use tokio_rustls's re-export of rustls types
 use tokio_rustls::rustls;
@@ -22,6 +23,7 @@ const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// and forwards PRIVMSG messages to the `anda` message bus.
 /// Supports both channel messages and private messages (DMs).
 pub struct IrcChannel {
+    id: String,
     server: String,
     port: u16,
     nickname: String,
@@ -112,6 +114,7 @@ impl IrcMessage {
 
 /// Configuration for constructing an `IrcChannel`.
 pub struct IrcChannelConfig {
+    pub id: String,
     pub server: String,
     pub port: u16,
     pub nickname: String,
@@ -124,10 +127,62 @@ pub struct IrcChannelConfig {
     pub verify_tls: bool,
 }
 
+impl From<&config::IrcChannelSettings> for IrcChannelConfig {
+    fn from(irc_cfg: &config::IrcChannelSettings) -> Self {
+        IrcChannelConfig {
+            id: irc_cfg.channel_id(),
+            server: irc_cfg.server.trim().to_string(),
+            port: irc_cfg.port,
+            nickname: irc_cfg.nickname.trim().to_string(),
+            username: config::normalize_optional(&irc_cfg.username),
+            channels: config::normalize_list(&irc_cfg.channels),
+            allowed_users: config::normalize_list(&irc_cfg.allowed_users),
+            server_password: config::normalize_optional(&irc_cfg.server_password),
+            nickserv_password: config::normalize_optional(&irc_cfg.nickserv_password),
+            sasl_password: config::normalize_optional(&irc_cfg.sasl_password),
+            verify_tls: irc_cfg.verify_tls,
+        }
+    }
+}
+
+pub fn build_irc_channels(
+    cfg: &[config::IrcChannelSettings],
+) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
+    let mut channels = HashMap::new();
+
+    for (index, irc_cfg) in cfg.iter().enumerate() {
+        if irc_cfg.is_empty() {
+            continue;
+        }
+
+        if irc_cfg.server.trim().is_empty() || irc_cfg.nickname.trim().is_empty() {
+            return Err(format!(
+                "IRC channel '{}' requires both server and nickname",
+                irc_cfg.label(index)
+            )
+            .into());
+        }
+
+        let irc: Arc<dyn Channel> = Arc::new(IrcChannel::new(irc_cfg.into()));
+        let channel_id = irc.id();
+        if channels.insert(channel_id.clone(), irc).is_some() {
+            return Err(format!("duplicate IRC channel id '{channel_id}'").into());
+        }
+    }
+
+    Ok(channels)
+}
+
 impl IrcChannel {
     pub fn new(cfg: IrcChannelConfig) -> Self {
-        let username = cfg.username.unwrap_or_else(|| cfg.nickname.clone());
+        let username = cfg.username.clone().unwrap_or_else(|| cfg.nickname.clone());
+        let id = if cfg.id.trim().is_empty() {
+            cfg.server.clone()
+        } else {
+            cfg.id.trim().to_string()
+        };
         Self {
+            id,
             server: cfg.server,
             port: cfg.port,
             nickname: cfg.nickname,
@@ -185,6 +240,20 @@ impl IrcChannel {
         writer.flush().await?;
         Ok(())
     }
+
+    async fn clear_writer(&self) {
+        let mut guard = self.writer.lock().await;
+        *guard = None;
+    }
+
+    fn is_retryable_send_error(error: &str) -> bool {
+        let error = error.to_ascii_lowercase();
+        error.contains("irc not connected")
+            || error.contains("broken pipe")
+            || error.contains("connection reset")
+            || error.contains("connection aborted")
+            || error.contains("connection closed")
+    }
 }
 
 #[async_trait]
@@ -198,12 +267,14 @@ impl Channel for IrcChannel {
     }
 
     fn id(&self) -> String {
-        format!("irc:{}", self.server)
+        format!("irc:{}", self.id)
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
         let mut guard = self.writer.lock().await;
-        let writer = guard.as_mut().ok_or("IRC not connected")?;
+        if guard.is_none() {
+            return Err("IRC not connected".into());
+        }
 
         // Calculate safe payload size:
         // 512 - sender prefix (~64 bytes for :nick!user@host) - "PRIVMSG " - target - " :" - "\r\n"
@@ -212,10 +283,24 @@ impl Channel for IrcChannel {
         let chunks = split_message(&message.content, max_payload);
 
         for chunk in chunks {
-            Self::send_raw(writer, &format!("PRIVMSG {} :{chunk}", message.recipient)).await?;
+            let result = match guard.as_mut() {
+                Some(writer) => {
+                    Self::send_raw(writer, &format!("PRIVMSG {} :{chunk}", message.recipient)).await
+                }
+                None => Err("IRC not connected".into()),
+            };
+
+            if let Err(err) = result {
+                *guard = None;
+                return Err(err);
+            }
         }
 
         Ok(())
+    }
+
+    fn should_retry_send(&self, error: &str) -> bool {
+        Self::is_retryable_send_error(error)
     }
 
     async fn listen(
@@ -264,13 +349,23 @@ impl Channel for IrcChannel {
 
             let res = tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    return Err("IRC channel received cancellation signal, shutting down".into());
+                    self.clear_writer().await;
+                    return Ok(());
                 }
                 res = tokio::time::timeout(READ_TIMEOUT, buf_reader.read_line(&mut line)) => res
             };
 
-            let n = res.map_err(|_| "IRC read timed out (no data for {READ_TIMEOUT:?})")??;
+            let n = match res {
+                Ok(read_result) => read_result?,
+                Err(_) => {
+                    self.clear_writer().await;
+                    return Err(
+                        format!("IRC read timed out (no data for {:?})", READ_TIMEOUT).into(),
+                    );
+                }
+            };
             if n == 0 {
+                self.clear_writer().await;
                 return Err("IRC connection closed by server".into());
             }
 
@@ -429,12 +524,14 @@ impl Channel for IrcChannel {
                     };
 
                     if tx.send(channel_msg).await.is_err() {
+                        self.clear_writer().await;
                         return Ok(());
                     }
                 }
 
                 // ERR_PASSWDMISMATCH (464) or other fatal errors
                 "464" => {
+                    self.clear_writer().await;
                     return Err("IRC password mismatch".into());
                 }
 
@@ -588,6 +685,7 @@ mod tests {
 
     fn make_channel() -> IrcChannel {
         IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "andabot".into(),
@@ -805,6 +903,7 @@ mod tests {
     #[test]
     fn specific_user_allowed() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
@@ -824,6 +923,7 @@ mod tests {
     #[test]
     fn allowlist_case_insensitive() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
@@ -843,6 +943,7 @@ mod tests {
     #[test]
     fn empty_allowlist_denies_all() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.test".into(),
             port: 6697,
             nickname: "bot".into(),
@@ -862,6 +963,7 @@ mod tests {
     #[test]
     fn new_defaults_username_to_nickname() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.test".into(),
             port: 6697,
             nickname: "mybot".into(),
@@ -879,6 +981,7 @@ mod tests {
     #[test]
     fn new_uses_explicit_username() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.test".into(),
             port: 6697,
             nickname: "mybot".into(),
@@ -903,6 +1006,7 @@ mod tests {
     #[test]
     fn new_stores_all_fields() {
         let ch = IrcChannel::new(IrcChannelConfig {
+            id: String::new(),
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "andabot".into(),
@@ -924,5 +1028,12 @@ mod tests {
         assert_eq!(ch.nickserv_password.as_deref(), Some("nspass"));
         assert_eq!(ch.sasl_password.as_deref(), Some("saslpass"));
         assert!(!ch.verify_tls);
+    }
+
+    #[test]
+    fn retryable_send_errors_are_classified() {
+        assert!(IrcChannel::is_retryable_send_error("IRC not connected"));
+        assert!(IrcChannel::is_retryable_send_error("Broken pipe"));
+        assert!(!IrcChannel::is_retryable_send_error("invalid target"));
     }
 }

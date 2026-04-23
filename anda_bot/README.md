@@ -16,25 +16,44 @@ Run the unified `anda` binary in interactive TUI mode:
 cargo run -p anda_bot --
 ```
 
-On first launch, `anda` creates a default `.env` file in the local home directory (`~/.anda/.env` by default) with detailed setup notes.
+On first launch, `anda` creates a default `config.yaml` file in the local home directory (`~/.anda/config.yaml` by default) with detailed setup notes.
 
-The TUI is chat-focused now. It no longer edits configuration inline. If required model settings are missing, the UI will pause in setup mode and ask you to edit `.env`, then reload with `Ctrl+R` or restart `anda`.
+The TUI is chat-focused now. It no longer edits configuration inline. If required settings are missing, the UI will pause in setup mode and ask you to edit `config.yaml`, then reload with `Ctrl+R` or restart `anda`.
 
-Required `.env` keys for chat:
+Minimal top-level keys:
 
-```env
-MODEL_FAMILY=
-MODEL_NAME=
-MODEL_API_KEY=
-MODEL_API_BASE=
+```yaml
+addr: 127.0.0.1:8042
+sandbox: false
+# https_proxy: http://127.0.0.1:7890
 ```
 
-Optional keys:
+Model and channel settings live under `model` and `channels`:
 
-```env
-GATEWAY_ADDR=127.0.0.1:8042
-SANDBOX=false
-# HTTPS_PROXY=
+```yaml
+model:
+	active: DeepSeek
+	providers:
+		DeepSeek:
+      family: deepseek
+      model: "deepseek-reasoner"
+      api_base: "https://api.deepseek.com/v1"
+			api_key: ...
+
+  MiniMax:
+      family: anthropic
+      model: "MiniMax-M2.7-highspeed"
+      api_base: "https://api.minimaxi.com/anthropic/v1"
+      api_key: ""
+      disabled: false
+
+channels:
+	irc:
+		- id: libera
+			server: irc.libera.chat
+			nickname: anda-bot
+			channels:
+				- "#anda"
 ```
 
 ## License

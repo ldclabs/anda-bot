@@ -110,6 +110,13 @@ pub trait Channel: Send + Sync {
         true
     }
 
+    /// Whether a send error is transient and worth retrying in the runtime.
+    /// Implementations can use this to surface reconnect windows or platform-
+    /// specific transport failures without forcing protocol logic into runtime.
+    fn should_retry_send(&self, _error: &str) -> bool {
+        false
+    }
+
     /// Signal that the bot is processing a response (e.g. "typing" indicator).
     /// Implementations should repeat the indicator as needed for their platform.
     async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {

@@ -8,15 +8,13 @@ use axum::{Router, routing};
 use object_store::ObjectStore;
 use std::sync::Arc;
 
-use crate::util::{http_client::build_http_client, key::Ed25519PubKey};
+use crate::{
+    config,
+    util::{http_client::build_http_client, key::Ed25519PubKey},
+};
 use anda_hippocampus::{
     agents::SELF_USER_ID, handler::*, model::build_model, space::AppState, types::ModelConfig,
 };
-
-const APP_NAME: &str = env!("CARGO_PKG_NAME");
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-pub static ANDA_BOT_SPACE_ID: &str = "anda_bot";
 
 pub struct HippocampusConfig {
     pub managers: Vec<Ed25519PubKey>,
@@ -69,26 +67,26 @@ impl Hippocampus {
             http_client.clone(),
             Arc::new(models),
             Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
-            APP_NAME.to_string(),
-            APP_VERSION.to_string(),
+            config::APP_NAME.to_string(),
+            config::APP_VERSION.to_string(),
             0,
         );
 
-        let _ = match app_state.load_space(ANDA_BOT_SPACE_ID, true).await {
+        let _ = match app_state.load_space(config::ANDA_BOT_SPACE_ID, true).await {
             Ok(space) => space,
             Err(e) => {
                 if e.to_string().contains("not found") {
                     log::warn!(
                         name = "brain";
                         "Space '{}' not found, creating a new one",
-                        ANDA_BOT_SPACE_ID
+                        config::ANDA_BOT_SPACE_ID
                     );
 
                     let _ = app_state
                         .admin_create_space(
                             admin,
                             admin,
-                            ANDA_BOT_SPACE_ID.to_string(),
+                            config::ANDA_BOT_SPACE_ID.to_string(),
                             7,
                             unix_ms(),
                         )
@@ -96,9 +94,11 @@ impl Hippocampus {
                     log::warn!(
                         name = "brain";
                         "Space '{}' created successfully",
-                        ANDA_BOT_SPACE_ID
+                        config::ANDA_BOT_SPACE_ID
                     );
-                    app_state.load_space(ANDA_BOT_SPACE_ID, true).await?
+                    app_state
+                        .load_space(config::ANDA_BOT_SPACE_ID, true)
+                        .await?
                 } else {
                     return Err(e);
                 }

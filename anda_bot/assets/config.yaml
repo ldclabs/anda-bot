@@ -1,0 +1,43 @@
+## anda_bot runtime configuration
+#
+# This file is created automatically on first launch.
+# It contains both startup and runtime settings.
+# Choose the active provider with `model.active`, then fill in that provider entry.
+# To switch models later, point `model.active` at a different provider key.
+
+addr: 127.0.0.1:8042
+sandbox: false
+
+# Optional: for example http://127.0.0.1:7890
+# https_proxy: http://127.0.0.1:7890
+
+model:
+  active: MiniMax
+  providers:
+    MiniMax:
+      family: anthropic
+      model: "MiniMax-M2.7-highspeed"
+      api_base: "https://api.minimaxi.com/anthropic/v1"
+      api_key: ""
+      disabled: false
+
+    DeepSeek:
+      family: deepseek
+      model: "deepseek-reasoner"
+      api_base: "https://api.deepseek.com/v1"
+      api_key: ""
+      disabled: false
+
+channels:
+  irc: []
+  # irc:
+  #   - id: libera
+  #     server: irc.libera.chat
+  #     port: 6697
+  #     nickname: anda-bot
+  #     username: anda
+  #     channels:
+  #       - "#anda"
+  #     allowed_users:
+  #       - "*"
+  #     verify_tls: true
