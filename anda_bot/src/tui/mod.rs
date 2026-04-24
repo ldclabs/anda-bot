@@ -1,15 +1,16 @@
 use anda_core::BoxError;
 use crossterm::{
     ExecutableCommand,
+    cursor::MoveToNextLine,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
-    Frame, Terminal,
+    Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    text::{Line, Span},
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 use std::{
     io::{self, IsTerminal},
@@ -27,8 +28,11 @@ use crate::{
 mod theme;
 mod widgets;
 
-use self::widgets::{Banner, InfoPanel};
+use self::widgets::Banner;
 
+const STATUS_MAX_WIDTH: u16 = 92;
+const MIN_INTERACTION_HEIGHT: u16 = 4;
+const MAX_INPUT_LINES: u16 = 4;
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
 pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
@@ -39,18 +43,22 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     app.bootstrap().await;
 
     enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
 
     let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(inline_viewport_height()),
+        },
+    )?;
     let run_result = run_app(&mut terminal, &mut app).await;
 
     let raw_mode_result = disable_raw_mode();
     let mut stdout = io::stdout();
-    let screen_result = stdout.execute(LeaveAlternateScreen);
 
     raw_mode_result?;
-    screen_result?;
+    let cursor_result = stdout.execute(MoveToNextLine(1));
+    cursor_result?;
     run_result
 }
 
@@ -164,13 +172,13 @@ impl App {
             let missing = self.setup.issues.join(", ");
             self.notice = if self.setup.template_created {
                 format!(
-                    "Created {}. Fill in {} and press Ctrl+R.",
+                    "Created {}. Fill in {} and press Enter to reload.",
                     self.config_file_path().display(),
                     missing
                 )
             } else {
                 format!(
-                    "Edit {} and fill in {}. Press Ctrl+R after saving.",
+                    "Edit {} and fill in {}. Press Enter after saving.",
                     self.config_file_path().display(),
                     missing
                 )
@@ -195,7 +203,7 @@ impl App {
                 );
             }
             Err(err) => {
-                self.notice = format!("Daemon unavailable: {err}. Press Ctrl+R to retry.");
+                self.notice = format!("Daemon unavailable: {err}. Press Enter to retry.");
             }
         }
 
@@ -229,16 +237,8 @@ impl App {
     async fn handle_key(&mut self, key: KeyEvent) -> Result<(), BoxError> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('c') | KeyCode::Char('q') => {
+                KeyCode::Char('c') => {
                     self.should_quit = true;
-                    return Ok(());
-                }
-                KeyCode::Char('r') => {
-                    self.bootstrap().await;
-                    return Ok(());
-                }
-                KeyCode::Char('n') if self.chat_enabled() => {
-                    self.new_conversation();
                     return Ok(());
                 }
                 KeyCode::Char('u') if self.chat_enabled() => {
@@ -260,18 +260,7 @@ impl App {
 
         if !self.chat_enabled() {
             if key.code == KeyCode::Enter {
-                self.notice = if self.setup_required() {
-                    format!(
-                        "Edit {} and fill in {}. Press Ctrl+R when ready.",
-                        self.config_file_path().display(),
-                        self.setup.issues.join(", ")
-                    )
-                } else {
-                    format!(
-                        "Daemon not ready. Check {} and press Ctrl+R to reconnect.",
-                        self.log_file_path().display()
-                    )
-                };
+                self.bootstrap().await;
             }
             return Ok(());
         }
@@ -284,6 +273,16 @@ impl App {
                 if !self.chat.sending {
                     let text = self.input_buf.trim().to_string();
                     if !text.is_empty() {
+                        if text == "/new" {
+                            self.new_conversation();
+                            return Ok(());
+                        }
+
+                        if text == "/reload" {
+                            self.bootstrap().await;
+                            return Ok(());
+                        }
+
                         self.input_buf.clear();
                         self.input_cursor = 0;
                         self.scroll_offset = usize::MAX;
@@ -362,6 +361,7 @@ async fn run_app(
 ) -> Result<(), BoxError> {
     let mut last_status_refresh = Instant::now();
     loop {
+        terminal.autoresize()?;
         terminal.draw(|frame| render(frame, app))?;
 
         if app.should_quit {
@@ -373,7 +373,7 @@ async fn run_app(
             let _ = app.refresh_status().await;
             if app.setup.is_ready() && was_running && !app.daemon_running && app.notice.is_empty() {
                 app.notice =
-                    "Daemon connection lost. Press Ctrl+R to reload config.yaml and reconnect."
+                    "Daemon connection lost. Press Enter to reload config.yaml and reconnect."
                         .to_string();
             }
             last_status_refresh = Instant::now();
@@ -406,171 +406,313 @@ async fn run_app(
 
 fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    let (status_height, interaction_height, input_height) = layout_heights(app, area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Min(8),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(status_height),
+            Constraint::Length(interaction_height),
+            Constraint::Length(input_height),
         ])
         .split(area);
 
-    let body = if area.width >= 110 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(60), Constraint::Length(34)])
-            .split(chunks[1])
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(12), Constraint::Length(9)])
-            .split(chunks[1])
-    };
-
-    render_title(frame, app, chunks[0]);
-    render_main_panel(frame, app, body[0]);
-    render_sidebar(frame, app, body[1]);
+    render_status_panel(frame, app, chunks[0]);
+    render_interaction_output(frame, app, chunks[1]);
     render_input(frame, app, chunks[2]);
-    render_status_line(frame, app, chunks[3]);
 }
 
-fn render_title(frame: &mut Frame, app: &App, area: Rect) {
-    let status_label = if app.setup_required() {
-        Span::styled(" SETUP REQUIRED ", theme::danger_style())
-    } else if app.daemon_running {
-        Span::styled(" READY ", theme::success_style())
-    } else if app.pid.is_some() {
-        Span::styled(" UNHEALTHY ", theme::warn_style())
-    } else {
-        Span::styled(" OFFLINE ", theme::danger_style())
-    };
-
-    let title_line = Line::from(vec![
-        Span::styled(" ANDA ", theme::title_style()),
-        Span::styled("Chat", theme::heading_style()),
-        Span::raw(" │ "),
-        status_label,
-        Span::raw(" "),
-        Span::styled(app.runtime_cfg.base_url(), theme::dim_style()),
-        Span::raw(" │ "),
-        Span::styled(
-            format!("cfg {}", app.config_file_path().display()),
-            theme::dim_style(),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(title_line), area);
-}
-
-fn render_main_panel(frame: &mut Frame, app: &mut App, area: Rect) {
-    if app.setup_required() {
-        render_state_panel(
-            frame,
-            area,
-            "Setup",
-            "Chat needs a complete config.yaml",
-            "Edit config.yaml, save, then press Ctrl+R.",
-            setup_lines(app),
-        );
+fn render_status_panel(frame: &mut Frame, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
         return;
     }
 
-    if !app.daemon_running {
-        render_state_panel(
-            frame,
-            area,
-            "Connection",
-            "The local daemon is not ready",
-            "Check the log file or reload config.yaml.",
-            daemon_unavailable_lines(app),
-        );
-        return;
-    }
+    let area = centered_area(area, STATUS_MAX_WIDTH);
 
-    if app.chat.messages.is_empty() {
-        render_state_panel(
-            frame,
-            area,
-            "Conversation",
-            "Local AI chat workspace",
-            "Type a message below to start a new conversation.",
-            empty_chat_lines(app),
-        );
-        return;
-    }
-
-    render_messages(frame, app, area);
-}
-
-fn render_state_panel(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    headline: &str,
-    subtitle: &str,
-    lines: Vec<Line<'static>>,
-) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border_style())
-        .title(Span::styled(format!(" {title} "), theme::heading_style()));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let chunks = Layout::default()
+    let header = panel_header_line(app);
+    let lines = panel_lines(app);
+    let (headline, subtitle) = panel_banner(app);
+    let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Min(4)])
-        .split(inner);
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(Banner::height().min(area.height.saturating_sub(1))),
+            Constraint::Min(0),
+        ])
+        .split(area);
 
-    frame.render_widget(Banner { headline, subtitle }, chunks[0]);
+    frame.render_widget(
+        Paragraph::new(header).alignment(ratatui::layout::Alignment::Center),
+        sections[0],
+    );
+    frame.render_widget(
+        Banner {
+            headline: headline.as_str(),
+            subtitle: subtitle.as_str(),
+        },
+        sections[1],
+    );
+
+    if sections[2].height == 0 || lines.is_empty() {
+        return;
+    }
+
     frame.render_widget(
         Paragraph::new(lines)
-            .style(theme::body_style())
+            .style(theme::panel_glow_style())
+            .alignment(ratatui::layout::Alignment::Center)
             .wrap(Wrap { trim: false }),
-        chunks[1],
+        sections[2],
     );
 }
 
-fn render_sidebar(frame: &mut Frame, app: &App, area: Rect) {
-    let (title, lines) = if app.setup_required() {
-        ("Setup", sidebar_setup_lines(app))
-    } else if !app.daemon_running {
-        ("Connection", sidebar_connection_lines(app))
-    } else {
-        ("Session", sidebar_session_lines(app))
-    };
+fn render_interaction_output(frame: &mut Frame, app: &mut App, area: Rect) {
+    let width = area.width as usize;
+    if width == 0 || area.height == 0 {
+        return;
+    }
 
-    frame.render_widget(InfoPanel { title, lines }, area);
+    let rendered_lines = interaction_lines(app, width);
+    if rendered_lines.is_empty() {
+        return;
+    }
+
+    let visible_height = area.height as usize;
+    let total = rendered_lines.len();
+
+    if total <= visible_height {
+        app.scroll_offset = 0;
+    } else if app.scroll_offset >= total.saturating_sub(visible_height) {
+        app.scroll_offset = total.saturating_sub(visible_height);
+    }
+
+    let visible: Vec<Line> = rendered_lines
+        .into_iter()
+        .skip(app.scroll_offset)
+        .take(visible_height)
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(visible)
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+
+    if total > visible_height {
+        let mut scrollbar_state =
+            ScrollbarState::new(total.saturating_sub(visible_height)).position(app.scroll_offset);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            area,
+            &mut scrollbar_state,
+        );
+    }
 }
 
-fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) {
-    let conv_label = app
+fn render_input(frame: &mut Frame, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let placeholder = if app.setup_required() {
+        "Edit config.yaml, save, then press Enter to enable chat."
+    } else if !app.daemon_running {
+        "Waiting for a healthy local daemon. Press Enter to retry."
+    } else if app.chat.sending {
+        ""
+    } else if app.chat.is_active() {
+        "Type a follow-up message..."
+    } else {
+        "Type a message..."
+    };
+
+    let prompt_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    };
+    let prompt_lines = build_prompt_lines(app, placeholder, prompt_area.width as usize);
+    frame.render_widget(
+        Paragraph::new(prompt_lines)
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false }),
+        prompt_area,
+    );
+
+    if !app.chat_enabled() || app.chat.sending || prompt_area.width <= 2 || prompt_area.height == 0
+    {
+        return;
+    }
+
+    let content_width = prompt_area.width.saturating_sub(5);
+    let (cursor_col, cursor_row) =
+        wrapped_cursor_position(&app.input_buf, app.input_cursor, content_width);
+    if cursor_row < prompt_area.height {
+        frame.set_cursor_position((
+            prompt_area.x + 5 + cursor_col.min(content_width.saturating_sub(1)),
+            prompt_area.y + cursor_row,
+        ));
+    }
+}
+
+fn inline_viewport_height() -> u16 {
+    Banner::height() + MIN_INTERACTION_HEIGHT + MAX_INPUT_LINES + 3
+}
+
+fn layout_heights(app: &App, area: Rect) -> (u16, u16, u16) {
+    if area.width == 0 || area.height == 0 {
+        return (0, 0, 0);
+    }
+
+    let input = input_height(app, area).min(area.height);
+    let remaining = area.height.saturating_sub(input);
+    let interaction_floor = MIN_INTERACTION_HEIGHT.min(remaining);
+    let status_limit = remaining.saturating_sub(interaction_floor);
+    let status = status_panel_height(
+        app,
+        Rect {
+            height: status_limit,
+            ..centered_area(area, STATUS_MAX_WIDTH)
+        },
+    );
+    let interaction = area.height.saturating_sub(status + input);
+
+    (status, interaction, input)
+}
+
+fn status_panel_height(app: &App, area: Rect) -> u16 {
+    if area.width == 0 || area.height == 0 {
+        return 0;
+    }
+
+    let lines = panel_lines(app).len() as u16;
+    let desired = 1 + Banner::height() + lines;
+    desired.min(area.height)
+}
+
+fn input_height(app: &App, area: Rect) -> u16 {
+    if area.width == 0 || area.height == 0 {
+        return 0;
+    }
+
+    let inner_width = area.width.saturating_sub(5) as usize;
+    wrapped_line_count(&input_display_text(app), inner_width)
+        .clamp(1, MAX_INPUT_LINES)
+        .min(area.height)
+}
+
+fn panel_banner(app: &App) -> (String, String) {
+    if app.setup_required() {
+        return (
+            "Setup required".to_string(),
+            app.config_file_path().display().to_string(),
+        );
+    }
+
+    if !app.daemon_running {
+        let headline = if app.pid.is_some() {
+            "Daemon unhealthy"
+        } else {
+            "Daemon offline"
+        };
+        return (headline.to_string(), app.runtime_cfg.base_url());
+    }
+
+    ("Daemon ready".to_string(), app.runtime_cfg.base_url())
+}
+
+fn panel_lines(app: &App) -> Vec<Line<'static>> {
+    if app.setup_required() {
+        let mut lines = vec![
+            Line::from(format!("Config: {}", app.config_file_path().display())),
+            Line::from(Span::styled("Missing or invalid", theme::heading_style())),
+        ];
+
+        for issue in &app.setup.issues {
+            lines.push(Line::from(format!("- {issue}")));
+        }
+
+        if app.setup.template_created {
+            lines.push(Line::from("Template files were created automatically."));
+        }
+
+        lines.push(Line::from("Press Enter after saving to reload."));
+
+        return lines;
+    }
+
+    if !app.daemon_running {
+        return vec![
+            Line::from(format!("Gateway: {}", app.runtime_cfg.base_url())),
+            Line::from(format!("Logs: {}", app.log_file_path().display())),
+            Line::from("Press Enter after the daemon becomes healthy."),
+        ];
+    }
+
+    let conversation = app
         .chat
         .conversation_id
         .map(|id| format!("#{id}"))
         .unwrap_or_else(|| "new".to_string());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border_style())
-        .title(Span::styled(
-            format!(" Conversation {conv_label} "),
-            theme::heading_style(),
-        ));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
 
-    let width = inner.width as usize;
-    if width == 0 || inner.height == 0 {
-        return;
+    vec![
+        Line::from(format!(
+            "conversation {conversation}   •   state {}",
+            app.chat.status_label()
+        )),
+        Line::from(app.runtime_cfg.base_url()),
+        Line::from("/new clear transcript   •   /reload config   •   Ctrl+C quit"),
+        Line::from("/steer guide   •   /stop stop   •   /cancel cancel"),
+    ]
+}
+
+fn panel_header_line(app: &App) -> Line<'static> {
+    let status = if app.setup_required() {
+        Span::styled(" SETUP ", theme::warn_style())
+    } else if !app.daemon_running {
+        Span::styled(" OFFLINE ", theme::danger_style())
+    } else {
+        Span::styled(" READY ", theme::badge_style())
+    };
+
+    Line::from(vec![
+        Span::styled("ANDA Chat", theme::title_style()),
+        Span::styled("  panda-born inline copilot  ", theme::subtle_style()),
+        status,
+    ])
+}
+
+fn interaction_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let mut rendered_lines: Vec<Line> = Vec::new();
+
+    if !app.notice.is_empty() {
+        rendered_lines.push(Line::from(Span::styled(
+            format!("! {}", app.notice),
+            theme::warn_style(),
+        )));
+        rendered_lines.push(Line::from(""));
     }
 
-    let mut rendered_lines: Vec<Line> = Vec::new();
+    if app.chat.messages.is_empty() {
+        if app.chat_enabled() {
+            rendered_lines.push(Line::from(vec![
+                Span::styled("🤖❯ ", theme::success_style()),
+                Span::styled("Ready when you are.", theme::subtle_style()),
+            ]));
+            rendered_lines.push(Line::from(Span::styled(
+                "      Send a message below to start the inline chat.",
+                theme::subtle_style(),
+            )));
+        }
+        return rendered_lines;
+    }
 
     for msg in &app.chat.messages {
         let (prefix, style) = match msg.role.as_str() {
-            "user" => ("▶ You: ", theme::accent_style()),
-            "assistant" => ("◀ Bot: ", theme::success_style()),
-            "system" => ("● Sys: ", theme::warn_style()),
+            "user" => ("❯ ", theme::accent_style()),
+            "assistant" => ("🤖 ❯ ", theme::success_style()),
+            "system" => ("⛑︎ ❯ ", theme::warn_style()),
             _ => ("  ", theme::dim_style()),
         };
 
@@ -610,231 +752,92 @@ fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         rendered_lines.push(Line::from(""));
     }
 
-    let visible_height = inner.height as usize;
-    let total = rendered_lines.len();
-
-    if total <= visible_height {
-        app.scroll_offset = 0;
-    } else if app.scroll_offset >= total.saturating_sub(visible_height) {
-        app.scroll_offset = total.saturating_sub(visible_height);
-    }
-
-    let visible: Vec<Line> = rendered_lines
-        .into_iter()
-        .skip(app.scroll_offset)
-        .take(visible_height)
-        .collect();
-
-    frame.render_widget(Paragraph::new(visible), inner);
-
-    if total > visible_height {
-        let mut scrollbar_state =
-            ScrollbarState::new(total.saturating_sub(visible_height)).position(app.scroll_offset);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight),
-            area,
-            &mut scrollbar_state,
-        );
-    }
+    rendered_lines
 }
 
-fn render_input(frame: &mut Frame, app: &App, area: Rect) {
-    let (title, border_style, placeholder) = if app.setup_required() {
-        (
-            " Setup required ",
-            theme::warn_style(),
-            "Edit config.yaml, save, then press Ctrl+R to enable chat.",
-        )
+fn input_display_text(app: &App) -> String {
+    if app.chat_enabled() && !app.input_buf.is_empty() {
+        return app.input_buf.clone();
+    }
+
+    if app.setup_required() {
+        "Edit config.yaml, save, then press Enter to enable chat.".to_string()
     } else if !app.daemon_running {
-        (
-            " Daemon unavailable ",
-            theme::danger_style(),
-            "Waiting for a healthy local daemon. Press Ctrl+R to retry.",
-        )
+        "Waiting for a healthy local daemon. Press Enter to retry.".to_string()
     } else if app.chat.sending {
-        (" Sending... ", theme::dim_style(), "")
+        String::new()
     } else if app.chat.is_active() {
-        (
-            " Follow-up ",
-            theme::accent_style(),
-            "Type a follow-up message...",
-        )
+        "Type a follow-up message...".to_string()
     } else {
-        (" New prompt ", theme::accent_style(), "Type a message...")
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(title, theme::heading_style()));
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let text = if app.chat_enabled() && !app.input_buf.is_empty() {
-        Text::from(app.input_buf.clone())
-    } else {
-        Text::from(Line::from(Span::styled(placeholder, theme::dim_style())))
-    };
-    frame.render_widget(
-        Paragraph::new(text)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
-
-    if !app.chat_enabled() || app.chat.sending || inner.width == 0 || inner.height == 0 {
-        return;
-    }
-
-    let (cursor_col, cursor_row) =
-        wrapped_cursor_position(&app.input_buf, app.input_cursor, inner.width);
-    if cursor_row < inner.height {
-        frame.set_cursor_position((
-            inner.x + cursor_col.min(inner.width - 1),
-            inner.y + cursor_row,
-        ));
+        "Type a message...".to_string()
     }
 }
 
-fn render_status_line(frame: &mut Frame, app: &App, area: Rect) {
-    let line = if !app.notice.is_empty() {
-        Line::from(Span::styled(
-            format!(" {}", app.notice),
-            theme::warn_style(),
-        ))
-    } else if app.chat_enabled() {
-        Line::from(Span::styled(
-            " Ctrl+N new conversation │ Ctrl+R reload config │ /steer /stop /cancel │ Ctrl+Q quit",
-            theme::dim_style(),
-        ))
-    } else {
-        Line::from(Span::styled(
-            " Edit config.yaml, save, then press Ctrl+R to retry │ Ctrl+Q quit",
-            theme::dim_style(),
-        ))
-    };
-    frame.render_widget(Paragraph::new(line), area);
-}
+fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'static>> {
+    let content_width = width.saturating_sub(5).max(1);
 
-fn setup_lines(app: &App) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from("All startup and runtime settings now live in config.yaml."),
-        Line::from(""),
-        Line::from(Span::styled("Config path", theme::heading_style())),
-        Line::from(format!("config.yaml: {}", app.config_file_path().display())),
-        Line::from(""),
-        Line::from(Span::styled("Current issues", theme::heading_style())),
-    ];
-
-    for issue in &app.setup.issues {
-        lines.push(Line::from(format!("  {issue}")));
+    if !app.chat_enabled() || app.input_buf.is_empty() {
+        return vec![Line::from(vec![
+            Span::styled("❯ ", theme::accent_style()),
+            Span::styled(placeholder.to_string(), theme::dim_style()),
+        ])];
     }
 
-    lines.extend([
-        Line::from(""),
-        Line::from("Top-level keys: addr, sandbox, https_proxy, model, channels"),
-        Line::from("Model keys: model.active and model.providers.*"),
-        Line::from("After saving the file, press Ctrl+R to reload and auto-start the daemon."),
-    ]);
+    let mut lines = Vec::new();
+    let mut first = true;
+
+    for text_line in app.input_buf.lines() {
+        if text_line.is_empty() {
+            let prefix = if first { "❯ " } else { "  " };
+            lines.push(Line::from(vec![Span::styled(
+                prefix.to_string(),
+                theme::accent_style(),
+            )]));
+            first = false;
+            continue;
+        }
+
+        for chunk in wrap_visual(text_line, content_width) {
+            let prefix = if first { "❯ " } else { "  " };
+            lines.push(Line::from(vec![
+                Span::styled(prefix.to_string(), theme::accent_style()),
+                Span::styled(chunk, theme::body_style()),
+            ]));
+            first = false;
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("❯ ", theme::accent_style()),
+            Span::styled(placeholder.to_string(), theme::dim_style()),
+        ]));
+    }
 
     lines
 }
 
-fn daemon_unavailable_lines(app: &App) -> Vec<Line<'static>> {
-    vec![
-        Line::from("The configuration looks complete, but the local daemon is not responding."),
-        Line::from(""),
-        Line::from(format!("Gateway: {}", app.runtime_cfg.base_url())),
-        Line::from(format!("Log file: {}", app.log_file_path().display())),
-        Line::from(""),
-        Line::from("Press Ctrl+R after fixing config.yaml or once the daemon becomes healthy."),
-    ]
-}
+fn wrapped_line_count(text: &str, width: usize) -> u16 {
+    let width = width.max(1);
+    let mut lines = 0u16;
 
-fn empty_chat_lines(app: &App) -> Vec<Line<'static>> {
-    vec![
-        Line::from(format!("Daemon: {}", app.runtime_cfg.base_url())),
-        Line::from(""),
-        Line::from(Span::styled("Useful controls", theme::heading_style())),
-        Line::from("  Enter send message"),
-        Line::from("  Ctrl+N start a fresh conversation"),
-        Line::from("  Up/Down/PageUp/PageDown scroll transcript"),
-        Line::from(""),
-        Line::from(Span::styled("Agent commands", theme::heading_style())),
-        Line::from("  /steer    guide the current run"),
-        Line::from("  /stop     request a graceful stop"),
-        Line::from("  /cancel   cancel the current conversation"),
-    ]
-}
-
-fn sidebar_setup_lines(app: &App) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(Span::styled("Config file", theme::heading_style())),
-        Line::from(app.config_file_path().display().to_string()),
-        Line::from(""),
-        Line::from(Span::styled("Issues", theme::heading_style())),
-    ];
-
-    for issue in &app.setup.issues {
-        lines.push(Line::from(format!("- {issue}")));
+    for line in text.split('\n') {
+        lines = lines.saturating_add(wrap_visual(line, width).len() as u16);
     }
 
-    if app.setup.template_created {
-        lines.extend([
-            Line::from(""),
-            Line::from("Default templates were created if missing."),
-        ]);
+    lines.max(1)
+}
+
+fn centered_area(area: Rect, max_width: u16) -> Rect {
+    let width = area.width.min(max_width);
+    let offset = area.width.saturating_sub(width) / 2;
+
+    Rect {
+        x: area.x + offset,
+        y: area.y,
+        width,
+        height: area.height,
     }
-
-    lines.extend([
-        Line::from(""),
-        Line::from(Span::styled("Workflow", theme::heading_style())),
-        Line::from("1. Edit config.yaml"),
-        Line::from("2. Save the file"),
-        Line::from("3. Press Ctrl+R"),
-        Line::from("4. Start chatting"),
-    ]);
-    lines
-}
-
-fn sidebar_connection_lines(app: &App) -> Vec<Line<'static>> {
-    vec![
-        Line::from(Span::styled("Daemon", theme::heading_style())),
-        Line::from("not reachable"),
-        Line::from(""),
-        Line::from(Span::styled("Address", theme::heading_style())),
-        Line::from(app.runtime_cfg.base_url()),
-        Line::from(""),
-        Line::from(Span::styled("Logs", theme::heading_style())),
-        Line::from(app.log_file_path().display().to_string()),
-        Line::from(""),
-        Line::from("Ctrl+R reload config and reconnect"),
-        Line::from("Ctrl+Q quit"),
-    ]
-}
-
-fn sidebar_session_lines(app: &App) -> Vec<Line<'static>> {
-    let conversation = app
-        .chat
-        .conversation_id
-        .map(|id| format!("#{id}"))
-        .unwrap_or_else(|| "new".to_string());
-
-    vec![
-        Line::from(Span::styled("Daemon", theme::heading_style())),
-        Line::from("running"),
-        Line::from(""),
-        Line::from(Span::styled("Conversation", theme::heading_style())),
-        Line::from(conversation),
-        Line::from(format!("status: {}", app.chat.status_label())),
-        Line::from(""),
-        Line::from(Span::styled("Controls", theme::heading_style())),
-        Line::from("Enter send"),
-        Line::from("Ctrl+N new chat"),
-        Line::from("Ctrl+R reload config"),
-        Line::from("Ctrl+Q quit"),
-    ]
 }
 
 fn char_display_width(ch: char) -> usize {

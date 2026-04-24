@@ -178,9 +178,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.11.6"
+version = "0.11.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd39ebe2087c2c5dfe915fec2ea49226dca3cbeb163a8a830734236e451f2def"
+checksum = "38007202a7bccf39b9adc41c137078d96cc7736cf214653856282dc94616fdc2"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.15"
+version = "0.11.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51f89cbf7123274dd3ef9f9f9b313f93a232a894eda0729787563c2b01c33be5"
+checksum = "09a9fbc8b02531d046f5f96f008d63c1c52a470647f73a7e7a0037ca582dca67"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -4007,9 +4007,9 @@ checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 
 [[package]]
 name = "libc"
-version = "0.2.185"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libflate"

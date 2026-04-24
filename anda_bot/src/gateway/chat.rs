@@ -49,6 +49,7 @@ impl ChatSession {
     pub fn status_label(&self) -> &'static str {
         match &self.conv_status {
             None => "idle",
+            Some(ConversationStatus::Idle) => "idle",
             Some(ConversationStatus::Submitted) => "submitted",
             Some(ConversationStatus::Working) => "working…",
             Some(ConversationStatus::Completed) => "completed",

@@ -3,6 +3,7 @@ use anda_hippocampus::types::ModelConfig;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
     path::{Path, PathBuf},
 };
 
@@ -142,6 +143,10 @@ fn default_true() -> bool {
 }
 
 impl Config {
+    pub fn socket_addr(&self) -> Result<SocketAddr, BoxError> {
+        Ok(self.addr.trim().parse()?)
+    }
+
     pub fn file_path(home: &Path) -> PathBuf {
         home.join(CONFIG_FILE_NAME)
     }
@@ -169,11 +174,15 @@ impl Config {
     }
 
     pub fn base_url(&self) -> String {
-        format!("http://{}", self.addr.trim())
+        match self.socket_addr() {
+            Ok(addr) if addr.is_ipv6() => format!("http://[::1]:{}", addr.port()),
+            Ok(addr) => format!("http://127.0.0.1:{}", addr.port()),
+            Err(_) => format!("http://{}", self.addr.trim()),
+        }
     }
 
     pub fn brain_base_url(&self) -> String {
-        format!("http://{}/v1/{}", self.addr.trim(), ANDA_BOT_SPACE_ID)
+        format!("http://{}/v1/{}", self.base_url(), ANDA_BOT_SPACE_ID)
     }
 
     pub fn setup_issues(&self) -> Vec<String> {
