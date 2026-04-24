@@ -1,5 +1,6 @@
 use anda_core::{BoxError, Principal, Usage, model::Message};
 use anda_db::storage::StorageStats;
+use anda_engine::model::ModelConfig as EngineModelConfig;
 use ic_cose_types::cose::cwt::{ClaimsSet, get_scope};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -86,24 +87,36 @@ pub struct ModelConfig {
 
     #[serde(default, alias = "d")]
     pub disabled: bool,
+
+    #[serde(default, alias = "l")]
+    pub label: Option<String>,
+
+    #[serde(default, alias = "b")]
+    pub bearer_auth: bool,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ModelConfigRef<'a> {
-    #[serde(rename = "f", alias = "family")]
+    #[serde(rename = "f")]
     pub family: &'a str,
 
-    #[serde(rename = "m", alias = "model")]
+    #[serde(rename = "m")]
     pub model: &'a str,
 
-    #[serde(rename = "ab", alias = "api_base")]
+    #[serde(rename = "ab")]
     pub api_base: &'a str,
 
-    #[serde(rename = "ak", alias = "api_key")]
+    #[serde(rename = "ak")]
     pub api_key: &'a str,
 
-    #[serde(rename = "d", alias = "disabled")]
+    #[serde(rename = "d")]
     pub disabled: bool,
+
+    #[serde(rename = "l")]
+    pub label: &'a Option<String>,
+
+    #[serde(rename = "b")]
+    pub bearer_auth: bool,
 }
 
 impl ModelConfig {
@@ -114,6 +127,22 @@ impl ModelConfig {
             api_base: &self.api_base,
             api_key: &self.api_key,
             disabled: self.disabled,
+            label: &self.label,
+            bearer_auth: self.bearer_auth,
+        }
+    }
+}
+
+impl From<ModelConfig> for EngineModelConfig {
+    fn from(config: ModelConfig) -> Self {
+        EngineModelConfig {
+            family: config.family,
+            model: config.model,
+            api_base: config.api_base,
+            api_key: config.api_key,
+            disabled: config.disabled,
+            label: config.label,
+            bearer_auth: config.bearer_auth,
         }
     }
 }

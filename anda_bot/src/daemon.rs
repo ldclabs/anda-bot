@@ -207,18 +207,19 @@ impl Daemon {
 
         // Create global cancellation token for graceful shutdown
         let global_cancel_token = CancellationToken::new();
+        let models = self.cfg.models_config();
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let engine_id = id_key.id();
         let user_id = user_pubkey.id();
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
-            model: self.cfg.model_config(),
+            model: models.first().cloned().unwrap_or_default(),
             https_proxy: self.cfg.https_proxy.clone(),
         };
         let engine_cfg = engine::EngineConfig {
             id_key,
             managers: vec![user_pubkey],
-            model: self.cfg.model_config(),
+            models,
             brain_base_url: self.cfg.brain_base_url(),
             work_dir: std::env::current_dir()?,
             skills_dir: self.skills_dir_path(),

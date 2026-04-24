@@ -6,12 +6,11 @@ use anda_engine::{
     extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
-    model::Models,
+    model::{ModelConfig, Models},
     store::Store,
     unix_ms,
 };
 use anda_engine_server::handler::{AppState, anda_engine};
-use anda_hippocampus::{model::build_model, types::ModelConfig};
 use anda_web3_client::client::Client as Web3Client;
 use async_trait::async_trait;
 use axum::{Router, response::IntoResponse, routing};
@@ -46,7 +45,7 @@ pub trait CompletionHook: Send + Sync {
 pub struct EngineConfig {
     pub id_key: Ed25519Key,
     pub managers: Vec<Ed25519PubKey>,
-    pub model: ModelConfig,
+    pub models: Vec<ModelConfig>,
     pub brain_base_url: String,
     pub work_dir: PathBuf,
     pub skills_dir: PathBuf,
@@ -67,13 +66,13 @@ impl Engines {
             hasher.update(cfg.id_key.as_bytes());
             hasher.finalize().into()
         };
-        let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
+        let outer_http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
 
         // Initialize Web3 client for ICP network interaction
         let web3 = Web3Client::builder()
             .with_identity(cfg.id_key.identity())
             .with_root_secret(root_secret)
-            .with_http_client(http_client.clone())
+            .with_http_client(outer_http_client.clone())
             .build()
             .await?;
         let web3 = Arc::new(web3);
@@ -86,8 +85,7 @@ impl Engines {
             visibility: Visibility::Protected,
         });
 
-        let models = Models::default();
-        models.set_model(build_model(http_client.clone(), cfg.model));
+        let models = Models::from_configs(&cfg.models, outer_http_client);
 
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();

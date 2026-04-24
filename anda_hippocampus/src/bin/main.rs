@@ -2,7 +2,7 @@ use anda_core::{BoxError, Principal};
 use anda_db::{database::DBConfig, storage::StorageConfig};
 use anda_engine::{
     management::{BaseManagement, Visibility},
-    model::{Models, Proxy, request_client_builder, reqwest},
+    model::{ModelConfig, Models, Proxy, request_client_builder, reqwest},
 };
 use anda_object_store::MetaStoreBuilder;
 use axum::{Router, routing};
@@ -25,9 +25,7 @@ use tower_http::{
     cors::{AllowHeaders, AllowMethods, CorsLayer},
 };
 
-use anda_hippocampus::{
-    agents::SELF_USER_ID, handler::*, model::build_model, space::AppState, types::ModelConfig,
-};
+use anda_hippocampus::{agents::SELF_USER_ID, handler::*, space::AppState};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -168,16 +166,16 @@ async fn main() -> Result<(), BoxError> {
 
     // Configure AI model
     let models = Models::default();
-    models.set_model(build_model(
-        http_client.clone(),
-        ModelConfig {
-            family: cli.model_family.clone(),
-            model: cli.model_name.clone(),
-            api_key: cli.model_api_key.clone(),
-            api_base: cli.model_api_base.clone(),
-            disabled: cli.model_api_key.is_empty(),
-        },
-    ));
+    let model_config = ModelConfig {
+        family: cli.model_family.clone(),
+        model: cli.model_name.clone(),
+        api_key: cli.model_api_key.clone(),
+        api_base: cli.model_api_base.clone(),
+        disabled: cli.model_api_key.is_empty(),
+        label: None,
+        bearer_auth: false,
+    };
+    models.set_model(model_config.build_model(http_client.clone()));
 
     let mut db_type = "memory".to_string();
     let object_store: Arc<dyn ObjectStore> = match cli.command {

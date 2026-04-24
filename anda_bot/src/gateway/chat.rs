@@ -73,6 +73,10 @@ impl ChatSession {
             return None;
         }
 
+        let previous_conversation_id = self.conversation_id;
+        let continuing_existing_conversation =
+            previous_conversation_id.is_some() && self.is_active();
+
         self.messages.push(ChatMessage {
             role: "user".to_string(),
             text: text.clone(),
@@ -96,14 +100,18 @@ impl ChatSession {
         let notice = match self.client.agent_run(&input).await {
             Ok(output) => {
                 if let Some(id) = output.conversation {
+                    let continuing_same_conversation =
+                        continuing_existing_conversation && previous_conversation_id == Some(id);
                     self.conversation_id = Some(id);
                     self.conv_status = Some(ConversationStatus::Working);
                     self.last_poll = Instant::now()
                         .checked_sub(POLL_INTERVAL)
                         .unwrap_or_else(Instant::now);
-                    if !self.is_active() || self.last_msg_count == 0 {
-                        self.last_msg_count = 0;
-                    }
+                    self.last_msg_count = if continuing_same_conversation {
+                        self.last_msg_count.saturating_add(1)
+                    } else {
+                        1
+                    };
                 }
                 if let Some(reason) = output.failed_reason {
                     self.messages.push(ChatMessage {
@@ -229,4 +237,44 @@ fn parse_message(msg_json: &Json) -> Option<ChatMessage> {
     }
 
     Some(ChatMessage { role, text })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_client() -> Client {
+        Client::new("http://127.0.0.1:8042".to_string(), String::new())
+    }
+
+    #[test]
+    fn apply_conversation_data_skips_locally_echoed_user_message() {
+        let mut session = ChatSession::new(test_client());
+        session.messages.push(ChatMessage {
+            role: "user".to_string(),
+            text: "hello".to_string(),
+        });
+        session.last_msg_count = 1;
+
+        let has_new = session.apply_conversation_data(&json!({
+            "status": "working",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hello"
+                },
+                {
+                    "role": "assistant",
+                    "content": "world"
+                }
+            ]
+        }));
+
+        assert!(has_new);
+        assert_eq!(session.last_msg_count, 2);
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.messages[0].role, "user");
+        assert_eq!(session.messages[1].role, "assistant");
+        assert_eq!(session.messages[1].text, "world");
+    }
 }

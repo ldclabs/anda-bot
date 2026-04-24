@@ -1,5 +1,5 @@
 use anda_core::BoxError;
-use anda_hippocampus::types::ModelConfig;
+use anda_engine::model::ModelConfig;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,7 +55,13 @@ pub struct ModelProviderConfig {
     pub api_key: String,
 
     #[serde(default)]
+    pub label: String,
+
+    #[serde(default)]
     pub disabled: bool,
+
+    #[serde(default)]
+    pub bearer_auth: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -182,7 +188,7 @@ impl Config {
     }
 
     pub fn brain_base_url(&self) -> String {
-        format!("http://{}/v1/{}", self.base_url(), ANDA_BOT_SPACE_ID)
+        format!("{}/v1/{}", self.base_url(), ANDA_BOT_SPACE_ID)
     }
 
     pub fn setup_issues(&self) -> Vec<String> {
@@ -235,23 +241,42 @@ impl Config {
         issues
     }
 
-    pub fn model_config(&self) -> ModelConfig {
-        self.model
+    pub fn models_config(&self) -> Vec<ModelConfig> {
+        let mut configs: Vec<ModelConfig> = Vec::new();
+
+        let active = self.model.active.trim();
+        if let Some(model) = self
+            .model
             .providers
-            .get(self.model.active.trim())
+            .get(active)
             .map(ModelProviderConfig::to_model_config)
-            .unwrap_or_default()
+            && !model.disabled
+        {
+            configs.push(model);
+        }
+
+        configs.extend(self.model.providers.iter().filter_map(|(key, provider)| {
+            if key.trim() == active || provider.disabled {
+                None
+            } else {
+                Some(provider.to_model_config())
+            }
+        }));
+        configs
     }
 }
 
 impl ModelProviderConfig {
     fn to_model_config(&self) -> ModelConfig {
+        let label = self.label.trim().to_string();
         ModelConfig {
             family: self.family.trim().to_string(),
             model: self.model.trim().to_string(),
             api_base: self.api_base.trim().to_string(),
             api_key: self.api_key.trim().to_string(),
+            label: if label.is_empty() { None } else { Some(label) },
             disabled: self.disabled,
+            bearer_auth: self.bearer_auth,
         }
     }
 }
@@ -351,15 +376,15 @@ channels:
         )
         .unwrap();
 
-        let model = config.model_config();
+        let model = config.models_config();
         assert_eq!(config.addr, "127.0.0.1:9000");
         assert!(config.sandbox);
         assert_eq!(config.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
         assert_eq!(config.model.active, "anthropic");
-        assert_eq!(model.family, "anthropic");
-        assert_eq!(model.model, "claude-sonnet-4-6");
-        assert_eq!(model.api_base, "https://api.anthropic.com/v1");
-        assert_eq!(model.api_key, "sk-test");
+        assert_eq!(model[0].family, "anthropic");
+        assert_eq!(model[0].model, "claude-sonnet-4-6");
+        assert_eq!(model[0].api_base, "https://api.anthropic.com/v1");
+        assert_eq!(model[0].api_key, "sk-test");
 
         assert_eq!(config.channels.irc.len(), 1);
         assert_eq!(config.channels.irc[0].id.as_deref(), Some("libera"));

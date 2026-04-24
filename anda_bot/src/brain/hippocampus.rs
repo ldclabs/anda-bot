@@ -2,7 +2,7 @@ use anda_core::BoxError;
 use anda_db::{database::DBConfig, storage::StorageConfig, unix_ms};
 use anda_engine::{
     management::{BaseManagement, Visibility},
-    model::Models,
+    model::{ModelConfig, Models},
 };
 use axum::{Router, routing};
 use object_store::ObjectStore;
@@ -12,9 +12,7 @@ use crate::{
     config,
     util::{http_client::build_http_client, key::Ed25519PubKey},
 };
-use anda_hippocampus::{
-    agents::SELF_USER_ID, handler::*, model::build_model, space::AppState, types::ModelConfig,
-};
+use anda_hippocampus::{agents::SELF_USER_ID, handler::*, space::AppState};
 
 pub struct HippocampusConfig {
     pub managers: Vec<Ed25519PubKey>,
@@ -40,7 +38,7 @@ impl Hippocampus {
 
         // Configure AI model
         let models = Models::default();
-        models.set_model(build_model(http_client.clone(), cfg.model.clone()));
+        models.set_model(cfg.model.build_model(http_client.clone()));
 
         let db_config = DBConfig {
             name: "brain_db".to_string(),

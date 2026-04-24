@@ -311,6 +311,11 @@ impl FormationAgent {
                 Ok(Some(mut res)) => {
                     let now_ms = unix_ms();
 
+                    let is_done = runner.is_done();
+                    if !is_done {
+                        runner.prune_raw_history_if(11, 7);
+                    }
+
                     if first_round {
                         first_round = false;
                         conversation.messages.clear();
@@ -328,7 +333,7 @@ impl FormationAgent {
 
                     conversation.status = if res.failed_reason.is_some() {
                         ConversationStatus::Failed
-                    } else if runner.is_done() {
+                    } else if is_done {
                         ConversationStatus::Completed
                     } else {
                         ConversationStatus::Working

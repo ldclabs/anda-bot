@@ -1,6 +1,6 @@
 # Anda Bot
 
-Just A Rather Very Intelligent Bot.
+Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Hippocampus.
 
 ## Usage
 

@@ -1,13 +1,16 @@
 use ratatui::style::{Color, Modifier, Style};
 
-pub const BAMBOO_GREEN: Color = Color::Rgb(126, 186, 88);
-pub const BAMBOO_LIGHT: Color = Color::Rgb(175, 224, 142);
-pub const LEAF_MINT: Color = Color::Rgb(205, 238, 184);
-pub const PANDA_WHITE: Color = Color::Rgb(236, 243, 229);
-pub const BAMBOO_DIM: Color = Color::Rgb(120, 144, 104);
-pub const PANDA_INK: Color = Color::Rgb(19, 24, 18);
-pub const WARN_AMBER: Color = Color::Rgb(255, 208, 92);
-pub const ERROR_RED: Color = Color::Rgb(255, 110, 110);
+// Brighter, more vibrant palette — still bamboo-inspired but with higher luma
+// so terminals with dark backgrounds render text crisply.
+pub const BAMBOO_GREEN: Color = Color::Rgb(150, 224, 104);
+pub const BAMBOO_LIGHT: Color = Color::Rgb(198, 244, 170);
+pub const LEAF_MINT: Color = Color::Rgb(226, 252, 208);
+pub const PANDA_WHITE: Color = Color::Rgb(248, 253, 243);
+pub const BAMBOO_DIM: Color = Color::Rgb(168, 192, 150);
+pub const PANDA_INK: Color = Color::Rgb(14, 20, 12);
+pub const WARN_AMBER: Color = Color::Rgb(255, 222, 120);
+pub const ERROR_RED: Color = Color::Rgb(255, 132, 132);
+pub const ACCENT_TEAL: Color = Color::Rgb(130, 232, 214);
 
 pub fn title_style() -> Style {
     Style::default()
@@ -29,7 +32,7 @@ pub fn dim_style() -> Style {
 
 pub fn accent_style() -> Style {
     Style::default()
-        .fg(BAMBOO_LIGHT)
+        .fg(ACCENT_TEAL)
         .add_modifier(Modifier::BOLD)
 }
 

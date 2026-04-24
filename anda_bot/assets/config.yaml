@@ -12,20 +12,31 @@ sandbox: false
 # https_proxy: http://127.0.0.1:7890
 
 model:
-  active: MiniMax
+  active: DeepSeek
   providers:
+    DeepSeek:
+      family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: ""
+      label: "pro"
+      disabled: false
+
+    Mimo:
+      family: anthropic
+      model: "mimo-v2.5"
+      api_base: "https://api.xiaomimimo.com/anthropic/v1"
+      api_key: ""
+      label: "pro"
+      disabled: false
+      bearer_auth: true
+
     MiniMax:
       family: anthropic
       model: "MiniMax-M2.7-highspeed"
       api_base: "https://api.minimaxi.com/anthropic/v1"
       api_key: ""
-      disabled: false
-
-    DeepSeek:
-      family: deepseek
-      model: "deepseek-reasoner"
-      api_base: "https://api.deepseek.com/v1"
-      api_key: ""
+      label: "flash"
       disabled: false
 
 channels:

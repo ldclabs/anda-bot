@@ -16,7 +16,7 @@ use anda_engine::{
     extension::note::NoteTool,
     management::Management,
     memory::{Conversation, Conversations, MemoryManagement, MemoryReadonly, MemoryTool},
-    model::{Models, reqwest},
+    model::{ModelConfig as EngineModelConfig, Models, reqwest},
     rfc3339_datetime_now, unix_ms,
 };
 use anda_kip::{
@@ -42,7 +42,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     agents::{FormationAgent, HippocampusHook, MaintenanceAgent, RecallAgent, SELF_USER_ID},
-    model::build_model,
     payload::StringOr,
     types::{
         AddSpaceTokenInput, CWToken, FormationInput, FormationStatus, MaintenanceInput,
@@ -486,7 +485,8 @@ impl Space {
         self.db
             .save_extension_from("byok".to_string(), &model_config.to_ref())
             .await?;
-        let model = build_model(self.http_client.clone(), model_config);
+        let model_config: EngineModelConfig = model_config.into();
+        let model = model_config.build_model(self.http_client.clone());
         self.models.set_model(model);
         Ok(())
     }
@@ -942,7 +942,8 @@ impl Space {
         hooks.bind_space(Arc::downgrade(&this));
 
         if let Some(cfg) = db.get_extension_as::<ModelConfig>("byok") {
-            let model = build_model(this.http_client.clone(), cfg);
+            let cfg: EngineModelConfig = cfg.into();
+            let model = cfg.build_model(this.http_client.clone());
             this.models.set_model(model);
         }
 
