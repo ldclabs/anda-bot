@@ -31,7 +31,8 @@ use crate::util::{
 };
 use crate::{brain, config, cron};
 use agent::*;
-use conversation_tool::*;
+
+pub use conversation_tool::*;
 
 pub struct Engines {
     state: AppState,

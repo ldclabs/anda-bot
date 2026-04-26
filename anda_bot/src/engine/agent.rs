@@ -34,7 +34,7 @@ use std::{
 
 use crate::{brain, cron, engine::CompletionHook};
 
-const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
+const CONVERSATION_IDLE_MS: u64 = 30 * 60 * 1000; // 30 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 
@@ -451,6 +451,15 @@ impl Agent<AgentCtx> for AndaBot {
                                 .await;
                                 break;
                             } else {
+                                if conversation.status != ConversationStatus::Idle {
+                                    conversation.status = ConversationStatus::Idle;
+                                    conversation.updated_at = now_ms;
+                                    persist_conversation_state(
+                                        &assistant.inner.conversations,
+                                        &conversation,
+                                    )
+                                    .await;
+                                }
                                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                 continue;
                             }
@@ -463,7 +472,7 @@ impl Agent<AgentCtx> for AndaBot {
 
                             let is_done = runner.is_done();
                             if !is_done {
-                                runner.prune_raw_history_if(11, 7);
+                                runner.prune_raw_history_if(13, 6);
                             }
 
                             if first_round {
@@ -498,25 +507,27 @@ impl Agent<AgentCtx> for AndaBot {
                             )
                             .await;
 
-                            let timestamp = rfc3339_datetime(now_ms);
-                            let submit_formation_at = conversation.messages.len();
-                            let messages = conversation_chat_history(
-                                &conversation,
-                                conversation_task.submit_formation_at.load(Ordering::SeqCst)
-                                    as usize,
-                            );
-                            if let Err(err) = assistant
-                                .submit_formation(&messages, &context, &timestamp)
-                                .await
-                            {
-                                log::error!(
-                                    "Failed to send formation for conversation {id}: {:?}",
-                                    err
+                            if conversation.failed_reason.is_none() {
+                                let timestamp = rfc3339_datetime(now_ms);
+                                let submit_formation_at = conversation.messages.len();
+                                let messages = conversation_chat_history(
+                                    &conversation,
+                                    conversation_task.submit_formation_at.load(Ordering::SeqCst)
+                                        as usize,
                                 );
-                            } else {
-                                conversation_task
-                                    .submit_formation_at
-                                    .store(submit_formation_at as u64, Ordering::SeqCst);
+                                if let Err(err) = assistant
+                                    .submit_formation(&messages, &context, &timestamp)
+                                    .await
+                                {
+                                    log::error!(
+                                        "Failed to send formation for conversation {id}: {:?}",
+                                        err
+                                    );
+                                } else {
+                                    conversation_task
+                                        .submit_formation_at
+                                        .store(submit_formation_at as u64, Ordering::SeqCst);
+                                }
                             }
 
                             if conversation.status == ConversationStatus::Cancelled

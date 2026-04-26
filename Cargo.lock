@@ -91,7 +91,7 @@ checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
 
 [[package]]
 name = "anda_bot"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anda_core",
  "anda_db",
@@ -124,7 +124,7 @@ dependencies = [
  "rand 0.10.1",
  "ratatui",
  "serde",
- "serde-saphyr",
+ "serde-saphyr 0.0.24",
  "serde_json",
  "sha3 0.11.0",
  "structured-logger",
@@ -156,9 +156,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.13"
+version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd896beef1e6f9dac383e0aba882ae41817a51ca02b5c6ade2d85f4342f21d0"
+checksum = "0134d6b3e34c3b4e6d7e8649e1b8d2fcea19b032bee535d769916b308ba0c2a5"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -205,9 +205,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.26"
+version = "0.7.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb255880c993908b37e74914a64a45a3d1f794237e0c2dec4196f8bb664cf273"
+checksum = "e1d78cd608371034df901a0eeec906e97c671bb40ddb1b87587701ed4e72c8f9"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -236,9 +236,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e2a2a15b3709afa454735fd3fcbb0b8d26ee881f1af1ed150c34d5d92edd4aa"
+checksum = "e7a11125adab71865e8e55f423d1353353f36ee98b2bccae78d68725a971535d"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -253,9 +253,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_derive"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c3c0eb7231b476827c45feec02c3d58d5d6d25bc868455a8f9d4a0538aae8d3"
+checksum = "2a6a820acda3ccae5048bf9224b2d16c82715c09e89c72d27eb049c76f846645"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -285,9 +285,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc6844ba8535908c679f7f1f5c2e87ed6e3724d2999ee70d947d393cd3d37d61"
+checksum = "12d67a27df262175fac93d9ed4c282d9f4ba8876341cdfb554f72d3252522e56"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",
@@ -302,9 +302,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.5.12"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d788ffb70c838a748a75cb4e6090d2648266083c73c293d21177e4da9493050"
+checksum = "aaa7ca90ee7364908e46fe1d9d5971d0cfeec4dadcbfa33246594a8423429371"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.18"
+version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa884b45d86017ede1bd1970a610be91373e03056097e0e05c90f45afbf6bb52"
+checksum = "a0ea5f60d75c361381e7cb91d03868f4a204b18c54bbf5d83f2ff0f8891510d2"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -371,7 +371,7 @@ dependencies = [
  "reqwest 0.13.2",
  "schemars",
  "serde",
- "serde-saphyr",
+ "serde-saphyr 0.0.25",
  "serde_bytes",
  "serde_json",
  "structured-logger",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -441,9 +441,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.9"
+version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8458ad280b520b1ef86e968926d47edab76d980a3738b48cd8cc52ef0341ded5"
+checksum = "bfb2ab219d17f953ac592372ebc336a6304a02c774e804e34e95e4c00d1d8a43"
 dependencies = [
  "async-trait",
  "chrono",
@@ -456,9 +456,9 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e82655996d24d04319a4bfcd67e2f7036f0efa7d68050951f154181bd8eba4ae"
+checksum = "92fc4f87270a7ad883d545481e731e25489857034478d7525db5e65fd4e780a1"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -472,7 +472,7 @@ dependencies = [
  "rand 0.10.1",
  "serde",
  "serde_bytes",
- "sha3 0.10.9",
+ "sha3 0.11.0",
  "tokio",
 ]
 
@@ -6021,6 +6021,25 @@ name = "serde-saphyr"
 version = "0.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83ad47c2f14654528a89495f8d0dbc64173176f8512c7c72386cbe81009f661"
+dependencies = [
+ "ahash",
+ "annotate-snippets",
+ "base64 0.22.1",
+ "encoding_rs_io",
+ "getrandom 0.3.4",
+ "nohash-hasher",
+ "num-traits",
+ "saphyr-parser-bw",
+ "serde",
+ "smallvec",
+ "zmij",
+]
+
+[[package]]
+name = "serde-saphyr"
+version = "0.0.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e214449d107a81daf1453eb46c9314457660509534883e82db6faca2034a8a"
 dependencies = [
  "ahash",
  "annotate-snippets",

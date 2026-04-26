@@ -238,6 +238,7 @@ impl CronStore {
         Ok(run)
     }
 
+    #[allow(unused)]
     pub async fn job_abort(
         &self,
         run: CronRun,

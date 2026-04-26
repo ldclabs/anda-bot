@@ -39,6 +39,7 @@ impl Client {
         self.get_json("").await
     }
 
+    #[allow(unused)]
     pub async fn execute_kip_readonly(&self, req: &KipRequest) -> Result<KipResponse, BoxError> {
         self.post_json("/v1/anda_bot/execute_kip_readonly", &req)
             .await

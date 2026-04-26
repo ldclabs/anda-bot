@@ -266,7 +266,7 @@ impl MaintenanceAgent {
 
                     let is_done = runner.is_done();
                     if !is_done {
-                        runner.prune_raw_history_if(11, 7);
+                        runner.prune_raw_history_if(13, 6);
                     }
 
                     if first_round {
