@@ -1062,7 +1062,7 @@ fn split_input_area(area: Rect) -> (Option<Rect>, Rect) {
 fn input_separator_block_height(area_height: u16) -> u16 {
     if area_height <= 1 {
         0
-    } else if area_height >= INPUT_DIVIDER_PADDED_HEIGHT + 1 {
+    } else if area_height > INPUT_DIVIDER_PADDED_HEIGHT {
         INPUT_DIVIDER_PADDED_HEIGHT
     } else {
         1

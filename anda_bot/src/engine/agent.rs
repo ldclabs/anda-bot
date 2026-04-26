@@ -24,8 +24,9 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -172,7 +173,7 @@ impl Agent<AgentCtx> for AndaBot {
             return Err("anonymous caller not allowed".into());
         }
 
-        let user = caller.to_string();
+        // let user = caller.to_string();
         let now_ms = unix_ms();
         let current_conversation_id = ctx.meta().get_extra_as::<u64>("conversation").unwrap_or(0);
         let mut input = ConversationInput {
@@ -209,58 +210,60 @@ impl Agent<AgentCtx> for AndaBot {
             return Err("prompt cannot be empty".into());
         }
 
-        let current_conversation = if current_conversation_id > 0 {
-            self.inner
+        let (mut prev_conversations, _) = self
+            .inner
+            .conversations
+            .list_conversations_by_user(caller, None, Some(2))
+            .await?;
+
+        let mut ancestors = if current_conversation_id > 0 {
+            if let Some(pos) = prev_conversations
+                .iter()
+                .position(|conv| conv._id == current_conversation_id)
+            {
+                prev_conversations.get(pos).map(|conv| {
+                    let mut ancestors = conv.ancestors.clone().unwrap_or_default();
+                    ancestors.push(conv._id);
+                    ancestors
+                })
+            } else if let Some(conv) = self
+                .inner
                 .conversations
                 .get_conversation(current_conversation_id)
                 .await
                 .ok()
                 .filter(|conversation| &conversation.user == caller)
+            {
+                let mut ancestors = conv.ancestors.clone().unwrap_or_default();
+                ancestors.push(conv._id);
+                prev_conversations.insert(0, conv);
+                Some(ancestors)
+            } else {
+                None
+            }
         } else {
-            None
+            prev_conversations.last().map(|conv| {
+                let mut ancestors = conv.ancestors.clone().unwrap_or_default();
+                ancestors.push(conv._id);
+                ancestors
+            })
         };
 
-        let (ancestors, parent_conversation) = if let Some(conv) = current_conversation {
-            let mut ancestors = conv.ancestors.clone().unwrap_or_default();
-            if ancestors.len() > 10 {
+        if let Some(ancestors) = ancestors.as_mut()
+            && ancestors.len() > 10 {
                 ancestors.drain(0..ancestors.len() - 10);
             }
 
-            ancestors.push(conv._id);
-            (Some(ancestors), Some(conv))
-        } else {
-            let (mut conversations, _cursor) = self
-                .inner
-                .conversations
-                .list_conversations_by_user(caller, None, Some(1))
-                .await?;
-            if let Some(conv) = conversations.pop() {
-                let mut ancestors = conv.ancestors.clone().unwrap_or_default();
-                if ancestors.len() > 10 {
-                    ancestors.drain(0..ancestors.len() - 10);
-                }
-
-                ancestors.push(conv._id);
-                (Some(ancestors), Some(conv))
-            } else {
-                (None, None)
-            }
-        };
-
-        let mut user_conversations: Vec<Document> = Vec::new();
-        if let Some(parent) = parent_conversation {
-            user_conversations.push(Document::from(parent));
-        }
-
         let primer = self.inner.brain.describe_primer().await?;
-        let caller_info = self.inner.brain.user_info(caller.to_string()).await;
+        let user_info = self.inner.brain.user_info(caller.to_string()).await;
         let notes = load_notes(&ctx).await.unwrap_or_default();
         let instructions = format!(
-            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# Current datetime: {}",
+            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# User profile:\n{}\n\n# Current datetime:\n{}",
             SELF_INSTRUCTIONS,
             SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
             primer,
             serde_json::to_string(&notes.notes).unwrap_or_default(),
+            serde_json::to_string(&user_info).unwrap_or_default(),
             rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
         );
 
@@ -272,11 +275,11 @@ impl Agent<AgentCtx> for AndaBot {
             ..Default::default()
         };
 
-        if !user_conversations.is_empty() {
+        if !prev_conversations.is_empty() {
             msg.content.push(
                 Documents::new(
                     "user_history_conversations".to_string(),
-                    user_conversations.clone(),
+                    prev_conversations.into_iter().map(Document::from).collect(),
                 )
                 .to_string()
                 .into(),
@@ -294,25 +297,6 @@ impl Agent<AgentCtx> for AndaBot {
             }
         }
 
-        msg.content.push(
-            Documents::new(
-                "user_profile".to_string(),
-                vec![Document {
-                    content: caller_info,
-                    metadata: BTreeMap::from([
-                        ("type".to_string(), "Person".into()),
-                        (
-                            "description".to_string(),
-                            "The latest user's profile in the Cognitive Nexus".into(),
-                        ),
-                    ]),
-                }],
-            )
-            .to_string()
-            .into(),
-        );
-
-        let chat_history = vec![msg];
         let mut conversation = Conversation {
             user: *caller,
             messages: vec![serde_json::json!(Message {
@@ -325,6 +309,7 @@ impl Agent<AgentCtx> for AndaBot {
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
+            extra: Some(json!(ctx.meta().extra)),
             ..Default::default()
         };
 
@@ -359,6 +344,11 @@ impl Agent<AgentCtx> for AndaBot {
         self.insert_processing_task(task_key, conversation_task.clone());
 
         let assistant = self.clone();
+        let chat_history = if msg.content.is_empty() {
+            vec![]
+        } else {
+            vec![msg]
+        };
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions,
@@ -377,7 +367,7 @@ impl Agent<AgentCtx> for AndaBot {
             .get_extra_as::<String>("source")
             .unwrap_or_else(|| format!("conversation:{id}"));
         let context = Some(InputContext {
-            counterparty: Some(user),
+            counterparty: Some(caller.to_string()),
             agent: Some(AndaBot::NAME.to_string()),
             source: Some(source),
             topic: None,
