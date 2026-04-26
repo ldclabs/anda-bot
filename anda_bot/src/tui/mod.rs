@@ -12,7 +12,7 @@ use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
@@ -39,7 +39,12 @@ const MAX_INPUT_LINES: u16 = 4;
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const INPUT_PROMPT_PREFIX: &str = "❯ ";
 const INPUT_CONTINUATION_PREFIX: &str = "  ";
+const INPUT_DIVIDER_PREFIX: &str = "── ";
 const INPUT_DIVIDER_LABEL: &str = "compose";
+const INPUT_DIVIDER_PADDED_HEIGHT: u16 = 3;
+const INPUT_DIVIDER_FLOW_SPEED: f32 = 1.25;
+const INPUT_DIVIDER_GLOW_RADIUS: f32 = 15.0;
+const INPUT_DIVIDER_TRAIL_OFFSET: f32 = 9.0;
 const THINKING_FRAMES: [&str; 4] = ["thinking", "thinking.", "thinking..", "thinking..."];
 
 pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
@@ -546,8 +551,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     if let Some(separator_area) = separator_area {
         frame.render_widget(
-            Paragraph::new(vec![input_separator_line(separator_area.width as usize)])
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(input_separator_lines(app, separator_area)).wrap(Wrap { trim: false }),
             separator_area,
         );
     }
@@ -665,7 +669,7 @@ fn input_height(app: &App, area: Rect) -> u16 {
     let inner_width = area.width.saturating_sub(input_prompt_prefix_width()) as usize;
     wrapped_line_count(&input_display_text(app), inner_width)
         .clamp(1, MAX_INPUT_LINES)
-        .saturating_add(1)
+        .saturating_add(input_separator_block_height(area.height))
         .min(area.height)
 }
 
@@ -1034,7 +1038,8 @@ fn input_prompt_prefix_width() -> u16 {
 }
 
 fn split_input_area(area: Rect) -> (Option<Rect>, Rect) {
-    if area.height <= 1 {
+    let separator_height = input_separator_block_height(area.height);
+    if separator_height == 0 {
         return (None, area);
     }
 
@@ -1043,40 +1048,179 @@ fn split_input_area(area: Rect) -> (Option<Rect>, Rect) {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: 1,
+            height: separator_height,
         }),
         Rect {
             x: area.x,
-            y: area.y + 1,
+            y: area.y + separator_height,
             width: area.width,
-            height: area.height - 1,
+            height: area.height - separator_height,
         },
     )
 }
 
-fn input_separator_line(width: usize) -> Line<'static> {
-    if width == 0 {
+fn input_separator_block_height(area_height: u16) -> u16 {
+    if area_height <= 1 {
+        0
+    } else if area_height >= INPUT_DIVIDER_PADDED_HEIGHT + 1 {
+        INPUT_DIVIDER_PADDED_HEIGHT
+    } else {
+        1
+    }
+}
+
+fn input_separator_lines(app: &App, area: Rect) -> Vec<Line<'static>> {
+    if area.height == 0 {
+        return Vec::new();
+    }
+
+    let separator = input_separator_line(app, area.width as usize);
+    if area.height >= INPUT_DIVIDER_PADDED_HEIGHT {
+        vec![Line::from(""), separator, Line::from("")]
+    } else {
+        vec![separator]
+    }
+}
+
+fn input_separator_line(app: &App, width: usize) -> Line<'static> {
+    let content = input_separator_text(width);
+    let total_width = content.chars().count();
+    if total_width == 0 {
         return Line::from("");
     }
 
-    let prefix = "── ";
-    let title = INPUT_DIVIDER_LABEL;
-    let compact = format!("{prefix}{title}");
+    let label_start = INPUT_DIVIDER_PREFIX.chars().count().min(total_width);
+    let label_end = (label_start + INPUT_DIVIDER_LABEL.chars().count()).min(total_width);
+    let spans: Vec<Span<'static>> = content
+        .chars()
+        .enumerate()
+        .map(|(idx, ch)| {
+            Span::styled(
+                ch.to_string(),
+                input_separator_style(
+                    idx,
+                    total_width,
+                    label_start <= idx && idx < label_end,
+                    app.animation_tick,
+                ),
+            )
+        })
+        .collect();
+
+    Line::from(spans)
+}
+
+fn input_separator_text(width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let compact = format!("{INPUT_DIVIDER_PREFIX}{INPUT_DIVIDER_LABEL}");
     let compact_width = display_width(&compact);
 
     if width <= compact_width {
-        return Line::from(Span::styled(
-            truncate_visual(&compact, width),
-            theme::dim_style(),
-        ));
+        return truncate_visual(&compact, width);
     }
 
     let filler_width = width.saturating_sub(compact_width + 1);
-    Line::from(vec![
-        Span::styled(prefix.to_string(), theme::dim_style()),
-        Span::styled(title.to_string(), theme::accent_style()),
-        Span::styled(format!(" {}", "─".repeat(filler_width)), theme::dim_style()),
-    ])
+    format!("{compact} {}", "─".repeat(filler_width))
+}
+
+fn input_separator_style(position: usize, total_width: usize, in_label: bool, tick: u64) -> Style {
+    let glow = input_separator_glow_strength(position, total_width, tick);
+    let shimmer = (((position as f32 * 0.24) - (tick as f32 * 0.42)).sin() + 1.0) * 0.5;
+    let fg_mix = if in_label {
+        (0.38 + shimmer * 0.18 + glow * 0.54).min(1.0)
+    } else {
+        (0.20 + shimmer * 0.12 + glow * 0.82).min(1.0)
+    };
+    let bg_mix = if in_label {
+        (0.14 + glow * 0.82 + shimmer * 0.06).min(1.0)
+    } else {
+        (0.04 + glow * 0.72).min(1.0)
+    };
+
+    let fg = if in_label {
+        blend_color(Color::Rgb(92, 242, 255), theme::PANDA_WHITE, fg_mix)
+    } else {
+        blend_color(Color::Rgb(82, 134, 136), Color::Rgb(220, 255, 245), fg_mix)
+    };
+    let bg = if in_label {
+        None
+    } else {
+        Some(blend_color(
+            Color::Rgb(3, 10, 11),
+            Color::Rgb(0, 108, 98),
+            bg_mix,
+        ))
+    };
+
+    let style = if let Some(bg) = bg {
+        Style::default().fg(fg).bg(bg)
+    } else {
+        Style::default().fg(fg)
+    };
+    if in_label || glow > 0.22 {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
+}
+
+fn input_separator_glow_strength(position: usize, total_width: usize, tick: u64) -> f32 {
+    if total_width == 0 {
+        return 0.0;
+    }
+
+    let total_width = total_width as f32;
+    let center = (tick as f32 * INPUT_DIVIDER_FLOW_SPEED).rem_euclid(total_width);
+    let position = position as f32;
+    let head = wrapped_glow_strength(position, total_width, center, INPUT_DIVIDER_GLOW_RADIUS);
+    let tail = wrapped_glow_strength(
+        position,
+        total_width,
+        center - INPUT_DIVIDER_TRAIL_OFFSET,
+        INPUT_DIVIDER_GLOW_RADIUS * 1.1,
+    ) * 0.58;
+    let lead = wrapped_glow_strength(
+        position,
+        total_width,
+        center + INPUT_DIVIDER_TRAIL_OFFSET * 0.45,
+        INPUT_DIVIDER_GLOW_RADIUS * 0.65,
+    ) * 0.22;
+
+    (head + tail + lead).min(1.0)
+}
+
+fn wrapped_glow_strength(position: f32, total_width: f32, center: f32, radius: f32) -> f32 {
+    let distance = (position - center).abs();
+    let wrapped_distance = distance.min(total_width - distance);
+    (1.0 - wrapped_distance / radius).max(0.0).powf(1.45)
+}
+
+fn blend_color(base: Color, peak: Color, amount: f32) -> Color {
+    let amount = amount.clamp(0.0, 1.0);
+    let (base_r, base_g, base_b) = color_components(base);
+    let (peak_r, peak_g, peak_b) = color_components(peak);
+
+    Color::Rgb(
+        mix_channel(base_r, peak_r, amount),
+        mix_channel(base_g, peak_g, amount),
+        mix_channel(base_b, peak_b, amount),
+    )
+}
+
+fn color_components(color: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => (255, 255, 255),
+    }
+}
+
+fn mix_channel(base: u8, peak: u8, amount: f32) -> u8 {
+    let base = base as f32;
+    let peak = peak as f32;
+    (base + (peak - base) * amount).round().clamp(0.0, 255.0) as u8
 }
 
 fn normalize_newlines(text: &str) -> String {
@@ -1350,7 +1494,7 @@ mod tests {
                     height: 8,
                 }
             ),
-            2
+            4
         );
     }
 
@@ -1370,10 +1514,94 @@ mod tests {
     }
 
     #[test]
+    fn split_input_area_reserves_padding_when_room_allows() {
+        let area = Rect {
+            x: 2,
+            y: 3,
+            width: 40,
+            height: 6,
+        };
+
+        let (separator, prompt) = split_input_area(area);
+
+        assert_eq!(separator.unwrap().height, INPUT_DIVIDER_PADDED_HEIGHT);
+        assert_eq!(prompt.y, area.y + INPUT_DIVIDER_PADDED_HEIGHT);
+        assert_eq!(prompt.height, area.height - INPUT_DIVIDER_PADDED_HEIGHT);
+    }
+
+    #[test]
+    fn input_separator_lines_add_blank_padding_when_room_allows() {
+        let app = ready_app();
+        let lines = input_separator_lines(
+            &app,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 24,
+                height: INPUT_DIVIDER_PADDED_HEIGHT,
+            },
+        );
+
+        assert_eq!(lines.len(), INPUT_DIVIDER_PADDED_HEIGHT as usize);
+        assert_eq!(line_text(&lines[0]), "");
+        assert!(line_text(&lines[1]).starts_with("── compose "));
+        assert_eq!(line_text(&lines[2]), "");
+    }
+
+    #[test]
     fn input_separator_line_labels_compose_section() {
-        let line = input_separator_line(24);
+        let app = ready_app();
+        let line = input_separator_line(&app, 24);
 
         assert!(line_text(&line).starts_with("── compose "));
+    }
+
+    #[test]
+    fn input_separator_title_has_no_background() {
+        let app = ready_app();
+        let line = input_separator_line(&app, 24);
+        let label_start = INPUT_DIVIDER_PREFIX.chars().count();
+        let label_end = label_start + INPUT_DIVIDER_LABEL.chars().count();
+
+        assert!(
+            line.spans[label_start..label_end]
+                .iter()
+                .all(|span| span.style.bg.is_none())
+        );
+        assert!(
+            line.spans[..label_start]
+                .iter()
+                .any(|span| matches!(span.style.bg, Some(Color::Rgb(..))))
+        );
+    }
+
+    #[test]
+    fn input_separator_line_animates_truecolor_glow() {
+        let mut app = ready_app();
+        app.animation_tick = 0;
+        let before = input_separator_line(&app, 24);
+
+        app.animation_tick = 8;
+        let after = input_separator_line(&app, 24);
+
+        let before_colors: Vec<_> = before.spans.iter().map(|span| span.style.fg).collect();
+        let after_colors: Vec<_> = after.spans.iter().map(|span| span.style.fg).collect();
+        let before_backgrounds: Vec<_> = before.spans.iter().map(|span| span.style.bg).collect();
+        let after_backgrounds: Vec<_> = after.spans.iter().map(|span| span.style.bg).collect();
+
+        assert_eq!(line_text(&before), line_text(&after));
+        assert!(
+            before_colors
+                .iter()
+                .any(|color| matches!(color, Some(Color::Rgb(..))))
+        );
+        assert!(
+            before_backgrounds
+                .iter()
+                .any(|color| matches!(color, Some(Color::Rgb(..))))
+        );
+        assert_ne!(before_colors, after_colors);
+        assert_ne!(before_backgrounds, after_backgrounds);
     }
 
     #[test]
