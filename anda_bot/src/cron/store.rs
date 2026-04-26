@@ -8,7 +8,6 @@ use anda_db::{
     schema::Fv,
     unix_ms,
 };
-use chrono::Utc;
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -102,8 +101,7 @@ impl CronStore {
     }
 
     pub async fn pause_job(&self, id: u64) -> Result<CronJob, BoxError> {
-        let now = Utc::now();
-        let now_ms = now.timestamp_millis() as u64;
+        let now_ms = unix_ms();
         let job = self
             .jobs
             .update(
@@ -120,8 +118,7 @@ impl CronStore {
 
     pub async fn resume_job(&self, id: u64) -> Result<CronJob, BoxError> {
         let job: CronJob = self.jobs.get_as(id).await?;
-        let now = Utc::now();
-        let now_ms = now.timestamp_millis() as u64;
+        let now_ms = unix_ms();
         let schedule = job.schedule()?;
         let next_run = schedule.next_run(now_ms);
 
@@ -140,8 +137,7 @@ impl CronStore {
     }
 
     pub async fn remove_job(&self, id: u64) -> Result<(), BoxError> {
-        let now = Utc::now();
-        let now_ms = now.timestamp_millis() as u64;
+        let now_ms = unix_ms();
         let _: CronJob = if let Ok(Some(job)) = self.jobs.remove(id).await {
             job.try_into()?
         } else {
@@ -227,7 +223,7 @@ impl CronStore {
         Ok(jobs)
     }
 
-    pub async fn json_start(&self, job_id: u64, started_at: u64) -> Result<CronRun, BoxError> {
+    pub async fn job_start(&self, job_id: u64, started_at: u64) -> Result<CronRun, BoxError> {
         let mut run = CronRun {
             job_id,
             started_at,
@@ -418,9 +414,9 @@ mod tests {
         let (_dir, store) = test_store().await;
         let job = insert_test_job(&store, "job-1").await;
 
-        let _run1 = store.json_start(job._id, unix_ms()).await.unwrap();
-        let _run2 = store.json_start(job._id, unix_ms()).await.unwrap();
-        let _run3 = store.json_start(job._id, unix_ms()).await.unwrap();
+        let _run1 = store.job_start(job._id, unix_ms()).await.unwrap();
+        let _run2 = store.job_start(job._id, unix_ms()).await.unwrap();
+        let _run3 = store.job_start(job._id, unix_ms()).await.unwrap();
         store.flush(unix_ms()).await.unwrap();
 
         let (page1, cursor1) = store.list_runs(None, Some(2), Some(job._id)).await.unwrap();

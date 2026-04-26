@@ -77,7 +77,7 @@ impl CronRuntime {
         let mut runs: Vec<(CronJob, CronRun)> = Vec::new();
         for job in due_jobs {
             let started_at_ms = unix_ms();
-            let run = match self.store.json_start(job._id, started_at_ms).await {
+            let run = match self.store.job_start(job._id, started_at_ms).await {
                 Ok(run) => {
                     self.running_jobs.lock().insert(job._id, started_at_ms);
                     run
@@ -90,8 +90,10 @@ impl CronRuntime {
             runs.push((job, run));
         }
 
-        self.store.flush(unix_ms()).await?;
         let len = runs.len();
+        if len == 0 {
+            return Ok(0);
+        }
 
         let store = self.store.clone();
         let mut in_flight = stream::iter(runs.into_iter().map(move |(job, run)| {
