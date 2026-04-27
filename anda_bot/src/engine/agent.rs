@@ -250,9 +250,10 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         if let Some(ancestors) = ancestors.as_mut()
-            && ancestors.len() > 10 {
-                ancestors.drain(0..ancestors.len() - 10);
-            }
+            && ancestors.len() > 10
+        {
+            ancestors.drain(0..ancestors.len() - 10);
+        }
 
         let primer = self.inner.brain.describe_primer().await?;
         let user_info = self.inner.brain.user_info(caller.to_string()).await;

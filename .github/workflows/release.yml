@@ -52,30 +52,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: anda-cli/go.mod
-
       - name: Build Rust binary
         run: |
-          cargo build --release --locked -p anda_hippocampus --target ${{ matrix.rust_target }}
-
-      - name: Build Go binary
-        working-directory: anda-cli
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: |
-          go build -trimpath -ldflags "-s -w" -o anda-cli${{ matrix.exe_ext }} .
+          cargo build --release --locked -p anda_bot --target ${{ matrix.rust_target }}
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p release
-          cp "target/${{ matrix.rust_target }}/release/anda_hippocampus${{ matrix.exe_ext }}" "release/anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
-          cp "anda-cli/anda-cli${{ matrix.exe_ext }}" "release/anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
+          cp "target/${{ matrix.rust_target }}/release/anda_bot${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
 
           for file in release/*; do
             if command -v sha256sum >/dev/null 2>&1; then
@@ -90,10 +75,8 @@ jobs:
           bundle="release/anda-bundle-${{ matrix.target }}.zip"
           bundle_name="$(basename "$bundle")"
           files=(
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}"
-            "anda_hippocampus-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
-            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}"
-            "anda-cli-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
+            "anda-${{ matrix.target }}${{ matrix.exe_ext }}"
+            "anda-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
           )
 
           if command -v bsdtar >/dev/null 2>&1; then

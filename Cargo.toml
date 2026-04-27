@@ -1,18 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["anda_bot", "anda_hippocampus"]
+members = ["anda_bot"]
 
 [workspace.package]
-description = "🧠 Anda Hippocampus (海马体) — Autonomous Graph Memory for AI Agents"
-repository = "https://github.com/ldclabs/anda-hippocampus"
-homepage = "https://github.com/ldclabs/anda-hippocampus"
-keywords = [
-  "knowledge-graph",
-  "persistent-memory",
-  "cognitive",
-  "kip",
-  "agent-memory",
-]
+description = "🐼 Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Hippocampus."
+repository = "https://github.com/ldclabs/anda-bot"
+homepage = "https://github.com/ldclabs/anda-bot"
+keywords = ["knowledge-graph", "persistent-memory", "cognitive", "kip", "agent"]
 categories = [
   "accessibility",
   "web-programming",
@@ -41,10 +35,17 @@ anda_object_store = "0.3"
 anda_db = { version = "0.7", features = ["full"] }
 anda_db_tfs = { version = "0.5", features = ["full"] }
 anda_cognitive_nexus = "0.7"
+anda_hippocampus = { version = "0.4" }
 anda_kip = "0.7"
 base64 = "0.22"
 ciborium = "0.2"
 coset = "0.4"
+chrono = { version = "0.4", default-features = false, features = [
+  "clock",
+  "std",
+] }
+chrono-tz = "0.10"
+cron = "0.16"
 dotenv = "0.15"
 futures = "0.3"
 futures-util = "0.3"
@@ -52,6 +53,7 @@ http = "1.3"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+serde-saphyr = "0.0"
 sha3 = "0.11"
 ic_cose_types = "0.9"
 ic_cose = "0.9"
@@ -67,6 +69,12 @@ tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
 markdown = "1"
 mimalloc = { version = "0.1", features = ["v3"] }
 rand = "0.10"
+libc = "0.2"
+ratatui = { version = "0.30", default-features = true }
+crossterm = { version = "0.29", features = ["event-stream"] }
+unicode-width = "0.2"
+tokio-rustls = "0.26"
+webpki-roots = "1"
 
 [patch.crates-io]
 boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }

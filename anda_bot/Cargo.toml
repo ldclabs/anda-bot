@@ -10,7 +10,7 @@ name = "anda"
 path = "src/main.rs"
 
 [dependencies]
-anda_hippocampus = { path = "../anda_hippocampus", version = "0.4" }
+anda_hippocampus = { workspace = true }
 async-trait = { workspace = true }
 anda_core = { workspace = true }
 anda_engine = { workspace = true, features = ["sandbox"] }
@@ -22,13 +22,10 @@ anda_object_store = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
-chrono = { version = "0.4", default-features = false, features = [
-  "clock",
-  "std",
-] }
-chrono-tz = "0.10"
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
 coset = { workspace = true }
-cron = "0.16"
+cron = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 ic-ed25519 = { workspace = true }
@@ -39,7 +36,7 @@ tokio-util = { workspace = true }
 structured-logger = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-serde-saphyr = "0.0.24"
+serde-saphyr = { workspace = true }
 sha3 = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
@@ -48,13 +45,13 @@ object_store = { workspace = true, features = ["aws", "integration"] }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
-libc = "0.2"
+libc = { workspace = true }
 # TUI (ratatui + crossterm)
-ratatui = { version = "0.30", default-features = true }
-crossterm = { version = "0.29", features = ["event-stream"] }
-unicode-width = "0.2"
-tokio-rustls = "0.26"
-webpki-roots = "1"
+ratatui = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
+unicode-width = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
