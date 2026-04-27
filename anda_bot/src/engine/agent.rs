@@ -142,13 +142,19 @@ impl AndaBot {
         context: &Option<InputContext>,
         timestamp: &Option<String>,
     ) -> Result<(), BoxError> {
-        let input = FormationInputRef {
-            messages,
-            context,
-            timestamp,
-        };
+        if messages.is_empty() {
+            return Ok(());
+        }
 
-        let _ = self.inner.brain.formation(input).await?;
+        let _ = self
+            .inner
+            .brain
+            .formation(FormationInputRef {
+                messages,
+                context,
+                timestamp,
+            })
+            .await?;
         Ok(())
     }
 }
@@ -296,7 +302,7 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let primer = self.inner.brain.describe_primer().await?;
-        let user_info = self.inner.brain.user_info(caller.to_string()).await;
+        let user_info = self.inner.brain.user_info(*caller, None).await?;
         let notes = load_notes(&ctx).await.unwrap_or_default();
         let instructions = format!(
             "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# User profile:\n{}\n\n# Current datetime:\n{}",
@@ -765,7 +771,17 @@ fn conversation_chat_history(conversation: &Conversation, skip: usize) -> Vec<Me
         .messages
         .iter()
         .skip(skip)
-        .filter_map(|raw| serde_json::from_value::<Message>(raw.clone()).ok())
+        .filter_map(|raw| match serde_json::from_value::<Message>(raw.clone()) {
+            Ok(mut msg) => {
+                let pruned = msg.prune_content();
+                if msg.content.is_empty() || pruned > 0 && msg.content.len() <= 1 {
+                    None
+                } else {
+                    Some(msg)
+                }
+            }
+            Err(_) => None,
+        })
         .collect()
 }
 

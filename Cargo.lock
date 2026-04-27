@@ -156,9 +156,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.15"
+version = "0.7.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "856cdda89a925c28e2fe1df77d66a539f3835be59c2d361af6469c2412038dab"
+checksum = "b5f479cefb32734d0a6f7e8236462793e266ab0f72b630cc7143699f9ca432f8"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.19"
+version = "0.11.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0ea5f60d75c361381e7cb91d03868f4a204b18c54bbf5d83f2ff0f8891510d2"
+checksum = "e7aafebe94375a770393453c5802ef4ec9cf117bf866df753049ae3002075f87"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -378,7 +378,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
- "which",
 ]
 
 [[package]]
@@ -408,9 +407,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6d8479bb7a8646b71f0debed444565ea7d874518b110dfef1957742e7ca0151"
+checksum = "859a3e11ae9e2bfa3ae47bf1468bb0127969c1e476b581b2a91de90eac168260"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -443,9 +442,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.10"
+version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfb2ab219d17f953ac592372ebc336a6304a02c774e804e34e95e4c00d1d8a43"
+checksum = "6865f464b9c1353592b9ad7d7ec0db05eb7f842c6ee6672cbb433825ae42f2ca"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7819,15 +7818,6 @@ dependencies = [
  "lazy_static",
  "serde",
  "wezterm-dynamic",
-]
-
-[[package]]
-name = "which"
-version = "8.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81995fafaaaf6ae47a7d0cc83c67caf92aeb7e5331650ae6ff856f7c0c60c459"
-dependencies = [
- "libc",
 ]
 
 [[package]]

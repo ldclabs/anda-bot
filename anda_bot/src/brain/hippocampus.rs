@@ -124,6 +124,10 @@ impl Hippocampus {
                 routing::post(execute_kip_readonly),
             )
             .route(
+                "/v1/{space_id}/get_or_init_user",
+                routing::post(get_or_init_user),
+            )
+            .route(
                 "/v1/{space_id}/conversations/{conversation_id}",
                 routing::get(get_conversation),
             )

@@ -420,9 +420,7 @@ async fn run_app(
         }
 
         let desired = desired_viewport_height(app, term_w, term_h);
-        let new_height = if terminal_resized {
-            desired
-        } else if desired > current_viewport_height {
+        let new_height = if terminal_resized || desired > current_viewport_height {
             desired
         } else {
             current_viewport_height

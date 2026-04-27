@@ -1,11 +1,13 @@
-use anda_core::{AgentOutput, BoxError, FunctionDefinition, Json, Resource, Tool, ToolOutput};
+use anda_core::{
+    AgentOutput, BoxError, FunctionDefinition, Json, Principal, Resource, Tool, ToolOutput,
+};
 use anda_engine::{context::BaseCtx, model::reqwest};
-use anda_kip::{Map, Request as KipRequest, Response as KipResponse};
+use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
 
 pub use anda_hippocampus::{
     payload::RpcResponse,
-    types::{FormationInputRef, RecallInput, RecallInputRef},
+    types::{FormationInputRef, GetOrInitUserInput, RecallInput, RecallInputRef},
 };
 
 #[derive(Clone)]
@@ -80,24 +82,19 @@ impl Client {
         }
     }
 
-    pub async fn user_info(&self, id: String) -> Json {
-        let rt: Result<KipResponse, BoxError> = self
-            .post(
-                "/execute_kip_readonly",
-                &KipRequest {
-                    command: "FIND(?user) WHERE { ?user {type:\"Person\", name: :name} }"
-                        .to_string(),
-                    parameters: Map::from_iter([("name".to_string(), Json::String(id.clone()))]),
-                    ..Default::default()
-                },
-            )
-            .await;
-        match rt {
-            Ok(KipResponse::Ok { result, .. }) => result,
-            _ => json!({
-                "type": "Person",
-                "name": id,
-            }),
+    pub async fn user_info(&self, user: Principal, name: Option<String>) -> Result<Json, BoxError> {
+        let rt: RpcResponse<Json> = self
+            .post("/get_or_init_user", &GetOrInitUserInput { user, name })
+            .await?;
+
+        if let Some(result) = rt.result {
+            Ok(result)
+        } else {
+            Err(serde_json::to_string(&rt)
+                .unwrap_or_else(|_| {
+                    "[HippocampusClient] user_info failed with unknown error".to_string()
+                })
+                .into())
         }
     }
 
@@ -108,7 +105,8 @@ impl Client {
     {
         let req = self.request(reqwest::Method::POST, path);
         let response = req.json(&input).send().await?;
-        self.decode_response(response).await
+        self.decode_response(reqwest::Method::POST, path, response)
+            .await
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -120,7 +118,12 @@ impl Client {
         }
     }
 
-    async fn decode_response<O>(&self, response: reqwest::Response) -> Result<O, BoxError>
+    async fn decode_response<O>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        response: reqwest::Response,
+    ) -> Result<O, BoxError>
     where
         O: serde::de::DeserializeOwned,
     {
@@ -130,18 +133,22 @@ impl Client {
             match serde_json::from_str::<O>(&text) {
                 Ok(res) => Ok(res),
                 Err(err) => Err(format!(
-                    "[HippocampusClient] Invalid response, error: {}, body: {}",
-                    err, text
+                    "[HippocampusClient] Invalid response for {} {}, error: {}, body: {}",
+                    method, path, err, text
                 )
                 .into()),
             }
         } else {
             let status = response.status();
             let msg = response.text().await?;
-            log::error!("[HippocampusClient] request failed: {status}, body: {msg}");
+            log::error!(
+                "[HippocampusClient] request failed for {} {}: {status}, body: {msg}",
+                method,
+                path
+            );
             Err(format!(
-                "[HippocampusClient] request failed, status: {}, body: {}",
-                status, msg
+                "[HippocampusClient] request failed for {} {}: {status}, body: {msg}",
+                method, path
             )
             .into())
         }
