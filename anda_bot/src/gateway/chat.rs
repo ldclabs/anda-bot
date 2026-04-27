@@ -1,7 +1,7 @@
-use anda_core::{AgentInput, Message, RequestMeta, ToolInput};
+use anda_core::{AgentInput, ContentPart, Message, RequestMeta, ToolInput};
 use anda_engine::{
     memory::{Conversation, ConversationStatus},
-    rfc3339_datetime, unix_ms,
+    unix_ms,
 };
 use anda_kip::Response as KipResponse;
 use serde_json::Map;
@@ -12,16 +12,16 @@ use crate::engine::{ConversationsTool, ConversationsToolArgs};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
 
-#[derive(Debug, Clone, Default)]
-pub struct ChatMessage {
-    pub role: String,
-    pub text: Option<String>,
-    pub thoughts: Option<String>,
-    pub error: Option<String>,
-    #[allow(unused)]
-    pub timestamp: Option<String>,
-    #[allow(unused)]
-    pub conv_id: u64,
+/// Build a synthetic system message (used for local notices / errors that
+/// aren't part of the persisted conversation history).
+fn system_message(text: impl Into<String>) -> Message {
+    Message {
+        role: "system".to_string(),
+        content: vec![ContentPart::Text { text: text.into() }],
+        name: None,
+        user: None,
+        timestamp: Some(unix_ms()),
+    }
 }
 
 pub struct ChatSession {
@@ -29,7 +29,7 @@ pub struct ChatSession {
     pub conv_id: Option<u64>,
     pub conversation: Option<Conversation>,
     pub prev_conversation: Option<Conversation>,
-    pub messages: Vec<ChatMessage>,
+    pub messages: Vec<Message>,
     pub sending: bool,
     pub errors: Vec<String>,
     last_poll: Instant,
@@ -138,25 +138,14 @@ impl ChatSession {
                 self.poll(output.conversation).await;
                 if let Some(reason) = &output.failed_reason {
                     self.errors.push(reason.clone());
-                    self.messages.push(ChatMessage {
-                        role: "system".to_string(),
-                        error: Some(reason.clone()),
-                        timestamp: rfc3339_datetime(unix_ms()),
-                        conv_id,
-                        ..Default::default()
-                    });
+                    self.messages.push(system_message(reason.clone()));
                 }
                 output.failed_reason
             }
             Err(err) => {
-                self.messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    error: Some(err.to_string()),
-                    timestamp: rfc3339_datetime(unix_ms()),
-                    conv_id,
-                    ..Default::default()
-                });
-                Some(format!("Request failed: {err}"))
+                let msg = err.to_string();
+                self.messages.push(system_message(msg.clone()));
+                Some(format!("Request failed: {msg}"))
             }
         };
 
@@ -224,14 +213,7 @@ impl ChatSession {
                     .iter()
                     .skip(self.last_msg_offset)
                     .filter_map(|m| match serde_json::from_value::<Message>(m.clone()) {
-                        Ok(msg) => Some(ChatMessage {
-                            text: msg.text(),
-                            thoughts: msg.thoughts(),
-                            error: None,
-                            timestamp: msg.timestamp.and_then(rfc3339_datetime),
-                            role: msg.role,
-                            conv_id: conv._id,
-                        }),
+                        Ok(msg) => Some(msg),
                         Err(err) => {
                             log::warn!("Failed to parse message for conv_id {}: {err}", conv._id);
                             None

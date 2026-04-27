@@ -124,7 +124,7 @@ dependencies = [
  "rand 0.10.1",
  "ratatui",
  "serde",
- "serde-saphyr 0.0.24",
+ "serde-saphyr",
  "serde_json",
  "sha3 0.11.0",
  "structured-logger",
@@ -371,7 +371,7 @@ dependencies = [
  "reqwest 0.13.2",
  "schemars",
  "serde",
- "serde-saphyr 0.0.25",
+ "serde-saphyr",
  "serde_bytes",
  "serde_json",
  "structured-logger",
@@ -408,9 +408,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.6"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a3a2f890a849398cb13f92c97d2f0cb3d3754833b03724a57c8f439f5a329d"
+checksum = "a6d8479bb7a8646b71f0debed444565ea7d874518b110dfef1957742e7ca0151"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -6016,25 +6016,6 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde-saphyr"
-version = "0.0.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f83ad47c2f14654528a89495f8d0dbc64173176f8512c7c72386cbe81009f661"
-dependencies = [
- "ahash",
- "annotate-snippets",
- "base64 0.22.1",
- "encoding_rs_io",
- "getrandom 0.3.4",
- "nohash-hasher",
- "num-traits",
- "saphyr-parser-bw",
- "serde",
- "smallvec",
- "zmij",
 ]
 
 [[package]]

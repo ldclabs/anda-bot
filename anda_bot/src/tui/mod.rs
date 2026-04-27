@@ -1,12 +1,12 @@
-use anda_core::BoxError;
+use anda_core::{BoxError, ContentPart};
 use crossterm::{
     ExecutableCommand,
-    cursor::MoveToNextLine,
+    cursor::{MoveTo, MoveToNextLine},
     event::{
         self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
         KeyModifiers,
     },
-    terminal::{disable_raw_mode, enable_raw_mode, size},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size},
 };
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
@@ -400,22 +400,47 @@ async fn run_app(
     let mut last_status_refresh = Instant::now();
     let (mut term_w, mut term_h) = size()?;
     term_h = term_h.max(1);
+    let mut current_viewport_height = terminal.size()?.height;
 
     loop {
         app.animation_tick = app.animation_tick.wrapping_add(1);
 
-        // Only recreate the terminal when the outer terminal is actually
-        // resized. Recreating on pure content changes causes the inline
-        // viewport to drift downward because each new Inline(n) emits `n`
-        // newlines from the current cursor row.
+        // Recreate the terminal when:
+        //  - the outer terminal was resized, or
+        //  - the inline viewport needs to grow to fit new content (capped at
+        //    the terminal height).
+        // We never shrink the viewport, so the layout doesn't jitter as
+        // messages arrive and disappear.
         let (w, h) = size()?;
         let h = h.max(1);
-        if w != term_w || h != term_h {
-            let desired = desired_viewport_height(app, w, h);
-            drop(terminal);
-            terminal = create_terminal_with_height(desired)?;
+        let terminal_resized = w != term_w || h != term_h;
+        if terminal_resized {
             term_w = w;
             term_h = h;
+        }
+
+        let desired = desired_viewport_height(app, term_w, term_h);
+        let new_height = if terminal_resized {
+            desired
+        } else if desired > current_viewport_height {
+            desired
+        } else {
+            current_viewport_height
+        };
+        let new_height = new_height.min(term_h).max(1);
+        if new_height != current_viewport_height || terminal_resized {
+            // Clear the previous viewport area before recreating so that the
+            // re-anchored viewport does not leave a ghost copy of the old
+            // frame above it. Anything that was already pushed into
+            // scrollback (above the viewport via `insert_before`) is
+            // preserved.
+            let old_area = terminal.get_frame().area();
+            let mut stdout = io::stdout();
+            stdout.execute(MoveTo(old_area.x, old_area.y))?;
+            stdout.execute(Clear(ClearType::FromCursorDown))?;
+            drop(terminal);
+            terminal = create_terminal_with_height(new_height)?;
+            current_viewport_height = new_height;
         }
 
         terminal.autoresize()?;
@@ -828,75 +853,131 @@ fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     }
 
     for msg in &app.chat.messages {
-        let (prefix, style) = match msg.role.as_str() {
-            "user" => ("❯ ", theme::accent_style()),
-            "assistant" => ("🐼 ❯ ", theme::success_style()),
-            "system" => ("⚠️ ❯ ", theme::warn_style()),
-            _ => ("  ", theme::dim_style()),
+        let (prefix, prefix_style, body_style) = match msg.role.as_str() {
+            "user" => ("❯ ", theme::accent_style(), theme::body_style()),
+            "assistant" => ("🐼 ❯ ", theme::success_style(), theme::body_style()),
+            "system" => ("⚠️ ❯ ", theme::danger_style(), theme::danger_style()),
+            "tool" => ("🔧 ❯ ", theme::dim_style(), theme::dim_style()),
+            _ => ("  ", theme::dim_style(), theme::body_style()),
         };
 
         let prefix_width = display_width(prefix);
         let continuation_prefix = " ".repeat(prefix_width);
         let content_width = width.saturating_sub(prefix_width).max(1);
         let mut first = true;
+        let mut rendered_anything = false;
 
-        for text_line in msg.text.clone().unwrap_or_default().lines() {
-            if text_line.is_empty() {
-                let marker = if first {
-                    prefix.to_string()
-                } else {
-                    continuation_prefix.clone()
-                };
-                rendered_lines.push(Line::from(vec![Span::styled(marker, style)]));
-                first = false;
-                continue;
-            }
-
-            for chunk in wrap_visual(text_line, content_width) {
-                if first {
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled(prefix.to_string(), style),
-                        Span::styled(chunk, theme::body_style()),
-                    ]));
-                    first = false;
-                } else {
-                    rendered_lines.push(Line::from(vec![
-                        Span::styled(continuation_prefix.clone(), theme::dim_style()),
-                        Span::styled(chunk, theme::body_style()),
-                    ]));
-                }
-            }
-        }
-
-        if let Some(thoughts) = collapsed_single_line(msg.thoughts.as_deref().unwrap_or_default()) {
-            let marker = if first {
+        let push_inline = |rendered_lines: &mut Vec<Line<'static>>,
+                           first: &mut bool,
+                           text: String,
+                           body: Style| {
+            let marker = if *first {
                 prefix.to_string()
             } else {
                 continuation_prefix.clone()
             };
+            let marker_style = if *first {
+                prefix_style
+            } else {
+                theme::dim_style()
+            };
             rendered_lines.push(Line::from(vec![
-                Span::styled(marker, theme::dim_style()),
-                Span::styled(
-                    truncate_visual(&thoughts, content_width),
-                    theme::dim_style(),
-                ),
+                Span::styled(marker, marker_style),
+                Span::styled(truncate_visual(&text, content_width), body),
             ]));
-            first = false;
+            *first = false;
+        };
+
+        for part in &msg.content {
+            match part {
+                ContentPart::Text { text } => {
+                    push_wrapped_block(
+                        &mut rendered_lines,
+                        text,
+                        &mut first,
+                        prefix,
+                        &continuation_prefix,
+                        prefix_style,
+                        theme::dim_style(),
+                        body_style,
+                        content_width,
+                    );
+                    rendered_anything = true;
+                }
+                ContentPart::Reasoning { text } => {
+                    if let Some(collapsed) = collapsed_single_line(text) {
+                        push_inline(
+                            &mut rendered_lines,
+                            &mut first,
+                            collapsed,
+                            theme::dim_style(),
+                        );
+                        rendered_anything = true;
+                    }
+                }
+                ContentPart::ToolCall { name, args, .. } => {
+                    let args_str = collapsed_single_line(&args.to_string()).unwrap_or_default();
+                    let summary = if args_str.is_empty() {
+                        format!("→ {name}()")
+                    } else {
+                        format!("→ {name}({args_str})")
+                    };
+                    push_inline(&mut rendered_lines, &mut first, summary, theme::dim_style());
+                    rendered_anything = true;
+                }
+                ContentPart::ToolOutput { name, output, .. } => {
+                    let out_str = collapsed_single_line(&output.to_string()).unwrap_or_default();
+                    let summary = if out_str.is_empty() {
+                        format!("← {name}")
+                    } else {
+                        format!("← {name}: {out_str}")
+                    };
+                    push_inline(&mut rendered_lines, &mut first, summary, theme::dim_style());
+                    rendered_anything = true;
+                }
+                ContentPart::FileData {
+                    file_uri,
+                    mime_type,
+                } => {
+                    let mime = mime_type.as_deref().unwrap_or("file");
+                    push_inline(
+                        &mut rendered_lines,
+                        &mut first,
+                        format!("📎 [{mime}] {file_uri}"),
+                        theme::dim_style(),
+                    );
+                    rendered_anything = true;
+                }
+                ContentPart::InlineData { mime_type, .. } => {
+                    push_inline(
+                        &mut rendered_lines,
+                        &mut first,
+                        format!("[inline {mime_type}]"),
+                        theme::dim_style(),
+                    );
+                    rendered_anything = true;
+                }
+                ContentPart::Action { name, .. } => {
+                    push_inline(
+                        &mut rendered_lines,
+                        &mut first,
+                        format!("⚡ {name}"),
+                        theme::dim_style(),
+                    );
+                    rendered_anything = true;
+                }
+                ContentPart::Any(json) => {
+                    if let Some(s) = collapsed_single_line(&json.to_string()) {
+                        push_inline(&mut rendered_lines, &mut first, s, theme::dim_style());
+                        rendered_anything = true;
+                    }
+                }
+            }
         }
 
-        push_wrapped_block(
-            &mut rendered_lines,
-            msg.error.as_deref().unwrap_or_default(),
-            &mut first,
-            prefix,
-            &continuation_prefix,
-            theme::danger_style(),
-            theme::dim_style(),
-            theme::danger_style(),
-            content_width,
-        );
-
-        rendered_lines.push(Line::from(""));
+        if rendered_anything {
+            rendered_lines.push(Line::from(""));
+        }
     }
 
     rendered_lines
@@ -1607,12 +1688,17 @@ mod tests {
     #[test]
     fn chat_message_lines_render_thoughts_as_single_dim_excerpt() {
         let mut app = ready_app();
-        app.chat.messages.push(gateway::ChatMessage {
+        app.chat.messages.push(anda_core::Message {
             role: "assistant".to_string(),
-            text: Some("Answer ready".to_string()),
-            thoughts: Some(
-                "first line of reasoning\nsecond line that is long enough to truncate".to_string(),
-            ),
+            content: vec![
+                ContentPart::Text {
+                    text: "Answer ready".to_string(),
+                },
+                ContentPart::Reasoning {
+                    text: "first line of reasoning\nsecond line that is long enough to truncate"
+                        .to_string(),
+                },
+            ],
             ..Default::default()
         });
 
@@ -1627,11 +1713,51 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_lines_expand_multiline_text() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::Text {
+                text: "line one\nline two\nline three".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 40);
+
+        assert_eq!(line_text(&lines[0]), "🐼 ❯ line one");
+        assert_eq!(line_text(&lines[1]), "     line two");
+        assert_eq!(line_text(&lines[2]), "     line three");
+        assert_eq!(line_text(&lines[3]), "");
+    }
+
+    #[test]
+    fn chat_message_lines_render_tool_calls_as_dim_summary() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::ToolCall {
+                name: "search".to_string(),
+                args: serde_json::json!({"q": "anda"}),
+                call_id: None,
+            }],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert!(line_text(&lines[0]).starts_with("🐼 ❯ → search("));
+        assert_eq!(lines[0].spans[1].style, theme::dim_style());
+    }
+
+    #[test]
     fn chat_message_lines_render_errors_with_system_prefix() {
         let mut app = ready_app();
-        app.chat.messages.push(gateway::ChatMessage {
+        app.chat.messages.push(anda_core::Message {
             role: "system".to_string(),
-            error: Some("request failed badly".to_string()),
+            content: vec![ContentPart::Text {
+                text: "request failed badly".to_string(),
+            }],
             ..Default::default()
         });
 

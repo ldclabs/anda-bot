@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -51,6 +52,14 @@ struct AndaBotInner {
     tools: Vec<String>,
     processing_conversations: ProcessingConversations,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
+    work_dir_conversation: RwLock<HashMap<String, WorkDirState>>,
+    home_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct WorkDirState {
+    #[serde(rename = "c")]
+    pub conversation_id: u64,
 }
 
 type ProcessingConversations = RwLock<HashMap<(Principal, u64), Arc<ConversationTask>>>;
@@ -62,6 +71,7 @@ impl AndaBot {
         brain: brain::Client,
         conversations: Conversations,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
+        home_dir: PathBuf,
     ) -> Self {
         Self {
             inner: Arc::new(AndaBotInner {
@@ -103,6 +113,8 @@ impl AndaBot {
                 ],
                 processing_conversations: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
+                work_dir_conversation: RwLock::new(HashMap::new()),
+                home_dir,
             }),
         }
     }
@@ -162,6 +174,19 @@ impl Agent<AgentCtx> for AndaBot {
         vec!["text".to_string()]
     }
 
+    async fn init(&self, _ctx: AgentCtx) -> Result<(), BoxError> {
+        let work_dir_conversation: HashMap<String, WorkDirState> = self
+            .inner
+            .conversations
+            .conversations
+            .get_extension_as("work_dir_conversation")
+            .unwrap_or_default();
+
+        let mut map = self.inner.work_dir_conversation.write();
+        *map = work_dir_conversation;
+        Ok(())
+    }
+
     async fn run(
         &self,
         ctx: AgentCtx,
@@ -173,9 +198,24 @@ impl Agent<AgentCtx> for AndaBot {
             return Err("anonymous caller not allowed".into());
         }
 
-        // let user = caller.to_string();
         let now_ms = unix_ms();
-        let current_conversation_id = ctx.meta().get_extra_as::<u64>("conversation").unwrap_or(0);
+        let work_dir = ctx
+            .meta()
+            .get_extra_as::<String>("work_dir")
+            .unwrap_or_else(|| self.inner.home_dir.to_string_lossy().to_string());
+        let work_dir_state = {
+            self.inner
+                .work_dir_conversation
+                .read()
+                .get(&work_dir)
+                .cloned()
+                .unwrap_or_default()
+        };
+        let current_conversation_id = ctx
+            .meta()
+            .get_extra_as::<u64>("conversation")
+            .unwrap_or(work_dir_state.conversation_id);
+
         let mut input = ConversationInput {
             prompt,
             resources,
@@ -320,6 +360,27 @@ impl Agent<AgentCtx> for AndaBot {
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = id;
+
+        if work_dir_state.conversation_id != id {
+            // Update the mapping of work_dir to conversation_id if it's different from the current one
+            let map = {
+                let mut map = self.inner.work_dir_conversation.write();
+                map.insert(
+                    work_dir.clone(),
+                    WorkDirState {
+                        conversation_id: id,
+                    },
+                );
+                map.clone()
+            };
+
+            let _ = self
+                .inner
+                .conversations
+                .conversations
+                .save_extension_from("work_dir_conversation".to_string(), &map)
+                .await;
+        }
 
         let res = AgentOutput {
             conversation: Some(id),

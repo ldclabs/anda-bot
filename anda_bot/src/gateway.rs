@@ -31,7 +31,8 @@ pub async fn serve(
     let engines = engine::Engines::new(engine_cfg, db, engine_ref, cron, completion_hooks).await?;
 
     let addr: SocketAddr = addr.parse()?;
-    let listener = create_reuse_port_listener(addr).await?;
+    // create_reuse_port_listener(addr).await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let server_cancel_token = cancel_token.clone();
     let background_cancel_token = cancel_token.clone();
     let app = Router::new()

@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -124,6 +125,7 @@ struct ChannelRuntimeInner {
     channels_conversation: RwLock<ChannelConversationMap>, // (channel, reply_target, thread) -> conversation_id
     conversation_routes: RwLock<HashMap<u64, ChannelRoute>>, // conversation_id -> route
     messages: Arc<Collection>,
+    home_dir: PathBuf,
 }
 
 impl ChannelRuntime {
@@ -132,6 +134,7 @@ impl ChannelRuntime {
         engine: Arc<EngineRef>,
         user: Principal,
         channels: HashMap<String, Arc<dyn Channel>>,
+        home_dir: PathBuf,
     ) -> Result<Self, BoxError> {
         let (tx, rx) = tokio::sync::mpsc::channel(21);
         let schema = ChannelMessage::schema()?;
@@ -171,6 +174,7 @@ impl ChannelRuntime {
             channels_conversation: RwLock::new(channels_conversation),
             conversation_routes: RwLock::new(conversation_routes),
             messages,
+            home_dir,
         });
 
         Ok(Self { rx, inner })
@@ -222,6 +226,14 @@ impl ChannelRuntime {
                             "reply_target".to_string(),
                             message.reply_target.clone().into(),
                         );
+                        extra.insert(
+                            "work_dir".to_string(),
+                            self.inner
+                                .home_dir
+                                .join(&message.channel)
+                                .to_string_lossy()
+                                .into(),
+                        );
                         if let Some(thread) = &message.thread {
                             extra.insert("thread".to_string(), thread.clone().into());
                         }
@@ -255,12 +267,12 @@ impl ChannelRuntime {
                                 if let Some(conv_id) = output.conversation
                                     && let Some(channels_conversation) =
                                         self.inner.bind_conversation(route, conv_id)
-                                    {
-                                        messages.set_extension_from::<ChannelConversationMap>(
-                                            "channels_conversation".to_string(),
-                                            channels_conversation,
-                                        );
-                                    }
+                                {
+                                    messages.set_extension_from::<ChannelConversationMap>(
+                                        "channels_conversation".to_string(),
+                                        channels_conversation,
+                                    );
+                                }
 
                                 let _ = messages.flush(unix_ms()).await;
                             }
@@ -660,6 +672,7 @@ mod tests {
             Arc::new(EngineRef::new()),
             Principal::management_canister(),
             channels,
+            std::env::temp_dir(),
         )
         .await
         .unwrap()

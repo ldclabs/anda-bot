@@ -48,7 +48,7 @@ pub struct EngineConfig {
     pub managers: Vec<Ed25519PubKey>,
     pub models: Vec<ModelConfig>,
     pub brain_base_url: String,
-    pub work_dir: PathBuf,
+    pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub sandbox_dir: Option<PathBuf>,
     pub https_proxy: Option<String>,
@@ -103,13 +103,18 @@ impl Engines {
 
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let conversations_tool = ConversationsTool::new(conversations.clone());
-        let bot = AndaBot::new(brain_client.clone(), conversations, completion_hooks);
+        let bot = AndaBot::new(
+            brain_client.clone(),
+            conversations,
+            completion_hooks,
+            cfg.home_dir.clone(),
+        );
 
         let shell_tool = {
             let runtime: Arc<dyn shell::Executor> = if let Some(sandbox) = cfg.sandbox_dir {
                 Arc::new(shell::sandbox::SandboxRuntime::new(sandbox).await?)
             } else {
-                Arc::new(shell::NativeRuntime::new(cfg.work_dir.clone()))
+                Arc::new(shell::NativeRuntime::new(cfg.home_dir.clone()))
             };
             shell::ShellTool::new(runtime, HashMap::new())
         };
@@ -125,10 +130,10 @@ impl Engines {
             .register_tool(skills_tool.clone())?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
-            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.work_dir.clone())))?
-            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.work_dir.clone())))?
-            .register_tool(Arc::new(fs::EditFileTool::new(cfg.work_dir.clone())))?
-            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.work_dir.clone())))?
+            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.home_dir.clone())))?
+            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.home_dir.clone())))?
+            .register_tool(Arc::new(fs::EditFileTool::new(cfg.home_dir.clone())))?
+            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.home_dir.clone())))?
             .register_tool(Arc::new(conversations_tool))?
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?

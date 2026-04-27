@@ -89,6 +89,14 @@ impl Daemon {
         self.home.join("logs")
     }
 
+    pub fn channels_dir_path(&self) -> PathBuf {
+        self.home.join("channels")
+    }
+
+    pub fn workspace_dir_path(&self) -> PathBuf {
+        self.home.join("workspace")
+    }
+
     pub fn log_file_path(&self) -> PathBuf {
         self.logs_dir_path().join(DAEMON_LOG_FILE)
     }
@@ -108,6 +116,8 @@ impl Daemon {
         tokio::fs::create_dir_all(self.skills_dir_path()).await?;
         tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
         tokio::fs::create_dir_all(self.logs_dir_path()).await?;
+        tokio::fs::create_dir_all(self.channels_dir_path()).await?;
+        tokio::fs::create_dir_all(self.workspace_dir_path()).await?;
         Ok(())
     }
 
@@ -221,7 +231,7 @@ impl Daemon {
             managers: vec![user_pubkey],
             models,
             brain_base_url: self.cfg.brain_base_url(),
-            work_dir: std::env::current_dir()?,
+            home_dir: self.workspace_dir_path(),
             skills_dir: self.skills_dir_path(),
             sandbox_dir: if self.cfg.sandbox {
                 Some(self.sandbox_dir_path())
@@ -266,6 +276,7 @@ impl Daemon {
             engine_ref.clone(),
             user_id,
             channel::irc::build_irc_channels(&self.cfg.channels.irc)?,
+            self.channels_dir_path(),
         )
         .await?;
         let channel_hook = channel_runtime.hook();
