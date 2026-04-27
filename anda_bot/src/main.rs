@@ -1,4 +1,4 @@
-use anda_core::BoxError;
+use anda_core::{AgentInput, BoxError, Json, ToolInput};
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
 use std::{path::PathBuf, time::Duration};
@@ -36,6 +36,46 @@ pub enum Commands {
     Stop,
     /// Restart the anda daemon. If the daemon is not running, this will start it.
     Restart,
+    /// Equal to running `anda restart`.
+    Reload,
+    /// Tool-related operations against the running daemon.
+    #[command(subcommand)]
+    Tool(ToolCommand),
+    /// Agent-related operations against the running daemon.
+    #[command(subcommand)]
+    Agent(AgentCommand),
+}
+
+#[derive(Subcommand)]
+pub enum ToolCommand {
+    /// Invoke a tool by name with JSON arguments.
+    Call {
+        /// Tool name registered with the engine.
+        #[arg(long)]
+        name: String,
+        /// Tool arguments as a JSON value (object/array/scalar). Defaults to `{}`.
+        #[arg(long, default_value = "{}")]
+        args: String,
+        /// Optional request metadata as a JSON object.
+        #[arg(long)]
+        meta: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AgentCommand {
+    /// Run an agent with the given prompt.
+    Run {
+        /// Agent name. Empty value uses the default agent.
+        #[arg(long, default_value = "")]
+        name: String,
+        /// User prompt sent to the agent.
+        #[arg(long)]
+        prompt: String,
+        /// Optional request metadata as a JSON object.
+        #[arg(long)]
+        meta: Option<String>,
+    },
 }
 
 /// ```bash
@@ -55,6 +95,14 @@ async fn main() -> Result<(), BoxError> {
     let cfg = Cli::parse();
 
     match cfg.command {
+        None => {
+            let daemon = load_daemon(home).await?;
+            let ed25519_secret =
+                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
+            let cli = cli::Cli::new(ed25519_key, daemon);
+            cli.run().await?
+        }
         Some(Commands::Daemon) => {
             let daemon = load_daemon(home).await?;
             daemon.ensure_directories().await?;
@@ -77,7 +125,7 @@ async fn main() -> Result<(), BoxError> {
                 }
             }
         }
-        Some(Commands::Restart) => {
+        Some(Commands::Restart) | Some(Commands::Reload) => {
             let daemon = load_daemon(home).await?;
             let stop_state = daemon.stop_background(Duration::from_secs(10)).await?;
             let client = build_control_client(&daemon).await?;
@@ -108,13 +156,45 @@ async fn main() -> Result<(), BoxError> {
                 }
             }
         }
-        None => {
+        Some(Commands::Tool(cmd)) => {
             let daemon = load_daemon(home).await?;
-            let ed25519_secret =
-                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
-            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
-            let cli = cli::Cli::new(ed25519_key, daemon);
-            cli.run().await?
+            let client = build_control_client(&daemon).await?;
+            client.ensure_daemon_running(&daemon).await?;
+
+            match cmd {
+                ToolCommand::Call { name, args, meta } => {
+                    let args: Json = serde_json::from_str(&args)
+                        .map_err(|e| format!("invalid --args JSON: {e}"))?;
+                    let mut input = ToolInput::new(name, args);
+                    if let Some(meta) = meta {
+                        input.meta = Some(
+                            serde_json::from_str(&meta)
+                                .map_err(|e| format!("invalid --meta JSON: {e}"))?,
+                        );
+                    }
+                    let output = client.tool_call::<Json, Json>(&input).await?;
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                }
+            }
+        }
+        Some(Commands::Agent(cmd)) => {
+            let daemon = load_daemon(home).await?;
+            let client = build_control_client(&daemon).await?;
+            client.ensure_daemon_running(&daemon).await?;
+
+            match cmd {
+                AgentCommand::Run { name, prompt, meta } => {
+                    let mut input = AgentInput::new(name, prompt);
+                    if let Some(meta) = meta {
+                        input.meta = Some(
+                            serde_json::from_str(&meta)
+                                .map_err(|e| format!("invalid --meta JSON: {e}"))?,
+                        );
+                    }
+                    let output = client.agent_run(&input).await?;
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                }
+            }
         }
     }
     Ok(())
