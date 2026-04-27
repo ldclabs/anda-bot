@@ -1,4 +1,4 @@
-use anda_core::{BoxError, ContentPart};
+use anda_core::{BoxError, ContentPart, Message};
 use crossterm::{
     ExecutableCommand,
     cursor::{MoveTo, MoveToNextLine},
@@ -11,6 +11,7 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -21,7 +22,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     config::Config,
@@ -45,6 +47,8 @@ const INPUT_DIVIDER_PADDED_HEIGHT: u16 = 3;
 const INPUT_DIVIDER_FLOW_SPEED: f32 = 1.25;
 const INPUT_DIVIDER_GLOW_RADIUS: f32 = 15.0;
 const INPUT_DIVIDER_TRAIL_OFFSET: f32 = 9.0;
+const STATUS_FOOTER_MAX_LINES: usize = 3;
+const SECONDARY_PART_MAX_LINES: usize = 3;
 const THINKING_FRAMES: [&str; 4] = ["thinking", "thinking.", "thinking..", "thinking..."];
 
 pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
@@ -63,7 +67,7 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     // whole screen (which would push prior history up and anchor us at the
     // bottom).
     let (term_w, term_h) = size()?;
-    let initial_height = desired_viewport_height(&app, term_w, term_h.max(1));
+    let initial_height = dynamic_viewport_height(&app, term_w, term_h.max(1));
     let run_result = run_app(create_terminal_with_height(initial_height)?, &mut app).await;
 
     let paste_mode_result = stdout.execute(DisableBracketedPaste);
@@ -101,7 +105,9 @@ struct App {
     input_buf: String,
     input_cursor: usize,
     animation_tick: u64,
-    flushed_message_lines: usize,
+    static_panel_flushed: bool,
+    flushed_message_count: usize,
+    input_focused: bool,
 }
 
 impl App {
@@ -119,7 +125,9 @@ impl App {
             input_buf: String::new(),
             input_cursor: 0,
             animation_tick: 0,
-            flushed_message_lines: 0,
+            static_panel_flushed: false,
+            flushed_message_count: 0,
+            input_focused: true,
         }
     }
 
@@ -149,11 +157,12 @@ impl App {
         self.chat = gateway::ChatSession::new(client);
         self.input_buf.clear();
         self.input_cursor = 0;
-        self.reset_transcript_view();
+        self.reset_message_view();
     }
 
-    fn reset_transcript_view(&mut self) {
-        self.flushed_message_lines = 0;
+    fn reset_message_view(&mut self) {
+        self.flushed_message_count = 0;
+        self.input_focused = true;
     }
 
     fn insert_input_text(&mut self, text: &str) {
@@ -303,7 +312,7 @@ impl App {
         self.chat.reset();
         self.input_buf.clear();
         self.input_cursor = 0;
-        self.reset_transcript_view();
+        self.reset_message_view();
         self.notice = "New conversation.".to_string();
     }
 
@@ -338,9 +347,21 @@ impl App {
             return Ok(());
         }
 
+        if !self.input_focused {
+            if key.code == KeyCode::Esc {
+                self.notice.clear();
+                return Ok(());
+            }
+            self.input_focused = true;
+            if key.code == KeyCode::Enter {
+                return Ok(());
+            }
+        }
+
         match key.code {
             KeyCode::Esc => {
                 self.notice.clear();
+                self.input_focused = false;
             }
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_text("\n");
@@ -400,7 +421,7 @@ async fn run_app(
     let mut last_status_refresh = Instant::now();
     let (mut term_w, mut term_h) = size()?;
     term_h = term_h.max(1);
-    let mut current_viewport_height = terminal.size()?.height;
+    let mut current_viewport_height = terminal.get_frame().area().height;
 
     loop {
         app.animation_tick = app.animation_tick.wrapping_add(1);
@@ -419,12 +440,8 @@ async fn run_app(
             term_h = h;
         }
 
-        let desired = desired_viewport_height(app, term_w, term_h);
-        let new_height = if terminal_resized || desired > current_viewport_height {
-            desired
-        } else {
-            current_viewport_height
-        };
+        let desired = dynamic_viewport_height(app, term_w, term_h);
+        let new_height = desired;
         let new_height = new_height.min(term_h).max(1);
         if new_height != current_viewport_height || terminal_resized {
             // Clear the previous viewport area before recreating so that the
@@ -442,7 +459,7 @@ async fn run_app(
         }
 
         terminal.autoresize()?;
-        flush_transcript_scrollback(&mut terminal, app)?;
+        flush_static_scrollback(&mut terminal, app)?;
         terminal.draw(|frame| render(frame, app))?;
 
         if app.should_quit {
@@ -486,22 +503,20 @@ async fn run_app(
 
 fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let (status_height, interaction_height, input_height) = layout_heights(app, area);
+    let (input_height, status_height) = dynamic_layout_heights(app, area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(status_height),
-            Constraint::Length(interaction_height),
             Constraint::Length(input_height),
+            Constraint::Length(status_height),
         ])
         .split(area);
 
-    render_status_panel(frame, app, chunks[0]);
-    render_interaction_output(frame, app, chunks[1]);
-    render_input(frame, app, chunks[2]);
+    render_input(frame, app, chunks[0]);
+    render_status_footer(frame, app, chunks[1]);
 }
 
-fn render_status_panel(frame: &mut Frame, app: &App, area: Rect) {
+fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -520,45 +535,39 @@ fn render_status_panel(frame: &mut Frame, app: &App, area: Rect) {
         ])
         .split(area);
 
-    frame.render_widget(
-        Paragraph::new(header).alignment(ratatui::layout::Alignment::Center),
-        sections[0],
-    );
-    frame.render_widget(
-        Banner {
-            headline: headline.as_str(),
-            subtitle: subtitle.as_str(),
-        },
-        sections[1],
-    );
+    Paragraph::new(header)
+        .alignment(ratatui::layout::Alignment::Center)
+        .render(sections[0], buf);
+    Banner {
+        headline: headline.as_str(),
+        subtitle: subtitle.as_str(),
+    }
+    .render(sections[1], buf);
 
     if sections[2].height == 0 || lines.is_empty() {
         return;
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::panel_glow_style())
-            .alignment(ratatui::layout::Alignment::Center)
-            .wrap(Wrap { trim: false }),
-        sections[2],
-    );
+    Paragraph::new(lines)
+        .style(theme::panel_glow_style())
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: false })
+        .render(sections[2], buf);
 }
 
-fn render_interaction_output(frame: &mut Frame, app: &mut App, area: Rect) {
-    let width = area.width as usize;
-    if width == 0 || area.height == 0 {
+fn render_status_footer(frame: &mut Frame, app: &App, area: Rect) {
+    if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let rendered_lines = visible_interaction_lines(app, width, area.height as usize);
-    if rendered_lines.is_empty() {
+    let lines = status_footer_lines(app, area.width as usize);
+    if lines.is_empty() {
         return;
     }
 
     frame.render_widget(
-        Paragraph::new(rendered_lines)
-            .style(theme::body_style())
+        Paragraph::new(lines)
+            .style(theme::subtle_style())
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -591,7 +600,11 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         prompt_area,
     );
 
-    if !app.chat_enabled() || app.chat.sending || prompt_area.width <= 2 || prompt_area.height == 0
+    if !app.chat_enabled()
+        || !app.input_focused
+        || app.chat.sending
+        || prompt_area.width <= 2
+        || prompt_area.height == 0
     {
         return;
     }
@@ -608,29 +621,22 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn layout_heights(app: &App, area: Rect) -> (u16, u16, u16) {
+fn dynamic_layout_heights(app: &App, area: Rect) -> (u16, u16) {
     if area.width == 0 || area.height == 0 {
-        return (0, 0, 0);
+        return (0, 0);
     }
 
     let input = input_height(app, area).min(area.height);
-    let remaining = area.height.saturating_sub(input);
-    let status = status_panel_height(
-        app,
-        Rect {
-            height: remaining,
-            ..centered_area(area, STATUS_MAX_WIDTH)
-        },
-    );
-    let interaction = remaining.saturating_sub(status);
+    let status =
+        status_footer_height(app, area.width as usize).min(area.height.saturating_sub(input));
 
-    (status, interaction, input)
+    (input, status)
 }
 
-/// Compute the ideal inline-viewport height for the current app state so the
-/// TUI sits naturally in the terminal rather than pinning the input to the
-/// bottom. Any overflow still flows into scrollback via `insert_before`.
-fn desired_viewport_height(app: &App, term_w: u16, term_h: u16) -> u16 {
+/// Compute the inline viewport height for the dynamic bottom area only. The
+/// static panel and messages are written above the viewport once via
+/// `insert_before`, so they can naturally become shell scrollback.
+fn dynamic_viewport_height(app: &App, term_w: u16, term_h: u16) -> u16 {
     let term_h = term_h.max(1);
     if term_w == 0 {
         return term_h;
@@ -643,35 +649,9 @@ fn desired_viewport_height(app: &App, term_w: u16, term_h: u16) -> u16 {
         height: term_h,
     };
     let input = input_height(app, full).min(term_h);
-    let after_input = term_h.saturating_sub(input);
-    let status = status_panel_height(
-        app,
-        Rect {
-            height: after_input,
-            ..centered_area(full, STATUS_MAX_WIDTH)
-        },
-    );
-    let interaction_cap = after_input.saturating_sub(status);
-    let interaction_needed = interaction_content_lines(app, term_w as usize) as u16;
-    let interaction = interaction_needed.min(interaction_cap);
+    let status = status_footer_height(app, term_w as usize).min(term_h.saturating_sub(input));
 
-    (status + interaction + input).clamp(1, term_h)
-}
-
-/// How many lines of interaction content we would like to display right now
-/// (notices + messages or empty state + loading indicator).
-fn interaction_content_lines(app: &App, width: usize) -> usize {
-    let notice = notice_lines(app).len();
-    let thinking = thinking_lines(app).len();
-    let body = if app.chat.messages.is_empty() {
-        empty_state_lines(app).len()
-    } else {
-        // Subtract any lines already flushed into scrollback so the viewport
-        // only reserves space for what is still visible.
-        let total = chat_message_lines(app, width).len();
-        total.saturating_sub(app.flushed_message_lines)
-    };
-    notice + body + thinking
+    (input + status).clamp(1, term_h)
 }
 
 fn status_panel_height(app: &App, area: Rect) -> u16 {
@@ -682,6 +662,114 @@ fn status_panel_height(app: &App, area: Rect) -> u16 {
     let lines = panel_lines(app).len() as u16;
     let desired = 1 + Banner::height() + lines;
     desired.min(area.height)
+}
+
+fn static_panel_height(app: &App, width: u16) -> u16 {
+    status_panel_height(
+        app,
+        Rect {
+            x: 0,
+            y: 0,
+            width,
+            height: u16::MAX,
+        },
+    )
+}
+
+fn status_footer_height(app: &App, width: usize) -> u16 {
+    status_footer_lines(app, width)
+        .len()
+        .clamp(1, STATUS_FOOTER_MAX_LINES) as u16
+}
+
+fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let mut lines = if app.input_focused && app.chat_enabled() && !app.chat.sending {
+        vec![
+            Line::from(vec![
+                Span::styled("? ", theme::accent_style()),
+                Span::styled(
+                    truncate_visual(
+                        "Shift+Enter newline  •  Ctrl+U clear  •  Ctrl+A/E move  •  Esc status",
+                        width.saturating_sub(2),
+                    ),
+                    theme::subtle_style(),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("? ", theme::accent_style()),
+                Span::styled(
+                    truncate_visual(
+                        "/new conversation  •  /reload config  •  Ctrl+C quit",
+                        width.saturating_sub(2),
+                    ),
+                    theme::subtle_style(),
+                ),
+            ]),
+        ]
+    } else {
+        vec![status_line(app, width)]
+    };
+
+    if !app.notice.is_empty() && lines.len() < STATUS_FOOTER_MAX_LINES {
+        lines.push(Line::from(vec![
+            Span::styled("! ", theme::warn_style()),
+            Span::styled(
+                truncate_visual(&app.notice, width.saturating_sub(2)),
+                theme::warn_style(),
+            ),
+        ]));
+    }
+
+    lines.truncate(STATUS_FOOTER_MAX_LINES);
+    lines
+}
+
+fn status_line(app: &App, width: usize) -> Line<'static> {
+    let (badge, style, text) = if app.setup_required() {
+        (
+            "SETUP",
+            theme::warn_style(),
+            format!("fill config: {}", app.setup.issues.join(", ")),
+        )
+    } else if !app.daemon_running {
+        (
+            "OFFLINE",
+            theme::danger_style(),
+            format!(
+                "gateway {} unavailable; logs {}; press Enter to retry",
+                app.runtime_cfg.base_url(),
+                app.log_file_path().display()
+            ),
+        )
+    } else {
+        let conversation = app
+            .chat
+            .conversation
+            .as_ref()
+            .map(|c| format!("#{}", c._id))
+            .unwrap_or_else(|| "new".to_string());
+        let status = if app.chat.is_thinking() {
+            let frame = THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()];
+            format!("{} · {frame}", app.chat.status_label())
+        } else {
+            app.chat.status_label().to_string()
+        };
+        (
+            "READY",
+            theme::success_style(),
+            format!("conversation {conversation} · state {status}"),
+        )
+    };
+
+    let prefix = format!("{badge} ");
+    Line::from(vec![
+        Span::styled(prefix.clone(), style),
+        Span::styled(
+            truncate_visual(&text, width.saturating_sub(display_width(&prefix))),
+            theme::subtle_style(),
+        ),
+    ])
 }
 
 fn input_height(app: &App, area: Rect) -> u16 {
@@ -699,342 +787,54 @@ fn input_height(app: &App, area: Rect) -> u16 {
 fn create_terminal_with_height(
     viewport_height: u16,
 ) -> Result<Terminal<CrosstermBackend<io::Stdout>>, BoxError> {
-    Terminal::with_options(
+    let mut terminal = Terminal::with_options(
         CrosstermBackend::new(io::stdout()),
         TerminalOptions {
             viewport: Viewport::Inline(viewport_height.max(1)),
         },
-    )
-    .map_err(Into::into)
+    )?;
+    terminal.clear()?;
+    Ok(terminal)
 }
 
 fn panel_banner(app: &App) -> (String, String) {
-    if app.setup_required() {
-        return (
-            "Setup required".to_string(),
-            app.config_file_path().display().to_string(),
-        );
-    }
-
-    if !app.daemon_running {
-        let headline = if app.pid.is_some() {
-            "Daemon unhealthy"
-        } else {
-            "Daemon offline"
-        };
-        return (headline.to_string(), app.runtime_cfg.base_url());
-    }
-
-    ("Daemon ready".to_string(), app.runtime_cfg.base_url())
+    (
+        "Born of panda. Awakened as Anda".to_string(),
+        format!(
+            "v{} · {}",
+            env!("CARGO_PKG_VERSION"),
+            app.runtime_cfg.base_url()
+        ),
+    )
 }
 
 fn panel_lines(app: &App) -> Vec<Line<'static>> {
-    if app.setup_required() {
-        let mut lines = vec![
-            Line::from(format!("Config: {}", app.config_file_path().display())),
-            Line::from(Span::styled("Missing or invalid", theme::heading_style())),
-        ];
-
-        for issue in &app.setup.issues {
-            lines.push(Line::from(format!("- {issue}")));
-        }
-
-        if app.setup.template_created {
-            lines.push(Line::from("Template files were created automatically."));
-        }
-
-        lines.push(Line::from("Press Enter after saving to reload."));
-
-        return lines;
-    }
-
-    if !app.daemon_running {
-        return vec![
-            Line::from(format!("Gateway: {}", app.runtime_cfg.base_url())),
-            Line::from(format!("Logs: {}", app.log_file_path().display())),
-            Line::from("Press Enter after the daemon becomes healthy."),
-        ];
-    }
-
-    let conversation = app
-        .chat
-        .conversation
-        .as_ref()
-        .map(|c| format!("#{}", c._id))
-        .unwrap_or_else(|| "new".to_string());
-
     vec![
-        Line::from(format!(
-            "conversation {conversation}   •   state {}",
-            app.chat.status_label()
+        Line::from(Span::styled(
+            "Static transcript model",
+            theme::heading_style(),
         )),
-        Line::from("/new clear transcript   •   /reload config   •   Ctrl+C quit"),
-        Line::from("/steer guide   •   /stop stop   •   /cancel cancel"),
+        Line::from(format!(
+            "version {}   •   gateway {}",
+            env!("CARGO_PKG_VERSION"),
+            app.runtime_cfg.base_url()
+        )),
+        Line::from("Transcript entries are printed above the prompt and stay in shell scrollback."),
+        Line::from(
+            "/new conversation   •   /reload config   •   Shift+Enter newline   •   Ctrl+C quit",
+        ),
     ]
 }
 
-fn panel_header_line(app: &App) -> Line<'static> {
-    let status = if app.setup_required() {
-        Span::styled(" SETUP ", theme::warn_style())
-    } else if !app.daemon_running {
-        Span::styled(" OFFLINE ", theme::danger_style())
-    } else {
-        Span::styled(" READY ", theme::badge_style())
-    };
-
+fn panel_header_line(_app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled("ANDA Bot", theme::title_style()),
         Span::styled("  Born of panda. Awakened as Anda  ", theme::subtle_style()),
-        status,
+        Span::styled(
+            format!(" v{} ", env!("CARGO_PKG_VERSION")),
+            theme::badge_style(),
+        ),
     ])
-}
-
-fn visible_interaction_lines(app: &App, width: usize, height: usize) -> Vec<Line<'static>> {
-    let mut rendered_lines = notice_lines(app);
-    let thinking = thinking_lines(app);
-    let message_capacity = height.saturating_sub(rendered_lines.len() + thinking.len());
-    let message_lines = chat_message_lines(app, width);
-
-    if message_lines.is_empty() {
-        let empty_state = empty_state_lines(app);
-        let start = empty_state.len().saturating_sub(message_capacity);
-        rendered_lines.extend(empty_state.into_iter().skip(start));
-    } else {
-        // Skip lines we have already pushed into scrollback, then keep only
-        // the tail that fits — older overflow is preserved in scrollback.
-        let flushed = app.flushed_message_lines.min(message_lines.len());
-        let remaining = &message_lines[flushed..];
-        let start = remaining.len().saturating_sub(message_capacity);
-        rendered_lines.extend(remaining.iter().skip(start).cloned());
-    }
-
-    rendered_lines.extend(thinking);
-    rendered_lines
-}
-
-fn notice_lines(app: &App) -> Vec<Line<'static>> {
-    let mut rendered_lines: Vec<Line> = Vec::new();
-
-    if !app.notice.is_empty() {
-        rendered_lines.push(Line::from(Span::styled(
-            format!("! {}", app.notice),
-            theme::warn_style(),
-        )));
-        rendered_lines.push(Line::from(""));
-    }
-
-    rendered_lines
-}
-
-fn empty_state_lines(app: &App) -> Vec<Line<'static>> {
-    let mut rendered_lines: Vec<Line> = Vec::new();
-
-    if app.chat.messages.is_empty() && app.chat_enabled() {
-        rendered_lines.push(Line::from(vec![
-            Span::styled("🐼 ❯ ", theme::success_style()),
-            Span::styled("Ready when you are.", theme::subtle_style()),
-        ]));
-        rendered_lines.push(Line::from(Span::styled(
-            "     Send a message below to start the inline chat.",
-            theme::subtle_style(),
-        )));
-    }
-
-    rendered_lines
-}
-
-fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    let mut rendered_lines: Vec<Line> = Vec::new();
-
-    if app.chat.messages.is_empty() {
-        return rendered_lines;
-    }
-
-    for msg in &app.chat.messages {
-        let (prefix, prefix_style, body_style) = match msg.role.as_str() {
-            "user" => ("❯ ", theme::accent_style(), theme::body_style()),
-            "assistant" => ("🐼 ❯ ", theme::success_style(), theme::body_style()),
-            "system" => ("⚠️ ❯ ", theme::danger_style(), theme::danger_style()),
-            "tool" => ("🔧 ❯ ", theme::dim_style(), theme::dim_style()),
-            _ => ("  ", theme::dim_style(), theme::body_style()),
-        };
-
-        let prefix_width = display_width(prefix);
-        let continuation_prefix = " ".repeat(prefix_width);
-        let content_width = width.saturating_sub(prefix_width).max(1);
-        let mut first = true;
-        let mut rendered_anything = false;
-
-        let push_inline = |rendered_lines: &mut Vec<Line<'static>>,
-                           first: &mut bool,
-                           text: String,
-                           body: Style| {
-            let marker = if *first {
-                prefix.to_string()
-            } else {
-                continuation_prefix.clone()
-            };
-            let marker_style = if *first {
-                prefix_style
-            } else {
-                theme::dim_style()
-            };
-            rendered_lines.push(Line::from(vec![
-                Span::styled(marker, marker_style),
-                Span::styled(truncate_visual(&text, content_width), body),
-            ]));
-            *first = false;
-        };
-
-        for part in &msg.content {
-            match part {
-                ContentPart::Text { text } => {
-                    push_wrapped_block(
-                        &mut rendered_lines,
-                        text,
-                        &mut first,
-                        prefix,
-                        &continuation_prefix,
-                        prefix_style,
-                        theme::dim_style(),
-                        body_style,
-                        content_width,
-                    );
-                    rendered_anything = true;
-                }
-                ContentPart::Reasoning { text } => {
-                    if let Some(collapsed) = collapsed_single_line(text) {
-                        push_inline(
-                            &mut rendered_lines,
-                            &mut first,
-                            collapsed,
-                            theme::dim_style(),
-                        );
-                        rendered_anything = true;
-                    }
-                }
-                ContentPart::ToolCall { name, args, .. } => {
-                    let args_str = collapsed_single_line(&args.to_string()).unwrap_or_default();
-                    let summary = if args_str.is_empty() {
-                        format!("→ {name}()")
-                    } else {
-                        format!("→ {name}({args_str})")
-                    };
-                    push_inline(&mut rendered_lines, &mut first, summary, theme::dim_style());
-                    rendered_anything = true;
-                }
-                ContentPart::ToolOutput { name, output, .. } => {
-                    let out_str = collapsed_single_line(&output.to_string()).unwrap_or_default();
-                    let summary = if out_str.is_empty() {
-                        format!("← {name}")
-                    } else {
-                        format!("← {name}: {out_str}")
-                    };
-                    push_inline(&mut rendered_lines, &mut first, summary, theme::dim_style());
-                    rendered_anything = true;
-                }
-                ContentPart::FileData {
-                    file_uri,
-                    mime_type,
-                } => {
-                    let mime = mime_type.as_deref().unwrap_or("file");
-                    push_inline(
-                        &mut rendered_lines,
-                        &mut first,
-                        format!("📎 [{mime}] {file_uri}"),
-                        theme::dim_style(),
-                    );
-                    rendered_anything = true;
-                }
-                ContentPart::InlineData { mime_type, .. } => {
-                    push_inline(
-                        &mut rendered_lines,
-                        &mut first,
-                        format!("[inline {mime_type}]"),
-                        theme::dim_style(),
-                    );
-                    rendered_anything = true;
-                }
-                ContentPart::Action { name, .. } => {
-                    push_inline(
-                        &mut rendered_lines,
-                        &mut first,
-                        format!("⚡ {name}"),
-                        theme::dim_style(),
-                    );
-                    rendered_anything = true;
-                }
-                ContentPart::Any(json) => {
-                    if let Some(s) = collapsed_single_line(&json.to_string()) {
-                        push_inline(&mut rendered_lines, &mut first, s, theme::dim_style());
-                        rendered_anything = true;
-                    }
-                }
-            }
-        }
-
-        if rendered_anything {
-            rendered_lines.push(Line::from(""));
-        }
-    }
-
-    rendered_lines
-}
-
-fn thinking_lines(app: &App) -> Vec<Line<'static>> {
-    if !app.chat.is_thinking() {
-        return Vec::new();
-    }
-
-    let frame = THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()];
-    vec![Line::from(vec![
-        Span::styled("🐼 ❯ ", theme::success_style()),
-        Span::styled(frame.to_string(), theme::subtle_style()),
-    ])]
-}
-
-fn flush_transcript_scrollback(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<(), BoxError> {
-    let size = terminal.size()?;
-    if size.width == 0 || size.height == 0 || app.chat.messages.is_empty() {
-        return Ok(());
-    }
-
-    let area = Rect {
-        x: 0,
-        y: 0,
-        width: size.width,
-        height: size.height,
-    };
-
-    let (_, interaction_height, _) = layout_heights(app, area);
-    let reserved_lines = notice_lines(app).len() + thinking_lines(app).len();
-    let message_capacity = interaction_height as usize;
-    let message_capacity = message_capacity.saturating_sub(reserved_lines);
-    let message_lines = chat_message_lines(app, area.width as usize);
-    let overflow = message_lines.len().saturating_sub(message_capacity);
-
-    if overflow <= app.flushed_message_lines {
-        return Ok(());
-    }
-
-    let new_lines = message_lines[app.flushed_message_lines..overflow].to_vec();
-    if new_lines.is_empty() {
-        app.flushed_message_lines = overflow;
-        return Ok(());
-    }
-
-    terminal.insert_before(new_lines.len() as u16, |buf| {
-        Paragraph::new(new_lines)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false })
-            .render(buf.area, buf);
-    })?;
-    app.flushed_message_lines = overflow;
-
-    Ok(())
 }
 
 fn input_display_text(app: &App) -> String {
@@ -1051,6 +851,8 @@ fn input_placeholder(app: &App) -> &'static str {
         "Waiting for a healthy local daemon. Press Enter to retry."
     } else if app.chat.sending {
         ""
+    } else if !app.input_focused {
+        "Press Enter or start typing to focus the input."
     } else if app.chat.is_active() {
         "Type a follow-up message..."
     } else {
@@ -1136,6 +938,234 @@ fn split_input_area(area: Rect) -> (Option<Rect>, Rect) {
             height: area.height - separator_height,
         },
     )
+}
+
+#[cfg(test)]
+fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    chat_message_lines_for_messages(&app.chat.messages, width)
+}
+
+fn chat_message_lines_for_messages(messages: &[Message], width: usize) -> Vec<Line<'static>> {
+    let mut rendered_lines = Vec::new();
+    for msg in messages {
+        rendered_lines.extend(chat_message_lines_for_message(msg, width));
+    }
+    rendered_lines
+}
+
+fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'static>> {
+    let mut rendered_lines: Vec<Line> = Vec::new();
+    let (prefix, prefix_style, body_style) = match msg.role.as_str() {
+        "user" => ("❯ ", theme::accent_style(), theme::body_style()),
+        "assistant" => ("🐼 ❯ ", theme::success_style(), theme::body_style()),
+        "system" => ("⚠️ ❯ ", theme::danger_style(), theme::danger_style()),
+        "tool" => ("🔧 ❯ ", theme::dim_style(), theme::dim_style()),
+        _ => ("  ", theme::dim_style(), theme::body_style()),
+    };
+
+    let prefix_width = display_width(prefix);
+    let continuation_prefix = " ".repeat(prefix_width);
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    let mut first = true;
+    let mut rendered_anything = false;
+
+    for part in &msg.content {
+        match part {
+            ContentPart::Text { text } => {
+                push_wrapped_block(
+                    &mut rendered_lines,
+                    text,
+                    &mut first,
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    body_style,
+                    content_width,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::Reasoning { text } => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("thinking: {text}"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::ToolCall { name, args, .. } => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("→ {name}({args})"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::ToolOutput { name, output, .. } => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("← {name}: {output}"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::FileData {
+                file_uri,
+                mime_type,
+            } => {
+                let mime = mime_type.as_deref().unwrap_or("file");
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("📎 [{mime}] {file_uri}"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::InlineData { mime_type, .. } => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("[inline {mime_type}]"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::Action { name, .. } => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &format!("⚡ {name}"),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+            ContentPart::Any(json) => {
+                push_limited_block(
+                    &mut rendered_lines,
+                    &mut first,
+                    &json.to_string(),
+                    prefix,
+                    &continuation_prefix,
+                    prefix_style,
+                    theme::dim_style(),
+                    theme::dim_style(),
+                    content_width,
+                    SECONDARY_PART_MAX_LINES,
+                );
+                rendered_anything = true;
+            }
+        }
+    }
+
+    if rendered_anything {
+        rendered_lines.push(Line::from(""));
+    }
+
+    rendered_lines
+}
+
+#[cfg(test)]
+fn thinking_lines(app: &App) -> Vec<Line<'static>> {
+    if !app.chat.is_thinking() {
+        return Vec::new();
+    }
+
+    let frame = THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()];
+    vec![Line::from(vec![
+        Span::styled("🐼 ❯ ", theme::success_style()),
+        Span::styled(frame.to_string(), theme::subtle_style()),
+    ])]
+}
+
+fn flush_static_scrollback(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<(), BoxError> {
+    let area = terminal.get_frame().area();
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+
+    if !app.static_panel_flushed {
+        let height = static_panel_height(app, area.width);
+        terminal.insert_before(height, |buf| {
+            render_static_panel_to_buffer(app, buf.area, buf);
+        })?;
+        app.static_panel_flushed = true;
+    }
+
+    if app.flushed_message_count >= app.chat.messages.len() {
+        return Ok(());
+    }
+
+    let lines = chat_message_lines_for_messages(
+        &app.chat.messages[app.flushed_message_count..],
+        area.width as usize,
+    );
+    if !lines.is_empty() {
+        insert_lines_before(terminal, lines)?;
+    }
+    app.flushed_message_count = app.chat.messages.len();
+
+    Ok(())
+}
+
+fn insert_lines_before(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    lines: Vec<Line<'static>>,
+) -> Result<(), BoxError> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    terminal.insert_before(lines.len() as u16, |buf| {
+        Paragraph::new(lines)
+            .style(theme::body_style())
+            .wrap(Wrap { trim: false })
+            .render(buf.area, buf);
+    })?;
+
+    Ok(())
 }
 
 fn input_separator_block_height(area_height: u16) -> u16 {
@@ -1330,20 +1360,11 @@ fn centered_area(area: Rect, max_width: u16) -> Rect {
 }
 
 fn char_display_width(ch: char) -> usize {
-    ch.width().unwrap_or(0).max(1)
+    ch.width().unwrap_or(0)
 }
 
 fn display_width(text: &str) -> usize {
-    text.chars().map(char_display_width).sum()
-}
-
-fn collapsed_single_line(text: &str) -> Option<String> {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        None
-    } else {
-        Some(collapsed)
-    }
+    text.width()
 }
 
 fn truncate_visual(text: &str, width: usize) -> String {
@@ -1360,13 +1381,13 @@ fn truncate_visual(text: &str, width: usize) -> String {
     let mut truncated = String::new();
     let mut current_width = 0;
 
-    for ch in text.chars() {
-        let ch_width = char_display_width(ch);
-        if current_width + ch_width > target_width {
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let grapheme_width = display_width(grapheme);
+        if current_width + grapheme_width > target_width {
             break;
         }
-        truncated.push(ch);
-        current_width += ch_width;
+        truncated.push_str(grapheme);
+        current_width += grapheme_width;
     }
 
     truncated.push_str("...");
@@ -1422,21 +1443,147 @@ fn push_wrapped_block(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn push_limited_block(
+    rendered_lines: &mut Vec<Line<'static>>,
+    first: &mut bool,
+    text: &str,
+    prefix: &str,
+    continuation_prefix: &str,
+    first_prefix_style: Style,
+    continuation_prefix_style: Style,
+    body_style: Style,
+    content_width: usize,
+    max_lines: usize,
+) {
+    for chunk in limited_visual_lines(text, content_width, max_lines) {
+        let marker = if *first {
+            prefix.to_string()
+        } else {
+            continuation_prefix.to_string()
+        };
+        let marker_style = if *first {
+            first_prefix_style
+        } else {
+            continuation_prefix_style
+        };
+        rendered_lines.push(Line::from(vec![
+            Span::styled(marker, marker_style),
+            Span::styled(chunk, body_style),
+        ]));
+        *first = false;
+    }
+}
+
+fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<String> {
+    let width = width.max(1);
+    let max_lines = max_lines.max(1);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    let mut truncated = false;
+    let normalized = normalize_newlines(text);
+
+    for grapheme in UnicodeSegmentation::graphemes(normalized.as_str(), true) {
+        if grapheme == "\n" {
+            if !push_limited_line(&mut lines, &mut current, max_lines) {
+                truncated = true;
+                break;
+            }
+            current_width = 0;
+            continue;
+        }
+
+        if grapheme.chars().any(char::is_control) {
+            continue;
+        }
+
+        let grapheme_width = display_width(grapheme);
+        if current_width + grapheme_width > width && !current.is_empty() {
+            if !push_limited_line(&mut lines, &mut current, max_lines) {
+                truncated = true;
+                break;
+            }
+            current_width = 0;
+        }
+
+        current.push_str(grapheme);
+        current_width += grapheme_width;
+    }
+
+    if !truncated && (!current.is_empty() || lines.is_empty()) {
+        if lines.len() < max_lines {
+            lines.push(current);
+        } else {
+            truncated = true;
+        }
+    }
+
+    if truncated {
+        append_ellipsis_to_last(&mut lines, width);
+    }
+
+    lines
+}
+
+fn push_limited_line(lines: &mut Vec<String>, current: &mut String, max_lines: usize) -> bool {
+    if lines.len() >= max_lines {
+        current.clear();
+        return false;
+    }
+
+    lines.push(std::mem::take(current));
+    true
+}
+
+fn append_ellipsis_to_last(lines: &mut Vec<String>, width: usize) {
+    if lines.is_empty() {
+        lines.push("...".to_string());
+        return;
+    }
+
+    let last = lines.last_mut().expect("line exists");
+    *last = truncate_with_ellipsis(last, width);
+}
+
+fn truncate_with_ellipsis(text: &str, width: usize) -> String {
+    let width = width.max(1);
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+
+    let target_width = width - 3;
+    let mut truncated = String::new();
+    let mut current_width = 0;
+
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let grapheme_width = display_width(grapheme);
+        if current_width + grapheme_width > target_width {
+            break;
+        }
+        truncated.push_str(grapheme);
+        current_width += grapheme_width;
+    }
+
+    truncated.push_str("...");
+    truncated
+}
+
 fn wrap_visual(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut wrapped = Vec::new();
     let mut current = String::new();
     let mut current_width = 0;
 
-    for ch in text.chars() {
-        let ch_width = char_display_width(ch);
-        if current_width + ch_width > width && !current.is_empty() {
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let grapheme_width = display_width(grapheme);
+        if current_width + grapheme_width > width && !current.is_empty() {
             wrapped.push(current);
             current = String::new();
             current_width = 0;
         }
-        current.push(ch);
-        current_width += ch_width;
+        current.push_str(grapheme);
+        current_width += grapheme_width;
     }
 
     if !current.is_empty() || wrapped.is_empty() {
@@ -1510,6 +1657,16 @@ mod tests {
         let mut app = App::new(PathBuf::from("."), Config::default(), test_client());
         app.daemon_running = true;
         app
+    }
+
+    fn push_text_message(app: &mut App, role: &str, text: &str) {
+        app.chat.messages.push(anda_core::Message {
+            role: role.to_string(),
+            content: vec![ContentPart::Text {
+                text: text.to_string(),
+            }],
+            ..Default::default()
+        });
     }
 
     fn line_text(line: &Line<'_>) -> String {
@@ -1684,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_message_lines_render_thoughts_as_single_dim_excerpt() {
+    fn chat_message_lines_render_thoughts_as_limited_dim_excerpt() {
         let mut app = ready_app();
         app.chat.messages.push(anda_core::Message {
             role: "assistant".to_string(),
@@ -1703,11 +1860,13 @@ mod tests {
         let lines = chat_message_lines(&app, 28);
 
         assert_eq!(line_text(&lines[0]), "🐼 ❯ Answer ready");
-        assert_eq!(lines[1].spans[0].style, theme::dim_style());
-        assert_eq!(lines[1].spans[1].style, theme::dim_style());
-        assert!(line_text(&lines[1]).contains("first line"));
-        assert!(line_text(&lines[1]).ends_with("..."));
-        assert_eq!(line_text(&lines[2]), "");
+        let secondary = &lines[1..lines.len() - 1];
+        assert!(secondary.len() <= SECONDARY_PART_MAX_LINES);
+        assert_eq!(secondary[0].spans[0].style, theme::dim_style());
+        assert_eq!(secondary[0].spans[1].style, theme::dim_style());
+        assert!(line_text(&secondary[0]).contains("thinking:"));
+        assert!(line_text(secondary.last().expect("secondary line")).ends_with("..."));
+        assert_eq!(line_text(lines.last().expect("blank line")), "");
     }
 
     #[test]
@@ -1749,6 +1908,32 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_lines_limit_tool_output_to_three_lines() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "tool".to_string(),
+            content: vec![ContentPart::ToolOutput {
+                name: "shell".to_string(),
+                output: serde_json::json!({"stdout": "a very long output line that should wrap and be truncated before it can take over the transcript area"}),
+                call_id: None,
+                remote_id: None,
+            }],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 28);
+        let secondary = &lines[..lines.len() - 1];
+
+        assert_eq!(secondary.len(), SECONDARY_PART_MAX_LINES);
+        assert!(
+            secondary
+                .iter()
+                .all(|line| line.spans[1].style == theme::dim_style())
+        );
+        assert!(line_text(secondary.last().expect("secondary line")).ends_with("..."));
+    }
+
+    #[test]
     fn chat_message_lines_render_errors_with_system_prefix() {
         let mut app = ready_app();
         app.chat.messages.push(anda_core::Message {
@@ -1765,6 +1950,46 @@ mod tests {
         assert_eq!(lines[0].spans[0].style, theme::danger_style());
         assert_eq!(lines[0].spans[1].style, theme::danger_style());
         assert_eq!(line_text(&lines[1]), "");
+    }
+
+    #[test]
+    fn chat_message_lines_keep_cjk_text_contiguous() {
+        let mut app = ready_app();
+        push_text_message(&mut app, "user", "前面出错了，再试试。");
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert_eq!(line_text(&lines[0]), "❯ 前面出错了，再试试。");
+        assert_eq!(display_width("前面出错了，再试试。"), 20);
+    }
+
+    #[test]
+    fn wrap_visual_splits_cjk_by_display_width_without_spaces() {
+        assert_eq!(wrap_visual("前面出错", 4), vec!["前面", "出错"]);
+        assert_eq!(truncate_visual("前面出错", 7), "前面...");
+    }
+
+    #[test]
+    fn dynamic_viewport_height_excludes_static_messages() {
+        let mut app = ready_app();
+        let before = dynamic_viewport_height(&app, 80, 30);
+        for idx in 0..6 {
+            push_text_message(&mut app, "user", &format!("message {idx}"));
+        }
+
+        assert_eq!(dynamic_viewport_height(&app, 80, 30), before);
+    }
+
+    #[test]
+    fn status_footer_switches_between_help_and_status() {
+        let mut app = ready_app();
+
+        let help = status_footer_lines(&app, 80);
+        assert!(line_text(&help[0]).starts_with("? "));
+
+        app.input_focused = false;
+        let status = status_footer_lines(&app, 80);
+        assert!(line_text(&status[0]).starts_with("READY "));
     }
 
     #[test]

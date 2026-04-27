@@ -133,6 +133,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tower-http",
+ "unicode-segmentation",
  "unicode-width",
  "webpki-roots",
 ]

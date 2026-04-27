@@ -83,19 +83,11 @@ impl Client {
     }
 
     pub async fn user_info(&self, user: Principal, name: Option<String>) -> Result<Json, BoxError> {
-        let rt: RpcResponse<Json> = self
+        let rt: Json = self
             .post("/get_or_init_user", &GetOrInitUserInput { user, name })
             .await?;
 
-        if let Some(result) = rt.result {
-            Ok(result)
-        } else {
-            Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[HippocampusClient] user_info failed with unknown error".to_string()
-                })
-                .into())
-        }
+        Ok(rt)
     }
 
     async fn post<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>

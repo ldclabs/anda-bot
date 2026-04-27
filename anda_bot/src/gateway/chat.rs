@@ -24,6 +24,36 @@ fn system_message(text: impl Into<String>) -> Message {
     }
 }
 
+fn user_message(text: impl Into<String>) -> Message {
+    Message {
+        role: "user".to_string(),
+        content: vec![ContentPart::Text { text: text.into() }],
+        name: None,
+        user: None,
+        timestamp: Some(unix_ms()),
+    }
+}
+
+fn same_display_message(left: &Message, right: &Message) -> bool {
+    left.role == right.role && left.content == right.content
+}
+
+fn displayed_suffix_prefix_overlap(displayed: &[Message], incoming: &[Message]) -> usize {
+    let max = displayed.len().min(incoming.len());
+    for len in (1..=max).rev() {
+        let displayed_suffix = &displayed[displayed.len() - len..];
+        let incoming_prefix = &incoming[..len];
+        if displayed_suffix
+            .iter()
+            .zip(incoming_prefix)
+            .all(|(left, right)| same_display_message(left, right))
+        {
+            return len;
+        }
+    }
+    0
+}
+
 pub struct ChatSession {
     client: Client,
     pub conv_id: Option<u64>,
@@ -99,6 +129,8 @@ impl ChatSession {
         if text.is_empty() {
             return None;
         }
+
+        self.messages.push(user_message(text.clone()));
 
         let conv_id = self.conv_id.unwrap_or_else(|| {
             self.prev_conversation
@@ -208,18 +240,21 @@ impl ChatSession {
                 self.prev_conversation = self.conversation.take();
                 self.last_msg_offset = 0;
             }
-            self.messages.extend(
-                conv.messages
-                    .iter()
-                    .skip(self.last_msg_offset)
-                    .filter_map(|m| match serde_json::from_value::<Message>(m.clone()) {
-                        Ok(msg) => Some(msg),
-                        Err(err) => {
-                            log::warn!("Failed to parse message for conv_id {}: {err}", conv._id);
-                            None
-                        }
-                    }),
-            );
+            let parsed_messages: Vec<Message> = conv
+                .messages
+                .iter()
+                .skip(self.last_msg_offset)
+                .filter_map(|m| match serde_json::from_value::<Message>(m.clone()) {
+                    Ok(msg) => Some(msg),
+                    Err(err) => {
+                        log::warn!("Failed to parse message for conv_id {}: {err}", conv._id);
+                        None
+                    }
+                })
+                .collect();
+            let overlap = displayed_suffix_prefix_overlap(&self.messages, &parsed_messages);
+            self.messages
+                .extend(parsed_messages.into_iter().skip(overlap));
             self.last_msg_offset = conv.messages.len();
             self.conversation = Some(conv);
         } else {
@@ -264,5 +299,34 @@ mod tests {
         assert!(!session_with_status(ConversationStatus::Completed).is_thinking());
         assert!(!session_with_status(ConversationStatus::Cancelled).is_thinking());
         assert!(!session_with_status(ConversationStatus::Failed).is_thinking());
+    }
+
+    #[test]
+    fn apply_conversation_data_dedupes_local_user_echo() {
+        let mut session = ChatSession::new(test_client());
+        session.messages.push(user_message("hello"));
+
+        let assistant = Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::Text {
+                text: "hi".to_string(),
+            }],
+            ..Default::default()
+        };
+        let conv = Conversation {
+            _id: 42,
+            status: ConversationStatus::Completed,
+            messages: vec![
+                serde_json::json!(user_message("hello")),
+                serde_json::json!(assistant),
+            ],
+            ..Default::default()
+        };
+
+        assert!(session.apply_conversation_data(conv));
+
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.messages[0].role, "user");
+        assert_eq!(session.messages[1].role, "assistant");
     }
 }

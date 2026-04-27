@@ -49,6 +49,7 @@ libc = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }
+unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }

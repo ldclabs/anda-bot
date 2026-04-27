@@ -72,6 +72,7 @@ rand = "0.10"
 libc = "0.2"
 ratatui = { version = "0.30", default-features = true }
 crossterm = { version = "0.29", features = ["event-stream"] }
+unicode-segmentation = "1"
 unicode-width = "0.2"
 tokio-rustls = "0.26"
 webpki-roots = "1"
