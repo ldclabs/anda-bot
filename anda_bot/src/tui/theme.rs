@@ -11,6 +11,8 @@ pub const PANDA_INK: Color = Color::Rgb(14, 20, 12);
 pub const WARN_AMBER: Color = Color::Rgb(255, 222, 120);
 pub const ERROR_RED: Color = Color::Rgb(255, 132, 132);
 pub const ACCENT_TEAL: Color = Color::Rgb(130, 232, 214);
+pub const FOOTER_BG: Color = Color::Rgb(10, 28, 24);
+pub const FOOTER_BORDER: Color = Color::Rgb(74, 150, 140);
 
 pub fn title_style() -> Style {
     Style::default()
@@ -52,6 +54,18 @@ pub fn danger_style() -> Style {
 
 pub fn subtle_style() -> Style {
     Style::default().fg(BAMBOO_DIM)
+}
+
+pub fn footer_panel_style() -> Style {
+    Style::default().bg(FOOTER_BG)
+}
+
+pub fn footer_border_style() -> Style {
+    Style::default().fg(FOOTER_BORDER).bg(FOOTER_BG)
+}
+
+pub fn footer_text_style() -> Style {
+    Style::default().fg(BAMBOO_LIGHT).bg(FOOTER_BG)
 }
 
 pub fn banner_line_style(index: usize) -> Style {

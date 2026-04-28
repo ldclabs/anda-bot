@@ -4,9 +4,12 @@ use crossterm::{
     cursor::{MoveTo, MoveToNextLine},
     event::{
         self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
-    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size},
+    terminal::{
+        Clear, ClearType, disable_raw_mode, enable_raw_mode, size, supports_keyboard_enhancement,
+    },
 };
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
@@ -15,9 +18,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Widget},
 };
 use std::{
+    borrow::Cow,
     io::{self, IsTerminal},
     path::PathBuf,
     time::{Duration, Instant},
@@ -26,7 +30,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    config::Config,
+    config::{APP_VERSION, Config},
     daemon::{Daemon, LaunchState, process_exists},
     gateway,
 };
@@ -34,7 +38,7 @@ use crate::{
 mod theme;
 mod widgets;
 
-use self::widgets::Banner;
+use self::widgets::{Banner, PackedLines};
 
 const STATUS_MAX_WIDTH: u16 = 92;
 const MAX_INPUT_LINES: u16 = 4;
@@ -61,6 +65,17 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnableBracketedPaste)?;
+    // Push kitty keyboard enhancement flags so Shift+Enter, Ctrl+Enter, etc.
+    // are reported as distinct key events. Some terminals (e.g. macOS
+    // Terminal.app) don't support this; in that case fall back silently.
+    let keyboard_enhancement_pushed = match supports_keyboard_enhancement() {
+        Ok(true) => stdout
+            .execute(PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+            ))
+            .is_ok(),
+        _ => false,
+    };
 
     // Size the inline viewport to the initial content, not the full terminal,
     // so the TUI expands from the current cursor row instead of reserving the
@@ -70,6 +85,9 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     let initial_height = dynamic_viewport_height(&app, term_w, term_h.max(1));
     let run_result = run_app(create_terminal_with_height(initial_height)?, &mut app).await;
 
+    if keyboard_enhancement_pushed {
+        let _ = stdout.execute(PopKeyboardEnhancementFlags);
+    }
     let paste_mode_result = stdout.execute(DisableBracketedPaste);
     let raw_mode_result = disable_raw_mode();
 
@@ -175,8 +193,10 @@ impl App {
         new.extend(&chars[..self.input_cursor]);
         new.push_str(text);
         new.extend(&chars[self.input_cursor..]);
-        self.input_buf = new;
-        self.input_cursor += text.chars().count();
+        let cursor = self.input_cursor + text.chars().count();
+        let (normalized, cursor) = compact_cjk_spacing_with_cursor(&new, cursor);
+        self.input_buf = normalized;
+        self.input_cursor = cursor;
     }
 
     fn handle_paste(&mut self, text: String) {
@@ -194,11 +214,6 @@ impl App {
 
         let text = self.input_buf.trim().to_string();
         if text.is_empty() {
-            return Ok(());
-        }
-
-        if text == "/new" {
-            self.new_conversation();
             return Ok(());
         }
 
@@ -308,13 +323,13 @@ impl App {
         Ok(())
     }
 
-    fn new_conversation(&mut self) {
-        self.chat.reset();
-        self.input_buf.clear();
-        self.input_cursor = 0;
-        self.reset_message_view();
-        self.notice = "New conversation.".to_string();
-    }
+    // fn new_conversation(&mut self) {
+    //     self.chat.reset();
+    //     self.input_buf.clear();
+    //     self.input_cursor = 0;
+    //     self.reset_message_view();
+    //     self.notice = "New conversation.".to_string();
+    // }
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<(), BoxError> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -525,33 +540,27 @@ fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
 
     let header = panel_header_line(app);
     let lines = panel_lines(app);
-    let (headline, subtitle) = panel_banner(app);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
             Constraint::Length(Banner::height().min(area.height.saturating_sub(1))),
+            Constraint::Length(1),
             Constraint::Min(0),
         ])
         .split(area);
 
-    Paragraph::new(header)
+    Banner {}.render(sections[0], buf);
+    PackedLines::new(vec![header])
         .alignment(ratatui::layout::Alignment::Center)
-        .render(sections[0], buf);
-    Banner {
-        headline: headline.as_str(),
-        subtitle: subtitle.as_str(),
-    }
-    .render(sections[1], buf);
+        .render(sections[1], buf);
 
     if sections[2].height == 0 || lines.is_empty() {
         return;
     }
 
-    Paragraph::new(lines)
+    PackedLines::new(lines)
         .style(theme::panel_glow_style())
         .alignment(ratatui::layout::Alignment::Center)
-        .wrap(Wrap { trim: false })
         .render(sections[2], buf);
 }
 
@@ -560,16 +569,29 @@ fn render_status_footer(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let lines = status_footer_lines(app, area.width as usize);
+    let panel = status_footer_panel(area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .style(theme::footer_panel_style())
+            .border_style(theme::footer_border_style()),
+        area,
+    );
+
+    if panel.width == 0 || panel.height == 0 {
+        return;
+    }
+
+    let lines = status_footer_lines(app, panel.width as usize);
     if lines.is_empty() {
         return;
     }
 
+    // Paint the panel background, then draw text via the CJK-safe widget.
+    frame.render_widget(Block::default().style(theme::footer_panel_style()), panel);
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::subtle_style())
-            .wrap(Wrap { trim: false }),
-        area,
+        PackedLines::new(lines).style(theme::footer_text_style()),
+        panel,
     );
 }
 
@@ -583,7 +605,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     if let Some(separator_area) = separator_area {
         frame.render_widget(
-            Paragraph::new(input_separator_lines(app, separator_area)).wrap(Wrap { trim: false }),
+            PackedLines::new(input_separator_lines(app, separator_area)),
             separator_area,
         );
     }
@@ -594,9 +616,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     let prompt_lines = build_prompt_lines(app, placeholder, prompt_area.width as usize);
     frame.render_widget(
-        Paragraph::new(prompt_lines)
-            .style(theme::body_style())
-            .wrap(Wrap { trim: false }),
+        PackedLines::new(prompt_lines).style(theme::body_style()),
         prompt_area,
     );
 
@@ -679,7 +699,17 @@ fn static_panel_height(app: &App, width: u16) -> u16 {
 fn status_footer_height(app: &App, width: usize) -> u16 {
     status_footer_lines(app, width)
         .len()
-        .clamp(1, STATUS_FOOTER_MAX_LINES) as u16
+        .clamp(1, STATUS_FOOTER_MAX_LINES)
+        .saturating_add(1) as u16
+}
+
+fn status_footer_panel(area: Rect) -> Rect {
+    Rect {
+        x: area.x,
+        y: area.y.saturating_add(1),
+        width: area.width,
+        height: area.height.saturating_sub(1),
+    }
 }
 
 fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
@@ -690,7 +720,7 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "Shift+Enter newline  •  Ctrl+U clear  •  Ctrl+A/E move  •  Esc status",
+                        "Shift+Enter newline  •  Ctrl+U clear  •  Ctrl+A/E move  •  Ctrl+C quit  •  Esc status",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),
@@ -700,7 +730,7 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "/new conversation  •  /reload config  •  Ctrl+C quit",
+                        "/reload config  •  /steer message  •  /stop message",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),
@@ -712,10 +742,11 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     };
 
     if !app.notice.is_empty() && lines.len() < STATUS_FOOTER_MAX_LINES {
+        let notice = compact_cjk_spacing(&app.notice);
         lines.push(Line::from(vec![
             Span::styled("! ", theme::warn_style()),
             Span::styled(
-                truncate_visual(&app.notice, width.saturating_sub(2)),
+                truncate_visual(notice.as_ref(), width.saturating_sub(2)),
                 theme::warn_style(),
             ),
         ]));
@@ -763,10 +794,11 @@ fn status_line(app: &App, width: usize) -> Line<'static> {
     };
 
     let prefix = format!("{badge} ");
+    let text = compact_cjk_spacing(&text);
     Line::from(vec![
         Span::styled(prefix.clone(), style),
         Span::styled(
-            truncate_visual(&text, width.saturating_sub(display_width(&prefix))),
+            truncate_visual(text.as_ref(), width.saturating_sub(display_width(&prefix))),
             theme::subtle_style(),
         ),
     ])
@@ -797,43 +829,18 @@ fn create_terminal_with_height(
     Ok(terminal)
 }
 
-fn panel_banner(app: &App) -> (String, String) {
-    (
-        "Born of panda. Awakened as Anda".to_string(),
-        format!(
-            "v{} · {}",
-            env!("CARGO_PKG_VERSION"),
-            app.runtime_cfg.base_url()
-        ),
-    )
-}
-
-fn panel_lines(app: &App) -> Vec<Line<'static>> {
-    vec![
-        Line::from(Span::styled(
-            "Static transcript model",
-            theme::heading_style(),
-        )),
-        Line::from(format!(
-            "version {}   •   gateway {}",
-            env!("CARGO_PKG_VERSION"),
-            app.runtime_cfg.base_url()
-        )),
-        Line::from("Transcript entries are printed above the prompt and stay in shell scrollback."),
-        Line::from(
-            "/new conversation   •   /reload config   •   Shift+Enter newline   •   Ctrl+C quit",
-        ),
-    ]
+fn panel_lines(_app: &App) -> Vec<Line<'static>> {
+    // vec![Line::from(format!(
+    //     "Gateway {}",
+    //     app.runtime_cfg.base_url()
+    // ))]
+    vec![]
 }
 
 fn panel_header_line(_app: &App) -> Line<'static> {
     Line::from(vec![
-        Span::styled("ANDA Bot", theme::title_style()),
-        Span::styled("  Born of panda. Awakened as Anda  ", theme::subtle_style()),
-        Span::styled(
-            format!(" v{} ", env!("CARGO_PKG_VERSION")),
-            theme::badge_style(),
-        ),
+        Span::styled("Born of panda. Awakened as Anda. ", theme::subtle_style()),
+        Span::styled(format!(" ANDA.Bot v{APP_VERSION} "), theme::badge_style()),
     ])
 }
 
@@ -853,10 +860,8 @@ fn input_placeholder(app: &App) -> &'static str {
         ""
     } else if !app.input_focused {
         "Press Enter or start typing to focus the input."
-    } else if app.chat.is_active() {
-        "Type a follow-up message..."
     } else {
-        "Type a message..."
+        ""
     }
 }
 
@@ -866,6 +871,13 @@ fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'s
         .max(1);
 
     if !app.chat_enabled() || app.input_buf.is_empty() {
+        if placeholder.is_empty() {
+            return vec![Line::from(vec![Span::styled(
+                INPUT_PROMPT_PREFIX.to_string(),
+                theme::accent_style(),
+            )])];
+        }
+
         return vec![Line::from(vec![
             Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
             Span::styled(placeholder.to_string(), theme::dim_style()),
@@ -905,10 +917,17 @@ fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'s
     }
 
     if lines.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
-            Span::styled(placeholder.to_string(), theme::dim_style()),
-        ]));
+        if placeholder.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                INPUT_PROMPT_PREFIX.to_string(),
+                theme::accent_style(),
+            )]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
+                Span::styled(placeholder.to_string(), theme::dim_style()),
+            ]));
+        }
     }
 
     lines
@@ -967,9 +986,11 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
     let continuation_prefix = " ".repeat(prefix_width);
     let content_width = width.saturating_sub(prefix_width).max(1);
     let mut first = true;
-    let mut rendered_anything = false;
+    let mut prev_kind: Option<PartKind> = None;
 
     for part in &msg.content {
+        let kind = part_kind(part);
+        ensure_part_spacing(&mut rendered_lines, prev_kind, kind);
         match part {
             ContentPart::Text { text } => {
                 push_wrapped_block(
@@ -983,7 +1004,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     body_style,
                     content_width,
                 );
-                rendered_anything = true;
             }
             ContentPart::Reasoning { text } => {
                 push_limited_block(
@@ -998,7 +1018,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::ToolCall { name, args, .. } => {
                 push_limited_block(
@@ -1013,7 +1032,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::ToolOutput { name, output, .. } => {
                 push_limited_block(
@@ -1028,7 +1046,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::FileData {
                 file_uri,
@@ -1047,7 +1064,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::InlineData { mime_type, .. } => {
                 push_limited_block(
@@ -1062,7 +1078,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::Action { name, .. } => {
                 push_limited_block(
@@ -1077,7 +1092,6 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
             ContentPart::Any(json) => {
                 push_limited_block(
@@ -1092,16 +1106,46 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
                     content_width,
                     SECONDARY_PART_MAX_LINES,
                 );
-                rendered_anything = true;
             }
         }
+        prev_kind = Some(kind);
     }
 
-    if rendered_anything {
+    if prev_kind.is_some() {
         rendered_lines.push(Line::from(""));
     }
 
     rendered_lines
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartKind {
+    Normal,
+    Limited,
+}
+
+fn part_kind(part: &ContentPart) -> PartKind {
+    match part {
+        ContentPart::Text { .. } => PartKind::Normal,
+        _ => PartKind::Limited,
+    }
+}
+
+fn ensure_part_spacing(
+    rendered_lines: &mut Vec<Line<'static>>,
+    prev_kind: Option<PartKind>,
+    next_kind: PartKind,
+) {
+    let Some(prev_kind) = prev_kind else {
+        return;
+    };
+    if prev_kind == next_kind {
+        return;
+    }
+    if rendered_lines.last().is_some_and(line_is_blank) {
+        return;
+    }
+    rendered_lines.push(Line::from(""));
 }
 
 #[cfg(test)]
@@ -1159,9 +1203,8 @@ fn insert_lines_before(
     }
 
     terminal.insert_before(lines.len() as u16, |buf| {
-        Paragraph::new(lines)
+        PackedLines::new(lines)
             .style(theme::body_style())
-            .wrap(Wrap { trim: false })
             .render(buf.area, buf);
     })?;
 
@@ -1336,6 +1379,90 @@ fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn compact_cjk_spacing<'a>(text: &'a str) -> Cow<'a, str> {
+    if !text.as_bytes().contains(&b' ') {
+        return Cow::Borrowed(text);
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut compacted = String::with_capacity(text.len());
+    let mut changed = false;
+
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        if ch == ' '
+            && should_compact_cjk_space(
+                idx.checked_sub(1).and_then(|prev| chars.get(prev)).copied(),
+                chars.get(idx + 1).copied(),
+            )
+        {
+            changed = true;
+            continue;
+        }
+
+        compacted.push(ch);
+    }
+
+    if changed {
+        Cow::Owned(compacted)
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
+fn compact_cjk_spacing_with_cursor(text: &str, cursor_chars: usize) -> (String, usize) {
+    if !text.as_bytes().contains(&b' ') {
+        return (text.to_string(), cursor_chars.min(text.chars().count()));
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let cursor_chars = cursor_chars.min(chars.len());
+    let mut compacted = String::with_capacity(text.len());
+    let mut normalized_cursor = 0;
+
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        let keep = ch != ' '
+            || !should_compact_cjk_space(
+                idx.checked_sub(1).and_then(|prev| chars.get(prev)).copied(),
+                chars.get(idx + 1).copied(),
+            );
+
+        if keep {
+            compacted.push(ch);
+            if idx < cursor_chars {
+                normalized_cursor += 1;
+            }
+        }
+    }
+
+    (compacted, normalized_cursor)
+}
+
+fn should_compact_cjk_space(prev: Option<char>, next: Option<char>) -> bool {
+    matches!((prev, next), (Some(prev), Some(next)) if is_cjk_display_char(prev) && is_cjk_display_char(next))
+}
+
+fn line_is_blank(line: &Line<'_>) -> bool {
+    line.spans.iter().all(|span| span.content.is_empty())
+}
+
+fn is_cjk_display_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x11FF
+            | 0x2E80..=0x2FFF
+            | 0x3000..=0x303F
+            | 0x3040..=0x30FF
+            | 0x31C0..=0x31FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE6F
+            | 0xFF01..=0xFF60
+            | 0xFFE0..=0xFFE6
+    )
+}
+
 fn wrapped_line_count(text: &str, width: usize) -> u16 {
     let width = width.max(1);
     let mut lines = 0u16;
@@ -1407,6 +1534,7 @@ fn push_wrapped_block(
     content_width: usize,
 ) {
     for text_line in text.lines() {
+        let text_line = compact_cjk_spacing(text_line);
         if text_line.is_empty() {
             let marker = if *first {
                 prefix.to_string()
@@ -1423,7 +1551,7 @@ fn push_wrapped_block(
             continue;
         }
 
-        for chunk in wrap_visual(text_line, content_width) {
+        for chunk in wrap_visual(text_line.as_ref(), content_width) {
             let marker = if *first {
                 prefix.to_string()
             } else {
@@ -1483,8 +1611,9 @@ fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<Strin
     let mut current_width = 0;
     let mut truncated = false;
     let normalized = normalize_newlines(text);
+    let normalized = compact_cjk_spacing(&normalized);
 
-    for grapheme in UnicodeSegmentation::graphemes(normalized.as_str(), true) {
+    for grapheme in UnicodeSegmentation::graphemes(normalized.as_ref(), true) {
         if grapheme == "\n" {
             if !push_limited_line(&mut lines, &mut current, max_lines) {
                 truncated = true;
@@ -1694,6 +1823,16 @@ mod tests {
     }
 
     #[test]
+    fn insert_input_text_compacts_cjk_spaces_but_keeps_english_spaces() {
+        let mut app = ready_app();
+
+        app.insert_input_text("你 好 hello world 再 见");
+
+        assert_eq!(app.input_buf, "你好 hello world 再见");
+        assert_eq!(app.input_cursor, "你好 hello world 再见".chars().count());
+    }
+
+    #[test]
     fn handle_paste_inserts_normalized_multiline_text() {
         let mut app = ready_app();
 
@@ -1714,6 +1853,16 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "❯ alpha");
         assert_eq!(line_text(&lines[1]), "  beta");
+    }
+
+    #[test]
+    fn build_prompt_lines_hides_placeholder_while_input_is_focused() {
+        let app = ready_app();
+
+        let lines = build_prompt_lines(&app, input_placeholder(&app), 24);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(line_text(&lines[0]), "❯ ");
     }
 
     #[test]
@@ -1778,7 +1927,6 @@ mod tests {
             },
         );
 
-        assert_eq!(lines.len(), INPUT_DIVIDER_PADDED_HEIGHT as usize);
         assert_eq!(line_text(&lines[0]), "");
         assert!(line_text(&lines[1]).starts_with("── compose "));
         assert_eq!(line_text(&lines[2]), "");
@@ -1860,13 +2008,39 @@ mod tests {
         let lines = chat_message_lines(&app, 28);
 
         assert_eq!(line_text(&lines[0]), "🐼 ❯ Answer ready");
-        let secondary = &lines[1..lines.len() - 1];
+        assert_eq!(line_text(&lines[1]), "");
+        let secondary = &lines[2..lines.len() - 1];
         assert!(secondary.len() <= SECONDARY_PART_MAX_LINES);
         assert_eq!(secondary[0].spans[0].style, theme::dim_style());
         assert_eq!(secondary[0].spans[1].style, theme::dim_style());
         assert!(line_text(&secondary[0]).contains("thinking:"));
         assert!(line_text(secondary.last().expect("secondary line")).ends_with("..."));
         assert_eq!(line_text(lines.last().expect("blank line")), "");
+    }
+
+    #[test]
+    fn chat_message_lines_insert_gap_before_limited_parts() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "assistant".to_string(),
+            content: vec![
+                ContentPart::Text {
+                    text: "正文内容".to_string(),
+                },
+                ContentPart::ToolCall {
+                    name: "search".to_string(),
+                    args: serde_json::json!({"q": "anda"}),
+                    call_id: None,
+                },
+            ],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert_eq!(line_text(&lines[0]), "🐼 ❯ 正文内容");
+        assert_eq!(line_text(&lines[1]), "");
+        assert!(line_text(&lines[2]).starts_with("     → search("));
     }
 
     #[test]
@@ -1964,6 +2138,16 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_lines_compact_ascii_spaces_between_cjk() {
+        let mut app = ready_app();
+        push_text_message(&mut app, "assistant", "已 提 交，依 赖 版 本 升 级。");
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert_eq!(line_text(&lines[0]), "🐼 ❯ 已提交，依赖版本升级。");
+    }
+
+    #[test]
     fn wrap_visual_splits_cjk_by_display_width_without_spaces() {
         assert_eq!(wrap_visual("前面出错", 4), vec!["前面", "出错"]);
         assert_eq!(truncate_visual("前面出错", 7), "前面...");
@@ -1990,6 +2174,44 @@ mod tests {
         app.input_focused = false;
         let status = status_footer_lines(&app, 80);
         assert!(line_text(&status[0]).starts_with("READY "));
+    }
+
+    #[test]
+    fn status_footer_height_reserves_separator_row() {
+        let app = ready_app();
+
+        assert_eq!(status_footer_height(&app, 80), 3);
+    }
+
+    #[test]
+    fn status_footer_panel_starts_below_divider() {
+        assert_eq!(
+            status_footer_panel(Rect {
+                x: 2,
+                y: 4,
+                width: 30,
+                height: 3,
+            }),
+            Rect {
+                x: 2,
+                y: 5,
+                width: 30,
+                height: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn status_footer_notice_compacts_spaced_cjk() {
+        let mut app = ready_app();
+        app.notice = "连 接 失 败，请 重 试。".to_string();
+
+        let lines = status_footer_lines(&app, 80);
+
+        assert_eq!(
+            line_text(lines.last().expect("notice line")),
+            "! 连接失败，请重试。"
+        );
     }
 
     #[test]
@@ -2021,5 +2243,33 @@ mod tests {
             ..Default::default()
         });
         assert!(thinking_lines(&app).is_empty());
+    }
+
+    #[test]
+    fn packed_lines_writes_each_grapheme_to_its_own_cell() {
+        use ratatui::widgets::Widget;
+
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 20,
+            height: 1,
+        };
+        let mut buf = Buffer::empty(area);
+        PackedLines::new(vec![Line::from(vec![
+            Span::styled("❯ ", theme::accent_style()),
+            Span::styled("中文", theme::body_style()),
+        ])])
+        .render(area, &mut buf);
+
+        // Prefix grapheme-by-grapheme: "❯" at col 0, " " at col 1.
+        assert_eq!(buf[(0, 0)].symbol(), "❯");
+        assert_eq!(buf[(1, 0)].symbol(), " ");
+        // CJK graphemes occupy width-2 cells: cell at col 2 holds "中"
+        // and ratatui implicitly skips col 3; "文" lands at col 4.
+        assert_eq!(buf[(2, 0)].symbol(), "中");
+        assert_eq!(buf[(4, 0)].symbol(), "文");
+        // Style preserved on the body cells.
+        assert_eq!(buf[(2, 0)].fg, theme::body_style().fg.unwrap());
     }
 }
