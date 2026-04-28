@@ -19,7 +19,7 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: ""
-      label: "pro"
+      labels: ["pro", "hippocampus"]
       disabled: false
 
     Mimo:
@@ -27,7 +27,7 @@ model:
       model: "mimo-v2.5"
       api_base: "https://api.xiaomimimo.com/anthropic/v1"
       api_key: ""
-      label: "pro"
+      labels: ["fallback"]
       disabled: false
       bearer_auth: true
 
@@ -36,7 +36,7 @@ model:
       model: "MiniMax-M2.7-highspeed"
       api_base: "https://api.minimaxi.com/anthropic/v1"
       api_key: ""
-      label: "flash"
+      labels: ["flash"]
       disabled: false
 
 channels:

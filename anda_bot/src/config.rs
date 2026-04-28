@@ -1,5 +1,5 @@
 use anda_core::BoxError;
-use anda_engine::model::ModelConfig;
+use anda_engine::model::{ModelConfig, Models, reqwest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,7 +55,7 @@ pub struct ModelProviderConfig {
     pub api_key: String,
 
     #[serde(default)]
-    pub label: String,
+    pub labels: Vec<String>,
 
     #[serde(default)]
     pub disabled: bool,
@@ -241,42 +241,36 @@ impl Config {
         issues
     }
 
-    pub fn models_config(&self) -> Vec<ModelConfig> {
-        let mut configs: Vec<ModelConfig> = Vec::new();
-
-        let active = self.model.active.trim();
-        if let Some(model) = self
+    pub fn models(&self, http_client: reqwest::Client) -> Models {
+        let configs: Vec<ModelConfig> = self
             .model
             .providers
-            .get(active)
-            .map(ModelProviderConfig::to_model_config)
-            && !model.disabled
+            .iter()
+            .map(|(_, provider)| ModelConfig::from(provider))
+            .collect();
+        let models = Models::from_configs(&configs, http_client.clone());
+
+        let active = self.model.active.trim();
+        if let Some(cfg) = self.model.providers.get(active).map(ModelConfig::from)
+            && let Ok(model) = cfg.model(http_client.clone())
         {
-            configs.push(model);
+            models.set_model(model);
         }
 
-        configs.extend(self.model.providers.iter().filter_map(|(key, provider)| {
-            if key.trim() == active || provider.disabled {
-                None
-            } else {
-                Some(provider.to_model_config())
-            }
-        }));
-        configs
+        models
     }
 }
 
-impl ModelProviderConfig {
-    fn to_model_config(&self) -> ModelConfig {
-        let label = self.label.trim().to_string();
+impl From<&ModelProviderConfig> for ModelConfig {
+    fn from(provider: &ModelProviderConfig) -> Self {
         ModelConfig {
-            family: self.family.trim().to_string(),
-            model: self.model.trim().to_string(),
-            api_base: self.api_base.trim().to_string(),
-            api_key: self.api_key.trim().to_string(),
-            label: if label.is_empty() { None } else { Some(label) },
-            disabled: self.disabled,
-            bearer_auth: self.bearer_auth,
+            family: provider.family.trim().to_string(),
+            model: provider.model.trim().to_string(),
+            api_base: provider.api_base.trim().to_string(),
+            api_key: provider.api_key.trim().to_string(),
+            labels: provider.labels.clone(),
+            disabled: provider.disabled,
+            bearer_auth: provider.bearer_auth,
         }
     }
 }
@@ -376,15 +370,16 @@ channels:
         )
         .unwrap();
 
-        let model = config.models_config();
         assert_eq!(config.addr, "127.0.0.1:9000");
         assert!(config.sandbox);
         assert_eq!(config.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
         assert_eq!(config.model.active, "anthropic");
-        assert_eq!(model[0].family, "anthropic");
-        assert_eq!(model[0].model, "claude-sonnet-4-6");
-        assert_eq!(model[0].api_base, "https://api.anthropic.com/v1");
-        assert_eq!(model[0].api_key, "sk-test");
+        let model: ModelConfig = config.model.providers.get("anthropic").unwrap().into();
+
+        assert_eq!(model.family, "anthropic");
+        assert_eq!(model.model, "claude-sonnet-4-6");
+        assert_eq!(model.api_base, "https://api.anthropic.com/v1");
+        assert_eq!(model.api_key, "sk-test");
 
         assert_eq!(config.channels.irc.len(), 1);
         assert_eq!(config.channels.irc[0].id.as_deref(), Some("libera"));

@@ -217,13 +217,18 @@ impl Daemon {
 
         // Create global cancellation token for graceful shutdown
         let global_cancel_token = CancellationToken::new();
-        let models = self.cfg.models_config();
+        let outer_http_client =
+            util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
+        let models = self.cfg.models(outer_http_client);
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let engine_id = id_key.id();
         let user_id = user_pubkey.id();
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
-            model: models.first().cloned().unwrap_or_default(),
+            model: models
+                .get("hippocampus")
+                .or_else(|| models.get_model())
+                .ok_or("No model found for brain")?,
             https_proxy: self.cfg.https_proxy.clone(),
         };
         let engine_cfg = engine::EngineConfig {

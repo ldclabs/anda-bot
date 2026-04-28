@@ -6,7 +6,7 @@ use anda_engine::{
     extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
-    model::{ModelConfig, Models},
+    model::Models,
     store::Store,
     unix_ms,
 };
@@ -46,7 +46,7 @@ pub trait CompletionHook: Send + Sync {
 pub struct EngineConfig {
     pub id_key: Ed25519Key,
     pub managers: Vec<Ed25519PubKey>,
-    pub models: Vec<ModelConfig>,
+    pub models: Models,
     pub brain_base_url: String,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
@@ -86,8 +86,6 @@ impl Engines {
             visibility: Visibility::Protected,
         });
 
-        let models = Models::from_configs(&cfg.models, outer_http_client);
-
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();
 
@@ -124,7 +122,7 @@ impl Engines {
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
             .with_management(management)
-            .set_models(Arc::new(models))
+            .with_models(Arc::new(cfg.models))
             .register_tool(Arc::new(brain_client))?
             .register_tool(Arc::new(shell_tool))?
             .register_tool(skills_tool.clone())?
