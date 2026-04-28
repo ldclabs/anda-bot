@@ -143,10 +143,10 @@ impl ChatSession {
         let mut input = AgentInput::new(String::new(), text);
 
         let mut extra = Map::new();
-        let work_dir = std::env::current_dir()
+        let workspace = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .ok();
-        let source = if let Some(dir) = &work_dir {
+        let source = if let Some(dir) = &workspace {
             format!("cli:{dir}")
         } else {
             "cli".to_string()
@@ -154,8 +154,8 @@ impl ChatSession {
 
         extra.insert("conversation".to_string(), conv_id.into());
         extra.insert("source".to_string(), source.into());
-        if let Some(work_dir) = work_dir {
-            extra.insert("work_dir".to_string(), work_dir.into());
+        if let Some(workspace) = workspace {
+            extra.insert("workspace".to_string(), workspace.into());
         };
 
         input.meta = Some(RequestMeta {

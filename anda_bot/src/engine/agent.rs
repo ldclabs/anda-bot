@@ -52,7 +52,7 @@ struct AndaBotInner {
     tools: Vec<String>,
     processing_conversations: ProcessingConversations,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
-    work_dir_conversation: RwLock<HashMap<String, WorkDirState>>,
+    workspace_conversation: RwLock<HashMap<String, WorkDirState>>,
     home_dir: PathBuf,
 }
 
@@ -113,7 +113,7 @@ impl AndaBot {
                 ],
                 processing_conversations: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
-                work_dir_conversation: RwLock::new(HashMap::new()),
+                workspace_conversation: RwLock::new(HashMap::new()),
                 home_dir,
             }),
         }
@@ -181,15 +181,15 @@ impl Agent<AgentCtx> for AndaBot {
     }
 
     async fn init(&self, _ctx: AgentCtx) -> Result<(), BoxError> {
-        let work_dir_conversation: HashMap<String, WorkDirState> = self
+        let workspace_conversation: HashMap<String, WorkDirState> = self
             .inner
             .conversations
             .conversations
-            .get_extension_as("work_dir_conversation")
+            .get_extension_as("workspace_conversation")
             .unwrap_or_default();
 
-        let mut map = self.inner.work_dir_conversation.write();
-        *map = work_dir_conversation;
+        let mut map = self.inner.workspace_conversation.write();
+        *map = workspace_conversation;
         Ok(())
     }
 
@@ -205,22 +205,22 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let now_ms = unix_ms();
-        let work_dir = ctx
+        let workspace = ctx
             .meta()
-            .get_extra_as::<String>("work_dir")
+            .get_extra_as::<String>("workspace")
             .unwrap_or_else(|| self.inner.home_dir.to_string_lossy().to_string());
-        let work_dir_state = {
+        let workspace_state = {
             self.inner
-                .work_dir_conversation
+                .workspace_conversation
                 .read()
-                .get(&work_dir)
+                .get(&workspace)
                 .cloned()
                 .unwrap_or_default()
         };
         let current_conversation_id = ctx
             .meta()
             .get_extra_as::<u64>("conversation")
-            .unwrap_or(work_dir_state.conversation_id);
+            .unwrap_or(workspace_state.conversation_id);
 
         let mut input = ConversationInput {
             prompt,
@@ -304,13 +304,20 @@ impl Agent<AgentCtx> for AndaBot {
         let primer = self.inner.brain.describe_primer().await?;
         let user_info = self.inner.brain.user_info(*caller, None).await?;
         let notes = load_notes(&ctx).await.unwrap_or_default();
+        let tools: Vec<String> = ctx
+            .definitions(None)
+            .await
+            .into_iter()
+            .map(|def| def.name)
+            .collect();
         let instructions = format!(
-            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# User profile:\n{}\n\n# Current datetime:\n{}",
+            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# User profile:\n{}\n\n# Available tools:\n{}\n\n# Current datetime:\n{}\n\n# Current workspace:\n{workspace}",
             SELF_INSTRUCTIONS,
             SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
             primer,
             serde_json::to_string(&notes.notes).unwrap_or_default(),
             serde_json::to_string(&user_info).unwrap_or_default(),
+            serde_json::to_string(&tools).unwrap_or_default(),
             rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
         );
 
@@ -367,12 +374,12 @@ impl Agent<AgentCtx> for AndaBot {
             .await?;
         conversation._id = id;
 
-        if work_dir_state.conversation_id != id {
-            // Update the mapping of work_dir to conversation_id if it's different from the current one
+        if workspace_state.conversation_id != id {
+            // Update the mapping of workspace to conversation_id if it's different from the current one
             let map = {
-                let mut map = self.inner.work_dir_conversation.write();
+                let mut map = self.inner.workspace_conversation.write();
                 map.insert(
-                    work_dir.clone(),
+                    workspace.clone(),
                     WorkDirState {
                         conversation_id: id,
                     },
@@ -384,7 +391,7 @@ impl Agent<AgentCtx> for AndaBot {
                 .inner
                 .conversations
                 .conversations
-                .save_extension_from("work_dir_conversation".to_string(), &map)
+                .save_extension_from("workspace_conversation".to_string(), &map)
                 .await;
         }
 

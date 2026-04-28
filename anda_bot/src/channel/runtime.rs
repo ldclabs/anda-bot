@@ -227,7 +227,7 @@ impl ChannelRuntime {
                             message.reply_target.clone().into(),
                         );
                         extra.insert(
-                            "work_dir".to_string(),
+                            "workspace".to_string(),
                             self.inner
                                 .home_dir
                                 .join(&message.channel)
