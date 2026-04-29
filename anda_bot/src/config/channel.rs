@@ -2,10 +2,83 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_true, normalize_list, normalize_optional, normalize_string};
 
+pub const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ChannelSettings {
     #[serde(default)]
     pub irc: Vec<IrcChannelSettings>,
+
+    #[serde(default)]
+    pub telegram: Vec<TelegramChannelSettings>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TelegramChannelSettings {
+    #[serde(default)]
+    pub id: Option<String>,
+
+    #[serde(default)]
+    pub bot_token: String,
+
+    #[serde(default)]
+    pub username: Option<String>,
+
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+
+    #[serde(default)]
+    pub mention_only: bool,
+
+    #[serde(default = "default_telegram_api_base")]
+    pub api_base: String,
+
+    #[serde(default = "default_true")]
+    pub ack_reactions: bool,
+}
+
+impl Default for TelegramChannelSettings {
+    fn default() -> Self {
+        Self {
+            id: None,
+            bot_token: String::new(),
+            username: None,
+            allowed_users: Vec::new(),
+            mention_only: false,
+            api_base: default_telegram_api_base(),
+            ack_reactions: true,
+        }
+    }
+}
+
+impl TelegramChannelSettings {
+    pub fn channel_id(&self) -> String {
+        self.id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    pub fn label(&self, index: usize) -> String {
+        let channel_id = self.channel_id();
+        if !channel_id.is_empty() {
+            channel_id
+        } else {
+            format!("#{}", index + 1)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
+            && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.username).is_none()
+            && normalize_list(&self.allowed_users).is_empty()
+            && !self.mention_only
+            && self.api_base.trim() == DEFAULT_TELEGRAM_API_BASE
+            && self.ack_reactions
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,4 +171,8 @@ impl IrcChannelSettings {
 
 fn default_port() -> u16 {
     6697
+}
+
+fn default_telegram_api_base() -> String {
+    DEFAULT_TELEGRAM_API_BASE.to_string()
 }

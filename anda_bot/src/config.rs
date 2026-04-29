@@ -151,13 +151,35 @@ impl Config {
             }
         }
 
+        let mut seen_telegram_ids = BTreeSet::new();
+        for (index, telegram) in self.channels.telegram.iter().enumerate() {
+            if telegram.is_empty() {
+                continue;
+            }
+
+            let base = format!("channels.telegram[{index}]");
+            if telegram.bot_token.trim().is_empty() {
+                issues.push(format!("{base}.bot_token"));
+            }
+            if telegram.api_base.trim().is_empty() {
+                issues.push(format!("{base}.api_base"));
+            }
+
+            let channel_id = telegram.channel_id();
+            if !channel_id.is_empty() && !seen_telegram_ids.insert(channel_id) {
+                issues.push(format!("{base}.id"));
+            }
+        }
+
         issues
     }
 
     pub fn models(&self, http_client: reqwest::Client) -> Models {
         let configs: Vec<ModelConfig> = self
             .model
-            .providers.values().map(|provider| ModelConfig::from(provider))
+            .providers
+            .values()
+            .map(|provider| ModelConfig::from(provider))
             .collect();
         let models = Models::from_configs(&configs, http_client.clone());
 
@@ -221,22 +243,8 @@ model:
       api_base: https://api.openai.com/v1
       api_key: sk-openai
 channels:
-  irc:
-    - id: libera
-      server: irc.libera.chat
-      port: 6697
-      nickname: anda-bot
-      username: anda
-      channels:
-        - "#anda"
-        - "#ops"
-      allowed_users:
-        - alice
-        - bob
-      server_password: serverpass
-      nickserv_password: nickservpass
-      sasl_password: saslpass
-      verify_tls: false
+ irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
+ telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
 "##,
         )
         .unwrap();
@@ -260,6 +268,19 @@ channels:
         assert_eq!(config.channels.irc[0].channels, vec!["#anda", "#ops"]);
         assert_eq!(config.channels.irc[0].allowed_users, vec!["alice", "bob"]);
         assert!(!config.channels.irc[0].verify_tls);
+        assert_eq!(config.channels.telegram.len(), 1);
+        assert_eq!(config.channels.telegram[0].id.as_deref(), Some("personal"));
+        assert_eq!(config.channels.telegram[0].bot_token, "123456:ABC");
+        assert_eq!(
+            config.channels.telegram[0].username.as_deref(),
+            Some("anda_bot")
+        );
+        assert_eq!(
+            config.channels.telegram[0].allowed_users,
+            vec!["alice", "123456789"]
+        );
+        assert!(config.channels.telegram[0].mention_only);
+        assert!(!config.channels.telegram[0].ack_reactions);
         assert!(config.setup_issues().is_empty());
     }
 

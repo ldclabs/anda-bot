@@ -82,6 +82,7 @@ model:
 
 channels:
   irc: []
+  telegram: []
   # irc:
   #   - id: libera
   #     server: irc.libera.chat
@@ -93,3 +94,12 @@ channels:
   #     allowed_users:
   #       - "*"
   #     verify_tls: true
+  # telegram:
+  #   - id: personal
+  #     bot_token: ""
+  #     username: anda_bot
+  #     allowed_users:
+  #       - "*"
+  #     mention_only: false
+  #     api_base: https://api.telegram.org
+  #     ack_reactions: true

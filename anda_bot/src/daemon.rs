@@ -282,7 +282,7 @@ impl Daemon {
             bot_db.clone(),
             engine_ref.clone(),
             user_id,
-            channel::irc::build_irc_channels(&self.cfg.channels.irc)?,
+            channel::build_channels(&self.cfg.channels, self.cfg.https_proxy.clone())?,
             self.channels_dir_path(),
         )
         .await?;
