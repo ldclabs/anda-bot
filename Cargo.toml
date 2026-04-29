@@ -79,6 +79,7 @@ webpki-roots = "1"
 
 [patch.crates-io]
 boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }
+ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }
 
 [profile.release]
 debug = false

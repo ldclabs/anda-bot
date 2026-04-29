@@ -47,13 +47,14 @@ const INPUT_PROMPT_PREFIX: &str = "❯ ";
 const INPUT_CONTINUATION_PREFIX: &str = "  ";
 const INPUT_DIVIDER_PREFIX: &str = "── ";
 const INPUT_DIVIDER_LABEL: &str = "compose";
+const THINKING_LABEL: &str = "thinking";
 const INPUT_DIVIDER_PADDED_HEIGHT: u16 = 3;
 const INPUT_DIVIDER_FLOW_SPEED: f32 = 1.25;
 const INPUT_DIVIDER_GLOW_RADIUS: f32 = 15.0;
 const INPUT_DIVIDER_TRAIL_OFFSET: f32 = 9.0;
 const STATUS_FOOTER_MAX_LINES: usize = 3;
 const SECONDARY_PART_MAX_LINES: usize = 3;
-const THINKING_FRAMES: [&str; 4] = ["thinking", "thinking.", "thinking..", "thinking..."];
+const THINKING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
     #[cfg(unix)]
@@ -780,16 +781,13 @@ fn status_line(app: &App, width: usize) -> Line<'static> {
             .as_ref()
             .map(|c| format!("#{}", c._id))
             .unwrap_or_else(|| "new".to_string());
-        let status = if app.chat.is_thinking() {
-            let frame = THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()];
-            format!("{} · {frame}", app.chat.status_label())
-        } else {
-            app.chat.status_label().to_string()
-        };
         (
             "READY",
             theme::success_style(),
-            format!("conversation {conversation} · state {status}"),
+            format!(
+                "conversation {conversation} · state {}",
+                app.chat.status_label()
+            ),
         )
     };
 
@@ -1154,10 +1152,12 @@ fn thinking_lines(app: &App) -> Vec<Line<'static>> {
         return Vec::new();
     }
 
-    let frame = THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()];
     vec![Line::from(vec![
         Span::styled("🐼 ❯ ", theme::success_style()),
-        Span::styled(frame.to_string(), theme::subtle_style()),
+        Span::styled(
+            input_separator_label(app).into_owned(),
+            theme::subtle_style(),
+        ),
     ])]
 }
 
@@ -1235,14 +1235,15 @@ fn input_separator_lines(app: &App, area: Rect) -> Vec<Line<'static>> {
 }
 
 fn input_separator_line(app: &App, width: usize) -> Line<'static> {
-    let content = input_separator_text(width);
+    let label = input_separator_label(app);
+    let content = input_separator_text(label.as_ref(), width);
     let total_width = content.chars().count();
     if total_width == 0 {
         return Line::from("");
     }
 
     let label_start = INPUT_DIVIDER_PREFIX.chars().count().min(total_width);
-    let label_end = (label_start + INPUT_DIVIDER_LABEL.chars().count()).min(total_width);
+    let label_end = (label_start + label.chars().count()).min(total_width);
     let spans: Vec<Span<'static>> = content
         .chars()
         .enumerate()
@@ -1262,12 +1263,24 @@ fn input_separator_line(app: &App, width: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-fn input_separator_text(width: usize) -> String {
+fn input_separator_label(app: &App) -> Cow<'static, str> {
+    if app.chat.is_thinking() {
+        Cow::Owned(format!("{THINKING_LABEL} {}", thinking_frame(app)))
+    } else {
+        Cow::Borrowed(INPUT_DIVIDER_LABEL)
+    }
+}
+
+fn thinking_frame(app: &App) -> &'static str {
+    THINKING_FRAMES[(app.animation_tick as usize / 2) % THINKING_FRAMES.len()]
+}
+
+fn input_separator_text(label: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
 
-    let compact = format!("{INPUT_DIVIDER_PREFIX}{INPUT_DIVIDER_LABEL}");
+    let compact = format!("{INPUT_DIVIDER_PREFIX}{label}");
     let compact_width = display_width(&compact);
 
     if width <= compact_width {
@@ -1941,6 +1954,36 @@ mod tests {
     }
 
     #[test]
+    fn input_separator_line_shows_fixed_width_thinking_status() {
+        let mut app = ready_app();
+        app.chat.conversation = Some(Conversation {
+            status: ConversationStatus::Submitted,
+            ..Default::default()
+        });
+
+        app.animation_tick = 0;
+        let first = line_text(&input_separator_line(&app, 32));
+        app.animation_tick = 2;
+        let second = line_text(&input_separator_line(&app, 32));
+        let frame_widths: Vec<_> = THINKING_FRAMES
+            .iter()
+            .map(|frame| display_width(&format!("{THINKING_LABEL} {frame}")))
+            .collect();
+
+        assert!(first.starts_with("── thinking ⠋ "));
+        assert!(second.starts_with("── thinking ⠙ "));
+        assert_ne!(first, second);
+        assert_eq!(display_width(&first), 32);
+        assert_eq!(display_width(&second), 32);
+        assert!(
+            THINKING_FRAMES
+                .iter()
+                .all(|frame| display_width(frame) == 1)
+        );
+        assert!(frame_widths.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
     fn input_separator_title_has_no_background() {
         let app = ready_app();
         let line = input_separator_line(&app, 24);
@@ -2230,13 +2273,13 @@ mod tests {
             status: ConversationStatus::Submitted,
             ..Default::default()
         });
-        assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking");
+        assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking ⠋");
 
         app.chat.conversation = Some(Conversation {
             status: ConversationStatus::Working,
             ..Default::default()
         });
-        assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking");
+        assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking ⠋");
 
         app.chat.conversation = Some(Conversation {
             status: ConversationStatus::Completed,
