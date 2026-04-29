@@ -4,6 +4,8 @@ use super::{default_true, normalize_list, normalize_optional, normalize_string};
 
 pub const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
 pub const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
+pub const DEFAULT_WECHAT_API_BASE: &str = weixin_agent::config::DEFAULT_BASE_URL;
+pub const DEFAULT_WECHAT_CDN_BASE: &str = weixin_agent::config::DEFAULT_CDN_BASE_URL;
 pub const DEFAULT_LARK_API_BASE: &str = "https://open.larksuite.com/open-apis";
 pub const DEFAULT_LARK_WS_BASE: &str = "https://open.larksuite.com";
 pub const DEFAULT_FEISHU_API_BASE: &str = "https://open.feishu.cn/open-apis";
@@ -16,6 +18,9 @@ pub struct ChannelSettings {
 
     #[serde(default)]
     pub telegram: Vec<TelegramChannelSettings>,
+
+    #[serde(default)]
+    pub wechat: Vec<WechatChannelSettings>,
 
     #[serde(default)]
     pub discord: Vec<DiscordChannelSettings>,
@@ -311,6 +316,60 @@ impl TelegramChannelSettings {
             && !self.mention_only
             && self.api_base.trim() == DEFAULT_TELEGRAM_API_BASE
             && self.ack_reactions
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct WechatChannelSettings {
+    #[serde(default)]
+    pub id: Option<String>,
+
+    #[serde(default)]
+    pub bot_token: String,
+
+    #[serde(default)]
+    pub username: Option<String>,
+
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    #[serde(default)]
+    pub cdn_base_url: Option<String>,
+
+    #[serde(default)]
+    pub route_tag: Option<u32>,
+}
+
+impl WechatChannelSettings {
+    pub fn channel_id(&self) -> String {
+        self.id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    pub fn label(&self, index: usize) -> String {
+        let channel_id = self.channel_id();
+        if !channel_id.is_empty() {
+            channel_id
+        } else {
+            format!("#{}", index + 1)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
+            && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.username).is_none()
+            && normalize_list(&self.allowed_users).is_empty()
+            && normalize_optional(&self.base_url).is_none()
+            && normalize_optional(&self.cdn_base_url).is_none()
+            && self.route_tag.is_none()
     }
 }
 

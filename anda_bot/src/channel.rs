@@ -2,6 +2,7 @@ pub mod discord;
 pub mod irc;
 pub mod lark;
 pub mod telegram;
+pub mod wechat;
 
 mod attachments;
 mod runtime;
@@ -25,6 +26,12 @@ pub fn build_channels(
     for (channel_id, channel) in
         telegram::build_telegram_channels(&cfg.telegram, https_proxy.clone())?
     {
+        if channels.insert(channel_id.clone(), channel).is_some() {
+            return Err(format!("duplicate channel id '{channel_id}'").into());
+        }
+    }
+
+    for (channel_id, channel) in wechat::build_wechat_channels(&cfg.wechat, https_proxy.clone())? {
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate channel id '{channel_id}'").into());
         }

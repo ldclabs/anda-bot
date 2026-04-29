@@ -83,6 +83,7 @@ model:
 channels:
   irc: []
   telegram: []
+  wechat: []
   discord: []
   lark: []
   # irc:
@@ -105,6 +106,17 @@ channels:
   #     mention_only: false
   #     api_base: https://api.telegram.org
   #     ack_reactions: true
+  # wechat:
+  #   - id: personal
+  #     # Optional. When empty, anda_bot will start QR login and save token.txt
+  #     # in the channel workspace for later restarts.
+  #     bot_token: ""
+  #     username: anda-wechat
+  #     allowed_users:
+  #       - "*"
+  #     base_url:
+  #     cdn_base_url:
+  #     route_tag:
   # discord:
   #   - id: server
   #     bot_token: ""

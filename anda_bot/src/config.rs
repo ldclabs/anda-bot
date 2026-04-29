@@ -171,6 +171,26 @@ impl Config {
             }
         }
 
+        let mut seen_wechat_ids = BTreeSet::new();
+        for (index, wechat) in self.channels.wechat.iter().enumerate() {
+            if wechat.is_empty() {
+                continue;
+            }
+
+            let base = format!("channels.wechat[{index}]");
+            if matches!(wechat.base_url.as_deref().map(str::trim), Some("")) {
+                issues.push(format!("{base}.base_url"));
+            }
+            if matches!(wechat.cdn_base_url.as_deref().map(str::trim), Some("")) {
+                issues.push(format!("{base}.cdn_base_url"));
+            }
+
+            let channel_id = wechat.channel_id();
+            if !channel_id.is_empty() && !seen_wechat_ids.insert(channel_id) {
+                issues.push(format!("{base}.id"));
+            }
+        }
+
         let mut seen_discord_ids = BTreeSet::new();
         for (index, discord) in self.channels.discord.iter().enumerate() {
             if discord.is_empty() {
@@ -288,6 +308,7 @@ model:
 channels:
  irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
  telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
+ wechat: [{id: personal, bot_token: "wx-token", username: anda-wechat, allowed_users: [wx_alice], base_url: https://ilinkai.weixin.qq.com/, cdn_base_url: https://novac2c.cdn.weixin.qq.com/c2c, route_tag: 42}]
  discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
  lark: [{id: work, app_id: cli_a, app_secret: secret, username: anda-lark, verification_token: verify, port: 8090, allowed_users: [ou_alice], mention_only: true, platform: feishu, receive_mode: webhook, api_base: https://open.feishu.cn/open-apis, ws_base: https://open.feishu.cn, ack_reactions: false}]
 "##,
@@ -326,6 +347,23 @@ channels:
         );
         assert!(config.channels.telegram[0].mention_only);
         assert!(!config.channels.telegram[0].ack_reactions);
+        assert_eq!(config.channels.wechat.len(), 1);
+        assert_eq!(config.channels.wechat[0].id.as_deref(), Some("personal"));
+        assert_eq!(config.channels.wechat[0].bot_token, "wx-token");
+        assert_eq!(
+            config.channels.wechat[0].username.as_deref(),
+            Some("anda-wechat")
+        );
+        assert_eq!(config.channels.wechat[0].allowed_users, vec!["wx_alice"]);
+        assert_eq!(
+            config.channels.wechat[0].base_url.as_deref(),
+            Some("https://ilinkai.weixin.qq.com/")
+        );
+        assert_eq!(
+            config.channels.wechat[0].cdn_base_url.as_deref(),
+            Some("https://novac2c.cdn.weixin.qq.com/c2c")
+        );
+        assert_eq!(config.channels.wechat[0].route_tag, Some(42));
         assert_eq!(config.channels.discord.len(), 1);
         assert_eq!(config.channels.discord[0].id.as_deref(), Some("server"));
         assert_eq!(config.channels.discord[0].bot_token, "discord-token");
@@ -408,6 +446,7 @@ channels:
         assert!(template.contains("model:"));
         assert!(template.contains("channels:"));
         assert!(template.contains("irc:"));
+        assert!(template.contains("wechat:"));
         assert!(template.contains("discord:"));
         assert!(template.contains("lark:"));
     }
