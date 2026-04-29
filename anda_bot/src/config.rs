@@ -191,6 +191,29 @@ impl Config {
             }
         }
 
+        let mut seen_lark_ids = BTreeSet::new();
+        for (index, lark) in self.channels.lark.iter().enumerate() {
+            if lark.is_empty() {
+                continue;
+            }
+
+            let base = format!("channels.lark[{index}]");
+            if lark.app_id.trim().is_empty() {
+                issues.push(format!("{base}.app_id"));
+            }
+            if lark.app_secret.trim().is_empty() {
+                issues.push(format!("{base}.app_secret"));
+            }
+            if lark.receive_mode == LarkReceiveMode::Webhook && lark.port.is_none() {
+                issues.push(format!("{base}.port"));
+            }
+
+            let channel_id = lark.channel_id();
+            if !channel_id.is_empty() && !seen_lark_ids.insert(channel_id) {
+                issues.push(format!("{base}.id"));
+            }
+        }
+
         issues
     }
 
@@ -266,6 +289,7 @@ channels:
  irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
  telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
  discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
+ lark: [{id: work, app_id: cli_a, app_secret: secret, username: anda-lark, verification_token: verify, port: 8090, allowed_users: [ou_alice], mention_only: true, platform: feishu, receive_mode: webhook, api_base: https://open.feishu.cn/open-apis, ws_base: https://open.feishu.cn, ack_reactions: false}]
 "##,
         )
         .unwrap();
@@ -317,6 +341,35 @@ channels:
         assert!(config.channels.discord[0].listen_to_bots);
         assert!(config.channels.discord[0].mention_only);
         assert!(!config.channels.discord[0].ack_reactions);
+        assert_eq!(config.channels.lark.len(), 1);
+        assert_eq!(config.channels.lark[0].id.as_deref(), Some("work"));
+        assert_eq!(config.channels.lark[0].app_id, "cli_a");
+        assert_eq!(config.channels.lark[0].app_secret, "secret");
+        assert_eq!(
+            config.channels.lark[0].username.as_deref(),
+            Some("anda-lark")
+        );
+        assert_eq!(
+            config.channels.lark[0].verification_token.as_deref(),
+            Some("verify")
+        );
+        assert_eq!(config.channels.lark[0].port, Some(8090));
+        assert_eq!(config.channels.lark[0].allowed_users, vec!["ou_alice"]);
+        assert!(config.channels.lark[0].mention_only);
+        assert_eq!(config.channels.lark[0].platform, LarkPlatform::Feishu);
+        assert_eq!(
+            config.channels.lark[0].receive_mode,
+            LarkReceiveMode::Webhook
+        );
+        assert_eq!(
+            config.channels.lark[0].api_base.as_deref(),
+            Some("https://open.feishu.cn/open-apis")
+        );
+        assert_eq!(
+            config.channels.lark[0].ws_base.as_deref(),
+            Some("https://open.feishu.cn")
+        );
+        assert!(!config.channels.lark[0].ack_reactions);
         assert!(config.setup_issues().is_empty());
     }
 
@@ -356,5 +409,6 @@ channels:
         assert!(template.contains("channels:"));
         assert!(template.contains("irc:"));
         assert!(template.contains("discord:"));
+        assert!(template.contains("lark:"));
     }
 }

@@ -4,6 +4,10 @@ use super::{default_true, normalize_list, normalize_optional, normalize_string};
 
 pub const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
 pub const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
+pub const DEFAULT_LARK_API_BASE: &str = "https://open.larksuite.com/open-apis";
+pub const DEFAULT_LARK_WS_BASE: &str = "https://open.larksuite.com";
+pub const DEFAULT_FEISHU_API_BASE: &str = "https://open.feishu.cn/open-apis";
+pub const DEFAULT_FEISHU_WS_BASE: &str = "https://open.feishu.cn";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ChannelSettings {
@@ -15,6 +19,153 @@ pub struct ChannelSettings {
 
     #[serde(default)]
     pub discord: Vec<DiscordChannelSettings>,
+
+    #[serde(default)]
+    pub lark: Vec<LarkChannelSettings>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LarkPlatform {
+    #[default]
+    Lark,
+    Feishu,
+}
+
+impl LarkPlatform {
+    pub fn api_base(self) -> &'static str {
+        match self {
+            Self::Lark => DEFAULT_LARK_API_BASE,
+            Self::Feishu => DEFAULT_FEISHU_API_BASE,
+        }
+    }
+
+    pub fn ws_base(self) -> &'static str {
+        match self {
+            Self::Lark => DEFAULT_LARK_WS_BASE,
+            Self::Feishu => DEFAULT_FEISHU_WS_BASE,
+        }
+    }
+
+    pub fn locale_header(self) -> &'static str {
+        match self {
+            Self::Lark => "en",
+            Self::Feishu => "zh",
+        }
+    }
+
+    pub fn channel_name(self) -> &'static str {
+        match self {
+            Self::Lark => "lark",
+            Self::Feishu => "feishu",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LarkReceiveMode {
+    #[default]
+    Websocket,
+    Webhook,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LarkChannelSettings {
+    #[serde(default)]
+    pub id: Option<String>,
+
+    #[serde(default)]
+    pub app_id: String,
+
+    #[serde(default)]
+    pub app_secret: String,
+
+    #[serde(default)]
+    pub username: Option<String>,
+
+    #[serde(default)]
+    pub verification_token: Option<String>,
+
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+
+    #[serde(default)]
+    pub mention_only: bool,
+
+    #[serde(default)]
+    pub platform: LarkPlatform,
+
+    #[serde(default)]
+    pub receive_mode: LarkReceiveMode,
+
+    #[serde(default)]
+    pub api_base: Option<String>,
+
+    #[serde(default)]
+    pub ws_base: Option<String>,
+
+    #[serde(default = "default_true")]
+    pub ack_reactions: bool,
+}
+
+impl Default for LarkChannelSettings {
+    fn default() -> Self {
+        Self {
+            id: None,
+            app_id: String::new(),
+            app_secret: String::new(),
+            username: None,
+            verification_token: None,
+            port: None,
+            allowed_users: Vec::new(),
+            mention_only: false,
+            platform: LarkPlatform::default(),
+            receive_mode: LarkReceiveMode::default(),
+            api_base: None,
+            ws_base: None,
+            ack_reactions: true,
+        }
+    }
+}
+
+impl LarkChannelSettings {
+    pub fn channel_id(&self) -> String {
+        self.id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    pub fn label(&self, index: usize) -> String {
+        let channel_id = self.channel_id();
+        if !channel_id.is_empty() {
+            channel_id
+        } else {
+            format!("#{}", index + 1)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
+            && self.app_id.trim().is_empty()
+            && self.app_secret.trim().is_empty()
+            && normalize_optional(&self.username).is_none()
+            && normalize_optional(&self.verification_token).is_none()
+            && self.port.is_none()
+            && normalize_list(&self.allowed_users).is_empty()
+            && !self.mention_only
+            && self.platform == LarkPlatform::default()
+            && self.receive_mode == LarkReceiveMode::default()
+            && normalize_optional(&self.api_base).is_none()
+            && normalize_optional(&self.ws_base).is_none()
+            && self.ack_reactions
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

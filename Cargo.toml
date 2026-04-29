@@ -80,6 +80,7 @@ tower-http = { version = "0.6", features = ["compression-gzip", "cors"] }
 markdown = "1"
 mimalloc = { version = "0.1", features = ["v3"] }
 rand = "0.10"
+prost = { version = "0.14", default-features = false, features = ["derive"] }
 libc = "0.2"
 ratatui = { version = "0.30", default-features = true }
 crossterm = { version = "0.29", features = ["event-stream"] }

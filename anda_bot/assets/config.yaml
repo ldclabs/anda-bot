@@ -84,6 +84,7 @@ channels:
   irc: []
   telegram: []
   discord: []
+  lark: []
   # irc:
   #   - id: libera
   #     server: irc.libera.chat
@@ -114,4 +115,19 @@ channels:
   #     listen_to_bots: false
   #     mention_only: true
   #     api_base: https://discord.com/api/v10
+  #     ack_reactions: true
+  # lark:
+  #   - id: work
+  #     app_id: ""
+  #     app_secret: ""
+  #     username: anda-lark
+  #     verification_token:
+  #     port:
+  #     allowed_users:
+  #       - "*"
+  #     mention_only: true
+  #     platform: lark # or feishu
+  #     receive_mode: websocket # or webhook
+  #     api_base:
+  #     ws_base:
   #     ack_reactions: true

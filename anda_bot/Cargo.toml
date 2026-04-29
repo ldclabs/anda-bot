@@ -32,6 +32,7 @@ ic-ed25519 = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
 parking_lot = { workspace = true }
+prost = { workspace = true }
 reqwest = { workspace = true }
 tokio-util = { workspace = true }
 tokio-tungstenite = { workspace = true }

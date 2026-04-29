@@ -129,7 +129,7 @@ Provider ordering matters only for fallback preference. The active provider is l
 
 ## Channel Bridges
 
-IRC, Telegram, and Discord support are configured under `channels.irc`, `channels.telegram`, and `channels.discord`.
+IRC, Telegram, Discord, and Lark/Feishu support are configured under `channels.irc`, `channels.telegram`, `channels.discord`, and `channels.lark`.
 
 ```yaml
 channels:
@@ -151,16 +151,27 @@ channels:
 			allowed_users:
 				- "111111111111111111"
 			mention_only: true
+	lark:
+		- id: work
+			app_id: "cli_xxx"
+			app_secret: "..."
+			allowed_users:
+				- "ou_xxx"
+			mention_only: true
+			platform: lark
+			receive_mode: websocket
 ```
 
 Behavior:
 
 - Each IRC entry must include `server` and `nickname`.
 - Each Telegram or Discord entry must include `bot_token`.
+- Each Lark entry must include `app_id` and `app_secret`; use `platform: feishu` for Feishu endpoints.
 - `id` is optional; if omitted, the server name becomes the channel runtime identifier.
 - `allowed_users` can restrict who may trigger the bot. Use `"*"` to allow anyone.
 - Messages are normalized for IRC output, kept plain-text, and threaded back to the original reply target.
 - Discord file attachments are passed to the agent as resources, and outgoing resources are uploaded when possible.
+- Lark image, file, and audio messages are passed to the agent as resources; audio uses the existing transcription pipeline when enabled.
 - Channel routes are persisted so later completions can continue the same conversation.
 
 ## TUI Notes
@@ -182,7 +193,7 @@ At a high level the daemon starts four collaborating parts:
 1. `brain`: a local Hippocampus space mounted at `/v1/anda_bot/...` for formation, recall, and memory management.
 2. `engine`: the Anda agent runtime, served under `/engine/{id}` with tools for shell, files, notes, todos, cron, skills, and memory recall.
 3. `cron`: a persistent scheduler that can run shell jobs or submit prompts back into the agent runtime.
-4. `channel`: an IRC/Telegram/Discord runtime that ingests messages, binds them to conversation IDs, and sends completions back through a completion hook.
+4. `channel`: an IRC/Telegram/Discord/Lark runtime that ingests messages, binds them to conversation IDs, and sends completions back through a completion hook.
 
 The daemon stores the current working directory as the agent work directory. File tools always operate relative to that working directory. Shell execution runs there as well unless `sandbox: true`, in which case shell commands are routed into the local sandbox runtime.
 
