@@ -243,6 +243,8 @@ impl Daemon {
             } else {
                 None
             },
+            tts: self.cfg.tts.clone(),
+            transcription: self.cfg.transcription.clone(),
             https_proxy: self.cfg.https_proxy.clone(),
         };
         let db_path = self.db_dir_path();

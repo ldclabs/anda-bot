@@ -11,6 +11,47 @@ sandbox: false
 # Optional: for example http://127.0.0.1:7890
 # https_proxy: http://127.0.0.1:7890
 
+tts:
+  enabled: false
+  default_provider: edge
+  default_voice: alloy
+  default_format: mp3
+  max_text_length: 4096
+  # edge:
+  #   binary_path: edge-tts
+  #   voice: en-US-AriaNeural
+  # openai:
+  #   api_key: ""
+  #   model: tts-1
+  #   speed: 1.0
+  #   voice: alloy
+  # google:
+  #   api_key: ""
+  #   language_code: en-US
+  #   voice: en-US-Standard-A
+
+transcription:
+  enabled: false
+  default_provider: groq
+  initial_prompt:
+  max_duration_secs: 120
+  transcribe_non_ptt_audio: false
+  # groq:
+  #   api_key: ""
+  #   api_url: https://api.groq.com/openai/v1/audio/transcriptions
+  #   model: whisper-large-v3-turbo
+  # openai:
+  #   api_key: ""
+  #   model: whisper-1
+  # google:
+  #   api_key: ""
+  #   language_code: en-US
+  # local_whisper:
+  #   url: http://127.0.0.1:8001/v1/transcribe
+  #   bearer_token:
+  #   max_audio_bytes: 26214400
+  #   timeout_secs: 300
+
 model:
   active: DeepSeek
   providers:

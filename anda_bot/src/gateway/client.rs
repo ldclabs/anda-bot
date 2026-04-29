@@ -2,7 +2,6 @@ use anda_core::{
     AgentInput, AgentOutput, BoxError, ByteBufB64, Json, ToolInput, ToolOutput,
     http::{RPCRequestRef, RPCResponse},
 };
-use anda_engine::model::reqwest;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use std::time::{Duration, Instant};
 

@@ -29,7 +29,7 @@ use crate::util::{
     http_client::build_http_client,
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
-use crate::{brain, config, cron};
+use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
 use agent::*;
 
 pub use conversation_tool::*;
@@ -51,6 +51,8 @@ pub struct EngineConfig {
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub sandbox_dir: Option<PathBuf>,
+    pub tts: config::TtsConfig,
+    pub transcription: config::TranscriptionConfig,
     pub https_proxy: Option<String>,
 }
 
@@ -101,11 +103,24 @@ impl Engines {
 
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let conversations_tool = ConversationsTool::new(conversations.clone());
+        let tts_manager = {
+            let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
+            manager.is_enabled().then_some(manager)
+        };
+        let transcription_manager = {
+            let manager = Arc::new(TranscriptionManager::new(
+                &cfg.transcription,
+                outer_http_client.clone(),
+            )?);
+            manager.is_enabled().then_some(manager)
+        };
         let bot = AndaBot::new(
             brain_client.clone(),
             conversations,
             completion_hooks,
             cfg.home_dir.clone(),
+            tts_manager.clone(),
+            transcription_manager.clone(),
         );
 
         let shell_tool = {
@@ -118,7 +133,7 @@ impl Engines {
         };
 
         let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
-        let engine = Engine::builder()
+        let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
             .with_management(management)
@@ -136,7 +151,16 @@ impl Engines {
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
-            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
+            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?;
+
+        if let Some(manager) = tts_manager {
+            engine_builder = engine_builder.register_tool(manager)?;
+        }
+        if let Some(manager) = transcription_manager {
+            engine_builder = engine_builder.register_tool(manager)?;
+        }
+
+        let engine = engine_builder
             .register_agent(Arc::new(bot), None)?
             .export_tools(vec![ConversationsTool::NAME.to_string()]);
 

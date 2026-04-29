@@ -60,6 +60,16 @@ ic_cose = "0.9"
 ic_auth_types = "0.8"
 ic-ed25519 = "0.6"
 object_store = { version = "0.13" }
+reqwest = { version = "0.13", features = [
+  "rustls",
+  "json",
+  "gzip",
+  "stream",
+  "http2",
+  "form",
+  "multipart",
+  # "hickory-dns",
+], default-features = true }
 tokio-util = "0.7"
 tokio = { version = "1", features = ["full"] }
 structured-logger = "1"

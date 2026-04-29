@@ -1,11 +1,21 @@
 use anda_core::BoxError;
-use anda_engine::model::{ModelConfig, Models, reqwest};
+use anda_engine::model::{ModelConfig, Models};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
+
+mod channel;
+mod model;
+mod transcription;
+mod tts;
+
+pub use channel::*;
+pub use model::*;
+pub use transcription::*;
+pub use tts::*;
 
 pub const ANDA_BOT_SPACE_ID: &str = "anda_bot";
 pub const CONFIG_FILE_NAME: &str = "config.yaml";
@@ -28,82 +38,13 @@ pub struct Config {
     pub model: ModelSettings,
 
     #[serde(default)]
+    pub tts: TtsConfig,
+
+    #[serde(default)]
+    pub transcription: TranscriptionConfig,
+
+    #[serde(default)]
     pub channels: ChannelSettings,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ModelSettings {
-    #[serde(default)]
-    pub active: String,
-
-    #[serde(default)]
-    pub providers: BTreeMap<String, ModelProviderConfig>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ModelProviderConfig {
-    #[serde(default)]
-    pub family: String,
-
-    #[serde(default)]
-    pub model: String,
-
-    #[serde(default)]
-    pub api_base: String,
-
-    #[serde(default)]
-    pub api_key: String,
-
-    #[serde(default)]
-    pub labels: Vec<String>,
-
-    #[serde(default)]
-    pub disabled: bool,
-
-    #[serde(default)]
-    pub bearer_auth: bool,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct ChannelSettings {
-    #[serde(default)]
-    pub irc: Vec<IrcChannelSettings>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct IrcChannelSettings {
-    #[serde(default)]
-    pub id: Option<String>,
-
-    #[serde(default)]
-    pub server: String,
-
-    #[serde(default = "default_irc_port")]
-    pub port: u16,
-
-    #[serde(default)]
-    pub nickname: String,
-
-    #[serde(default)]
-    pub username: Option<String>,
-
-    #[serde(default)]
-    pub channels: Vec<String>,
-
-    #[serde(default)]
-    pub allowed_users: Vec<String>,
-
-    #[serde(default)]
-    pub server_password: Option<String>,
-
-    #[serde(default)]
-    pub nickserv_password: Option<String>,
-
-    #[serde(default)]
-    pub sasl_password: Option<String>,
-
-    #[serde(default = "default_true")]
-    pub verify_tls: bool,
 }
 
 impl Default for Config {
@@ -114,38 +55,10 @@ impl Default for Config {
             https_proxy: None,
             model: ModelSettings::default(),
             channels: ChannelSettings::default(),
+            tts: TtsConfig::default(),
+            transcription: TranscriptionConfig::default(),
         }
     }
-}
-
-impl Default for IrcChannelSettings {
-    fn default() -> Self {
-        Self {
-            id: None,
-            server: String::new(),
-            port: default_irc_port(),
-            nickname: String::new(),
-            username: None,
-            channels: Vec::new(),
-            allowed_users: Vec::new(),
-            server_password: None,
-            nickserv_password: None,
-            sasl_password: None,
-            verify_tls: true,
-        }
-    }
-}
-
-fn default_gateway_addr() -> String {
-    DEFAULT_GATEWAY_ADDR.to_string()
-}
-
-fn default_irc_port() -> u16 {
-    6697
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Config {
@@ -244,9 +157,7 @@ impl Config {
     pub fn models(&self, http_client: reqwest::Client) -> Models {
         let configs: Vec<ModelConfig> = self
             .model
-            .providers
-            .iter()
-            .map(|(_, provider)| ModelConfig::from(provider))
+            .providers.values().map(|provider| ModelConfig::from(provider))
             .collect();
         let models = Models::from_configs(&configs, http_client.clone());
 
@@ -261,52 +172,12 @@ impl Config {
     }
 }
 
-impl From<&ModelProviderConfig> for ModelConfig {
-    fn from(provider: &ModelProviderConfig) -> Self {
-        ModelConfig {
-            family: provider.family.trim().to_string(),
-            model: provider.model.trim().to_string(),
-            api_base: provider.api_base.trim().to_string(),
-            api_key: provider.api_key.trim().to_string(),
-            labels: provider.labels.clone(),
-            disabled: provider.disabled,
-            bearer_auth: provider.bearer_auth,
-        }
-    }
+fn default_gateway_addr() -> String {
+    DEFAULT_GATEWAY_ADDR.to_string()
 }
 
-impl IrcChannelSettings {
-    pub fn channel_id(&self) -> String {
-        self.id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| self.server.trim())
-            .to_string()
-    }
-
-    pub fn label(&self, index: usize) -> String {
-        let channel_id = self.channel_id();
-        if !channel_id.is_empty() {
-            channel_id
-        } else {
-            format!("#{}", index + 1)
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
-            && self.server.trim().is_empty()
-            && self.nickname.trim().is_empty()
-            && normalize_optional(&self.username).is_none()
-            && normalize_list(&self.channels).is_empty()
-            && normalize_list(&self.allowed_users).is_empty()
-            && normalize_optional(&self.server_password).is_none()
-            && normalize_optional(&self.nickserv_password).is_none()
-            && normalize_optional(&self.sasl_password).is_none()
-            && self.port == default_irc_port()
-            && self.verify_tls
-    }
+pub fn default_true() -> bool {
+    true
 }
 
 pub fn normalize_string(raw: &str) -> Option<String> {

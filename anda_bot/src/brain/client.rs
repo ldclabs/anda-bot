@@ -1,7 +1,7 @@
 use anda_core::{
     AgentOutput, BoxError, FunctionDefinition, Json, Principal, Resource, Tool, ToolOutput,
 };
-use anda_engine::{context::BaseCtx, model::reqwest};
+use anda_engine::context::BaseCtx;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
 

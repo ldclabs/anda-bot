@@ -34,7 +34,12 @@ use std::{
     },
 };
 
-use crate::{brain, cron, engine::CompletionHook};
+use crate::{
+    brain, cron,
+    engine::CompletionHook,
+    transcription::{TranscriptionManager, audio_resource_file_name, is_audio_resource},
+    tts::TtsManager,
+};
 
 const CONVERSATION_IDLE_MS: u64 = 30 * 60 * 1000; // 30 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
@@ -54,6 +59,8 @@ struct AndaBotInner {
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     workspace_conversation: RwLock<HashMap<String, WorkDirState>>,
     home_dir: PathBuf,
+    tts_manager: Option<Arc<TtsManager>>,
+    transcription_manager: Option<Arc<TranscriptionManager>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -72,49 +79,65 @@ impl AndaBot {
         conversations: Conversations,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         home_dir: PathBuf,
+        tts_manager: Option<Arc<TtsManager>>,
+        transcription_manager: Option<Arc<TranscriptionManager>>,
     ) -> Self {
+        let mut tool_dependencies = vec![
+            brain::Client::NAME.to_string(),
+            NoteTool::NAME.to_string(),
+            TOOLS_SEARCH_NAME.to_string(),
+            TOOLS_SELECT_NAME.to_string(),
+            ShellTool::NAME.to_string(),
+            ReadFileTool::NAME.to_string(),
+            SearchFileTool::NAME.to_string(),
+            EditFileTool::NAME.to_string(),
+            WriteFileTool::NAME.to_string(),
+            TodoTool::NAME.to_string(),
+            SubAgentManager::NAME.to_string(),
+            SkillManager::NAME.to_string(),
+            cron::CreateCronTool::NAME.to_string(),
+            cron::ManageCronJobTool::NAME.to_string(),
+            cron::ListCronJobsTool::NAME.to_string(),
+            cron::ListCronRunsTool::NAME.to_string(),
+        ];
+        let mut tools = vec![
+            brain::Client::NAME.to_string(),
+            NoteTool::NAME.to_string(),
+            TOOLS_SEARCH_NAME.to_string(),
+            TOOLS_SELECT_NAME.to_string(),
+            ShellTool::NAME.to_string(),
+            ReadFileTool::NAME.to_string(),
+            SearchFileTool::NAME.to_string(),
+            EditFileTool::NAME.to_string(),
+            WriteFileTool::NAME.to_string(),
+            TodoTool::NAME.to_string(),
+            SubAgentManager::NAME.to_string(),
+            SkillManager::NAME.to_string(),
+            cron::CreateCronTool::NAME.to_string(),
+            cron::ManageCronJobTool::NAME.to_string(),
+        ];
+
+        if tts_manager.is_some() {
+            tool_dependencies.push(TtsManager::NAME.to_string());
+            tools.push(TtsManager::NAME.to_string());
+        }
+        if transcription_manager.is_some() {
+            tool_dependencies.push(TranscriptionManager::NAME.to_string());
+            tools.push(TranscriptionManager::NAME.to_string());
+        }
+
         Self {
             inner: Arc::new(AndaBotInner {
                 brain,
                 conversations,
-                tool_dependencies: vec![
-                    brain::Client::NAME.to_string(),
-                    NoteTool::NAME.to_string(),
-                    TOOLS_SEARCH_NAME.to_string(),
-                    TOOLS_SELECT_NAME.to_string(),
-                    ShellTool::NAME.to_string(),
-                    ReadFileTool::NAME.to_string(),
-                    SearchFileTool::NAME.to_string(),
-                    EditFileTool::NAME.to_string(),
-                    WriteFileTool::NAME.to_string(),
-                    TodoTool::NAME.to_string(),
-                    SubAgentManager::NAME.to_string(),
-                    SkillManager::NAME.to_string(),
-                    cron::CreateCronTool::NAME.to_string(),
-                    cron::ManageCronJobTool::NAME.to_string(),
-                    cron::ListCronJobsTool::NAME.to_string(),
-                    cron::ListCronRunsTool::NAME.to_string(),
-                ],
-                tools: vec![
-                    brain::Client::NAME.to_string(),
-                    NoteTool::NAME.to_string(),
-                    TOOLS_SEARCH_NAME.to_string(),
-                    TOOLS_SELECT_NAME.to_string(),
-                    ShellTool::NAME.to_string(),
-                    ReadFileTool::NAME.to_string(),
-                    SearchFileTool::NAME.to_string(),
-                    EditFileTool::NAME.to_string(),
-                    WriteFileTool::NAME.to_string(),
-                    TodoTool::NAME.to_string(),
-                    SubAgentManager::NAME.to_string(),
-                    SkillManager::NAME.to_string(),
-                    cron::CreateCronTool::NAME.to_string(),
-                    cron::ManageCronJobTool::NAME.to_string(),
-                ],
+                tool_dependencies,
+                tools,
                 processing_conversations: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 workspace_conversation: RwLock::new(HashMap::new()),
                 home_dir,
+                tts_manager,
+                transcription_manager,
             }),
         }
     }
@@ -157,6 +180,80 @@ impl AndaBot {
             .await?;
         Ok(())
     }
+
+    async fn prompt_with_audio_resources(
+        &self,
+        prompt: String,
+        resources: &[Resource],
+    ) -> Result<String, BoxError> {
+        if !resources.iter().any(is_audio_resource) {
+            return Ok(prompt);
+        }
+
+        let Some(manager) = &self.inner.transcription_manager else {
+            if prompt.trim().is_empty() {
+                return Err("voice transcription is not enabled".into());
+            }
+            return Ok(prompt);
+        };
+
+        let mut transcripts = Vec::new();
+        for (index, resource) in resources
+            .iter()
+            .filter(|res| is_audio_resource(res))
+            .enumerate()
+        {
+            let audio = resource
+                .blob
+                .as_ref()
+                .map(|blob| blob.0.clone())
+                .ok_or("audio resource missing inline blob data")?;
+            let file_name = audio_resource_file_name(resource, &format!("voice_{}", index + 1));
+            let text = manager.transcribe(&audio, &file_name).await?;
+            if !text.trim().is_empty() {
+                transcripts.push((file_name, text.trim().to_string()));
+            }
+        }
+
+        if transcripts.is_empty() {
+            return Ok(prompt);
+        }
+
+        let transcript = if transcripts.len() == 1 {
+            transcripts.remove(0).1
+        } else {
+            transcripts
+                .into_iter()
+                .map(|(file_name, text)| format!("{file_name}: {text}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if prompt.trim().is_empty() {
+            Ok(transcript)
+        } else {
+            Ok(format!(
+                "{}\n\nTranscribed voice input:\n{}",
+                prompt.trim(),
+                transcript
+            ))
+        }
+    }
+
+    async fn attach_tts_artifact(&self, output: &mut AgentOutput) -> Result<(), BoxError> {
+        let Some(manager) = &self.inner.tts_manager else {
+            return Ok(());
+        };
+        let text = agent_output_text_for_tts(output);
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+
+        let bytes = manager.synthesize(text.trim()).await?;
+        output
+            .artifacts
+            .push(manager.audio_artifact(bytes, Some(format!("anda_bot_response_{}", unix_ms()))));
+        Ok(())
+    }
 }
 
 /// Implementation of the [`Agent`] trait for AndaBot.
@@ -177,7 +274,11 @@ impl Agent<AgentCtx> for AndaBot {
     }
 
     fn supported_resource_tags(&self) -> Vec<String> {
-        vec!["text".to_string()]
+        let mut tags = vec!["text".to_string(), "md".to_string()];
+        if self.inner.transcription_manager.is_some() {
+            tags.extend(crate::transcription::supported_audio_resource_tags());
+        }
+        tags
     }
 
     async fn init(&self, _ctx: AgentCtx) -> Result<(), BoxError> {
@@ -221,6 +322,16 @@ impl Agent<AgentCtx> for AndaBot {
             .meta()
             .get_extra_as::<u64>("conversation")
             .unwrap_or(workspace_state.conversation_id);
+        let voice_response = ctx
+            .meta()
+            .get_extra_as::<bool>("voice_response")
+            .unwrap_or(false);
+        let wait_for_completion = voice_response
+            || ctx
+                .meta()
+                .get_extra_as::<bool>("wait_completion")
+                .unwrap_or(false);
+        let prompt = self.prompt_with_audio_resources(prompt, &resources).await?;
 
         let mut input = ConversationInput {
             prompt,
@@ -434,7 +545,7 @@ impl Agent<AgentCtx> for AndaBot {
                 max_output_tokens: Some(50000),
                 ..Default::default()
             },
-            vec![],
+            resources.clone(),
         );
 
         let source = ctx
@@ -448,8 +559,15 @@ impl Agent<AgentCtx> for AndaBot {
             topic: None,
         });
 
-        runner.set_unbound(true);
+        runner.set_unbound(!wait_for_completion);
+        let (completion_tx, completion_rx) = if wait_for_completion {
+            let (tx, rx) = tokio::sync::oneshot::channel::<AgentOutput>();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         tokio::spawn(async move {
+            let mut completion_tx = completion_tx;
             let task_result = async {
                 let mut first_round = true;
                 loop {
@@ -533,9 +651,17 @@ impl Agent<AgentCtx> for AndaBot {
                         Ok(Some(mut res)) => {
                             let now_ms = unix_ms();
                             conversation_task.active_at.store(now_ms, Ordering::SeqCst);
-                            conversation_task.on_completion(&ctx, &res).await;
-
                             let is_done = runner.is_done();
+                            res.conversation = Some(id);
+                            if voice_response
+                                && is_done
+                                && let Err(err) = assistant.attach_tts_artifact(&mut res).await
+                            {
+                                log::warn!("Failed to synthesize voice response: {err}");
+                            }
+                            let output_for_caller = is_done.then(|| res.clone());
+
+                            conversation_task.on_completion(&ctx, &res).await;
                             if !is_done {
                                 runner.prune_raw_history_if(13, 6);
                             }
@@ -599,13 +725,19 @@ impl Agent<AgentCtx> for AndaBot {
                                 || conversation.status == ConversationStatus::Failed
                                 || is_done
                             {
+                                if let Some(output) = output_for_caller
+                                    && let Some(tx) = completion_tx.take()
+                                {
+                                    let _ = tx.send(output);
+                                }
                                 break;
                             }
                         }
 
                         Err(err) => {
+                            let failed_reason = err.to_string();
                             log::error!("Conversation {id} in CompletionRunner error: {:?}", err);
-                            conversation.failed_reason = Some(err.to_string());
+                            conversation.failed_reason = Some(failed_reason.clone());
                             conversation.status = ConversationStatus::Failed;
                             conversation.updated_at = unix_ms();
                             persist_conversation_state(
@@ -613,6 +745,13 @@ impl Agent<AgentCtx> for AndaBot {
                                 &conversation,
                             )
                             .await;
+                            if let Some(tx) = completion_tx.take() {
+                                let _ = tx.send(AgentOutput {
+                                    conversation: Some(id),
+                                    failed_reason: Some(failed_reason),
+                                    ..Default::default()
+                                });
+                            }
                             break;
                         }
                     }
@@ -627,6 +766,10 @@ impl Agent<AgentCtx> for AndaBot {
                 log::error!("Error occurred in conversation {id}: {:?}", err);
             }
         });
+
+        if let Some(rx) = completion_rx {
+            return Ok(rx.await.unwrap_or(res));
+        }
 
         Ok(res)
     }
@@ -771,6 +914,20 @@ fn prompt_with_resources(prompt: String, resources: &[Resource]) -> String {
             Documents::new("user_resources".to_string(), user_resources)
         )
     }
+}
+
+fn agent_output_text_for_tts(output: &AgentOutput) -> String {
+    if !output.content.trim().is_empty() {
+        return output.content.clone();
+    }
+
+    output
+        .chat_history
+        .iter()
+        .rev()
+        .find(|msg| msg.role == "assistant")
+        .and_then(Message::text)
+        .unwrap_or_default()
 }
 
 fn conversation_chat_history(conversation: &Conversation, skip: usize) -> Vec<Message> {
