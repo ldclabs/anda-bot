@@ -4,7 +4,7 @@ use anda_db::schema::{
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 /// Message to send through a channel
@@ -94,6 +94,9 @@ pub trait Channel: Send + Sync {
 
     /// Unique channel identifier for message metadata (e.g. "irc:irc.libera.chat").
     fn id(&self) -> String;
+
+    /// Set the channel-specific workspace directory managed by ChannelRuntime.
+    fn set_workspace(&self, _workspace: PathBuf) {}
 
     /// Send a message through this channel
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError>;

@@ -1,4 +1,4 @@
-use anda_core::{BoxError, ByteBufB64, Resource};
+use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
 use base64::{
@@ -11,12 +11,21 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde_json::Value;
-use std::{collections::HashMap, fmt::Write as _, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Write as _,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{Mutex, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-use super::types::{Channel, ChannelMessage, SendMessage};
+use super::{
+    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage, attachment_kind,
+    file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+};
 use crate::config;
 
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
@@ -35,21 +44,13 @@ const DISCORD_ACK_REACTIONS: &[&str] = &[
     "\u{1F44C}",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DiscordAttachmentKind {
-    Image,
-    Document,
-    Audio,
-    Video,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IncomingAttachment {
     url: String,
     file_name: String,
     file_size: Option<u64>,
     mime_type: Option<String>,
-    kind: DiscordAttachmentKind,
+    kind: AttachmentKind,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +135,7 @@ pub struct DiscordChannel {
     api_base: String,
     ack_reactions: bool,
     client: Client,
+    workspace: Arc<ChannelWorkspace>,
     bot_user_id: Mutex<Option<String>>,
     #[allow(dead_code)]
     typing_handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -160,6 +162,7 @@ impl DiscordChannel {
             },
             ack_reactions: cfg.ack_reactions,
             client: cfg.http_client,
+            workspace: Arc::new(ChannelWorkspace::default()),
             bot_user_id: Mutex::new(None),
             typing_handles: Mutex::new(HashMap::new()),
         }
@@ -331,19 +334,13 @@ impl DiscordChannel {
             return None;
         }
 
-        Some(Resource {
-            tags: resource_tags(
-                attachment.kind,
-                &attachment.file_name,
-                attachment.mime_type.as_deref(),
-            ),
-            name: attachment.file_name.clone(),
-            description: Some("Discord attachment".to_string()),
-            mime_type: attachment.mime_type.clone(),
-            blob: Some(ByteBufB64(bytes.clone())),
-            size: Some(bytes.len() as u64),
-            ..Default::default()
-        })
+        Some(resource_from_bytes(
+            attachment.kind,
+            attachment.file_name.clone(),
+            attachment.mime_type.clone(),
+            bytes,
+            "Discord attachment",
+        ))
     }
 
     async fn parse_gateway_message(
@@ -409,6 +406,12 @@ impl DiscordChannel {
             return None;
         }
 
+        let message_id = message
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
         let mut attachments = Vec::new();
         for attachment_value in attachment_values {
             let Some(attachment) = Self::parse_attachment_metadata(&attachment_value) else {
@@ -418,17 +421,19 @@ impl DiscordChannel {
                 attachments.push(resource);
             }
         }
+        self.workspace
+            .store_resources_lossy(
+                &mut attachments,
+                (!message_id.is_empty()).then_some(message_id.as_str()),
+                "Discord attachment",
+            )
+            .await;
 
         let content = content_with_attachment_fallback(content, &attachments);
         if content.trim().is_empty() && attachments.is_empty() {
             return None;
         }
 
-        let message_id = message
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
         let mut extra = std::collections::BTreeMap::new();
         extra.insert("channel_id".to_string(), channel_id.clone().into());
         if !message_id.is_empty() {
@@ -720,6 +725,10 @@ impl Channel for DiscordChannel {
 
     fn id(&self) -> String {
         format!("discord:{}", self.id)
+    }
+
+    fn set_workspace(&self, workspace: PathBuf) {
+        self.workspace.set_path(workspace);
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
@@ -1284,121 +1293,10 @@ fn discord_reaction_url(api_base: &str, channel_id: &str, message_id: &str, emoj
     )
 }
 
-fn is_http_url(target: &str) -> bool {
-    target.starts_with("http://") || target.starts_with("https://")
-}
-
-fn attachment_kind(file_name: &str, mime_type: Option<&str>) -> DiscordAttachmentKind {
-    let mime_type = mime_type.unwrap_or_default().to_ascii_lowercase();
-    if mime_type.starts_with("image/") {
-        DiscordAttachmentKind::Image
-    } else if mime_type.starts_with("video/") {
-        DiscordAttachmentKind::Video
-    } else if mime_type.starts_with("audio/") {
-        DiscordAttachmentKind::Audio
-    } else if let Some(extension) = Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-    {
-        match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "webp" => DiscordAttachmentKind::Image,
-            "mp4" | "mov" | "webm" => DiscordAttachmentKind::Video,
-            "mp3" | "m4a" | "wav" | "ogg" | "oga" | "opus" | "flac" => DiscordAttachmentKind::Audio,
-            _ => DiscordAttachmentKind::Document,
-        }
-    } else {
-        DiscordAttachmentKind::Document
-    }
-}
-
-fn mime_type_for_path(path: &str) -> Option<&'static str> {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())?
-        .to_ascii_lowercase();
-
-    match extension.as_str() {
-        "txt" => Some("text/plain"),
-        "md" => Some("text/markdown"),
-        "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "mp3" => Some("audio/mpeg"),
-        "m4a" => Some("audio/mp4"),
-        "wav" => Some("audio/wav"),
-        "ogg" | "oga" | "opus" => Some("audio/ogg"),
-        "flac" => Some("audio/flac"),
-        "mp4" => Some("video/mp4"),
-        "mov" => Some("video/quicktime"),
-        "pdf" => Some("application/pdf"),
-        _ => None,
-    }
-}
-
-fn resource_tags(
-    kind: DiscordAttachmentKind,
-    file_name: &str,
-    mime_type: Option<&str>,
-) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mime_type = mime_type.unwrap_or_default();
-    if mime_type.starts_with("text/") || file_name.ends_with(".txt") {
-        tags.push("text".to_string());
-    } else if file_name.ends_with(".md") || mime_type == "text/markdown" {
-        tags.push("md".to_string());
-    } else {
-        tags.push(
-            match kind {
-                DiscordAttachmentKind::Image => "image",
-                DiscordAttachmentKind::Audio => "audio",
-                DiscordAttachmentKind::Video => "video",
-                DiscordAttachmentKind::Document => "document",
-            }
-            .to_string(),
-        );
-    }
-
-    if let Some(extension) = Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-    {
-        if !tags.iter().any(|tag| tag == &extension) {
-            tags.push(extension);
-        }
-    }
-
-    tags
-}
-
-fn file_name_for_resource(resource: &Resource) -> String {
-    if !resource.name.trim().is_empty() {
-        resource.name.clone()
-    } else {
-        default_file_name_for_resource(resource).to_string()
-    }
-}
-
-fn default_file_name_for_resource(resource: &Resource) -> &'static str {
-    let mime_type = resource.mime_type.as_deref().unwrap_or_default();
-    if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
-        "image.jpg"
-    } else if resource.tags.iter().any(|tag| tag == "video") || mime_type.starts_with("video/") {
-        "video.mp4"
-    } else if resource.tags.iter().any(|tag| tag == "audio") || mime_type.starts_with("audio/") {
-        "audio.mp3"
-    } else {
-        "document.bin"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::resource_tags;
 
     fn test_config() -> DiscordChannelConfig {
         DiscordChannelConfig {
@@ -1474,15 +1372,11 @@ mod tests {
     #[test]
     fn resource_tags_detect_text_and_audio() {
         assert_eq!(
-            resource_tags(
-                DiscordAttachmentKind::Document,
-                "notes.txt",
-                Some("text/plain")
-            ),
+            resource_tags(AttachmentKind::Document, "notes.txt", Some("text/plain")),
             vec!["text".to_string(), "txt".to_string()]
         );
         assert_eq!(
-            resource_tags(DiscordAttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
+            resource_tags(AttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
             vec!["audio".to_string(), "ogg".to_string()]
         );
     }

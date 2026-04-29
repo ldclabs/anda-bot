@@ -165,6 +165,9 @@ impl ChannelRuntime {
             .get_extension_as::<ChannelConversationMap>("channels_conversation")
             .unwrap_or_default();
         let conversation_routes = build_conversation_routes(&channels_conversation);
+        for (channel_name, channel) in &channels {
+            channel.set_workspace(home_dir.join(channel_name));
+        }
 
         let inner = Arc::new(ChannelRuntimeInner {
             engine,
@@ -182,6 +185,10 @@ impl ChannelRuntime {
 
     pub fn hook(&self) -> Arc<dyn CompletionHook> {
         Arc::new(self.inner.clone())
+    }
+
+    pub fn channel_workspace(&self, channel_name: &str) -> PathBuf {
+        self.inner.home_dir.join(channel_name)
     }
 
     pub async fn serve(

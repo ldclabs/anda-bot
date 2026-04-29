@@ -3,12 +3,14 @@ pub mod irc;
 pub mod lark;
 pub mod telegram;
 
+mod attachments;
 mod runtime;
 mod types;
 
 use anda_core::BoxError;
 use std::{collections::HashMap, sync::Arc};
 
+pub use attachments::*;
 pub use runtime::*;
 pub use types::*;
 

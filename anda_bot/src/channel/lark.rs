@@ -1,4 +1,4 @@
-use anda_core::{BoxError, ByteBufB64, Resource};
+use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
 use futures_util::{Sink, SinkExt, StreamExt};
@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    path::Path,
+    path::PathBuf,
     sync::{Arc, RwLock as StdRwLock},
     time::{Duration, Instant},
 };
@@ -15,7 +15,10 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
 use tokio_util::sync::CancellationToken;
 
-use super::types::{Channel, ChannelMessage, SendMessage};
+use super::{
+    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage, attachment_kind,
+    default_file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+};
 use crate::config;
 
 const LARK_CARD_MARKDOWN_MAX_BYTES: usize = 28_000;
@@ -58,14 +61,6 @@ const LARK_ACK_REACTIONS_JA: &[&str] = &[
     "SMILE",
     "DONE",
 ];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LarkAttachmentKind {
-    Image,
-    Audio,
-    Video,
-    Document,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LarkAckLocale {
@@ -279,6 +274,7 @@ pub struct LarkChannel {
     ws_base: String,
     ack_reactions: bool,
     client: Client,
+    workspace: Arc<ChannelWorkspace>,
     bot_open_id: Arc<StdRwLock<Option<String>>>,
     tenant_token: Arc<RwLock<Option<CachedTenantToken>>>,
     ws_seen_ids: Arc<RwLock<HashMap<String, Instant>>>,
@@ -314,6 +310,7 @@ impl LarkChannel {
             },
             ack_reactions: cfg.ack_reactions,
             client: cfg.http_client,
+            workspace: Arc::new(ChannelWorkspace::default()),
             bot_open_id: Arc::new(StdRwLock::new(None)),
             tenant_token: Arc::new(RwLock::new(None)),
             ws_seen_ids: Arc::new(RwLock::new(HashMap::new())),
@@ -975,7 +972,7 @@ impl LarkChannel {
                 post_mentioned_open_ids: details.mentioned_open_ids,
             }),
             "list" => parse_list_content(content).map(ParsedMessageContent::text),
-            "image" => self.parse_image_message(content).await,
+            "image" => self.parse_image_message(message_id, content).await,
             "file" => self.parse_file_message(message_id, content).await,
             "audio" => self.parse_audio_message(message_id, content).await,
             _ => {
@@ -985,7 +982,11 @@ impl LarkChannel {
         }
     }
 
-    async fn parse_image_message(&self, content: &str) -> Option<ParsedMessageContent> {
+    async fn parse_image_message(
+        &self,
+        message_id: &str,
+        content: &str,
+    ) -> Option<ParsedMessageContent> {
         let image_key = serde_json::from_str::<Value>(content)
             .ok()
             .and_then(|value| {
@@ -995,7 +996,7 @@ impl LarkChannel {
                     .map(str::to_string)
             })?;
 
-        match self.download_image_resource(&image_key).await {
+        match self.download_image_resource(message_id, &image_key).await {
             Some(resource) => Some(ParsedMessageContent::with_attachment(
                 format!("[Image: {}]", resource.name),
                 resource,
@@ -1052,7 +1053,7 @@ impl LarkChannel {
         }
     }
 
-    async fn download_image_resource(&self, image_key: &str) -> Option<Resource> {
+    async fn download_image_resource(&self, message_id: &str, image_key: &str) -> Option<Resource> {
         let (bytes, content_type) = match self
             .get_authorized_bytes(
                 &self.image_download_url(image_key),
@@ -1074,13 +1075,17 @@ impl LarkChannel {
             "{image_key}.{}",
             extension_for_mime(&mime_type).unwrap_or("jpg")
         );
-        Some(resource_from_bytes(
-            LarkAttachmentKind::Image,
+        let mut resource = resource_from_bytes(
+            AttachmentKind::Image,
             file_name,
             Some(mime_type),
             bytes,
             "Lark image",
-        ))
+        );
+        self.workspace
+            .store_resource_lossy(&mut resource, Some(message_id), "Lark image")
+            .await;
+        Some(resource)
     }
 
     async fn download_file_resource(
@@ -1106,13 +1111,12 @@ impl LarkChannel {
 
         let mime_type = content_type.or_else(|| mime_type_for_path(file_name).map(String::from));
         let kind = attachment_kind(file_name, mime_type.as_deref());
-        Some(resource_from_bytes(
-            kind,
-            file_name.to_string(),
-            mime_type,
-            bytes,
-            "Lark file",
-        ))
+        let mut resource =
+            resource_from_bytes(kind, file_name.to_string(), mime_type, bytes, "Lark file");
+        self.workspace
+            .store_resource_lossy(&mut resource, Some(message_id), "Lark file")
+            .await;
+        Some(resource)
     }
 
     async fn download_audio_resource(&self, message_id: &str, file_key: &str) -> Option<Resource> {
@@ -1136,13 +1140,17 @@ impl LarkChannel {
             .filter(|mime| mime.starts_with("audio/"))
             .or_else(|| mime_type_for_path(&file_name).map(String::from))
             .or_else(|| Some("audio/mp4".to_string()));
-        Some(resource_from_bytes(
-            LarkAttachmentKind::Audio,
+        let mut resource = resource_from_bytes(
+            AttachmentKind::Audio,
             file_name,
             mime_type,
             bytes,
             "Lark audio",
-        ))
+        );
+        self.workspace
+            .store_resource_lossy(&mut resource, Some(message_id), "Lark audio")
+            .await;
+        Some(resource)
     }
 
     async fn get_authorized_bytes(
@@ -1224,6 +1232,10 @@ impl Channel for LarkChannel {
 
     fn id(&self) -> String {
         format!("{}:{}", self.channel_name(), self.id)
+    }
+
+    fn set_workspace(&self, workspace: PathBuf) {
+        self.workspace.set_path(workspace);
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
@@ -1587,24 +1599,6 @@ fn inferred_audio_filename(file_key: &str) -> String {
     }
 }
 
-fn resource_from_bytes(
-    kind: LarkAttachmentKind,
-    file_name: String,
-    mime_type: Option<String>,
-    bytes: Vec<u8>,
-    description: &str,
-) -> Resource {
-    Resource {
-        tags: resource_tags(kind, &file_name, mime_type.as_deref()),
-        name: file_name,
-        description: Some(description.to_string()),
-        mime_type,
-        blob: Some(ByteBufB64(bytes.clone())),
-        size: Some(bytes.len() as u64),
-        ..Default::default()
-    }
-}
-
 fn normalize_content_type(content_type: &str) -> Option<String> {
     content_type
         .split(';')
@@ -1646,109 +1640,6 @@ fn extension_for_mime(mime_type: &str) -> Option<&'static str> {
         "video/mp4" => Some("mp4"),
         _ => None,
     }
-}
-
-fn attachment_kind(file_name: &str, mime_type: Option<&str>) -> LarkAttachmentKind {
-    let mime_type = mime_type.unwrap_or_default().to_ascii_lowercase();
-    if mime_type.starts_with("image/") {
-        LarkAttachmentKind::Image
-    } else if mime_type.starts_with("audio/") {
-        LarkAttachmentKind::Audio
-    } else if mime_type.starts_with("video/") {
-        LarkAttachmentKind::Video
-    } else if let Some(extension) = Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-    {
-        match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "webp" => LarkAttachmentKind::Image,
-            "mp3" | "m4a" | "wav" | "ogg" | "oga" | "opus" => LarkAttachmentKind::Audio,
-            "mp4" | "mov" | "webm" => LarkAttachmentKind::Video,
-            _ => LarkAttachmentKind::Document,
-        }
-    } else {
-        LarkAttachmentKind::Document
-    }
-}
-
-fn mime_type_for_path(path: &str) -> Option<&'static str> {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())?
-        .to_ascii_lowercase();
-
-    match extension.as_str() {
-        "txt" => Some("text/plain"),
-        "md" => Some("text/markdown"),
-        "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "mp3" => Some("audio/mpeg"),
-        "m4a" => Some("audio/mp4"),
-        "wav" => Some("audio/wav"),
-        "ogg" | "oga" | "opus" => Some("audio/ogg"),
-        "webm" => Some("audio/webm"),
-        "mp4" => Some("video/mp4"),
-        "mov" => Some("video/quicktime"),
-        "pdf" => Some("application/pdf"),
-        _ => None,
-    }
-}
-
-fn resource_tags(
-    kind: LarkAttachmentKind,
-    file_name: &str,
-    mime_type: Option<&str>,
-) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mime_type = mime_type.unwrap_or_default();
-    if mime_type.starts_with("text/") || file_name.ends_with(".txt") {
-        tags.push("text".to_string());
-    } else if file_name.ends_with(".md") || mime_type == "text/markdown" {
-        tags.push("md".to_string());
-    } else {
-        tags.push(
-            match kind {
-                LarkAttachmentKind::Image => "image",
-                LarkAttachmentKind::Audio => "audio",
-                LarkAttachmentKind::Video => "video",
-                LarkAttachmentKind::Document => "document",
-            }
-            .to_string(),
-        );
-    }
-
-    if let Some(extension) = Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-        && !tags.iter().any(|tag| tag == &extension)
-    {
-        tags.push(extension);
-    }
-
-    tags
-}
-
-fn default_file_name_for_resource(resource: &Resource) -> &'static str {
-    let mime_type = resource.mime_type.as_deref().unwrap_or_default();
-    if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
-        "image.jpg"
-    } else if resource.tags.iter().any(|tag| tag == "video") || mime_type.starts_with("video/") {
-        "video.mp4"
-    } else if resource.tags.iter().any(|tag| tag == "audio") || mime_type.starts_with("audio/") {
-        "audio.mp3"
-    } else {
-        "document.bin"
-    }
-}
-
-fn is_http_url(target: &str) -> bool {
-    target.starts_with("http://") || target.starts_with("https://")
 }
 
 fn pick_uniform_index(len: usize) -> usize {

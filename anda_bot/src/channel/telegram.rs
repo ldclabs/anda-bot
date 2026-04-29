@@ -1,4 +1,4 @@
-use anda_core::{BoxError, ByteBufB64, Resource};
+use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
 use reqwest::{
@@ -6,11 +6,20 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde_json::Value;
-use std::{collections::HashMap, fmt::Write as _, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Write as _,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use super::types::{Channel, ChannelMessage, SendMessage};
+use super::{
+    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage,
+    default_file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+};
 use crate::config;
 
 const TELEGRAM_MAX_MESSAGE_LENGTH: usize = 4096;
@@ -115,6 +124,7 @@ pub struct TelegramChannel {
     api_base: String,
     ack_reactions: bool,
     client: Client,
+    workspace: Arc<ChannelWorkspace>,
     bot_username: Mutex<Option<String>>,
     #[allow(dead_code)]
     typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -140,6 +150,7 @@ impl TelegramChannel {
             },
             ack_reactions: cfg.ack_reactions,
             client: cfg.http_client,
+            workspace: Arc::new(ChannelWorkspace::default()),
             bot_username: Mutex::new(None),
             typing_handle: Mutex::new(None),
         }
@@ -617,16 +628,20 @@ impl TelegramChannel {
             .mime_type
             .clone()
             .or_else(|| mime_type_for_path(&file_name).map(String::from));
-        let tags = resource_tags(attachment.kind, &file_name, mime_type.as_deref());
-        let resource = Resource {
-            tags,
-            name: file_name.clone(),
-            description: Some("Telegram attachment".to_string()),
+        let mut resource = resource_from_bytes(
+            telegram_attachment_kind(attachment.kind),
+            file_name.clone(),
             mime_type,
-            blob: Some(ByteBufB64(bytes.clone())),
-            size: Some(bytes.len() as u64),
-            ..Default::default()
-        };
+            bytes,
+            "Telegram attachment",
+        );
+        let message_key = message
+            .get("message_id")
+            .and_then(Value::as_i64)
+            .map(|id| id.to_string());
+        self.workspace
+            .store_resource_lossy(&mut resource, message_key.as_deref(), "Telegram attachment")
+            .await;
 
         let content = if caption.trim().is_empty() {
             match attachment.kind {
@@ -1068,6 +1083,10 @@ impl Channel for TelegramChannel {
         format!("telegram:{}", self.id)
     }
 
+    fn set_workspace(&self, workspace: PathBuf) {
+        self.workspace.set_path(workspace);
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
         let (chat_id, thread_id) = Self::parse_reply_target(&message.recipient);
         let thread_id = thread_id.as_deref();
@@ -1337,10 +1356,6 @@ fn split_message_for_telegram(message: &str) -> Vec<String> {
     chunks
 }
 
-fn is_http_url(target: &str) -> bool {
-    target.starts_with("http://") || target.starts_with("https://")
-}
-
 fn default_mime_for_attachment_kind(kind: TelegramAttachmentKind) -> Option<&'static str> {
     match kind {
         TelegramAttachmentKind::Photo => Some("image/jpeg"),
@@ -1351,66 +1366,13 @@ fn default_mime_for_attachment_kind(kind: TelegramAttachmentKind) -> Option<&'st
     }
 }
 
-fn mime_type_for_path(path: &str) -> Option<&'static str> {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())?
-        .to_ascii_lowercase();
-
-    match extension.as_str() {
-        "txt" => Some("text/plain"),
-        "md" => Some("text/markdown"),
-        "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "mp3" => Some("audio/mpeg"),
-        "m4a" => Some("audio/mp4"),
-        "wav" => Some("audio/wav"),
-        "ogg" | "oga" | "opus" => Some("audio/ogg"),
-        "mp4" => Some("video/mp4"),
-        "mov" => Some("video/quicktime"),
-        "pdf" => Some("application/pdf"),
-        _ => None,
+fn telegram_attachment_kind(kind: TelegramAttachmentKind) -> AttachmentKind {
+    match kind {
+        TelegramAttachmentKind::Photo => AttachmentKind::Image,
+        TelegramAttachmentKind::Voice | TelegramAttachmentKind::Audio => AttachmentKind::Audio,
+        TelegramAttachmentKind::Video => AttachmentKind::Video,
+        TelegramAttachmentKind::Document => AttachmentKind::Document,
     }
-}
-
-fn resource_tags(
-    kind: TelegramAttachmentKind,
-    file_name: &str,
-    mime_type: Option<&str>,
-) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mime_type = mime_type.unwrap_or_default();
-    if mime_type.starts_with("text/") || file_name.ends_with(".txt") {
-        tags.push("text".to_string());
-    } else if file_name.ends_with(".md") || mime_type == "text/markdown" {
-        tags.push("md".to_string());
-    } else {
-        tags.push(
-            match kind {
-                TelegramAttachmentKind::Photo => "image",
-                TelegramAttachmentKind::Voice | TelegramAttachmentKind::Audio => "audio",
-                TelegramAttachmentKind::Video => "video",
-                TelegramAttachmentKind::Document => "document",
-            }
-            .to_string(),
-        );
-    }
-
-    if let Some(extension) = Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-    {
-        if !tags.iter().any(|tag| tag == &extension) {
-            tags.push(extension);
-        }
-    }
-
-    tags
 }
 
 fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str) {
@@ -1426,22 +1388,10 @@ fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str
     }
 }
 
-fn default_file_name_for_resource(resource: &Resource) -> &'static str {
-    let mime_type = resource.mime_type.as_deref().unwrap_or_default();
-    if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
-        "image.jpg"
-    } else if resource.tags.iter().any(|tag| tag == "video") || mime_type.starts_with("video/") {
-        "video.mp4"
-    } else if resource.tags.iter().any(|tag| tag == "audio") || mime_type.starts_with("audio/") {
-        "audio.mp3"
-    } else {
-        "document.bin"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::resource_tags;
 
     fn test_config() -> TelegramChannelConfig {
         TelegramChannelConfig {
@@ -1523,19 +1473,11 @@ mod tests {
     #[test]
     fn resource_tags_detect_text_and_audio() {
         assert_eq!(
-            resource_tags(
-                TelegramAttachmentKind::Document,
-                "notes.txt",
-                Some("text/plain")
-            ),
+            resource_tags(AttachmentKind::Document, "notes.txt", Some("text/plain")),
             vec!["text".to_string(), "txt".to_string()]
         );
         assert_eq!(
-            resource_tags(
-                TelegramAttachmentKind::Voice,
-                "voice.ogg",
-                Some("audio/ogg")
-            ),
+            resource_tags(AttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
             vec!["audio".to_string(), "ogg".to_string()]
         );
     }
