@@ -14,12 +14,14 @@ pub const ACCENT_TEAL: Color = Color::Rgb(130, 232, 214);
 pub const FOOTER_BG: Color = Color::Rgb(10, 28, 24);
 pub const FOOTER_BORDER: Color = Color::Rgb(74, 150, 140);
 
+#[allow(unused)]
 pub fn title_style() -> Style {
     Style::default()
         .fg(BAMBOO_LIGHT)
         .add_modifier(Modifier::BOLD)
 }
 
+#[allow(unused)]
 pub fn heading_style() -> Style {
     Style::default().fg(LEAF_MINT).add_modifier(Modifier::BOLD)
 }

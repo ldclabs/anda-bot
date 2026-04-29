@@ -242,7 +242,7 @@ impl Config {
             .model
             .providers
             .values()
-            .map(|provider| ModelConfig::from(provider))
+            .map(ModelConfig::from)
             .collect();
         let models = Models::from_configs(&configs, http_client.clone());
 

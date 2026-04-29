@@ -11,6 +11,7 @@ use super::Client;
 use crate::engine::{ConversationsTool, ConversationsToolArgs};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
+const PING_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Build a synthetic system message (used for local notices / errors that
 /// aren't part of the persisted conversation history).
@@ -62,6 +63,7 @@ pub struct ChatSession {
     pub messages: Vec<Message>,
     pub sending: bool,
     pub errors: Vec<String>,
+    last_ping: Instant,
     last_poll: Instant,
     last_msg_offset: usize,
 }
@@ -76,6 +78,7 @@ impl ChatSession {
             messages: Vec::new(),
             sending: false,
             errors: Vec::new(),
+            last_ping: Instant::now(),
             last_poll: Instant::now(),
             last_msg_offset: 0,
         }
@@ -185,8 +188,22 @@ impl ChatSession {
         notice
     }
 
+    async fn ping(&mut self) {
+        if !self.is_active() || self.last_ping.elapsed() < PING_INTERVAL {
+            return;
+        }
+
+        self.last_ping = Instant::now();
+        let _ = self
+            .client
+            .agent_run(&AgentInput::new(String::new(), String::new()))
+            .await;
+    }
+
     /// Poll the conversation for updates. Returns `true` if new messages were received.
     pub async fn poll(&mut self, latest_conv_id: Option<u64>) -> bool {
+        self.ping().await;
+
         let conv_id = if let Some(id) = latest_conv_id {
             self.conv_id = Some(id);
             id

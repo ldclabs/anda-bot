@@ -172,7 +172,7 @@ impl DiscordChannel {
         format!("{}/{}", self.api_base, path.trim_start_matches('/'))
     }
 
-    fn message_channel_id<'a>(message: &'a SendMessage) -> &'a str {
+    fn message_channel_id(message: &SendMessage) -> &str {
         message.thread.as_deref().unwrap_or(&message.recipient)
     }
 

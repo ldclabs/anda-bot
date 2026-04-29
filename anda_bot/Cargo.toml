@@ -21,6 +21,7 @@ anda_kip = { workspace = true }
 anda_object_store = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
+cpal = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }

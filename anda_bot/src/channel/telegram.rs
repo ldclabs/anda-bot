@@ -562,15 +562,14 @@ impl TelegramChannel {
         let message = update.get("message")?;
         let attachment = Self::parse_attachment_metadata(message)?;
 
-        if let Some(size) = attachment.file_size {
-            if size > TELEGRAM_MAX_FILE_DOWNLOAD_BYTES {
+        if let Some(size) = attachment.file_size
+            && size > TELEGRAM_MAX_FILE_DOWNLOAD_BYTES {
                 log::warn!(
                     "Telegram skipping attachment larger than {} bytes: {size}",
                     TELEGRAM_MAX_FILE_DOWNLOAD_BYTES
                 );
                 return None;
             }
-        }
 
         let (username, sender_id, sender_identity) = Self::extract_sender_info(message);
         let mut identities = vec![username.as_str()];
@@ -952,46 +951,41 @@ impl TelegramChannel {
             let bytes = line.as_bytes();
             let len = bytes.len();
             while index < len {
-                if index + 1 < len && bytes[index] == b'*' && bytes[index + 1] == b'*' {
-                    if let Some(end) = line[index + 2..].find("**") {
+                if index + 1 < len && bytes[index] == b'*' && bytes[index + 1] == b'*'
+                    && let Some(end) = line[index + 2..].find("**") {
                         let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
                         let _ = write!(line_out, "<b>{inner}</b>");
                         index += 4 + end;
                         continue;
                     }
-                }
-                if index + 1 < len && bytes[index] == b'_' && bytes[index + 1] == b'_' {
-                    if let Some(end) = line[index + 2..].find("__") {
+                if index + 1 < len && bytes[index] == b'_' && bytes[index + 1] == b'_'
+                    && let Some(end) = line[index + 2..].find("__") {
                         let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
                         let _ = write!(line_out, "<b>{inner}</b>");
                         index += 4 + end;
                         continue;
                     }
-                }
-                if bytes[index] == b'*' && (index == 0 || bytes[index - 1] != b'*') {
-                    if let Some(end) = line[index + 1..].find('*') {
-                        if end > 0 {
+                if bytes[index] == b'*' && (index == 0 || bytes[index - 1] != b'*')
+                    && let Some(end) = line[index + 1..].find('*')
+                        && end > 0 {
                             let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
                             let _ = write!(line_out, "<i>{inner}</i>");
                             index += 2 + end;
                             continue;
                         }
-                    }
-                }
-                if bytes[index] == b'`' && (index == 0 || bytes[index - 1] != b'`') {
-                    if let Some(end) = line[index + 1..].find('`') {
+                if bytes[index] == b'`' && (index == 0 || bytes[index - 1] != b'`')
+                    && let Some(end) = line[index + 1..].find('`') {
                         let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
                         let _ = write!(line_out, "<code>{inner}</code>");
                         index += 2 + end;
                         continue;
                     }
-                }
-                if bytes[index] == b'[' {
-                    if let Some(bracket_end) = line[index + 1..].find(']') {
+                if bytes[index] == b'['
+                    && let Some(bracket_end) = line[index + 1..].find(']') {
                         let text_part = &line[index + 1..index + 1 + bracket_end];
                         let after_bracket = index + 1 + bracket_end + 1;
-                        if after_bracket < len && bytes[after_bracket] == b'(' {
-                            if let Some(paren_end) = line[after_bracket + 1..].find(')') {
+                        if after_bracket < len && bytes[after_bracket] == b'('
+                            && let Some(paren_end) = line[after_bracket + 1..].find(')') {
                                 let url = &line[after_bracket + 1..after_bracket + 1 + paren_end];
                                 if is_http_url(url) {
                                     let text_html = Self::escape_html(text_part);
@@ -1002,17 +996,14 @@ impl TelegramChannel {
                                     continue;
                                 }
                             }
-                        }
                     }
-                }
-                if index + 1 < len && bytes[index] == b'~' && bytes[index + 1] == b'~' {
-                    if let Some(end) = line[index + 2..].find("~~") {
+                if index + 1 < len && bytes[index] == b'~' && bytes[index + 1] == b'~'
+                    && let Some(end) = line[index + 2..].find("~~") {
                         let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
                         let _ = write!(line_out, "<s>{inner}</s>");
                         index += 4 + end;
                         continue;
                     }
-                }
 
                 let ch = line[index..].chars().next().unwrap();
                 match ch {

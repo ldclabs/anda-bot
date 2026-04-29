@@ -54,6 +54,8 @@ Commands:
 - `daemon`: run the daemon in the foreground.
 - `stop`: stop a background daemon.
 - `restart`: stop and relaunch the background daemon.
+- `agent run --prompt "..."`: run a one-time text agent request.
+- `voice`: start a continuous microphone-to-agent voice conversation using CLI-side STT/TTS. Press Ctrl-C to stop.
 
 ## Home Directory Layout
 

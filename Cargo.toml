@@ -38,6 +38,7 @@ anda_cognitive_nexus = "0.7"
 anda_hippocampus = { version = "0.4" }
 anda_kip = "0.7"
 base64 = "0.22"
+cpal = { version = "0.17" }
 ciborium = "0.2"
 coset = "0.4"
 chrono = { version = "0.4", default-features = false, features = [

@@ -1,6 +1,8 @@
 use anda_core::BoxError;
 use structured_logger::{Builder, async_json::new_writer, get_env_level};
 
+pub mod voice;
+
 use crate::{
     daemon, gateway, tui,
     util::{

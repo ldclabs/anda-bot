@@ -459,11 +459,10 @@ async fn channel_message_from_context(
     }
 
     let mut attachments = Vec::new();
-    if let Some(media) = &ctx.media {
-        if let Some(resource) = download_media_resource(ctx, media, workspace).await {
+    if let Some(media) = &ctx.media
+        && let Some(resource) = download_media_resource(ctx, media, workspace).await {
             attachments.push(resource);
         }
-    }
 
     if content.trim().is_empty() && !attachments.is_empty() {
         content = attachment_fallback_text(&attachments[0]);

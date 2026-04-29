@@ -41,7 +41,7 @@ use crate::{
     tts::TtsManager,
 };
 
-const CONVERSATION_IDLE_MS: u64 = 30 * 60 * 1000; // 30 minutes
+const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 
@@ -59,7 +59,6 @@ struct AndaBotInner {
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     workspace_conversation: RwLock<HashMap<String, WorkDirState>>,
     home_dir: PathBuf,
-    tts_manager: Option<Arc<TtsManager>>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
 }
 
@@ -136,7 +135,6 @@ impl AndaBot {
                 completion_hooks: Arc::new(completion_hooks),
                 workspace_conversation: RwLock::new(HashMap::new()),
                 home_dir,
-                tts_manager,
                 transcription_manager,
             }),
         }
@@ -238,22 +236,6 @@ impl AndaBot {
             ))
         }
     }
-
-    async fn attach_tts_artifact(&self, output: &mut AgentOutput) -> Result<(), BoxError> {
-        let Some(manager) = &self.inner.tts_manager else {
-            return Ok(());
-        };
-        let text = agent_output_text_for_tts(output);
-        if text.trim().is_empty() {
-            return Ok(());
-        }
-
-        let bytes = manager.synthesize(text.trim()).await?;
-        output
-            .artifacts
-            .push(manager.audio_artifact(bytes, Some(format!("anda_bot_response_{}", unix_ms()))));
-        Ok(())
-    }
 }
 
 /// Implementation of the [`Agent`] trait for AndaBot.
@@ -322,15 +304,6 @@ impl Agent<AgentCtx> for AndaBot {
             .meta()
             .get_extra_as::<u64>("conversation")
             .unwrap_or(workspace_state.conversation_id);
-        let voice_response = ctx
-            .meta()
-            .get_extra_as::<bool>("voice_response")
-            .unwrap_or(false);
-        let wait_for_completion = voice_response
-            || ctx
-                .meta()
-                .get_extra_as::<bool>("wait_completion")
-                .unwrap_or(false);
         let prompt = self.prompt_with_audio_resources(prompt, &resources).await?;
 
         let mut input = ConversationInput {
@@ -559,15 +532,8 @@ impl Agent<AgentCtx> for AndaBot {
             topic: None,
         });
 
-        runner.set_unbound(!wait_for_completion);
-        let (completion_tx, completion_rx) = if wait_for_completion {
-            let (tx, rx) = tokio::sync::oneshot::channel::<AgentOutput>();
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
+        runner.set_unbound(true);
         tokio::spawn(async move {
-            let mut completion_tx = completion_tx;
             let task_result = async {
                 let mut first_round = true;
                 loop {
@@ -653,13 +619,6 @@ impl Agent<AgentCtx> for AndaBot {
                             conversation_task.active_at.store(now_ms, Ordering::SeqCst);
                             let is_done = runner.is_done();
                             res.conversation = Some(id);
-                            if voice_response
-                                && is_done
-                                && let Err(err) = assistant.attach_tts_artifact(&mut res).await
-                            {
-                                log::warn!("Failed to synthesize voice response: {err}");
-                            }
-                            let output_for_caller = is_done.then(|| res.clone());
 
                             conversation_task.on_completion(&ctx, &res).await;
                             if !is_done {
@@ -725,11 +684,6 @@ impl Agent<AgentCtx> for AndaBot {
                                 || conversation.status == ConversationStatus::Failed
                                 || is_done
                             {
-                                if let Some(output) = output_for_caller
-                                    && let Some(tx) = completion_tx.take()
-                                {
-                                    let _ = tx.send(output);
-                                }
                                 break;
                             }
                         }
@@ -745,13 +699,6 @@ impl Agent<AgentCtx> for AndaBot {
                                 &conversation,
                             )
                             .await;
-                            if let Some(tx) = completion_tx.take() {
-                                let _ = tx.send(AgentOutput {
-                                    conversation: Some(id),
-                                    failed_reason: Some(failed_reason),
-                                    ..Default::default()
-                                });
-                            }
                             break;
                         }
                     }
@@ -766,11 +713,6 @@ impl Agent<AgentCtx> for AndaBot {
                 log::error!("Error occurred in conversation {id}: {:?}", err);
             }
         });
-
-        if let Some(rx) = completion_rx {
-            return Ok(rx.await.unwrap_or(res));
-        }
-
         Ok(res)
     }
 }
@@ -914,20 +856,6 @@ fn prompt_with_resources(prompt: String, resources: &[Resource]) -> String {
             Documents::new("user_resources".to_string(), user_resources)
         )
     }
-}
-
-fn agent_output_text_for_tts(output: &AgentOutput) -> String {
-    if !output.content.trim().is_empty() {
-        return output.content.clone();
-    }
-
-    output
-        .chat_history
-        .iter()
-        .rev()
-        .find(|msg| msg.role == "assistant")
-        .and_then(Message::text)
-        .unwrap_or_default()
 }
 
 fn conversation_chat_history(conversation: &Conversation, skip: usize) -> Vec<Message> {
