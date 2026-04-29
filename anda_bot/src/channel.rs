@@ -1,3 +1,4 @@
+pub mod discord;
 pub mod irc;
 pub mod telegram;
 
@@ -18,7 +19,15 @@ pub fn build_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = irc::build_irc_channels(&cfg.irc)?;
 
-    for (channel_id, channel) in telegram::build_telegram_channels(&cfg.telegram, https_proxy)? {
+    for (channel_id, channel) in
+        telegram::build_telegram_channels(&cfg.telegram, https_proxy.clone())?
+    {
+        if channels.insert(channel_id.clone(), channel).is_some() {
+            return Err(format!("duplicate channel id '{channel_id}'").into());
+        }
+    }
+
+    for (channel_id, channel) in discord::build_discord_channels(&cfg.discord, https_proxy)? {
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate channel id '{channel_id}'").into());
         }

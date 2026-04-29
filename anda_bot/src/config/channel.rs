@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::{default_true, normalize_list, normalize_optional, normalize_string};
 
 pub const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
+pub const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ChannelSettings {
@@ -11,6 +12,87 @@ pub struct ChannelSettings {
 
     #[serde(default)]
     pub telegram: Vec<TelegramChannelSettings>,
+
+    #[serde(default)]
+    pub discord: Vec<DiscordChannelSettings>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DiscordChannelSettings {
+    #[serde(default)]
+    pub id: Option<String>,
+
+    #[serde(default)]
+    pub bot_token: String,
+
+    #[serde(default)]
+    pub username: Option<String>,
+
+    #[serde(default)]
+    pub guild_id: Option<String>,
+
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+
+    #[serde(default)]
+    pub listen_to_bots: bool,
+
+    #[serde(default)]
+    pub mention_only: bool,
+
+    #[serde(default = "default_discord_api_base")]
+    pub api_base: String,
+
+    #[serde(default = "default_true")]
+    pub ack_reactions: bool,
+}
+
+impl Default for DiscordChannelSettings {
+    fn default() -> Self {
+        Self {
+            id: None,
+            bot_token: String::new(),
+            username: None,
+            guild_id: None,
+            allowed_users: Vec::new(),
+            listen_to_bots: false,
+            mention_only: false,
+            api_base: default_discord_api_base(),
+            ack_reactions: true,
+        }
+    }
+}
+
+impl DiscordChannelSettings {
+    pub fn channel_id(&self) -> String {
+        self.id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    pub fn label(&self, index: usize) -> String {
+        let channel_id = self.channel_id();
+        if !channel_id.is_empty() {
+            channel_id
+        } else {
+            format!("#{}", index + 1)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
+            && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.username).is_none()
+            && normalize_optional(&self.guild_id).is_none()
+            && normalize_list(&self.allowed_users).is_empty()
+            && !self.listen_to_bots
+            && !self.mention_only
+            && self.api_base.trim() == DEFAULT_DISCORD_API_BASE
+            && self.ack_reactions
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -175,4 +257,8 @@ fn default_port() -> u16 {
 
 fn default_telegram_api_base() -> String {
     DEFAULT_TELEGRAM_API_BASE.to_string()
+}
+
+fn default_discord_api_base() -> String {
+    DEFAULT_DISCORD_API_BASE.to_string()
 }

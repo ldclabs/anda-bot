@@ -91,11 +91,13 @@ model:
 
 channels:
 	irc: []
+	telegram: []
+	discord: []
 ```
 
 激活模型必须能解析到一个未禁用的 provider，并且至少补齐 `family`、`model`、`api_base`、`api_key`。
 
-IRC 配置是可选的。启用后，频道消息或私聊会被转换成 agent prompt，对应回复会回发到原来的频道、目标用户或线程。
+IRC、Telegram、Discord 配置都是可选的。启用后，频道消息或私聊会被转换成 agent prompt，对应回复会回发到原来的频道、目标用户或线程。
 
 ## 架构说明
 
@@ -106,7 +108,7 @@ IRC 配置是可选的。启用后，频道消息或私聊会被转换成 agent 
 - [anda_bot/src/tui](anda_bot/src/tui)：终端内联聊天 UI。
 - [anda_bot/src/engine](anda_bot/src/engine)：Agent 运行时、工具注册与会话接口。
 - [anda_bot/src/brain](anda_bot/src/brain)：Hippocampus 的 formation / recall 集成。
-- [anda_bot/src/channel](anda_bot/src/channel)：IRC 接入、路由、重试与回发。
+- [anda_bot/src/channel](anda_bot/src/channel)：IRC、Telegram、Discord 接入、路由、重试与回发。
 - [anda_bot/src/cron](anda_bot/src/cron)：持久化调度器、任务存储与执行历史。
 - [anda_bot/src/gateway](anda_bot/src/gateway)：本地 HTTP API 与客户端。
 

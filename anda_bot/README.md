@@ -2,7 +2,7 @@
 
 Born of panda. Awakened as Anda.
 
-Anda Bot is an AI agent with long-term memory, local tool use, and a self-evolving runtime powered by ANDA Hippocampus. The executable packages that agent with a local daemon, a terminal chat UI, an optional IRC bridge, and a persistent cron scheduler.
+Anda Bot is an AI agent with long-term memory, local tool use, and a self-evolving runtime powered by ANDA Hippocampus. The executable packages that agent with a local daemon, a terminal chat UI, optional IRC/Telegram/Discord bridges, and a persistent cron scheduler.
 
 ## What It Does
 
@@ -10,7 +10,7 @@ Anda Bot is an AI agent with long-term memory, local tool use, and a self-evolvi
 - Hosts both the agent engine and the Hippocampus memory APIs in the same process.
 - Persists conversations, channel messages, cron jobs, run history, keys, and object storage state under a local home directory.
 - Provides an inline TUI chat client that can launch or reconnect to the daemon automatically.
-- Optionally listens on IRC channels, maps messages into agent conversations, and posts completions back to the same route.
+- Optionally listens on IRC, Telegram, or Discord channels, maps messages into agent conversations, and posts completions back to the same route.
 - Exposes agent tools for memory recall, shell execution, notes, todos, file search/read/write/edit, conversation history, skills, and cron management.
 
 ## Quick Start
@@ -75,7 +75,7 @@ By default Anda Bot stores runtime state in `~/.anda`:
 
 Notes:
 
-- `config.yaml` controls the gateway address, model providers, proxy, sandbox flag, and IRC channels.
+- `config.yaml` controls the gateway address, model providers, proxy, sandbox flag, and optional channel bridges.
 - `keys/` stores the daemon identity key and the local user key.
 - `db/` stores AndaDB-backed conversation, memory, channel, and cron state.
 - `logs/anda-daemon.log` is used when a daemon is started in the background.
@@ -127,9 +127,9 @@ model:
 
 Provider ordering matters only for fallback preference. The active provider is loaded first; other non-disabled providers follow behind it.
 
-## IRC Channels
+## Channel Bridges
 
-IRC support is configured under `channels.irc`.
+IRC, Telegram, and Discord support are configured under `channels.irc`, `channels.telegram`, and `channels.discord`.
 
 ```yaml
 channels:
@@ -144,14 +144,23 @@ channels:
 			allowed_users:
 				- "*"
 			verify_tls: true
+	discord:
+		- id: server
+			bot_token: "..."
+			guild_id: "123456789012345678"
+			allowed_users:
+				- "111111111111111111"
+			mention_only: true
 ```
 
 Behavior:
 
 - Each IRC entry must include `server` and `nickname`.
+- Each Telegram or Discord entry must include `bot_token`.
 - `id` is optional; if omitted, the server name becomes the channel runtime identifier.
-- `allowed_users` can restrict who may trigger the bot. Use `"*"` to allow any nickname.
+- `allowed_users` can restrict who may trigger the bot. Use `"*"` to allow anyone.
 - Messages are normalized for IRC output, kept plain-text, and threaded back to the original reply target.
+- Discord file attachments are passed to the agent as resources, and outgoing resources are uploaded when possible.
 - Channel routes are persisted so later completions can continue the same conversation.
 
 ## TUI Notes
@@ -173,7 +182,7 @@ At a high level the daemon starts four collaborating parts:
 1. `brain`: a local Hippocampus space mounted at `/v1/anda_bot/...` for formation, recall, and memory management.
 2. `engine`: the Anda agent runtime, served under `/engine/{id}` with tools for shell, files, notes, todos, cron, skills, and memory recall.
 3. `cron`: a persistent scheduler that can run shell jobs or submit prompts back into the agent runtime.
-4. `channel`: an IRC runtime that ingests messages, binds them to conversation IDs, and sends completions back through a completion hook.
+4. `channel`: an IRC/Telegram/Discord runtime that ingests messages, binds them to conversation IDs, and sends completions back through a completion hook.
 
 The daemon stores the current working directory as the agent work directory. File tools always operate relative to that working directory. Shell execution runs there as well unless `sandbox: true`, in which case shell commands are routed into the local sandbox runtime.
 

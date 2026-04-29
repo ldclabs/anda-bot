@@ -91,11 +91,13 @@ model:
 
 channels:
 	irc: []
+	telegram: []
+	discord: []
 ```
 
 The active provider must resolve to a non-disabled provider with `family`, `model`, `api_base`, and `api_key` filled in.
 
-IRC channels are optional. When configured, incoming channel or DM traffic is translated into agent prompts and the resulting completions are sent back to the original route.
+IRC, Telegram, and Discord channels are optional. When configured, incoming channel or DM traffic is translated into agent prompts and the resulting completions are sent back to the original route.
 
 ## Architecture
 
@@ -106,7 +108,7 @@ Key implementation areas:
 - [anda_bot/src/tui](anda_bot/src/tui): inline terminal chat UI.
 - [anda_bot/src/engine](anda_bot/src/engine): agent runtime, tool registration, and conversation APIs.
 - [anda_bot/src/brain](anda_bot/src/brain): Hippocampus integration for formation and recall.
-- [anda_bot/src/channel](anda_bot/src/channel): IRC ingestion, routing, retries, and completion delivery.
+- [anda_bot/src/channel](anda_bot/src/channel): IRC, Telegram, and Discord ingestion, routing, retries, and completion delivery.
 - [anda_bot/src/cron](anda_bot/src/cron): persistent scheduler, job storage, and run history.
 - [anda_bot/src/gateway](anda_bot/src/gateway): local HTTP API surface and client.
 

@@ -171,6 +171,26 @@ impl Config {
             }
         }
 
+        let mut seen_discord_ids = BTreeSet::new();
+        for (index, discord) in self.channels.discord.iter().enumerate() {
+            if discord.is_empty() {
+                continue;
+            }
+
+            let base = format!("channels.discord[{index}]");
+            if discord.bot_token.trim().is_empty() {
+                issues.push(format!("{base}.bot_token"));
+            }
+            if discord.api_base.trim().is_empty() {
+                issues.push(format!("{base}.api_base"));
+            }
+
+            let channel_id = discord.channel_id();
+            if !channel_id.is_empty() && !seen_discord_ids.insert(channel_id) {
+                issues.push(format!("{base}.id"));
+            }
+        }
+
         issues
     }
 
@@ -245,6 +265,7 @@ model:
 channels:
  irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
  telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
+ discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
 "##,
         )
         .unwrap();
@@ -281,6 +302,21 @@ channels:
         );
         assert!(config.channels.telegram[0].mention_only);
         assert!(!config.channels.telegram[0].ack_reactions);
+        assert_eq!(config.channels.discord.len(), 1);
+        assert_eq!(config.channels.discord[0].id.as_deref(), Some("server"));
+        assert_eq!(config.channels.discord[0].bot_token, "discord-token");
+        assert_eq!(
+            config.channels.discord[0].username.as_deref(),
+            Some("anda-discord")
+        );
+        assert_eq!(
+            config.channels.discord[0].guild_id.as_deref(),
+            Some("987654321")
+        );
+        assert_eq!(config.channels.discord[0].allowed_users, vec!["111", "222"]);
+        assert!(config.channels.discord[0].listen_to_bots);
+        assert!(config.channels.discord[0].mention_only);
+        assert!(!config.channels.discord[0].ack_reactions);
         assert!(config.setup_issues().is_empty());
     }
 
@@ -319,5 +355,6 @@ channels:
         assert!(template.contains("model:"));
         assert!(template.contains("channels:"));
         assert!(template.contains("irc:"));
+        assert!(template.contains("discord:"));
     }
 }

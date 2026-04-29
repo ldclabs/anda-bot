@@ -83,6 +83,7 @@ model:
 channels:
   irc: []
   telegram: []
+  discord: []
   # irc:
   #   - id: libera
   #     server: irc.libera.chat
@@ -102,4 +103,15 @@ channels:
   #       - "*"
   #     mention_only: false
   #     api_base: https://api.telegram.org
+  #     ack_reactions: true
+  # discord:
+  #   - id: server
+  #     bot_token: ""
+  #     username: anda-discord
+  #     guild_id:
+  #     allowed_users:
+  #       - "*"
+  #     listen_to_bots: false
+  #     mention_only: true
+  #     api_base: https://discord.com/api/v10
   #     ack_reactions: true
