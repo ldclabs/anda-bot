@@ -189,7 +189,7 @@ impl ChatSession {
     }
 
     async fn ping(&mut self) {
-        if !self.is_active() || self.last_ping.elapsed() < PING_INTERVAL {
+        if self.last_ping.elapsed() < PING_INTERVAL {
             return;
         }
 
@@ -213,10 +213,14 @@ impl ChatSession {
             return false;
         };
 
-        if !self.is_active()
-            || (latest_conv_id.is_none() && self.last_poll.elapsed() < POLL_INTERVAL)
-        {
+        if latest_conv_id.is_none() && self.last_poll.elapsed() < POLL_INTERVAL {
             return false;
+        }
+
+        if let Some(conv) = &self.conversation {
+            if conv_id == conv._id && !self.is_active() {
+                return false;
+            }
         }
 
         self.last_poll = Instant::now();

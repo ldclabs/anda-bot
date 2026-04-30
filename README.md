@@ -1,40 +1,97 @@
-# anda-bot
+# Anda Bot
 
-[English](README.md) | [简体中文](README_CN.md)
+[English](README.md) | [简体中文](README_cn.md)
 
-anda-bot is an AI agent with long-term memory, local tool use, and a self-evolving runtime powered by ANDA Hippocampus.
+> Born of panda. Awakened as Anda.
 
-This repository currently exposes that agent through [anda_bot](anda_bot/README.md), the package that ships the `anda` binary.
+I am Anda Bot: a local AI agent with a long-term memory brain. Most agents are useful for one conversation and then start over. I am built to remember, recall, use tools on your computer, and keep improving as we work together.
 
-## Overview
+My most important difference is [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus), the memory engine behind me. Hippocampus turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can build context, notice relationships, and carry useful history into future conversations.
 
-The project combines several pieces into one local runtime:
+## Why Use Me
 
-- An inline terminal UI for chat.
-- A local daemon with an HTTP gateway.
-- A long-term memory service built on ANDA Hippocampus.
-- A tool-enabled agent runtime backed by anda_engine.
-- Persistent conversation, channel, and cron storage powered by AndaDB.
-- Optional IRC ingestion and response delivery.
-- A persistent cron scheduler for shell jobs or agent prompts.
+- I remember through a graph brain, not a pile of disconnected chat logs.
+- I can recall what matters from past work when you ask, or when it helps the current task.
+- I can use local tools for shell commands, files, notes, todos, skills, and scheduled jobs.
+- I can live in your terminal, and optionally in IRC, Telegram, WeChat, Discord, or Lark/Feishu.
+- I can support voice conversations when transcription and speech output are configured.
+- I keep my runtime state under your local home directory by default.
 
-The daemon merges two HTTP surfaces on the same local address:
+## My Memory Brain
 
-- `/engine/{id}` for the agent runtime.
-- `/v1/anda_bot/...` for Hippocampus memory and space management.
+Anda Hippocampus is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
+
+- **Formation:** conversations are encoded into structured memories: entities, relationships, events, preferences, and patterns.
+- **Recall:** I can ask the memory graph natural-language questions and receive context-rich answers instead of raw search hits.
+- **Maintenance:** Hippocampus can consolidate fragments, merge duplicates, decay stale knowledge, and preserve timelines when facts change.
+
+For you, this means a simple habit works well: tell me the things that should remain true across sessions, correct me when something changes, and ask me what I remember when you want continuity. If you once preferred one workflow and now prefer another, I should learn the evolution instead of blindly overwriting the past.
 
 ## Quick Start
 
 Requirements:
 
 - A recent Rust toolchain.
-- At least one configured model provider API key.
+- At least one model provider API key.
 
-Run the TUI:
+Run me from this repository:
 
 ```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
 cargo run -p anda_bot --
 ```
+
+On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then press Enter in the terminal UI.
+
+Minimal model configuration:
+
+```yaml
+model:
+  active: DeepSeek
+  providers:
+    DeepSeek:
+      family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+The `hippocampus` label lets the memory brain prefer that provider for memory work. If no provider has that label, I use the active model.
+
+Use a separate home directory when you want an isolated profile:
+
+```bash
+cargo run -p anda_bot -- --home /path/to/.anda
+```
+
+## Chat With Me
+
+When the terminal UI is running:
+
+- Press Enter to send.
+- Press Shift+Enter to insert a newline.
+- Press Ctrl+U to clear the input.
+- Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
+- Use `/reload` after editing `config.yaml`.
+- Use `/stop` or `/cancel` to interrupt the current response.
+- Use `/steer ...` to nudge an in-progress response.
+- Press Esc to show status, and Ctrl+C to quit.
+
+Successful conversation turns are submitted to Hippocampus for memory formation in the background. You do not need to manage memory files by hand.
+
+Good prompts for long-term memory:
+
+```text
+Remember that I prefer concise release notes with a short risk section.
+What do you remember about the payment migration project?
+I used to use provider A, but now provider B is the default for this workspace.
+When we talk about Alice, she means the designer on the mobile team.
+```
+
+## Useful Commands
 
 Run the daemon in the foreground:
 
@@ -42,99 +99,83 @@ Run the daemon in the foreground:
 cargo run -p anda_bot -- daemon
 ```
 
-Stop or restart a background daemon on Unix:
+Stop or restart the background daemon on Unix:
 
 ```bash
 cargo run -p anda_bot -- stop
 cargo run -p anda_bot -- restart
 ```
 
-The runtime home defaults to `~/.anda`. Override it with `--home`:
+Send a one-time prompt without opening the terminal UI:
 
 ```bash
-cargo run -p anda_bot -- --home /path/to/.anda
+cargo run -p anda_bot -- agent run --prompt "Summarize what you remember about my current project"
 ```
 
-## First-Run Behavior
+Start a voice conversation:
 
-On first launch, the binary creates the home directory and writes a starter config file to `~/.anda/config.yaml` when needed.
+```bash
+cargo run -p anda_bot -- voice --record-secs 8
+```
 
-If the active model provider is incomplete, the TUI stays in setup mode and reports the missing keys. Edit the config file, save it, then press Enter in the TUI to reload.
+Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output.
 
-The runtime also creates these subdirectories as needed:
+## Put Me Where You Work
 
-- `keys/` for the daemon key and local user key.
-- `db/` for object-store and database state.
-- `logs/` for background daemon logs.
-- `skills/` for runtime-loaded skills.
-- `sandbox/` for shell isolation when sandboxing is enabled.
+You can keep me in the terminal, or connect me to chat channels by editing `~/.anda/config.yaml`.
 
-## Configuration Model
+Supported channel families:
 
-The canonical template is [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml).
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / Feishu
 
-Core fields:
+Minimal Telegram example:
 
 ```yaml
-addr: 127.0.0.1:8042
-sandbox: false
-# https_proxy: http://127.0.0.1:7890
-
-model:
-	active: DeepSeek
-	providers:
-		DeepSeek:
-			family: anthropic
-			model: "deepseek-v4-pro"
-			api_base: "https://api.deepseek.com/anthropic"
-			api_key: "..."
-
 channels:
-	irc: []
-	telegram: []
-	discord: []
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: anda_bot
+      allowed_users:
+        - "*"
+      mention_only: false
 ```
 
-The active provider must resolve to a non-disabled provider with `family`, `model`, `api_base`, and `api_key` filled in.
+See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel, transcription, and TTS examples.
 
-IRC, Telegram, and Discord channels are optional. When configured, incoming channel or DM traffic is translated into agent prompts and the resulting completions are sent back to the original route.
+## Files, Skills, And Automations
 
-## Architecture
+My local runtime creates a working area at `~/.anda/workspace`. File and shell tools operate there by default. If `sandbox: true`, shell execution is routed through `~/.anda/sandbox`.
 
-Key implementation areas:
+You can also add runtime skills under `~/.anda/skills`. Skills let me load focused instructions and workflows as the system grows. Cron tools let me schedule shell commands or future agent prompts, with run history stored locally.
 
-- [anda_bot/src/main.rs](anda_bot/src/main.rs): CLI entrypoint and command dispatch.
-- [anda_bot/src/daemon.rs](anda_bot/src/daemon.rs): runtime directory management, key loading, local database startup, and service orchestration.
-- [anda_bot/src/tui](anda_bot/src/tui): inline terminal chat UI.
-- [anda_bot/src/engine](anda_bot/src/engine): agent runtime, tool registration, and conversation APIs.
-- [anda_bot/src/brain](anda_bot/src/brain): Hippocampus integration for formation and recall.
-- [anda_bot/src/channel](anda_bot/src/channel): IRC, Telegram, and Discord ingestion, routing, retries, and completion delivery.
-- [anda_bot/src/cron](anda_bot/src/cron): persistent scheduler, job storage, and run history.
-- [anda_bot/src/gateway](anda_bot/src/gateway): local HTTP API surface and client.
+## Local Data And Privacy
 
-Notable runtime behavior:
-
-- Conversation history is stored persistently and exposed to the TUI through a dedicated conversations tool.
-- The engine registers tools for memory recall, shell, notes, todos, file read/search/edit/write, skills, and cron control.
-- File tools operate relative to the current working directory where `anda` is launched.
-- Shell execution uses the working directory by default, or the local sandbox when `sandbox: true`.
-- Cron jobs can run either shell commands or agent prompts, and their run history is persisted.
-
-## Repository Layout
+By default I store state under `~/.anda`:
 
 ```text
-.
-├── Cargo.toml
-├── README.md
-├── README_CN.md
-└── anda_bot/
-		├── Cargo.toml
-		├── README.md
-		├── assets/
-		└── src/
+~/.anda/
+  config.yaml
+  db/
+  keys/
+  logs/
+  channels/
+  sandbox/
+  skills/
+  workspace/
 ```
 
-For package-specific usage details, configuration examples, and TUI notes, see [anda_bot/README.md](anda_bot/README.md).
+The memory graph, conversations, channel state, cron jobs, keys, logs, and workspace data live there. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
+
+## Learn More
+
+- [Anda Bot package guide](anda_bot/README.md)
+- [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)
+- [Anda Hippocampus product site](https://brain.anda.ai/)
 
 ## License
 

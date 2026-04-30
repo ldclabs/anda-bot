@@ -138,7 +138,7 @@ pub fn infer_resource(mut resource: Resource) -> Resource {
     resource
 }
 
-pub fn file_name_for_resource(resource: &Resource) -> Cow<str> {
+pub fn file_name_for_resource<'a>(resource: &'a Resource) -> Cow<'a, str> {
     if !resource.name.trim().is_empty() {
         Cow::Borrowed(resource.name.trim())
     } else if let Some(t) = infer_from_resource(&resource) {
