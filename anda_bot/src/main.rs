@@ -11,6 +11,7 @@ mod cron;
 mod daemon;
 mod engine;
 mod gateway;
+mod logger;
 mod transcription;
 mod tts;
 mod tui;
@@ -96,10 +97,18 @@ async fn main() -> Result<(), BoxError> {
     };
 
     tokio::fs::create_dir_all(&home).await?;
+    let daemon = load_daemon(home).await?;
+
+    if matches!(command, Some(Commands::Daemon)) {
+        logger::init_daily_json_logger(daemon.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)?;
+    } else {
+        logger::init_daily_json_logger(daemon.logs_dir_path(), logger::CLI_LOG_FILE_PREFIX)?;
+    }
 
     match command {
         None => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting CLI at {}", daemon.base_url());
+
             let ed25519_secret =
                 load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
             let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
@@ -107,7 +116,8 @@ async fn main() -> Result<(), BoxError> {
             cli.run().await?
         }
         Some(Commands::Daemon) => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting daemon at {}", daemon.base_url());
+
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
 
@@ -120,7 +130,8 @@ async fn main() -> Result<(), BoxError> {
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         Some(Commands::Stop) => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting CLI with command 'stop' at {}", daemon.base_url());
+
             match daemon.stop_background(Duration::from_secs(10)).await? {
                 daemon::StopState::NotRunning => println!("anda daemon is not running"),
                 daemon::StopState::Stopped(pid) => {
@@ -129,7 +140,11 @@ async fn main() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Restart) | Some(Commands::Reload) => {
-            let daemon = load_daemon(home).await?;
+            log::info!(
+                "Starting CLI with command 'restart' at {}",
+                daemon.base_url()
+            );
+
             let stop_state = daemon.stop_background(Duration::from_secs(10)).await?;
             let client = build_control_client(&daemon).await?;
 
@@ -160,7 +175,8 @@ async fn main() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Tool(cmd)) => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting CLI with command 'tool' at {}", daemon.base_url());
+
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
 
@@ -181,7 +197,8 @@ async fn main() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Agent(cmd)) => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting CLI with command 'agent' at {}", daemon.base_url());
+
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
 
@@ -197,7 +214,8 @@ async fn main() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Voice(cmd)) => {
-            let daemon = load_daemon(home).await?;
+            log::info!("Starting CLI with command 'voice' at {}", daemon.base_url());
+
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
             cli::voice::run_voice_loop(&client, &daemon.cfg, cmd).await?;

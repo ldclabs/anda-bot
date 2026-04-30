@@ -75,6 +75,7 @@ impl Hippocampus {
             Err(e) => {
                 if e.to_string().contains("not found") {
                     log::warn!(
+                        target: "hippocampus",
                         name = "brain";
                         "Space '{}' not found, creating a new one",
                         config::ANDA_BOT_SPACE_ID
@@ -90,6 +91,7 @@ impl Hippocampus {
                         )
                         .await?;
                     log::warn!(
+                        target: "hippocampus",
                         name = "brain";
                         "Space '{}' created successfully",
                         config::ANDA_BOT_SPACE_ID

@@ -1,5 +1,4 @@
 use anda_core::BoxError;
-use structured_logger::{Builder, async_json::new_writer, get_env_level};
 
 pub mod voice;
 
@@ -10,8 +9,6 @@ use crate::{
         key::{ClaimsSetBuilder, Ed25519Key, iana},
     },
 };
-
-const CLI_LOG_FILE: &str = "anda-cli.log";
 
 pub struct Cli {
     client: gateway::Client,
@@ -35,15 +32,6 @@ impl Cli {
     }
 
     pub async fn run(self) -> Result<(), BoxError> {
-        let log = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.daemon.logs_dir_path().join(CLI_LOG_FILE))
-            .await?;
-        // Initialize structured logging with JSON format
-        Builder::with_level(&get_env_level().to_string())
-            .with_target_writer("*", new_writer(log))
-            .init();
         tui::run(self.daemon, self.client).await
     }
 }

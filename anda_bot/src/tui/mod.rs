@@ -159,7 +159,10 @@ impl App {
     }
 
     fn log_file_path(&self) -> PathBuf {
-        self.home.join("logs").join("anda-daemon.log")
+        crate::logger::current_daily_log_file_path(
+            self.home.join("logs"),
+            crate::logger::DAEMON_LOG_FILE_PREFIX,
+        )
     }
 
     fn setup_required(&self) -> bool {

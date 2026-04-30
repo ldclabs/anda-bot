@@ -8,24 +8,21 @@ use anda_engine_server::shutdown_signal;
 use anda_object_store::MetaStoreBuilder;
 use object_store::{ObjectStore, local::LocalFileSystem};
 use std::{
-    fs::OpenOptions as StdOpenOptions,
     io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Arc,
     time::{Duration, Instant},
 };
-use structured_logger::{Builder, async_json::new_writer, get_env_level};
 use tokio::{fs::OpenOptions, io::AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::{brain, channel, config::Config, cron, engine, gateway, util};
+use crate::{brain, channel, config::Config, cron, engine, gateway, logger, util};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
-const DAEMON_LOG_FILE: &str = "anda-daemon.log";
 
 pub struct Daemon {
     pub home: PathBuf,
@@ -98,7 +95,7 @@ impl Daemon {
     }
 
     pub fn log_file_path(&self) -> PathBuf {
-        self.logs_dir_path().join(DAEMON_LOG_FILE)
+        logger::current_daily_log_file_path(self.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)
     }
 
     pub async fn read_pid_file(&self) -> Result<Option<u32>, BoxError> {
@@ -144,14 +141,6 @@ impl Daemon {
         std::fs::create_dir_all(&logs_dir)?;
 
         let log_path = self.log_file_path();
-        let stdout = StdOpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
-        let stderr = StdOpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)?;
 
         let mut command = Command::new(exe);
         command
@@ -159,8 +148,8 @@ impl Daemon {
             .arg(&self.home)
             .arg("daemon")
             .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         configure_background_daemon_command(&mut command);
 
         let child = command.spawn()?;
@@ -200,11 +189,6 @@ impl Daemon {
         id_key: util::key::Ed25519Key,
         user_pubkey: util::key::Ed25519PubKey,
     ) -> Result<(), BoxError> {
-        // Initialize structured logging with JSON format
-        Builder::with_level(&get_env_level().to_string())
-            .with_target_writer("*", new_writer(tokio::io::stdout()))
-            .init();
-
         let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
         let setup_issues = self.cfg.setup_issues();
         if !setup_issues.is_empty() {
