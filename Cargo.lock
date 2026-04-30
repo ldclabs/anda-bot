@@ -139,7 +139,7 @@ dependencies = [
  "ic-ed25519",
  "ic_auth_types",
  "ic_cose_types",
- "infer 0.21.0",
+ "infer2",
  "libc",
  "log",
  "mimalloc",
@@ -389,7 +389,7 @@ dependencies = [
  "ic_cose_types",
  "ic_tee_cdk",
  "ic_tee_gateway_sdk",
- "infer 0.19.0",
+ "infer",
  "log",
  "mime",
  "moka",
@@ -3904,9 +3904,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "infer"
+name = "infer2"
 version = "0.21.0"
-source = "git+https://github.com/ldclabs/infer.git?rev=92e99356c18826a8294cd751985bd6d1277d8ff6#92e99356c18826a8294cd751985bd6d1277d8ff6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1846c7f6a23ab4cb14fbd7ebcf0524fd5db5a1e18ece180118a12690f3a103"
 dependencies = [
  "cfb 0.12.1",
 ]

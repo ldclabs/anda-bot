@@ -60,6 +60,7 @@ ic_cose_types = "0.9"
 ic_cose = "0.9"
 ic_auth_types = "0.8"
 ic-ed25519 = "0.6"
+infer2 = { version = "0.21" }
 object_store = { version = "0.13" }
 reqwest = { version = "0.13", features = [
   "rustls",
@@ -90,7 +91,6 @@ unicode-width = "0.2"
 tokio-rustls = "0.26"
 webpki-roots = "1"
 weixin-agent = "0.1"
-infer = { git = "https://github.com/ldclabs/infer.git", rev = "92e99356c18826a8294cd751985bd6d1277d8ff6" }
 
 [patch.crates-io]
 boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }

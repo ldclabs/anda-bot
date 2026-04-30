@@ -6,8 +6,8 @@ use std::{
     sync::RwLock,
 };
 
-pub type MimeKind = infer::MatcherType;
-pub type InferType = infer::Type;
+pub type MimeKind = infer2::MatcherType;
+pub type InferType = infer2::Type;
 
 #[derive(Debug, Default)]
 pub struct ChannelWorkspace {
@@ -80,15 +80,15 @@ impl ChannelWorkspace {
 
 pub fn infer_from(file_name: &str, mime_type: Option<&str>) -> Option<InferType> {
     mime_type
-        .and_then(|mime| infer::get_from_mime(mime))
-        .or_else(|| infer::get_from_filename(file_name))
+        .and_then(|mime| infer2::get_from_mime(mime))
+        .or_else(|| infer2::get_from_filename(file_name))
 }
 
 pub fn infer_from_resource(resource: &Resource) -> Option<InferType> {
     resource
         .blob
         .as_ref()
-        .and_then(|blob| infer::get(&blob.0))
+        .and_then(|blob| infer2::get(&blob.0))
         .or_else(|| infer_from(&resource.name, resource.mime_type.as_deref()))
 }
 
