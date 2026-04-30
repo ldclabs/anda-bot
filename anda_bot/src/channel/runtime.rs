@@ -187,10 +187,6 @@ impl ChannelRuntime {
         Arc::new(self.inner.clone())
     }
 
-    pub fn channel_workspace(&self, channel_name: &str) -> PathBuf {
-        self.inner.home_dir.join(channel_name)
-    }
-
     pub async fn serve(
         self,
         cancel_token: CancellationToken,

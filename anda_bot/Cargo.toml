@@ -32,6 +32,7 @@ futures-util = { workspace = true }
 ic-ed25519 = { workspace = true }
 ic_auth_types = { workspace = true }
 ic_cose_types = { workspace = true }
+infer = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }

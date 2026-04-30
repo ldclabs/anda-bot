@@ -26,7 +26,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
 dependencies = [
- "crypto-common 0.1.6",
+ "crypto-common 0.1.7",
  "generic-array",
 ]
 
@@ -139,6 +139,7 @@ dependencies = [
  "ic-ed25519",
  "ic_auth_types",
  "ic_cose_types",
+ "infer 0.21.0",
  "libc",
  "log",
  "mimalloc",
@@ -184,9 +185,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.16"
+version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5f479cefb32734d0a6f7e8236462793e266ab0f72b630cc7143699f9ca432f8"
+checksum = "25e4695c1f9cc9e6f5f6a46775f4ac1756172f30813acece38e2c08ab06af24c"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -206,9 +207,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b9bcc2767bbeebddce680cb3783e93bfa823beac86f3555c8de2d106295f69b"
+checksum = "9ef488c2dbd259ca0208497b8f37e21c33fd7f485519bbd77c1e2ba89f785224"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -233,9 +234,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.27"
+version = "0.7.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1d78cd608371034df901a0eeec906e97c671bb40ddb1b87587701ed4e72c8f9"
+checksum = "1005a61f1bfe5ee97b266a36efa7ef2378cbef8b638b9ea11d5772407edbfb00"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -264,9 +265,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a11125adab71865e8e55f423d1353353f36ee98b2bccae78d68725a971535d"
+checksum = "69309baef499d81bf08fbbfe2c7145c5a353e4b726b884ccf393bf3020ef57a9"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -292,9 +293,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_hnsw"
-version = "0.4.10"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d857c05df7dad8fd75d0cbff86cd6899d7e9be2f7bfc32405f6f8e7862a0441"
+checksum = "ef7e160797255a74fa41d1929228314a8981d6f8013d157985aa9d1043698b73"
 dependencies = [
  "ciborium",
  "croaring",
@@ -304,7 +305,7 @@ dependencies = [
  "ordered-float 5.3.0",
  "papaya",
  "parking_lot",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rustc-hash",
  "serde",
  "smallvec",
@@ -313,9 +314,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12d67a27df262175fac93d9ed4c282d9f4ba8876341cdfb554f72d3252522e56"
+checksum = "8ffb62fe1f2affa41034a6ea402fa866556e6c24ef2e8fbf062dbc0cf9e00cfb"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",
@@ -323,16 +324,15 @@ dependencies = [
  "half 2.7.1",
  "ic_auth_types",
  "serde",
- "serde_bytes",
  "serde_json",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.5.13"
+version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaa7ca90ee7364908e46fe1d9d5971d0cfeec4dadcbfa33246594a8423429371"
+checksum = "31b7d8b59974d03d4029b1f01e59cdcec25273b76ae70646b5e78528068bb5ac"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -348,9 +348,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_utils"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86b658cb43128d9c846f21f10b6705ccea43402e3fb2544690d778a18c1c3657"
+checksum = "68c9ac24d3495bf61cd6e426262c44933597f6ee24316bd740f265e7aa3b5b4d"
 dependencies = [
  "ciborium",
  "half 2.7.1",
@@ -360,9 +360,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.23"
+version = "0.11.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "030796ef90b3f464778183ea96165908fc10427a4edff1baab94665b9959d467"
+checksum = "1ff9e02823f0177d232f0d28a1ccdb686e13672ce92e49b17c158c4c0b6cc444"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -389,7 +389,7 @@ dependencies = [
  "ic_cose_types",
  "ic_tee_cdk",
  "ic_tee_gateway_sdk",
- "infer",
+ "infer 0.19.0",
  "log",
  "mime",
  "moka",
@@ -435,9 +435,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.11"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4383b08c45ade8f93f4c49179b29bc944f6665f15dd08b86cb04fda93b39a360"
+checksum = "0ec16e37686e1421b25ab7078b23fc7a269456e2d4b3f05d538d31853b50e70a"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -470,9 +470,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.11"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6865f464b9c1353592b9ad7d7ec0db05eb7f842c6ee6672cbb433825ae42f2ca"
+checksum = "b91b9913d9118a0d148df28eec34998b22aefeb090b597bad82a269a74335269"
 dependencies = [
  "async-trait",
  "chrono",
@@ -485,9 +485,9 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92fc4f87270a7ad883d545481e731e25489857034478d7525db5e65fd4e780a1"
+checksum = "ef9f79b3b1948de99684d1b0fe76e4ca977f2cd46aedf872e15ab2ad10cafbe8"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -1348,6 +1348,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfb"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb9b414dc579b1b0194d06e65472b6ee2e87f623f970a715e3bb04e105400ffa"
+dependencies = [
+ "fnv",
+ "uuid",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1427,7 +1437,7 @@ version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
- "crypto-common 0.1.6",
+ "crypto-common 0.1.7",
  "inout",
 ]
 
@@ -1821,9 +1831,9 @@ dependencies = [
 
 [[package]]
 name = "crypto-common"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "rand_core 0.6.4",
@@ -2114,7 +2124,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "const-oid 0.9.6",
- "crypto-common 0.1.6",
+ "crypto-common 0.1.7",
  "subtle",
 ]
 
@@ -2697,9 +2707,9 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.14.9"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
@@ -3492,9 +3502,9 @@ checksum = "c77c8932bff1f09502d0d8c079d5a206a06afe523e35e816162cf4d30b5bf80d"
 
 [[package]]
 name = "ic_auth_types"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "829254ce4e2a1d22e07367a0b8ec247e732894ec225ab4f499127129bc329e6e"
+checksum = "de30b7a345c2f12a3e7f89004e3c4cbc5ebf8fc04c43ac40e5619f3e85b71196"
 dependencies = [
  "base64 0.22.1",
  "candid",
@@ -3506,9 +3516,9 @@ dependencies = [
 
 [[package]]
 name = "ic_auth_verifier"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9e19c0c0591c546f558c443fc1ff34838a950ad0bef79424581deec9361bc32"
+checksum = "66374a9f966bee6276b628bd2ad7d0dbbb6b97a2d438a3527c72e381f5d39bbd"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
@@ -3569,9 +3579,9 @@ dependencies = [
 
 [[package]]
 name = "ic_cose_types"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a095d0f38752cf785ac5630a27abae3055408f2d6092053b60cf333f9b77acfa"
+checksum = "d4a6be16e5b827358aeec87028c347ebbdc20b277fd59859a7d31295e538c436"
 dependencies = [
  "aes-gcm",
  "candid",
@@ -3890,7 +3900,15 @@ version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 dependencies = [
- "cfb",
+ "cfb 0.7.3",
+]
+
+[[package]]
+name = "infer"
+version = "0.21.0"
+source = "git+https://github.com/ldclabs/infer.git?rev=92e99356c18826a8294cd751985bd6d1277d8ff6#92e99356c18826a8294cd751985bd6d1277d8ff6"
+dependencies = [
+ "cfb 0.12.1",
 ]
 
 [[package]]
@@ -4107,7 +4125,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6204285f77fe7d9784db3fdc449ecce1a0114927a51d5a41c4c7a292011c015f"
 dependencies = [
  "base64 0.13.1",
- "crypto-common 0.1.6",
+ "crypto-common 0.1.7",
  "digest 0.10.7",
  "hmac 0.12.1",
  "serde",
@@ -5902,7 +5920,7 @@ checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
 [[package]]
 name = "ratatui"
 version = "0.30.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "instability",
  "ratatui-core",
@@ -5916,7 +5934,7 @@ dependencies = [
 [[package]]
 name = "ratatui-core"
 version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "bitflags 2.11.1",
  "compact_str",
@@ -5938,7 +5956,7 @@ dependencies = [
 [[package]]
 name = "ratatui-crossterm"
 version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "cfg-if",
  "crossterm",
@@ -5949,7 +5967,7 @@ dependencies = [
 [[package]]
 name = "ratatui-macros"
 version = "0.7.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "ratatui-core",
  "ratatui-widgets",
@@ -5958,7 +5976,7 @@ dependencies = [
 [[package]]
 name = "ratatui-termwiz"
 version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "ratatui-core",
  "termwiz",
@@ -5967,7 +5985,7 @@ dependencies = [
 [[package]]
 name = "ratatui-widgets"
 version = "0.3.0"
-source = "git+https://github.com/ldclabs/ratatui.git?branch=main#65b38ff668eb2819640d471358962a76d017370e"
+source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "bitflags 2.11.1",
  "hashbrown 0.17.0",
@@ -6284,9 +6302,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -8017,7 +8035,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
- "crypto-common 0.1.6",
+ "crypto-common 0.1.7",
  "subtle",
 ]
 

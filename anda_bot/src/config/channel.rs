@@ -107,12 +107,6 @@ pub struct LarkChannelSettings {
     #[serde(default)]
     pub receive_mode: LarkReceiveMode,
 
-    #[serde(default)]
-    pub api_base: Option<String>,
-
-    #[serde(default)]
-    pub ws_base: Option<String>,
-
     #[serde(default = "default_true")]
     pub ack_reactions: bool,
 }
@@ -130,8 +124,6 @@ impl Default for LarkChannelSettings {
             mention_only: false,
             platform: LarkPlatform::default(),
             receive_mode: LarkReceiveMode::default(),
-            api_base: None,
-            ws_base: None,
             ack_reactions: true,
         }
     }
@@ -167,8 +159,6 @@ impl LarkChannelSettings {
             && !self.mention_only
             && self.platform == LarkPlatform::default()
             && self.receive_mode == LarkReceiveMode::default()
-            && normalize_optional(&self.api_base).is_none()
-            && normalize_optional(&self.ws_base).is_none()
             && self.ack_reactions
     }
 }
@@ -196,9 +186,6 @@ pub struct DiscordChannelSettings {
     #[serde(default)]
     pub mention_only: bool,
 
-    #[serde(default = "default_discord_api_base")]
-    pub api_base: String,
-
     #[serde(default = "default_true")]
     pub ack_reactions: bool,
 }
@@ -213,7 +200,6 @@ impl Default for DiscordChannelSettings {
             allowed_users: Vec::new(),
             listen_to_bots: false,
             mention_only: false,
-            api_base: default_discord_api_base(),
             ack_reactions: true,
         }
     }
@@ -246,7 +232,6 @@ impl DiscordChannelSettings {
             && normalize_list(&self.allowed_users).is_empty()
             && !self.listen_to_bots
             && !self.mention_only
-            && self.api_base.trim() == DEFAULT_DISCORD_API_BASE
             && self.ack_reactions
     }
 }
@@ -268,9 +253,6 @@ pub struct TelegramChannelSettings {
     #[serde(default)]
     pub mention_only: bool,
 
-    #[serde(default = "default_telegram_api_base")]
-    pub api_base: String,
-
     #[serde(default = "default_true")]
     pub ack_reactions: bool,
 }
@@ -283,7 +265,6 @@ impl Default for TelegramChannelSettings {
             username: None,
             allowed_users: Vec::new(),
             mention_only: false,
-            api_base: default_telegram_api_base(),
             ack_reactions: true,
         }
     }
@@ -314,7 +295,6 @@ impl TelegramChannelSettings {
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
             && !self.mention_only
-            && self.api_base.trim() == DEFAULT_TELEGRAM_API_BASE
             && self.ack_reactions
     }
 }
@@ -332,12 +312,6 @@ pub struct WechatChannelSettings {
 
     #[serde(default)]
     pub allowed_users: Vec<String>,
-
-    #[serde(default)]
-    pub base_url: Option<String>,
-
-    #[serde(default)]
-    pub cdn_base_url: Option<String>,
 
     #[serde(default)]
     pub route_tag: Option<u32>,
@@ -367,8 +341,6 @@ impl WechatChannelSettings {
             && self.bot_token.trim().is_empty()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
-            && normalize_optional(&self.base_url).is_none()
-            && normalize_optional(&self.cdn_base_url).is_none()
             && self.route_tag.is_none()
     }
 }
@@ -463,12 +435,4 @@ impl IrcChannelSettings {
 
 fn default_port() -> u16 {
     6697
-}
-
-fn default_telegram_api_base() -> String {
-    DEFAULT_TELEGRAM_API_BASE.to_string()
-}
-
-fn default_discord_api_base() -> String {
-    DEFAULT_DISCORD_API_BASE.to_string()
 }

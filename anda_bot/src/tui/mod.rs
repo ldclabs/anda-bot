@@ -546,7 +546,7 @@ fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
         .constraints([
             Constraint::Length(Banner::height().min(area.height.saturating_sub(1))),
             Constraint::Length(1),
-            Constraint::Min(0),
+            Constraint::Min(1),
         ])
         .split(area);
 

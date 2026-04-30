@@ -161,9 +161,6 @@ impl Config {
             if telegram.bot_token.trim().is_empty() {
                 issues.push(format!("{base}.bot_token"));
             }
-            if telegram.api_base.trim().is_empty() {
-                issues.push(format!("{base}.api_base"));
-            }
 
             let channel_id = telegram.channel_id();
             if !channel_id.is_empty() && !seen_telegram_ids.insert(channel_id) {
@@ -178,13 +175,6 @@ impl Config {
             }
 
             let base = format!("channels.wechat[{index}]");
-            if matches!(wechat.base_url.as_deref().map(str::trim), Some("")) {
-                issues.push(format!("{base}.base_url"));
-            }
-            if matches!(wechat.cdn_base_url.as_deref().map(str::trim), Some("")) {
-                issues.push(format!("{base}.cdn_base_url"));
-            }
-
             let channel_id = wechat.channel_id();
             if !channel_id.is_empty() && !seen_wechat_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
@@ -200,9 +190,6 @@ impl Config {
             let base = format!("channels.discord[{index}]");
             if discord.bot_token.trim().is_empty() {
                 issues.push(format!("{base}.bot_token"));
-            }
-            if discord.api_base.trim().is_empty() {
-                issues.push(format!("{base}.api_base"));
             }
 
             let channel_id = discord.channel_id();
@@ -355,14 +342,6 @@ channels:
             Some("anda-wechat")
         );
         assert_eq!(config.channels.wechat[0].allowed_users, vec!["wx_alice"]);
-        assert_eq!(
-            config.channels.wechat[0].base_url.as_deref(),
-            Some("https://ilinkai.weixin.qq.com/")
-        );
-        assert_eq!(
-            config.channels.wechat[0].cdn_base_url.as_deref(),
-            Some("https://novac2c.cdn.weixin.qq.com/c2c")
-        );
         assert_eq!(config.channels.wechat[0].route_tag, Some(42));
         assert_eq!(config.channels.discord.len(), 1);
         assert_eq!(config.channels.discord[0].id.as_deref(), Some("server"));
@@ -398,14 +377,6 @@ channels:
         assert_eq!(
             config.channels.lark[0].receive_mode,
             LarkReceiveMode::Webhook
-        );
-        assert_eq!(
-            config.channels.lark[0].api_base.as_deref(),
-            Some("https://open.feishu.cn/open-apis")
-        );
-        assert_eq!(
-            config.channels.lark[0].ws_base.as_deref(),
-            Some("https://open.feishu.cn")
         );
         assert!(!config.channels.lark[0].ack_reactions);
         assert!(config.setup_issues().is_empty());

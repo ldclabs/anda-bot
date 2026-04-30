@@ -17,8 +17,8 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage,
-    default_file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
+    resource_from_bytes,
 };
 use crate::config;
 
@@ -36,15 +36,6 @@ const TELEGRAM_ACK_REACTIONS: &[&str] = &[
     "\u{1F44C}",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TelegramAttachmentKind {
-    Document,
-    Photo,
-    Audio,
-    Voice,
-    Video,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IncomingAttachment {
     file_id: String,
@@ -52,41 +43,11 @@ struct IncomingAttachment {
     file_size: Option<u64>,
     mime_type: Option<String>,
     caption: Option<String>,
-    kind: TelegramAttachmentKind,
-}
-
-pub struct TelegramChannelConfig {
-    pub id: String,
-    pub bot_token: String,
-    pub username: Option<String>,
-    pub allowed_users: Vec<String>,
-    pub mention_only: bool,
-    pub api_base: String,
-    pub ack_reactions: bool,
-    pub http_client: Client,
-}
-
-impl TelegramChannelConfig {
-    fn from_settings(
-        cfg: &config::TelegramChannelSettings,
-        https_proxy: Option<String>,
-    ) -> Result<Self, BoxError> {
-        Ok(Self {
-            id: cfg.channel_id(),
-            bot_token: cfg.bot_token.trim().to_string(),
-            username: config::normalize_optional(&cfg.username),
-            allowed_users: config::normalize_list(&cfg.allowed_users),
-            mention_only: cfg.mention_only,
-            api_base: cfg.api_base.trim().trim_end_matches('/').to_string(),
-            ack_reactions: cfg.ack_reactions,
-            http_client: build_http_client(https_proxy.as_deref())?,
-        })
-    }
 }
 
 pub fn build_telegram_channels(
     cfg: &[config::TelegramChannelSettings],
-    https_proxy: Option<String>,
+    client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -103,9 +64,8 @@ pub fn build_telegram_channels(
             .into());
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(TelegramChannel::new(
-            TelegramChannelConfig::from_settings(telegram_cfg, https_proxy.clone())?,
-        ));
+        let channel: Arc<dyn Channel> =
+            Arc::new(TelegramChannel::new(telegram_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate Telegram channel id '{channel_id}'").into());
@@ -131,25 +91,19 @@ pub struct TelegramChannel {
 }
 
 impl TelegramChannel {
-    pub fn new(cfg: TelegramChannelConfig) -> Self {
-        let username = cfg.username.unwrap_or_else(|| "telegram".to_string());
+    pub fn new(cfg: &config::TelegramChannelSettings, client: Client) -> Self {
         Self {
-            id: if cfg.id.trim().is_empty() {
-                "default".to_string()
-            } else {
-                cfg.id.trim().to_string()
-            },
-            bot_token: cfg.bot_token,
-            username,
-            allowed_users: normalize_allowed_users(cfg.allowed_users),
+            id: cfg.channel_id(),
+            bot_token: cfg.bot_token.clone(),
+            username: cfg
+                .username
+                .clone()
+                .unwrap_or_else(|| "telegram".to_string()),
+            allowed_users: cfg.allowed_users.clone(),
             mention_only: cfg.mention_only,
-            api_base: if cfg.api_base.trim().is_empty() {
-                config::DEFAULT_TELEGRAM_API_BASE.to_string()
-            } else {
-                cfg.api_base.trim().trim_end_matches('/').to_string()
-            },
+            api_base: config::DEFAULT_TELEGRAM_API_BASE.to_string(),
             ack_reactions: cfg.ack_reactions,
-            client: cfg.http_client,
+            client,
             workspace: Arc::new(ChannelWorkspace::default()),
             bot_username: Mutex::new(None),
             typing_handle: Mutex::new(None),
@@ -509,7 +463,6 @@ impl TelegramChannel {
                     .get("caption")
                     .and_then(Value::as_str)
                     .map(String::from),
-                kind: TelegramAttachmentKind::Document,
             });
         }
 
@@ -524,15 +477,10 @@ impl TelegramChannel {
                     .get("caption")
                     .and_then(Value::as_str)
                     .map(String::from),
-                kind: TelegramAttachmentKind::Photo,
             });
         }
 
-        for (field, kind) in [
-            ("voice", TelegramAttachmentKind::Voice),
-            ("audio", TelegramAttachmentKind::Audio),
-            ("video", TelegramAttachmentKind::Video),
-        ] {
+        for field in ["voice", "audio", "video"] {
             if let Some(media) = message.get(field) {
                 return Some(IncomingAttachment {
                     file_id: media.get("file_id")?.as_str()?.to_string(),
@@ -544,13 +492,11 @@ impl TelegramChannel {
                     mime_type: media
                         .get("mime_type")
                         .and_then(Value::as_str)
-                        .map(String::from)
-                        .or_else(|| default_mime_for_attachment_kind(kind).map(String::from)),
+                        .map(String::from),
                     caption: message
                         .get("caption")
                         .and_then(Value::as_str)
                         .map(String::from),
-                    kind,
                 });
             }
         }
@@ -563,13 +509,14 @@ impl TelegramChannel {
         let attachment = Self::parse_attachment_metadata(message)?;
 
         if let Some(size) = attachment.file_size
-            && size > TELEGRAM_MAX_FILE_DOWNLOAD_BYTES {
-                log::warn!(
-                    "Telegram skipping attachment larger than {} bytes: {size}",
-                    TELEGRAM_MAX_FILE_DOWNLOAD_BYTES
-                );
-                return None;
-            }
+            && size > TELEGRAM_MAX_FILE_DOWNLOAD_BYTES
+        {
+            log::warn!(
+                "Telegram skipping attachment larger than {} bytes: {size}",
+                TELEGRAM_MAX_FILE_DOWNLOAD_BYTES
+            );
+            return None;
+        }
 
         let (username, sender_id, sender_identity) = Self::extract_sender_info(message);
         let mut identities = vec![username.as_str()];
@@ -608,32 +555,12 @@ impl TelegramChannel {
             }
         };
 
-        let file_name = attachment.file_name.clone().unwrap_or_else(|| {
-            let fallback = match attachment.kind {
-                TelegramAttachmentKind::Photo => "photo.jpg",
-                TelegramAttachmentKind::Voice => "voice.ogg",
-                TelegramAttachmentKind::Audio => "audio.mp3",
-                TelegramAttachmentKind::Video => "video.mp4",
-                TelegramAttachmentKind::Document => "document.bin",
-            };
-            telegram_path
-                .rsplit('/')
-                .next()
-                .filter(|name| !name.is_empty())
-                .unwrap_or(fallback)
-                .to_string()
-        });
-        let mime_type = attachment
-            .mime_type
+        let file_name = attachment
+            .file_name
             .clone()
-            .or_else(|| mime_type_for_path(&file_name).map(String::from));
-        let mut resource = resource_from_bytes(
-            telegram_attachment_kind(attachment.kind),
-            file_name.clone(),
-            mime_type,
-            bytes,
-            "Telegram attachment",
-        );
+            .or_else(|| telegram_path.rsplit('/').next().map(String::from))
+            .unwrap_or_default();
+        let mut resource = resource_from_bytes(file_name, bytes, "Telegram attachment");
         let message_key = message
             .get("message_id")
             .and_then(Value::as_i64)
@@ -643,12 +570,7 @@ impl TelegramChannel {
             .await;
 
         let content = if caption.trim().is_empty() {
-            match attachment.kind {
-                TelegramAttachmentKind::Voice | TelegramAttachmentKind::Audio => String::new(),
-                TelegramAttachmentKind::Photo => format!("[Photo: {file_name}]"),
-                TelegramAttachmentKind::Video => format!("[Video: {file_name}]"),
-                TelegramAttachmentKind::Document => format!("[Document: {file_name}]"),
-            }
+            resource.name.clone()
         } else {
             caption
         };
@@ -899,11 +821,7 @@ impl TelegramChannel {
         bytes: Vec<u8>,
     ) -> Result<(), BoxError> {
         let (method, field) = telegram_method_and_field(resource);
-        let file_name = if resource.name.trim().is_empty() {
-            default_file_name_for_resource(resource).to_string()
-        } else {
-            resource.name.clone()
-        };
+        let file_name = file_name_for_resource(resource).to_string();
         let part = Part::bytes(bytes).file_name(file_name);
         let mut form = Form::new()
             .text("chat_id", chat_id.to_string())
@@ -951,59 +869,74 @@ impl TelegramChannel {
             let bytes = line.as_bytes();
             let len = bytes.len();
             while index < len {
-                if index + 1 < len && bytes[index] == b'*' && bytes[index + 1] == b'*'
-                    && let Some(end) = line[index + 2..].find("**") {
-                        let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
-                        let _ = write!(line_out, "<b>{inner}</b>");
-                        index += 4 + end;
-                        continue;
-                    }
-                if index + 1 < len && bytes[index] == b'_' && bytes[index + 1] == b'_'
-                    && let Some(end) = line[index + 2..].find("__") {
-                        let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
-                        let _ = write!(line_out, "<b>{inner}</b>");
-                        index += 4 + end;
-                        continue;
-                    }
-                if bytes[index] == b'*' && (index == 0 || bytes[index - 1] != b'*')
+                if index + 1 < len
+                    && bytes[index] == b'*'
+                    && bytes[index + 1] == b'*'
+                    && let Some(end) = line[index + 2..].find("**")
+                {
+                    let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
+                    let _ = write!(line_out, "<b>{inner}</b>");
+                    index += 4 + end;
+                    continue;
+                }
+                if index + 1 < len
+                    && bytes[index] == b'_'
+                    && bytes[index + 1] == b'_'
+                    && let Some(end) = line[index + 2..].find("__")
+                {
+                    let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
+                    let _ = write!(line_out, "<b>{inner}</b>");
+                    index += 4 + end;
+                    continue;
+                }
+                if bytes[index] == b'*'
+                    && (index == 0 || bytes[index - 1] != b'*')
                     && let Some(end) = line[index + 1..].find('*')
-                        && end > 0 {
-                            let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
-                            let _ = write!(line_out, "<i>{inner}</i>");
-                            index += 2 + end;
+                    && end > 0
+                {
+                    let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
+                    let _ = write!(line_out, "<i>{inner}</i>");
+                    index += 2 + end;
+                    continue;
+                }
+                if bytes[index] == b'`'
+                    && (index == 0 || bytes[index - 1] != b'`')
+                    && let Some(end) = line[index + 1..].find('`')
+                {
+                    let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
+                    let _ = write!(line_out, "<code>{inner}</code>");
+                    index += 2 + end;
+                    continue;
+                }
+                if bytes[index] == b'['
+                    && let Some(bracket_end) = line[index + 1..].find(']')
+                {
+                    let text_part = &line[index + 1..index + 1 + bracket_end];
+                    let after_bracket = index + 1 + bracket_end + 1;
+                    if after_bracket < len
+                        && bytes[after_bracket] == b'('
+                        && let Some(paren_end) = line[after_bracket + 1..].find(')')
+                    {
+                        let url = &line[after_bracket + 1..after_bracket + 1 + paren_end];
+                        if is_http_url(url) {
+                            let text_html = Self::escape_html(text_part);
+                            let url_html = Self::escape_html(url);
+                            let _ = write!(line_out, "<a href=\"{url_html}\">{text_html}</a>");
+                            index = after_bracket + 1 + paren_end + 1;
                             continue;
                         }
-                if bytes[index] == b'`' && (index == 0 || bytes[index - 1] != b'`')
-                    && let Some(end) = line[index + 1..].find('`') {
-                        let inner = Self::escape_html(&line[index + 1..index + 1 + end]);
-                        let _ = write!(line_out, "<code>{inner}</code>");
-                        index += 2 + end;
-                        continue;
                     }
-                if bytes[index] == b'['
-                    && let Some(bracket_end) = line[index + 1..].find(']') {
-                        let text_part = &line[index + 1..index + 1 + bracket_end];
-                        let after_bracket = index + 1 + bracket_end + 1;
-                        if after_bracket < len && bytes[after_bracket] == b'('
-                            && let Some(paren_end) = line[after_bracket + 1..].find(')') {
-                                let url = &line[after_bracket + 1..after_bracket + 1 + paren_end];
-                                if is_http_url(url) {
-                                    let text_html = Self::escape_html(text_part);
-                                    let url_html = Self::escape_html(url);
-                                    let _ =
-                                        write!(line_out, "<a href=\"{url_html}\">{text_html}</a>");
-                                    index = after_bracket + 1 + paren_end + 1;
-                                    continue;
-                                }
-                            }
-                    }
-                if index + 1 < len && bytes[index] == b'~' && bytes[index + 1] == b'~'
-                    && let Some(end) = line[index + 2..].find("~~") {
-                        let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
-                        let _ = write!(line_out, "<s>{inner}</s>");
-                        index += 4 + end;
-                        continue;
-                    }
+                }
+                if index + 1 < len
+                    && bytes[index] == b'~'
+                    && bytes[index + 1] == b'~'
+                    && let Some(end) = line[index + 2..].find("~~")
+                {
+                    let inner = Self::escape_html(&line[index + 2..index + 2 + end]);
+                    let _ = write!(line_out, "<s>{inner}</s>");
+                    index += 4 + end;
+                    continue;
+                }
 
                 let ch = line[index..].chars().next().unwrap();
                 match ch {
@@ -1271,27 +1204,8 @@ impl Channel for TelegramChannel {
     }
 }
 
-fn build_http_client(https_proxy: Option<&str>) -> Result<Client, BoxError> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(600));
-    if let Some(proxy) = https_proxy.map(str::trim).filter(|proxy| !proxy.is_empty()) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy)?);
-    }
-
-    Ok(builder.build()?)
-}
-
 fn normalize_identity(value: &str) -> String {
     value.trim().trim_start_matches('@').to_string()
-}
-
-fn normalize_allowed_users(allowed_users: Vec<String>) -> Vec<String> {
-    allowed_users
-        .into_iter()
-        .filter_map(|entry| {
-            let normalized = normalize_identity(&entry);
-            (!normalized.is_empty()).then_some(normalized)
-        })
-        .collect()
 }
 
 fn random_telegram_ack_reaction() -> &'static str {
@@ -1347,25 +1261,6 @@ fn split_message_for_telegram(message: &str) -> Vec<String> {
     chunks
 }
 
-fn default_mime_for_attachment_kind(kind: TelegramAttachmentKind) -> Option<&'static str> {
-    match kind {
-        TelegramAttachmentKind::Photo => Some("image/jpeg"),
-        TelegramAttachmentKind::Voice => Some("audio/ogg"),
-        TelegramAttachmentKind::Audio => Some("audio/mpeg"),
-        TelegramAttachmentKind::Video => Some("video/mp4"),
-        TelegramAttachmentKind::Document => None,
-    }
-}
-
-fn telegram_attachment_kind(kind: TelegramAttachmentKind) -> AttachmentKind {
-    match kind {
-        TelegramAttachmentKind::Photo => AttachmentKind::Image,
-        TelegramAttachmentKind::Voice | TelegramAttachmentKind::Audio => AttachmentKind::Audio,
-        TelegramAttachmentKind::Video => AttachmentKind::Video,
-        TelegramAttachmentKind::Document => AttachmentKind::Document,
-    }
-}
-
 fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str) {
     let mime_type = resource.mime_type.as_deref().unwrap_or_default();
     if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
@@ -1382,24 +1277,21 @@ fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::resource_tags;
 
-    fn test_config() -> TelegramChannelConfig {
-        TelegramChannelConfig {
-            id: "test".to_string(),
+    fn test_config() -> config::TelegramChannelSettings {
+        config::TelegramChannelSettings {
+            id: Some("test".to_string()),
             bot_token: "123:ABC".to_string(),
             username: Some("anda_bot".to_string()),
             allowed_users: vec!["@Alice".to_string(), "12345".to_string()],
             mention_only: true,
-            api_base: config::DEFAULT_TELEGRAM_API_BASE.to_string(),
             ack_reactions: true,
-            http_client: Client::new(),
         }
     }
 
     #[test]
     fn telegram_channel_identity() {
-        let channel = TelegramChannel::new(test_config());
+        let channel = TelegramChannel::new(&test_config(), Client::new());
         assert_eq!(channel.name(), "telegram");
         assert_eq!(channel.username(), "anda_bot");
         assert_eq!(channel.id(), "telegram:test");
@@ -1419,7 +1311,7 @@ mod tests {
 
     #[test]
     fn allowed_users_match_username_or_numeric_id() {
-        let channel = TelegramChannel::new(test_config());
+        let channel = TelegramChannel::new(&test_config(), Client::new());
         assert!(channel.is_user_allowed("alice"));
         assert!(channel.is_user_allowed("Alice"));
         assert!(channel.is_user_allowed("12345"));
@@ -1461,21 +1353,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resource_tags_detect_text_and_audio() {
-        assert_eq!(
-            resource_tags(AttachmentKind::Document, "notes.txt", Some("text/plain")),
-            vec!["text".to_string(), "txt".to_string()]
-        );
-        assert_eq!(
-            resource_tags(AttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
-            vec!["audio".to_string(), "ogg".to_string()]
-        );
-    }
-
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let channel = TelegramChannel::new(test_config());
+        let channel = TelegramChannel::new(&test_config(), Client::new());
         {
             let mut guard = channel.typing_handle.lock().await;
             *guard = Some(tokio::spawn(async {

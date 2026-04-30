@@ -16,8 +16,8 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage, attachment_kind,
-    default_file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
+    resource_from_bytes,
 };
 use crate::config;
 
@@ -176,52 +176,9 @@ struct CachedTenantToken {
     refresh_after: Instant,
 }
 
-pub struct LarkChannelConfig {
-    pub id: String,
-    pub app_id: String,
-    pub app_secret: String,
-    pub username: Option<String>,
-    pub verification_token: Option<String>,
-    pub port: Option<u16>,
-    pub allowed_users: Vec<String>,
-    pub mention_only: bool,
-    pub platform: config::LarkPlatform,
-    pub receive_mode: config::LarkReceiveMode,
-    pub api_base: String,
-    pub ws_base: String,
-    pub ack_reactions: bool,
-    pub http_client: Client,
-}
-
-impl LarkChannelConfig {
-    fn from_settings(
-        cfg: &config::LarkChannelSettings,
-        https_proxy: Option<String>,
-    ) -> Result<Self, BoxError> {
-        Ok(Self {
-            id: cfg.channel_id(),
-            app_id: cfg.app_id.trim().to_string(),
-            app_secret: cfg.app_secret.trim().to_string(),
-            username: config::normalize_optional(&cfg.username),
-            verification_token: config::normalize_optional(&cfg.verification_token),
-            port: cfg.port,
-            allowed_users: config::normalize_list(&cfg.allowed_users),
-            mention_only: cfg.mention_only,
-            platform: cfg.platform,
-            receive_mode: cfg.receive_mode,
-            api_base: config::normalize_optional(&cfg.api_base)
-                .unwrap_or_else(|| cfg.platform.api_base().to_string()),
-            ws_base: config::normalize_optional(&cfg.ws_base)
-                .unwrap_or_else(|| cfg.platform.ws_base().to_string()),
-            ack_reactions: cfg.ack_reactions,
-            http_client: build_http_client(https_proxy.as_deref())?,
-        })
-    }
-}
-
 pub fn build_lark_channels(
     cfg: &[config::LarkChannelSettings],
-    https_proxy: Option<String>,
+    client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -246,9 +203,7 @@ pub fn build_lark_channels(
             .into());
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(LarkChannel::new(
-            LarkChannelConfig::from_settings(lark_cfg, https_proxy.clone())?,
-        ));
+        let channel: Arc<dyn Channel> = Arc::new(LarkChannel::new(&lark_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate Lark channel id '{channel_id}'").into());
@@ -281,35 +236,26 @@ pub struct LarkChannel {
 }
 
 impl LarkChannel {
-    pub fn new(cfg: LarkChannelConfig) -> Self {
+    pub fn new(cfg: &config::LarkChannelSettings, client: Client) -> Self {
         let channel_name = cfg.platform.channel_name();
         Self {
-            id: if cfg.id.trim().is_empty() {
-                "default".to_string()
-            } else {
-                cfg.id.trim().to_string()
-            },
-            app_id: cfg.app_id,
-            app_secret: cfg.app_secret,
-            username: cfg.username.unwrap_or_else(|| channel_name.to_string()),
-            verification_token: cfg.verification_token.unwrap_or_default(),
+            id: cfg.channel_id(),
+            app_id: cfg.app_id.clone(),
+            app_secret: cfg.app_secret.clone(),
+            username: cfg
+                .username
+                .clone()
+                .unwrap_or_else(|| channel_name.to_string()),
+            verification_token: cfg.verification_token.clone().unwrap_or_default(),
             port: cfg.port,
-            allowed_users: normalize_allowed_users(cfg.allowed_users),
+            allowed_users: cfg.allowed_users.clone(),
             mention_only: cfg.mention_only,
             platform: cfg.platform,
             receive_mode: cfg.receive_mode,
-            api_base: if cfg.api_base.trim().is_empty() {
-                cfg.platform.api_base().to_string()
-            } else {
-                cfg.api_base.trim().trim_end_matches('/').to_string()
-            },
-            ws_base: if cfg.ws_base.trim().is_empty() {
-                cfg.platform.ws_base().to_string()
-            } else {
-                cfg.ws_base.trim().trim_end_matches('/').to_string()
-            },
+            api_base: cfg.platform.api_base().to_string(),
+            ws_base: cfg.platform.ws_base().to_string(),
             ack_reactions: cfg.ack_reactions,
-            client: cfg.http_client,
+            client,
             workspace: Arc::new(ChannelWorkspace::default()),
             bot_open_id: Arc::new(StdRwLock::new(None)),
             tenant_token: Arc::new(RwLock::new(None)),
@@ -1017,9 +963,7 @@ impl LarkChannel {
         let file_name = value
             .get("file_name")
             .and_then(Value::as_str)
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("lark-file.bin")
-            .to_string();
+            .unwrap_or(&file_key);
 
         match self
             .download_file_resource(message_id, &file_key, &file_name)
@@ -1054,7 +998,7 @@ impl LarkChannel {
     }
 
     async fn download_image_resource(&self, message_id: &str, image_key: &str) -> Option<Resource> {
-        let (bytes, content_type) = match self
+        let bytes = match self
             .get_authorized_bytes(
                 &self.image_download_url(image_key),
                 LARK_MAX_FILE_DOWNLOAD_BYTES,
@@ -1069,19 +1013,7 @@ impl LarkChannel {
             }
         };
 
-        let mime_type = lark_detect_image_mime(content_type.as_deref(), &bytes)
-            .unwrap_or_else(|| "image/jpeg".to_string());
-        let file_name = format!(
-            "{image_key}.{}",
-            extension_for_mime(&mime_type).unwrap_or("jpg")
-        );
-        let mut resource = resource_from_bytes(
-            AttachmentKind::Image,
-            file_name,
-            Some(mime_type),
-            bytes,
-            "Lark image",
-        );
+        let mut resource = resource_from_bytes(image_key.to_string(), bytes, "Lark image");
         self.workspace
             .store_resource_lossy(&mut resource, Some(message_id), "Lark image")
             .await;
@@ -1094,7 +1026,7 @@ impl LarkChannel {
         file_key: &str,
         file_name: &str,
     ) -> Option<Resource> {
-        let (bytes, content_type) = match self
+        let bytes = match self
             .get_authorized_bytes(
                 &self.file_download_url(message_id, file_key),
                 LARK_MAX_FILE_DOWNLOAD_BYTES,
@@ -1109,10 +1041,7 @@ impl LarkChannel {
             }
         };
 
-        let mime_type = content_type.or_else(|| mime_type_for_path(file_name).map(String::from));
-        let kind = attachment_kind(file_name, mime_type.as_deref());
-        let mut resource =
-            resource_from_bytes(kind, file_name.to_string(), mime_type, bytes, "Lark file");
+        let mut resource = resource_from_bytes(file_name.to_string(), bytes, "Lark file");
         self.workspace
             .store_resource_lossy(&mut resource, Some(message_id), "Lark file")
             .await;
@@ -1120,7 +1049,7 @@ impl LarkChannel {
     }
 
     async fn download_audio_resource(&self, message_id: &str, file_key: &str) -> Option<Resource> {
-        let (bytes, content_type) = match self
+        let bytes = match self
             .get_authorized_bytes(
                 &self.file_download_url(message_id, file_key),
                 LARK_MAX_AUDIO_BYTES,
@@ -1135,18 +1064,7 @@ impl LarkChannel {
             }
         };
 
-        let file_name = inferred_audio_filename(file_key);
-        let mime_type = content_type
-            .filter(|mime| mime.starts_with("audio/"))
-            .or_else(|| mime_type_for_path(&file_name).map(String::from))
-            .or_else(|| Some("audio/mp4".to_string()));
-        let mut resource = resource_from_bytes(
-            AttachmentKind::Audio,
-            file_name,
-            mime_type,
-            bytes,
-            "Lark audio",
-        );
+        let mut resource = resource_from_bytes(file_key.to_string(), bytes, "Lark audio");
         self.workspace
             .store_resource_lossy(&mut resource, Some(message_id), "Lark audio")
             .await;
@@ -1158,7 +1076,7 @@ impl LarkChannel {
         url: &str,
         max_bytes: u64,
         context: &str,
-    ) -> Result<(Vec<u8>, Option<String>), BoxError> {
+    ) -> Result<Vec<u8>, BoxError> {
         let mut token = self.get_tenant_access_token().await?;
         let mut retried = false;
 
@@ -1179,18 +1097,14 @@ impl LarkChannel {
                         format!("{context} exceeds {max_bytes} bytes: {content_length}").into(),
                     );
                 }
-                let content_type = response
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(normalize_content_type);
+
                 let bytes = response.bytes().await?.to_vec();
                 if bytes.len() as u64 > max_bytes {
                     return Err(
                         format!("{context} exceeds {max_bytes} bytes: {}", bytes.len()).into(),
                     );
                 }
-                return Ok((bytes, content_type));
+                return Ok(bytes);
             }
 
             let body = response.text().await.unwrap_or_default();
@@ -1544,24 +1458,6 @@ fn ensure_lark_send_success(
     Ok(())
 }
 
-fn normalize_allowed_users(allowed_users: Vec<String>) -> Vec<String> {
-    allowed_users
-        .into_iter()
-        .filter_map(|entry| {
-            let normalized = entry.trim().to_string();
-            (!normalized.is_empty()).then_some(normalized)
-        })
-        .collect()
-}
-
-fn build_http_client(https_proxy: Option<&str>) -> Result<Client, BoxError> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(600));
-    if let Some(proxy) = https_proxy.map(str::trim).filter(|proxy| !proxy.is_empty()) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy)?);
-    }
-    Ok(builder.build()?)
-}
-
 fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> String {
     if resources.is_empty() {
         return content.to_string();
@@ -1573,11 +1469,7 @@ fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> St
     }
     lines.push("Attachments:".to_string());
     for resource in resources {
-        let name = if resource.name.trim().is_empty() {
-            default_file_name_for_resource(resource)
-        } else {
-            resource.name.as_str()
-        };
+        let name = file_name_for_resource(resource);
         if let Some(uri) = resource.uri.as_deref().filter(|uri| is_http_url(uri)) {
             lines.push(format!("- [{name}]({uri})"));
         } else {
@@ -1585,61 +1477,6 @@ fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> St
         }
     }
     lines.join("\n")
-}
-
-fn inferred_audio_filename(file_key: &str) -> String {
-    let lower = file_key.to_ascii_lowercase();
-    if [".m4a", ".ogg", ".mp3", ".aac", ".wav", ".webm"]
-        .iter()
-        .any(|extension| lower.ends_with(extension))
-    {
-        file_key.to_string()
-    } else {
-        "voice.m4a".to_string()
-    }
-}
-
-fn normalize_content_type(content_type: &str) -> Option<String> {
-    content_type
-        .split(';')
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
-}
-
-fn lark_detect_image_mime(content_type: Option<&str>, bytes: &[u8]) -> Option<String> {
-    if bytes.len() >= 8 && bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']) {
-        return Some("image/png".to_string());
-    }
-    if bytes.len() >= 3 && bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Some("image/jpeg".to_string());
-    }
-    if bytes.len() >= 6 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
-        return Some("image/gif".to_string());
-    }
-    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return Some("image/webp".to_string());
-    }
-    content_type
-        .and_then(normalize_content_type)
-        .filter(|mime| mime.starts_with("image/"))
-}
-
-fn extension_for_mime(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/png" => Some("png"),
-        "image/jpeg" => Some("jpg"),
-        "image/gif" => Some("gif"),
-        "image/webp" => Some("webp"),
-        "audio/mp4" | "audio/x-m4a" => Some("m4a"),
-        "audio/mpeg" => Some("mp3"),
-        "audio/ogg" => Some("ogg"),
-        "audio/wav" => Some("wav"),
-        "audio/webm" => Some("webm"),
-        "video/mp4" => Some("mp4"),
-        _ => None,
-    }
 }
 
 fn pick_uniform_index(len: usize) -> usize {
@@ -2019,9 +1856,9 @@ fn should_respond_in_group(
 mod tests {
     use super::*;
 
-    fn test_config() -> LarkChannelConfig {
-        LarkChannelConfig {
-            id: "test".to_string(),
+    fn test_config() -> config::LarkChannelSettings {
+        config::LarkChannelSettings {
+            id: Some("test".to_string()),
             app_id: "cli_test_app_id".to_string(),
             app_secret: "test_app_secret".to_string(),
             username: Some("anda-lark".to_string()),
@@ -2031,15 +1868,12 @@ mod tests {
             mention_only: true,
             platform: config::LarkPlatform::Lark,
             receive_mode: config::LarkReceiveMode::Websocket,
-            api_base: config::DEFAULT_LARK_API_BASE.to_string(),
-            ws_base: config::DEFAULT_LARK_WS_BASE.to_string(),
             ack_reactions: true,
-            http_client: Client::new(),
         }
     }
 
     fn test_channel() -> LarkChannel {
-        let channel = LarkChannel::new(test_config());
+        let channel = LarkChannel::new(&test_config(), Client::new());
         channel.set_resolved_bot_open_id(Some("ou_bot".to_string()));
         channel
     }

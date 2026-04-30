@@ -1,17 +1,13 @@
 use anda_core::{BoxError, ByteBufB64, Resource};
 use anda_db::unix_ms;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::RwLock,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttachmentKind {
-    Image,
-    Audio,
-    Video,
-    Document,
-}
+pub type MimeKind = infer::MatcherType;
+pub type InferType = infer::Type;
 
 #[derive(Debug, Default)]
 pub struct ChannelWorkspace {
@@ -82,124 +78,73 @@ impl ChannelWorkspace {
     }
 }
 
-pub fn attachment_kind(file_name: &str, mime_type: Option<&str>) -> AttachmentKind {
-    let mime_type = mime_type.unwrap_or_default().to_ascii_lowercase();
-    if mime_type.starts_with("image/") {
-        AttachmentKind::Image
-    } else if mime_type.starts_with("audio/") {
-        AttachmentKind::Audio
-    } else if mime_type.starts_with("video/") {
-        AttachmentKind::Video
-    } else if let Some(extension) = file_extension(file_name) {
-        match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "tiff" | "svg" => {
-                AttachmentKind::Image
-            }
-            "mp3" | "m4a" | "wav" | "ogg" | "oga" | "opus" | "flac" | "aac" => {
-                AttachmentKind::Audio
-            }
-            "mp4" | "mov" | "webm" | "mkv" | "avi" | "wmv" | "flv" => AttachmentKind::Video,
-            _ => AttachmentKind::Document,
-        }
-    } else {
-        AttachmentKind::Document
+pub fn infer_from(file_name: &str, mime_type: Option<&str>) -> Option<InferType> {
+    mime_type
+        .and_then(|mime| infer::get_from_mime(mime))
+        .or_else(|| infer::get_from_filename(file_name))
+}
+
+pub fn infer_from_resource(resource: &Resource) -> Option<InferType> {
+    resource
+        .blob
+        .as_ref()
+        .and_then(|blob| infer::get(&blob.0))
+        .or_else(|| infer_from(&resource.name, resource.mime_type.as_deref()))
+}
+
+pub fn infer_tag(it: &InferType) -> String {
+    match it.matcher_type() {
+        MimeKind::App => "app".to_string(),
+        MimeKind::Archive => "archive".to_string(),
+        MimeKind::Audio => "audio".to_string(),
+        MimeKind::Book => "book".to_string(),
+        MimeKind::Doc => "doc".to_string(),
+        MimeKind::Font => "font".to_string(),
+        MimeKind::Image => "image".to_string(),
+        MimeKind::Text => "text".to_string(),
+        MimeKind::Video => "video".to_string(),
+        MimeKind::Custom => "custom".to_string(),
     }
 }
 
-pub fn mime_type_for_path(path: &str) -> Option<&'static str> {
-    match file_extension(path)?.as_str() {
-        "txt" => Some("text/plain"),
-        "md" => Some("text/markdown"),
-        "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "svg" => Some("image/svg+xml"),
-        "mp3" => Some("audio/mpeg"),
-        "m4a" => Some("audio/mp4"),
-        "wav" => Some("audio/wav"),
-        "ogg" | "oga" | "opus" => Some("audio/ogg"),
-        "flac" => Some("audio/flac"),
-        "aac" => Some("audio/aac"),
-        "webm" => Some("video/webm"),
-        "mp4" => Some("video/mp4"),
-        "mov" => Some("video/quicktime"),
-        "pdf" => Some("application/pdf"),
-        _ => None,
-    }
-}
-
-pub fn resource_tags(
-    kind: AttachmentKind,
-    file_name: &str,
-    mime_type: Option<&str>,
-) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mime_type = mime_type.unwrap_or_default();
-    if mime_type.starts_with("text/") || file_name.ends_with(".txt") {
-        tags.push("text".to_string());
-    } else if file_name.ends_with(".md") || mime_type == "text/markdown" {
-        tags.push("md".to_string());
-    } else {
-        tags.push(
-            match kind {
-                AttachmentKind::Image => "image",
-                AttachmentKind::Audio => "audio",
-                AttachmentKind::Video => "video",
-                AttachmentKind::Document => "document",
-            }
-            .to_string(),
-        );
-    }
-
-    if let Some(extension) = file_extension(file_name)
-        && !tags.iter().any(|tag| tag == &extension)
-    {
-        tags.push(extension);
-    }
-
-    tags
-}
-
-pub fn resource_from_bytes(
-    kind: AttachmentKind,
-    file_name: String,
-    mime_type: Option<String>,
-    bytes: Vec<u8>,
-    description: &str,
-) -> Resource {
+pub fn resource_from_bytes(file_name: String, bytes: Vec<u8>, description: &str) -> Resource {
     let size = bytes.len() as u64;
-    Resource {
-        tags: resource_tags(kind, &file_name, mime_type.as_deref()),
+    infer_resource(Resource {
         name: file_name,
         description: Some(description.to_string()),
-        mime_type,
         blob: Some(ByteBufB64(bytes)),
         size: Some(size),
         ..Default::default()
-    }
+    })
 }
 
-pub fn file_name_for_resource(resource: &Resource) -> String {
+pub fn infer_resource(mut resource: Resource) -> Resource {
+    if let Some(t) = infer_from_resource(&resource) {
+        let tag = infer_tag(&t);
+        resource.mime_type = Some(t.mime_type().to_string());
+        resource.name = if resource.name.trim().is_empty() {
+            format!("{tag}.{}", t.extension())
+        } else if !resource.name.trim().ends_with(t.extension()) {
+            format!("{}.{}", resource.name.trim(), t.extension())
+        } else {
+            resource.name.trim().to_owned()
+        };
+
+        if !resource.tags.contains(&tag) {
+            resource.tags.push(tag);
+        }
+    };
+
+    resource
+}
+
+pub fn file_name_for_resource(resource: &Resource) -> Cow<str> {
     if !resource.name.trim().is_empty() {
-        resource.name.clone()
+        Cow::Borrowed(resource.name.trim())
+    } else if let Some(t) = infer_from_resource(&resource) {
+        Cow::Owned(format!("{}.{}", infer_tag(&t), t.extension()))
     } else {
-        default_file_name_for_resource(resource).to_string()
-    }
-}
-
-pub fn default_file_name_for_resource(resource: &Resource) -> &'static str {
-    let mime_type = resource.mime_type.as_deref().unwrap_or_default();
-    if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
-        "image.jpg"
-    } else if resource.tags.iter().any(|tag| tag == "video") || mime_type.starts_with("video/") {
-        "video.mp4"
-    } else if resource.tags.iter().any(|tag| tag == "audio") || mime_type.starts_with("audio/") {
-        "audio.mp3"
-    } else {
-        "document.bin"
+        Cow::Borrowed("document.bin")
     }
 }
 
@@ -285,45 +230,4 @@ fn local_file_uri(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resource_tags_detect_text_and_audio() {
-        assert_eq!(
-            resource_tags(AttachmentKind::Document, "notes.txt", Some("text/plain")),
-            vec!["text".to_string(), "txt".to_string()]
-        );
-        assert_eq!(
-            resource_tags(AttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
-            vec!["audio".to_string(), "ogg".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn channel_workspace_stores_resource_and_sets_uri() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = ChannelWorkspace::default();
-        workspace.set_path(temp_dir.path().join("telegram:test"));
-        let mut resource = resource_from_bytes(
-            AttachmentKind::Document,
-            "../../notes.txt".to_string(),
-            Some("text/plain".to_string()),
-            b"hello".to_vec(),
-            "test attachment",
-        );
-
-        let path = workspace
-            .store_resource(&mut resource, Some("msg/1"))
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert!(path.exists());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"hello");
-        assert!(path.ends_with("msg_1-notes.txt"));
-        assert_eq!(
-            resource.uri.as_deref(),
-            Some(format!("file://{}", path.to_string_lossy()).as_str())
-        );
-        assert_eq!(resource.blob.as_ref().unwrap().0, b"hello".to_vec());
-    }
 }

@@ -104,7 +104,6 @@ channels:
   #     allowed_users:
   #       - "*"
   #     mention_only: false
-  #     api_base: https://api.telegram.org
   #     ack_reactions: true
   # wechat:
   #   - id: personal
@@ -114,8 +113,6 @@ channels:
   #     username: anda-wechat
   #     allowed_users:
   #       - "*"
-  #     base_url:
-  #     cdn_base_url:
   #     route_tag:
   # discord:
   #   - id: server
@@ -126,7 +123,6 @@ channels:
   #       - "*"
   #     listen_to_bots: false
   #     mention_only: true
-  #     api_base: https://discord.com/api/v10
   #     ack_reactions: true
   # lark:
   #   - id: work
@@ -140,6 +136,4 @@ channels:
   #     mention_only: true
   #     platform: lark # or feishu
   #     receive_mode: websocket # or webhook
-  #     api_base:
-  #     ws_base:
   #     ack_reactions: true

@@ -219,7 +219,7 @@ impl Daemon {
         let global_cancel_token = CancellationToken::new();
         let outer_http_client =
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
-        let models = self.cfg.models(outer_http_client);
+        let models = self.cfg.models(outer_http_client.clone());
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let engine_id = id_key.id();
         let user_id = user_pubkey.id();
@@ -282,7 +282,7 @@ impl Daemon {
             bot_db.clone(),
             engine_ref.clone(),
             user_id,
-            channel::build_channels(&self.cfg.channels, self.cfg.https_proxy.clone())?,
+            channel::build_channels(&self.cfg.channels, outer_http_client)?,
             self.channels_dir_path(),
         )
         .await?;

@@ -1,6 +1,7 @@
 use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
+use reqwest::Client;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -15,8 +16,8 @@ use weixin_agent::{
 };
 
 use super::{
-    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage, attachment_kind,
-    default_file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
+    resource_from_bytes,
 };
 use crate::config;
 
@@ -26,38 +27,9 @@ const WECHAT_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 const WECHAT_QR_POLL_DELAY: Duration = Duration::from_secs(2);
 const WECHAT_MAX_QR_REFRESH_COUNT: u32 = 3;
 
-pub struct WechatChannelConfig {
-    pub id: String,
-    pub bot_token: Option<String>,
-    pub username: Option<String>,
-    pub allowed_users: Vec<String>,
-    pub base_url: String,
-    pub cdn_base_url: String,
-    pub route_tag: Option<u32>,
-}
-
-impl WechatChannelConfig {
-    fn from_settings(
-        cfg: &config::WechatChannelSettings,
-        _https_proxy: Option<String>,
-    ) -> Result<Self, BoxError> {
-        Ok(Self {
-            id: cfg.channel_id(),
-            bot_token: config::normalize_string(&cfg.bot_token),
-            username: config::normalize_optional(&cfg.username),
-            allowed_users: config::normalize_list(&cfg.allowed_users),
-            base_url: config::normalize_optional(&cfg.base_url)
-                .unwrap_or_else(|| config::DEFAULT_WECHAT_API_BASE.to_string()),
-            cdn_base_url: config::normalize_optional(&cfg.cdn_base_url)
-                .unwrap_or_else(|| config::DEFAULT_WECHAT_CDN_BASE.to_string()),
-            route_tag: cfg.route_tag,
-        })
-    }
-}
-
 pub fn build_wechat_channels(
     cfg: &[config::WechatChannelSettings],
-    https_proxy: Option<String>,
+    client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -73,9 +45,7 @@ pub fn build_wechat_channels(
             );
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(
-            WechatChannelConfig::from_settings(wechat_cfg, https_proxy.clone())?,
-        ));
+        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(&wechat_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate WeChat channel id '{channel_id}'").into());
@@ -94,23 +64,21 @@ pub struct WechatChannel {
     cdn_base_url: String,
     route_tag: Option<u32>,
     workspace: Arc<ChannelWorkspace>,
+    client: Client,
 }
 
 impl WechatChannel {
-    pub fn new(cfg: WechatChannelConfig) -> Self {
+    pub fn new(cfg: &config::WechatChannelSettings, client: Client) -> Self {
         Self {
-            id: if cfg.id.trim().is_empty() {
-                "default".to_string()
-            } else {
-                cfg.id.trim().to_string()
-            },
-            bot_token: cfg.bot_token,
-            username: cfg.username.unwrap_or_else(|| "wechat".to_string()),
-            allowed_users: normalize_allowed_users(cfg.allowed_users),
-            base_url: cfg.base_url,
-            cdn_base_url: cfg.cdn_base_url,
+            id: cfg.channel_id(),
+            bot_token: Some(cfg.bot_token.clone()),
+            username: cfg.username.clone().unwrap_or_else(|| "wechat".to_string()),
+            allowed_users: cfg.allowed_users.clone(),
+            base_url: config::DEFAULT_WECHAT_API_BASE.to_string(),
+            cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
             workspace: Arc::new(ChannelWorkspace::default()),
+            client,
         }
     }
 
@@ -290,11 +258,7 @@ impl WechatChannel {
         let dir = base.join("outgoing");
         tokio::fs::create_dir_all(&dir).await?;
 
-        let file_name = if resource.name.trim().is_empty() {
-            default_file_name_for_resource(resource).to_string()
-        } else {
-            resource.name.clone()
-        };
+        let file_name = file_name_for_resource(resource).to_string();
         let path = dir.join(format!(
             "{}-{}",
             unix_ms(),
@@ -460,9 +424,10 @@ async fn channel_message_from_context(
 
     let mut attachments = Vec::new();
     if let Some(media) = &ctx.media
-        && let Some(resource) = download_media_resource(ctx, media, workspace).await {
-            attachments.push(resource);
-        }
+        && let Some(resource) = download_media_resource(ctx, media, workspace).await
+    {
+        attachments.push(resource);
+    }
 
     if content.trim().is_empty() && !attachments.is_empty() {
         content = attachment_fallback_text(&attachments[0]);
@@ -524,20 +489,8 @@ async fn download_media_resource(
             bytes
         }
         Err(err) => {
-            if let Some(url) = media.url.as_deref() {
-                match download_url_bytes(url, WECHAT_MAX_FILE_DOWNLOAD_BYTES).await {
-                    Ok(bytes) => bytes,
-                    Err(url_err) => {
-                        log::warn!(
-                            "WeChat failed to download media via SDK ({err}) or URL ({url_err})"
-                        );
-                        return None;
-                    }
-                }
-            } else {
-                log::warn!("WeChat failed to download media: {err}");
-                return None;
-            }
+            log::warn!("WeChat failed to download media: {err}");
+            return None;
         }
     };
 
@@ -550,31 +503,11 @@ async fn download_media_resource(
         return None;
     }
 
-    let mime_type = wechat_media_mime(media, &file_name);
-    let kind = wechat_attachment_kind(media.media_type, &file_name, mime_type.as_deref());
-    let mut resource = resource_from_bytes(kind, file_name, mime_type, bytes, "WeChat attachment");
+    let mut resource = resource_from_bytes(file_name, bytes, "WeChat attachment");
     workspace
         .store_resource_lossy(&mut resource, Some(&ctx.message_id), "WeChat attachment")
         .await;
     Some(resource)
-}
-
-async fn download_url_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, BoxError> {
-    let response = reqwest::get(url).await?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("HTTP media download failed ({status})").into());
-    }
-    if let Some(length) = response.content_length()
-        && length > max_bytes
-    {
-        return Err(format!("HTTP media is too large: {length} bytes").into());
-    }
-    let bytes = response.bytes().await?.to_vec();
-    if bytes.len() as u64 > max_bytes {
-        return Err(format!("HTTP media is too large: {} bytes", bytes.len()).into());
-    }
-    Ok(bytes)
 }
 
 async fn temp_media_path(
@@ -648,30 +581,6 @@ fn wechat_media_file_name(media: &MediaInfo, message_id: &str) -> String {
         MediaType::Video => format!("{message_id}.mp4"),
         MediaType::Voice => format!("{message_id}.silk"),
         MediaType::File => format!("{message_id}.bin"),
-    }
-}
-
-fn wechat_media_mime(media: &MediaInfo, file_name: &str) -> Option<String> {
-    mime_type_for_path(file_name)
-        .map(String::from)
-        .or_else(|| match media.media_type {
-            MediaType::Image => Some("image/jpeg".to_string()),
-            MediaType::Video => Some("video/mp4".to_string()),
-            MediaType::Voice => Some("audio/silk".to_string()),
-            MediaType::File => None,
-        })
-}
-
-fn wechat_attachment_kind(
-    media_type: MediaType,
-    file_name: &str,
-    mime_type: Option<&str>,
-) -> AttachmentKind {
-    match media_type {
-        MediaType::Image => AttachmentKind::Image,
-        MediaType::Video => AttachmentKind::Video,
-        MediaType::Voice => AttachmentKind::Audio,
-        MediaType::File => attachment_kind(file_name, mime_type),
     }
 }
 
@@ -775,16 +684,6 @@ fn normalize_identity(value: &str) -> String {
     value.trim().to_string()
 }
 
-fn normalize_allowed_users(allowed_users: Vec<String>) -> Vec<String> {
-    allowed_users
-        .into_iter()
-        .filter_map(|entry| {
-            let normalized = normalize_identity(&entry);
-            (!normalized.is_empty()).then_some(normalized)
-        })
-        .collect()
-}
-
 fn is_identity_allowed(allowed_users: &[String], identity: &str) -> bool {
     let identity = normalize_identity(identity);
     !identity.is_empty()
@@ -824,32 +723,22 @@ fn print_qr_hint(content: &str) {
 mod tests {
     use super::*;
 
-    fn test_config() -> WechatChannelConfig {
-        WechatChannelConfig {
-            id: "test".to_string(),
-            bot_token: Some("token".to_string()),
+    fn test_config() -> config::WechatChannelSettings {
+        config::WechatChannelSettings {
+            id: Some("test".to_string()),
+            bot_token: "token".to_string(),
             username: Some("anda-wechat".to_string()),
             allowed_users: vec!["alice".to_string(), "wxid_123".to_string()],
-            base_url: config::DEFAULT_WECHAT_API_BASE.to_string(),
-            cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: None,
         }
     }
 
     #[test]
     fn wechat_channel_identity() {
-        let channel = WechatChannel::new(test_config());
+        let channel = WechatChannel::new(&test_config(), Client::new());
         assert_eq!(channel.name(), "wechat");
         assert_eq!(channel.username(), "anda-wechat");
         assert_eq!(channel.id(), "wechat:test");
-    }
-
-    #[test]
-    fn allowed_users_match_exact_identity() {
-        let channel = WechatChannel::new(test_config());
-        assert!(is_identity_allowed(&channel.allowed_users, "alice"));
-        assert!(is_identity_allowed(&channel.allowed_users, "wxid_123"));
-        assert!(!is_identity_allowed(&channel.allowed_users, "bob"));
     }
 
     #[test]

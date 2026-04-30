@@ -11,20 +11,14 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    fmt::Write as _,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    AttachmentKind, Channel, ChannelMessage, ChannelWorkspace, SendMessage, attachment_kind,
-    file_name_for_resource, is_http_url, mime_type_for_path, resource_from_bytes,
+    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
+    resource_from_bytes,
 };
 use crate::config;
 
@@ -50,7 +44,6 @@ struct IncomingAttachment {
     file_name: String,
     file_size: Option<u64>,
     mime_type: Option<String>,
-    kind: AttachmentKind,
 }
 
 #[derive(Debug, Clone)]
@@ -60,42 +53,9 @@ struct DiscordUpload {
     bytes: Vec<u8>,
 }
 
-pub struct DiscordChannelConfig {
-    pub id: String,
-    pub bot_token: String,
-    pub username: Option<String>,
-    pub guild_id: Option<String>,
-    pub allowed_users: Vec<String>,
-    pub listen_to_bots: bool,
-    pub mention_only: bool,
-    pub api_base: String,
-    pub ack_reactions: bool,
-    pub http_client: Client,
-}
-
-impl DiscordChannelConfig {
-    fn from_settings(
-        cfg: &config::DiscordChannelSettings,
-        https_proxy: Option<String>,
-    ) -> Result<Self, BoxError> {
-        Ok(Self {
-            id: cfg.channel_id(),
-            bot_token: cfg.bot_token.trim().to_string(),
-            username: config::normalize_optional(&cfg.username),
-            guild_id: config::normalize_optional(&cfg.guild_id),
-            allowed_users: config::normalize_list(&cfg.allowed_users),
-            listen_to_bots: cfg.listen_to_bots,
-            mention_only: cfg.mention_only,
-            api_base: cfg.api_base.trim().trim_end_matches('/').to_string(),
-            ack_reactions: cfg.ack_reactions,
-            http_client: build_http_client(https_proxy.as_deref())?,
-        })
-    }
-}
-
 pub fn build_discord_channels(
     cfg: &[config::DiscordChannelSettings],
-    https_proxy: Option<String>,
+    http_client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -112,9 +72,8 @@ pub fn build_discord_channels(
             .into());
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(DiscordChannel::new(
-            DiscordChannelConfig::from_settings(discord_cfg, https_proxy.clone())?,
-        ));
+        let channel: Arc<dyn Channel> =
+            Arc::new(DiscordChannel::new(discord_cfg, http_client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate Discord channel id '{channel_id}'").into());
@@ -142,26 +101,21 @@ pub struct DiscordChannel {
 }
 
 impl DiscordChannel {
-    pub fn new(cfg: DiscordChannelConfig) -> Self {
+    pub fn new(cfg: &config::DiscordChannelSettings, client: Client) -> Self {
         Self {
-            id: if cfg.id.trim().is_empty() {
-                "default".to_string()
-            } else {
-                cfg.id.trim().to_string()
-            },
-            bot_token: cfg.bot_token,
-            username: cfg.username.unwrap_or_else(|| "discord".to_string()),
-            guild_id: cfg.guild_id,
-            allowed_users: normalize_allowed_users(cfg.allowed_users),
+            id: cfg.channel_id(),
+            bot_token: cfg.bot_token.clone(),
+            username: cfg
+                .username
+                .clone()
+                .unwrap_or_else(|| "discord".to_string()),
+            guild_id: cfg.guild_id.clone(),
+            allowed_users: cfg.allowed_users.clone(),
             listen_to_bots: cfg.listen_to_bots,
             mention_only: cfg.mention_only,
-            api_base: if cfg.api_base.trim().is_empty() {
-                config::DEFAULT_DISCORD_API_BASE.to_string()
-            } else {
-                cfg.api_base.trim().trim_end_matches('/').to_string()
-            },
+            api_base: config::DEFAULT_DISCORD_API_BASE.to_string(),
             ack_reactions: cfg.ack_reactions,
-            client: cfg.http_client,
+            client,
             workspace: Arc::new(ChannelWorkspace::default()),
             bot_user_id: Mutex::new(None),
             typing_handles: Mutex::new(HashMap::new()),
@@ -269,16 +223,13 @@ impl DiscordChannel {
         let mime_type = attachment
             .get("content_type")
             .and_then(Value::as_str)
-            .map(String::from)
-            .or_else(|| mime_type_for_path(&file_name).map(String::from));
-        let kind = attachment_kind(&file_name, mime_type.as_deref());
+            .map(String::from);
 
         Some(IncomingAttachment {
             url,
             file_name,
             file_size: attachment.get("size").and_then(Value::as_u64),
             mime_type,
-            kind,
         })
     }
 
@@ -335,9 +286,7 @@ impl DiscordChannel {
         }
 
         Some(resource_from_bytes(
-            attachment.kind,
             attachment.file_name.clone(),
-            attachment.mime_type.clone(),
             bytes,
             "Discord attachment",
         ))
@@ -617,31 +566,6 @@ impl DiscordChannel {
         let mut remote_urls = Vec::new();
 
         for resource in resources {
-            if let Some(uri) = resource.uri.as_deref() {
-                if is_http_url(uri) {
-                    remote_urls.push(uri.to_string());
-                    continue;
-                }
-
-                let path = uri.strip_prefix("file://").unwrap_or(uri);
-                if Path::new(path).exists() {
-                    let bytes = tokio::fs::read(path).await?;
-                    if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
-                        return Err(format!(
-                            "Discord resource '{}' exceeds {} bytes",
-                            resource.name, DISCORD_MAX_FILE_BYTES
-                        )
-                        .into());
-                    }
-                    uploads.push(DiscordUpload {
-                        file_name: file_name_for_resource(resource),
-                        mime_type: resource.mime_type.clone(),
-                        bytes,
-                    });
-                    continue;
-                }
-            }
-
             if let Some(blob) = &resource.blob {
                 let bytes = blob.0.clone();
                 if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
@@ -652,7 +576,30 @@ impl DiscordChannel {
                     .into());
                 }
                 uploads.push(DiscordUpload {
-                    file_name: file_name_for_resource(resource),
+                    file_name: file_name_for_resource(resource).to_string(),
+                    mime_type: resource.mime_type.clone(),
+                    bytes,
+                });
+                continue;
+            }
+
+            if let Some(uri) = resource.uri.as_deref() {
+                if is_http_url(uri) {
+                    remote_urls.push(uri.to_string());
+                    continue;
+                }
+
+                let path = uri.strip_prefix("file://").unwrap_or(uri);
+                let bytes = tokio::fs::read(path).await?;
+                if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
+                    return Err(format!(
+                        "Discord resource '{}' exceeds {} bytes",
+                        resource.name, DISCORD_MAX_FILE_BYTES
+                    )
+                    .into());
+                }
+                uploads.push(DiscordUpload {
+                    file_name: file_name_for_resource(resource).to_string(),
                     mime_type: resource.mime_type.clone(),
                     bytes,
                 });
@@ -1104,15 +1051,6 @@ async fn response_unit_checked(response: reqwest::Response, context: &str) -> Re
     Ok(())
 }
 
-fn build_http_client(https_proxy: Option<&str>) -> Result<Client, BoxError> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(600));
-    if let Some(proxy) = https_proxy.map(str::trim).filter(|proxy| !proxy.is_empty()) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy)?);
-    }
-
-    Ok(builder.build()?)
-}
-
 fn decode_base64_string(input: &str) -> Option<String> {
     if input.is_empty() {
         return None;
@@ -1126,16 +1064,6 @@ fn decode_base64_string(input: &str) -> Option<String> {
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .filter(|value| !value.is_empty())
-}
-
-fn normalize_allowed_users(allowed_users: Vec<String>) -> Vec<String> {
-    allowed_users
-        .into_iter()
-        .filter_map(|entry| {
-            let normalized = entry.trim().to_string();
-            (!normalized.is_empty()).then_some(normalized)
-        })
-        .collect()
 }
 
 fn mention_tags(bot_user_id: &str) -> [String; 2] {
@@ -1296,26 +1224,23 @@ fn discord_reaction_url(api_base: &str, channel_id: &str, message_id: &str, emoj
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::resource_tags;
 
-    fn test_config() -> DiscordChannelConfig {
-        DiscordChannelConfig {
-            id: "test".to_string(),
+    fn test_config() -> config::DiscordChannelSettings {
+        config::DiscordChannelSettings {
+            id: Some("test".to_string()),
             bot_token: "MTIzNDU2.fake.hmac".to_string(),
             username: Some("anda-discord".to_string()),
             guild_id: Some("987".to_string()),
             allowed_users: vec!["111".to_string(), "*".to_string()],
             listen_to_bots: false,
             mention_only: true,
-            api_base: config::DEFAULT_DISCORD_API_BASE.to_string(),
             ack_reactions: true,
-            http_client: Client::new(),
         }
     }
 
     #[test]
     fn discord_channel_identity() {
-        let channel = DiscordChannel::new(test_config());
+        let channel = DiscordChannel::new(&test_config(), Client::new());
         assert_eq!(channel.name(), "discord");
         assert_eq!(channel.username(), "anda-discord");
         assert_eq!(channel.id(), "discord:test");
@@ -1331,7 +1256,7 @@ mod tests {
 
     #[test]
     fn allowed_users_match_exact_id_or_wildcard() {
-        let channel = DiscordChannel::new(test_config());
+        let channel = DiscordChannel::new(&test_config(), Client::new());
         assert!(channel.is_user_allowed("111"));
         assert!(channel.is_user_allowed("222"));
         assert!(!channel.is_user_allowed(""));
@@ -1369,21 +1294,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resource_tags_detect_text_and_audio() {
-        assert_eq!(
-            resource_tags(AttachmentKind::Document, "notes.txt", Some("text/plain")),
-            vec!["text".to_string(), "txt".to_string()]
-        );
-        assert_eq!(
-            resource_tags(AttachmentKind::Audio, "voice.ogg", Some("audio/ogg")),
-            vec!["audio".to_string(), "ogg".to_string()]
-        );
-    }
-
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let channel = DiscordChannel::new(test_config());
+        let channel = DiscordChannel::new(&test_config(), Client::new());
         {
             let mut guard = channel.typing_handles.lock().await;
             guard.insert(
