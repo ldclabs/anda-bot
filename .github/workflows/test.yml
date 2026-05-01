@@ -9,10 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
       - name: Run tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 protobuf-compiler libasound2-dev
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
           rustup update --no-self-update stable
           cargo clippy --all-targets --all-features
           cargo test --workspace -- --nocapture

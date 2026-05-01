@@ -44,11 +44,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 protobuf-compiler libasound2-dev
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -60,13 +63,13 @@ jobs:
 
       - name: Build Rust binary
         run: |
-          cargo build --release --locked -p anda_bot --target ${{ matrix.rust_target }}
+          cargo build --release --locked --target ${{ matrix.rust_target }}
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p release
-          cp "target/${{ matrix.rust_target }}/release/anda_bot${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
+          cp "target/${{ matrix.rust_target }}/release/anda${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
 
           for file in release/*; do
             if command -v sha256sum >/dev/null 2>&1; then
@@ -78,36 +81,6 @@ jobs:
             fi
             echo "$hash  $(basename "$file")" > "${file}.sha256"
           done
-          bundle="release/anda-bundle-${{ matrix.target }}.zip"
-          bundle_name="$(basename "$bundle")"
-          files=(
-            "anda-${{ matrix.target }}${{ matrix.exe_ext }}"
-            "anda-${{ matrix.target }}${{ matrix.exe_ext }}.sha256"
-          )
-
-          if command -v bsdtar >/dev/null 2>&1; then
-            bsdtar -a -cf "$bundle" -C release "${files[@]}"
-          elif command -v zip >/dev/null 2>&1; then
-            (
-              cd release
-              zip -q "$bundle_name" "${files[@]}"
-            )
-          else
-            PYTHON_BIN="python3"
-            if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-              PYTHON_BIN="python"
-            fi
-            "$PYTHON_BIN" -c 'import sys,zipfile; out=sys.argv[1]; items=sys.argv[2:]; z=zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED); [z.write(p, p.split("/")[-1]) for p in items]; z.close()' "$bundle" "release/${files[0]}" "release/${files[1]}" "release/${files[2]}" "release/${files[3]}"
-          fi
-
-          if command -v sha256sum >/dev/null 2>&1; then
-            bundle_hash="$(sha256sum "$bundle" | awk '{print $1}')"
-          elif command -v shasum >/dev/null 2>&1; then
-            bundle_hash="$(shasum -a 256 "$bundle" | awk '{print $1}')"
-          else
-            bundle_hash="$(openssl dgst -sha256 "$bundle" | awk '{print $NF}')"
-          fi
-          echo "$bundle_hash  $(basename "$bundle")" > "${bundle}.sha256"
 
           ls -lah release
 
