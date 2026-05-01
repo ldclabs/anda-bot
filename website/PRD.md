@@ -2,7 +2,7 @@
 
 Status: living document
 Owner: Anda Bot website maintainers
-Last updated: 2026-04-30
+Last updated: 2026-05-01
 Primary route: `/`
 Current implementation: SvelteKit, Svelte 5, Tailwind CSS v4, shadcn-svelte-style local primitives
 
@@ -91,13 +91,14 @@ Current content:
 - H1: `Anda Bot`
 - Core line: `I am the agent that remembers...`
 - CTAs: `Run me locally`, `Meet my memory`, `GitHub`
-- Proof points: `3 memory phases`, `local workspace`, `open source`
-- Desktop-only memory console: `hippocampus.stream`, recall pulse, memory signal tags, example `anda chat` output
+- Proof points: `3 phases`, `local workspace`, `open source`
+- Full-bleed hippocampus-style `NexusCanvas` memory field with animated streams, pulse paths, labels, and pointer response
+- Desktop memory observatory panel: `hippocampus.live`, phase wheel, recall signal meters, and live memory event log
 
 Requirements:
 
 - The product name must be visible in the first viewport.
-- The hero must include a visual memory system, currently `NexusCanvas`.
+- The hero must include a visual memory system, currently the animated `NexusCanvas` memory field.
 - Mobile must show a hint of the next section in the first viewport.
 - CTA labels must remain action-oriented and concise.
 
@@ -112,7 +113,7 @@ Current content:
 
 - Section badge: `Anda Hippocampus`
 - Headline: `My memory is not a note pile. It is a living loop.`
-- Three cards: `Formation`, `Recall`, `Maintenance`
+- Three phase cards: `Formation`, `Recall`, `Maintenance`, connected by a subtle loop trace on desktop
 
 Requirements:
 
@@ -131,7 +132,7 @@ Current content:
 
 - Badge: `Where I work`
 - Headline: `Bring me to the places your context is born.`
-- Tags: chat, voice, shell, channels
+- Context routes board: chat, voice, shell, channels
 - Cards: local-first shell, multi-channel chat, your keys/models, inspectable memory
 
 Requirements:
@@ -200,6 +201,7 @@ Design concept:
 - A cognitive instrument panel for an agent with a living memory brain.
 - Organic, dark, warm, and technical.
 - More like a memory observatory than a SaaS dashboard.
+- The first viewport should feel like entering an active memory field, not reading a conventional two-column landing hero.
 
 Current palette:
 
@@ -227,7 +229,8 @@ Shape language:
 Texture and motion:
 
 - `NexusCanvas` supplies the hero visual asset and interactive memory field.
-- `.anda-grain` adds a subtle grid texture.
+- The canvas renders a hippocampus-like seeded topology with animated streams, recall pulses, labels, and pointer response.
+- `.memory-strata`, `.hero-scan`, `.signal-panel`, and `.phase-wheel` add observatory texture and interface motion.
 - Motion must respect `prefers-reduced-motion`.
 
 Avoid:
@@ -270,6 +273,8 @@ NexusCanvas requirements:
 - Must stay decorative to screen readers via `aria-hidden="true"`.
 - Must not block content or controls.
 - Must preserve acceptable performance on mobile and desktop.
+- Must cap device pixel ratio and reduce or stop animation for reduced motion users.
+- Should maintain a product-specific memory topology rather than generic particles or abstract AI decoration.
 
 ## 9. Functional Requirements
 
@@ -406,3 +411,9 @@ A website change is ready when:
 
 - Created the first living design and requirements document for the Anda Bot website.
 - Documented the current single-page landing experience, design direction, component requirements, validation commands, and iteration backlog.
+
+### 2026-05-01
+
+- Redesigned the landing page as a memory observatory with a stronger first-viewport visual system.
+- Rebuilt `NexusCanvas` as an animated hippocampus-style memory field with streams, pulses, labels, and pointer response.
+- Updated the hero, memory, workflows, and start sections to match the new cognitive instrument panel direction.
