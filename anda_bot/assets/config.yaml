@@ -11,6 +11,74 @@ sandbox: false
 # Optional: for example http://127.0.0.1:7890
 # https_proxy: http://127.0.0.1:7890
 
+model:
+  active: DeepSeek
+  providers:
+    DeepSeek:
+      family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: ""
+      labels: ["pro", "hippocampus"]
+      disabled: false
+
+    GPT:
+      family: openai
+      model: "gpt-5.5"
+      api_base: "https://api.openai.com/v1"
+      api_key: ""
+      labels: []
+      disabled: false
+
+    Claude:
+      family: anthropic
+      model: "claude-opus-4-6"
+      api_base: "https://api.anthropic.com/v1"
+      api_key: ""
+      labels: []
+      disabled: false
+
+    Gemini:
+      family: gemini
+      model: "gemini-pro-latest"
+      api_base: "https://generativelanguage.googleapis.com/v1beta/models"
+      api_key: ""
+      labels: []
+      disabled: false
+
+    Mimo:
+      family: anthropic
+      model: "mimo-v2.5"
+      api_base: "https://api.xiaomimimo.com/anthropic/v1"
+      api_key: ""
+      labels: ["fallback"]
+      disabled: false
+      bearer_auth: true
+
+    Kimi:
+      family: openai
+      model: "kimi-k2.6"
+      api_base: "https://api.moonshot.cn/v1"
+      api_key: ""
+      labels: []
+      disabled: false
+
+    GLM:
+      family: anthropic
+      model: "glm-5.1"
+      api_base: "https://open.bigmodel.cn/api/anthropic"
+      api_key: ""
+      labels: []
+      disabled: false
+
+    MiniMax:
+      family: anthropic
+      model: "MiniMax-M2.7-highspeed"
+      api_base: "https://api.minimaxi.com/anthropic/v1"
+      api_key: ""
+      labels: ["flash"]
+      disabled: false
+
 tts:
   enabled: false
   default_provider: edge
@@ -51,34 +119,6 @@ transcription:
   #   bearer_token:
   #   max_audio_bytes: 26214400
   #   timeout_secs: 300
-
-model:
-  active: DeepSeek
-  providers:
-    DeepSeek:
-      family: anthropic
-      model: "deepseek-v4-pro"
-      api_base: "https://api.deepseek.com/anthropic"
-      api_key: ""
-      labels: ["pro", "hippocampus"]
-      disabled: false
-
-    Mimo:
-      family: anthropic
-      model: "mimo-v2.5"
-      api_base: "https://api.xiaomimimo.com/anthropic/v1"
-      api_key: ""
-      labels: ["fallback"]
-      disabled: false
-      bearer_auth: true
-
-    MiniMax:
-      family: anthropic
-      model: "MiniMax-M2.7-highspeed"
-      api_base: "https://api.minimaxi.com/anthropic/v1"
-      api_key: ""
-      labels: ["flash"]
-      disabled: false
 
 channels:
   irc: []

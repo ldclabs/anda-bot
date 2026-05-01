@@ -29,12 +29,31 @@ For you, this means a simple habit works well: tell me the things that should re
 
 ## Quick Start
 
+Install the latest release:
+
+With Homebrew:
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+With the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
 Requirements:
 
-- A recent Rust toolchain.
 - At least one model provider API key.
 
-Run me from this repository:
+Or run me from this repository with a recent Rust toolchain:
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -64,7 +83,7 @@ The `hippocampus` label lets the memory brain prefer that provider for memory wo
 Use a separate home directory when you want an isolated profile:
 
 ```bash
-cargo run -p anda_bot -- --home /path/to/.anda
+anda --home /path/to/.anda
 ```
 
 ## Chat With Me
@@ -93,29 +112,29 @@ When we talk about Alice, she means the designer on the mobile team.
 
 ## Useful Commands
 
-Run the daemon in the foreground:
+Run Anda Bot:
 
 ```bash
-cargo run -p anda_bot -- daemon
+anda
 ```
 
 Stop or restart the background daemon on Unix:
 
 ```bash
-cargo run -p anda_bot -- stop
-cargo run -p anda_bot -- restart
+anda stop
+anda restart
 ```
 
 Send a one-time prompt without opening the terminal UI:
 
 ```bash
-cargo run -p anda_bot -- agent run --prompt "Summarize what you remember about my current project"
+anda agent run --prompt "Summarize what you remember about my current project"
 ```
 
 Start a voice conversation:
 
 ```bash
-cargo run -p anda_bot -- voice --record-secs 8
+anda voice --record-secs 8
 ```
 
 Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output.

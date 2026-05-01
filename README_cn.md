@@ -29,12 +29,31 @@ Anda Hippocampus 的设计重点不是“记得更多”，而是“记住之后
 
 ## 快速开始
 
+安装最新发布版：
+
+通过 Homebrew：
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+通过安装脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
 前置要求：
 
-- 较新的 Rust 工具链。
 - 至少一个可用的模型提供方 API Key。
 
-从源码启动我：
+也可以用较新的 Rust 工具链从源码启动我：
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -64,7 +83,7 @@ model:
 如果你想为不同身份或项目准备独立记忆，可以换一个 home 目录：
 
 ```bash
-cargo run -p anda_bot -- --home /path/to/.anda
+anda --home /path/to/.anda
 ```
 
 ## 和我聊天
@@ -93,29 +112,29 @@ cargo run -p anda_bot -- --home /path/to/.anda
 
 ## 常用命令
 
-前台运行守护进程：
+运行 Anda Bot：
 
 ```bash
-cargo run -p anda_bot -- daemon
+anda
 ```
 
 在 Unix 平台停止或重启后台守护进程：
 
 ```bash
-cargo run -p anda_bot -- stop
-cargo run -p anda_bot -- restart
+anda stop
+anda restart
 ```
 
 不打开终端 UI，直接发起一次请求：
 
 ```bash
-cargo run -p anda_bot -- agent run --prompt "总结一下你记得的当前项目背景"
+anda agent run --prompt "总结一下你记得的当前项目背景"
 ```
 
 启动语音对话：
 
 ```bash
-cargo run -p anda_bot -- voice --record-secs 8
+anda voice --record-secs 8
 ```
 
 语音模式需要 `transcription.enabled: true`。如果还想让我读出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。

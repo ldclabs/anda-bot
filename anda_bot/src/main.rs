@@ -108,7 +108,7 @@ async fn main() -> Result<(), BoxError> {
     match command {
         None => {
             log::info!("Starting CLI at {}", daemon.base_url());
-
+            daemon.ensure_directories().await?;
             let ed25519_secret =
                 load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
             let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
