@@ -68,18 +68,18 @@ async fn build_shell_runtime(
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 async fn build_sandbox_runtime(sandbox_dir: PathBuf) -> Result<Arc<dyn shell::Executor>, BoxError> {
     Ok(Arc::new(
         shell::sandbox::SandboxRuntime::new(sandbox_dir).await?,
     ))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 async fn build_sandbox_runtime(
     _sandbox_dir: PathBuf,
 ) -> Result<Arc<dyn shell::Executor>, BoxError> {
-    Err("sandbox is not supported on Windows".into())
+    Err("sandbox is not supported on non-macOS platforms".into())
 }
 
 impl Engines {

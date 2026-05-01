@@ -59,11 +59,11 @@ tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-anda_engine = { workspace = true }
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 anda_engine = { workspace = true, features = ["sandbox"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+anda_engine = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
