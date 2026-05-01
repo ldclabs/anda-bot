@@ -75,7 +75,7 @@ jobs:
         if: ${{ contains(matrix.rust_target, 'linux-musl') && !matrix.cross }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 musl-tools libasound2-dev
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 musl-tools libasound2-dev linux-libc-dev
 
       - name: Install cross (ARM Linux)
         if: ${{ matrix.cross }}
