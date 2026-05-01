@@ -383,8 +383,8 @@ impl Channel for IrcChannel {
                 }
 
                 // CAP responses for SASL
-                "CAP" => {
-                    if sasl_pending && msg.params.iter().any(|p| p.contains("sasl")) {
+                "CAP"
+                    if sasl_pending && msg.params.iter().any(|p| p.contains("sasl")) => {
                         if msg.params.iter().any(|p| p.contains("ACK")) {
                             // CAP * ACK :sasl — server accepted, start SASL auth
                             let mut guard = self.writer.lock().await;
@@ -401,11 +401,10 @@ impl Channel for IrcChannel {
                             }
                         }
                     }
-                }
 
-                "AUTHENTICATE" => {
+                "AUTHENTICATE"
                     // Server sends "AUTHENTICATE +" to request credentials
-                    if sasl_pending && msg.params.first().is_some_and(|p| p == "+") {
+                    if sasl_pending && msg.params.first().is_some_and(|p| p == "+") => {
                         // sasl_password is loaded from runtime config, not hard-coded
                         if let Some(password) = self.sasl_password.as_deref() {
                             let encoded = encode_sasl_plain(&current_nick, password);
@@ -425,7 +424,6 @@ impl Channel for IrcChannel {
                             }
                         }
                     }
-                }
 
                 // RPL_SASLSUCCESS (903) — SASL done, end CAP
                 "903" => {

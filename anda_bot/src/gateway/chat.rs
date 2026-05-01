@@ -217,11 +217,10 @@ impl ChatSession {
             return false;
         }
 
-        if let Some(conv) = &self.conversation {
-            if conv_id == conv._id && !self.is_active() {
+        if let Some(conv) = &self.conversation
+            && conv_id == conv._id && !self.is_active() {
                 return false;
             }
-        }
 
         self.last_poll = Instant::now();
         match self

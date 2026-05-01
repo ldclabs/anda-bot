@@ -268,6 +268,10 @@ pub fn normalize_list(values: &[String]) -> Vec<String> {
         .collect()
 }
 
+pub fn normalize_identity(value: &str) -> String {
+    value.trim().trim_start_matches('@').to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

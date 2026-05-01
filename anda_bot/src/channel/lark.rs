@@ -19,7 +19,7 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config;
+use crate::config::{self, normalize_identity};
 
 const LARK_CARD_MARKDOWN_MAX_BYTES: usize = 28_000;
 const LARK_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
@@ -203,7 +203,7 @@ pub fn build_lark_channels(
             .into());
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(LarkChannel::new(&lark_cfg, client.clone()));
+        let channel: Arc<dyn Channel> = Arc::new(LarkChannel::new(lark_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate Lark channel id '{channel_id}'").into());
@@ -248,7 +248,11 @@ impl LarkChannel {
                 .unwrap_or_else(|| channel_name.to_string()),
             verification_token: cfg.verification_token.clone().unwrap_or_default(),
             port: cfg.port,
-            allowed_users: cfg.allowed_users.clone(),
+            allowed_users: cfg
+                .allowed_users
+                .iter()
+                .map(|s| normalize_identity(s))
+                .collect(),
             mention_only: cfg.mention_only,
             platform: cfg.platform,
             receive_mode: cfg.receive_mode,
@@ -966,7 +970,7 @@ impl LarkChannel {
             .unwrap_or(&file_key);
 
         match self
-            .download_file_resource(message_id, &file_key, &file_name)
+            .download_file_resource(message_id, &file_key, file_name)
             .await
         {
             Some(resource) => Some(ParsedMessageContent::with_attachment(

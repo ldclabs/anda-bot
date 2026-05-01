@@ -6,7 +6,6 @@ use std::{
     sync::RwLock,
 };
 
-pub type MimeKind = infer2::MatcherType;
 pub type InferType = infer2::Type;
 
 #[derive(Debug, Default)]
@@ -80,7 +79,7 @@ impl ChannelWorkspace {
 
 pub fn infer_from(file_name: &str, mime_type: Option<&str>) -> Option<InferType> {
     mime_type
-        .and_then(|mime| infer2::get_from_mime(mime))
+        .and_then(infer2::get_from_mime)
         .or_else(|| infer2::get_from_filename(file_name))
 }
 
@@ -90,21 +89,6 @@ pub fn infer_from_resource(resource: &Resource) -> Option<InferType> {
         .as_ref()
         .and_then(|blob| infer2::get(&blob.0))
         .or_else(|| infer_from(&resource.name, resource.mime_type.as_deref()))
-}
-
-pub fn infer_tag(it: &InferType) -> String {
-    match it.matcher_type() {
-        MimeKind::App => "app".to_string(),
-        MimeKind::Archive => "archive".to_string(),
-        MimeKind::Audio => "audio".to_string(),
-        MimeKind::Book => "book".to_string(),
-        MimeKind::Doc => "doc".to_string(),
-        MimeKind::Font => "font".to_string(),
-        MimeKind::Image => "image".to_string(),
-        MimeKind::Text => "text".to_string(),
-        MimeKind::Video => "video".to_string(),
-        MimeKind::Custom => "custom".to_string(),
-    }
 }
 
 pub fn resource_from_bytes(file_name: String, bytes: Vec<u8>, description: &str) -> Resource {
@@ -120,7 +104,7 @@ pub fn resource_from_bytes(file_name: String, bytes: Vec<u8>, description: &str)
 
 pub fn infer_resource(mut resource: Resource) -> Resource {
     if let Some(t) = infer_from_resource(&resource) {
-        let tag = infer_tag(&t);
+        let tag = t.matcher_type().to_string();
         resource.mime_type = Some(t.mime_type().to_string());
         resource.name = if resource.name.trim().is_empty() {
             format!("{tag}.{}", t.extension())
@@ -141,8 +125,12 @@ pub fn infer_resource(mut resource: Resource) -> Resource {
 pub fn file_name_for_resource<'a>(resource: &'a Resource) -> Cow<'a, str> {
     if !resource.name.trim().is_empty() {
         Cow::Borrowed(resource.name.trim())
-    } else if let Some(t) = infer_from_resource(&resource) {
-        Cow::Owned(format!("{}.{}", infer_tag(&t), t.extension()))
+    } else if let Some(t) = infer_from_resource(resource) {
+        Cow::Owned(format!(
+            "{}.{}",
+            t.matcher_type(),
+            t.extension()
+        ))
     } else {
         Cow::Borrowed("document.bin")
     }
@@ -150,13 +138,6 @@ pub fn file_name_for_resource<'a>(resource: &'a Resource) -> Cow<'a, str> {
 
 pub fn is_http_url(target: &str) -> bool {
     target.starts_with("http://") || target.starts_with("https://")
-}
-
-fn file_extension(path: &str) -> Option<String> {
-    Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
 }
 
 fn stored_attachment_name(message_key: Option<&str>, file_name: &str) -> String {
@@ -225,9 +206,4 @@ async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, 
 
 fn local_file_uri(path: &Path) -> String {
     format!("file://{}", path.to_string_lossy())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 }

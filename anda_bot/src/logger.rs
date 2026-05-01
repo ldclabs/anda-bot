@@ -1,5 +1,11 @@
 use chrono::{Local, NaiveDate};
-use std::{collections::BTreeMap, fs::File, io, io::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use structured_logger::{Builder, Writer, get_env_level};
 
 pub const CLI_LOG_FILE_PREFIX: &str = "anda-cli";
@@ -69,7 +75,7 @@ fn new_daily_json_writer(
     Ok(Box::new(DailyJsonWriter::new(logs_dir, file_prefix)?))
 }
 
-fn open_daily_log_file(logs_dir: &PathBuf, file_prefix: &str, date: NaiveDate) -> io::Result<File> {
+fn open_daily_log_file(logs_dir: &Path, file_prefix: &str, date: NaiveDate) -> io::Result<File> {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)

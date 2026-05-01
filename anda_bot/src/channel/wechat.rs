@@ -19,7 +19,7 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config;
+use crate::config::{self, normalize_identity};
 
 const WECHAT_MAX_MESSAGE_LENGTH: usize = 4000;
 const WECHAT_CONTINUATION_OVERHEAD: usize = 30;
@@ -45,7 +45,7 @@ pub fn build_wechat_channels(
             );
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(&wechat_cfg, client.clone()));
+        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(wechat_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate WeChat channel id '{channel_id}'").into());
@@ -73,7 +73,11 @@ impl WechatChannel {
             id: cfg.channel_id(),
             bot_token: Some(cfg.bot_token.clone()),
             username: cfg.username.clone().unwrap_or_else(|| "wechat".to_string()),
-            allowed_users: cfg.allowed_users.clone(),
+            allowed_users: cfg
+                .allowed_users
+                .iter()
+                .map(|s| normalize_identity(s))
+                .collect(),
             base_url: config::DEFAULT_WECHAT_API_BASE.to_string(),
             cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
@@ -678,10 +682,6 @@ fn split_message_for_wechat(message: &str) -> Vec<String> {
     }
 
     chunks
-}
-
-fn normalize_identity(value: &str) -> String {
-    value.trim().to_string()
 }
 
 fn is_identity_allowed(allowed_users: &[String], identity: &str) -> bool {

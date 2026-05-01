@@ -20,7 +20,7 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config;
+use crate::config::{self, normalize_identity};
 
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
 const DISCORD_MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
@@ -110,7 +110,11 @@ impl DiscordChannel {
                 .clone()
                 .unwrap_or_else(|| "discord".to_string()),
             guild_id: cfg.guild_id.clone(),
-            allowed_users: cfg.allowed_users.clone(),
+            allowed_users: cfg
+                .allowed_users
+                .iter()
+                .map(|s| normalize_identity(s))
+                .collect(),
             listen_to_bots: cfg.listen_to_bots,
             mention_only: cfg.mention_only,
             api_base: config::DEFAULT_DISCORD_API_BASE.to_string(),

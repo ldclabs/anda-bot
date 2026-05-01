@@ -388,14 +388,13 @@ impl App {
             KeyCode::Enter => {
                 self.submit_input().await?;
             }
-            KeyCode::Backspace => {
-                if self.input_cursor > 0 {
+            KeyCode::Backspace
+                if self.input_cursor > 0 => {
                     let chars: Vec<char> = self.input_buf.chars().collect();
                     let pos = self.input_cursor - 1;
                     self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
                     self.input_cursor -= 1;
                 }
-            }
             KeyCode::Delete => {
                 let chars: Vec<char> = self.input_buf.chars().collect();
                 if self.input_cursor < chars.len() {
@@ -405,11 +404,10 @@ impl App {
                         .collect();
                 }
             }
-            KeyCode::Left => {
-                if self.input_cursor > 0 {
+            KeyCode::Left
+                if self.input_cursor > 0 => {
                     self.input_cursor -= 1;
                 }
-            }
             KeyCode::Right => {
                 let len = self.input_buf.chars().count();
                 if self.input_cursor < len {

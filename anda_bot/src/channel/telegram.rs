@@ -20,7 +20,7 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config;
+use crate::config::{self, normalize_identity};
 
 const TELEGRAM_MAX_MESSAGE_LENGTH: usize = 4096;
 const TELEGRAM_CONTINUATION_OVERHEAD: usize = 30;
@@ -99,7 +99,11 @@ impl TelegramChannel {
                 .username
                 .clone()
                 .unwrap_or_else(|| "telegram".to_string()),
-            allowed_users: cfg.allowed_users.clone(),
+            allowed_users: cfg
+                .allowed_users
+                .iter()
+                .map(|s| normalize_identity(s))
+                .collect(),
             mention_only: cfg.mention_only,
             api_base: config::DEFAULT_TELEGRAM_API_BASE.to_string(),
             ack_reactions: cfg.ack_reactions,
@@ -1202,10 +1206,6 @@ impl Channel for TelegramChannel {
         }
         Ok(())
     }
-}
-
-fn normalize_identity(value: &str) -> String {
-    value.trim().trim_start_matches('@').to_string()
 }
 
 fn random_telegram_ack_reaction() -> &'static str {
