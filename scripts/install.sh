@@ -71,8 +71,8 @@ esac
 TARGET="${OS}-${ARCH}"
 
 case "$TARGET" in
-    linux-x86_64|windows-x86_64|macos-x86_64|macos-arm64) ;;
-    *) error "Unsupported target: ${TARGET}. Available releases: linux-x86_64, windows-x86_64, macos-x86_64, macos-arm64" ;;
+    linux-x86_64|linux-arm64|windows-x86_64|macos-x86_64|macos-arm64) ;;
+    *) error "Unsupported target: ${TARGET}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-x86_64, macos-arm64" ;;
 esac
 
 EXE_EXT=""

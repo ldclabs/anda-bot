@@ -16,28 +16,39 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
-            rust_target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-musl
             goos: linux
             goarch: amd64
             exe_ext: ""
+            cross: false
+          - os: ubuntu-latest
+            target: linux-arm64
+            rust_target: aarch64-unknown-linux-musl
+            goos: linux
+            goarch: arm64
+            exe_ext: ""
+            cross: true
           - os: windows-latest
             target: windows-x86_64
             rust_target: x86_64-pc-windows-msvc
             goos: windows
             goarch: amd64
             exe_ext: ".exe"
+            cross: false
           - os: macos-15-intel
             target: macos-x86_64
             rust_target: x86_64-apple-darwin
             goos: darwin
             goarch: amd64
             exe_ext: ""
+            cross: false
           - os: macos-latest
             target: macos-arm64
             rust_target: aarch64-apple-darwin
             goos: darwin
             goarch: arm64
             exe_ext: ""
+            cross: false
 
     runs-on: ${{ matrix.os }}
 
@@ -46,24 +57,41 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && !contains(matrix.rust_target, 'linux-musl') }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
 
+      - name: Install musl tools (Linux)
+        if: ${{ contains(matrix.rust_target, 'linux-musl') && !matrix.cross }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 musl-tools libasound2-dev
+
+      - name: Install cross (ARM Linux)
+        if: ${{ matrix.cross }}
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.rust_target }}
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build Rust binary
+      - name: Build Rust binary (native)
+        if: ${{ !matrix.cross }}
         run: |
           cargo build --release --locked --target ${{ matrix.rust_target }}
+
+      - name: Build Rust binary (cross)
+        if: ${{ matrix.cross }}
+        run: |
+          cross build --release --locked --target ${{ matrix.rust_target }}
 
       - name: Collect artifacts
         shell: bash

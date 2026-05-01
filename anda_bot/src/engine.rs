@@ -56,6 +56,32 @@ pub struct EngineConfig {
     pub https_proxy: Option<String>,
 }
 
+async fn build_shell_runtime(
+    home_dir: PathBuf,
+    sandbox_dir: Option<PathBuf>,
+) -> Result<Arc<dyn shell::Executor>, BoxError> {
+    if let Some(sandbox_dir) = sandbox_dir {
+        build_sandbox_runtime(sandbox_dir).await
+    } else {
+        let runtime: Arc<dyn shell::Executor> = Arc::new(shell::NativeRuntime::new(home_dir));
+        Ok(runtime)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn build_sandbox_runtime(sandbox_dir: PathBuf) -> Result<Arc<dyn shell::Executor>, BoxError> {
+    Ok(Arc::new(
+        shell::sandbox::SandboxRuntime::new(sandbox_dir).await?,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+async fn build_sandbox_runtime(
+    _sandbox_dir: PathBuf,
+) -> Result<Arc<dyn shell::Executor>, BoxError> {
+    Err("sandbox is not supported on Windows".into())
+}
+
 impl Engines {
     pub async fn new(
         cfg: EngineConfig,
@@ -124,11 +150,7 @@ impl Engines {
         );
 
         let shell_tool = {
-            let runtime: Arc<dyn shell::Executor> = if let Some(sandbox) = cfg.sandbox_dir {
-                Arc::new(shell::sandbox::SandboxRuntime::new(sandbox).await?)
-            } else {
-                Arc::new(shell::NativeRuntime::new(cfg.home_dir.clone()))
-            };
+            let runtime = build_shell_runtime(cfg.home_dir.clone(), cfg.sandbox_dir).await?;
             shell::ShellTool::new(runtime, HashMap::new())
         };
 
