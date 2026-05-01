@@ -1,5 +1,9 @@
 use anda_core::BoxError;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod voice;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[path = "cli/voice_unsupported.rs"]
 pub mod voice;
 
 use crate::{

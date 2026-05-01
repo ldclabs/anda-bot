@@ -20,7 +20,6 @@ anda_kip = { workspace = true }
 anda_object_store = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
-cpal = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
@@ -58,6 +57,9 @@ unicode-width = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+cpal = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 anda_engine = { workspace = true, features = ["sandbox"] }
