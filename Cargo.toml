@@ -95,7 +95,7 @@ weixin-agent = "0.1"
 [patch.crates-io]
 boxlite = { git = "https://github.com/boxlite-ai/boxlite.git", tag = "v0.8.2" }
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }
-weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", branch = "main" }
+weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "13f8c28b4a91962a9431e82f29fd89292e557ff1" }
 
 [profile.release]
 debug = false

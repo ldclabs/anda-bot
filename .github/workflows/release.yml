@@ -21,6 +21,7 @@ jobs:
             goarch: amd64
             exe_ext: ""
             cross: false
+            build_dir: target
           - os: ubuntu-latest
             target: linux-arm64
             rust_target: aarch64-unknown-linux-musl
@@ -28,6 +29,7 @@ jobs:
             goarch: arm64
             exe_ext: ""
             cross: true
+            build_dir: target-cross
           - os: windows-latest
             target: windows-x86_64
             rust_target: x86_64-pc-windows-msvc
@@ -35,6 +37,7 @@ jobs:
             goarch: amd64
             exe_ext: ".exe"
             cross: false
+            build_dir: target
           - os: macos-15-intel
             target: macos-x86_64
             rust_target: x86_64-apple-darwin
@@ -42,6 +45,7 @@ jobs:
             goarch: amd64
             exe_ext: ""
             cross: false
+            build_dir: target
           - os: macos-latest
             target: macos-arm64
             rust_target: aarch64-apple-darwin
@@ -49,6 +53,7 @@ jobs:
             goarch: arm64
             exe_ext: ""
             cross: false
+            build_dir: target
 
     runs-on: ${{ matrix.os }}
 
@@ -82,6 +87,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.cross }}
 
       - name: Build Rust binary (native)
         if: ${{ !matrix.cross }}
@@ -91,13 +97,13 @@ jobs:
       - name: Build Rust binary (cross)
         if: ${{ matrix.cross }}
         run: |
-          cross build --release --locked --target ${{ matrix.rust_target }}
+          cross build --release --locked --target-dir ${{ matrix.build_dir }} --target ${{ matrix.rust_target }}
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p release
-          cp "target/${{ matrix.rust_target }}/release/anda${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
+          cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
 
           for file in release/*; do
             if command -v sha256sum >/dev/null 2>&1; then
