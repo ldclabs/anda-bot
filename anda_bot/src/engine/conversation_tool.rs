@@ -13,6 +13,16 @@ pub enum ConversationsToolArgs {
         /// The ID of the conversation to get
         _id: u64,
     },
+    GetConversationDelta {
+        /// The ID of the conversation to get
+        _id: u64,
+        /// The messages offset for the conversation delta
+        #[serde(default)]
+        messages_offset: usize,
+        /// The artifacts offset for the conversation delta
+        #[serde(default)]
+        artifacts_offset: usize,
+    },
     /// List previous conversations
     ListPrevConversations {
         /// The cursor for pagination
@@ -67,6 +77,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                     "type": "string",
                     "enum": [
                         "GetConversation",
+                        "GetConversationDelta",
                         "ListPrevConversations",
                         "SearchConversations"
                     ],
@@ -74,7 +85,15 @@ impl Tool<BaseCtx> for ConversationsTool {
                 },
                 "_id": {
                     "type": "integer",
-                    "description": "The ID of the conversation to retrieve. Required for GetConversation."
+                    "description": "The ID of the conversation to retrieve. Required for GetConversation and GetConversationDelta."
+                },
+                "messages_offset": {
+                    "type": ["integer", "null"],
+                    "description": "The messages offset for the conversation delta. Required for GetConversationDelta."
+                },
+                "artifacts_offset": {
+                    "type": ["integer", "null"],
+                    "description": "The artifacts offset for the conversation delta. Required for GetConversationDelta."
                 },
                 "cursor": {
                     "type": ["string", "null"],
@@ -110,6 +129,21 @@ impl Tool<BaseCtx> for ConversationsTool {
 
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(conversation),
+                    next_cursor: None,
+                }))
+            }
+            ConversationsToolArgs::GetConversationDelta {
+                _id,
+                messages_offset,
+                artifacts_offset,
+            } => {
+                let conversation = self.conversations.get_conversation(_id).await?;
+                if &conversation.user != ctx.caller() {
+                    return Err("permission denied".into());
+                }
+
+                Ok(ToolOutput::new(Response::Ok {
+                    result: json!(conversation.into_delta(messages_offset, artifacts_offset)),
                     next_cursor: None,
                 }))
             }

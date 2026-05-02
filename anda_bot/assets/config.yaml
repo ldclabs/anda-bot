@@ -19,6 +19,8 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: ""
+      context_window: 1000000
+      max_output: 384000
       labels: ["pro", "hippocampus"]
       disabled: false
 
@@ -27,31 +29,90 @@ model:
       model: "gpt-5.5"
       api_base: "https://api.openai.com/v1"
       api_key: ""
-      labels: []
+      context_window: 1000000
+      max_output: 128000
+      labels: ["pro", "hippocampus"]
       disabled: false
 
-    Claude:
+    GPTMini:
+      family: openai
+      model: "gpt-5.4-mini"
+      api_base: "https://api.openai.com/v1"
+      api_key: ""
+      context_window: 400000
+      max_output: 128000
+      labels: ["flash", "hippocampus"]
+      disabled: false
+
+    ClaudeOpus:
       family: anthropic
-      model: "claude-opus-4-6"
+      model: "claude-opus-4-7"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
-      labels: []
+      context_window: 1000000
+      max_output: 128000
+      labels: ["pro", "hippocampus"]
       disabled: false
 
-    Gemini:
+    ClaudeHaiku:
+      family: anthropic
+      model: "claude-haiku-4-5"
+      api_base: "https://api.anthropic.com/v1"
+      api_key: ""
+      context_window: 200000
+      max_output: 64000
+      labels: ["flash", "hippocampus"]
+      disabled: false
+
+    GeminiPro:
       family: gemini
       model: "gemini-pro-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
-      labels: []
+      context_window: 1000000
+      max_output: 64000
+      labels: ["pro", "hippocampus"]
       disabled: false
 
-    Mimo:
+    GeminiFlash:
+      family: gemini
+      model: "gemini-flash-latest"
+      api_base: "https://generativelanguage.googleapis.com/v1beta/models"
+      api_key: ""
+      context_window: 1000000
+      max_output: 64000
+      labels: ["flash", "hippocampus"]
+      disabled: false
+
+    GeminiLite:
+      family: gemini
+      model: "gemini-flash-lite-latest"
+      api_base: "https://generativelanguage.googleapis.com/v1beta/models"
+      api_key: ""
+      context_window: 1000000
+      max_output: 64000
+      labels: ["lite"]
+      disabled: false
+
+    MimoPro:
+      family: anthropic
+      model: "mimo-v2.5-pro"
+      api_base: "https://api.xiaomimimo.com/anthropic/v1"
+      api_key: ""
+      context_window: 1000000
+      max_output: 128000
+      labels: ["pro", "fallback"]
+      disabled: false
+      bearer_auth: true
+
+    MimoOmni:
       family: anthropic
       model: "mimo-v2.5"
       api_base: "https://api.xiaomimimo.com/anthropic/v1"
       api_key: ""
-      labels: ["fallback"]
+      context_window: 1000000
+      max_output: 128000
+      labels: ["flash", "fallback"]
       disabled: false
       bearer_auth: true
 
@@ -60,7 +121,9 @@ model:
       model: "kimi-k2.6"
       api_base: "https://api.moonshot.cn/v1"
       api_key: ""
-      labels: []
+      context_window: 256000
+      max_output: 32000
+      labels: ["pro"]
       disabled: false
 
     GLM:
@@ -68,7 +131,9 @@ model:
       model: "glm-5.1"
       api_base: "https://open.bigmodel.cn/api/anthropic"
       api_key: ""
-      labels: []
+      context_window: 200000
+      max_output: 128000
+      labels: ["pro", "hippocampus"]
       disabled: false
 
     MiniMax:
@@ -76,7 +141,9 @@ model:
       model: "MiniMax-M2.7-highspeed"
       api_base: "https://api.minimaxi.com/anthropic/v1"
       api_key: ""
-      labels: ["flash"]
+      context_window: 200000
+      max_output: 130000
+      labels: ["lite"]
       disabled: false
 
 tts:

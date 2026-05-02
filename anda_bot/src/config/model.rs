@@ -26,6 +26,12 @@ pub struct ModelProviderConfig {
     pub api_key: String,
 
     #[serde(default)]
+    pub context_window: usize,
+
+    #[serde(default)]
+    pub max_output: usize,
+
+    #[serde(default)]
     pub labels: Vec<String>,
 
     #[serde(default)]
@@ -42,6 +48,8 @@ impl From<&ModelProviderConfig> for ModelConfig {
             model: provider.model.trim().to_string(),
             api_base: provider.api_base.trim().to_string(),
             api_key: provider.api_key.trim().to_string(),
+            context_window: provider.context_window,
+            max_output: provider.max_output,
             labels: provider.labels.clone(),
             disabled: provider.disabled,
             bearer_auth: provider.bearer_auth,

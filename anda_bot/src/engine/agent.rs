@@ -16,17 +16,14 @@ use anda_engine::{
     memory::{Conversation, ConversationRef, ConversationStatus, Conversations},
     rfc3339_datetime, unix_ms,
 };
-use anda_hippocampus::{
-    agents::SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-    types::{FormationInputRef, InputContext},
-};
+use anda_hippocampus::types::{FormationInputRef, InputContext};
 use async_trait::async_trait;
 use futures::future::join_all;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -42,7 +39,7 @@ use crate::{
 };
 
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
-const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 60 * 60 * 1000; // 1 hour
+const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 
 #[derive(Clone)]
@@ -58,6 +55,7 @@ struct AndaBotInner {
     processing_conversations: ProcessingConversations,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     workspace_conversation: RwLock<HashMap<String, WorkDirState>>,
+    tools_usage: RwLock<HashMap<String, Usage>>,
     home_dir: PathBuf,
     transcription_manager: Option<Arc<TranscriptionManager>>,
 }
@@ -134,6 +132,7 @@ impl AndaBot {
                 processing_conversations: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 workspace_conversation: RwLock::new(HashMap::new()),
+                tools_usage: RwLock::new(HashMap::new()),
                 home_dir,
                 transcription_manager,
             }),
@@ -264,15 +263,27 @@ impl Agent<AgentCtx> for AndaBot {
     }
 
     async fn init(&self, _ctx: AgentCtx) -> Result<(), BoxError> {
-        let workspace_conversation: HashMap<String, WorkDirState> = self
-            .inner
-            .conversations
-            .conversations
-            .get_extension_as("workspace_conversation")
-            .unwrap_or_default();
+        {
+            let workspace_conversation: HashMap<String, WorkDirState> = self
+                .inner
+                .conversations
+                .conversations
+                .get_extension_as("workspace_conversation")
+                .unwrap_or_default();
 
-        let mut map = self.inner.workspace_conversation.write();
-        *map = workspace_conversation;
+            *self.inner.workspace_conversation.write() = workspace_conversation;
+        }
+        {
+            let tools_usage: HashMap<String, Usage> = self
+                .inner
+                .conversations
+                .conversations
+                .get_extension_as("tools_usage")
+                .unwrap_or_default();
+
+            *self.inner.tools_usage.write() = tools_usage;
+        }
+
         Ok(())
     }
 
@@ -288,10 +299,17 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let now_ms = unix_ms();
+        let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let workspace = ctx
             .meta()
             .get_extra_as::<String>("workspace")
-            .unwrap_or_else(|| self.inner.home_dir.to_string_lossy().to_string());
+            .unwrap_or_else(|| {
+                self.inner
+                    .home_dir
+                    .join("workspace")
+                    .to_string_lossy()
+                    .to_string()
+            });
         let workspace_state = {
             self.inner
                 .workspace_conversation
@@ -386,22 +404,21 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let primer = self.inner.brain.describe_primer().await?;
-        let user_info = self.inner.brain.user_info(*caller, None).await?;
+        let user_profile = self.inner.brain.user_info(*caller, None).await?;
         let notes = load_notes(&ctx).await.unwrap_or_default();
-        let tools: Vec<String> = ctx
+        let available_tools: Vec<String> = ctx
             .definitions(None)
             .await
             .into_iter()
             .map(|def| def.name)
             .collect();
         let instructions = format!(
-            "{}\n\n{}\n\n---\n\n# Your identity & knowledge domains:\n{}\n\n---\n\n# Your notes:\n{}\n\n# User profile:\n{}\n\n# Available tools:\n{}\n\n# Current datetime:\n{}\n\n# Current workspace:\n{workspace}",
+            "{}\n\n---\n\n# Your Context\n\n## Identity & Knowledge Domains:\n\n{}\n\n## Notes:\n\n{}\n\n## Tools:\n\n{}\n\n## Home:\n\n{home_dir}\n\n---\n\n# User Context\n\n## User Profile:\n\n{}\n\n## Workspace:\n{workspace}\n\n---\n\n# Current Datetime: {}",
             SELF_INSTRUCTIONS,
-            SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
             primer,
-            serde_json::to_string(&notes.notes).unwrap_or_default(),
-            serde_json::to_string(&user_info).unwrap_or_default(),
-            serde_json::to_string(&tools).unwrap_or_default(),
+            serde_json::to_string(&notes.notes)?,
+            serde_json::to_string(&available_tools)?,
+            serde_json::to_string(&user_profile)?,
             rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
         );
 
@@ -428,7 +445,7 @@ impl Agent<AgentCtx> for AndaBot {
             let user_resources = text_resource_documents(&resources);
             if !user_resources.is_empty() {
                 msg.content.push(
-                    Documents::new("user_resources".to_string(), user_resources)
+                    Documents::new("user_attachments".to_string(), user_resources)
                         .to_string()
                         .into(),
                 );
@@ -508,14 +525,21 @@ impl Agent<AgentCtx> for AndaBot {
         } else {
             vec![msg]
         };
+
+        let mut tools = assistant.inner.tools.clone();
+        let additional_tools = {
+            let tools_usage = assistant.inner.tools_usage.read();
+            select_most_used_tools(&available_tools, &tools, &tools_usage, 12)
+        };
+        tools.extend(additional_tools);
         let mut runner = ctx.clone().completion_iter(
             CompletionRequest {
                 instructions,
                 prompt,
                 chat_history,
-                tools: ctx.definitions(Some(&assistant.inner.tools)).await,
+                tools: ctx.definitions(Some(&tools)).await,
                 tool_choice_required: false,
-                max_output_tokens: Some(50000),
+                max_output_tokens: Some(ctx.model.max_output.max(10000)),
                 ..Default::default()
             },
             resources.clone(),
@@ -536,7 +560,9 @@ impl Agent<AgentCtx> for AndaBot {
         tokio::spawn(async move {
             let task_result = async {
                 let mut first_round = true;
+                let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
                 loop {
+                    let mut cancellation_requested = false;
                     let mut inputs = Vec::new();
 
                     while let Ok(input) = rx.try_recv() {
@@ -550,25 +576,23 @@ impl Agent<AgentCtx> for AndaBot {
                     }
 
                     for input in inputs {
+                        // 累计来自于后台任务的工具使用情况
                         runner.accumulate(&input.usage);
 
-                        if input.prompt.trim().is_empty() {
+                        let prompt = input.prompt.trim();
+                        if prompt.is_empty() {
                             // PING from the user to keep the conversation alive, update the active_at timestamp and continue without sending a new prompt to the runner.
                             continue;
                         }
 
                         // Cancel the conversation if the user sends "/stop" or "/cancel" without any additional prompt.
-                        if input.prompt.trim().eq_ignore_ascii_case("/stop")
-                            || input.prompt.trim().eq_ignore_ascii_case("/cancel")
-                        {
+                        if is_cancel_command(prompt) {
                             ctx.cancellation_token().cancel();
+                            cancellation_requested = true;
                             break;
                         }
 
-                        let prompt = prompt_with_resources(
-                            input.prompt.trim().to_string(),
-                            &input.resources,
-                        );
+                        let prompt = prompt_with_resources(prompt.to_string(), &input.resources);
                         if prompt.starts_with("/steer")
                             || prompt.starts_with("/stop")
                             || prompt.starts_with("/cancel")
@@ -579,6 +603,30 @@ impl Agent<AgentCtx> for AndaBot {
                         }
                     }
 
+                    if cancellation_requested {
+                        let now_ms = unix_ms();
+                        persist_tools_usage_snapshot(
+                            &assistant,
+                            runner.tools_usage(),
+                            &mut tools_usage_snapshot,
+                        )
+                        .await;
+                        submit_pending_formation(
+                            &assistant,
+                            &conversation,
+                            &context,
+                            &conversation_task.submit_formation_at,
+                            now_ms,
+                        )
+                        .await;
+                        conversation.status = ConversationStatus::Cancelled;
+                        conversation.failed_reason = None;
+                        conversation.updated_at = now_ms;
+                        persist_conversation_state(&assistant.inner.conversations, &conversation)
+                            .await;
+                        break;
+                    }
+
                     match runner.next().await {
                         Ok(None) => {
                             let now_ms = unix_ms();
@@ -586,6 +634,21 @@ impl Agent<AgentCtx> for AndaBot {
                                 .saturating_sub(conversation_task.active_at.load(Ordering::SeqCst));
                             let has_background_tasks =
                                 !conversation_task.background_tasks.read().is_empty();
+
+                            persist_tools_usage_snapshot(
+                                &assistant,
+                                runner.tools_usage(),
+                                &mut tools_usage_snapshot,
+                            )
+                            .await;
+                            submit_pending_formation(
+                                &assistant,
+                                &conversation,
+                                &context,
+                                &conversation_task.submit_formation_at,
+                                now_ms,
+                            )
+                            .await;
 
                             if idle > CONVERSATION_IDLE_MS && !has_background_tasks
                                 || (idle > CONVERSATION_WAIT_BACKGROUND_TASK_MS
@@ -657,27 +720,23 @@ impl Agent<AgentCtx> for AndaBot {
                             )
                             .await;
 
-                            if conversation.failed_reason.is_none() {
-                                let timestamp = rfc3339_datetime(now_ms);
-                                let submit_formation_at = conversation.messages.len();
-                                let messages = conversation_chat_history(
+                            if conversation.status == ConversationStatus::Completed
+                                || conversation.status == ConversationStatus::Failed
+                            {
+                                persist_tools_usage_snapshot(
+                                    &assistant,
+                                    runner.tools_usage(),
+                                    &mut tools_usage_snapshot,
+                                )
+                                .await;
+                                submit_pending_formation(
+                                    &assistant,
                                     &conversation,
-                                    conversation_task.submit_formation_at.load(Ordering::SeqCst)
-                                        as usize,
-                                );
-                                if let Err(err) = assistant
-                                    .submit_formation(&messages, &context, &timestamp)
-                                    .await
-                                {
-                                    log::error!(
-                                        "Failed to send formation for conversation {id}: {:?}",
-                                        err
-                                    );
-                                } else {
-                                    conversation_task
-                                        .submit_formation_at
-                                        .store(submit_formation_at as u64, Ordering::SeqCst);
-                                }
+                                    &context,
+                                    &conversation_task.submit_formation_at,
+                                    now_ms,
+                                )
+                                .await;
                             }
 
                             if conversation.status == ConversationStatus::Cancelled
@@ -697,6 +756,20 @@ impl Agent<AgentCtx> for AndaBot {
                             persist_conversation_state(
                                 &assistant.inner.conversations,
                                 &conversation,
+                            )
+                            .await;
+                            persist_tools_usage_snapshot(
+                                &assistant,
+                                runner.tools_usage(),
+                                &mut tools_usage_snapshot,
+                            )
+                            .await;
+                            submit_pending_formation(
+                                &assistant,
+                                &conversation,
+                                &context,
+                                &conversation_task.submit_formation_at,
+                                conversation.updated_at,
                             )
                             .await;
                             break;
@@ -877,6 +950,73 @@ fn conversation_chat_history(conversation: &Conversation, skip: usize) -> Vec<Me
         .collect()
 }
 
+fn is_cancel_command(prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    prompt.eq_ignore_ascii_case("/stop") || prompt.eq_ignore_ascii_case("/cancel")
+}
+
+async fn persist_tools_usage_snapshot(
+    assistant: &AndaBot,
+    current_tools_usage: &HashMap<String, Usage>,
+    tools_usage_snapshot: &mut HashMap<String, Usage>,
+) {
+    let tools_usage_delta = compute_tools_usage_delta(current_tools_usage, tools_usage_snapshot);
+    *tools_usage_snapshot = current_tools_usage.clone();
+    if tools_usage_delta.is_empty() {
+        return;
+    }
+
+    let tools_usage = {
+        let mut tools_usage = assistant.inner.tools_usage.write();
+        for (tool, usage) in tools_usage_delta.into_iter() {
+            let entry = tools_usage.entry(tool.clone()).or_default();
+            entry.accumulate(&usage);
+        }
+        tools_usage.clone()
+    };
+
+    let _ = assistant
+        .inner
+        .conversations
+        .conversations
+        .save_extension_from("tools_usage".to_string(), &tools_usage)
+        .await;
+}
+
+async fn submit_pending_formation(
+    assistant: &AndaBot,
+    conversation: &Conversation,
+    context: &Option<InputContext>,
+    submit_formation_at: &AtomicU64,
+    now_ms: u64,
+) {
+    let messages = conversation_chat_history(
+        conversation,
+        submit_formation_at.load(Ordering::SeqCst) as usize,
+    );
+    if messages.is_empty() {
+        return;
+    }
+
+    let next_submit_formation_at = conversation.messages.len();
+    let timestamp = rfc3339_datetime(now_ms);
+    match assistant
+        .submit_formation(&messages, context, &timestamp)
+        .await
+    {
+        Ok(_) => {
+            submit_formation_at.store(next_submit_formation_at as u64, Ordering::SeqCst);
+        }
+        Err(err) => {
+            log::error!(
+                "Failed to send formation for conversation {}: {:?}",
+                conversation._id,
+                err
+            );
+        }
+    }
+}
+
 async fn persist_conversation_state(conversations: &Conversations, conversation: &Conversation) {
     match conversation.to_changes() {
         Ok(changes) => {
@@ -891,5 +1031,212 @@ async fn persist_conversation_state(conversations: &Conversations, conversation:
                 err
             );
         }
+    }
+}
+
+fn compute_tools_usage_delta(
+    current: &HashMap<String, Usage>,
+    previous: &HashMap<String, Usage>,
+) -> HashMap<String, Usage> {
+    current
+        .iter()
+        .filter_map(|(tool, usage)| {
+            let delta = usage_delta(usage, previous.get(tool));
+            if is_zero_usage(&delta) {
+                None
+            } else {
+                Some((tool.clone(), delta))
+            }
+        })
+        .collect()
+}
+
+fn select_most_used_tools(
+    available_tools: &[String],
+    base_tools: &[String],
+    tools_usage: &HashMap<String, Usage>,
+    limit: usize,
+) -> Vec<String> {
+    let available: HashSet<&str> = available_tools.iter().map(String::as_str).collect();
+    let existing: HashSet<&str> = base_tools.iter().map(String::as_str).collect();
+    let mut ranked: Vec<(&String, &Usage)> = tools_usage
+        .iter()
+        .filter(|(tool, _)| {
+            let tool = tool.as_str();
+            available.contains(tool) && !existing.contains(tool)
+        })
+        .collect();
+
+    ranked.sort_unstable_by(|(tool_a, usage_a), (tool_b, usage_b)| {
+        usage_b
+            .requests
+            .cmp(&usage_a.requests)
+            .then_with(|| tool_a.cmp(tool_b))
+    });
+
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(tool, _)| tool.clone())
+        .collect()
+}
+
+fn usage_delta(current: &Usage, previous: Option<&Usage>) -> Usage {
+    Usage {
+        input_tokens: current
+            .input_tokens
+            .saturating_sub(previous.map_or(0, |usage| usage.input_tokens)),
+        output_tokens: current
+            .output_tokens
+            .saturating_sub(previous.map_or(0, |usage| usage.output_tokens)),
+        cached_tokens: current
+            .cached_tokens
+            .saturating_sub(previous.map_or(0, |usage| usage.cached_tokens)),
+        requests: current
+            .requests
+            .saturating_sub(previous.map_or(0, |usage| usage.requests)),
+    }
+}
+
+fn is_zero_usage(usage: &Usage) -> bool {
+    usage.input_tokens == 0
+        && usage.output_tokens == 0
+        && usage.cached_tokens == 0
+        && usage.requests == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anda_core::Usage;
+    use std::collections::HashMap;
+
+    #[test]
+    fn usage_delta_uses_saturating_subtraction() {
+        let current = Usage {
+            input_tokens: 10,
+            output_tokens: 8,
+            cached_tokens: 3,
+            requests: 2,
+        };
+        let previous = Usage {
+            input_tokens: 12,
+            output_tokens: 5,
+            cached_tokens: 4,
+            requests: 1,
+        };
+
+        let delta = usage_delta(&current, Some(&previous));
+
+        assert_eq!(delta.input_tokens, 0);
+        assert_eq!(delta.output_tokens, 3);
+        assert_eq!(delta.cached_tokens, 0);
+        assert_eq!(delta.requests, 1);
+    }
+
+    #[test]
+    fn compute_tools_usage_delta_skips_zero_entries() {
+        let current = HashMap::from([
+            (
+                "shell".to_string(),
+                Usage {
+                    input_tokens: 5,
+                    output_tokens: 2,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+            ),
+            (
+                "read_file".to_string(),
+                Usage {
+                    input_tokens: 3,
+                    output_tokens: 0,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+            ),
+        ]);
+        let previous = HashMap::from([
+            (
+                "shell".to_string(),
+                Usage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+            ),
+            (
+                "read_file".to_string(),
+                Usage {
+                    input_tokens: 3,
+                    output_tokens: 0,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+            ),
+        ]);
+
+        let delta = compute_tools_usage_delta(&current, &previous);
+
+        assert_eq!(delta.len(), 1);
+        let shell = delta.get("shell").expect("shell delta should exist");
+        assert_eq!(shell.input_tokens, 4);
+        assert_eq!(shell.output_tokens, 1);
+        assert_eq!(shell.cached_tokens, 0);
+        assert_eq!(shell.requests, 0);
+    }
+
+    #[test]
+    fn select_most_used_tools_prefers_high_request_tools() {
+        let available_tools = vec![
+            "shell".to_string(),
+            "read_file".to_string(),
+            "todo".to_string(),
+            "search".to_string(),
+        ];
+        let base_tools = vec!["shell".to_string()];
+        let tools_usage = HashMap::from([
+            (
+                "shell".to_string(),
+                Usage {
+                    requests: 99,
+                    ..Default::default()
+                },
+            ),
+            (
+                "todo".to_string(),
+                Usage {
+                    requests: 8,
+                    ..Default::default()
+                },
+            ),
+            (
+                "read_file".to_string(),
+                Usage {
+                    requests: 10,
+                    ..Default::default()
+                },
+            ),
+            (
+                "unavailable".to_string(),
+                Usage {
+                    requests: 100,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let selected = select_most_used_tools(&available_tools, &base_tools, &tools_usage, 2);
+
+        assert_eq!(selected, vec!["read_file".to_string(), "todo".to_string()]);
+    }
+
+    #[test]
+    fn is_cancel_command_matches_trimmed_stop_and_cancel() {
+        assert!(is_cancel_command("/stop"));
+        assert!(is_cancel_command("  /cancel  "));
+        assert!(!is_cancel_command("/stop now"));
+        assert!(!is_cancel_command("continue"));
     }
 }

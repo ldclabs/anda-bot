@@ -220,7 +220,7 @@ impl Daemon {
             managers: vec![user_pubkey],
             models,
             brain_base_url: self.cfg.brain_base_url(),
-            home_dir: self.workspace_dir_path(),
+            home_dir: self.home.clone(),
             skills_dir: self.skills_dir_path(),
             sandbox_dir: if self.cfg.sandbox {
                 Some(self.sandbox_dir_path())
