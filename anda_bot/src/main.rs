@@ -21,7 +21,7 @@ mod util;
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "I am Anda Bot: a local AI agent with a long-term memory brain. Run `anda` to interact with me.", long_about = None)]
 struct Cli {
     /// Path to a directory for storing state (defaults to '~/.anda')
     #[arg(long)]

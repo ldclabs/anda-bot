@@ -217,6 +217,7 @@ try {
     Write-Host ""
     Write-Host "  Get started:"
     Write-Host "    $BinaryName --help"
+    Write-Host "    $BinaryName"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 }

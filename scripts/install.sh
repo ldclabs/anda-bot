@@ -308,6 +308,7 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     echo ""
     echo "  Get started:"
     echo "    ${BINARY_NAME} --help"
+    echo "    ${BINARY_NAME}"
 else
     success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"
     echo "  Make sure ${INSTALL_DIR} is in your PATH."

@@ -84,7 +84,10 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     // bottom).
     let (term_w, term_h) = size()?;
     let initial_height = dynamic_viewport_height(&app, term_w, term_h.max(1));
-    let run_result = run_app(create_terminal_with_height(initial_height)?, &mut app).await;
+    let mut terminal = create_terminal_with_height(initial_height)?;
+    let run_result = run_app(&mut terminal, &mut app).await;
+    let cleanup_result = cleanup_inline_viewport(&mut stdout, terminal.get_frame().area());
+    drop(terminal);
 
     if keyboard_enhancement_pushed {
         let _ = stdout.execute(PopKeyboardEnhancementFlags);
@@ -94,8 +97,7 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
 
     paste_mode_result?;
     raw_mode_result?;
-    let cursor_result = stdout.execute(MoveToNextLine(1));
-    cursor_result?;
+    cleanup_result?;
     run_result
 }
 
@@ -388,13 +390,12 @@ impl App {
             KeyCode::Enter => {
                 self.submit_input().await?;
             }
-            KeyCode::Backspace
-                if self.input_cursor > 0 => {
-                    let chars: Vec<char> = self.input_buf.chars().collect();
-                    let pos = self.input_cursor - 1;
-                    self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
-                    self.input_cursor -= 1;
-                }
+            KeyCode::Backspace if self.input_cursor > 0 => {
+                let chars: Vec<char> = self.input_buf.chars().collect();
+                let pos = self.input_cursor - 1;
+                self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
+                self.input_cursor -= 1;
+            }
             KeyCode::Delete => {
                 let chars: Vec<char> = self.input_buf.chars().collect();
                 if self.input_cursor < chars.len() {
@@ -404,10 +405,9 @@ impl App {
                         .collect();
                 }
             }
-            KeyCode::Left
-                if self.input_cursor > 0 => {
-                    self.input_cursor -= 1;
-                }
+            KeyCode::Left if self.input_cursor > 0 => {
+                self.input_cursor -= 1;
+            }
             KeyCode::Right => {
                 let len = self.input_buf.chars().count();
                 if self.input_cursor < len {
@@ -432,7 +432,7 @@ impl App {
 }
 
 async fn run_app(
-    mut terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<(), BoxError> {
     let mut last_status_refresh = Instant::now();
@@ -470,13 +470,12 @@ async fn run_app(
             let mut stdout = io::stdout();
             stdout.execute(MoveTo(old_area.x, old_area.y))?;
             stdout.execute(Clear(ClearType::FromCursorDown))?;
-            drop(terminal);
-            terminal = create_terminal_with_height(new_height)?;
+            *terminal = create_terminal_with_height(new_height)?;
             current_viewport_height = new_height;
         }
 
         terminal.autoresize()?;
-        flush_static_scrollback(&mut terminal, app)?;
+        flush_static_scrollback(terminal, app)?;
         terminal.draw(|frame| render(frame, app))?;
 
         if app.should_quit {
@@ -826,6 +825,13 @@ fn create_terminal_with_height(
     )?;
     terminal.clear()?;
     Ok(terminal)
+}
+
+fn cleanup_inline_viewport<W: io::Write>(writer: &mut W, area: Rect) -> io::Result<()> {
+    writer.execute(MoveTo(area.x, area.y))?;
+    writer.execute(Clear(ClearType::FromCursorDown))?;
+    writer.execute(MoveToNextLine(area.height.max(1)))?;
+    Ok(())
 }
 
 fn panel_lines(_app: &App) -> Vec<Line<'static>> {
@@ -1894,6 +1900,27 @@ mod tests {
                 }
             ),
             4
+        );
+    }
+
+    #[test]
+    fn cleanup_inline_viewport_clears_from_viewport_top_and_moves_below_it() {
+        let mut output = Vec::new();
+
+        cleanup_inline_viewport(
+            &mut output,
+            Rect {
+                x: 2,
+                y: 4,
+                width: 40,
+                height: 3,
+            },
+        )
+        .expect("cleanup succeeds");
+
+        assert_eq!(
+            String::from_utf8(output).expect("valid ansi"),
+            "\u{1b}[5;3H\u{1b}[J\u{1b}[3E"
         );
     }
 
