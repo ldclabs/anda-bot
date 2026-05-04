@@ -223,11 +223,6 @@ impl Daemon {
             home_dir: self.home.clone(),
             skills_dir: self.skills_dir_path(),
             workspace_dir: self.workspace_dir_path(),
-            sandbox_dir: if self.cfg.sandbox {
-                Some(self.sandbox_dir_path())
-            } else {
-                None
-            },
             tts: self.cfg.tts.clone(),
             transcription: self.cfg.transcription.clone(),
             https_proxy: self.cfg.https_proxy.clone(),

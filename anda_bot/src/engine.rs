@@ -54,36 +54,9 @@ pub struct EngineConfig {
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub workspace_dir: PathBuf,
-    pub sandbox_dir: Option<PathBuf>,
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
     pub https_proxy: Option<String>,
-}
-
-async fn build_shell_runtime(
-    home_dir: PathBuf,
-    sandbox_dir: Option<PathBuf>,
-) -> Result<Arc<dyn shell::Executor>, BoxError> {
-    if let Some(sandbox_dir) = sandbox_dir {
-        build_sandbox_runtime(sandbox_dir).await
-    } else {
-        let runtime: Arc<dyn shell::Executor> = Arc::new(shell::NativeRuntime::new(home_dir));
-        Ok(runtime)
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn build_sandbox_runtime(sandbox_dir: PathBuf) -> Result<Arc<dyn shell::Executor>, BoxError> {
-    Ok(Arc::new(
-        shell::sandbox::SandboxRuntime::new(sandbox_dir).await?,
-    ))
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn build_sandbox_runtime(
-    _sandbox_dir: PathBuf,
-) -> Result<Arc<dyn shell::Executor>, BoxError> {
-    Err("sandbox is not supported on non-macOS platforms".into())
 }
 
 impl Engines {
@@ -146,7 +119,7 @@ impl Engines {
         };
 
         let shell_tool = {
-            let runtime = build_shell_runtime(cfg.workspace_dir.clone(), cfg.sandbox_dir).await?;
+            let runtime = Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()));
             shell::ShellTool::new(runtime, HashMap::new(), None)
         };
         let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));

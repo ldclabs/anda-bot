@@ -175,7 +175,7 @@ channels:
 
 ## 文件、技能与自动化
 
-我的本地工作区默认在 `~/.anda/workspace`。文件工具和 shell 工具默认都在这里工作。如果设置 `sandbox: true`，shell 执行会被路由到 `~/.anda/sandbox`。
+我的本地工作区默认在 `~/.anda/workspace`。文件工具和 shell 工具默认都在这里工作。
 
 你还可以把运行时技能放到 `~/.anda/skills`，让我加载更专门的工作流。cron 工具可以让我安排未来执行的 shell 任务或 agent prompt，并保存运行历史。
 

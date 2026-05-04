@@ -175,7 +175,7 @@ See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel,
 
 ## Files, Skills, And Automations
 
-My local runtime creates a working area at `~/.anda/workspace`. File and shell tools operate there by default. If `sandbox: true`, shell execution is routed through `~/.anda/sandbox`.
+My local runtime creates a working area at `~/.anda/workspace`. File and shell tools operate there by default.
 
 You can also add runtime skills under `~/.anda/skills`. Skills let me load focused instructions and workflows as the system grows. Cron tools let me schedule shell commands or future agent prompts, with run history stored locally.
 

@@ -10,7 +10,6 @@
 # MIMO_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, BIGMODEL_API_KEY, and GLM_API_KEY.
 
 addr: 127.0.0.1:8042
-sandbox: false
 
 # Optional: for example http://127.0.0.1:7890
 # https_proxy: http://127.0.0.1:7890
