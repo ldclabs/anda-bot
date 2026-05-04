@@ -51,6 +51,7 @@ const MAX_TURNS_TO_COMPACT: usize = 128;
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
+static COMPACTION_PROMPT: &str = include_str!("../../assets/CompactionPrompt.md");
 
 #[derive(Clone)]
 pub struct AndaBot {
@@ -104,20 +105,11 @@ fn base_tools() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
         NoteTool::NAME.to_string(),
-        TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         ShellTool::NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
-        EditFileTool::NAME.to_string(),
-        WriteFileTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
-        SubAgentManager::NAME.to_string(),
-        SkillManager::NAME.to_string(),
-        cron::CreateCronTool::NAME.to_string(),
-        cron::ManageCronJobTool::NAME.to_string(),
-        cron::ListCronJobsTool::NAME.to_string(),
-        cron::ListCronRunsTool::NAME.to_string(),
     ]
 }
 
@@ -403,7 +395,13 @@ impl Agent<AgentCtx> for AndaBot {
             .definitions(None)
             .await
             .into_iter()
-            .map(|def| def.name)
+            .filter_map(|def| {
+                if def.name == Self::NAME {
+                    None
+                } else {
+                    Some(def.name)
+                }
+            })
             .collect();
 
         let mut instructions = self
@@ -684,7 +682,7 @@ impl Agent<AgentCtx> for AndaBot {
         tools.extend(additional_tools);
         let additional_tools = {
             let tools_usage = assistant.inner.tools_usage.read();
-            select_most_used_tools(&available_tools, &tools, &tools_usage, 12)
+            select_most_used_tools(&available_tools, &tools, &tools_usage, 5)
         };
         tools.extend(additional_tools);
         let req = CompletionRequest {
@@ -980,7 +978,10 @@ impl SessionJob {
 
                 if needs_compaction(&self.runner) {
                     // 上下文过长，先进行一次压缩总结，更新conversation状态和历史消息，再继续后续的处理
-                    let output = self.runner.finalize(Some("Before continuing, briefly summarize the current task state, important decisions, files or resources touched, and remaining work.".to_string())).await?;
+                    let output = self
+                        .runner
+                        .finalize(Some(COMPACTION_PROMPT.to_string()))
+                        .await?;
 
                     let now_ms = unix_ms();
                     if let Some(failed_reason) = output.failed_reason {
@@ -1524,20 +1525,6 @@ mod tests {
     }
 
     #[test]
-    fn base_tools_include_registered_cron_list_tools() {
-        let dependencies = base_tool_dependencies();
-        let tools = base_tools();
-
-        assert!(tools.contains(&cron::ListCronJobsTool::NAME.to_string()));
-        assert!(tools.contains(&cron::ListCronRunsTool::NAME.to_string()));
-        assert!(
-            tools
-                .iter()
-                .all(|tool_name| dependencies.contains(tool_name))
-        );
-    }
-
-    #[test]
     fn source_conversation_key_is_route_aware_for_channels() {
         assert_eq!(
             source_conversation_key("cli:/tmp/app", None, None),
@@ -1558,5 +1545,14 @@ mod tests {
         assert_eq!(compaction_token_threshold(0), 100_000);
         assert_eq!(compaction_token_threshold(140_000), 70_000);
         assert_eq!(compaction_token_threshold(3_000_000), 500_000);
+    }
+
+    #[test]
+    fn compaction_prompt_preserves_goal_continuation_evidence() {
+        assert!(COMPACTION_PROMPT.contains("not a final answer"));
+        assert!(COMPACTION_PROMPT.contains("user-provided task data"));
+        assert!(COMPACTION_PROMPT.contains("prompt-to-artifact checklist"));
+        assert!(COMPACTION_PROMPT.contains("next concrete action"));
+        assert!(COMPACTION_PROMPT.contains("Do not invent progress"));
     }
 }

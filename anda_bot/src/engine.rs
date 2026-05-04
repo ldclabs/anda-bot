@@ -53,6 +53,7 @@ pub struct EngineConfig {
     pub brain_base_url: String,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
+    pub workspace_dir: PathBuf,
     pub sandbox_dir: Option<PathBuf>,
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
@@ -145,7 +146,7 @@ impl Engines {
         };
 
         let shell_tool = {
-            let runtime = build_shell_runtime(cfg.home_dir.clone(), cfg.sandbox_dir).await?;
+            let runtime = build_shell_runtime(cfg.workspace_dir.clone(), cfg.sandbox_dir).await?;
             shell::ShellTool::new(runtime, HashMap::new(), None)
         };
         let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
@@ -168,10 +169,10 @@ impl Engines {
             .register_tool(skills_tool.clone())?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
-            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.home_dir.clone())))?
-            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.home_dir.clone())))?
-            .register_tool(Arc::new(fs::EditFileTool::new(cfg.home_dir.clone())))?
-            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.home_dir.clone())))?
+            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.workspace_dir.clone())))?
+            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.workspace_dir.clone())))?
+            .register_tool(Arc::new(fs::EditFileTool::new(cfg.workspace_dir.clone())))?
+            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.workspace_dir.clone())))?
             .register_tool(Arc::new(conversations_tool))?
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
