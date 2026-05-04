@@ -306,9 +306,11 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     INSTALLED_VERSION=$("${INSTALL_DIR}/${INSTALL_NAME}" --version 2>/dev/null || echo "unknown")
     success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
     echo ""
-    echo "  Get started:"
-    echo "    ${BINARY_NAME} --help"
+    echo "  Run Anda:"
+    echo "    DEEPSEEK_API_KEY=**** ${BINARY_NAME}"
+    echo "    # or add api_key to ~/.anda/config.yaml, then:"
     echo "    ${BINARY_NAME}"
+    echo "    ${BINARY_NAME} --help"
 else
     success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"
     echo "  Make sure ${INSTALL_DIR} is in your PATH."

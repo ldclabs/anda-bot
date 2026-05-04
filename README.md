@@ -51,7 +51,7 @@ irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 
 
 Requirements:
 
-- At least one model provider API key.
+- At least one model provider API key, either in `~/.anda/config.yaml` or in a supported environment variable.
 
 Or run me from this repository with a recent Rust toolchain:
 
@@ -61,7 +61,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then press Enter in the terminal UI.
+On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then press Enter in the terminal UI. For API keys, you can also export a provider environment variable before starting Anda.
 
 Minimal model configuration:
 
@@ -72,10 +72,12 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "YOUR_API_KEY" # optional when DEEPSEEK_API_KEY is set
       labels: ["pro", "hippocampus"]
       disabled: false
 ```
+
+Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
 
 The `hippocampus` label lets the memory brain prefer that provider for memory work. If no provider has that label, I use the active model.
 

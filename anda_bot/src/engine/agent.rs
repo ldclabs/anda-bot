@@ -1119,9 +1119,6 @@ impl SessionJob {
                 res.conversation = Some(self.conversation._id);
 
                 self.session.on_completion(&self.ctx, &res).await;
-                if !is_done {
-                    self.runner.prune_raw_history_if(13, 6);
-                }
 
                 if self.first_round {
                     self.first_round = false;

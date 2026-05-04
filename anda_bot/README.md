@@ -26,7 +26,7 @@ cargo run -p anda_bot -- --home /path/to/.anda
 
 ## Configure A Model
 
-The generated template is [assets/config.yaml](assets/config.yaml). The active provider must include `family`, `model`, `api_base`, and `api_key`.
+The generated template is [assets/config.yaml](assets/config.yaml). The active provider must include `family`, `model`, and `api_base`. Set `api_key` in the file, or leave it empty and export a matching environment variable before starting Anda.
 
 ```yaml
 model:
@@ -35,10 +35,12 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "YOUR_API_KEY" # optional when DEEPSEEK_API_KEY is set
       labels: ["pro", "hippocampus"]
       disabled: false
 ```
+
+Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
 
 Provider labels help me choose models for different jobs. A provider labeled `hippocampus` is preferred for memory formation and recall support. If no provider has that label, I use the active model.
 

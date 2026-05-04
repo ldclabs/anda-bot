@@ -51,7 +51,7 @@ irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 
 
 前置要求：
 
-- 至少一个可用的模型提供方 API Key。
+- 至少一个可用的模型提供方 API Key，可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
 
 也可以用较新的 Rust 工具链从源码启动我：
 
@@ -61,7 +61,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-第一次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型配置缺失，请打开这个文件，填好 provider 信息，保存后回到终端按 Enter。
+第一次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型配置缺失，请打开这个文件，填好 provider 信息，保存后回到终端按 Enter。API key 也可以在启动 Anda 前通过 provider 对应的环境变量导出。
 
 最小模型配置示例：
 
@@ -72,10 +72,12 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "YOUR_API_KEY" # 设置 DEEPSEEK_API_KEY 时可留空
       labels: ["pro", "hippocampus"]
       disabled: false
 ```
+
+支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。
 
 `hippocampus` 标签表示这一路模型可优先用于记忆大脑。如果没有 provider 带这个标签，我会使用当前激活模型。
 

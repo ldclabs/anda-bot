@@ -178,8 +178,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: 'Copy install command',
 			commandAria: 'Copy the install command',
 			alternative: 'Alternative: {method}',
-			steps: ['Install release', 'Add model key', 'Run'],
-			requiresPrefix: 'Requires at least one model provider API key. Anda creates',
+			steps: ['Install release', 'Add or export key', 'Run'],
+			requiresPrefix: 'Requires at least one model provider API key in config or env. Anda creates',
 			requiresSuffix: 'on first launch.',
 			options: {
 				macos: {
@@ -300,15 +300,14 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: 'After install',
-			title: 'Give Anda a model key, then start a thread that can keep going.',
-			bodyPrefix:
-				'The first launch creates the local home directory, config file, workspace, memory store, logs, skills, and channel state under',
-			bodySuffix: 'by default.',
+			title: 'Run Anda from any terminal with a model key.',
+			bodyPrefix: 'Use an environment key for the first run, or save provider keys in',
+			bodySuffix: 'for future sessions.',
 			quickStart: 'Quick start',
 			meetHippocampus: 'Meet Hippocampus',
-			terminalLabel: 'terminal',
-			sourceComment: 'Or run from source:',
-			goalComment: 'Tell Anda the goal, the context, and what should be remembered.',
+			terminalLabel: 'run command',
+			sourceComment: 'Start now with an environment key:',
+			goalComment: 'Or save api_key in config.yaml, then run:',
 			localRuntime: 'local runtime',
 			durableThread: 'durable thread',
 			inspectableBrain: 'inspectable brain'
@@ -350,8 +349,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: '复制安装命令',
 			commandAria: '点击复制安装命令',
 			alternative: '备选：{method}',
-			steps: ['安装发布版', '添加模型密钥', '运行'],
-			requiresPrefix: '至少需要一个模型服务商 API key。Anda 首次启动时会创建',
+			steps: ['安装发布版', '配置或导出密钥', '运行'],
+			requiresPrefix: '至少需要一个配置文件或环境变量中的模型服务商 API key。Anda 首次启动时会创建',
 			requiresSuffix: '配置文件。',
 			options: {
 				macos: {
@@ -443,15 +442,14 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: '安装之后',
-			title: '给 Anda 一个模型密钥，然后开启一条能持续推进的线索。',
-			bodyPrefix:
-				'首次启动会在本地创建 home 目录、配置文件、工作区、记忆库、日志、技能和频道状态，默认位于',
-			bodySuffix: '。',
+			title: '带上模型密钥，就可以在任意终端运行 Anda。',
+			bodyPrefix: '第一次运行可以临时使用环境变量，也可以把 provider 密钥保存到',
+			bodySuffix: '供后续会话使用。',
 			quickStart: '快速开始',
 			meetHippocampus: '了解 Hippocampus',
-			terminalLabel: '终端',
-			sourceComment: '也可以从源码运行：',
-			goalComment: '告诉 Anda 目标、上下文，以及什么应该被记住。',
+			terminalLabel: '运行命令',
+			sourceComment: '用环境变量立即启动：',
+			goalComment: '或把 api_key 保存到 config.yaml 后运行：',
 			localRuntime: '本地运行时',
 			durableThread: '持久线索',
 			inspectableBrain: '可检查大脑'
@@ -499,8 +497,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: 'Copiar comando de instalación',
 			commandAria: 'Copiar el comando de instalación',
 			alternative: 'Alternativa: {method}',
-			steps: ['Instala la versión', 'Añade la clave del modelo', 'Ejecuta'],
-			requiresPrefix: 'Requiere al menos una clave API de proveedor de modelos. Anda crea',
+			steps: ['Instala la versión', 'Añade o exporta la clave', 'Ejecuta'],
+			requiresPrefix:
+				'Requiere al menos una clave API de proveedor de modelos en config o env. Anda crea',
 			requiresSuffix: 'en el primer inicio.',
 			options: {
 				macos: {
@@ -626,15 +625,14 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: 'Después de instalar',
-			title: 'Dale a Anda una clave de modelo y abre un hilo que pueda seguir avanzando.',
-			bodyPrefix:
-				'El primer inicio crea el directorio local, la configuración, el workspace, la memoria, los logs, las skills y el estado de canales en',
-			bodySuffix: 'por defecto.',
+			title: 'Ejecuta Anda desde cualquier terminal con una clave de modelo.',
+			bodyPrefix: 'Usa una clave de entorno en el primer arranque, o guarda claves en',
+			bodySuffix: 'para sesiones futuras.',
 			quickStart: 'Inicio rápido',
 			meetHippocampus: 'Conocer Hippocampus',
-			terminalLabel: 'terminal',
-			sourceComment: 'O ejecutar desde el código fuente:',
-			goalComment: 'Dile a Anda el objetivo, el contexto y qué debe recordar.',
+			terminalLabel: 'comando de ejecución',
+			sourceComment: 'Inicia ahora con una clave de entorno:',
+			goalComment: 'O guarda api_key en config.yaml y ejecuta:',
 			localRuntime: 'runtime local',
 			durableThread: 'hilo durable',
 			inspectableBrain: 'cerebro inspeccionable'
@@ -682,8 +680,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: 'Copier la commande d’installation',
 			commandAria: 'Copier la commande d’installation',
 			alternative: 'Alternative : {method}',
-			steps: ['Installer la version', 'Ajouter la clé modèle', 'Lancer'],
-			requiresPrefix: 'Nécessite au moins une clé API de fournisseur de modèle. Anda crée',
+			steps: ['Installer la version', 'Ajouter ou exporter la clé', 'Lancer'],
+			requiresPrefix:
+				'Nécessite au moins une clé API de fournisseur de modèle en config ou env. Anda crée',
 			requiresSuffix: 'au premier lancement.',
 			options: {
 				macos: {
@@ -807,15 +806,15 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: 'Après installation',
-			title: 'Donnez à Anda une clé modèle, puis ouvrez un fil qui peut continuer.',
+			title: 'Lancez Anda depuis n’importe quel terminal avec une clé modèle.',
 			bodyPrefix:
-				'Le premier lancement crée le dossier local, la configuration, l’espace de travail, la mémoire, les journaux, les skills et l’état des canaux sous',
-			bodySuffix: 'par défaut.',
+				'Utilisez une clé en variable d’environnement au premier lancement, ou gardez les clés dans',
+			bodySuffix: 'pour les sessions suivantes.',
 			quickStart: 'Démarrage rapide',
 			meetHippocampus: 'Découvrir Hippocampus',
-			terminalLabel: 'terminal',
-			sourceComment: 'Ou exécuter depuis les sources :',
-			goalComment: 'Dites à Anda l’objectif, le contexte et ce qui doit être mémorisé.',
+			terminalLabel: 'commande',
+			sourceComment: 'Démarrer avec une clé d’environnement :',
+			goalComment: 'Ou enregistrer api_key dans config.yaml, puis lancer :',
 			localRuntime: 'runtime local',
 			durableThread: 'fil durable',
 			inspectableBrain: 'cerveau inspectable'
@@ -858,9 +857,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: 'Скопировать команду установки',
 			commandAria: 'Скопировать команду установки',
 			alternative: 'Альтернатива: {method}',
-			steps: ['Установите релиз', 'Добавьте ключ модели', 'Запустите'],
+			steps: ['Установите релиз', 'Добавьте или экспортируйте ключ', 'Запустите'],
 			requiresPrefix:
-				'Нужен хотя бы один API-ключ провайдера модели. При первом запуске Anda создает',
+				'Нужен хотя бы один API-ключ провайдера модели в config или env. При первом запуске Anda создает',
 			requiresSuffix: '.',
 			options: {
 				macos: {
@@ -977,15 +976,15 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: 'После установки',
-			title: 'Дайте Anda ключ модели, затем начните нить, которая может продолжаться.',
+			title: 'Запускайте Anda из любого терминала с ключом модели.',
 			bodyPrefix:
-				'Первый запуск создает локальный home-каталог, конфигурацию, workspace, хранилище памяти, логи, skills и состояние каналов в',
-			bodySuffix: 'по умолчанию.',
+				'Для первого запуска используйте ключ в переменной окружения или сохраните ключи в',
+			bodySuffix: 'для следующих сессий.',
 			quickStart: 'Быстрый старт',
 			meetHippocampus: 'Познакомиться с Hippocampus',
-			terminalLabel: 'терминал',
-			sourceComment: 'Или запустите из исходников:',
-			goalComment: 'Скажите Anda цель, контекст и что нужно запомнить.',
+			terminalLabel: 'команда запуска',
+			sourceComment: 'Запустить сразу с ключом окружения:',
+			goalComment: 'Или сохраните api_key в config.yaml и запустите:',
 			localRuntime: 'локальный runtime',
 			durableThread: 'долгая нить',
 			inspectableBrain: 'проверяемый мозг'
@@ -1028,8 +1027,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			copyAria: 'نسخ أمر التثبيت',
 			commandAria: 'انسخ أمر التثبيت',
 			alternative: 'بديل: {method}',
-			steps: ['ثبّت الإصدار', 'أضف مفتاح النموذج', 'شغّل'],
-			requiresPrefix: 'يتطلب مفتاح API واحدًا على الأقل لمزوّد نموذج. ينشئ Anda',
+			steps: ['ثبّت الإصدار', 'أضف المفتاح أو صدّره', 'شغّل'],
+			requiresPrefix: 'يتطلب مفتاح API واحدًا على الأقل لمزوّد نموذج في config أو env. ينشئ Anda',
 			requiresSuffix: 'عند أول تشغيل.',
 			options: {
 				macos: {
@@ -1139,15 +1138,14 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		start: {
 			badge: 'بعد التثبيت',
-			title: 'أعط Anda مفتاح نموذج، ثم ابدأ خيطًا يمكنه الاستمرار.',
-			bodyPrefix:
-				'ينشئ التشغيل الأول دليل home المحلي، وملف الإعداد، ومساحة العمل، ومخزن الذاكرة، والسجلات، والمهارات، وحالة القنوات تحت',
-			bodySuffix: 'افتراضيًا.',
+			title: 'شغّل Anda من أي طرفية باستخدام مفتاح نموذج.',
+			bodyPrefix: 'استخدم مفتاحًا في متغير بيئة عند التشغيل الأول، أو احفظ مفاتيح المزوّد في',
+			bodySuffix: 'للجلسات التالية.',
 			quickStart: 'البدء السريع',
 			meetHippocampus: 'تعرّف على Hippocampus',
-			terminalLabel: 'الطرفية',
-			sourceComment: 'أو شغّله من المصدر:',
-			goalComment: 'أخبر Anda بالهدف والسياق وما يجب تذكّره.',
+			terminalLabel: 'أمر التشغيل',
+			sourceComment: 'ابدأ الآن بمفتاح بيئة:',
+			goalComment: 'أو احفظ api_key في config.yaml ثم شغّل:',
 			localRuntime: 'تشغيل محلي',
 			durableThread: 'خيط دائم',
 			inspectableBrain: 'دماغ قابل للفحص'

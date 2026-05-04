@@ -361,9 +361,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.31"
+version = "0.11.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21ceae3ad4a585abc67a5da2b0bd1fae329cacc1c7de3f8f47af96c4b6b9803c"
+checksum = "a183153a27cfe2c9b436daab0829afcb2a7a675ab62996f53c240bab50fa630d"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -390,7 +390,7 @@ dependencies = [
  "ic_cose_types",
  "ic_tee_cdk",
  "ic_tee_gateway_sdk",
- "infer",
+ "infer2",
  "log",
  "mime",
  "moka",
@@ -436,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77dcef6d5d11cf5ada2f90b76efbda753bcdb9ee32f79034c8cee0393a5a3986"
+checksum = "a7bad6825f3ffb839e39800499de220d4b14681372293f2153028d4890cbe54c"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -1097,8 +1097,9 @@ dependencies = [
 
 [[package]]
 name = "boxlite"
-version = "0.8.2"
-source = "git+https://github.com/boxlite-ai/boxlite.git?tag=v0.8.2#da71624aea28e2d95c453e6d9b6c24bda492c021"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb975d93cd71dfa87ca46e8b459433d4db5016ee403034afdbc1b558eb07fbfd"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1126,6 +1127,7 @@ dependencies = [
  "oci-client",
  "oci-spec",
  "parking_lot",
+ "pathrs",
  "pkg-config",
  "qcow2-rs",
  "rand 0.9.4",
@@ -1162,8 +1164,9 @@ dependencies = [
 
 [[package]]
 name = "boxlite-shared"
-version = "0.8.2"
-source = "git+https://github.com/boxlite-ai/boxlite.git?tag=v0.8.2#da71624aea28e2d95c453e6d9b6c24bda492c021"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab5d4548ff23efb512c5517f801f6bbcdd377b8589a608aa8589a2390a266940"
 dependencies = [
  "prost 0.13.5",
  "serde",
@@ -1336,17 +1339,6 @@ name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
-
-[[package]]
-name = "cfb"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d38f2da7a0a2c4ccf0065be06397cc26a81f4e528be095826eee9d4adbb8c60f"
-dependencies = [
- "byteorder",
- "fnv",
- "uuid",
-]
 
 [[package]]
 name = "cfb"
@@ -3866,21 +3858,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "infer"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
-dependencies = [
- "cfb 0.7.3",
-]
-
-[[package]]
 name = "infer2"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0189fd8b1e956bbbcaf121d433653a52174e496322c191e0669dfd37b0d26028"
 dependencies = [
- "cfb 0.14.0",
+ "cfb",
 ]
 
 [[package]]
@@ -5180,6 +5163,24 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pathrs"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fb2311801201fc6fd2e8a9f4841b41eee565e992fbe713731e29e367b8e3f17"
+dependencies = [
+ "bitflags 2.11.1",
+ "itertools",
+ "libc",
+ "memchr",
+ "once_cell",
+ "rustix",
+ "rustversion",
+ "static_assertions",
+ "tempfile",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "pem"

@@ -53,6 +53,11 @@
 				'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
 		}
 	};
+	const runCommands: Record<OsKey, string[]> = {
+		macos: ['DEEPSEEK_API_KEY=**** anda'],
+		windows: ['$env:DEEPSEEK_API_KEY="****"; anda'],
+		linux: ['DEEPSEEK_API_KEY=**** anda']
+	};
 
 	const installOrder: OsKey[] = ['macos', 'windows', 'linux'];
 	const localeStorageKey = 'anda-bot-landing-locale';
@@ -66,6 +71,7 @@
 	let activeDirection = $derived(localeMeta[activeLocale].dir);
 	let activeInstallText = $derived(copy.install.options[activeOs]);
 	let activeInstall = $derived({ ...installCommands[activeOs], ...activeInstallText });
+	let activeRunCommands = $derived(runCommands[activeOs]);
 
 	$effect(() => {
 		document.documentElement.lang = localeMeta[activeLocale].htmlLang;
@@ -716,18 +722,19 @@
 					<span class="inline-flex items-center gap-2"
 						><Terminal class="size-4 text-(--anda-teal)" /> {copy.start.terminalLabel}</span
 					>
-					<span>~/.anda</span>
+					<span>~/.anda/config.yaml</span>
 				</div>
-				<pre
-					dir="ltr"
-					class="p-5 text-sm leading-7 wrap-break-word whitespace-pre-wrap text-white/76"><code
-						><span class="text-(--anda-amber-soft)">anda</span>
-<span class="text-white/42"># {copy.start.sourceComment}</span>
-<span class="text-(--anda-teal)">git clone</span> https://github.com/ldclabs/anda-bot
-<span class="text-(--anda-teal)">cd</span> anda-bot
-<span class="text-(--anda-teal)">cargo run</span> -p anda_bot --
-<span class="text-white/42"># {copy.start.goalComment}</span></code
-					></pre>
+				<div dir="ltr" class="p-5 font-mono text-sm leading-7 wrap-break-word text-white/76">
+					<code class="block">
+						<span class="block text-white/42"># {copy.start.sourceComment}</span>
+						{#each activeRunCommands as command}
+							<span class="block text-(--anda-teal)">{command}</span>
+						{/each}
+						<span class="mt-3 block text-white/42"># {copy.start.goalComment}</span>
+						<span class="block text-(--anda-amber-soft)">anda</span>
+						<span class="block"><span class="text-(--anda-amber-soft)">anda</span> --help</span>
+					</code>
+				</div>
 				<div class="grid gap-2 border-t border-white/10 p-5 text-sm text-white/62 sm:grid-cols-3">
 					<span class="inline-flex items-center gap-2"
 						><CheckCircle class="size-4 text-(--anda-teal)" /> {copy.start.localRuntime}</span

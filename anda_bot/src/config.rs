@@ -107,13 +107,12 @@ impl Config {
     pub fn setup_issues(&self) -> Vec<String> {
         let mut issues = Vec::new();
         let active = self.model.active.trim();
+        let model_providers = self.model.providers_with_env_api_keys();
 
         if active.is_empty() {
             issues.push("model.active".to_string());
-        } else if let Some(provider) = self.model.providers.iter().find(|m| m.model == active) {
-            let pos = self
-                .model
-                .providers
+        } else if let Some(provider) = model_providers.iter().find(|m| m.model == active) {
+            let pos = model_providers
                 .iter()
                 .position(|m| m.model == active)
                 .unwrap();
@@ -231,7 +230,8 @@ impl Config {
     }
 
     pub fn models(&self, http_client: reqwest::Client) -> Models {
-        let models = Models::from_configs(&self.model.providers, http_client.clone());
+        let providers = self.model.providers_with_env_api_keys();
+        let models = Models::from_configs(&providers, http_client.clone());
 
         let active = self.model.active.trim();
         if let Some(model) = models.get(active) {
@@ -386,6 +386,7 @@ channels:
 
     #[test]
     fn setup_issues_report_missing_active_provider_fields() {
+        let _env = model::guard_model_api_key_env();
         let mut config = Config::default();
         config.model.active = "deepseek-v4-pro".to_string();
 
@@ -407,6 +408,23 @@ channels:
     }
 
     #[test]
+    fn setup_issues_accepts_api_key_from_environment() {
+        let _env = model::guard_model_api_key_env();
+        unsafe { std::env::set_var("DEEPSEEK_API_KEY", "sk-env") };
+
+        let mut config = Config::default();
+        config.model.active = "deepseek-v4-pro".to_string();
+        config.model.providers.push(ModelConfig {
+            family: "anthropic".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            api_base: "https://api.deepseek.com/anthropic".to_string(),
+            ..Default::default()
+        });
+
+        assert!(config.setup_issues().is_empty());
+    }
+
+    #[test]
     fn default_template_contains_setup_guidance() {
         let template = Config::default_template();
 
@@ -414,6 +432,10 @@ channels:
         assert!(template.contains("sandbox:"));
         assert!(template.contains("https_proxy:"));
         assert!(template.contains("model:"));
+        assert!(template.contains("OPENAI_API_KEY"));
+        assert!(template.contains("ANTHROPIC_API_KEY"));
+        assert!(template.contains("GEMINI_API_KEY"));
+        assert!(template.contains("GOOGLE_API_KEY"));
         assert!(template.contains("channels:"));
         assert!(template.contains("irc:"));
         assert!(template.contains("wechat:"));

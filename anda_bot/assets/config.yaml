@@ -2,8 +2,12 @@
 #
 # This file is created automatically on first launch.
 # It contains both startup and runtime settings.
-# Choose the active provider with `model.active`, then fill in that provider entry.
+# Choose the active provider with `model.active`, then fill in that provider entry
+# or export a matching API key environment variable.
 # To switch models later, point `model.active` at a different provider key.
+# Supported model API key env vars include DEEPSEEK_API_KEY, MINIMAX_API_KEY,
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY,
+# MIMO_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, BIGMODEL_API_KEY, and GLM_API_KEY.
 
 addr: 127.0.0.1:8042
 sandbox: false

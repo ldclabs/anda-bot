@@ -215,9 +215,11 @@ try {
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"
     Write-Host ""
-    Write-Host "  Get started:"
-    Write-Host "    $BinaryName --help"
+    Write-Host "  Run Anda:"
+    Write-Host '    $env:DEEPSEEK_API_KEY="****"; anda'
+    Write-Host '    # or add api_key to $env:USERPROFILE\.anda\config.yaml, then:'
     Write-Host "    $BinaryName"
+    Write-Host "    $BinaryName --help"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 }

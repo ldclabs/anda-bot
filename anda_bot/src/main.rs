@@ -21,7 +21,19 @@ mod util;
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Parser)]
-#[command(author, version, about = "I am Anda Bot: a local AI agent with a long-term memory brain. Run `anda` to interact with me.", long_about = None)]
+#[command(author, version)]
+#[command(
+    about = "I am Anda Bot: a local AI agent with a long-term memory brain. Run `anda` to interact with me."
+)]
+#[command(long_about = None)]
+#[command(after_help = r#"Examples:
+    DEEPSEEK_API_KEY=**** anda
+    anda
+
+PowerShell:
+    $env:DEEPSEEK_API_KEY="****"; anda
+
+On first launch, Anda creates ~/.anda/config.yaml. You can leave provider api_key empty when a matching environment variable is set."#)]
 struct Cli {
     /// Path to a directory for storing state (defaults to '~/.anda')
     #[arg(long)]
