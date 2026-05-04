@@ -226,6 +226,42 @@
 	animation: memory-breathe 3.8s ease-in-out infinite;
 }
 
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.language-switcher {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 0.35rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: var(--radius-lg);
+	background: rgba(0, 0, 0, 0.2);
+	padding: 0 0.55rem;
+	color: rgba(244, 238, 227, 0.78);
+	backdrop-filter: blur(18px);
+}
+
+.language-switcher select {
+	min-width: 5.8rem;
+	max-width: 8.5rem;
+	height: 2rem;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-size: 0.82rem;
+	font-weight: 600;
+	outline: none;
+}
+
+.language-switcher option {
+	background: #07110f;
+	color: var(--anda-parchment);
+}
+
 .proof-tile {
 	min-width: 0;
 	border: 1px solid rgba(255, 255, 255, 0.1);
@@ -233,6 +269,137 @@
 	background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.035));
 	padding: 0.85rem;
 	backdrop-filter: blur(18px);
+}
+
+.install-console {
+	position: relative;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: var(--radius-lg);
+	background:
+		linear-gradient(140deg, rgba(255, 208, 138, 0.16), transparent 34%),
+		linear-gradient(180deg, rgba(7, 17, 15, 0.76), rgba(7, 17, 15, 0.58));
+	box-shadow:
+		0 34px 120px rgba(0, 0, 0, 0.46),
+		inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	padding: 1.25rem;
+	backdrop-filter: blur(24px);
+}
+
+.install-console::before {
+	position: absolute;
+	inset: 0;
+	content: '';
+	background:
+		linear-gradient(100deg, transparent 0%, rgba(53, 178, 171, 0.12) 30%, transparent 58%),
+		repeating-linear-gradient(90deg, transparent 0 42px, rgba(244, 238, 227, 0.035) 42px 43px);
+	pointer-events: none;
+}
+
+.install-tab {
+	display: flex;
+	min-height: 3.25rem;
+	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.045);
+	padding: 0.72rem 0.85rem;
+	color: rgba(244, 238, 227, 0.72);
+	font-size: 0.9rem;
+	font-weight: 600;
+	transition:
+		border-color 180ms ease,
+		background 180ms ease,
+		color 180ms ease,
+		transform 180ms ease;
+}
+
+.install-tab:hover {
+	transform: translateY(-2px);
+	border-color: rgba(255, 208, 138, 0.28);
+	background: rgba(255, 255, 255, 0.07);
+	color: var(--anda-parchment);
+}
+
+.install-tab small {
+	border-radius: 999px;
+	background: rgba(53, 178, 171, 0.16);
+	padding: 0.18rem 0.42rem;
+	color: var(--anda-teal);
+	font-size: 0.65rem;
+	font-weight: 700;
+}
+
+.install-tab-active {
+	border-color: rgba(241, 166, 78, 0.5);
+	background: rgba(241, 166, 78, 0.13);
+	color: #fff;
+	box-shadow: 0 0 34px rgba(241, 166, 78, 0.12);
+}
+
+.install-command {
+	cursor: pointer;
+	direction: ltr;
+	display: block;
+	width: 100%;
+	min-height: 7rem;
+	border: 0;
+	background: transparent;
+	padding: 1.1rem;
+	text-align: left;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--anda-amber-soft);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+	font-size: clamp(0.92rem, 1.5vw, 1.05rem);
+	line-height: 1.75;
+	transition: background 180ms ease;
+	unicode-bidi: plaintext;
+}
+
+.install-command:hover,
+.install-command:focus-visible {
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.copy-command-button {
+	display: inline-flex;
+	min-width: max-content;
+	align-items: center;
+	justify-content: center;
+	gap: 0.35rem;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.055);
+	padding: 0.28rem 0.55rem;
+	color: rgba(244, 238, 227, 0.78);
+	font-size: 0.74rem;
+	font-weight: 700;
+	transition:
+		border-color 180ms ease,
+		background 180ms ease,
+		color 180ms ease;
+}
+
+.copy-command-button:hover,
+.copy-command-button:focus-visible {
+	border-color: rgba(255, 208, 138, 0.32);
+	background: rgba(241, 166, 78, 0.12);
+	color: var(--anda-amber-soft);
+}
+
+.install-step {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 0.5rem;
+	border: 1px solid rgba(255, 255, 255, 0.09);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.045);
+	padding: 0.72rem;
 }
 
 .signal-panel::before {
@@ -394,6 +561,16 @@
 
 .memory-loop {
 	position: relative;
+}
+
+.reasoning-grid {
+	align-items: stretch;
+}
+
+.reasoning-card {
+	min-height: 10.5rem;
+	background:
+		linear-gradient(135deg, rgba(241, 166, 78, 0.095), transparent 42%), rgba(255, 255, 255, 0.04);
 }
 
 .memory-loop::before {
@@ -601,6 +778,27 @@
 
 	.proof-tile {
 		padding: 0.7rem;
+	}
+
+	.install-console {
+		padding: 1rem;
+	}
+
+	.install-tab {
+		min-height: 2.9rem;
+	}
+
+	.language-switcher {
+		padding: 0 0.45rem;
+	}
+
+	.language-switcher select {
+		min-width: 4.8rem;
+		max-width: 6.2rem;
+	}
+
+	.header-actions [data-slot='button'] {
+		padding-inline: 0.7rem;
 	}
 
 	.phase-card-raised {

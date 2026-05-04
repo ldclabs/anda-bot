@@ -845,7 +845,7 @@ fn panel_lines(_app: &App) -> Vec<Line<'static>> {
 fn panel_header_line(_app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled("Born of panda. Awakened as Anda. ", theme::subtle_style()),
-        Span::styled(format!(" ANDA.Bot v{APP_VERSION} "), theme::badge_style()),
+        Span::styled(format!(" ANDA.Bot v{APP_VERSION} "), theme::accent_style()),
     ])
 }
 
