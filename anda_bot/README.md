@@ -87,6 +87,7 @@ The memory brain stores more than text snippets. It can form entities, relations
 | Command                                             | Use it when                                           |
 | --------------------------------------------------- | ----------------------------------------------------- |
 | `cargo run -p anda_bot --`                          | You want the interactive terminal UI.                 |
+| `cargo run -p anda_bot -- update`                   | You want to update an install-script release.         |
 | `cargo run -p anda_bot -- daemon`                   | You want the daemon in the foreground.                |
 | `cargo run -p anda_bot -- stop`                     | You want to stop a background daemon on Unix.         |
 | `cargo run -p anda_bot -- restart`                  | You changed config or want a fresh daemon on Unix.    |

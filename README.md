@@ -118,6 +118,12 @@ Run Anda Bot:
 anda
 ```
 
+Update an install-script release to the latest version:
+
+```bash
+anda update
+```
+
 Stop or restart the background daemon on Unix:
 
 ```bash

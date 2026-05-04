@@ -41,6 +41,8 @@ pub enum Commands {
     Restart,
     /// Equal to running `anda restart`.
     Reload,
+    /// Update the anda binary to the latest release.
+    Update(cli::updater::UpdateCommand),
     /// Tool-related operations against the running daemon.
     #[command(subcommand)]
     Tool(ToolCommand),
@@ -90,6 +92,12 @@ pub enum AgentCommand {
 async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let Cli { home, command } = cli;
+
+    if let Some(Commands::Update(cmd)) = command.as_ref() {
+        cli::updater::run(cmd).await?;
+        return Ok(());
+    }
+
     let home = if let Some(home) = home {
         PathBuf::from(home)
     } else {
@@ -174,6 +182,7 @@ async fn main() -> Result<(), BoxError> {
                 }
             }
         }
+        Some(Commands::Update(_)) => unreachable!("update command is handled before daemon setup"),
         Some(Commands::Tool(cmd)) => {
             log::info!("Starting CLI with command 'tool' at {}", daemon.base_url());
 

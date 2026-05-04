@@ -56,6 +56,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 serde-saphyr = "0.0"
 sha3 = "0.11"
+sha2 = "0.10"
 ic_cose_types = "0.9"
 ic_cose = "0.9"
 ic_auth_types = "0.8"

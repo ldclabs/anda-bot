@@ -152,6 +152,7 @@ dependencies = [
  "serde",
  "serde-saphyr",
  "serde_json",
+ "sha2 0.10.9",
  "sha3 0.11.0",
  "structured-logger",
  "tempfile",

@@ -1,5 +1,6 @@
 use anda_core::BoxError;
 
+pub mod updater;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub mod voice;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

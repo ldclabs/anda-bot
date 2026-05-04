@@ -118,6 +118,12 @@ anda --home /path/to/.anda
 anda
 ```
 
+把安装脚本安装的发布版更新到最新版本：
+
+```bash
+anda update
+```
+
 在 Unix 平台停止或重启后台守护进程：
 
 ```bash
