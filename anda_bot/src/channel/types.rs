@@ -57,6 +57,7 @@ impl SendMessage {
     }
 
     /// Create a new message with content, recipient, and subject
+    #[allow(unused)]
     pub fn with_subject(
         content: impl Into<String>,
         recipient: impl Into<String>,
@@ -84,6 +85,33 @@ impl SendMessage {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChannelInitOptions {
+    pub force: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelInitResult {
+    pub changed: bool,
+    pub message: String,
+}
+
+impl ChannelInitResult {
+    pub fn changed(message: impl Into<String>) -> Self {
+        Self {
+            changed: true,
+            message: message.into(),
+        }
+    }
+
+    pub fn unchanged(message: impl Into<String>) -> Self {
+        Self {
+            changed: false,
+            message: message.into(),
+        }
+    }
+}
+
 /// Core channel trait — implement for any messaging platform
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -97,6 +125,14 @@ pub trait Channel: Send + Sync {
 
     /// Set the channel-specific workspace directory managed by ChannelRuntime.
     fn set_workspace(&self, _workspace: PathBuf) {}
+
+    /// Run channel-specific direct initialization from `anda channel init`.
+    async fn init(&self, _options: ChannelInitOptions) -> Result<ChannelInitResult, BoxError> {
+        Ok(ChannelInitResult::unchanged(format!(
+            "{} does not require CLI initialization",
+            self.id()
+        )))
+    }
 
     /// Send a message through this channel
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError>;
@@ -122,16 +158,19 @@ pub trait Channel: Send + Sync {
 
     /// Signal that the bot is processing a response (e.g. "typing" indicator).
     /// Implementations should repeat the indicator as needed for their platform.
+    #[allow(unused)]
     async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Stop any active typing indicator.
+    #[allow(unused)]
     async fn stop_typing(&self, _recipient: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Whether this channel supports progressive message updates via draft edits.
+    #[allow(unused)]
     fn supports_draft_updates(&self) -> bool {
         false
     }
@@ -139,22 +178,26 @@ pub trait Channel: Send + Sync {
     /// Whether this channel supports multi-message streaming delivery, where
     /// the response is sent as multiple separate messages at paragraph
     /// boundaries as tokens arrive from the provider.
+    #[allow(unused)]
     fn supports_multi_message_streaming(&self) -> bool {
         false
     }
 
     /// Minimum delay (ms) between sending each paragraph in multi-message mode.
     /// Channels should override this to avoid platform rate limits.
+    #[allow(unused)]
     fn multi_message_delay_ms(&self) -> u64 {
         800
     }
 
     /// Send an initial draft message. Returns a platform-specific message ID for later edits.
+    #[allow(unused)]
     async fn send_draft(&self, _message: &SendMessage) -> Result<Option<String>, BoxError> {
         Ok(None)
     }
 
     /// Update a previously sent draft message with new accumulated content.
+    #[allow(unused)]
     async fn update_draft(
         &self,
         _recipient: &str,
@@ -167,6 +210,7 @@ pub trait Channel: Send + Sync {
     /// Show a progress/status update (e.g. tool execution status).
     /// Channels can display this in a status bar rather than in the message body.
     /// Default: no-op (progress is ignored).
+    #[allow(unused)]
     async fn update_draft_progress(
         &self,
         _recipient: &str,
@@ -177,6 +221,7 @@ pub trait Channel: Send + Sync {
     }
 
     /// Finalize a draft with the complete response (e.g. apply Markdown formatting).
+    #[allow(unused)]
     async fn finalize_draft(
         &self,
         _recipient: &str,
@@ -187,6 +232,7 @@ pub trait Channel: Send + Sync {
     }
 
     /// Cancel and remove a previously sent draft message if the channel supports it.
+    #[allow(unused)]
     async fn cancel_draft(&self, _recipient: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
@@ -196,6 +242,7 @@ pub trait Channel: Send + Sync {
     /// `channel_id` is the platform channel/conversation identifier (e.g. Discord channel ID).
     /// `message_id` is the platform-scoped message identifier (e.g. `discord_<snowflake>`).
     /// `emoji` is the Unicode emoji to react with (e.g. "👀", "✅").
+    #[allow(unused)]
     async fn add_reaction(
         &self,
         _channel_id: &str,
@@ -206,6 +253,7 @@ pub trait Channel: Send + Sync {
     }
 
     /// Remove a reaction (emoji) from a message previously added by this bot.
+    #[allow(unused)]
     async fn remove_reaction(
         &self,
         _channel_id: &str,
@@ -216,11 +264,13 @@ pub trait Channel: Send + Sync {
     }
 
     /// Pin a message in the channel.
+    #[allow(unused)]
     async fn pin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Unpin a previously pinned message.
+    #[allow(unused)]
     async fn unpin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
@@ -230,6 +280,7 @@ pub trait Channel: Send + Sync {
     /// `channel_id` is the platform channel/conversation identifier.
     /// `message_id` is the platform-scoped message identifier.
     /// `reason` is an optional reason for the redaction (may be visible in audit logs).
+    #[allow(unused)]
     async fn redact_message(
         &self,
         _channel_id: &str,

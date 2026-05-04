@@ -125,7 +125,7 @@ struct ChannelRuntimeInner {
     channels_conversation: RwLock<ChannelConversationMap>, // (channel, reply_target, thread) -> conversation_id
     conversation_routes: RwLock<HashMap<u64, ChannelRoute>>, // conversation_id -> route
     messages: Arc<Collection>,
-    home_dir: PathBuf,
+    work_dir: PathBuf,
 }
 
 impl ChannelRuntime {
@@ -134,7 +134,7 @@ impl ChannelRuntime {
         engine: Arc<EngineRef>,
         user: Principal,
         channels: HashMap<String, Arc<dyn Channel>>,
-        home_dir: PathBuf,
+        work_dir: PathBuf,
     ) -> Result<Self, BoxError> {
         let (tx, rx) = tokio::sync::mpsc::channel(21);
         let schema = ChannelMessage::schema()?;
@@ -166,7 +166,7 @@ impl ChannelRuntime {
             .unwrap_or_default();
         let conversation_routes = build_conversation_routes(&channels_conversation);
         for (channel_name, channel) in &channels {
-            channel.set_workspace(home_dir.join(channel_name));
+            channel.set_workspace(work_dir.join(channel_name));
         }
 
         let inner = Arc::new(ChannelRuntimeInner {
@@ -177,7 +177,7 @@ impl ChannelRuntime {
             channels_conversation: RwLock::new(channels_conversation),
             conversation_routes: RwLock::new(conversation_routes),
             messages,
-            home_dir,
+            work_dir,
         });
 
         Ok(Self { rx, inner })
@@ -210,6 +210,12 @@ impl ChannelRuntime {
                         message
                     },
                 } {
+                    // log::info!(
+                    //     name = "channel";
+                    //     "received message from channel {}: {:?}",
+                    //     message.channel,
+                    //     message
+                    // );
                     let _ = messages.flush(unix_ms()).await;
                     if let Some(engine) = self.inner.engine.get() {
                         let mut extra = Map::new();
@@ -232,12 +238,14 @@ impl ChannelRuntime {
                         extra.insert(
                             "workspace".to_string(),
                             self.inner
-                                .home_dir
+                                .work_dir
                                 .join(&message.channel)
                                 .to_string_lossy()
                                 .into(),
                         );
-                        if let Some(thread) = &message.thread {
+                        if let Some(thread) = &message.thread
+                            && !thread.is_empty()
+                        {
                             extra.insert("thread".to_string(), thread.clone().into());
                         }
                         match engine

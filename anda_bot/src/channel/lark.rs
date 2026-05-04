@@ -1306,10 +1306,9 @@ fn should_refresh_last_recv(message: &WsMsg) -> bool {
     matches!(message, WsMsg::Binary(_) | WsMsg::Ping(_) | WsMsg::Pong(_))
 }
 
-fn reassemble_lark_ws_payload(
-    frame: PbFrame,
-    frag_cache: &mut HashMap<String, (Vec<Option<Vec<u8>>>, Instant)>,
-) -> Option<Vec<u8>> {
+type FragCache = HashMap<String, (Vec<Option<Vec<u8>>>, Instant)>;
+
+fn reassemble_lark_ws_payload(frame: PbFrame, frag_cache: &mut FragCache) -> Option<Vec<u8>> {
     if frame.header_value("type") != "event" {
         return None;
     }

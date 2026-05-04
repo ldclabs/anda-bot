@@ -178,11 +178,6 @@ transcription:
   #   timeout_secs: 300
 
 channels:
-  irc: []
-  telegram: []
-  wechat: []
-  discord: []
-  lark: []
   # irc:
   #   - id: libera
   #     server: irc.libera.chat

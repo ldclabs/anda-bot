@@ -117,6 +117,7 @@ impl ChatSession {
         }
     }
 
+    #[allow(unused)]
     pub fn reset(&mut self) {
         self.conv_id = None;
         self.conversation = None;

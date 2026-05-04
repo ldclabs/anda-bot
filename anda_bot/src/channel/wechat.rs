@@ -1,7 +1,6 @@
 use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
-use reqwest::Client;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -16,10 +15,10 @@ use weixin_agent::{
 };
 
 use super::{
-    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    resource_from_bytes,
+    Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace, SendMessage,
+    file_name_for_resource, is_http_url, resource_from_bytes,
 };
-use crate::config::{self, normalize_identity};
+use crate::config::{self, normalize_identity, normalize_string};
 
 const WECHAT_MAX_MESSAGE_LENGTH: usize = 4000;
 const WECHAT_CONTINUATION_OVERHEAD: usize = 30;
@@ -29,7 +28,6 @@ const WECHAT_MAX_QR_REFRESH_COUNT: u32 = 3;
 
 pub fn build_wechat_channels(
     cfg: &[config::WechatChannelSettings],
-    client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -45,7 +43,7 @@ pub fn build_wechat_channels(
             );
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(wechat_cfg, client.clone()));
+        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(wechat_cfg));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate WeChat channel id '{channel_id}'").into());
@@ -64,14 +62,13 @@ pub struct WechatChannel {
     cdn_base_url: String,
     route_tag: Option<u32>,
     workspace: Arc<ChannelWorkspace>,
-    client: Client,
 }
 
 impl WechatChannel {
-    pub fn new(cfg: &config::WechatChannelSettings, client: Client) -> Self {
+    pub fn new(cfg: &config::WechatChannelSettings) -> Self {
         Self {
             id: cfg.channel_id(),
-            bot_token: Some(cfg.bot_token.clone()),
+            bot_token: normalize_string(&cfg.bot_token),
             username: cfg.username.clone().unwrap_or_else(|| "wechat".to_string()),
             allowed_users: cfg
                 .allowed_users
@@ -82,7 +79,6 @@ impl WechatChannel {
             cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
             workspace: Arc::new(ChannelWorkspace::default()),
-            client,
         }
     }
 
@@ -134,8 +130,7 @@ impl WechatChannel {
             return Ok(token);
         }
 
-        let workspace = self.ensure_workspace_dir().await?;
-        self.qr_login_and_save(&workspace).await
+        Err("WeChat channel has no bot_token configured and no saved token found; Run `anda channel init wechat` to initialize the bot_token.".into())
     }
 
     async fn qr_login_and_save(&self, workspace: &Path) -> Result<String, BoxError> {
@@ -153,9 +148,12 @@ impl WechatChannel {
                     base_url,
                     ilink_user_id,
                 } => {
-                    log::info!(
+                    let info = format!(
                         "WeChat QR login confirmed: bot_id={ilink_bot_id}, user_id={ilink_user_id}, base_url={base_url}"
                     );
+                    log::info!("{}", info);
+                    println!("{}\n\nYou can now close this terminal if you like.", info);
+                    tokio::fs::write(workspace.join("bot.txt"), &info).await?;
                     tokio::fs::write(workspace.join("token.txt"), &bot_token).await?;
                     return Ok(bot_token);
                 }
@@ -289,6 +287,33 @@ impl Channel for WechatChannel {
 
     fn set_workspace(&self, workspace: PathBuf) {
         self.workspace.set_path(workspace);
+    }
+
+    async fn init(&self, options: ChannelInitOptions) -> Result<ChannelInitResult, BoxError> {
+        if self.bot_token.is_some() && !options.force {
+            return Ok(ChannelInitResult::unchanged(
+                "WeChat bot_token is configured; QR login is not required",
+            ));
+        }
+
+        let workspace = self.ensure_workspace_dir().await?;
+        let token_path = workspace.join("token.txt");
+        if !options.force && self.saved_token().await.is_some() {
+            return Ok(ChannelInitResult::unchanged(format!(
+                "WeChat token already exists at {}",
+                token_path.display()
+            )));
+        }
+
+        self.qr_login_and_save(&workspace).await?;
+        let mut message = format!(
+            "WeChat QR login completed; token saved to {}",
+            token_path.display()
+        );
+        if self.bot_token.is_some() {
+            message.push_str("; configured bot_token still takes precedence");
+        }
+        Ok(ChannelInitResult::changed(message))
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
@@ -452,7 +477,9 @@ async fn channel_message_from_context(
     if let Some(server_message_id) = ctx.server_message_id {
         extra.insert("server_message_id".to_string(), server_message_id.into());
     }
-    if let Some(session_id) = &ctx.session_id {
+    if let Some(session_id) = &ctx.session_id
+        && !session_id.is_empty()
+    {
         extra.insert("session_id".to_string(), session_id.clone().into());
     }
 
@@ -735,10 +762,20 @@ mod tests {
 
     #[test]
     fn wechat_channel_identity() {
-        let channel = WechatChannel::new(&test_config(), Client::new());
+        let channel = WechatChannel::new(&test_config());
         assert_eq!(channel.name(), "wechat");
         assert_eq!(channel.username(), "anda-wechat");
         assert_eq!(channel.id(), "wechat:test");
+    }
+
+    #[test]
+    fn wechat_empty_bot_token_is_unconfigured() {
+        let mut cfg = test_config();
+        cfg.bot_token = "   ".to_string();
+
+        let channel = WechatChannel::new(&cfg);
+
+        assert!(channel.bot_token.is_none());
     }
 
     #[test]

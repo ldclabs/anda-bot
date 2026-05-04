@@ -355,9 +355,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.32"
+version = "0.11.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a183153a27cfe2c9b436daab0829afcb2a7a675ab62996f53c240bab50fa630d"
+checksum = "f2d06e5209a1beac2718a06c01e7ab797bfd13b3526b830822cc97b952c5cc95"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -6454,9 +6454,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.52.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "110a78583f19d5cdb2c5ccf321d1290344e71313c6c37d43520d386027d18386"
 dependencies = [
  "bytes",
  "libc",

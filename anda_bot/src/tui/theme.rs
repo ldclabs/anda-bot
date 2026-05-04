@@ -83,6 +83,7 @@ pub fn banner_line_style(index: usize) -> Style {
     }
 }
 
+#[allow(unused)]
 pub fn badge_style() -> Style {
     Style::default()
         .fg(PANDA_INK)

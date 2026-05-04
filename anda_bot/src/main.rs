@@ -61,6 +61,9 @@ pub enum Commands {
     /// Agent-related operations against the running daemon.
     #[command(subcommand)]
     Agent(AgentCommand),
+    /// Channel-related operations that run directly from this CLI.
+    #[command(subcommand)]
+    Channel(cli::channel::ChannelCommand),
     /// Start a continuous voice conversation with the agent.
     Voice(cli::voice::VoiceCommand),
 }
@@ -233,6 +236,13 @@ async fn main() -> Result<(), BoxError> {
                     println!("\n{}", serde_json::to_string_pretty(&output)?);
                 }
             }
+        }
+        Some(Commands::Channel(cmd)) => {
+            log::info!(
+                "Starting CLI with command 'channel' at {}",
+                daemon.base_url()
+            );
+            cli::channel::run(&daemon, cmd).await?;
         }
         Some(Commands::Voice(cmd)) => {
             log::info!("Starting CLI with command 'voice' at {}", daemon.base_url());

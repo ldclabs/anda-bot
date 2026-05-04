@@ -30,7 +30,7 @@ pub fn build_channels(
         }
     }
 
-    for (channel_id, channel) in wechat::build_wechat_channels(&cfg.wechat, client.clone())? {
+    for (channel_id, channel) in wechat::build_wechat_channels(&cfg.wechat)? {
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate channel id '{channel_id}'").into());
         }
