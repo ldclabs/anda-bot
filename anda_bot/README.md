@@ -30,10 +30,9 @@ The generated template is [assets/config.yaml](assets/config.yaml). The active p
 
 ```yaml
 model:
-  active: DeepSeek
+  active: "deepseek-v4-pro"
   providers:
-    DeepSeek:
-      family: anthropic
+    - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY"

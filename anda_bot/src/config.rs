@@ -1,5 +1,5 @@
 use anda_core::BoxError;
-use anda_engine::model::{ModelConfig, Models};
+use anda_engine::model::Models;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -110,8 +110,14 @@ impl Config {
 
         if active.is_empty() {
             issues.push("model.active".to_string());
-        } else if let Some(provider) = self.model.providers.get(active) {
-            let base = format!("model.providers.{active}");
+        } else if let Some(provider) = self.model.providers.iter().find(|m| m.model == active) {
+            let pos = self
+                .model
+                .providers
+                .iter()
+                .position(|m| m.model == active)
+                .unwrap();
+            let base = format!("model.providers[{pos}]");
             if provider.disabled {
                 issues.push(format!("{base}.disabled"));
             }
@@ -128,7 +134,7 @@ impl Config {
                 issues.push(format!("{base}.api_key"));
             }
         } else {
-            issues.push(format!("model.providers.{active}"));
+            issues.push(format!("model.providers: no {active}"));
         }
 
         let mut seen_ids = BTreeSet::new();
@@ -225,18 +231,10 @@ impl Config {
     }
 
     pub fn models(&self, http_client: reqwest::Client) -> Models {
-        let configs: Vec<ModelConfig> = self
-            .model
-            .providers
-            .values()
-            .map(ModelConfig::from)
-            .collect();
-        let models = Models::from_configs(&configs, http_client.clone());
+        let models = Models::from_configs(&self.model.providers, http_client.clone());
 
         let active = self.model.active.trim();
-        if let Some(cfg) = self.model.providers.get(active).map(ModelConfig::from)
-            && let Ok(model) = cfg.model(http_client.clone())
-        {
+        if let Some(model) = models.get(active) {
             models.set_model(model);
         }
 
@@ -275,6 +273,7 @@ pub fn normalize_identity(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anda_engine::model::ModelConfig;
 
     #[test]
     fn config_contents_read_selected_provider_and_irc_channels() {
@@ -284,15 +283,13 @@ addr: 127.0.0.1:9000
 sandbox: true
 https_proxy: http://127.0.0.1:7890
 model:
-  active: anthropic
+  active: claude-sonnet-4-6
   providers:
-    anthropic:
-      family: anthropic
+    - family: anthropic
       model: claude-sonnet-4-6
       api_base: https://api.anthropic.com/v1
       api_key: sk-test
-    openai:
-      family: openai
+    - family: openai
       model: gpt-4.1-mini
       api_base: https://api.openai.com/v1
       api_key: sk-openai
@@ -309,8 +306,8 @@ channels:
         assert_eq!(config.addr, "127.0.0.1:9000");
         assert!(config.sandbox);
         assert_eq!(config.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
-        assert_eq!(config.model.active, "anthropic");
-        let model: ModelConfig = config.model.providers.get("anthropic").unwrap().into();
+        assert_eq!(config.model.active, "claude-sonnet-4-6");
+        let model: ModelConfig = config.model.providers[0].clone();
 
         assert_eq!(model.family, "anthropic");
         assert_eq!(model.model, "claude-sonnet-4-6");
@@ -383,31 +380,29 @@ channels:
             LarkReceiveMode::Webhook
         );
         assert!(!config.channels.lark[0].ack_reactions);
+        println!("Config: {:#?}", config.setup_issues());
         assert!(config.setup_issues().is_empty());
     }
 
     #[test]
     fn setup_issues_report_missing_active_provider_fields() {
         let mut config = Config::default();
-        config.model.active = "anthropic".to_string();
-
-        assert_eq!(config.setup_issues(), vec!["model.providers.anthropic"]);
-
-        config.model.providers.insert(
-            "anthropic".to_string(),
-            ModelProviderConfig {
-                family: "anthropic".to_string(),
-                ..Default::default()
-            },
-        );
+        config.model.active = "deepseek-v4-pro".to_string();
 
         assert_eq!(
             config.setup_issues(),
-            vec![
-                "model.providers.anthropic.model",
-                "model.providers.anthropic.api_base",
-                "model.providers.anthropic.api_key"
-            ]
+            vec!["model.providers: no deepseek-v4-pro"]
+        );
+
+        config.model.providers.push(ModelConfig {
+            family: "anthropic".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.setup_issues(),
+            vec!["model.providers[0].api_base", "model.providers[0].api_key"]
         );
     }
 

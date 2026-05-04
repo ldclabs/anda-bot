@@ -67,10 +67,9 @@ Minimal model configuration:
 
 ```yaml
 model:
-  active: DeepSeek
+  active: "deepseek-v4-pro"
   providers:
-    DeepSeek:
-      family: anthropic
+    - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY"
