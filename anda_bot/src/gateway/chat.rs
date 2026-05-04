@@ -204,7 +204,7 @@ impl ChatSession {
     pub async fn poll(&mut self, latest_conv_id: Option<u64>) -> bool {
         self.ping().await;
 
-        let conv_id = if let Some(id) = latest_conv_id {
+        let mut conv_id = if let Some(id) = latest_conv_id {
             self.conv_id = Some(id);
             id
         } else if let Some(id) = self.conv_id {
@@ -218,36 +218,56 @@ impl ChatSession {
         }
 
         if let Some(conv) = &self.conversation
-            && conv_id == conv._id && !self.is_active() {
-                return false;
-            }
-
-        self.last_poll = Instant::now();
-        match self
-            .client
-            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
-                ConversationsTool::NAME.to_string(),
-                ConversationsToolArgs::GetConversation { _id: conv_id },
-            ))
-            .await
+            && conv_id == conv._id
+            && !self.is_active()
         {
-            Ok(output) => {
-                if let KipResponse::Ok { result, .. } = output.output {
-                    match serde_json::from_value::<Conversation>(result) {
-                        Ok(conv) => return self.apply_conversation_data(conv),
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to parse conversation data for conv_id {conv_id}: {err}"
-                            );
+            return false;
+        }
+
+        let mut received = false;
+        loop {
+            self.last_poll = Instant::now();
+            match self
+                .client
+                .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+                    ConversationsTool::NAME.to_string(),
+                    ConversationsToolArgs::GetConversation { _id: conv_id },
+                ))
+                .await
+            {
+                Ok(output) => {
+                    if let KipResponse::Ok { result, .. } = output.output {
+                        match serde_json::from_value::<Conversation>(result) {
+                            Ok(conv) => {
+                                let child = conv.child;
+                                self.apply_conversation_data(conv);
+                                received = true;
+
+                                if self.conv_id != child
+                                    && let Some(id) = child
+                                {
+                                    self.conv_id = Some(id);
+                                    conv_id = id;
+                                    continue;
+                                }
+
+                                return received;
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to parse conversation data for conv_id {conv_id}: {err}"
+                                );
+                            }
                         }
                     }
                 }
+                Err(err) => {
+                    log::warn!("Poll conversation {conv_id} failed: {err}");
+                }
             }
-            Err(err) => {
-                log::warn!("Poll conversation {conv_id} failed: {err}");
-            }
+
+            return received;
         }
-        false
     }
 
     fn apply_conversation_data(&mut self, conv: Conversation) -> bool {
@@ -279,7 +299,6 @@ impl ChatSession {
             self.conversation = Some(conv);
         } else {
             // should not happen, but just in case, we update prev_conversation to keep the history.
-            self.prev_conversation = Some(conv);
         }
 
         true

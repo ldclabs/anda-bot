@@ -23,7 +23,10 @@ use std::{
 };
 
 mod agent;
-mod conversation_tool;
+mod conversation;
+mod goal;
+mod prompt;
+mod side;
 
 use crate::util::{
     http_client::build_http_client,
@@ -32,7 +35,7 @@ use crate::util::{
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
 use agent::*;
 
-pub use conversation_tool::*;
+pub use conversation::*;
 
 pub struct Engines {
     state: AppState,
@@ -140,21 +143,21 @@ impl Engines {
             )?);
             manager.is_enabled().then_some(manager)
         };
+
+        let shell_tool = {
+            let runtime = build_shell_runtime(cfg.home_dir.clone(), cfg.sandbox_dir).await?;
+            shell::ShellTool::new(runtime, HashMap::new(), None)
+        };
+        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
         let bot = AndaBot::new(
             brain_client.clone(),
             conversations,
             completion_hooks,
             cfg.home_dir.clone(),
+            skills_tool.clone(),
             tts_manager.clone(),
             transcription_manager.clone(),
         );
-
-        let shell_tool = {
-            let runtime = build_shell_runtime(cfg.home_dir.clone(), cfg.sandbox_dir).await?;
-            shell::ShellTool::new(runtime, HashMap::new())
-        };
-
-        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))

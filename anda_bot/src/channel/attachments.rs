@@ -126,11 +126,7 @@ pub fn file_name_for_resource<'a>(resource: &'a Resource) -> Cow<'a, str> {
     if !resource.name.trim().is_empty() {
         Cow::Borrowed(resource.name.trim())
     } else if let Some(t) = infer_from_resource(resource) {
-        Cow::Owned(format!(
-            "{}.{}",
-            t.matcher_type(),
-            t.extension()
-        ))
+        Cow::Owned(format!("{}.{}", t.matcher_type(), t.extension()))
     } else {
         Cow::Borrowed("document.bin")
     }

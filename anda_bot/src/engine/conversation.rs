@@ -172,3 +172,54 @@ impl Tool<BaseCtx> for ConversationsTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversation_tool_args_parse_tagged_variants() {
+        let args: ConversationsToolArgs = serde_json::from_value(json!({
+            "type": "GetConversationDelta",
+            "_id": 42,
+            "messages_offset": 3,
+            "artifacts_offset": 5,
+        }))
+        .expect("tagged variant should parse");
+
+        assert_eq!(
+            args,
+            ConversationsToolArgs::GetConversationDelta {
+                _id: 42,
+                messages_offset: 3,
+                artifacts_offset: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn conversation_tool_args_default_optional_list_fields() {
+        let args: ConversationsToolArgs = serde_json::from_value(json!({
+            "type": "ListPrevConversations",
+        }))
+        .expect("missing optional list fields should parse");
+
+        assert_eq!(
+            args,
+            ConversationsToolArgs::ListPrevConversations {
+                cursor: None,
+                limit: None,
+            }
+        );
+    }
+
+    #[test]
+    fn conversation_tool_args_reject_missing_required_variant_fields() {
+        let err = serde_json::from_value::<ConversationsToolArgs>(json!({
+            "type": "SearchConversations",
+        }))
+        .expect_err("search query is required");
+
+        assert!(err.to_string().contains("query"));
+    }
+}

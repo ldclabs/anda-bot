@@ -731,7 +731,7 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "/reload config  •  /steer message  •  /stop message",
+                        "/skill skill-name message  •  /goal message  •  /side message  •  /steer message  •  /stop message",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),

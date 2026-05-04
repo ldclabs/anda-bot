@@ -360,9 +360,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.11.28"
+version = "0.11.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "345c6d24a9bb7ee5b4aae88c7d7e7f4eccbf4449da8380b0c9f5f6622df4777f"
+checksum = "21ceae3ad4a585abc67a5da2b0bd1fae329cacc1c7de3f8f47af96c4b6b9803c"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -435,9 +435,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e913063de8f5d69dfd9307f36f0968c529cdeb0aa4b894752c32d2adbdfdd15d"
+checksum = "77dcef6d5d11cf5ada2f90b76efbda753bcdb9ee32f79034c8cee0393a5a3986"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -2131,9 +2131,9 @@ dependencies = [
 
 [[package]]
 name = "digest"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4850db49bf08e663084f7fb5c87d202ef91a3907271aff24a94eb97ff039153c"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.0",
  "const-oid 0.10.2",
@@ -2946,7 +2946,7 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
- "digest 0.11.2",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -6610,7 +6610,7 @@ checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
- "digest 0.11.2",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -6629,7 +6629,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
 dependencies = [
- "digest 0.11.2",
+ "digest 0.11.3",
  "keccak 0.2.0",
 ]
 
@@ -6725,9 +6725,9 @@ dependencies = [
 
 [[package]]
 name = "siphasher"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
+checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "sketches-ddsketch"
