@@ -11,27 +11,41 @@ pub enum PromptCommand {
     Plain {
         prompt: String,
     },
-    // '/goal' | '/loop', case insensitive
-    // 长程任务，实现思路：1. 主 agent 处理完当前轮次的任务进入 idle 状态后，一个专门的 subagent（goal agent）评估任务是否完成，如果没完成则根据评估结果用 runner.follow_up 让主 agent 继续；2. 进入每轮 idle 状态时，需要判断 runner.current_usage().input_tokens 是否大于 ctx.model.max_output 的 1/2（可能还需要配合其它条件，比如 runner.turns() >= 42 也触发？），是则告知主 agent 压缩当前任务进展，运行时用压缩结果创建一个新的 conversation 继续处理，新的 conversation 是原 conversation 的 child。
+    // '/goal' | '/loop', case-insensitive.
+    // Intended for long-running tasks. When the main agent becomes idle after a turn,
+    // a dedicated goal subagent evaluates whether the task is complete and can resume
+    // the main agent via runner.follow_up when more work is needed.
+    // If the context grows too large, such as input_tokens > ctx.model.context_window / 2
+    // (possibly combined with another threshold like runner.turns() >= 81), the main
+    // agent should summarize its current progress and continue in a new child
+    // conversation created from that summary.
     Goal {
         prompt: String,
     },
-    // '/side' | '/btw', case insensitive
-    // side 模式会使用一个单独的 subagent 来处理用户的 prompt。该 subagent 仅能使用包括 brain 在内的少数工具，且与主 agent 之间没有上下文共享，不会产生 conversation。适用于用户想要在不打断主 agent 思路的情况下，临时处理一些问题。
+    // '/side' | '/btw', case-insensitive.
+    // Runs the user's prompt in a separate subagent with a limited tool set, including
+    // brain. It does not share context with the main agent and does not create a
+    // conversation, so it is useful for handling temporary side requests without
+    // interrupting the main agent's flow.
     Side {
         prompt: String,
     },
-    // '/steer', case insensitive
-    // steer 会让模型停止接下来的工具调用，转而使用新的 prompt 来引导模型调整思路或者修正错误，而不是继续沿着原来的思路往下走。
+    // '/steer', case-insensitive.
+    // Stops the next tool calls and uses a new prompt to redirect the model's
+    // reasoning, typically to correct mistakes or adjust strategy instead of
+    // continuing down the current path.
     Steer {
         prompt: String,
     },
-    // '/skill', case insensitive, followed by the skill name and the prompt。通过 skill name 来引导模型使用特定的 skill （subagent）处理 prompt。
+    // '/skill', case-insensitive, followed by the skill name and prompt.
+    // Uses the provided skill name to route the prompt to a specific skill-based
+    // subagent.
     Skill {
         skill: String,
         prompt: String,
     },
-    // '/stop' | '/cancel', case insensitive. 直接 cancel，如果 prompt 存在成为 failed_reason
+    // '/stop' | '/cancel', case-insensitive.
+    // Cancels immediately. If a prompt is provided, it becomes the failed_reason.
     Stop {
         prompt: Option<String>,
     },
@@ -55,18 +69,22 @@ impl From<String> for PromptCommand {
         let rest = stripped[command_end..].trim();
 
         match command.to_ascii_lowercase().as_str() {
-            "goal" | "loop" => required_prompt_command(command, rest, |prompt| Self::Goal {
+            "goal" | "loop" => {
+                required_prompt_command(command, rest, trimmed, |prompt| Self::Goal {
+                    prompt: prompt.to_string(),
+                })
+            }
+            "side" | "btw" => {
+                required_prompt_command(command, rest, trimmed, |prompt| Self::Side {
+                    prompt: prompt.to_string(),
+                })
+            }
+            "steer" => required_prompt_command(command, rest, trimmed, |prompt| Self::Steer {
                 prompt: prompt.to_string(),
             }),
-            "side" | "btw" => required_prompt_command(command, rest, |prompt| Self::Side {
-                prompt: prompt.to_string(),
-            }),
-            "steer" => required_prompt_command(command, rest, |prompt| Self::Steer {
-                prompt: prompt.to_string(),
-            }),
-            "skill" => parse_skill_command(rest),
+            "skill" => parse_skill_command(rest, trimmed),
             "stop" | "cancel" => Self::Stop {
-                prompt: (!rest.is_empty()).then(|| rest.to_string()),
+                prompt: (!trimmed.is_empty()).then(|| trimmed.to_string()),
             },
             _ => Self::Plain { prompt },
         }
@@ -107,7 +125,12 @@ pub fn text_resource_documents(resources: &mut Vec<Resource>) -> Vec<Document> {
     user_resources
 }
 
-fn required_prompt_command<F>(command: &str, rest: &str, build: F) -> PromptCommand
+fn required_prompt_command<F>(
+    command: &str,
+    rest: &str,
+    full_prompt: &str,
+    build: F,
+) -> PromptCommand
 where
     F: FnOnce(&str) -> PromptCommand,
 {
@@ -116,11 +139,11 @@ where
             reason: format!("/{command} requires a prompt"),
         }
     } else {
-        build(rest)
+        build(full_prompt)
     }
 }
 
-fn parse_skill_command(rest: &str) -> PromptCommand {
+fn parse_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
     let mut parts = rest.splitn(2, char::is_whitespace);
     let skill = parts.next().unwrap_or_default().trim();
     let prompt = parts.next().unwrap_or_default().trim();
@@ -137,7 +160,7 @@ fn parse_skill_command(rest: &str) -> PromptCommand {
 
     PromptCommand::Skill {
         skill: skill.to_string(),
-        prompt: prompt.to_string(),
+        prompt: full_prompt.to_string(),
     }
 }
 
@@ -151,26 +174,26 @@ mod tests {
         assert_eq!(
             PromptCommand::from(" /GOAL ship the feature ".to_string()),
             PromptCommand::Goal {
-                prompt: "ship the feature".to_string()
+                prompt: "/GOAL ship the feature".to_string()
             }
         );
         assert_eq!(
             PromptCommand::from("/btw what is my status?".to_string()),
             PromptCommand::Side {
-                prompt: "what is my status?".to_string()
+                prompt: "/btw what is my status?".to_string()
             }
         );
         assert_eq!(
             PromptCommand::from("/skill frontend-design polish this".to_string()),
             PromptCommand::Skill {
                 skill: "frontend-design".to_string(),
-                prompt: "polish this".to_string()
+                prompt: "/skill frontend-design polish this".to_string()
             }
         );
         assert_eq!(
             PromptCommand::from("/stop because it is wrong".to_string()),
             PromptCommand::Stop {
-                prompt: Some("because it is wrong".to_string())
+                prompt: Some("/stop because it is wrong".to_string())
             }
         );
     }

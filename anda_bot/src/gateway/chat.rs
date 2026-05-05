@@ -130,6 +130,7 @@ impl ChatSession {
 
     /// Send a user message. Returns an optional error notice for the UI.
     pub async fn send(&mut self, text: String) -> Option<String> {
+        let text = text.trim().to_owned();
         if text.is_empty() {
             return None;
         }

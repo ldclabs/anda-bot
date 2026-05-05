@@ -47,7 +47,7 @@ use super::{
     side,
 };
 
-const MAX_TURNS_TO_COMPACT: usize = 128;
+const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
@@ -689,7 +689,7 @@ impl Agent<AgentCtx> for AndaBot {
             instructions,
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
-            max_output_tokens: Some(ctx.model.max_output.max(10000)),
+            max_output_tokens: Some(ctx.model.max_output.max(32000)),
             ..Default::default()
         };
 
