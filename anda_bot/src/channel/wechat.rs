@@ -105,15 +105,6 @@ impl WechatChannel {
             .build()?)
     }
 
-    async fn ensure_workspace_dir(&self) -> Result<PathBuf, BoxError> {
-        let path = self
-            .workspace
-            .path()
-            .ok_or("WeChat channel workspace is not initialized")?;
-        tokio::fs::create_dir_all(&path).await?;
-        Ok(path)
-    }
-
     async fn saved_token(&self) -> Option<String> {
         let path = self.workspace.path()?.join("token.txt");
         let token = tokio::fs::read_to_string(path).await.ok()?;
@@ -296,7 +287,10 @@ impl Channel for WechatChannel {
             ));
         }
 
-        let workspace = self.ensure_workspace_dir().await?;
+        let workspace = self
+            .workspace
+            .path()
+            .ok_or("WeChat channel workspace is not initialized")?;
         let token_path = workspace.join("token.txt");
         if !options.force && self.saved_token().await.is_some() {
             return Ok(ChannelInitResult::unchanged(format!(

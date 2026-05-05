@@ -166,7 +166,11 @@ impl ChannelRuntime {
             .unwrap_or_default();
         let conversation_routes = build_conversation_routes(&channels_conversation);
         for (channel_name, channel) in &channels {
-            channel.set_workspace(work_dir.join(channel_name));
+            let path = work_dir.join(channel_name);
+            if let Err(err) = tokio::fs::create_dir_all(&path).await {
+                log::warn!("failed to create workspace for {}: {err}", channel_name);
+            }
+            channel.set_workspace(path);
         }
 
         let inner = Arc::new(ChannelRuntimeInner {
@@ -210,12 +214,12 @@ impl ChannelRuntime {
                         message
                     },
                 } {
-                    // log::info!(
-                    //     name = "channel";
-                    //     "received message from channel {}: {:?}",
-                    //     message.channel,
-                    //     message
-                    // );
+                    log::debug!(
+                        channel = message.channel,
+                        message:serde = message;
+                        "received message from channel {}",
+                        message.channel
+                    );
                     let _ = messages.flush(unix_ms()).await;
                     if let Some(engine) = self.inner.engine.get() {
                         let mut extra = Map::new();
