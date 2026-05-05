@@ -29,7 +29,7 @@ mod prompt;
 mod side;
 
 use crate::util::{
-    http_client::build_http_client,
+    http_client::{NO_PROXY, build_http_client},
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
@@ -120,9 +120,30 @@ impl Engines {
 
         let shell_tool = {
             let runtime = Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()));
-            shell::ShellTool::new(runtime, HashMap::new(), None)
+            let mut envs = HashMap::from([(
+                "ANDA_HOME".to_string(),
+                cfg.home_dir.to_string_lossy().to_string(),
+            )]);
+
+            if let Some(proxy) = &cfg.https_proxy {
+                envs.insert("http_proxy".to_string(), proxy.clone());
+                envs.insert("HTTP_PROXY".to_string(), proxy.clone());
+                envs.insert("https_proxy".to_string(), proxy.clone());
+                envs.insert("HTTPS_PROXY".to_string(), proxy.clone());
+                envs.insert("no_proxy".to_string(), NO_PROXY.to_string());
+                envs.insert("NO_PROXY".to_string(), NO_PROXY.to_string());
+            }
+            shell::ShellTool::new(runtime, envs, None)
         };
-        let skills_tool = Arc::new(skill::SkillManager::new(cfg.skills_dir));
+        let skills_tool = Arc::new(
+            skill::SkillManager::new(cfg.skills_dir).with_default_skill_tools(vec![
+                "shell".to_string(),
+                "read_file".to_string(),
+                "search_file".to_string(),
+                "note".to_string(),
+                "tools_select".to_string(),
+            ]),
+        );
         let bot = AndaBot::new(
             brain_client.clone(),
             conversations,

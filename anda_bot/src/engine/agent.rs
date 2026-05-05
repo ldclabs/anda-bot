@@ -107,8 +107,6 @@ fn base_tools() -> Vec<String> {
         NoteTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         ShellTool::NAME.to_string(),
-        ReadFileTool::NAME.to_string(),
-        SearchFileTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
     ]
 }
@@ -951,10 +949,16 @@ impl SessionJob {
                         Ok(check) => {
                             self.runner.accumulate(&check.usage);
                             match check.action {
-                                goal::GoalAction::Complete => {
+                                goal::GoalAction::Complete(reason) => {
                                     // 目标已经完成，但继续保持对话活跃，等待用户的下一步指令
                                     active = true;
                                     self.session.active_at.store(now_ms, Ordering::SeqCst);
+                                    log::info!(
+                                        turns = self.runner.turns(),
+                                        last_usage:serde = self.runner.current_usage(),
+                                        total_usage:serde = self.runner.total_usage(),
+                                        tools_usage:serde = self.runner.tools_usage();
+                                        "Goal completed: {:?}", reason);
                                 }
                                 goal::GoalAction::Continue(prompt) => {
                                     let now_ms = unix_ms();

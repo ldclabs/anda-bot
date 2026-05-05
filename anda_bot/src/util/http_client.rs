@@ -2,6 +2,10 @@ use anda_core::BoxError;
 use anda_engine::model::{Proxy, request_client_builder, reqwest};
 use std::time::Duration;
 
+/// Default `no_proxy` value for Anda Engine HTTP clients, covering common local and private network addresses.
+pub static NO_PROXY: &str =
+    "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.local";
+
 #[derive(Clone, Copy, Debug)]
 struct AnyHost;
 
@@ -39,7 +43,8 @@ where
                 }),
         );
     if let Some(proxy) = &https_proxy {
-        http_client = http_client.proxy(Proxy::all(proxy)?);
+        http_client =
+            http_client.proxy(Proxy::all(proxy)?.no_proxy(reqwest::NoProxy::from_string(NO_PROXY)));
     }
     let http_client = f(http_client).build()?;
     Ok(http_client)

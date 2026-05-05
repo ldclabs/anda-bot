@@ -8,11 +8,8 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::util;
-
 const REPO: &str = "ldclabs/anda-bot";
 const BINARY_NAME: &str = "anda";
-const USER_AGENT: &str = "anda-bot-updater";
 
 #[derive(Args)]
 pub struct UpdateCommand {
@@ -110,14 +107,12 @@ impl ReleaseTarget {
     }
 }
 
-pub async fn run(cmd: &UpdateCommand) -> Result<(), BoxError> {
+pub async fn run(client: &reqwest::Client, cmd: &UpdateCommand) -> Result<(), BoxError> {
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let target = ReleaseTarget::detect()?;
-    let client =
-        util::http_client::build_http_client(None, |client| client.user_agent(USER_AGENT))?;
 
     println!("Detecting latest version...");
-    let latest_tag = fetch_latest_version(&client).await?;
+    let latest_tag = fetch_latest_version(client).await?;
     println!("Latest version: {latest_tag}");
 
     if !cmd.force && latest_tag == current_tag {
@@ -143,9 +138,9 @@ pub async fn run(cmd: &UpdateCommand) -> Result<(), BoxError> {
     let staged = StagedFile::new(staged_path);
 
     println!("Downloading {asset_name}...");
-    let actual_hash = download_binary(&client, &asset_url, download.path()).await?;
+    let actual_hash = download_binary(client, &asset_url, download.path()).await?;
 
-    match fetch_expected_checksum(&client, &checksum_url).await? {
+    match fetch_expected_checksum(client, &checksum_url).await? {
         Some(expected_hash) => verify_checksum(&asset_name, &expected_hash, &actual_hash)?,
         None => println!("Checksum file not found; skipping checksum verification."),
     }

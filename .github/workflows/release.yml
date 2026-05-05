@@ -125,8 +125,35 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  package-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package skills
+        shell: bash
+        run: |
+          mkdir -p release
+          skills_archive="anda-skills.zip"
+
+          (cd skills && zip -qr "../release/${skills_archive}" . -x '__pycache__/*' '*/__pycache__/*' '*.pyc' '.DS_Store' '*/.DS_Store')
+
+          hash="$(sha256sum "release/${skills_archive}" | awk '{print $1}')"
+          echo "$hash  ${skills_archive}" > "release/${skills_archive}.sha256"
+
+          ls -lah release
+
+      - name: Upload skills artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-skills
+          path: release/*
+          if-no-files-found: error
+
   release:
-    needs: build-binary
+    needs:
+      - build-binary
+      - package-skills
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

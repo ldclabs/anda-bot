@@ -6,6 +6,7 @@ set -e
 
 REPO="ldclabs/anda-bot"
 BINARY_NAME="anda"
+SKILLS_ARCHIVE_NAME="anda-skills.zip"
 BANNER_ART='        _     _   _   ____      _
        / \   | \ | | |  _ \    / \
       / _ \  |  \| | | | | |  / _ \
@@ -53,6 +54,18 @@ windows_path_from_posix() {
         printf '%s\\bin\n' "$USERPROFILE"
     else
         printf '%s\n' "$1"
+    fi
+}
+
+detect_anda_home() {
+    if [ -n "${ANDA_HOME:-}" ]; then
+        printf '%s\n' "$ANDA_HOME"
+    elif [ "$OS" = "windows" ]; then
+        WINDOWS_HOME=$(windows_home_dir) || return 1
+        printf '%s/.anda\n' "$WINDOWS_HOME"
+    else
+        [ -n "${HOME:-}" ] || return 1
+        printf '%s/.anda\n' "$HOME"
     fi
 }
 
@@ -216,6 +229,86 @@ verify_checksum() {
     success "Checksum verified."
 }
 
+extract_skills_archive() {
+    ARCHIVE_PATH="$1"
+    STAGING_DIR="$2"
+
+    rm -rf "$STAGING_DIR" 2>/dev/null || true
+    mkdir -p "$STAGING_DIR" || error "Could not create skills staging directory: ${STAGING_DIR}"
+
+    if command -v unzip >/dev/null 2>&1; then
+        if ! unzip -q "$ARCHIVE_PATH" -d "$STAGING_DIR"; then
+            error "Could not extract ${SKILLS_ARCHIVE_NAME}"
+        fi
+    elif command -v bsdtar >/dev/null 2>&1; then
+        if ! bsdtar -xf "$ARCHIVE_PATH" -C "$STAGING_DIR"; then
+            error "Could not extract ${SKILLS_ARCHIVE_NAME}"
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if ! python3 - "$ARCHIVE_PATH" "$STAGING_DIR" <<'PY'
+import sys
+import zipfile
+
+archive_path, staging_dir = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(archive_path) as archive:
+    archive.extractall(staging_dir)
+PY
+        then
+            error "Could not extract ${SKILLS_ARCHIVE_NAME}"
+        fi
+    else
+        info "No unzip, bsdtar, or python3 found; skipping skills install."
+        return 1
+    fi
+}
+
+install_skills_from_staging() {
+    STAGING_DIR="$1"
+    SKILLS_DIR="${ANDA_HOME_DIR}/skills"
+    FOUND_SKILL=0
+
+    mkdir -p "$SKILLS_DIR" || error "Could not create skills directory: ${SKILLS_DIR}"
+
+    for ENTRY in "$STAGING_DIR"/* "$STAGING_DIR"/.[!.]* "$STAGING_DIR"/..?*; do
+        [ -e "$ENTRY" ] || continue
+        FOUND_SKILL=1
+        ENTRY_NAME=$(basename "$ENTRY")
+        rm -rf "${SKILLS_DIR}/${ENTRY_NAME}" || error "Could not replace ${SKILLS_DIR}/${ENTRY_NAME}"
+        mv "$ENTRY" "${SKILLS_DIR}/${ENTRY_NAME}" || error "Could not install ${ENTRY_NAME}"
+    done
+
+    if [ "$FOUND_SKILL" -eq 0 ]; then
+        error "${SKILLS_ARCHIVE_NAME} is empty"
+    fi
+
+    success "Installed curated skills to ${SKILLS_DIR}"
+}
+
+download_and_install_skills() {
+    SKILLS_ARCHIVE_PATH="${TMPDIR}/${SKILLS_ARCHIVE_NAME}"
+    SKILLS_CHECKSUM_NAME="${SKILLS_ARCHIVE_NAME}.sha256"
+    SKILLS_CHECKSUM_PATH="${TMPDIR}/${SKILLS_CHECKSUM_NAME}"
+    SKILLS_URL="https://github.com/${REPO}/releases/download/${VERSION}/${SKILLS_ARCHIVE_NAME}"
+    SKILLS_CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${SKILLS_CHECKSUM_NAME}"
+    SKILLS_STAGING_DIR="${TMPDIR}/skills-staging"
+
+    info "Downloading ${SKILLS_ARCHIVE_NAME}..."
+    if ! curl -fsSL "$SKILLS_URL" -o "$SKILLS_ARCHIVE_PATH"; then
+        info "Skills archive not found; skipping skills install."
+        return 0
+    fi
+
+    if curl -fsSL "$SKILLS_CHECKSUM_URL" -o "$SKILLS_CHECKSUM_PATH"; then
+        verify_checksum "$SKILLS_ARCHIVE_PATH" "$SKILLS_CHECKSUM_PATH"
+    else
+        info "Skills checksum file not found; skipping checksum verification."
+    fi
+
+    if extract_skills_archive "$SKILLS_ARCHIVE_PATH" "$SKILLS_STAGING_DIR"; then
+        install_skills_from_staging "$SKILLS_STAGING_DIR"
+    fi
+}
+
 # Detect OS
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$OS" in
@@ -253,6 +346,8 @@ else
     fi
     INSTALL_DIR="${HOME}/.local/bin"
 fi
+
+ANDA_HOME_DIR=$(detect_anda_home) || error "Could not detect Anda home. Set ANDA_HOME and rerun."
 
 EXE_EXT=""
 if [ "$OS" = "windows" ]; then
@@ -294,6 +389,7 @@ fi
 # Install
 mkdir -p "$INSTALL_DIR" || error "Could not create install directory: ${INSTALL_DIR}"
 install_binary
+download_and_install_skills
 
 if [ "$OS" = "windows" ]; then
     ensure_windows_path

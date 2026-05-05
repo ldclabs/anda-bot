@@ -108,11 +108,6 @@ async fn main() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let Cli { home, command } = cli;
 
-    if let Some(Commands::Update(cmd)) = command.as_ref() {
-        cli::updater::run(cmd).await?;
-        return Ok(());
-    }
-
     let home = if let Some(home) = home {
         PathBuf::from(home)
     } else {
@@ -121,6 +116,13 @@ async fn main() -> Result<(), BoxError> {
 
     tokio::fs::create_dir_all(&home).await?;
     let daemon = load_daemon(home).await?;
+
+    if let Some(Commands::Update(cmd)) = command.as_ref() {
+        let http_client =
+            util::http_client::build_http_client(daemon.cfg.https_proxy.clone(), |client| client)?;
+        cli::updater::run(&http_client, cmd).await?;
+        return Ok(());
+    }
 
     if matches!(command, Some(Commands::Daemon)) {
         logger::init_daily_json_logger(daemon.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)?;
@@ -131,11 +133,8 @@ async fn main() -> Result<(), BoxError> {
     match command {
         None => {
             log::info!("Starting CLI at {}", daemon.base_url());
-            daemon.ensure_directories().await?;
-            let ed25519_secret =
-                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
-            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
-            let cli = cli::Cli::new(ed25519_key, daemon);
+            let client = build_control_client(&daemon).await?;
+            let cli = cli::Cli::new(client, daemon);
             cli.run().await?
         }
         Some(Commands::Daemon) => {

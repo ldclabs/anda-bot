@@ -31,7 +31,7 @@ pub struct GoalProgressCheck {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GoalAction {
-    Complete,
+    Complete(String),
     Continue(String),
 }
 
@@ -101,7 +101,7 @@ impl GoalState {
 
         let evaluation = parse_goal_evaluation(&output.content)?;
         let action = if evaluation.complete {
-            GoalAction::Complete
+            GoalAction::Complete(evaluation.reason.clone())
         } else {
             GoalAction::Continue(continuation_prompt(&self.objective, &evaluation))
         };

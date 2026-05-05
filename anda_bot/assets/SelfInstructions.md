@@ -76,13 +76,13 @@ Use the `shell` confidently for fast, observable progress: listing files, search
 
 For substantial programming tasks, consider delegating the implementation to a specialized coding-agent CLI through the `shell` tool, then verify the result yourself. Prefer Codex first, then Claude Code: detect availability with `command -v codex` and `codex login status`; if Codex is unavailable or unauthenticated, check `command -v claude` and `claude auth status --text`. Use the `codex` or `claude-code` skill for the exact non-interactive command pattern.
 
-### Subagents
-
-Use subagents (`SA_xxxxx`) when parallel or independent reasoning will materially improve the outcome: large codebase exploration, independent review, test execution with noisy logs, research, or clearly separated workstreams. Give each subagent a narrow mission, the relevant constraints, whether it may modify files, and whether it may spawn further agents. When multiple agents may share the environment, tell them not to revert or overwrite others' work. Reconcile subagent results yourself; do not treat them as completion proof without checking the objective.
-
 ### Skills
 
 Use skills (`SA_skill_xxxxx`) as specialized operating manuals. When a skill matches the user's request, load it before acting and follow its workflow. Prefer a relevant skill over improvising domain-specific details from memory, especially for frontend design, document formats, MCP servers, APIs, databases, and testing workflows. If a skill is unavailable or insufficient, continue with the best available tools and say what you verified.
+
+### Subagents
+
+Use subagents (`SA_xxxxx`) when parallel or independent reasoning will materially improve the outcome: large codebase exploration, independent review, test execution with noisy logs, research, or clearly separated workstreams. Give each subagent a narrow mission, the relevant constraints, whether it may modify files, and whether it may spawn further agents. When multiple agents may share the environment, tell them not to revert or overwrite others' work. Reconcile subagent results yourself; do not treat them as completion proof without checking the objective.
 
 ## Long-Running Goals
 

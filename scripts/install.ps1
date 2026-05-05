@@ -2,7 +2,8 @@
 # Usage: irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 
 param(
-    [string]$InstallDir = (Join-Path $env:USERPROFILE "bin")
+    [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+    [string]$AndaHome = $env:ANDA_HOME
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +11,7 @@ $ProgressPreference = "SilentlyContinue"
 $Repo = "ldclabs/anda-bot"
 $BinaryName = "anda"
 $InstallName = "$BinaryName.exe"
+$SkillsArchiveName = "anda-skills.zip"
 $BannerArt = @(
     '      _     _   _   ____      _      '
     '     / \   | \ | | |  _ \    / \     '
@@ -153,9 +155,44 @@ function Verify-Checksum($FilePath, $ChecksumPath) {
     Write-Success "Checksum verified."
 }
 
+function Install-Skills($ArchivePath, $HomeDir, $TempRoot) {
+    $skillsDir = Join-Path $HomeDir "skills"
+    $stagingDir = Join-Path $TempRoot "skills-staging"
+
+    Remove-Item -Recurse -Force -LiteralPath $stagingDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+    try {
+        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $stagingDir -Force
+    } catch {
+        Fail "Could not extract $SkillsArchiveName. $($_.Exception.Message)"
+    }
+
+    New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+    $entries = Get-ChildItem -Force -LiteralPath $stagingDir
+    if (-not $entries) {
+        Fail "$SkillsArchiveName is empty"
+    }
+
+    foreach ($entry in $entries) {
+        $destination = Join-Path $skillsDir $entry.Name
+        Remove-Item -Recurse -Force -LiteralPath $destination -ErrorAction SilentlyContinue
+        Move-Item -Force -LiteralPath $entry.FullName -Destination $destination
+    }
+
+    Write-Success "Installed curated skills to $skillsDir"
+}
+
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 } catch {
+}
+
+if ([string]::IsNullOrWhiteSpace($AndaHome)) {
+    if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        Fail "Could not detect USERPROFILE. Set -AndaHome or ANDA_HOME and rerun."
+    }
+    $AndaHome = Join-Path $env:USERPROFILE ".anda"
 }
 
 $target = "windows-$(Get-TargetArch)"
@@ -174,6 +211,9 @@ Write-Info "Latest version: $version"
 
 $url = "https://github.com/$Repo/releases/download/$version/$assetName"
 $checksumUrl = "https://github.com/$Repo/releases/download/$version/$checksumName"
+$skillsUrl = "https://github.com/$Repo/releases/download/$version/$SkillsArchiveName"
+$skillsChecksumName = "$SkillsArchiveName.sha256"
+$skillsChecksumUrl = "https://github.com/$Repo/releases/download/$version/$skillsChecksumName"
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "anda-install-$([Guid]::NewGuid().ToString('N'))"
 
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -181,6 +221,8 @@ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 try {
     $downloadPath = Join-Path $tempDir $assetName
     $checksumPath = Join-Path $tempDir $checksumName
+    $skillsArchivePath = Join-Path $tempDir $SkillsArchiveName
+    $skillsChecksumPath = Join-Path $tempDir $skillsChecksumName
 
     Write-Info "Downloading $assetName..."
     try {
@@ -200,6 +242,29 @@ try {
     }
 
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
+
+    Write-Info "Downloading $SkillsArchiveName..."
+    $skillsDownloaded = $false
+    try {
+        Invoke-WebRequest -Uri $skillsUrl -OutFile $skillsArchivePath -UseBasicParsing
+        $skillsDownloaded = $true
+    } catch {
+        Write-Info "Skills archive not found; skipping skills install."
+    }
+
+    if ($skillsDownloaded) {
+        try {
+            Invoke-WebRequest -Uri $skillsChecksumUrl -OutFile $skillsChecksumPath -UseBasicParsing
+            Verify-Checksum $skillsArchivePath $skillsChecksumPath
+        } catch {
+            if ($_.Exception.Message -like "Checksum verification failed*") {
+                throw
+            }
+            Write-Info "Skills checksum file not found; skipping checksum verification."
+        }
+
+        Install-Skills $skillsArchivePath $AndaHome $tempDir
+    }
 
     $pathChanged = Ensure-UserPath $InstallDir
     if ($pathChanged) {
