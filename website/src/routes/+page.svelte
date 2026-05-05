@@ -40,9 +40,9 @@
 
 	const installCommands: Record<OsKey, { command: string; fallback?: string }> = {
 		macos: {
-			command: 'brew install ldclabs/tap/anda',
-			fallback:
-				'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
+			command:
+				'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
+			fallback: 'brew install ldclabs/tap/anda'
 		},
 		windows: {
 			command:
@@ -192,10 +192,10 @@
 	<meta property="og:title" content={copy.meta.ogTitle} />
 	<meta property="og:description" content={copy.meta.ogDescription} />
 	<meta content="website" property="og:type" />
-  <meta content="https://anda.bot" property="og:url" />
-  <meta content="https://anda.bot/_assets/images/anda_bot.webp" property="og:image" />
-  <meta content="summary_large_image" name="twitter:card" />
-  <meta content="@ICPandaDAO" name="twitter:creator" />
+	<meta content="https://anda.bot" property="og:url" />
+	<meta content="https://anda.bot/_assets/images/anda_bot.webp" property="og:image" />
+	<meta content="summary_large_image" name="twitter:card" />
+	<meta content="@ICPandaDAO" name="twitter:creator" />
 </svelte:head>
 
 <main

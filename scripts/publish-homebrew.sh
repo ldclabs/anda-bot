@@ -87,6 +87,14 @@ class ${FORMULA_CLASS} < Formula
     bin.install binary => "anda"
   end
 
+  def caveats
+    <<~EOS
+      Homebrew does not write runtime files into ~/.anda during install.
+      To install or refresh curated skills, run:
+        anda update --skills-only
+    EOS
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/anda --version")
   end

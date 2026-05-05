@@ -184,9 +184,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: 'Homebrew is the easiest path on macOS and keeps updates simple.',
-					fallbackLabel: 'Shell script'
+					commandLabel: 'Shell script',
+					note: 'The install script fetches the latest release and curated skills for macOS.',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',
@@ -355,9 +355,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: '在 macOS 上，Homebrew 是最简单也最便于更新的安装方式。',
-					fallbackLabel: 'Shell 脚本'
+					commandLabel: 'Shell 脚本',
+					note: '安装脚本会为 macOS 获取最新发布版和精选 skills。',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',
@@ -504,9 +504,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: 'Homebrew es la ruta más sencilla en macOS y facilita las actualizaciones.',
-					fallbackLabel: 'Script de shell'
+					commandLabel: 'Script de shell',
+					note: 'El script instala la última versión y las skills seleccionadas para macOS.',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',
@@ -687,9 +687,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: 'Homebrew est le chemin le plus simple sur macOS et facilite les mises à jour.',
-					fallbackLabel: 'Script shell'
+					commandLabel: 'Script shell',
+					note: 'Le script installe la dernière version et les skills sélectionnés pour macOS.',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',
@@ -864,9 +864,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: 'Homebrew - самый простой путь на macOS, он упрощает обновления.',
-					fallbackLabel: 'Shell-скрипт'
+					commandLabel: 'Shell-скрипт',
+					note: 'Скрипт установки загружает последний релиз и выбранные skills для macOS.',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',
@@ -1033,9 +1033,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					commandLabel: 'Homebrew',
-					note: 'Homebrew هو أسهل مسار على macOS ويجعل التحديثات بسيطة.',
-					fallbackLabel: 'سكربت Shell'
+					commandLabel: 'سكربت Shell',
+					note: 'يثبت سكربت التثبيت أحدث إصدار و skills المنتقاة على macOS.',
+					fallbackLabel: 'Homebrew'
 				},
 				windows: {
 					label: 'Windows',

@@ -92,6 +92,10 @@ unicode-width = "0.2"
 tokio-rustls = "0.26"
 webpki-roots = "1"
 weixin-agent = "0.1"
+zip = { version = "2", default-features = false, features = [
+  "deflate-flate2",
+  "flate2",
+] }
 
 [patch.crates-io]
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }

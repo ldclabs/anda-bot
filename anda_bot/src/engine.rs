@@ -18,6 +18,7 @@ use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
     collections::{BTreeMap, HashMap},
+    env,
     path::PathBuf,
     sync::Arc,
 };
@@ -120,20 +121,37 @@ impl Engines {
 
         let shell_tool = {
             let runtime = Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()));
-            let mut envs = HashMap::from([(
-                "ANDA_HOME".to_string(),
-                cfg.home_dir.to_string_lossy().to_string(),
-            )]);
+            let mut envs = vec![shell::CustomEnv {
+                key: "ANDA_HOME".to_string(),
+                value: cfg.home_dir.to_string_lossy().to_string(),
+                default: true,
+                description:
+                    "The home directory for AndaBot, used for storing data and configuration."
+                        .to_string(),
+            }];
 
             if let Some(proxy) = &cfg.https_proxy {
-                envs.insert("http_proxy".to_string(), proxy.clone());
-                envs.insert("HTTP_PROXY".to_string(), proxy.clone());
-                envs.insert("https_proxy".to_string(), proxy.clone());
-                envs.insert("HTTPS_PROXY".to_string(), proxy.clone());
-                envs.insert("no_proxy".to_string(), NO_PROXY.to_string());
-                envs.insert("NO_PROXY".to_string(), NO_PROXY.to_string());
+                envs.push(shell::CustomEnv {
+                    key: "http_proxy".to_string(),
+                    value: proxy.clone(),
+                    default: true,
+                    description: "Proxy server for HTTP requests.".to_string(),
+                });
+                envs.push(shell::CustomEnv {
+                    key: "https_proxy".to_string(),
+                    value: proxy.clone(),
+                    default: true,
+                    description: "Proxy server for HTTPS requests.".to_string(),
+                });
+                envs.push(shell::CustomEnv {
+                    key: "no_proxy".to_string(),
+                    value: NO_PROXY.to_string(),
+                    default: true,
+                    description: "Comma-separated list of hosts that should bypass the proxy."
+                        .to_string(),
+                });
             }
-            shell::ShellTool::new(runtime, envs, None)
+            shell::ShellTool::new_with_custom_envs(runtime, envs, None)
         };
         let skills_tool = Arc::new(
             skill::SkillManager::new(cfg.skills_dir).with_default_skill_tools(vec![

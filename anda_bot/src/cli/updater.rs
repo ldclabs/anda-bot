@@ -3,6 +3,8 @@ use clap::Args;
 use reqwest::{StatusCode, header};
 use sha2::{Digest, Sha256};
 use std::{
+    fs::File,
+    io,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,12 +12,16 @@ use tokio::io::AsyncWriteExt;
 
 const REPO: &str = "ldclabs/anda-bot";
 const BINARY_NAME: &str = "anda";
+const SKILLS_ARCHIVE_NAME: &str = "anda-skills.zip";
 
 #[derive(Args)]
 pub struct UpdateCommand {
     /// Reinstall the latest release even when this binary is already current.
     #[arg(long)]
     force: bool,
+    /// Only update curated skills in the Anda home directory.
+    #[arg(long)]
+    skills_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +41,10 @@ enum UpdateFinish {
 struct StagedFile {
     path: PathBuf,
     keep: bool,
+}
+
+struct StagedDir {
+    path: PathBuf,
 }
 
 impl StagedFile {
@@ -57,6 +67,22 @@ impl Drop for StagedFile {
         if !self.keep {
             let _ = std::fs::remove_file(&self.path);
         }
+    }
+}
+
+impl StagedDir {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StagedDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 
@@ -107,19 +133,31 @@ impl ReleaseTarget {
     }
 }
 
-pub async fn run(client: &reqwest::Client, cmd: &UpdateCommand) -> Result<(), BoxError> {
+pub async fn run(
+    client: &reqwest::Client,
+    home_dir: &Path,
+    cmd: &UpdateCommand,
+) -> Result<(), BoxError> {
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let target = ReleaseTarget::detect()?;
 
     println!("Detecting latest version...");
     let latest_tag = fetch_latest_version(client).await?;
     println!("Latest version: {latest_tag}");
 
+    let base_url = format!("https://github.com/{REPO}/releases/download/{latest_tag}");
+
+    if cmd.skills_only {
+        install_release_skills(client, &base_url, home_dir).await?;
+        return Ok(());
+    }
+
     if !cmd.force && latest_tag == current_tag {
+        install_release_skills(client, &base_url, home_dir).await?;
         println!("anda is already up to date ({current_tag}).");
         return Ok(());
     }
 
+    let target = ReleaseTarget::detect()?;
     let current_exe = std::env::current_exe()?;
     let install_dir = current_exe
         .parent()
@@ -127,7 +165,6 @@ pub async fn run(client: &reqwest::Client, cmd: &UpdateCommand) -> Result<(), Bo
         .to_path_buf();
     let asset_name = target.asset_name();
     let checksum_name = format!("{asset_name}.sha256");
-    let base_url = format!("https://github.com/{REPO}/releases/download/{latest_tag}");
     let asset_url = format!("{base_url}/{asset_name}");
     let checksum_url = format!("{base_url}/{checksum_name}");
     let download = StagedFile::new(temporary_download_path(&asset_name));
@@ -147,7 +184,16 @@ pub async fn run(client: &reqwest::Client, cmd: &UpdateCommand) -> Result<(), Bo
 
     stage_update(download.path(), staged.path()).await?;
     prepare_executable(staged.path(), &current_exe).await?;
-    match install_update(staged.path(), &current_exe).await? {
+    let finish = install_update(staged.path(), &current_exe).await?;
+
+    #[cfg(windows)]
+    if finish == UpdateFinish::Scheduled {
+        staged.keep();
+    }
+
+    install_release_skills(client, &base_url, home_dir).await?;
+
+    match finish {
         UpdateFinish::Installed => {
             println!("anda updated from {current_tag} to {latest_tag}.");
             println!(
@@ -156,7 +202,6 @@ pub async fn run(client: &reqwest::Client, cmd: &UpdateCommand) -> Result<(), Bo
         }
         #[cfg(windows)]
         UpdateFinish::Scheduled => {
-            staged.keep();
             println!("Update staged for {latest_tag}.");
             println!("The Windows helper will replace anda after this process exits.");
             println!("If replacement fails, close running anda processes and rerun `anda update`.");
@@ -221,7 +266,7 @@ async fn download_binary(
     url: &str,
     destination: &Path,
 ) -> Result<String, BoxError> {
-    let mut response = client.get(url).send().await?;
+    let response = client.get(url).send().await?;
     if !response.status().is_success() {
         return Err(format!(
             "Download failed (HTTP {}). Binary may not exist for this platform. Check: {url}",
@@ -230,6 +275,29 @@ async fn download_binary(
         .into());
     }
 
+    write_response_to_file(response, destination).await
+}
+
+async fn download_optional_file(
+    client: &reqwest::Client,
+    url: &str,
+    destination: &Path,
+) -> Result<Option<String>, BoxError> {
+    let response = client.get(url).send().await?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("Download failed (HTTP {}). Check: {url}", response.status()).into());
+    }
+
+    Ok(Some(write_response_to_file(response, destination).await?))
+}
+
+async fn write_response_to_file(
+    mut response: reqwest::Response,
+    destination: &Path,
+) -> Result<String, BoxError> {
     let mut file = tokio::fs::File::create(destination).await?;
     let mut hasher = Sha256::new();
 
@@ -240,6 +308,111 @@ async fn download_binary(
     file.flush().await?;
 
     Ok(hex_lower(&hasher.finalize()))
+}
+
+async fn install_release_skills(
+    client: &reqwest::Client,
+    base_url: &str,
+    home_dir: &Path,
+) -> Result<bool, BoxError> {
+    let archive_url = format!("{base_url}/{SKILLS_ARCHIVE_NAME}");
+    let checksum_url = format!("{base_url}/{SKILLS_ARCHIVE_NAME}.sha256");
+    let download = StagedFile::new(temporary_download_path(SKILLS_ARCHIVE_NAME));
+    let staging = StagedDir::new(staged_skills_dir_path(home_dir));
+
+    println!("Downloading {SKILLS_ARCHIVE_NAME}...");
+    let Some(actual_hash) = download_optional_file(client, &archive_url, download.path()).await?
+    else {
+        println!("Skills archive not found; skipping skills update.");
+        return Ok(false);
+    };
+
+    match fetch_expected_checksum(client, &checksum_url).await? {
+        Some(expected_hash) => verify_checksum(SKILLS_ARCHIVE_NAME, &expected_hash, &actual_hash)?,
+        None => println!("Skills checksum file not found; skipping checksum verification."),
+    }
+
+    extract_skills_archive(download.path(), staging.path())?;
+    let installed = install_skills_from_staging(staging.path(), &home_dir.join("skills"))?;
+    println!(
+        "Updated {installed} curated skill{} in {}.",
+        if installed == 1 { "" } else { "s" },
+        home_dir.join("skills").display()
+    );
+
+    Ok(true)
+}
+
+fn extract_skills_archive(archive_path: &Path, staging_dir: &Path) -> Result<(), BoxError> {
+    remove_path_if_exists(staging_dir)?;
+    std::fs::create_dir_all(staging_dir)?;
+
+    let file = File::open(archive_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let Some(enclosed_name) = entry.enclosed_name().map(|path| path.to_owned()) else {
+            continue;
+        };
+        if enclosed_name.components().next().is_none() {
+            continue;
+        }
+
+        let output_path = staging_dir.join(enclosed_name);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&output_path)?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut output = File::create(&output_path)?;
+        io::copy(&mut entry, &mut output)?;
+    }
+
+    Ok(())
+}
+
+fn install_skills_from_staging(staging_dir: &Path, skills_dir: &Path) -> Result<usize, BoxError> {
+    std::fs::create_dir_all(skills_dir)?;
+
+    let mut installed = 0;
+    for entry in std::fs::read_dir(staging_dir)? {
+        let entry = entry?;
+        let destination = skills_dir.join(entry.file_name());
+        remove_path_if_exists(&destination)?;
+        std::fs::rename(entry.path(), &destination).map_err(|err| {
+            format!(
+                "Could not install skill at {}: {err}",
+                destination.display()
+            )
+        })?;
+        installed += 1;
+    }
+
+    if installed == 0 {
+        return Err(format!("{SKILLS_ARCHIVE_NAME} is empty").into());
+    }
+
+    Ok(installed)
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), BoxError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+
+    if metadata.file_type().is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+
+    Ok(())
 }
 
 async fn fetch_expected_checksum(
@@ -397,6 +570,15 @@ fn temporary_download_path(asset_name: &str) -> PathBuf {
     ))
 }
 
+fn staged_skills_dir_path(home_dir: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+
+    home_dir.join(format!(".skills.update-{}-{nanos}.tmp", std::process::id()))
+}
+
 fn normalized_target_name(os: &str, arch: &str) -> String {
     let arch = match arch {
         "x86_64" | "amd64" => "x86_64",
@@ -479,6 +661,33 @@ mod tests {
         assert_eq!(
             release_version_from_location("https://github.com/ldclabs/anda-bot/releases/latest"),
             None
+        );
+    }
+
+    #[test]
+    fn install_skills_replaces_curated_entries_and_keeps_custom_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let staging_dir = temp.path().join("staging");
+        let skills_dir = temp.path().join("skills");
+
+        std::fs::create_dir_all(staging_dir.join("codex")).unwrap();
+        std::fs::write(staging_dir.join("codex/SKILL.md"), "new codex").unwrap();
+
+        std::fs::create_dir_all(skills_dir.join("codex")).unwrap();
+        std::fs::write(skills_dir.join("codex/SKILL.md"), "old codex").unwrap();
+        std::fs::create_dir_all(skills_dir.join("custom")).unwrap();
+        std::fs::write(skills_dir.join("custom/SKILL.md"), "custom").unwrap();
+
+        let installed = install_skills_from_staging(&staging_dir, &skills_dir).unwrap();
+
+        assert_eq!(installed, 1);
+        assert_eq!(
+            std::fs::read_to_string(skills_dir.join("codex/SKILL.md")).unwrap(),
+            "new codex"
+        );
+        assert_eq!(
+            std::fs::read_to_string(skills_dir.join("custom/SKILL.md")).unwrap(),
+            "custom"
         );
     }
 }

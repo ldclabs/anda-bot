@@ -120,7 +120,7 @@ async fn main() -> Result<(), BoxError> {
     if let Some(Commands::Update(cmd)) = command.as_ref() {
         let http_client =
             util::http_client::build_http_client(daemon.cfg.https_proxy.clone(), |client| client)?;
-        cli::updater::run(&http_client, cmd).await?;
+        cli::updater::run(&http_client, &daemon.home, cmd).await?;
         return Ok(());
     }
 

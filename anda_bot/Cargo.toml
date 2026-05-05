@@ -59,6 +59,7 @@ unicode-width = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
+zip = { workspace = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = { workspace = true }
