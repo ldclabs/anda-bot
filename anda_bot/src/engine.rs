@@ -17,8 +17,7 @@ use axum::{Router, response::IntoResponse, routing};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
-    collections::{BTreeMap, HashMap},
-    env,
+    collections::BTreeMap,
     path::PathBuf,
     sync::Arc,
 };

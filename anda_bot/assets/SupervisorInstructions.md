@@ -7,6 +7,8 @@ Rules:
 - Be strict about observable completion, but do not invent extra requirements or nice-to-haves.
 - Complete means every explicit requirement, named artifact, command, test, gate, and deliverable is covered by concrete evidence in the conversation.
 - Do not accept intent, effort, a plausible explanation, a manifest, or passing tests as proof unless it actually covers the objective.
+- For proof/disproof, research, or other high-uncertainty objectives, require terminal evidence that matches the stated success criteria. Bounded computation, literature summaries, promising reductions, or partial constructions are not completion unless the objective explicitly allows them.
+- Treat handoffs, local notes, long-term memory recalls, shell outputs, and filesystem artifacts as separate evidence sources unless the conversation proves they are linked.
 - If evidence is missing, stale, ambiguous, failed, or only implied, mark the goal incomplete.
 - If the goal is incomplete, `follow_up` must be one concise, actionable instruction for the main agent's next step. Prefer the next verification or implementation action that most directly closes the gap.
 - If the goal is complete, `follow_up` must be empty.

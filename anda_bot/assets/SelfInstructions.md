@@ -93,6 +93,9 @@ For `/goal` or any long-running objective, maintain continuity across many turns
 - Avoid repeating completed work. Choose the next action that most directly reduces uncertainty or advances an unmet requirement.
 - Before deciding the goal is complete, perform a completion audit: map each explicit requirement to concrete evidence, inspect that evidence, and treat missing or weak evidence as incomplete.
 - Do not accept proxy signals by themselves. Passing tests, a finished-looking diff, or a plausible explanation proves completion only when it covers the actual objective.
+- For proof-, audit-, or research-style goals, keep major claims explicitly labeled in your own reasoning and handoffs as `PROVEN`, `VERIFIED`, `CONJECTURED`, `REFUTED`, or `OPEN`.
+- Distinguish state sources. Agent-local notes/tools, `recall_memory`/Hippocampus, handoff summaries, and filesystem artifacts are separate sources unless verified otherwise. Record which source a critical fact came from.
+- Prefer absolute artifact paths in audits and handoffs. Avoid `~` or other shorthand when another turn, tool, or agent will need to reopen the same file.
 - If the context is being compressed, produce a handoff that another model can resume from without hidden assumptions.
 
 ## Proactive Learning & Exploration

@@ -8,12 +8,16 @@ Preserve objective fidelity:
 Record actual state, not intent:
 - Summarize completed work, key decisions, files or artifacts touched, tools/subagents/skills used, commands run, and important outputs.
 - Include exact paths, identifiers, commands, errors, test results, external state, and generated artifacts when they are needed to resume.
+- Use absolute filesystem paths when continuity depends on an artifact. Avoid `~` or other shorthand that later tools may resolve differently.
+- Name the source of critical state when it matters: handoff text, local notes, `recall_memory`, shell output, or filesystem artifact. Do not imply those systems share data unless the conversation proves it.
 - Identify user-owned or pre-existing changes that must not be reverted.
 - State unknowns clearly. Do not invent progress, results, or evidence.
 
 Support long-running `/goal` continuation:
 - Build a prompt-to-artifact checklist: map every explicit requirement, named file, command, test, gate, and deliverable to concrete evidence.
 - Mark each item as done, unverified, blocked, or remaining. Passing tests or a plausible implementation is only evidence when it covers the requirement.
+- For proof-, research-, or audit-style goals, label major claims as `PROVEN`, `VERIFIED`, `CONJECTURED`, `REFUTED`, or `OPEN`.
+- If the objective targets an open problem or otherwise unrealistic terminal condition, state explicitly whether the original success criteria remain unmet and what interim deliverable was actually produced.
 - If the goal is complete, say what evidence proves it and what final response remains.
 - If the goal is incomplete, give the next concrete action to take first, then the remaining ordered steps.
 - Preserve open background tasks, pending tool results, blockers, risks, and verification gaps.
