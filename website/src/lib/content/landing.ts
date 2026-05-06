@@ -138,12 +138,12 @@ export const localeMeta: Record<
 export const landingCopy: Record<Locale, LandingCopy> = {
 	en: {
 		meta: {
-			title: 'Install Anda Bot - Long-horizon memory agent',
+			title: 'Install Anda Bot - Graph-memory Rust agent',
 			description:
-				'Install Anda Bot, a local AI agent with long-horizon reasoning, continuous learning, and a graph memory brain powered by Anda Hippocampus.',
-			ogTitle: 'Install Anda Bot - Long-horizon memory agent',
+				'Install Anda Bot, an open-source Rust agent with graph long-term memory, long-horizon reasoning, external tools, subagents, and IM integrations.',
+			ogTitle: 'Install Anda Bot - Graph-memory Rust agent',
 			ogDescription:
-				'Run Anda locally and give it goals that can continue across compacted conversations, memory recall, tools, files, and channels.'
+				'Run Anda locally with Anda Hippocampus memory, long-running goals, Claude Code and Codex tool use, subagents, and terminal or IM workflows.'
 		},
 		nav: {
 			install: 'Install',
@@ -153,16 +153,16 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		language: { label: 'Language' },
 		hero: {
-			badge: 'Installable local AI agent',
-			eyebrow: 'continuous learning · long-horizon reasoning',
-			title: 'Install Anda. Give it a goal that can outlive the chat window.',
-			body: 'I am the local agent that keeps learning while we work. My Hippocampus brain remembers what matters, and my goal loop can compact context, open the next linked conversation, and keep reasoning until the objective is complete.',
+			badge: 'Open-source Rust terminal agent',
+			eyebrow: 'graph memory · subagents · external tools',
+			title: 'Install Anda. Give it work that needs memory, tools, and time.',
+			body: 'I am the local agent that keeps learning while we work. Hippocampus turns experience into graph memory, long-horizon goals keep moving across context boundaries, and subagents can coordinate external tools such as Claude Code and Codex.',
 			installFor: 'Install for {os}',
-			seeReasoning: 'See long reasoning',
-			proofOs: 'OS',
-			proofOsText: 'auto-detect',
+			seeReasoning: 'See core loop',
+			proofOs: 'Rust',
+			proofOsText: 'open source',
 			proofReasoning: 'hours+',
-			proofReasoningText: 'reasoning',
+			proofReasoningText: 'goal loops',
 			proofMemory: 'graph',
 			proofMemoryText: 'memory'
 		},
@@ -202,57 +202,53 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: 'Long-horizon reasoning',
-			title: 'A goal can keep moving long after a normal chat would run out of road.',
-			body: 'Anda can keep a session alive across many linked conversations. When context grows, it compacts the current state, preserves the objective, and continues reasoning with almost no practical limit on duration or turns.',
+			title: 'A goal can keep moving after the chat window would normally stop.',
+			body: 'Anda can keep a session alive across linked conversations. It compacts the current state, preserves the objective, asks subagents to inspect or continue focused work, and calls the tools needed to reach a verified result.',
 			panelTitle: 'Anda session loop',
 			panelStatus: 'goal://active',
-			phases: ['reason', 'compact', 'continue'],
+			phases: ['reason & execute', 'compact & handoff', 'evaluate & continue'],
 			signals: [
 				{ label: 'objective', value: 'active', level: 92 },
-				{ label: 'context', value: 'compacted', level: 84 },
-				{ label: 'memory', value: 'forming', level: 76 },
-				{ label: 'tools', value: 'ready', level: 68 }
+				{ label: 'subagents', value: 'coordinating', level: 84 },
+				{ label: 'tools', value: 'Claude Code / Codex', level: 76 },
+				{ label: 'memory', value: 'forming', level: 68 }
 			],
 			events: [
 				{ time: '00:01', phase: 'goal', detail: 'objective accepted and session opened' },
-				{
-					time: '47:18',
-					phase: 'compact',
-					detail: 'context summarized into the next conversation'
-				},
-				{ time: 'hours+', phase: 'continue', detail: 'reasoning resumes until the target is done' }
+				{ time: '47:18', phase: 'tools', detail: 'external coding tools and files inspected' },
+				{ time: 'hours+', phase: 'audit', detail: 'subagents continue until evidence is complete' }
 			],
 			cards: [
 				{
-					label: 'Goal loop',
-					title: 'Keeps working after one answer',
+					label: 'Long goals',
+					title: 'Keeps working after one answer is not enough',
 					detail:
-						'Give Anda an objective and it can check progress, continue, and wait for the next useful action instead of stopping at a fixed turn count.'
+						'Give Anda an objective and it can inspect progress, compact context, continue in a linked conversation, and keep going until the outcome is real.'
 				},
 				{
-					label: 'Context handoff',
-					title: 'Compacts and carries the thread forward',
+					label: 'Subagents',
+					title: 'Delegates work without losing the main thread',
 					detail:
-						'When a conversation gets large, Anda summarizes the live state, opens the next linked conversation, and continues the same session.'
+						'Specialized subagents can research, implement, review, or supervise while the main session keeps the plan, memory, and final objective intact.'
 				},
 				{
-					label: 'Memory formation',
-					title: 'Learns from successful work',
+					label: 'Tool use',
+					title: 'Works with the tools already on your machine',
 					detail:
-						'Useful turns flow into Hippocampus, where relationships, decisions, preferences, and timelines become recallable working context.'
+						'Anda can call shell and file tools, load skills, and coordinate external coding tools such as Claude Code and Codex when the task needs them.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: 'Memory is how the work gets better every time.',
-			body: 'Hippocampus turns useful conversations into a living Cognitive Nexus: people, projects, decisions, preferences, events, and the relationships between them.',
+			title: 'Memory is a graph that keeps learning the useful parts.',
+			body: 'Hippocampus turns useful conversations into a living Cognitive Nexus: people, projects, decisions, preferences, events, timelines, and the relationships between them.',
 			formationTitle: 'Formation',
 			formationBody:
-				'I turn successful turns, files, channels, and tool results into memories with source, time, and meaning.',
+				'I distill successful turns, files, channel context, and tool results into memories with source, time, and meaning.',
 			recallTitle: 'Recall',
 			recallBody:
-				'When a goal needs history, I retrieve context that explains the present task instead of matching nearest text alone.',
+				'When a goal needs history, I retrieve relationships and timelines that explain the present task instead of matching nearest text alone.',
 			maintenanceTitle: 'Maintenance',
 			maintenanceBody:
 				'I consolidate, merge, decay, and preserve timelines so durable knowledge stays reachable while old noise fades.'
@@ -261,40 +257,48 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: 'context routes',
 			memoryRoute: 'anda://memory',
 			badge: 'Where I work',
-			title: 'Bring long memory to the places your context is born.',
-			body: 'I can live in the terminal, join your chat channels, listen and speak by voice, read files, run tools, and keep scheduled work moving while the same memory thread follows.',
+			title: 'Bring long memory to the terminal, tools, and team channels.',
+			body: 'I run as an open-source Rust terminal agent, join IM surfaces such as WeChat, Feishu/Lark, Telegram, Discord, and IRC, and keep the same memory thread moving through tools and subagents.',
 			surfaces: [
 				{
-					label: 'goals',
-					detail: 'Long tasks stay attached to a session until the outcome is real.'
-				},
-				{ label: 'voice', detail: 'Spoken context can become part of the same working memory.' },
-				{
-					label: 'shell',
-					detail: 'Local commands and files give memory something concrete to reason over.'
+					label: 'terminal',
+					detail:
+						'A local Rust runtime keeps commands, files, and agent work close to your machine.'
 				},
 				{
-					label: 'channels',
-					detail: 'Context born in teams can follow the work instead of vanishing.'
+					label: 'external tools',
+					detail:
+						'Claude Code, Codex, shell tools, skills, and files can all become part of the loop.'
+				},
+				{
+					label: 'subagents',
+					detail: 'Focused workers can research, implement, audit, and continue complex tasks.'
+				},
+				{
+					label: 'IM channels',
+					detail:
+						'WeChat, Feishu/Lark, Telegram, Discord, and IRC can share the same memory thread.'
 				}
 			],
 			cards: [
 				{
-					title: 'Local-first shell',
+					title: 'Rust terminal runtime',
 					detail:
-						'A grounded workspace for commands, files, experiments, and multi-step automation.'
+						'Open-source, local-first, and built for commands, files, experiments, and multi-step automation.'
 				},
 				{
-					title: 'Multi-channel chat',
-					detail: 'Conversations around the work can become part of the working thread.'
+					title: 'WeChat, Feishu, Telegram',
+					detail: 'Work conversations from IM channels can feed the same durable context.'
 				},
 				{
-					title: 'Your keys and models',
-					detail: 'Connect the provider you trust and keep the runtime close to your machine.'
+					title: 'Claude Code and Codex',
+					detail:
+						'Use external coding assistants as tools while Anda keeps the objective and memory.'
 				},
 				{
-					title: 'Inspectable memory',
-					detail: 'Open-source components keep the shape of my brain visible and auditable.'
+					title: 'Powerful subagents',
+					detail:
+						'Delegate specialized work and supervision without scattering the project context.'
 				}
 			]
 		},
@@ -308,34 +312,35 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: 'run command',
 			sourceComment: 'Start now with an environment key:',
 			goalComment: 'Or save api_key in config.yaml, then run:',
-			localRuntime: 'local runtime',
-			durableThread: 'durable thread',
-			inspectableBrain: 'inspectable brain'
+			localRuntime: 'Rust runtime',
+			durableThread: 'subagents',
+			inspectableBrain: 'graph brain'
 		}
 	},
 	zh: {
 		meta: {
-			title: '安装 Anda Bot - 具备长程推理的记忆 Agent',
+			title: '安装 Anda Bot - 知识图谱记忆智能体',
 			description:
-				'安装 Anda Bot，一个具备长程推理、持续学习和 Anda Hippocampus 图记忆大脑的本地 AI Agent。',
-			ogTitle: '安装 Anda Bot - 具备长程推理的记忆 Agent',
-			ogDescription: '在本地运行 Anda，让目标跨越压缩后的对话、记忆召回、工具、文件和频道持续推进。'
+				'安装 Anda Bot，一个具备知识图谱长期记忆、长程推理、外部工具调用、子智能体 和 IM 接入能力的开源 Rust Agent。',
+			ogTitle: '安装 Anda Bot - 知识图谱记忆智能体',
+			ogDescription:
+				'在本地运行 Anda：让 Hippocampus 记住上下文，让长程目标、Claude Code、Codex、子智能体 和 IM 工作流持续推进。'
 		},
 		nav: { install: '安装', reasoning: '推理', memory: '记忆', surfaces: '场景' },
 		language: { label: '语言' },
 		hero: {
-			badge: '可本地安装的 AI Agent',
-			eyebrow: '持续学习 · 长程推理',
-			title: '安装 Anda。给它一个能跨越聊天窗口的目标。',
-			body: '我是会在工作中持续学习的本地 Agent。Hippocampus 大脑会记住真正重要的上下文，而目标循环可以压缩上下文、开启下一个关联对话，并一直推理直到目标完成。',
+			badge: '开源 Rust 终端 Agent',
+			eyebrow: '知识图谱记忆 · 子智能体 · 外部工具',
+			title: '安装 Anda。把需要记忆、工具和时间的工作交给它。',
+			body: '我是会在工作中持续学习的本地 Agent。Hippocampus 会把经验沉淀成知识图谱记忆，长程目标可以跨越上下文边界继续推进，子智能体还能协同 Claude Code、Codex 等外部 skills 工具。',
 			installFor: '安装 {os} 版本',
-			seeReasoning: '查看长程推理',
-			proofOs: 'OS',
-			proofOsText: '自动识别',
-			proofReasoning: '数小时+',
-			proofReasoningText: '持续推理',
-			proofMemory: '图谱',
-			proofMemoryText: '记忆'
+			seeReasoning: '查看核心循环',
+			proofOs: 'Rust',
+			proofOsText: '开源终端',
+			proofReasoning: '长程推理',
+			proofReasoningText: '目标循环',
+			proofMemory: '知识图谱',
+			proofMemoryText: '长期记忆'
 		},
 		install: {
 			eyebrow: '安装最新版本',
@@ -373,51 +378,53 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: '长程推理',
-			title: '一个目标可以在普通聊天耗尽之后继续向前推进。',
-			body: 'Anda 可以让同一个 session 跨越多个关联 conversation 保持活跃。当上下文变大时，它会压缩当前状态、保留目标，并继续推理，在实际使用中几乎不受时长或轮次限制。',
-			panelTitle: 'Anda session 循环',
+			title: '一个目标可以在普通聊天停下之后继续向前推进。',
+			body: 'Anda 可以让同一个 session 会话跨越多个关联 conversation 对话保持活跃。它会压缩当前状态、保留目标，让子智能体检查或继续专门工作，并调用真正需要的工具直到结果可验证。',
+			panelTitle: 'Anda 会话循环',
 			panelStatus: 'goal://active',
-			phases: ['推理', '压缩', '继续'],
+			phases: ['推理和执行', '压缩和接力', '评估和继续'],
 			signals: [
 				{ label: '目标', value: '进行中', level: 92 },
-				{ label: '上下文', value: '已压缩', level: 84 },
-				{ label: '记忆', value: '形成中', level: 76 },
-				{ label: '工具', value: '就绪', level: 68 }
+				{ label: '子智能体', value: '协同中', level: 84 },
+				{ label: '工具', value: 'Claude Code / Codex', level: 76 },
+				{ label: '记忆', value: '形成中', level: 68 }
 			],
 			events: [
-				{ time: '00:01', phase: '目标', detail: '目标已接收，session 已开启' },
-				{ time: '47:18', phase: '压缩', detail: '任务状态总结到下一个 conversation' },
-				{ time: '数小时+', phase: '继续', detail: '持续推理直到目标完成' }
+				{ time: '00:01', phase: '目标', detail: '目标已接收，会话已开启' },
+				{ time: '47:18', phase: '工具', detail: '检查外部编码工具、文件和运行结果' },
+				{ time: '长程', phase: '审查', detail: '子智能体 持续推进直到证据完整' }
 			],
 			cards: [
 				{
-					label: '目标循环',
-					title: '不会在一次回答后停下',
+					label: '长程目标',
+					title: '一次回答不够时，它会继续工作',
 					detail:
-						'给 Anda 一个目标，它可以检查进展、继续推进，并等待下一步有用动作，而不是被固定轮次截断。'
+						'给 Anda 一个目标，它可以检查进展、压缩上下文、进入关联 conversation，并一直推进到结果真正落地。'
 				},
 				{
-					label: '上下文交接',
-					title: '压缩并携带任务线索继续',
+					label: '子智能体',
+					title: '拆给专门角色，但不丢主线',
 					detail:
-						'当 conversation 变大时，Anda 会总结当前状态，开启下一个关联 conversation，并延续同一个 session。'
+						'专门的子智能体可以研究、实现、审查或监督，主会话继续保留整体计划、记忆线索和最终目标。'
 				},
 				{
-					label: '记忆形成',
-					title: '从成功工作中持续学习',
+					label: '工具调用',
+					title: '会用你机器上已有的工具',
 					detail:
-						'有价值的轮次会进入 Hippocampus，让关系、决策、偏好和时间线成为之后可召回的工作上下文。'
+						'Anda 可以调用 shell 和文件工具，加载 Skills，并在任务需要时协同 Claude Code、Codex 等外部编码工具。'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: '记忆让每一次工作都变得更好。',
-			body: 'Hippocampus 会把有用的对话转化为活的 Cognitive Nexus：人物、项目、决策、偏好、事件，以及它们之间的关系。',
+			title: '记忆是一张会持续学习精华的知识图谱。',
+			body: 'Hippocampus 会把有用的对话转化为活的 Cognitive Nexus：人物、项目、决策、偏好、事件、时间线，以及它们之间的关系。',
 			formationTitle: '形成',
-			formationBody: '我会把成功的对话轮次、文件、频道和工具结果转化为带来源、时间和意义的记忆。',
+			formationBody:
+				'我会把成功的对话轮次、文件、频道上下文和工具结果提炼成带来源、时间和意义的记忆。',
 			recallTitle: '召回',
-			recallBody: '当目标需要历史上下文时，我会召回能解释当前任务的内容，而不仅是匹配相近文本。',
+			recallBody:
+				'当目标需要历史上下文时，我会召回能解释当前任务的关系和时间线，而不仅是匹配相近文本。',
 			maintenanceTitle: '维护',
 			maintenanceBody: '我会合并、巩固、衰减并保留时间线，让重要知识始终可达，旧噪声自然淡出。'
 		},
@@ -425,19 +432,31 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: '上下文路径',
 			memoryRoute: 'anda://memory',
 			badge: '工作场景',
-			title: '把长记忆带到上下文诞生的地方。',
-			body: '我可以在终端里工作，加入聊天频道，听你说也能开口回应，读取文件，运行工具，并在同一条记忆线索中推进定时任务。',
+			title: '把长记忆带到终端、工具和团队频道。',
+			body: '我作为开源 Rust 终端 Agent 运行，也可以接入微信、飞书/Lark、Telegram、Discord、IRC 等 IM，并让同一条记忆线索贯穿工具调用和子智能体。',
 			surfaces: [
-				{ label: '目标', detail: '长任务会保持在同一个 session 中，直到结果真正落地。' },
-				{ label: '语音', detail: '语音上下文也可以成为同一份工作记忆的一部分。' },
-				{ label: '终端', detail: '本地命令和文件让记忆拥有可以推理的真实材料。' },
-				{ label: '频道', detail: '团队沟通中产生的上下文不会随着聊天窗口消失。' }
+				{ label: '终端', detail: '本地 Rust 运行时让命令、文件和 Agent 工作靠近你的机器。' },
+				{
+					label: '外部工具',
+					detail: 'Claude Code、Codex、shell、Skills 和文件都可以进入同一个工作循环。'
+				},
+				{ label: '子智能体', detail: '专门角色可以研究、实现、审查，并继续推进复杂任务。' },
+				{
+					label: 'IM 频道',
+					detail: '微信、飞书/Lark、Telegram、Discord、IRC 可以共享同一条记忆线索。'
+				}
 			],
 			cards: [
-				{ title: '本地优先终端', detail: '用于命令、文件、实验和多步骤自动化的扎实工作区。' },
-				{ title: '多频道聊天', detail: '围绕工作的对话可以进入同一条持续工作线索。' },
-				{ title: '你的密钥和模型', detail: '连接你信任的模型服务商，并让运行时靠近你的机器。' },
-				{ title: '可检查的记忆', detail: '开源组件让我的大脑结构保持可见、可审计。' }
+				{
+					title: 'Rust 终端运行时',
+					detail: '开源、本地优先，适合命令、文件、实验和多步骤自动化。'
+				},
+				{ title: '微信、飞书、Telegram', detail: 'IM 中围绕工作的对话可以进入同一条持久上下文。' },
+				{
+					title: 'Claude Code 和 Codex',
+					detail: '把外部编码助手当作工具使用，同时由 Anda 保留目标和记忆。'
+				},
+				{ title: '强大的 子智能体', detail: '把专门工作和监督拆出去，但不打散项目上下文。' }
 			]
 		},
 		start: {
@@ -450,19 +469,19 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: '运行命令',
 			sourceComment: '用环境变量立即启动：',
 			goalComment: '或把 api_key 保存到 config.yaml 后运行：',
-			localRuntime: '本地运行时',
-			durableThread: '持久线索',
-			inspectableBrain: '可检查大脑'
+			localRuntime: 'Rust 运行时',
+			durableThread: '子智能体',
+			inspectableBrain: '图谱大脑'
 		}
 	},
 	es: {
 		meta: {
-			title: 'Instala Anda Bot - Agente de memoria para razonamiento largo',
+			title: 'Instala Anda Bot - Agente Rust con memoria en grafo',
 			description:
-				'Instala Anda Bot, un agente local de IA con razonamiento de largo horizonte, aprendizaje continuo y una memoria en grafo impulsada por Anda Hippocampus.',
-			ogTitle: 'Instala Anda Bot - Agente de memoria para razonamiento largo',
+				'Instala Anda Bot, un agente Rust open source con memoria larga en grafo, razonamiento prolongado, herramientas externas, subagents e integraciones IM.',
+			ogTitle: 'Instala Anda Bot - Agente Rust con memoria en grafo',
 			ogDescription:
-				'Ejecuta Anda localmente y dale objetivos que continúan entre conversaciones compactadas, memoria, herramientas, archivos y canales.'
+				'Ejecuta Anda localmente con memoria Hippocampus, objetivos largos, Claude Code, Codex, subagents y flujos de terminal o IM.'
 		},
 		nav: {
 			install: 'Instalar',
@@ -472,16 +491,16 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		language: { label: 'Idioma' },
 		hero: {
-			badge: 'Agente local de IA instalable',
-			eyebrow: 'aprendizaje continuo · razonamiento de largo horizonte',
-			title: 'Instala Anda. Dale un objetivo que sobreviva a la ventana del chat.',
-			body: 'Soy el agente local que sigue aprendiendo mientras trabajamos. Mi cerebro Hippocampus recuerda lo importante, y mi bucle de objetivos puede compactar contexto, abrir la siguiente conversación enlazada y seguir razonando hasta completar el objetivo.',
+			badge: 'Agente Rust de terminal open source',
+			eyebrow: 'memoria en grafo · subagents · herramientas externas',
+			title: 'Instala Anda. Dale trabajo que necesita memoria, herramientas y tiempo.',
+			body: 'Soy el agente local que sigue aprendiendo mientras trabajamos. Hippocampus convierte experiencia en memoria en grafo, los objetivos largos cruzan límites de contexto y los subagents coordinan herramientas como Claude Code y Codex.',
 			installFor: 'Instalar para {os}',
-			seeReasoning: 'Ver razonamiento largo',
-			proofOs: 'SO',
-			proofOsText: 'detección automática',
-			proofReasoning: 'horas+',
-			proofReasoningText: 'razonamiento',
+			seeReasoning: 'Ver ciclo central',
+			proofOs: 'Rust',
+			proofOsText: 'open source',
+			proofReasoning: 'largo',
+			proofReasoningText: 'objetivos',
 			proofMemory: 'grafo',
 			proofMemoryText: 'memoria'
 		},
@@ -522,58 +541,57 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: 'Razonamiento de largo horizonte',
-			title:
-				'Un objetivo puede seguir avanzando mucho después de que un chat normal se quedaría sin camino.',
-			body: 'Anda puede mantener viva una sesión a través de muchas conversaciones enlazadas. Cuando crece el contexto, compacta el estado actual, conserva el objetivo y continúa razonando casi sin límite práctico de duración o turnos.',
+			title: 'Un objetivo puede seguir avanzando cuando un chat normal ya se habría detenido.',
+			body: 'Anda mantiene viva una sesión a través de conversaciones enlazadas. Compacta el estado, conserva el objetivo, pide a subagents trabajo focalizado y llama las herramientas necesarias para llegar a un resultado verificable.',
 			panelTitle: 'Bucle de sesión de Anda',
 			panelStatus: 'goal://active',
 			phases: ['razonar', 'compactar', 'continuar'],
 			signals: [
 				{ label: 'objetivo', value: 'activo', level: 92 },
-				{ label: 'contexto', value: 'compactado', level: 84 },
-				{ label: 'memoria', value: 'formándose', level: 76 },
-				{ label: 'herramientas', value: 'listas', level: 68 }
+				{ label: 'subagents', value: 'coordinando', level: 84 },
+				{ label: 'herramientas', value: 'Claude Code / Codex', level: 76 },
+				{ label: 'memoria', value: 'formándose', level: 68 }
 			],
 			events: [
 				{ time: '00:01', phase: 'objetivo', detail: 'objetivo aceptado y sesión abierta' },
 				{
 					time: '47:18',
-					phase: 'compactar',
-					detail: 'contexto resumido en la siguiente conversación'
+					phase: 'tools',
+					detail: 'herramientas externas y archivos inspeccionados'
 				},
-				{ time: 'horas+', phase: 'continuar', detail: 'el razonamiento se reanuda hasta terminar' }
+				{ time: 'largo', phase: 'auditar', detail: 'subagents continúan hasta completar evidencia' }
 			],
 			cards: [
 				{
-					label: 'Bucle de objetivo',
-					title: 'Sigue trabajando después de una respuesta',
+					label: 'Objetivos largos',
+					title: 'Sigue cuando una respuesta no basta',
 					detail:
-						'Dale a Anda un objetivo y puede revisar progreso, continuar y esperar la siguiente acción útil en lugar de detenerse en un número fijo de turnos.'
+						'Dale a Anda un objetivo y puede revisar progreso, compactar contexto, continuar en una conversación enlazada y avanzar hasta un resultado real.'
 				},
 				{
-					label: 'Traspaso de contexto',
-					title: 'Compacta y lleva el hilo hacia adelante',
+					label: 'Subagents',
+					title: 'Delega sin perder el hilo principal',
 					detail:
-						'Cuando una conversación crece, Anda resume el estado vivo, abre la siguiente conversación enlazada y continúa la misma sesión.'
+						'Subagents especializados pueden investigar, implementar, revisar o supervisar mientras la sesión principal conserva plan, memoria y objetivo.'
 				},
 				{
-					label: 'Formación de memoria',
-					title: 'Aprende del trabajo que sale bien',
+					label: 'Herramientas',
+					title: 'Usa lo que ya está en tu máquina',
 					detail:
-						'Los turnos útiles fluyen a Hippocampus, donde relaciones, decisiones, preferencias y líneas de tiempo se vuelven contexto recuperable.'
+						'Anda puede llamar shell, archivos, skills y herramientas externas de código como Claude Code y Codex cuando la tarea lo necesita.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: 'La memoria hace que el trabajo mejore cada vez.',
-			body: 'Hippocampus convierte conversaciones útiles en un Cognitive Nexus vivo: personas, proyectos, decisiones, preferencias, eventos y las relaciones entre ellos.',
+			title: 'La memoria es un grafo que aprende lo útil.',
+			body: 'Hippocampus convierte conversaciones útiles en un Cognitive Nexus vivo: personas, proyectos, decisiones, preferencias, eventos, líneas de tiempo y relaciones.',
 			formationTitle: 'Formación',
 			formationBody:
-				'Convierto turnos exitosos, archivos, canales y resultados de herramientas en recuerdos con fuente, tiempo y significado.',
+				'Destilo turnos exitosos, archivos, contexto de canales y resultados de herramientas en recuerdos con fuente, tiempo y significado.',
 			recallTitle: 'Recuerdo',
 			recallBody:
-				'Cuando un objetivo necesita historia, recupero el contexto que explica la tarea actual en lugar de solo buscar texto cercano.',
+				'Cuando un objetivo necesita historia, recupero relaciones y líneas de tiempo que explican la tarea actual, no solo texto cercano.',
 			maintenanceTitle: 'Mantenimiento',
 			maintenanceBody:
 				'Consolido, fusiono, reduzco y preservo líneas de tiempo para que el conocimiento durable siga accesible mientras el ruido viejo se desvanece.'
@@ -582,44 +600,47 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: 'rutas de contexto',
 			memoryRoute: 'anda://memory',
 			badge: 'Dónde trabajo',
-			title: 'Lleva memoria larga a los lugares donde nace tu contexto.',
-			body: 'Puedo vivir en la terminal, unirme a tus canales de chat, escuchar y hablar por voz, leer archivos, ejecutar herramientas y mantener trabajo programado mientras sigue el mismo hilo de memoria.',
+			title: 'Lleva memoria larga a la terminal, herramientas y canales de equipo.',
+			body: 'Me ejecuto como agente Rust open source en la terminal, me uno a WeChat, Feishu/Lark, Telegram, Discord e IRC, y mantengo el mismo hilo de memoria entre herramientas y subagents.',
 			surfaces: [
 				{
-					label: 'objetivos',
-					detail: 'Las tareas largas permanecen unidas a una sesión hasta que el resultado es real.'
+					label: 'terminal',
+					detail:
+						'Un runtime Rust local mantiene comandos, archivos y trabajo de agente cerca de tu máquina.'
 				},
 				{
-					label: 'voz',
-					detail: 'El contexto hablado puede convertirse en parte de la misma memoria de trabajo.'
+					label: 'herramientas',
+					detail: 'Claude Code, Codex, shell, skills y archivos pueden entrar en el mismo ciclo.'
 				},
 				{
-					label: 'shell',
-					detail: 'Los comandos y archivos locales dan a la memoria material concreto para razonar.'
+					label: 'subagents',
+					detail:
+						'Trabajadores enfocados investigan, implementan, auditan y continúan tareas complejas.'
 				},
 				{
-					label: 'canales',
-					detail: 'El contexto que nace en equipos puede seguir al trabajo en vez de desaparecer.'
+					label: 'canales IM',
+					detail: 'WeChat, Feishu/Lark, Telegram, Discord e IRC comparten el mismo hilo de memoria.'
 				}
 			],
 			cards: [
 				{
-					title: 'Shell local primero',
+					title: 'Runtime Rust de terminal',
 					detail:
-						'Un espacio de trabajo concreto para comandos, archivos, experimentos y automatización de varios pasos.'
+						'Open source, local-first y pensado para comandos, archivos, experimentos y automatización.'
 				},
 				{
-					title: 'Chat multicanal',
-					detail: 'Las conversaciones alrededor del trabajo pueden formar parte del hilo activo.'
+					title: 'WeChat, Feishu, Telegram',
+					detail: 'Las conversaciones IM del trabajo alimentan el mismo contexto durable.'
 				},
 				{
-					title: 'Tus claves y modelos',
-					detail: 'Conecta el proveedor en el que confías y mantén el runtime cerca de tu máquina.'
-				},
-				{
-					title: 'Memoria inspeccionable',
+					title: 'Claude Code y Codex',
 					detail:
-						'Los componentes open source mantienen visible y auditable la forma de mi cerebro.'
+						'Usa asistentes externos como herramientas mientras Anda conserva objetivo y memoria.'
+				},
+				{
+					title: 'Subagents potentes',
+					detail:
+						'Delega trabajo especializado y supervisión sin dispersar el contexto del proyecto.'
 				}
 			]
 		},
@@ -633,19 +654,19 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: 'comando de ejecución',
 			sourceComment: 'Inicia ahora con una clave de entorno:',
 			goalComment: 'O guarda api_key en config.yaml y ejecuta:',
-			localRuntime: 'runtime local',
-			durableThread: 'hilo durable',
-			inspectableBrain: 'cerebro inspeccionable'
+			localRuntime: 'runtime Rust',
+			durableThread: 'subagents',
+			inspectableBrain: 'grafo memoria'
 		}
 	},
 	fr: {
 		meta: {
-			title: 'Installer Anda Bot - Agent mémoire pour raisonnement long',
+			title: 'Installer Anda Bot - Agent Rust à mémoire graphe',
 			description:
-				'Installez Anda Bot, un agent IA local avec raisonnement de longue durée, apprentissage continu et mémoire en graphe propulsée par Anda Hippocampus.',
-			ogTitle: 'Installer Anda Bot - Agent mémoire pour raisonnement long',
+				'Installez Anda Bot, un agent Rust open source avec mémoire longue en graphe, raisonnement prolongé, outils externes, subagents et intégrations IM.',
+			ogTitle: 'Installer Anda Bot - Agent Rust à mémoire graphe',
 			ogDescription:
-				'Exécutez Anda localement et confiez-lui des objectifs qui continuent à travers conversations compactées, mémoire, outils, fichiers et canaux.'
+				'Exécutez Anda localement avec mémoire Hippocampus, objectifs longs, Claude Code, Codex, subagents et workflows terminal ou IM.'
 		},
 		nav: {
 			install: 'Installer',
@@ -655,16 +676,16 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		language: { label: 'Langue' },
 		hero: {
-			badge: 'Agent IA local installable',
-			eyebrow: 'apprentissage continu · raisonnement de longue durée',
-			title: 'Installez Anda. Donnez-lui un objectif qui survit à la fenêtre de chat.',
-			body: 'Je suis l’agent local qui continue d’apprendre pendant que nous travaillons. Mon cerveau Hippocampus retient ce qui compte, et ma boucle d’objectifs peut compacter le contexte, ouvrir la conversation liée suivante et raisonner jusqu’à ce que l’objectif soit atteint.',
+			badge: 'Agent terminal Rust open source',
+			eyebrow: 'mémoire graphe · subagents · outils externes',
+			title: 'Installez Anda. Confiez-lui le travail qui demande mémoire, outils et temps.',
+			body: 'Je suis l’agent local qui continue d’apprendre pendant que nous travaillons. Hippocampus transforme l’expérience en mémoire graphe, les objectifs longs traversent les limites de contexte, et les subagents coordonnent Claude Code, Codex et d’autres outils.',
 			installFor: 'Installer pour {os}',
-			seeReasoning: 'Voir le raisonnement long',
-			proofOs: 'OS',
-			proofOsText: 'détection auto',
-			proofReasoning: 'heures+',
-			proofReasoningText: 'raisonnement',
+			seeReasoning: 'Voir la boucle',
+			proofOs: 'Rust',
+			proofOsText: 'open source',
+			proofReasoning: 'long',
+			proofReasoningText: 'objectifs',
 			proofMemory: 'graphe',
 			proofMemoryText: 'mémoire'
 		},
@@ -705,57 +726,53 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: 'Raisonnement de longue durée',
-			title: 'Un objectif peut continuer bien après qu’un chat ordinaire aurait épuisé sa route.',
-			body: 'Anda peut garder une session active à travers de nombreuses conversations liées. Quand le contexte grossit, il compacte l’état actuel, préserve l’objectif et continue à raisonner avec presque aucune limite pratique de durée ou de tours.',
+			title: 'Un objectif peut continuer quand un chat ordinaire se serait arrêté.',
+			body: 'Anda garde une session active à travers des conversations liées. Il compacte l’état, préserve l’objectif, demande aux subagents un travail ciblé et appelle les outils nécessaires pour atteindre un résultat vérifiable.',
 			panelTitle: 'Boucle de session Anda',
 			panelStatus: 'goal://active',
 			phases: ['raisonner', 'compacter', 'continuer'],
 			signals: [
 				{ label: 'objectif', value: 'actif', level: 92 },
-				{ label: 'contexte', value: 'compacté', level: 84 },
-				{ label: 'mémoire', value: 'en formation', level: 76 },
-				{ label: 'outils', value: 'prêts', level: 68 }
+				{ label: 'subagents', value: 'coordonnent', level: 84 },
+				{ label: 'outils', value: 'Claude Code / Codex', level: 76 },
+				{ label: 'mémoire', value: 'en formation', level: 68 }
 			],
 			events: [
 				{ time: '00:01', phase: 'objectif', detail: 'objectif accepté et session ouverte' },
-				{
-					time: '47:18',
-					phase: 'compact',
-					detail: 'contexte résumé dans la conversation suivante'
-				},
-				{ time: 'heures+', phase: 'continuer', detail: 'le raisonnement reprend jusqu’à la fin' }
+				{ time: '47:18', phase: 'outils', detail: 'outils externes et fichiers inspectés' },
+				{ time: 'long', phase: 'audit', detail: 'les subagents continuent jusqu’aux preuves' }
 			],
 			cards: [
 				{
-					label: 'Boucle d’objectif',
-					title: 'Continue après une réponse',
+					label: 'Objectifs longs',
+					title: 'Continue quand une réponse ne suffit pas',
 					detail:
-						'Donnez un objectif à Anda : il peut vérifier la progression, continuer et attendre l’action utile suivante au lieu de s’arrêter à un nombre fixe de tours.'
+						'Donnez un objectif à Anda : il vérifie la progression, compacte le contexte, continue dans une conversation liée et avance jusqu’au résultat réel.'
 				},
 				{
-					label: 'Passage de contexte',
-					title: 'Compacte et porte le fil plus loin',
+					label: 'Subagents',
+					title: 'Délègue sans perdre le fil principal',
 					detail:
-						'Quand une conversation devient grande, Anda résume l’état vivant, ouvre la conversation liée suivante et poursuit la même session.'
+						'Des subagents spécialisés peuvent rechercher, implémenter, relire ou superviser pendant que la session principale garde plan, mémoire et objectif.'
 				},
 				{
-					label: 'Formation de mémoire',
-					title: 'Apprend du travail réussi',
+					label: 'Outils',
+					title: 'Utilise les outils déjà présents sur votre machine',
 					detail:
-						'Les tours utiles vont vers Hippocampus, où relations, décisions, préférences et chronologies deviennent du contexte rappelable.'
+						'Anda peut appeler shell, fichiers, skills et outils de code externes comme Claude Code et Codex quand la tâche l’exige.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: 'La mémoire rend le travail meilleur à chaque fois.',
-			body: 'Hippocampus transforme les conversations utiles en Cognitive Nexus vivant : personnes, projets, décisions, préférences, événements et relations entre eux.',
+			title: 'La mémoire est un graphe qui apprend l’essentiel.',
+			body: 'Hippocampus transforme les conversations utiles en Cognitive Nexus vivant : personnes, projets, décisions, préférences, événements, chronologies et relations.',
 			formationTitle: 'Formation',
 			formationBody:
-				'Je transforme les tours réussis, fichiers, canaux et résultats d’outils en souvenirs avec source, temps et sens.',
+				'Je distille les tours réussis, fichiers, contextes de canaux et résultats d’outils en souvenirs avec source, temps et sens.',
 			recallTitle: 'Rappel',
 			recallBody:
-				'Quand un objectif a besoin d’historique, je récupère le contexte qui explique la tâche actuelle plutôt que de seulement chercher le texte le plus proche.',
+				'Quand un objectif a besoin d’historique, je récupère relations et chronologies qui expliquent la tâche actuelle, pas seulement le texte proche.',
 			maintenanceTitle: 'Maintenance',
 			maintenanceBody:
 				'Je consolide, fusionne, fais décroître et préserve les chronologies afin que le savoir durable reste accessible pendant que le bruit ancien s’efface.'
@@ -764,43 +781,46 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: 'routes de contexte',
 			memoryRoute: 'anda://memory',
 			badge: 'Où je travaille',
-			title: 'Apportez une mémoire longue là où votre contexte naît.',
-			body: 'Je peux vivre dans le terminal, rejoindre vos canaux de chat, écouter et parler en vocal, lire des fichiers, lancer des outils et faire avancer le travail planifié pendant que le même fil mémoire suit.',
+			title: 'Apportez la mémoire longue au terminal, aux outils et aux canaux.',
+			body: 'Je fonctionne comme agent terminal Rust open source, rejoins WeChat, Feishu/Lark, Telegram, Discord et IRC, et garde le même fil mémoire entre outils et subagents.',
 			surfaces: [
 				{
-					label: 'objectifs',
+					label: 'terminal',
 					detail:
-						'Les tâches longues restent attachées à une session jusqu’à ce que le résultat soit réel.'
-				},
-				{ label: 'voix', detail: 'Le contexte parlé peut rejoindre la même mémoire de travail.' },
-				{
-					label: 'shell',
-					detail:
-						'Les commandes et fichiers locaux donnent à la mémoire une matière concrète à raisonner.'
+						'Un runtime Rust local garde commandes, fichiers et travail agent près de votre machine.'
 				},
 				{
-					label: 'canaux',
-					detail: 'Le contexte né dans les équipes peut suivre le travail au lieu de disparaître.'
+					label: 'outils',
+					detail: 'Claude Code, Codex, shell, skills et fichiers peuvent rejoindre la même boucle.'
+				},
+				{
+					label: 'subagents',
+					detail:
+						'Des travailleurs ciblés recherchent, implémentent, auditent et poursuivent les tâches complexes.'
+				},
+				{
+					label: 'canaux IM',
+					detail: 'WeChat, Feishu/Lark, Telegram, Discord et IRC partagent le même fil mémoire.'
 				}
 			],
 			cards: [
 				{
-					title: 'Shell local-first',
+					title: 'Runtime terminal Rust',
 					detail:
-						'Un espace de travail ancré pour commandes, fichiers, expériences et automatisation multi-étapes.'
+						'Open source, local-first, pensé pour commandes, fichiers, expériences et automatisation.'
 				},
 				{
-					title: 'Chat multicanal',
-					detail: 'Les conversations autour du travail peuvent rejoindre le fil actif.'
+					title: 'WeChat, Feishu, Telegram',
+					detail: 'Les conversations IM autour du travail nourrissent le même contexte durable.'
 				},
 				{
-					title: 'Vos clés et modèles',
+					title: 'Claude Code et Codex',
 					detail:
-						'Connectez le fournisseur de confiance et gardez le runtime près de votre machine.'
+						'Utilisez des assistants externes comme outils pendant qu’Anda garde objectif et mémoire.'
 				},
 				{
-					title: 'Mémoire inspectable',
-					detail: 'Les composants open source rendent la forme de mon cerveau visible et auditable.'
+					title: 'Subagents puissants',
+					detail: 'Déléguez travail spécialisé et supervision sans disperser le contexte du projet.'
 				}
 			]
 		},
@@ -815,33 +835,33 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: 'commande',
 			sourceComment: 'Démarrer avec une clé d’environnement :',
 			goalComment: 'Ou enregistrer api_key dans config.yaml, puis lancer :',
-			localRuntime: 'runtime local',
-			durableThread: 'fil durable',
-			inspectableBrain: 'cerveau inspectable'
+			localRuntime: 'runtime Rust',
+			durableThread: 'subagents',
+			inspectableBrain: 'graphe mémoire'
 		}
 	},
 	ru: {
 		meta: {
-			title: 'Установите Anda Bot - агент памяти для долгого рассуждения',
+			title: 'Установите Anda Bot - Rust-агент с графовой памятью',
 			description:
-				'Установите Anda Bot, локального ИИ-агента с долгим рассуждением, непрерывным обучением и графовой памятью на базе Anda Hippocampus.',
-			ogTitle: 'Установите Anda Bot - агент памяти для долгого рассуждения',
+				'Установите Anda Bot: open-source Rust-агент с долгой графовой памятью, длительным рассуждением, внешними инструментами, subagents и IM-интеграциями.',
+			ogTitle: 'Установите Anda Bot - Rust-агент с графовой памятью',
 			ogDescription:
-				'Запускайте Anda локально и задавайте цели, которые продолжаются через сжатые разговоры, память, инструменты, файлы и каналы.'
+				'Запускайте Anda локально с памятью Hippocampus, долгими целями, Claude Code, Codex, subagents и workflow в терминале или IM.'
 		},
 		nav: { install: 'Установка', reasoning: 'Рассуждение', memory: 'Память', surfaces: 'Среды' },
 		language: { label: 'Язык' },
 		hero: {
-			badge: 'Локальный ИИ-агент для установки',
-			eyebrow: 'непрерывное обучение · долгий горизонт рассуждения',
-			title: 'Установите Anda. Дайте цель, которая переживет окно чата.',
-			body: 'Я локальный агент, который продолжает учиться во время работы. Мозг Hippocampus запоминает важное, а цикл целей может сжимать контекст, открывать следующий связанный разговор и рассуждать до завершения цели.',
+			badge: 'Open-source Rust-агент для терминала',
+			eyebrow: 'графовая память · subagents · внешние инструменты',
+			title: 'Установите Anda. Дайте работу, где нужны память, инструменты и время.',
+			body: 'Я локальный агент, который продолжает учиться во время работы. Hippocampus превращает опыт в графовую память, долгие цели проходят границы контекста, а subagents координируют Claude Code, Codex и другие инструменты.',
 			installFor: 'Установить для {os}',
-			seeReasoning: 'Смотреть долгое рассуждение',
-			proofOs: 'OS',
-			proofOsText: 'автоопределение',
-			proofReasoning: 'часы+',
-			proofReasoningText: 'рассуждение',
+			seeReasoning: 'Смотреть цикл',
+			proofOs: 'Rust',
+			proofOsText: 'open source',
+			proofReasoning: 'долго',
+			proofReasoningText: 'цели',
 			proofMemory: 'граф',
 			proofMemoryText: 'память'
 		},
@@ -882,53 +902,53 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: 'Долгое рассуждение',
-			title: 'Цель может двигаться дальше, когда обычный чат уже исчерпал бы путь.',
-			body: 'Anda может поддерживать одну сессию через множество связанных разговоров. Когда контекст растет, он сжимает текущее состояние, сохраняет цель и продолжает рассуждать почти без практического ограничения по времени или числу ходов.',
+			title: 'Цель может двигаться дальше, когда обычный чат уже остановился бы.',
+			body: 'Anda поддерживает одну сессию через связанные разговоры. Он сжимает состояние, сохраняет цель, поручает subagents точечную работу и вызывает нужные инструменты, чтобы дойти до проверяемого результата.',
 			panelTitle: 'Цикл сессии Anda',
 			panelStatus: 'goal://active',
 			phases: ['рассуждать', 'сжимать', 'продолжать'],
 			signals: [
 				{ label: 'цель', value: 'активна', level: 92 },
-				{ label: 'контекст', value: 'сжат', level: 84 },
-				{ label: 'память', value: 'формируется', level: 76 },
-				{ label: 'инструменты', value: 'готовы', level: 68 }
+				{ label: 'subagents', value: 'координация', level: 84 },
+				{ label: 'инструменты', value: 'Claude Code / Codex', level: 76 },
+				{ label: 'память', value: 'формируется', level: 68 }
 			],
 			events: [
 				{ time: '00:01', phase: 'цель', detail: 'цель принята, сессия открыта' },
-				{ time: '47:18', phase: 'сжатие', detail: 'контекст передан в следующий разговор' },
-				{ time: 'часы+', phase: 'продолжение', detail: 'рассуждение продолжается до результата' }
+				{ time: '47:18', phase: 'tools', detail: 'внешние инструменты и файлы проверены' },
+				{ time: 'долго', phase: 'аудит', detail: 'subagents продолжают до полной проверки' }
 			],
 			cards: [
 				{
-					label: 'Цикл цели',
-					title: 'Продолжает работать после одного ответа',
+					label: 'Долгие цели',
+					title: 'Продолжает, когда одного ответа мало',
 					detail:
-						'Дайте Anda цель: он может проверять прогресс, продолжать и ждать следующего полезного действия вместо остановки на фиксированном числе ходов.'
+						'Дайте Anda цель: он проверяет прогресс, сжимает контекст, продолжает в связанном разговоре и идет до реального результата.'
 				},
 				{
-					label: 'Передача контекста',
-					title: 'Сжимает и несет нить дальше',
+					label: 'Subagents',
+					title: 'Делегирует, не теряя главную нить',
 					detail:
-						'Когда разговор становится большим, Anda резюмирует живое состояние, открывает следующий связанный разговор и продолжает ту же сессию.'
+						'Специализированные subagents могут исследовать, реализовывать, проверять или надзирать, пока главная сессия хранит план, память и цель.'
 				},
 				{
-					label: 'Формирование памяти',
-					title: 'Учится на успешной работе',
+					label: 'Инструменты',
+					title: 'Использует то, что уже есть на машине',
 					detail:
-						'Полезные ходы попадают в Hippocampus, где связи, решения, предпочтения и линии времени становятся доступным для вызова контекстом.'
+						'Anda вызывает shell, файлы, skills и внешние coding tools вроде Claude Code и Codex, когда задача этого требует.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: 'Память делает работу лучше с каждым разом.',
-			body: 'Hippocampus превращает полезные разговоры в живой Cognitive Nexus: людей, проекты, решения, предпочтения, события и отношения между ними.',
+			title: 'Память - это граф, который учит полезное.',
+			body: 'Hippocampus превращает полезные разговоры в живой Cognitive Nexus: людей, проекты, решения, предпочтения, события, линии времени и отношения.',
 			formationTitle: 'Формирование',
 			formationBody:
-				'Я превращаю успешные ходы, файлы, каналы и результаты инструментов в воспоминания с источником, временем и смыслом.',
+				'Я выделяю успешные ходы, файлы, контекст каналов и результаты инструментов в воспоминания с источником, временем и смыслом.',
 			recallTitle: 'Вызов',
 			recallBody:
-				'Когда цели нужна история, я извлекаю контекст, который объясняет текущую задачу, а не просто ближайший текст.',
+				'Когда цели нужна история, я извлекаю связи и линии времени, объясняющие задачу, а не просто ближайший текст.',
 			maintenanceTitle: 'Поддержка',
 			maintenanceBody:
 				'Я консолидирую, объединяю, ослабляю и сохраняю линии времени, чтобы прочное знание оставалось доступным, а старый шум исчезал.'
@@ -937,40 +957,44 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: 'маршруты контекста',
 			memoryRoute: 'anda://memory',
 			badge: 'Где я работаю',
-			title: 'Принесите долгую память туда, где рождается ваш контекст.',
-			body: 'Я могу жить в терминале, подключаться к чат-каналам, слушать и говорить голосом, читать файлы, запускать инструменты и вести запланированную работу, пока та же нить памяти следует дальше.',
+			title: 'Принесите долгую память в терминал, инструменты и каналы команды.',
+			body: 'Я работаю как open-source Rust-агент в терминале, подключаюсь к WeChat, Feishu/Lark, Telegram, Discord и IRC и сохраняю одну нить памяти между инструментами и subagents.',
 			surfaces: [
 				{
-					label: 'цели',
-					detail: 'Долгие задачи остаются привязаны к сессии, пока результат не станет реальным.'
-				},
-				{ label: 'голос', detail: 'Речевой контекст может стать частью той же рабочей памяти.' },
-				{
-					label: 'shell',
-					detail: 'Локальные команды и файлы дают памяти конкретный материал для рассуждения.'
+					label: 'терминал',
+					detail: 'Локальный Rust runtime держит команды, файлы и работу агента рядом с машиной.'
 				},
 				{
-					label: 'каналы',
-					detail: 'Контекст, рожденный в командах, может следовать за работой, а не исчезать.'
+					label: 'инструменты',
+					detail: 'Claude Code, Codex, shell, skills и файлы входят в один рабочий цикл.'
+				},
+				{
+					label: 'subagents',
+					detail: 'Фокусные работники исследуют, реализуют, проверяют и продолжают сложные задачи.'
+				},
+				{
+					label: 'IM-каналы',
+					detail: 'WeChat, Feishu/Lark, Telegram, Discord и IRC разделяют одну нить памяти.'
 				}
 			],
 			cards: [
 				{
-					title: 'Локальный shell',
+					title: 'Rust runtime в терминале',
 					detail:
-						'Приземленное рабочее пространство для команд, файлов, экспериментов и многошаговой автоматизации.'
+						'Open source, local-first, для команд, файлов, экспериментов и многошаговой автоматизации.'
 				},
 				{
-					title: 'Многоканальный чат',
-					detail: 'Разговоры вокруг работы могут стать частью рабочей нити.'
+					title: 'WeChat, Feishu, Telegram',
+					detail: 'IM-разговоры о работе питают тот же долговечный контекст.'
 				},
 				{
-					title: 'Ваши ключи и модели',
-					detail: 'Подключите провайдера, которому доверяете, и держите runtime рядом с машиной.'
+					title: 'Claude Code и Codex',
+					detail:
+						'Используйте внешних coding assistants как инструменты, пока Anda хранит цель и память.'
 				},
 				{
-					title: 'Проверяемая память',
-					detail: 'Открытые компоненты делают форму моего мозга видимой и пригодной для аудита.'
+					title: 'Сильные subagents',
+					detail: 'Делегируйте специализированную работу и надзор, не распыляя контекст проекта.'
 				}
 			]
 		},
@@ -985,33 +1009,33 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: 'команда запуска',
 			sourceComment: 'Запустить сразу с ключом окружения:',
 			goalComment: 'Или сохраните api_key в config.yaml и запустите:',
-			localRuntime: 'локальный runtime',
-			durableThread: 'долгая нить',
-			inspectableBrain: 'проверяемый мозг'
+			localRuntime: 'Rust runtime',
+			durableThread: 'subagents',
+			inspectableBrain: 'граф памяти'
 		}
 	},
 	ar: {
 		meta: {
-			title: 'ثبّت Anda Bot - وكيل ذاكرة للاستدلال الطويل',
+			title: 'ثبّت Anda Bot - وكيل Rust بذاكرة رسومية',
 			description:
-				'ثبّت Anda Bot، وكيل ذكاء اصطناعي محلي للاستدلال طويل المدى والتعلّم المستمر وذاكرة رسومية يعمل بها Anda Hippocampus.',
-			ogTitle: 'ثبّت Anda Bot - وكيل ذاكرة للاستدلال الطويل',
+				'ثبّت Anda Bot، وكيل Rust مفتوح المصدر بذاكرة طويلة رسومية، واستدلال ممتد، وأدوات خارجية، و subagents، وتكاملات IM.',
+			ogTitle: 'ثبّت Anda Bot - وكيل Rust بذاكرة رسومية',
 			ogDescription:
-				'شغّل Anda محليًا وأعطه أهدافًا تستمر عبر المحادثات المضغوطة، واسترجاع الذاكرة، والأدوات، والملفات، والقنوات.'
+				'شغّل Anda محليًا مع ذاكرة Hippocampus، وأهداف طويلة، و Claude Code، و Codex، و subagents، وسير عمل في الطرفية أو IM.'
 		},
 		nav: { install: 'التثبيت', reasoning: 'الاستدلال', memory: 'الذاكرة', surfaces: 'بيئات العمل' },
 		language: { label: 'اللغة' },
 		hero: {
-			badge: 'وكيل ذكاء اصطناعي محلي قابل للتثبيت',
-			eyebrow: 'تعلّم مستمر · استدلال طويل المدى',
-			title: 'ثبّت Anda. امنحه هدفًا يمكنه تجاوز نافذة الدردشة.',
-			body: 'أنا الوكيل المحلي الذي يواصل التعلّم أثناء العمل. يتذكر دماغي Hippocampus ما يهم، ويمكن لحلقة الأهداف ضغط السياق وفتح المحادثة المرتبطة التالية ومواصلة الاستدلال حتى يكتمل الهدف.',
+			badge: 'وكيل طرفية Rust مفتوح المصدر',
+			eyebrow: 'ذاكرة رسومية · subagents · أدوات خارجية',
+			title: 'ثبّت Anda. أعطه عملًا يحتاج ذاكرة وأدوات ووقتًا.',
+			body: 'أنا الوكيل المحلي الذي يواصل التعلّم أثناء العمل. يحوّل Hippocampus الخبرة إلى ذاكرة رسومية، وتستمر الأهداف الطويلة عبر حدود السياق، وتنسّق subagents أدوات مثل Claude Code و Codex.',
 			installFor: 'ثبّت لـ {os}',
-			seeReasoning: 'اعرض الاستدلال الطويل',
-			proofOs: 'النظام',
-			proofOsText: 'اكتشاف تلقائي',
-			proofReasoning: 'ساعات+',
-			proofReasoningText: 'استدلال',
+			seeReasoning: 'اعرض الحلقة',
+			proofOs: 'Rust',
+			proofOsText: 'مفتوح المصدر',
+			proofReasoning: 'طويل',
+			proofReasoningText: 'أهداف',
 			proofMemory: 'رسم بياني',
 			proofMemoryText: 'ذاكرة'
 		},
@@ -1051,53 +1075,53 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		reasoning: {
 			badge: 'استدلال طويل المدى',
-			title: 'يمكن للهدف أن يواصل الحركة بعد أن تنفد المحادثة العادية من المسار.',
-			body: 'يمكن لـ Anda إبقاء الجلسة حيّة عبر كثير من المحادثات المرتبطة. عندما يكبر السياق، يضغط الحالة الحالية، ويحافظ على الهدف، ويواصل الاستدلال تقريبًا بلا حد عملي للمدة أو عدد الجولات.',
+			title: 'يمكن للهدف أن يواصل الحركة عندما تتوقف المحادثة العادية.',
+			body: 'يبقي Anda الجلسة حيّة عبر محادثات مرتبطة. يضغط الحالة، ويحافظ على الهدف، ويطلب من subagents عملًا مركّزًا، ويستدعي الأدوات اللازمة للوصول إلى نتيجة قابلة للتحقق.',
 			panelTitle: 'حلقة جلسة Anda',
 			panelStatus: 'goal://active',
 			phases: ['استدلال', 'ضغط', 'متابعة'],
 			signals: [
 				{ label: 'الهدف', value: 'نشط', level: 92 },
-				{ label: 'السياق', value: 'مضغوط', level: 84 },
-				{ label: 'الذاكرة', value: 'تتشكل', level: 76 },
-				{ label: 'الأدوات', value: 'جاهزة', level: 68 }
+				{ label: 'subagents', value: 'تنسّق', level: 84 },
+				{ label: 'الأدوات', value: 'Claude Code / Codex', level: 76 },
+				{ label: 'الذاكرة', value: 'تتشكل', level: 68 }
 			],
 			events: [
 				{ time: '00:01', phase: 'هدف', detail: 'قُبل الهدف وفتحت الجلسة' },
-				{ time: '47:18', phase: 'ضغط', detail: 'لُخّص السياق في المحادثة التالية' },
-				{ time: 'ساعات+', phase: 'متابعة', detail: 'يستأنف الاستدلال حتى يكتمل الهدف' }
+				{ time: '47:18', phase: 'أدوات', detail: 'فُحصت أدوات خارجية وملفات' },
+				{ time: 'طويل', phase: 'تدقيق', detail: 'تستمر subagents حتى تكتمل الأدلة' }
 			],
 			cards: [
 				{
-					label: 'حلقة الهدف',
-					title: 'يواصل العمل بعد إجابة واحدة',
+					label: 'أهداف طويلة',
+					title: 'يستمر عندما لا تكفي إجابة واحدة',
 					detail:
-						'امنح Anda هدفًا، فيمكنه فحص التقدم والمتابعة وانتظار الإجراء المفيد التالي بدل التوقف عند عدد ثابت من الجولات.'
+						'امنح Anda هدفًا، فيفحص التقدم، ويضغط السياق، ويتابع في محادثة مرتبطة، ويتحرك حتى تصبح النتيجة حقيقية.'
 				},
 				{
-					label: 'تسليم السياق',
-					title: 'يضغط الخيط ويحمله للأمام',
+					label: 'Subagents',
+					title: 'يفوّض العمل دون فقدان الخيط الرئيسي',
 					detail:
-						'عندما تكبر المحادثة، يلخص Anda الحالة الحية ويفتح المحادثة المرتبطة التالية ويواصل الجلسة نفسها.'
+						'يمكن لـ subagents متخصصة البحث والتنفيذ والمراجعة والإشراف بينما تحفظ الجلسة الرئيسية الخطة والذاكرة والهدف.'
 				},
 				{
-					label: 'تكوين الذاكرة',
-					title: 'يتعلم من العمل الناجح',
+					label: 'الأدوات',
+					title: 'يستخدم ما هو موجود على جهازك',
 					detail:
-						'تتدفق الجولات المفيدة إلى Hippocampus، حيث تصبح العلاقات والقرارات والتفضيلات والجداول الزمنية سياقًا قابلًا للاسترجاع.'
+						'يمكن لـ Anda استدعاء shell والملفات و skills وأدوات البرمجة الخارجية مثل Claude Code و Codex عند الحاجة.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Hippocampus',
-			title: 'الذاكرة تجعل العمل أفضل في كل مرة.',
-			body: 'يحوّل Hippocampus المحادثات المفيدة إلى Cognitive Nexus حي: أشخاص، ومشاريع، وقرارات، وتفضيلات، وأحداث، والعلاقات بينها.',
+			title: 'الذاكرة رسم بياني يتعلم الخلاصة المفيدة.',
+			body: 'يحوّل Hippocampus المحادثات المفيدة إلى Cognitive Nexus حي: أشخاص، ومشاريع، وقرارات، وتفضيلات، وأحداث، وجداول زمنية، وعلاقات.',
 			formationTitle: 'التكوين',
 			formationBody:
-				'أحوّل الجولات الناجحة والملفات والقنوات ونتائج الأدوات إلى ذكريات لها مصدر ووقت ومعنى.',
+				'أستخلص الجولات الناجحة والملفات وسياق القنوات ونتائج الأدوات إلى ذكريات لها مصدر ووقت ومعنى.',
 			recallTitle: 'الاسترجاع',
 			recallBody:
-				'عندما يحتاج الهدف إلى تاريخ، أسترجع السياق الذي يشرح المهمة الحالية بدل مطابقة أقرب نص فقط.',
+				'عندما يحتاج الهدف إلى تاريخ، أسترجع العلاقات والجداول الزمنية التي تشرح المهمة، لا أقرب نص فقط.',
 			maintenanceTitle: 'الصيانة',
 			maintenanceBody:
 				'أدمج وأوحّد وأخفّض الضجيج وأحافظ على الجداول الزمنية كي تبقى المعرفة الدائمة قابلة للوصول بينما يتلاشى الضجيج القديم.'
@@ -1106,33 +1130,42 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			contextRoutes: 'مسارات السياق',
 			memoryRoute: 'anda://memory',
 			badge: 'أين أعمل',
-			title: 'اجلب الذاكرة الطويلة إلى الأماكن التي يولد فيها سياقك.',
-			body: 'يمكنني العيش في الطرفية، والانضمام إلى قنوات الدردشة، والاستماع والتحدث بالصوت، وقراءة الملفات، وتشغيل الأدوات، وتحريك الأعمال المجدولة بينما يتبعها خيط الذاكرة نفسه.',
+			title: 'اجلب الذاكرة الطويلة إلى الطرفية والأدوات وقنوات الفريق.',
+			body: 'أعمل كوكيل Rust مفتوح المصدر في الطرفية، وأتصل بـ WeChat و Feishu/Lark و Telegram و Discord و IRC، وأحافظ على خيط ذاكرة واحد بين الأدوات و subagents.',
 			surfaces: [
-				{ label: 'الأهداف', detail: 'تبقى المهام الطويلة مرتبطة بجلسة حتى يصبح الناتج حقيقيًا.' },
-				{ label: 'الصوت', detail: 'يمكن للسياق المنطوق أن يصبح جزءًا من ذاكرة العمل نفسها.' },
 				{
 					label: 'الطرفية',
-					detail: 'تعطي الأوامر والملفات المحلية للذاكرة مادة ملموسة للاستدلال.'
+					detail: 'يبقي runtime Rust المحلي الأوامر والملفات وعمل الوكيل قرب جهازك.'
 				},
-				{ label: 'القنوات', detail: 'يمكن للسياق الذي يولد في الفرق أن يتبع العمل بدل أن يختفي.' }
+				{
+					label: 'الأدوات',
+					detail: 'يمكن لـ Claude Code و Codex و shell و skills والملفات دخول الحلقة نفسها.'
+				},
+				{
+					label: 'subagents',
+					detail: 'عمال مركّزون يبحثون وينفذون ويدققون ويتابعون المهام المعقدة.'
+				},
+				{
+					label: 'قنوات IM',
+					detail: 'تشارك WeChat و Feishu/Lark و Telegram و Discord و IRC خيط الذاكرة نفسه.'
+				}
 			],
 			cards: [
 				{
-					title: 'Shell محلي أولًا',
-					detail: 'مساحة عمل ملموسة للأوامر والملفات والتجارب والأتمتة متعددة الخطوات.'
+					title: 'Runtime Rust في الطرفية',
+					detail: 'مفتوح المصدر ومحلي أولًا للأوامر والملفات والتجارب والأتمتة متعددة الخطوات.'
 				},
 				{
-					title: 'دردشة متعددة القنوات',
-					detail: 'يمكن للمحادثات حول العمل أن تصبح جزءًا من الخيط العامل.'
+					title: 'WeChat و Feishu و Telegram',
+					detail: 'محادثات IM حول العمل تغذي السياق الدائم نفسه.'
 				},
 				{
-					title: 'مفاتيحك ونماذجك',
-					detail: 'صل المزوّد الذي تثق به وأبق بيئة التشغيل قريبة من جهازك.'
+					title: 'Claude Code و Codex',
+					detail: 'استخدم مساعدين خارجيين كأدوات بينما يحفظ Anda الهدف والذاكرة.'
 				},
 				{
-					title: 'ذاكرة قابلة للفحص',
-					detail: 'تحافظ المكونات مفتوحة المصدر على شكل دماغي مرئيًا وقابلًا للتدقيق.'
+					title: 'Subagents قوية',
+					detail: 'فوّض العمل المتخصص والإشراف دون تشتيت سياق المشروع.'
 				}
 			]
 		},
@@ -1146,9 +1179,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			terminalLabel: 'أمر التشغيل',
 			sourceComment: 'ابدأ الآن بمفتاح بيئة:',
 			goalComment: 'أو احفظ api_key في config.yaml ثم شغّل:',
-			localRuntime: 'تشغيل محلي',
-			durableThread: 'خيط دائم',
-			inspectableBrain: 'دماغ قابل للفحص'
+			localRuntime: 'runtime Rust',
+			durableThread: 'subagents',
+			inspectableBrain: 'ذاكرة رسومية'
 		}
 	}
 };

@@ -4,18 +4,27 @@
 
 > Born of panda. Awakened as Anda.
 
-我是 Anda Bot，一个运行在你本机的长期记忆智能体。市面上的智能体已经很多，但大多数都擅长“这一轮聊天”，却很难真正延续过去的经验。我想成为的是另一种伙伴：我会记住重要的事，会在需要时回想，会使用你电脑上的工具，也会随着我们一起工作而逐渐成长。
+我是 Anda Bot，一个 Rust 编写、开源、运行在你本机终端里的智能体。我会记住重要的事，会做长程推理任务，会使用你电脑上的工具，会调度 Subagents，也会随着我们一起工作而逐渐成长。
 
-我的核心差异来自 [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的长期记忆大脑。Hippocampus 会把对话转化为一个持续生长的认知中枢：里面有用户、项目、偏好、事件、关系、决策和随时间变化的事实。
+我的核心差异来自 [Anda Hippocampus 海马体](https://github.com/ldclabs/anda-hippocampus)。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的长期记忆大脑。Hippocampus 会把对话转化为一个持续生长的认知中枢：里面有用户、项目、偏好、事件、关系、决策和随时间变化的事实，并能从经验里自主学习真正有价值的精华。
 
 ## 为什么推荐我
 
-- 我有图谱记忆，不只是检索旧聊天记录。
-- 我可以在未来对话里主动召回与你当前任务相关的背景。
-- 我能调用本地 shell、文件、笔记、待办、技能和定时任务工具。
+- 我有知识图谱长期记忆，不只是检索旧聊天记录。
+- 我可以从过去工作中自主学习精华，并在未来对话里主动召回关键背景。
+- 我可以执行跨越多轮和多段上下文的长程推理任务。
+- 我擅长使用外部工具，包括 Claude Code、Codex、本地 shell、文件、笔记、待办、技能和定时任务。
+- 我拥有强大的 Subagents 系统，适合把复杂工作拆给专门角色协同推进、检查和监督。
+- 我用 Rust 编写，开源，并优先作为本地终端智能体运行。
 - 我可以待在终端里，也可以接入 IRC、Telegram、WeChat、Discord、Lark/飞书。
 - 配好转写和语音合成后，你可以直接和我语音对话。
-- 默认情况下，我的运行数据会保存在你的本机目录下。
+- 我的运行数据会保存在你的本机目录下。
+
+## 长程任务与 Subagents
+
+Anda Bot 面向的不是“一问一答”，而是需要连续性的复杂目标。一个目标可以保持活跃：我会检查进展、压缩上下文、开启下一个关联 conversation、调用工具，并持续推进到有证据表明目标已经完成。Subagents 可以承担实现、审查、研究、监督等专门角色，而主智能体继续保留整体计划和记忆线索。
+
+外部编码工具也是这个循环的一部分。当任务需要时，我可以配合 Claude Code、Codex 等工具工作，调用本地 shell 和文件工具，加载运行时 Skills，并把重要结果沉淀到 Hippocampus，供之后继续召回。
 
 ## 我的长期记忆大脑
 
@@ -144,7 +153,7 @@ anda agent run --prompt "总结一下你记得的当前项目背景"
 anda voice --record-secs 8
 ```
 
-语音模式需要 `transcription.enabled: true`。如果还想让我读出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。
+语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。
 
 ## 把我放到你的工作场景里
 
@@ -159,16 +168,28 @@ anda voice --record-secs 8
 - Lark / 飞书
 
 Telegram 最小示例：
-
 ```yaml
 channels:
   telegram:
     - id: personal
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
-      username: anda_bot
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
         - "*"
       mention_only: false
+```
+
+微信最小示例：
+```yaml
+channels:
+  wechat:
+    - id: personal
+      # 可选，留空时可通过运行 anda channel init wechat 命令初始化，扫码登录获得 token
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+      route_tag:
 ```
 
 更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。

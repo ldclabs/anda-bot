@@ -31,7 +31,6 @@
 		MessageSquare,
 		Network,
 		RotateCcw,
-		ShieldCheck,
 		Terminal,
 		Workflow,
 		Zap
@@ -282,24 +281,13 @@
 					{copy.hero.eyebrow}
 				</p>
 				<h1
-					class="anda-display max-w-3xl text-5xl leading-[0.94] text-white sm:text-6xl lg:text-7xl"
+					class="anda-display max-w-3xl text-5xl text-white sm:text-4xl lg:text-6xl"
 				>
 					{copy.hero.title}
 				</h1>
-				<p class="mt-6 max-w-2xl text-lg leading-8 text-white/78 sm:text-2xl sm:leading-9">
+				<p class="mt-6 max-w-2xl text-lg leading-8 text-white/78 sm:text-2xl">
 					{copy.hero.body}
 				</p>
-
-				<div class="mt-8 flex flex-col gap-3 sm:flex-row">
-					<Button href="#install" size="lg">
-						<Download class="size-4" />
-						{installFor(activeInstall.label)}
-					</Button>
-					<Button href="#reasoning" variant="secondary" size="lg">
-						<Infinity class="size-4" />
-						{copy.hero.seeReasoning}
-					</Button>
-				</div>
 
 				<div class="mt-8 grid max-w-2xl grid-cols-3 gap-2 text-sm text-white/68 sm:gap-3">
 					<div class="proof-tile">
@@ -653,14 +641,14 @@
 						</p>
 					</Card>
 					<Card class="work-card p-5" size="sm">
-						<KeyRound class="mb-4 size-6 text-(--anda-clay)" />
+						<Command class="mb-4 size-6 text-(--anda-clay)" />
 						<h3 class="font-semibold text-white">{copy.work.cards[2].title}</h3>
 						<p class="mt-2 leading-7 text-white/62">
 							{copy.work.cards[2].detail}
 						</p>
 					</Card>
 					<Card class="work-card p-5" size="sm">
-						<ShieldCheck class="mb-4 size-6 text-(--anda-lichen)" />
+						<Workflow class="mb-4 size-6 text-(--anda-lichen)" />
 						<h3 class="font-semibold text-white">{copy.work.cards[3].title}</h3>
 						<p class="mt-2 leading-7 text-white/62">
 							{copy.work.cards[3].detail}

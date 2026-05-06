@@ -4,18 +4,27 @@
 
 > Born of panda. Awakened as Anda.
 
-I am Anda Bot: a local AI agent with a long-term memory brain. Most agents are useful for one conversation and then start over. I am built to remember, recall, use tools on your computer, and keep improving as we work together.
+I am Anda Bot: an open-source Rust AI agent that runs in your terminal, remembers across sessions, and can keep working on long-horizon goals. I am built to remember, reason, use tools on your computer, coordinate subagents, and keep improving as we work together.
 
-My most important difference is [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus), the memory engine behind me. Hippocampus turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can build context, notice relationships, and carry useful history into future conversations.
+My most important difference is [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus), the memory engine behind me. Hippocampus turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can autonomously distill useful knowledge, build context, notice relationships, and carry useful history into future conversations.
 
 ## Why Use Me
 
-- I remember through a graph brain, not a pile of disconnected chat logs.
-- I can recall what matters from past work when you ask, or when it helps the current task.
-- I can use local tools for shell commands, files, notes, todos, skills, and scheduled jobs.
+- I remember through a knowledge graph brain, not a pile of disconnected chat logs.
+- I can autonomously learn the useful parts of past work and recall them when they matter.
+- I can execute long-horizon reasoning tasks that continue across compacted conversations.
+- I am good at using external tools, including Claude Code, Codex, shell commands, files, notes, todos, skills, and scheduled jobs.
+- I have a powerful subagents system for delegating, auditing, and coordinating complex work.
+- I am written in Rust, open source, and built to run locally in your terminal.
 - I can live in your terminal, and optionally in IRC, Telegram, WeChat, Discord, or Lark/Feishu.
 - I can support voice conversations when transcription and speech output are configured.
-- I keep my runtime state under your local home directory by default.
+- I keep my runtime state under your local home directory.
+
+## Long-Horizon Work And Subagents
+
+Anda Bot is designed for tasks that need continuity, not just a single answer. A goal can stay active while I inspect progress, compact context, open the next linked conversation, call tools, and continue until there is evidence that the objective is done. Subagents let specialized workers take on focused roles such as implementation, review, research, or supervision, while the main agent keeps the larger plan and memory thread intact.
+
+External coding tools are part of that loop. When a task calls for it, I can work alongside tools such as Claude Code and Codex, use local shell and file tools, load runtime skills, and preserve the important outcomes in Hippocampus for future recall.
 
 ## My Memory Brain
 
@@ -159,16 +168,28 @@ Supported channel families:
 - Lark / Feishu
 
 Minimal Telegram example:
-
 ```yaml
 channels:
   telegram:
     - id: personal
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
-      username: anda_bot
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
         - "*"
       mention_only: false
+```
+
+Minimal Wechat example:
+```yaml
+channels:
+  wechat:
+    - id: personal
+      # Optional. When empty, you can run `anda channel init wechat` to initialize, scan QR code, and obtain a token.
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+      route_tag:
 ```
 
 See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel, transcription, and TTS examples.
