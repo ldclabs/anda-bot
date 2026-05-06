@@ -2,7 +2,6 @@ use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
     Resource, StateFeatures, ToolOutput, Usage, select_resources,
 };
-use anda_db::schema::Fv;
 use anda_engine::{
     ANONYMOUS,
     context::{
@@ -16,7 +15,7 @@ use anda_engine::{
         todo::TodoTool,
     },
     hook::{AgentHook, DynAgentHook, ToolHook},
-    memory::{Conversation, ConversationRef, ConversationStatus, Conversations},
+    memory::{Conversation, ConversationRef, ConversationStatus},
     rfc3339_datetime, unix_ms,
 };
 use anda_hippocampus::types::{FormationInputRef, InputContext};
@@ -42,7 +41,9 @@ use crate::{
 };
 
 use super::{
-    CompletionHook, goal,
+    CompletionHook,
+    conversation::{ConversationsTool, RequestState, SourceState},
+    goal,
     prompt::{PromptCommand, prompt_with_resources, skill_subagent, text_resource_documents},
     side,
 };
@@ -60,22 +61,14 @@ pub struct AndaBot {
 
 struct AndaBotInner {
     brain: brain::Client,
-    conversations: Conversations,
+    conversations: Arc<ConversationsTool>,
     tool_dependencies: Vec<String>,
     tools: Vec<String>,
     sessions: ActiveSessions,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
-    source_conversation: RwLock<HashMap<String, SourceState>>,
-    tools_usage: RwLock<HashMap<String, Usage>>,
     home_dir: PathBuf,
     skills_manager: Arc<SkillManager>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct SourceState {
-    #[serde(rename = "c")]
-    pub conv_id: u64,
 }
 
 type ActiveSessions = RwLock<HashMap<Xid, Arc<Session>>>;
@@ -111,28 +104,14 @@ fn base_tools() -> Vec<String> {
     ]
 }
 
-fn source_conversation_key(
-    source: &str,
-    reply_target: Option<&str>,
-    thread: Option<&str>,
-) -> String {
-    match reply_target {
-        Some(reply_target) => format!(
-            "{source}:reply_target:{reply_target}:thread:{}",
-            thread.unwrap_or_default()
-        ),
-        None => source.to_string(),
-    }
-}
-
 impl AndaBot {
     pub const NAME: &'static str = "anda_bot";
 
     pub fn new(
         brain: brain::Client,
-        conversations: Conversations,
-        completion_hooks: Vec<Arc<dyn CompletionHook>>,
         home_dir: PathBuf,
+        conversations: Arc<ConversationsTool>,
+        completion_hooks: Vec<Arc<dyn CompletionHook>>,
         skills_manager: Arc<SkillManager>,
         tts_manager: Option<Arc<TtsManager>>,
         transcription_manager: Option<Arc<TranscriptionManager>>,
@@ -152,14 +131,12 @@ impl AndaBot {
         Self {
             inner: Arc::new(AndaBotInner {
                 brain,
+                home_dir,
                 conversations,
                 tool_dependencies,
                 tools,
                 sessions: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
-                source_conversation: RwLock::new(HashMap::new()),
-                tools_usage: RwLock::new(HashMap::new()),
-                home_dir,
                 skills_manager,
                 transcription_manager,
             }),
@@ -341,31 +318,6 @@ impl Agent<AgentCtx> for AndaBot {
         tags
     }
 
-    async fn init(&self, _ctx: AgentCtx) -> Result<(), BoxError> {
-        {
-            let source_conversation: HashMap<String, SourceState> = self
-                .inner
-                .conversations
-                .conversations
-                .get_extension_as("source_conversation")
-                .unwrap_or_default();
-
-            *self.inner.source_conversation.write() = source_conversation;
-        }
-        {
-            let tools_usage: HashMap<String, Usage> = self
-                .inner
-                .conversations
-                .conversations
-                .get_extension_as("tools_usage")
-                .unwrap_or_default();
-
-            *self.inner.tools_usage.write() = tools_usage;
-        }
-
-        Ok(())
-    }
-
     async fn run(
         &self,
         ctx: AgentCtx,
@@ -379,16 +331,14 @@ impl Agent<AgentCtx> for AndaBot {
 
         let now_ms = unix_ms();
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
-        let workspace = ctx
-            .meta()
-            .get_extra_as::<String>("workspace")
-            .unwrap_or_else(|| {
-                self.inner
-                    .home_dir
-                    .join("workspace")
-                    .to_string_lossy()
-                    .to_string()
-            });
+        let RequestState {
+            workspace,
+            source,
+            source_key,
+            source_state,
+            conversation: current_conv_id,
+            ..
+        } = self.inner.conversations.state_from_meta(ctx.meta());
         let available_tools: Vec<String> = ctx
             .definitions(None)
             .await
@@ -406,30 +356,9 @@ impl Agent<AgentCtx> for AndaBot {
             .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
             .await?;
 
-        let source = ctx
-            .meta()
-            .get_extra_as::<String>("source")
-            .unwrap_or_else(|| format!("cli:{workspace}"));
-        let reply_target = ctx.meta().get_extra_as::<String>("reply_target");
-        let thread = ctx.meta().get_extra_as::<String>("thread");
-        let source_key =
-            source_conversation_key(&source, reply_target.as_deref(), thread.as_deref());
-        let source_state = {
-            self.inner
-                .source_conversation
-                .read()
-                .get(&source_key)
-                .cloned()
-                .unwrap_or_default()
-        };
-        let current_conv_id = ctx
-            .meta()
-            .get_extra_as::<u64>("conversation")
-            .filter(|conv_id| *conv_id > 0)
-            .unwrap_or(source_state.conv_id);
-
         let (history_conversations, _) = self
             .inner
+            .conversations
             .conversations
             .list_conversations_by_user(caller, None, Some(2))
             .await?;
@@ -442,6 +371,7 @@ impl Agent<AgentCtx> for AndaBot {
                 history_conversations.get(pos).cloned()
             } else {
                 self.inner
+                    .conversations
                     .conversations
                     .get_conversation(current_conv_id)
                     .await
@@ -606,36 +536,20 @@ impl Agent<AgentCtx> for AndaBot {
         let conv_id = self
             .inner
             .conversations
+            .conversations
             .add_conversation(ConversationRef::from(&conversation))
             .await?;
         conversation._id = conv_id;
 
         if source_state.conv_id != conv_id {
             // Update the mapping of source to conv_id if it's different from the current one.
-            let fv = {
-                let mut map = self.inner.source_conversation.write();
-                map.insert(source_key, SourceState { conv_id });
-                Fv::serialized(&*map, None)
-            };
-
-            match fv {
-                Ok(v) => {
-                    if let Err(err) = self
-                        .inner
-                        .conversations
-                        .conversations
-                        .save_extension("source_conversation".to_string(), v)
-                        .await
-                    {
-                        log::error!("Failed to save source_conversation extension: {:?}", err);
-                    }
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to serialize source_conversation extension: {:?}",
-                        err
-                    );
-                }
+            if let Err(err) = self
+                .inner
+                .conversations
+                .update_source_state(source_key, SourceState { conv_id })
+                .await
+            {
+                log::error!("Failed to update_source_state: {:?}", err);
             }
         }
 
@@ -678,10 +592,10 @@ impl Agent<AgentCtx> for AndaBot {
 
         let mut tools = assistant.inner.tools.clone();
         tools.extend(additional_tools);
-        let additional_tools = {
-            let tools_usage = assistant.inner.tools_usage.read();
-            select_most_used_tools(&available_tools, &tools, &tools_usage, 5)
-        };
+        let additional_tools = assistant
+            .inner
+            .conversations
+            .tool_usage_with(|usage| select_most_used_tools(&available_tools, &tools, usage, 5));
         tools.extend(additional_tools);
         let req = CompletionRequest {
             instructions,
@@ -759,6 +673,7 @@ impl SessionJob {
                     .assistant
                     .inner
                     .conversations
+                    .conversations
                     .update_conversation(self.conversation._id, changes)
                     .await;
             }
@@ -780,35 +695,14 @@ impl SessionJob {
         let tools_usage_delta =
             compute_tools_usage_delta(&current_tools_usage, tools_usage_snapshot);
         *tools_usage_snapshot = current_tools_usage;
-        if tools_usage_delta.is_empty() {
-            return;
-        }
-
-        let tools_usage = {
-            let mut tools_usage = self.assistant.inner.tools_usage.write();
-            for (tool, usage) in tools_usage_delta.into_iter() {
-                let entry = tools_usage.entry(tool.clone()).or_default();
-                entry.accumulate(&usage);
-            }
-            Fv::serialized(&*tools_usage, None)
-        };
-
-        match tools_usage {
-            Ok(v) => {
-                if let Err(err) = self
-                    .assistant
-                    .inner
-                    .conversations
-                    .conversations
-                    .save_extension("tools_usage".to_string(), v)
-                    .await
-                {
-                    log::error!("Failed to save tools_usage extension: {:?}", err);
-                }
-            }
-            Err(err) => {
-                log::error!("Failed to serialize tools_usage extension: {:?}", err);
-            }
+        if let Err(err) = self
+            .assistant
+            .inner
+            .conversations
+            .accumulate_tool_usage(tools_usage_delta)
+            .await
+        {
+            log::error!("Failed to accumulate_tool_usage: {:?}", err);
         }
     }
 
@@ -1038,6 +932,7 @@ impl SessionJob {
                         let conv_id = self
                             .assistant
                             .inner
+                            .conversations
                             .conversations
                             .add_conversation(ConversationRef::from(&conversation))
                             .await?;
@@ -1526,22 +1421,6 @@ mod tests {
         let selected = select_most_used_tools(&available_tools, &base_tools, &tools_usage, 2);
 
         assert_eq!(selected, vec!["read_file".to_string(), "todo".to_string()]);
-    }
-
-    #[test]
-    fn source_conversation_key_is_route_aware_for_channels() {
-        assert_eq!(
-            source_conversation_key("cli:/tmp/app", None, None),
-            "cli:/tmp/app"
-        );
-        assert_eq!(
-            source_conversation_key("telegram", Some("chat-1"), None),
-            "telegram:reply_target:chat-1:thread:"
-        );
-        assert_ne!(
-            source_conversation_key("telegram", Some("chat-1"), Some("thread-a")),
-            source_conversation_key("telegram", Some("chat-1"), Some("thread-b"))
-        );
     }
 
     #[test]

@@ -206,7 +206,7 @@ impl App {
     }
 
     fn handle_paste(&mut self, text: String) {
-        if !self.chat_enabled() {
+        if !self.chat_enabled() || self.chat.sending {
             return;
         }
 
@@ -230,7 +230,7 @@ impl App {
 
         self.input_buf.clear();
         self.input_cursor = 0;
-        if let Some(err) = self.chat.send(text).await {
+        if let Some(err) = self.chat.start_send(text) {
             self.notice = err;
         } else {
             self.notice.clear();
@@ -313,6 +313,19 @@ impl App {
         if let Err(err) = self.refresh_status().await {
             self.notice = format!("Status refresh failed: {err}");
         }
+
+        if self.chat_enabled() {
+            match self.chat.restore_source_conversation().await {
+                Ok(true) => self.reset_message_view(),
+                Ok(false) => {}
+                Err(err) => {
+                    log::warn!("Failed to restore source conversation: {err}");
+                    if self.notice.is_empty() {
+                        self.notice = format!("Conversation restore failed: {err}");
+                    }
+                }
+            }
+        }
     }
 
     async fn refresh_status(&mut self) -> Result<(), BoxError> {
@@ -365,6 +378,10 @@ impl App {
             if key.code == KeyCode::Enter {
                 self.bootstrap().await;
             }
+            return Ok(());
+        }
+
+        if self.chat.sending {
             return Ok(());
         }
 
@@ -442,6 +459,12 @@ async fn run_app(
 
     loop {
         app.animation_tick = app.animation_tick.wrapping_add(1);
+
+        if app.chat_enabled()
+            && let Some(err) = app.chat.finish_pending_send().await
+        {
+            app.notice = err;
+        }
 
         // Recreate the terminal when:
         //  - the outer terminal was resized, or

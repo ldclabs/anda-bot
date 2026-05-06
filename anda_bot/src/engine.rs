@@ -16,11 +16,7 @@ use async_trait::async_trait;
 use axum::{Router, response::IntoResponse, routing};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 mod agent;
 mod conversation;
@@ -105,7 +101,10 @@ impl Engines {
             .with_http_client(brain_http_client);
 
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
-        let conversations_tool = ConversationsTool::new(conversations.clone());
+        let conversations_tool = Arc::new(ConversationsTool::new(
+            conversations.clone(),
+            cfg.workspace_dir.to_string_lossy().to_string(),
+        ));
         let tts_manager = {
             let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
             manager.is_enabled().then_some(manager)
@@ -163,9 +162,9 @@ impl Engines {
         );
         let bot = AndaBot::new(
             brain_client.clone(),
-            conversations,
-            completion_hooks,
             cfg.home_dir.clone(),
+            conversations_tool.clone(),
+            completion_hooks,
             skills_tool.clone(),
             tts_manager.clone(),
             transcription_manager.clone(),
@@ -177,18 +176,18 @@ impl Engines {
             .with_models(Arc::new(cfg.models))
             .register_tool(Arc::new(brain_client))?
             .register_tool(Arc::new(shell_tool))?
-            .register_tool(skills_tool.clone())?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
             .register_tool(Arc::new(fs::ReadFileTool::new(cfg.workspace_dir.clone())))?
             .register_tool(Arc::new(fs::SearchFileTool::new(cfg.workspace_dir.clone())))?
             .register_tool(Arc::new(fs::EditFileTool::new(cfg.workspace_dir.clone())))?
             .register_tool(Arc::new(fs::WriteFileTool::new(cfg.workspace_dir.clone())))?
-            .register_tool(Arc::new(conversations_tool))?
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
-            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?;
+            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
+            .register_tool(skills_tool.clone())?
+            .register_tool(conversations_tool.clone())?;
 
         if let Some(manager) = tts_manager {
             engine_builder = engine_builder.register_tool(manager)?;
