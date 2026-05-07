@@ -1,12 +1,11 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
-    Resource, StateFeatures, ToolOutput, Usage, select_resources,
+    Resource, StateFeatures, ToolOutput, Usage, prompt_with_resources, select_resources,
+    text_resource_documents,
 };
 use anda_engine::{
     ANONYMOUS,
-    context::{
-        AgentCtx, BaseCtx, CompletionRunner, SubAgentManager, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME,
-    },
+    context::{AgentCtx, BaseCtx, CompletionRunner, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
         note::{NoteTool, load_notes},
@@ -16,7 +15,9 @@ use anda_engine::{
     },
     hook::{AgentHook, DynAgentHook, ToolHook},
     memory::{Conversation, ConversationRef, ConversationStatus},
-    rfc3339_datetime, unix_ms,
+    rfc3339_datetime,
+    subagent::SubAgentManager,
+    unix_ms,
 };
 use anda_hippocampus::types::{FormationInputRef, InputContext};
 use async_trait::async_trait;
@@ -34,18 +35,17 @@ use std::{
     },
 };
 
-use crate::{
-    brain, cron,
-    transcription::{TranscriptionManager, audio_resource_file_name, is_audio_resource},
-    tts::TtsManager,
-};
-
 use super::{
     CompletionHook,
     conversation::{ConversationsTool, RequestState, SourceState},
     goal,
-    prompt::{PromptCommand, prompt_with_resources, skill_subagent, text_resource_documents},
+    prompt::{PromptCommand, skill_subagent},
     side,
+};
+use crate::{
+    brain, cron,
+    transcription::{TranscriptionManager, audio_resource_file_name, is_audio_resource},
+    tts::TtsManager,
 };
 
 const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
@@ -619,7 +619,7 @@ impl Agent<AgentCtx> for AndaBot {
 
         tokio::spawn(async move {
             let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
-            let mut job = SessionJob {
+            let mut runner = SessionRunner {
                 ctx,
                 req,
                 assistant: assistant.clone(),
@@ -636,7 +636,7 @@ impl Agent<AgentCtx> for AndaBot {
                     inputs.push(input);
                 }
 
-                match job.run(inputs, &mut tools_usage_snapshot).await {
+                match runner.run(inputs, &mut tools_usage_snapshot).await {
                     Ok(continue_active) => {
                         if !continue_active {
                             break;
@@ -655,7 +655,7 @@ impl Agent<AgentCtx> for AndaBot {
     }
 }
 
-struct SessionJob {
+struct SessionRunner {
     ctx: AgentCtx,
     req: CompletionRequest,
     assistant: AndaBot,
@@ -665,7 +665,7 @@ struct SessionJob {
     first_round: bool,
 }
 
-impl SessionJob {
+impl SessionRunner {
     async fn persist_conversation_state(&self) {
         match self.conversation.to_changes() {
             Ok(changes) => {
@@ -844,9 +844,8 @@ impl SessionJob {
                             self.runner.accumulate(&check.usage);
                             match check.action {
                                 goal::GoalAction::Complete(reason) => {
-                                    // 目标已经完成，但继续保持对话活跃，等待用户的下一步指令
-                                    active = true;
-                                    self.session.active_at.store(now_ms, Ordering::SeqCst);
+                                    let message = goal_completed_message(&reason, now_ms);
+                                    self.runner.append_chat_history(vec![message]);
                                     log::info!(
                                         turns = self.runner.turns(),
                                         last_usage:serde = self.runner.current_usage(),
@@ -857,7 +856,6 @@ impl SessionJob {
                                 goal::GoalAction::Continue(prompt) => {
                                     let now_ms = unix_ms();
                                     goal_continue_prompt = Some(prompt);
-                                    // runner.follow_up(prompt);
                                     active = true;
                                     self.session.active_at.store(now_ms, Ordering::SeqCst);
                                     *self.session.goal.write() = Some(goal);
@@ -1118,9 +1116,14 @@ impl CompletionHook for Session {
 
 #[async_trait]
 impl AgentHook for Session {
-    async fn on_background_start(&self, ctx: &AgentCtx, task_id: &str, _req: &CompletionRequest) {
+    async fn on_background_start(
+        &self,
+        ctx: &AgentCtx,
+        session_id: &str,
+        _req: &CompletionRequest,
+    ) {
         self.background_tasks.write().insert(
-            task_id.to_string(),
+            session_id.to_string(),
             BackgroundTaskInfo {
                 agent_name: ctx.base.agent.clone(),
                 tool_name: None,
@@ -1129,20 +1132,52 @@ impl AgentHook for Session {
         );
     }
 
-    async fn on_background_end(&self, _ctx: AgentCtx, task_id: String, output: AgentOutput) {
-        {
-            self.background_tasks.write().remove(&task_id);
-        }
-
+    async fn on_background_progress(
+        &self,
+        _ctx: &AgentCtx,
+        session_id: String,
+        output: AgentOutput,
+    ) {
         let prompt = if !output.content.is_empty() {
-            format!("Background task {task_id} completed:\n\n{}", output.content)
+            format!(
+                "Subagent session {session_id} intermediate output:\n\n{}",
+                output.content
+            )
         } else if let Some(failed_reason) = output.failed_reason {
             format!(
-                "Background task {task_id} failed with reason: {:?}",
+                "Subagent session {session_id} failed with reason: {:?}",
                 failed_reason
             )
         } else {
-            format!("Background task {task_id} completed")
+            format!("Subagent session {session_id} completed")
+        };
+        self.sender
+            .send(ConversationInput {
+                command: PromptCommand::Plain { prompt },
+                resources: vec![],
+                usage: output.usage,
+            })
+            .await
+            .ok();
+    }
+
+    async fn on_background_end(&self, _ctx: &AgentCtx, session_id: String, output: AgentOutput) {
+        {
+            self.background_tasks.write().remove(&session_id);
+        }
+
+        let prompt = if !output.content.is_empty() {
+            format!(
+                "Subagent session {session_id} final output:\n\n{}",
+                output.content
+            )
+        } else if let Some(failed_reason) = output.failed_reason {
+            format!(
+                "Subagent session {session_id} failed with reason: {:?}",
+                failed_reason
+            )
+        } else {
+            format!("Subagent session {session_id} completed")
         };
         self.sender
             .send(ConversationInput {
@@ -1170,7 +1205,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
 
     async fn on_background_end(
         &self,
-        _ctx: BaseCtx,
+        _ctx: &BaseCtx,
         task_id: String,
         output: ToolOutput<ExecOutput>,
     ) {
@@ -1206,6 +1241,23 @@ struct ConversationInput {
     command: PromptCommand,
     resources: Vec<Resource>,
     usage: Usage,
+}
+
+fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
+    let reason = reason.trim();
+    let text = if reason.is_empty() {
+        "Goal completed.\n\nSupervisor evaluation:\nNo reason provided.".to_string()
+    } else {
+        format!("Goal completed.\n\nSupervisor evaluation:\n{reason}")
+    };
+
+    Message {
+        role: "assistant".to_string(),
+        name: Some(goal::SUPERVISOR_AGENT_NAME.to_string()),
+        content: vec![text.into()],
+        timestamp: Some(timestamp),
+        ..Default::default()
+    }
 }
 
 fn needs_compaction(runner: &CompletionRunner) -> bool {
@@ -1437,5 +1489,19 @@ mod tests {
         assert!(COMPACTION_PROMPT.contains("prompt-to-artifact checklist"));
         assert!(COMPACTION_PROMPT.contains("next concrete action"));
         assert!(COMPACTION_PROMPT.contains("Do not invent progress"));
+    }
+
+    #[test]
+    fn goal_completed_message_records_supervisor_result() {
+        let message = goal_completed_message("All deliverables verified", 42);
+
+        assert_eq!(message.role, "assistant");
+        assert_eq!(message.name.as_deref(), Some(goal::SUPERVISOR_AGENT_NAME));
+        assert_eq!(message.timestamp, Some(42));
+
+        let text = message.text().expect("message should contain text");
+        assert!(text.contains("Goal completed."));
+        assert!(text.contains("Supervisor evaluation:"));
+        assert!(text.contains("All deliverables verified"));
     }
 }

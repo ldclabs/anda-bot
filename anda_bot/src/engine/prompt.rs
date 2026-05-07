@@ -1,7 +1,6 @@
-use anda_core::{Document, Documents, Resource, select_resources};
 use anda_engine::{
-    context::{SubAgent, SubAgentSet},
     extension::skill::{SkillManager, normalise_skill_agent_name},
+    subagent::{SubAgent, SubAgentSet},
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,36 +92,6 @@ impl From<String> for PromptCommand {
 
 pub fn skill_subagent(skill_manager: &SkillManager, skill: &str) -> Option<SubAgent> {
     skill_manager.get_lowercase(&normalise_skill_agent_name(skill))
-}
-
-pub fn prompt_with_resources(prompt: String, resources: &mut Vec<Resource>) -> String {
-    let user_resources = text_resource_documents(resources);
-    if user_resources.is_empty() {
-        prompt
-    } else {
-        format!(
-            "{prompt}\n\n{}",
-            Documents::new("attachments".to_string(), user_resources)
-        )
-    }
-}
-
-pub fn text_resource_documents(resources: &mut Vec<Resource>) -> Vec<Document> {
-    let res = select_resources(resources, &["text".to_string(), "md".to_string()]);
-    let mut user_resources: Vec<Document> = Vec::with_capacity(res.len());
-    for resource in res {
-        if let Some(content) = resource
-            .blob
-            .and_then(|blob| String::from_utf8(blob.0).ok())
-        {
-            user_resources.push(Document::from_text(
-                resource._id.to_string().as_str(),
-                &content,
-            ));
-        }
-    }
-
-    user_resources
 }
 
 fn required_prompt_command<F>(

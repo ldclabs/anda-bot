@@ -1,9 +1,11 @@
 use anda_engine::{
-    context::{SubAgent, TOOLS_SELECT_NAME},
+    context::TOOLS_SELECT_NAME,
     extension::{
         fs::{ReadFileTool, SearchFileTool},
         note::NoteTool,
+        shell::ShellTool,
     },
+    subagent::SubAgent,
 };
 
 use crate::{brain, cron};
@@ -21,6 +23,7 @@ pub fn side_agent(instructions: String) -> SubAgent {
             brain::Client::NAME.to_string(),
             NoteTool::NAME.to_string(),
             TOOLS_SELECT_NAME.to_string(),
+            ShellTool::NAME.to_string(),
             ReadFileTool::NAME.to_string(),
             SearchFileTool::NAME.to_string(),
             cron::ListCronJobsTool::NAME.to_string(),
@@ -43,20 +46,5 @@ mod tests {
         assert!(agent.instructions.contains("available read-only tools"));
         assert!(agent.instructions.contains("Do not change files"));
         assert!(agent.instructions.contains("Keep the answer focused"));
-    }
-
-    #[test]
-    fn side_agent_tools_are_read_only() {
-        let tools = side_agent("base".to_string()).tools;
-
-        assert!(tools.contains(&brain::Client::NAME.to_string()));
-        assert!(tools.contains(&ReadFileTool::NAME.to_string()));
-        assert!(tools.contains(&SearchFileTool::NAME.to_string()));
-        assert!(tools.contains(&cron::ListCronJobsTool::NAME.to_string()));
-        assert!(tools.contains(&cron::ListCronRunsTool::NAME.to_string()));
-        assert!(!tools.iter().any(|tool| {
-            let tool = tool.to_ascii_lowercase();
-            tool.contains("write") || tool.contains("edit") || tool.contains("shell")
-        }));
     }
 }

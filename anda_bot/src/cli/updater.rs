@@ -21,7 +21,7 @@ pub struct UpdateCommand {
     force: bool,
     /// Only update curated skills in the Anda home directory.
     #[arg(long)]
-    skills_only: bool,
+    skills: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +146,7 @@ pub async fn run(
 
     let base_url = format!("https://github.com/{REPO}/releases/download/{latest_tag}");
 
-    if cmd.skills_only {
+    if cmd.skills {
         install_release_skills(client, &base_url, home_dir).await?;
         return Ok(());
     }

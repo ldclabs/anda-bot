@@ -1,9 +1,13 @@
 use anda_core::{Agent, BoxError, Message, Usage};
-use anda_engine::context::{AgentCtx, CompletionRunner, SubAgent, json_candidates};
+use anda_engine::{
+    context::{AgentCtx, CompletionRunner, json_candidates},
+    subagent::SubAgent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const EVALUATION_HISTORY_LIMIT: usize = 21;
+pub const SUPERVISOR_AGENT_NAME: &str = "supervisor_agent";
 const SUPERVISOR_INSTRUCTIONS: &str = include_str!("../../assets/SupervisorInstructions.md");
 
 #[derive(Clone)]
@@ -37,7 +41,7 @@ pub enum GoalAction {
 
 pub fn supervisor_agent() -> SubAgent {
     SubAgent {
-        name: "supervisor_agent".to_string(),
+        name: SUPERVISOR_AGENT_NAME.to_string(),
         description: "Audits long-running objective progress and issues a precise continuation step when evidence is incomplete."
             .to_string(),
         instructions: SUPERVISOR_INSTRUCTIONS.to_string(),

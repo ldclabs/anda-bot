@@ -156,7 +156,7 @@ impl Tool<BaseCtx> for Client {
     }
 
     fn description(&self) -> String {
-        "Recall information from the assistant's long-term memory (the Cognitive Nexus owned by $self). Send a natural language query describing what you want to remember or look up — the memory system will search and return relevant knowledge, including facts, preferences, relationships, past events, self-reflective insights, and other stored information. Use this whenever you need context from previous interactions or stored knowledge to answer the current conversation.".to_string()
+        "Recall information from the assistant's long-term memory (the Cognitive Nexus owned by $self). Use only for information that is not already present in the active conversation. Do not call for facts just mentioned, just submitted to formation, or otherwise available in current context; formation is asynchronous and fresh memories may take a minute or more to become searchable.".to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -168,11 +168,11 @@ impl Tool<BaseCtx> for Client {
               "properties": {
                 "query": {
                   "type": "string",
-                  "description": "A natural language question or description of what information to retrieve from memory. Be specific and include relevant context. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?', 'What has the assistant learned about how to respond when the user asks for brevity?'"
+                  "description": "A natural language question about older or out-of-context memory. Be specific and include the subject, timeframe, and topic when known. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?'"
                 },
                 "context": {
                   "type": "object",
-                  "description": "Optional current conversational context used only to disambiguate the query within $self's memory. It does not change the memory owner. Provide any relevant identifiers or scope hints that could improve retrieval accuracy.",
+                  "description": "Optional current conversational context used only to disambiguate the query within $self's memory. Pass an object, not a JSON string. It does not change the memory owner.",
                   "properties": {
                     "counterparty": {
                       "type": "string",
