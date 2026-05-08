@@ -241,7 +241,6 @@ body {
   background:
     linear-gradient(rgba(7, 17, 15, 0.04) 1px, transparent 1px),
     linear-gradient(180deg, #f4eee3 0%, #ead8bd 100%);
-  background-size: 38px 38px;
 }
 
 [data-theme='dark'] .footer {
@@ -250,7 +249,6 @@ body {
   background:
     linear-gradient(rgba(244, 238, 227, 0.04) 1px, transparent 1px),
     var(--anda-ink);
-  background-size: 38px 38px;
 }
 
 .footer__title {

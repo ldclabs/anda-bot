@@ -157,6 +157,10 @@ const config: Config = {
               href: 'https://github.com/ldclabs/anda-hippocampus',
             },
             {
+              label: 'Anda Framework',
+              href: 'https://github.com/ldclabs/anda',
+            },
+            {
               label: 'Product Site',
               href: 'https://anda.bot',
             },

@@ -247,7 +247,7 @@
 			</nav>
 
 			<div class="header-actions">
-				<label class="language-switcher">
+				<label class="language-switcher mr-2">
 					<Languages class="size-4" />
 					<span class="sr-only">{copy.language.label}</span>
 					<select
@@ -280,7 +280,7 @@
 					variant="ghost"
 					size="sm"
 				>
-					<Github class="size-5" />
+					<Github class="size-6" />
 					GitHub
 				</Button>
 			</div>
