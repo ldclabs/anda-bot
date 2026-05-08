@@ -1,4 +1,4 @@
-use anda_core::{AgentOutput, BoxError};
+use anda_core::{AgentOutput, BoxError, Tool};
 use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
@@ -29,8 +29,8 @@ use crate::util::{
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
-use agent::*;
 
+pub use agent::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary};
 pub use conversation::*;
 
 pub struct Engines {
@@ -160,7 +160,7 @@ impl Engines {
                 "tools_select".to_string(),
             ]),
         );
-        let bot = AndaBot::new(
+        let bot = Arc::new(AndaBot::new(
             brain_client.clone(),
             cfg.home_dir.clone(),
             conversations_tool.clone(),
@@ -168,7 +168,7 @@ impl Engines {
             skills_tool.clone(),
             tts_manager.clone(),
             transcription_manager.clone(),
-        );
+        ));
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
@@ -187,7 +187,8 @@ impl Engines {
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
             .register_tool(skills_tool.clone())?
-            .register_tool(conversations_tool.clone())?;
+            .register_tool(conversations_tool.clone())?
+            .register_tool(bot.clone())?;
 
         if let Some(manager) = tts_manager {
             engine_builder = engine_builder.register_tool(manager)?;
@@ -197,8 +198,11 @@ impl Engines {
         }
 
         let engine = engine_builder
-            .register_agent(Arc::new(bot), None)?
-            .export_tools(vec![ConversationsTool::NAME.to_string()]);
+            .register_agent(bot.clone(), None)?
+            .export_tools(vec![
+                ConversationsTool::NAME.to_string(),
+                Tool::name(bot.as_ref()),
+            ]);
 
         // Initialize and start the server
         let engine = engine.build(AndaBot::NAME.to_string()).await?;

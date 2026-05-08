@@ -91,7 +91,7 @@ class ${FORMULA_CLASS} < Formula
     <<~EOS
       Homebrew does not write runtime files into ~/.anda during install.
       To install or refresh curated skills, run:
-        anda update --skills-only
+        anda update --skills
     EOS
   end
 

@@ -64,6 +64,8 @@ pub enum Commands {
     /// Channel-related operations that run directly from this CLI.
     #[command(subcommand)]
     Channel(cli::channel::ChannelCommand),
+    /// Inspect currently active agent sessions in the daemon.
+    Session(cli::session::SessionCommand),
     /// Start a continuous voice conversation with the agent.
     Voice(cli::voice::VoiceCommand),
 }
@@ -242,6 +244,16 @@ async fn main() -> Result<(), BoxError> {
                 daemon.base_url()
             );
             cli::channel::run(&daemon, cmd).await?;
+        }
+        Some(Commands::Session(cmd)) => {
+            log::info!(
+                "Starting CLI with command 'sessions' at {}",
+                daemon.base_url()
+            );
+
+            let client = build_control_client(&daemon).await?;
+            client.ensure_daemon_running(&daemon).await?;
+            cli::session::run(&client, cmd).await?;
         }
         Some(Commands::Voice(cmd)) => {
             log::info!("Starting CLI with command 'voice' at {}", daemon.base_url());

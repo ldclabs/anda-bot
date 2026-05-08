@@ -19,6 +19,13 @@ pub struct GoalState {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GoalStateSnapshot {
+    pub objective: String,
+    pub prev_objective: Option<String>,
+    pub prev_evaluation: Option<GoalEvaluation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GoalEvaluation {
     #[serde(default)]
     pub complete: bool,
@@ -81,6 +88,14 @@ impl GoalState {
     pub fn update_objective(&mut self, new_objective: String) {
         self.prev_objective = Some(self.objective.clone());
         self.objective = new_objective;
+    }
+
+    pub fn snapshot(&self) -> GoalStateSnapshot {
+        GoalStateSnapshot {
+            objective: self.objective.clone(),
+            prev_objective: self.prev_objective.clone(),
+            prev_evaluation: self.prev_evaluation.clone(),
+        }
     }
 
     pub async fn check_progress(
@@ -203,6 +218,34 @@ mod tests {
         assert!(prompt.contains("Recent conversation history, pruned for evaluation"));
         assert!(prompt.contains("Evaluate completion with a strict audit"));
         assert!(prompt.contains("Return only JSON matching the schema"));
+    }
+
+    #[test]
+    fn goal_state_snapshot_exposes_public_progress_fields() {
+        let state = GoalState {
+            supervisor: supervisor_agent(),
+            objective: "ship the sessions API".to_string(),
+            prev_objective: Some("inspect session state".to_string()),
+            prev_evaluation: Some(GoalEvaluation {
+                complete: false,
+                reason: "Need CLI verification".to_string(),
+                follow_up: "Run cargo check".to_string(),
+            }),
+        };
+
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.objective, "ship the sessions API");
+        assert_eq!(
+            snapshot.prev_objective.as_deref(),
+            Some("inspect session state")
+        );
+        let evaluation = snapshot
+            .prev_evaluation
+            .expect("snapshot should include previous evaluation");
+        assert!(!evaluation.complete);
+        assert_eq!(evaluation.reason, "Need CLI verification");
+        assert_eq!(evaluation.follow_up, "Run cargo check");
     }
 
     #[test]

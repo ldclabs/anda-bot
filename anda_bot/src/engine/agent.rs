@@ -1,7 +1,7 @@
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents, Message,
-    Resource, StateFeatures, ToolOutput, Usage, prompt_with_resources, select_resources,
-    text_resource_documents,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
+    FunctionDefinition, Message, Resource, StateFeatures, Tool, ToolOutput, Usage,
+    prompt_with_resources, select_resources, text_resource_documents,
 };
 use anda_engine::{
     ANONYMOUS,
@@ -20,6 +20,7 @@ use anda_engine::{
     unix_ms,
 };
 use anda_hippocampus::types::{FormationInputRef, InputContext};
+use anda_kip::Response;
 use async_trait::async_trait;
 use futures::future::join_all;
 use ic_auth_types::Xid;
@@ -38,7 +39,7 @@ use std::{
 use super::{
     CompletionHook,
     conversation::{ConversationsTool, RequestState, SourceState},
-    goal,
+    goal::{self, GoalStateSnapshot},
     prompt::{PromptCommand, skill_subagent},
     side,
 };
@@ -72,6 +73,56 @@ struct AndaBotInner {
 }
 
 type ActiveSessions = RwLock<HashMap<Xid, Arc<Session>>>;
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum AndaBotToolArgs {
+    /// List currently active in-memory sessions.
+    ListSessions {},
+    /// Get one currently active in-memory session by session id.
+    GetSession { session_id: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub caller: String,
+    pub workspace: String,
+    pub source: String,
+    pub conversation_id: u64,
+    pub active_at: u64,
+    pub idle_ms: u64,
+    pub has_goal: bool,
+    pub background_task_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionFormationContext {
+    pub counterparty: Option<String>,
+    pub agent: Option<String>,
+    pub source: Option<String>,
+    pub topic: Option<String>,
+}
+
+impl From<&InputContext> for SessionFormationContext {
+    fn from(context: &InputContext) -> Self {
+        Self {
+            counterparty: context.counterparty.clone(),
+            agent: context.agent.clone(),
+            source: context.source.clone(),
+            topic: context.topic.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionState {
+    pub summary: SessionSummary,
+    pub formation_context: Option<SessionFormationContext>,
+    pub goal: Option<GoalStateSnapshot>,
+    pub background_tasks: HashMap<String, BackgroundTaskInfo>,
+    pub submit_formation_at: u64,
+}
 
 fn base_tool_dependencies() -> Vec<String> {
     vec![
@@ -155,6 +206,35 @@ impl AndaBot {
 
     fn remove_session(&self, key: &Xid) {
         self.inner.sessions.write().remove(key);
+    }
+
+    fn active_sessions(&self) -> Vec<Arc<Session>> {
+        let mut sessions = self.inner.sessions.write();
+        sessions.retain(|_, session| !session.sender.is_closed());
+        let mut active = sessions.values().cloned().collect::<Vec<_>>();
+        drop(sessions);
+
+        active.sort_by(|a, b| {
+            b.active_at
+                .load(Ordering::SeqCst)
+                .cmp(&a.active_at.load(Ordering::SeqCst))
+                .then_with(|| a.id.to_string().cmp(&b.id.to_string()))
+        });
+        active
+    }
+
+    fn session_summaries(&self, now_ms: u64) -> Vec<SessionSummary> {
+        self.active_sessions()
+            .into_iter()
+            .map(|session| session.summary(now_ms))
+            .collect()
+    }
+
+    fn session_state_by_id(&self, session_id: &str, now_ms: u64) -> Option<SessionState> {
+        self.active_sessions()
+            .into_iter()
+            .find(|session| session.id.to_string() == session_id)
+            .map(|session| session.state(now_ms))
     }
 
     async fn build_system_instructions(
@@ -290,6 +370,67 @@ impl AndaBot {
                 .map(|hook| hook.on_completion(ctx, output)),
         )
         .await;
+    }
+}
+
+impl Tool<BaseCtx> for AndaBot {
+    type Args = AndaBotToolArgs;
+    type Output = Response;
+
+    fn name(&self) -> String {
+        format!("{}_api", Self::NAME)
+    }
+
+    fn description(&self) -> String {
+        "Client API for inspecting currently active AndaBot sessions, including goals and background tasks."
+            .to_string()
+    }
+
+    fn definition(&self) -> FunctionDefinition {
+        FunctionDefinition {
+            name: Tool::name(self),
+            description: Tool::description(self),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["ListSessions", "GetSession"],
+                        "description": "The session operation to perform. Use ListSessions to list active sessions or GetSession to inspect one session."
+                    },
+                    "session_id": {
+                        "type": ["string", "null"],
+                        "description": "The active session id to inspect. Required for GetSession."
+                    }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+            }),
+            strict: Some(true),
+        }
+    }
+
+    async fn call(
+        &self,
+        _ctx: BaseCtx,
+        args: Self::Args,
+        _resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let now_ms = unix_ms();
+        let result = match args {
+            AndaBotToolArgs::ListSessions {} => json!(self.session_summaries(now_ms)),
+            AndaBotToolArgs::GetSession { session_id } => {
+                let Some(state) = self.session_state_by_id(&session_id, now_ms) else {
+                    return Err(format!("session not found: {session_id}").into());
+                };
+                json!(state)
+            }
+        };
+
+        Ok(ToolOutput::new(Response::Ok {
+            result,
+            next_cursor: None,
+        }))
     }
 }
 
@@ -561,6 +702,10 @@ impl Agent<AgentCtx> for AndaBot {
         let (sender, mut rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
         let session = Arc::new(Session {
             id: sess_id,
+            caller: caller.to_string(),
+            workspace: workspace.clone(),
+            source: source.clone(),
+            conversation_id: AtomicU64::new(conv_id),
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             goal: RwLock::new(initial_goal.map(goal::GoalState::new)),
@@ -966,6 +1111,10 @@ impl SessionRunner {
                             self.first_round = true;
                             self.session.submit_formation_at.store(0, Ordering::SeqCst);
                             self.conversation = conv;
+                            self.session
+                                .conversation_id
+                                .store(self.conversation._id, Ordering::SeqCst);
+                            // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
                             self.runner = self
                                 .ctx
                                 .clone()
@@ -1092,6 +1241,10 @@ impl SessionRunner {
 
 struct Session {
     id: Xid,
+    caller: String,
+    workspace: String,
+    source: String,
+    conversation_id: AtomicU64,
     sender: tokio::sync::mpsc::Sender<ConversationInput>,
     // task_id -> BackgroundTaskInfo
     background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
@@ -1100,6 +1253,36 @@ struct Session {
     submit_formation_at: AtomicU64,
     active_at: AtomicU64,
     formation_context: Option<InputContext>,
+}
+
+impl Session {
+    fn summary(&self, now_ms: u64) -> SessionSummary {
+        let active_at = self.active_at.load(Ordering::SeqCst);
+        SessionSummary {
+            id: self.id.to_string(),
+            caller: self.caller.clone(),
+            workspace: self.workspace.clone(),
+            source: self.source.clone(),
+            conversation_id: self.conversation_id.load(Ordering::SeqCst),
+            active_at,
+            idle_ms: now_ms.saturating_sub(active_at),
+            has_goal: self.goal.read().is_some(),
+            background_task_count: self.background_tasks.read().len(),
+        }
+    }
+
+    fn state(&self, now_ms: u64) -> SessionState {
+        SessionState {
+            summary: self.summary(now_ms),
+            formation_context: self
+                .formation_context
+                .as_ref()
+                .map(SessionFormationContext::from),
+            goal: self.goal.read().as_ref().map(|goal| goal.snapshot()),
+            background_tasks: self.background_tasks.read().clone(),
+            submit_formation_at: self.submit_formation_at.load(Ordering::SeqCst),
+        }
+    }
 }
 
 #[async_trait]
@@ -1353,6 +1536,39 @@ mod tests {
     use super::*;
     use anda_core::Usage;
     use std::collections::HashMap;
+
+    #[test]
+    fn anda_bot_tool_args_parse_tagged_variants() {
+        let args: AndaBotToolArgs = serde_json::from_value(serde_json::json!({
+            "type": "ListSessions",
+        }))
+        .expect("list sessions variant should parse");
+
+        assert_eq!(args, AndaBotToolArgs::ListSessions {});
+
+        let args: AndaBotToolArgs = serde_json::from_value(serde_json::json!({
+            "type": "GetSession",
+            "session_id": "session-1",
+        }))
+        .expect("get session variant should parse");
+
+        assert_eq!(
+            args,
+            AndaBotToolArgs::GetSession {
+                session_id: "session-1".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn anda_bot_tool_args_reject_missing_session_id() {
+        let err = serde_json::from_value::<AndaBotToolArgs>(serde_json::json!({
+            "type": "GetSession",
+        }))
+        .expect_err("get session requires session_id");
+
+        assert!(err.to_string().contains("session_id"));
+    }
 
     #[test]
     fn usage_delta_uses_saturating_subtraction() {
