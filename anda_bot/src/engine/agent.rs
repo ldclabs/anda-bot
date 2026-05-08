@@ -152,6 +152,8 @@ fn base_tools() -> Vec<String> {
         TOOLS_SELECT_NAME.to_string(),
         ShellTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
+        SubAgentManager::NAME.to_string(),
+        SkillManager::NAME.to_string(),
     ]
 }
 
@@ -250,7 +252,7 @@ impl AndaBot {
         let notes = load_notes(ctx).await.unwrap_or_default();
 
         Ok(format!(
-            "{}\n\n---\n\n# Your Context\n\n## Identity & Knowledge Domains:\n\n{}\n\n## Notes:\n\n{}\n\n## Tools:\n\n{}\n\n## Home:\n\n{home_dir}\n\n---\n\n# User Context\n\n## User Profile:\n\n{}\n\n## Workspace:\n{workspace}\n\n---\n\n# Current Datetime: {}",
+            "{}\n\n---\n\n# Your Context\n\n## Identity & Knowledge Domains:\n\n{}\n\n## Notes:\n\n{}\n\n## Tools:\n\n{}\n\n## Home:\n\n{home_dir}\n\n---\n\n# User Context\n\n## User Profile:\n\n{}\n\n## Current Workspace (AUTHORITATIVE):\n{workspace}\n\n> **IMPORTANT**: The path above is the user's **current active workspace** for this session. Always use this path for all file system operations and shell commands. Never use workspace paths mentioned in `user_history_conversations` — those belong to past sessions and must not override this current workspace.\n\n---\n\n# Current Datetime: {}",
             SELF_INSTRUCTIONS,
             primer,
             serde_json::to_string(&notes.notes)?,
@@ -497,7 +499,7 @@ impl Agent<AgentCtx> for AndaBot {
             .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
             .await?;
 
-        let (history_conversations, _) = self
+        let (mut history_conversations, _) = self
             .inner
             .conversations
             .conversations
@@ -522,18 +524,18 @@ impl Agent<AgentCtx> for AndaBot {
         } else {
             None
         };
-        let current_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
 
-        let ancestors = match &current_conversation {
+        let (current_conversation_id, ancestors) = match &current_conversation {
             Some(conv) => {
+                history_conversations.push(conv.clone());
                 let mut ids = conv.ancestors.clone().unwrap_or_default();
                 ids.push(conv._id);
                 if ids.len() > 10 {
                     ids.drain(0..ids.len() - 10);
                 }
-                Some(ids)
+                (Some(conv._id), Some(ids))
             }
-            None => None,
+            None => (None, None),
         };
 
         let audio_resources: Vec<Resource> =
