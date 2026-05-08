@@ -1,0 +1,78 @@
+---
+sidebar_position: 2
+title: Каналы и голос
+description: Настройка IM-каналов, голосового ввода, транскрипции и TTS.
+---
+
+# Каналы и голос
+
+Anda может оставаться в терминале или подключаться к командным каналам. Каналы возвращают контекст в тот же runtime и память.
+
+## Поддерживаемые каналы
+
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / Feishu
+
+Настройка находится в `channels` внутри `~/.anda/config.yaml`.
+
+## Telegram
+
+```yaml
+channels:
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      allowed_users:
+        - "*"
+      mention_only: false
+```
+
+## WeChat
+
+```yaml
+channels:
+  wechat:
+    - id: personal
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+```
+
+Если `bot_token` пустой, используйте `anda channel init wechat` и QR-вход.
+
+## Lark / Feishu
+
+```yaml
+channels:
+  lark:
+    - id: work
+      app_id: "cli_xxx"
+      app_secret: "YOUR_APP_SECRET"
+      platform: feishu
+      receive_mode: websocket
+      mention_only: true
+```
+
+## Безопасность
+
+- `allowed_users` определяет, кто может активировать Anda.
+- Используйте `"*"` только если открытый доступ допустим.
+- Lark/Feishu требует `app_id` и `app_secret`.
+- Роуты каналов сохраняются, чтобы отвечать в правильный поток или комнату.
+
+## Голос
+
+```bash
+anda voice --record-secs 8
+```
+
+Голосовой ввод требует `transcription.enabled: true`; озвучивание требует `tts.enabled: true`. Для голоса на входе и текста на выходе:
+
+```bash
+anda voice --record-secs 8 --no-playback
+```

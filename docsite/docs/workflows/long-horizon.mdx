@@ -1,0 +1,64 @@
+---
+sidebar_position: 1
+title: Long-Horizon Work and Subagents
+description: Use /goal, subagents, skills, and tools to keep complex goals moving until verified completion.
+---
+
+# Long-Horizon Work and Subagents
+
+Anda Bot is designed for complex goals that need continuity, not only one answer. Long-horizon work preserves the objective, checks progress, compacts context, and continues when needed.
+
+## Use /goal
+
+`/goal` or `/loop` marks a request as a long-horizon goal:
+
+```text
+/goal Finish this release prep: run tests, check the changelog, verify install script docs, and summarize risk.
+```
+
+When the main agent is idle, the goal checker evaluates whether the current result is complete. If more work is needed, it can generate a follow-up for the main agent. When context grows too long, Anda compacts the current state and opens a linked conversation to continue the same session.
+
+## Use /side
+
+`/side` or `/btw` puts a request into an independent side task. It is useful for:
+
+- Researching a risk.
+- Asking another perspective to review the current conclusion.
+- Gathering background without interrupting the main conversation.
+
+```text
+/side Check whether this dependency upgrade affects macOS arm64 users.
+```
+
+## Use /skill
+
+Runtime skills live in `~/.anda/skills`. When you want a specific workflow to handle a request:
+
+```text
+/skill git-assistant Draft a Conventional Commit message from the current diff.
+```
+
+## What Subagents Do
+
+Subagents can take specialized roles such as research, implementation, review, and supervision. The main session keeps the objective and final judgment; subagents handle focused work.
+
+This structure is useful for:
+
+- Research that requires reading many files or references.
+- Code tasks where implementation and review should be separated.
+- Goals that need repeated checks of whether the work is actually done.
+- Work that needs external tools without losing the main thread.
+
+## Tools and Local Workspace
+
+Anda's base tools include memory, note, shell, file read/write, todo, skills, cron, and subagents. File and shell tools work in `~/.anda/workspace` by default.
+
+When a task involves the current repository or external tools, state the objective, acceptance criteria, and boundaries clearly.
+
+```text
+/goal Fix the docs build in the current repository. Do not edit Rust code. Done means pnpm --dir docsite build passes.
+```
+
+## When Not to Use /goal
+
+Simple Q&A, one-off explanations, and short command lookups do not need `/goal`. Send a normal message. Save `/goal` for work that genuinely needs continuation, verification, and follow-up.

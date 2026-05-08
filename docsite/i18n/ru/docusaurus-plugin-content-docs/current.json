@@ -1,0 +1,22 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.Quick Start": {
+    "message": "Быстрый старт",
+    "description": "The label for category 'Quick Start' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Runtime": {
+    "message": "Runtime",
+    "description": "The label for category 'Runtime' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Memory": {
+    "message": "Память",
+    "description": "The label for category 'Memory' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Workflows": {
+    "message": "Рабочие процессы",
+    "description": "The label for category 'Workflows' in sidebar 'docsSidebar'"
+  }
+}

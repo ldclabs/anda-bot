@@ -1,0 +1,77 @@
+---
+sidebar_position: 1
+title: إعداد وقت التشغيل
+description: إعداد مزودي النماذج والمجلدات المحلية والبروكسي والخصوصية وبيانات التشغيل.
+---
+
+# إعداد وقت التشغيل
+
+يحفظ Anda حالته افتراضيًا في `~/.anda`. الملف الرئيسي هو `~/.anda/config.yaml`.
+
+## مزودو النماذج
+
+يجب أن يحتوي المزود النشط على `family` و `model` و `api_base`. يمكن وضع `api_key` في الملف أو تمريره عبر متغير بيئة.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+متغيرات البيئة المدعومة:
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## إعدادات رئيسية
+
+| الإعداد | الغرض |
+| --- | --- |
+| `addr` | عنوان gateway المحلي، افتراضيًا `127.0.0.1:8042`. |
+| `sandbox` | إذا كان true يستخدم shell مجلد `~/.anda/sandbox`. |
+| `https_proxy` | بروكسي للنماذج والقنوات. |
+| `model` | مزودو الوكيل والذاكرة. |
+| `transcription` | تحويل الصوت والمرفقات إلى نص. |
+| `tts` | تشغيل الصوت. |
+| `channels` | IRC وTelegram وWeChat وDiscord وLark/Feishu. |
+
+## المجلدات المحلية
+
+```text
+~/.anda/
+  config.yaml
+  channels/
+  db/
+  keys/
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+يحتوي `db/` على الذاكرة والمحادثات وحالة القنوات و cron. ويعد `workspace/` مساحة العمل الافتراضية للملفات و shell.
+
+## الخصوصية
+
+تبقى البيانات المحلية على جهازك، لكن مزودي النماذج قد يستقبلون prompts وملخصات وطلبات ذاكرة. اختر المزودين و endpoints والبروكسي حسب احتياجاتك.
+
+:::tip
+استخدم `anda --home /path/to/.anda` لعزل المشاريع أو الهويات أو الاختبارات.
+:::

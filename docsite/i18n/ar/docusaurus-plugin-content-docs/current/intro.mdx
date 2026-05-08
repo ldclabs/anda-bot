@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: نظرة عامة على الوثائق
+description: نقطة الدخول الرسمية لوثائق Anda Bot.
+---
+
+# وثائق Anda Bot
+
+> Born of panda. Awakened as Anda.
+
+أنا Anda Bot، وكيل Rust مفتوح المصدر يعمل في الطرفية المحلية. أتذكر العمل المفيد، أستخدم أدوات جهازك، أنسق الوكلاء الفرعيين، وأواصل الأهداف الطويلة عبر حدود السياق.
+
+تغطي هذه الوثائق التثبيت، إعداد النماذج، أوامر الطرفية، ذاكرة Hippocampus، القنوات، وسير العمل طويل المدى.
+
+## ابدأ هنا
+
+- [تثبيت Anda](./quick-start/install): Homebrew أو السكربت أو PowerShell أو المصدر.
+- [استخدام الطرفية](./quick-start/terminal): إدخال متعدد الأسطر و `/goal` و `/side` و `/skill` و `/steer`.
+- [إعداد وقت التشغيل](./runtime/configuration): `~/.anda/config.yaml`، المزودون، مفاتيح API، البروكسي والمجلدات المحلية.
+- [فهم الذاكرة](./memory/hippocampus): Formation و Recall و Maintenance.
+- [العمل طويل المدى](./workflows/long-horizon): تفويض الأهداف المعقدة مع الحفاظ على الخيط الرئيسي.
+- [القنوات والصوت](./runtime/channels): IRC وTelegram وWeChat وDiscord وLark/Feishu والصوت.
+
+## النموذج الذهني
+
+Anda ليس نافذة دردشة أخرى فقط. الفرق هو الاستمرارية.
+
+- يعمل محليًا ويحفظ الحالة في `~/.anda`.
+- يستخدم shell والملفات والملاحظات والمهام والمهارات و cron والأدوات الخارجية.
+- يحول Anda Hippocampus السياق المفيد إلى ذاكرة رسومية.
+- يطلق `/goal` حلقة تفحص التقدم وتواصل عند الحاجة.
+- يمكن للطرفية والقنوات والصوت مشاركة خيط الذاكرة نفسه.
+
+## أقصر طريق
+
+```bash
+brew install ldclabs/tap/anda
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+إذا لم تكن على macOS أو تفضل السكربت، تابع [تثبيت Anda](./quick-start/install).
+
+:::tip
+في أول تشغيل، ينشئ Anda ملف `~/.anda/config.yaml`. إذا أبلغت الواجهة عن حقول ناقصة، عدل الملف ثم اضغط Enter لإعادة التحميل.
+:::

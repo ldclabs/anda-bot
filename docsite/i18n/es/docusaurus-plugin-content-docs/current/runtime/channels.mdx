@@ -1,0 +1,80 @@
+---
+sidebar_position: 2
+title: Canales y voz
+description: Configura canales IM, entrada de voz, transcripción y TTS.
+---
+
+# Canales y voz
+
+Anda puede quedarse en la terminal o unirse a canales de equipo. Los canales devuelven el contexto al mismo runtime y sistema de memoria.
+
+## Canales soportados
+
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / Feishu
+
+La configuración vive en `channels` dentro de `~/.anda/config.yaml`.
+
+## Telegram
+
+```yaml
+channels:
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      allowed_users:
+        - "*"
+      mention_only: false
+```
+
+## WeChat
+
+```yaml
+channels:
+  wechat:
+    - id: personal
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+```
+
+Con `bot_token` vacío puedes usar `anda channel init wechat` y escanear el QR.
+
+## Lark / Feishu
+
+```yaml
+channels:
+  lark:
+    - id: work
+      app_id: "cli_xxx"
+      app_secret: "YOUR_APP_SECRET"
+      platform: feishu
+      receive_mode: websocket
+      mention_only: true
+```
+
+## Seguridad
+
+- `allowed_users` define quién puede activar Anda.
+- Usa `"*"` solo si el acceso abierto es aceptable.
+- Lark/Feishu requiere `app_id` y `app_secret`.
+- Las rutas de canal se guardan para responder en el hilo, sala o contacto correcto.
+
+## Voz
+
+La entrada de voz requiere `transcription.enabled: true`:
+
+```bash
+anda voice --record-secs 8
+```
+
+Para reproducir respuestas, configura `tts.enabled: true`. Para entrada de voz y salida de texto:
+
+```bash
+anda voice --record-secs 8 --no-playback
+```

@@ -1,0 +1,82 @@
+---
+sidebar_position: 2
+title: 频道和语音
+description: 配置 IM 频道、语音输入、转写和 TTS。
+---
+
+# 频道和语音
+
+Anda 可以只待在终端里，也可以接入团队频道。频道会把上下文带回同一套运行时和记忆系统。
+
+## 支持的频道
+
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / 飞书
+
+频道配置位于 `~/.anda/config.yaml` 的 `channels` 下。
+
+## Telegram 示例
+
+```yaml
+channels:
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      allowed_users:
+        - "*"
+      mention_only: false
+```
+
+## WeChat 示例
+
+```yaml
+channels:
+  wechat:
+    - id: personal
+      # 留空时，可以运行 anda channel init wechat，扫码登录并获得 token。
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+```
+
+## Lark / 飞书示例
+
+```yaml
+channels:
+  lark:
+    - id: work
+      app_id: "cli_xxx"
+      app_secret: "YOUR_APP_SECRET"
+      platform: feishu
+      receive_mode: websocket
+      mention_only: true
+```
+
+## 频道安全检查
+
+- `allowed_users` 决定谁能触发 Anda；只有可接受开放访问时才使用 `"*"`。
+- Telegram 和 Discord 通常需要 `bot_token`。
+- WeChat 可以使用已保存 token，也可以在 `bot_token` 为空时走扫码登录。
+- Lark / 飞书需要 `app_id` 和 `app_secret`；飞书端点使用 `platform: feishu`。
+- 频道路由会被持久化，方便后续回复回到原线程、房间或联系人。
+
+## 语音输入和播放
+
+语音输入需要配置 `transcription.enabled: true`。启动一次语音会话：
+
+```bash
+anda voice --record-secs 8
+```
+
+如果还希望 Anda 播放回答，需要配置 `tts.enabled: true`。只需要麦克风输入和文字输出时：
+
+```bash
+anda voice --record-secs 8 --no-playback
+```
+
+音频附件也可以在转写启用后进入上下文，这让频道里的语音消息可以成为同一条记忆线索的一部分。

@@ -1,0 +1,113 @@
+---
+sidebar_position: 1
+title: 安装 Anda
+description: 安装 Anda Bot 发布版，或从源码运行。
+---
+
+# 安装 Anda
+
+Anda Bot 可以通过发布版安装，也可以直接从仓库源码运行。发布版适合日常使用；源码运行适合贡献代码、调试或试验新功能。
+
+## 安装最新发布版
+
+macOS 推荐使用 Homebrew：
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+macOS 和 Linux 也可以使用安装脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+安装完成后打开一个新的终端，并运行：
+
+```bash
+anda
+```
+
+## 准备模型 API key
+
+至少需要一个模型 provider API key。你可以先用环境变量启动：
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+也可以把 key 写进 `~/.anda/config.yaml`，供后续会话复用。`config.yaml` 中的 `api_key` 优先级高于环境变量。
+
+## 首次启动
+
+第一次运行时，Anda 会创建本地运行目录和 `~/.anda/config.yaml`。如果配置还不完整，终端 UI 会列出缺失字段。
+
+1. 打开 `~/.anda/config.yaml`。
+2. 填好 model provider 的 `family`、`model`、`api_base`，以及 `api_key` 或环境变量。
+3. 保存文件。
+4. 回到终端 UI，按 Enter 重新加载。
+
+最小模型配置示例：
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY" # 设置 DEEPSEEK_API_KEY 时可留空
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+`hippocampus` 标签会让记忆大脑优先使用这个 provider。没有 provider 带这个标签时，记忆任务会使用当前 active model。
+
+## 从源码运行
+
+如果你想直接从仓库运行：
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+使用独立 home 目录可以隔离身份、项目或测试数据：
+
+```bash
+anda --home /path/to/.anda
+```
+
+源码运行时等价命令是：
+
+```bash
+cargo run -p anda_bot -- --home /path/to/.anda
+```
+
+## 更新
+
+通过安装脚本安装的发布版可以这样更新：
+
+```bash
+anda update
+```
+
+Unix 平台可以停止或重启后台 daemon：
+
+```bash
+anda stop
+anda restart
+```

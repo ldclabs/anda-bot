@@ -1,0 +1,96 @@
+---
+sidebar_position: 1
+title: Installer Anda
+description: Installer une version d'Anda Bot ou l'exécuter depuis le code source.
+---
+
+# Installer Anda
+
+Anda Bot peut être installé depuis une version publiée ou exécuté depuis le dépôt. Utilisez une version publiée au quotidien et le code source pour contribuer, déboguer ou tester.
+
+## Installer la dernière version
+
+Sur macOS, Homebrew est recommandé :
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+macOS et Linux peuvent aussi utiliser le script :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell :
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+Ouvrez ensuite un nouveau terminal :
+
+```bash
+anda
+```
+
+## Préparer une clé API
+
+Il faut au moins une clé API de fournisseur de modèle. Vous pouvez démarrer avec une variable d'environnement :
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell :
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+Vous pouvez aussi enregistrer la clé dans `~/.anda/config.yaml`. Le `api_key` du fichier est prioritaire.
+
+## Premier lancement
+
+Anda crée `~/.anda/config.yaml`. Si la configuration est incomplète, la UI terminal liste les champs manquants.
+
+1. Ouvrez `~/.anda/config.yaml`.
+2. Renseignez `family`, `model`, `api_base` et `api_key` ou une variable d'environnement.
+3. Sauvegardez.
+4. Revenez à la UI et appuyez sur Enter.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Le label `hippocampus` rend ce fournisseur prioritaire pour la mémoire.
+
+## Exécuter depuis le source
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+Pour isoler identités, projets ou tests :
+
+```bash
+anda --home /path/to/.anda
+```
+
+## Mettre à jour
+
+```bash
+anda update
+anda stop
+anda restart
+```

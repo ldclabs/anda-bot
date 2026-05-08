@@ -1,0 +1,56 @@
+---
+sidebar_position: 2
+title: الطرفية
+description: عناصر تحكم واجهة الطرفية وأوامر slash وأوامر CLI الشائعة.
+---
+
+# الطرفية
+
+بعد تشغيل `anda` تتصل واجهة الطرفية بالـ daemon المحلي. عند نجاح المحادثة، ترسل في الخلفية إلى Hippocampus لتكوين ذاكرة طويلة.
+
+## التحكم في الإدخال
+
+| المفتاح | الإجراء |
+| --- | --- |
+| Enter | إرسال الرسالة الحالية |
+| Shift+Enter | سطر جديد |
+| Ctrl+U | مسح الإدخال |
+| Ctrl+A / Ctrl+E | الانتقال للبداية أو النهاية |
+| Esc | عرض الحالة |
+| Ctrl+C | الخروج |
+
+بعد تعديل `~/.anda/config.yaml`:
+
+```text
+/reload
+```
+
+## أوامر Slash
+
+| الأمر | الاستخدام |
+| --- | --- |
+| `/goal message` أو `/loop message` | وضع هدف في حلقة طويلة. |
+| `/side message` أو `/btw message` | مهمة جانبية لا تقاطع المحادثة الرئيسية. |
+| `/skill skill-name message` | استخدام مهارة محددة. |
+| `/steer message` | تصحيح الرد الحالي. |
+| `/stop message` أو `/cancel message` | إيقاف الرد الحالي. |
+
+```text
+/goal أكمل قائمة الإصدار حتى تمر الاختبارات و changelog.
+/side تحقق من تأثير الاعتماد على macOS arm64.
+/skill git-assistant اكتب رسالة commit من diff الحالي.
+/steer لا تقم بإعادة هيكلة؛ أصلح build أولًا.
+```
+
+## أوامر CLI
+
+| الأمر | الغرض |
+| --- | --- |
+| `anda` | فتح الواجهة التفاعلية. |
+| `anda update` | تحديث تثبيت السكربت. |
+| `anda stop` | إيقاف daemon على Unix. |
+| `anda restart` | إعادة تشغيل daemon على Unix. |
+| `anda agent run --prompt "..."` | إرسال طلب دون فتح الواجهة. |
+| `anda voice --record-secs 8` | بدء إدخال صوتي. |
+
+يتطلب تشغيل الصوت `tts.enabled: true`. للصوت كإدخال والنص كمخرج استخدم `--no-playback`.

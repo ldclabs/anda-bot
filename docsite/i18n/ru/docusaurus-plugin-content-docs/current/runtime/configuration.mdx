@@ -1,0 +1,77 @@
+---
+sidebar_position: 1
+title: Настройка runtime
+description: Настройка провайдеров моделей, локальных директорий, proxy, приватности и runtime-данных.
+---
+
+# Настройка runtime
+
+Anda по умолчанию хранит состояние в `~/.anda`. Основной файл — `~/.anda/config.yaml`.
+
+## Провайдеры моделей
+
+Активный провайдер должен содержать `family`, `model` и `api_base`. `api_key` можно указать в файле или передать через переменную окружения.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Поддерживаемые переменные:
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## Основные настройки
+
+| Настройка | Назначение |
+| --- | --- |
+| `addr` | Локальный gateway, по умолчанию `127.0.0.1:8042`. |
+| `sandbox` | Если true, shell идет через `~/.anda/sandbox`. |
+| `https_proxy` | Proxy для моделей и каналов. |
+| `model` | Провайдеры для агента и памяти. |
+| `transcription` | Распознавание голоса и аудио. |
+| `tts` | Озвучивание ответа. |
+| `channels` | IRC, Telegram, WeChat, Discord, Lark/Feishu. |
+
+## Локальные директории
+
+```text
+~/.anda/
+  config.yaml
+  channels/
+  db/
+  keys/
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+`db/` хранит память, беседы, состояние каналов и cron. `workspace/` — рабочая область для shell и файлов.
+
+## Приватность
+
+Локальные данные остаются на вашей машине, но провайдеры моделей могут получать prompts, резюме и запросы памяти. Выбирайте провайдеры, endpoints и proxy по требованиям приватности.
+
+:::tip
+Используйте `anda --home /path/to/.anda`, чтобы изолировать проекты, личности или тесты.
+:::

@@ -25,6 +25,7 @@
 		"@sveltejs/kit": "latest",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/vite": "^4.2.4",
+		"@types/node": "^25.6.2",
 		"@vitest/browser-playwright": "^4.1.5",
 		"clsx": "^2.1.1",
 		"playwright": "^1.59.1",

@@ -1,4 +1,5 @@
 packages:
+  - docsite
   - website
 onlyBuiltDependencies:
   - esbuild

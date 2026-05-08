@@ -1,0 +1,90 @@
+---
+sidebar_position: 1
+title: Runtime Configuration
+description: Configure model providers, local directories, proxies, privacy boundaries, and runtime data.
+---
+
+# Runtime Configuration
+
+Anda stores runtime state in `~/.anda` by default. The configuration file is `~/.anda/config.yaml`, created automatically on first launch.
+
+## Model Providers
+
+The active provider must include `family`, `model`, and `api_base`. `api_key` can be written in the config file or left empty and supplied through an environment variable.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Supported model API key environment variables include:
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## Common Top-Level Settings
+
+| Setting | Purpose |
+| --- | --- |
+| `addr` | Local gateway address, default `127.0.0.1:8042`. |
+| `sandbox` | When true, shell execution goes through `~/.anda/sandbox`. |
+| `https_proxy` | Proxy used for model and channel requests. |
+| `model` | Model providers for the agent and memory brain. |
+| `transcription` | Provider for voice input and audio attachment transcription. |
+| `tts` | Provider for voice playback. |
+| `channels` | IRC, Telegram, WeChat, Discord, Lark/Feishu, and other channel configuration. |
+
+## Local Directory Structure
+
+```text
+~/.anda/
+  config.yaml
+  anda-daemon.pid
+  channels/
+  db/
+  keys/
+    anda_bot.key
+    user.key
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+| Directory | Contents |
+| --- | --- |
+| `db/` | Local memory, conversations, channel state, cron state, object state, and related data. |
+| `keys/` | Local signing keys for the daemon and user. |
+| `logs/` | Daemon and CLI logs. |
+| `channels/` | Channel runtime state. |
+| `sandbox/` | Shell isolation directory when sandboxing is enabled. |
+| `skills/` | Runtime skills. |
+| `workspace/` | Default workspace for file and shell tools. |
+
+## Privacy Boundary
+
+Anda local state, memory graph, conversations, channel state, cron state, keys, logs, and workspace data are stored on your machine by default.
+
+However, model providers may still receive prompts, tool-result summaries, and memory formation or recall requests. Choose trusted providers, private endpoints, or proxy policies according to your privacy needs.
+
+:::tip
+Use `anda --home /path/to/.anda` when you need isolated data for different identities, projects, or tests.
+:::

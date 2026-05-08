@@ -1,0 +1,56 @@
+---
+sidebar_position: 2
+title: Терминал
+description: Управление terminal UI, slash-команды и основные CLI-команды.
+---
+
+# Терминал
+
+После запуска `anda` terminal UI подключается к локальному daemon. Успешная беседа отправляется в Hippocampus для формирования долгой памяти.
+
+## Управление вводом
+
+| Клавиша | Действие |
+| --- | --- |
+| Enter | Отправить сообщение |
+| Shift+Enter | Новая строка |
+| Ctrl+U | Очистить ввод |
+| Ctrl+A / Ctrl+E | В начало или конец |
+| Esc | Статус |
+| Ctrl+C | Выход |
+
+После изменения `~/.anda/config.yaml`:
+
+```text
+/reload
+```
+
+## Slash-команды
+
+| Команда | Когда использовать |
+| --- | --- |
+| `/goal message` или `/loop message` | Длинный цикл цели. |
+| `/side message` или `/btw message` | Боковая задача без прерывания основной беседы. |
+| `/skill skill-name message` | Конкретная skill. |
+| `/steer message` | Коррекция текущего ответа. |
+| `/stop message` или `/cancel message` | Остановка ответа. |
+
+```text
+/goal Заверши release checklist до подтверждения тестов и changelog.
+/side Проверь риск для macOS arm64.
+/skill git-assistant Напиши commit message по diff.
+/steer Не рефактори, сначала почини build.
+```
+
+## CLI-команды
+
+| Команда | Назначение |
+| --- | --- |
+| `anda` | Открыть интерактивный UI. |
+| `anda update` | Обновить установку из скрипта. |
+| `anda stop` | Остановить daemon на Unix. |
+| `anda restart` | Перезапустить daemon на Unix. |
+| `anda agent run --prompt "..."` | Отправить запрос без UI. |
+| `anda voice --record-secs 8` | Запустить голосовой ввод. |
+
+Для воспроизведения голоса нужен `tts.enabled: true`. Для голосового ввода и текстового ответа используйте `--no-playback`.

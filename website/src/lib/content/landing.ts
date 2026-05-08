@@ -37,6 +37,7 @@ export type LandingCopy = {
 		reasoning: string;
 		memory: string;
 		surfaces: string;
+		docs: string;
 	};
 	language: {
 		label: string;
@@ -149,7 +150,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Install',
 			reasoning: 'Reasoning',
 			memory: 'Memory',
-			surfaces: 'Surfaces'
+			surfaces: 'Surfaces',
+			docs: 'Docs'
 		},
 		language: { label: 'Language' },
 		hero: {
@@ -326,7 +328,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			ogDescription:
 				'在本地运行 Anda：让 Hippocampus 记住上下文，让长程目标、Claude Code、Codex、子智能体 和 IM 工作流持续推进。'
 		},
-		nav: { install: '安装', reasoning: '推理', memory: '记忆', surfaces: '场景' },
+		nav: { install: '安装', reasoning: '推理', memory: '记忆', surfaces: '场景', docs: '文档' },
 		language: { label: '语言' },
 		hero: {
 			badge: '开源 Rust 终端 Agent',
@@ -487,7 +489,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Instalar',
 			reasoning: 'Razonamiento',
 			memory: 'Memoria',
-			surfaces: 'Entornos'
+			surfaces: 'Entornos',
+			docs: 'Docs'
 		},
 		language: { label: 'Idioma' },
 		hero: {
@@ -672,7 +675,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Installer',
 			reasoning: 'Raisonnement',
 			memory: 'Mémoire',
-			surfaces: 'Espaces'
+			surfaces: 'Espaces',
+			docs: 'Docs'
 		},
 		language: { label: 'Langue' },
 		hero: {
@@ -849,7 +853,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			ogDescription:
 				'Запускайте Anda локально с памятью Hippocampus, долгими целями, Claude Code, Codex, subagents и workflow в терминале или IM.'
 		},
-		nav: { install: 'Установка', reasoning: 'Рассуждение', memory: 'Память', surfaces: 'Среды' },
+		nav: { install: 'Установка', reasoning: 'Рассуждение', memory: 'Память', surfaces: 'Среды', docs: 'Документация' },
 		language: { label: 'Язык' },
 		hero: {
 			badge: 'Open-source Rust-агент для терминала',
@@ -1023,7 +1027,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			ogDescription:
 				'شغّل Anda محليًا مع ذاكرة Hippocampus، وأهداف طويلة، و Claude Code، و Codex، و subagents، وسير عمل في الطرفية أو IM.'
 		},
-		nav: { install: 'التثبيت', reasoning: 'الاستدلال', memory: 'الذاكرة', surfaces: 'بيئات العمل' },
+		nav: { install: 'التثبيت', reasoning: 'الاستدلال', memory: 'الذاكرة', surfaces: 'بيئات العمل', docs: 'الوثائق' },
 		language: { label: 'اللغة' },
 		hero: {
 			badge: 'وكيل طرفية Rust مفتوح المصدر',

@@ -1,0 +1,56 @@
+---
+sidebar_position: 2
+title: Terminal
+description: Contrôles de la UI terminal, commandes slash et commandes CLI courantes.
+---
+
+# Terminal
+
+Après `anda`, la UI terminal se connecte au daemon local. Quand une conversation se termine correctement, elle est envoyée à Hippocampus pour former une mémoire longue.
+
+## Contrôles
+
+| Touche | Action |
+| --- | --- |
+| Enter | Envoyer le message |
+| Shift+Enter | Insérer une nouvelle ligne |
+| Ctrl+U | Vider l'entrée |
+| Ctrl+A / Ctrl+E | Aller au début ou à la fin |
+| Esc | Voir l'état |
+| Ctrl+C | Quitter |
+
+Après modification de `~/.anda/config.yaml` :
+
+```text
+/reload
+```
+
+## Commandes slash
+
+| Commande | Usage |
+| --- | --- |
+| `/goal message` ou `/loop message` | Met un objectif dans la boucle longue. |
+| `/side message` ou `/btw message` | Ouvre une tâche latérale. |
+| `/skill skill-name message` | Utilise une skill précise. |
+| `/steer message` | Corrige la réponse en cours. |
+| `/stop message` ou `/cancel message` | Arrête la réponse actuelle. |
+
+```text
+/goal Termine cette release avec tests et changelog confirmés.
+/side Vérifie le risque pour macOS arm64.
+/skill git-assistant Rédige un commit depuis le diff.
+/steer Ne refactorise pas, corrige d'abord le build.
+```
+
+## Commandes CLI
+
+| Commande | But |
+| --- | --- |
+| `anda` | Ouvre la UI interactive. |
+| `anda update` | Met à jour une installation par script. |
+| `anda stop` | Arrête le daemon sur Unix. |
+| `anda restart` | Redémarre le daemon sur Unix. |
+| `anda agent run --prompt "..."` | Envoie une requête sans ouvrir la UI. |
+| `anda voice --record-secs 8` | Démarre l'entrée vocale. |
+
+La lecture vocale exige `tts.enabled: true`. Pour entrée vocale et sortie texte seulement, ajoutez `--no-playback`.

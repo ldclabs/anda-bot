@@ -1,0 +1,82 @@
+---
+sidebar_position: 2
+title: Channels and Voice
+description: Configure IM channels, voice input, transcription, and TTS.
+---
+
+# Channels and Voice
+
+Anda can stay in the terminal, or it can join team channels. Channels bring context back into the same runtime and memory system.
+
+## Supported Channels
+
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / Feishu
+
+Channel configuration lives under `channels` in `~/.anda/config.yaml`.
+
+## Telegram Example
+
+```yaml
+channels:
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      allowed_users:
+        - "*"
+      mention_only: false
+```
+
+## WeChat Example
+
+```yaml
+channels:
+  wechat:
+    - id: personal
+      # Leave empty to run anda channel init wechat, scan the QR code, and get a token.
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+```
+
+## Lark / Feishu Example
+
+```yaml
+channels:
+  lark:
+    - id: work
+      app_id: "cli_xxx"
+      app_secret: "YOUR_APP_SECRET"
+      platform: feishu
+      receive_mode: websocket
+      mention_only: true
+```
+
+## Channel Safety Checks
+
+- `allowed_users` decides who can trigger Anda; use `"*"` only when open access is acceptable.
+- Telegram and Discord usually require `bot_token`.
+- WeChat can use a saved token, or QR login when `bot_token` is empty.
+- Lark / Feishu needs `app_id` and `app_secret`; Feishu endpoints use `platform: feishu`.
+- Channel routes are persisted so later replies can return to the original thread, room, or contact.
+
+## Voice Input and Playback
+
+Voice input requires `transcription.enabled: true`. Start a voice session with:
+
+```bash
+anda voice --record-secs 8
+```
+
+If you also want Anda to play the answer, configure `tts.enabled: true`. For microphone input and text output only:
+
+```bash
+anda voice --record-secs 8 --no-playback
+```
+
+Audio attachments can enter context after transcription is enabled, so voice messages in channels can become part of the same memory thread.

@@ -1,0 +1,77 @@
+---
+sidebar_position: 1
+title: Configuration du runtime
+description: Configurer fournisseurs de modèles, dossiers locaux, proxy, confidentialité et données runtime.
+---
+
+# Configuration du runtime
+
+Anda stocke son état dans `~/.anda` par défaut. Le fichier principal est `~/.anda/config.yaml`.
+
+## Fournisseurs de modèles
+
+Le fournisseur actif doit inclure `family`, `model` et `api_base`. `api_key` peut être dans le fichier ou venir d'une variable d'environnement.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Variables supportées :
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## Réglages principaux
+
+| Réglage | But |
+| --- | --- |
+| `addr` | Adresse gateway locale, par défaut `127.0.0.1:8042`. |
+| `sandbox` | Si true, shell passe par `~/.anda/sandbox`. |
+| `https_proxy` | Proxy pour modèles et canaux. |
+| `model` | Fournisseurs pour agent et mémoire. |
+| `transcription` | Transcription voix et audio. |
+| `tts` | Lecture vocale. |
+| `channels` | IRC, Telegram, WeChat, Discord, Lark/Feishu. |
+
+## Dossiers locaux
+
+```text
+~/.anda/
+  config.yaml
+  channels/
+  db/
+  keys/
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+`db/` contient mémoire, conversations, états de canaux et cron. `workspace/` est l'espace par défaut pour shell et fichiers.
+
+## Confidentialité
+
+Les données locales restent sur votre machine, mais les fournisseurs de modèles peuvent recevoir prompts, résumés et requêtes de mémoire. Choisissez fournisseurs, endpoints et proxy selon vos besoins.
+
+:::tip
+Utilisez `anda --home /path/to/.anda` pour isoler projets, identités ou tests.
+:::

@@ -1,0 +1,26 @@
+{
+  "title": {
+    "message": "Anda Bot Docs",
+    "description": "The title in the navbar"
+  },
+  "logo.alt": {
+    "message": "Anda Bot",
+    "description": "The alt text of navbar logo"
+  },
+  "item.label.Docs": {
+    "message": "الوثائق",
+    "description": "Navbar item with label Docs"
+  },
+  "item.label.Quick Start": {
+    "message": "البدء السريع",
+    "description": "Navbar item with label Quick Start"
+  },
+  "item.label.Main Site": {
+    "message": "الموقع الرئيسي",
+    "description": "Navbar item with label Main Site"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item with label GitHub"
+  }
+}

@@ -1,0 +1,96 @@
+---
+sidebar_position: 1
+title: Установить Anda
+description: Установите релиз Anda Bot или запустите его из исходного кода.
+---
+
+# Установить Anda
+
+Anda Bot можно установить из релиза или запустить прямо из репозитория. Релиз подходит для ежедневной работы, исходники — для вкладов, отладки и экспериментов.
+
+## Последний релиз
+
+На macOS рекомендуется Homebrew:
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+macOS и Linux также могут использовать скрипт:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+Затем откройте новый терминал:
+
+```bash
+anda
+```
+
+## API-ключ модели
+
+Нужен хотя бы один API-ключ провайдера модели:
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+Ключ можно сохранить в `~/.anda/config.yaml`; `api_key` в файле имеет приоритет.
+
+## Первый запуск
+
+Anda создает `~/.anda/config.yaml`. Если конфигурация неполная, terminal UI покажет недостающие поля.
+
+1. Откройте `~/.anda/config.yaml`.
+2. Заполните `family`, `model`, `api_base` и `api_key` или переменную окружения.
+3. Сохраните файл.
+4. Вернитесь в UI и нажмите Enter.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Метка `hippocampus` делает провайдера предпочтительным для памяти.
+
+## Из исходного кода
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+Для изоляции проектов или тестов:
+
+```bash
+anda --home /path/to/.anda
+```
+
+## Обновление
+
+```bash
+anda update
+anda stop
+anda restart
+```

@@ -1,0 +1,113 @@
+---
+sidebar_position: 1
+title: Install Anda
+description: Install an Anda Bot release, or run it from source.
+---
+
+# Install Anda
+
+Anda Bot can be installed from a release or run directly from the repository source. Releases are best for daily use; source builds are best for contribution, debugging, and experimenting with new features.
+
+## Install the Latest Release
+
+On macOS, Homebrew is recommended:
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+macOS and Linux can also use the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+After installation, open a new terminal and run:
+
+```bash
+anda
+```
+
+## Prepare a Model API Key
+
+You need at least one model provider API key. You can start with an environment variable:
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+You can also write the key to `~/.anda/config.yaml` for reuse. The `api_key` in `config.yaml` takes priority over environment variables.
+
+## First Launch
+
+On first run, Anda creates the local runtime directory and `~/.anda/config.yaml`. If the configuration is incomplete, the terminal UI lists the missing fields.
+
+1. Open `~/.anda/config.yaml`.
+2. Fill in the model provider `family`, `model`, `api_base`, and either `api_key` or an environment variable.
+3. Save the file.
+4. Return to the terminal UI and press Enter to reload.
+
+Minimal model configuration:
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY" # Can be empty when DEEPSEEK_API_KEY is set
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+  The `hippocampus` label makes the memory brain prefer that provider. If no provider has the label, memory tasks use the active model.
+
+  ## Run from Source
+
+  To run directly from the repository:
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+Use a separate home directory to isolate identities, projects, or test data:
+
+```bash
+anda --home /path/to/.anda
+```
+
+Equivalent source command:
+
+```bash
+cargo run -p anda_bot -- --home /path/to/.anda
+```
+
+## Update
+
+If installed through the install script, update with:
+
+```bash
+anda update
+```
+
+On Unix platforms, stop or restart the background daemon with:
+
+```bash
+anda stop
+anda restart
+```

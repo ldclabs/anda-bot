@@ -1,0 +1,96 @@
+---
+sidebar_position: 1
+title: Instalar Anda
+description: Instala una versión de Anda Bot o ejecútalo desde el código fuente.
+---
+
+# Instalar Anda
+
+Puedes instalar Anda Bot desde una versión publicada o ejecutarlo desde el repositorio. Usa la versión publicada para el día a día y el código fuente para contribuir, depurar o probar cambios.
+
+## Instalar la última versión
+
+En macOS se recomienda Homebrew:
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+macOS y Linux también pueden usar el script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+Después abre una terminal nueva y ejecuta:
+
+```bash
+anda
+```
+
+## Preparar una clave API
+
+Necesitas al menos una clave API de un proveedor de modelos. Puedes arrancar con una variable de entorno:
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+También puedes guardar la clave en `~/.anda/config.yaml`. El `api_key` del archivo tiene prioridad sobre las variables de entorno.
+
+## Primer arranque
+
+Anda crea `~/.anda/config.yaml` en el primer arranque. Si falta configuración, la UI de terminal mostrará los campos necesarios.
+
+1. Abre `~/.anda/config.yaml`.
+2. Completa `family`, `model`, `api_base` y `api_key` o una variable de entorno.
+3. Guarda el archivo.
+4. Vuelve a la UI y presiona Enter para recargar.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+La etiqueta `hippocampus` hace que la memoria prefiera ese proveedor.
+
+## Ejecutar desde el código fuente
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+Para aislar identidades, proyectos o pruebas:
+
+```bash
+anda --home /path/to/.anda
+```
+
+## Actualizar
+
+```bash
+anda update
+anda stop
+anda restart
+```

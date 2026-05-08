@@ -1,0 +1,54 @@
+{
+  "link.title.Start": {
+    "message": "开始",
+    "description": "The title of the footer links column with title=Start in the footer"
+  },
+  "link.title.Core": {
+    "message": "核心能力",
+    "description": "The title of the footer links column with title=Core in the footer"
+  },
+  "link.title.Project": {
+    "message": "项目",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.item.label.Overview": {
+    "message": "文档概览",
+    "description": "The label of footer link with label=Overview linking to /docs/intro"
+  },
+  "link.item.label.Install Anda": {
+    "message": "安装 Anda",
+    "description": "The label of footer link with label=Install Anda linking to /docs/quick-start/install"
+  },
+  "link.item.label.Terminal": {
+    "message": "终端使用",
+    "description": "The label of footer link with label=Terminal linking to /docs/quick-start/terminal"
+  },
+  "link.item.label.Hippocampus Memory": {
+    "message": "Hippocampus 记忆",
+    "description": "The label of footer link with label=Hippocampus Memory linking to /docs/memory/hippocampus"
+  },
+  "link.item.label.Long-Horizon Work": {
+    "message": "长程任务与 Subagents",
+    "description": "The label of footer link with label=Long-Horizon Work linking to /docs/workflows/long-horizon"
+  },
+  "link.item.label.Channels and Voice": {
+    "message": "频道和语音",
+    "description": "The label of footer link with label=Channels and Voice linking to /docs/runtime/channels"
+  },
+  "link.item.label.Anda Bot": {
+    "message": "Anda Bot",
+    "description": "The label of footer link with label=Anda Bot linking to https://github.com/ldclabs/anda-bot"
+  },
+  "link.item.label.Anda Hippocampus": {
+    "message": "Anda Hippocampus",
+    "description": "The label of footer link with label=Anda Hippocampus linking to https://github.com/ldclabs/anda-hippocampus"
+  },
+  "link.item.label.Product Site": {
+    "message": "产品主站",
+    "description": "The label of footer link with label=Product Site linking to https://anda.bot"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 LDC Labs. Built with Docusaurus.",
+    "description": "The footer copyright"
+  }
+}

@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: Vue d'ensemble de la documentation
+description: Point d'entrée officiel de la documentation Anda Bot.
+---
+
+# Documentation Anda Bot
+
+> Born of panda. Awakened as Anda.
+
+Je suis Anda Bot, un agent Rust open source qui s'exécute dans votre terminal local. Je mémorise le travail utile, utilise les outils de votre machine, coordonne des sous-agents et maintiens les objectifs longs au-delà des limites de contexte.
+
+Cette documentation couvre l'installation, la configuration des modèles, les commandes terminal, la mémoire Hippocampus, les canaux et les workflows de longue durée.
+
+## Commencer ici
+
+- [Installer Anda](./quick-start/install) : Homebrew, script, PowerShell ou source.
+- [Utiliser le terminal](./quick-start/terminal) : entrée multiligne, `/goal`, `/side`, `/skill`, `/steer` et commandes courantes.
+- [Configurer le runtime](./runtime/configuration) : `~/.anda/config.yaml`, fournisseurs, clés API, proxy et dossiers locaux.
+- [Comprendre la mémoire](./memory/hippocampus) : Formation, Recall et Maintenance.
+- [Travail longue durée](./workflows/long-horizon) : déléguer des objectifs complexes sans perdre le fil principal.
+- [Canaux et voix](./runtime/channels) : IRC, Telegram, WeChat, Discord, Lark/Feishu et voix.
+
+## Modèle mental
+
+Anda n'est pas une simple fenêtre de chat. Sa différence est la continuité.
+
+- Il s'exécute localement et stocke l'état dans `~/.anda`.
+- Il peut utiliser shell, fichiers, notes, tâches, skills, cron et outils externes.
+- Anda Hippocampus transforme le contexte utile en mémoire graphe.
+- `/goal` lance une boucle qui vérifie la progression et continue si nécessaire.
+- Terminal, canaux et voix peuvent partager le même fil de mémoire.
+
+## Chemin le plus court
+
+```bash
+brew install ldclabs/tap/anda
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Si vous n'êtes pas sur macOS ou préférez le script, continuez avec [Installer Anda](./quick-start/install).
+
+:::tip
+Au premier lancement, Anda crée `~/.anda/config.yaml`. Si la UI indique des champs manquants, éditez le fichier puis appuyez sur Enter pour recharger.
+:::

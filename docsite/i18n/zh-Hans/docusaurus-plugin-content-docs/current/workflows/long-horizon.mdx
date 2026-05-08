@@ -1,0 +1,64 @@
+---
+sidebar_position: 1
+title: 长程任务与 Subagents
+description: 使用 /goal、Subagents、Skills 和工具把复杂目标持续推进到可验证完成。
+---
+
+# 长程任务与 Subagents
+
+Anda Bot 面向的不是一次回答，而是需要连续性的复杂目标。长程任务会保留目标、检查进展、压缩上下文，并在需要时继续推进。
+
+## 使用 /goal
+
+`/goal` 或 `/loop` 会把请求标记为长程目标：
+
+```text
+/goal 帮我完成这个发布准备：跑测试、检查 changelog、确认安装脚本说明，并总结风险。
+```
+
+当主 Agent 空闲后，目标检查器会评估当前结果是否完成。如果还需要继续，它可以生成 follow-up 让主 Agent 继续工作。上下文过长时，Anda 会先压缩当前状态，再开启关联 conversation 继续同一个 session。
+
+## 使用 /side
+
+`/side` 或 `/btw` 会把请求放到独立的旁路子任务里。它适合：
+
+- 临时研究一个风险。
+- 让另一个视角审查当前结论。
+- 不打断主会话的情况下收集背景。
+
+```text
+/side 查一下这个依赖升级是否会影响 macOS arm64 用户。
+```
+
+## 使用 /skill
+
+运行时 Skills 放在 `~/.anda/skills`。当你希望特定工作流处理请求时：
+
+```text
+/skill git-assistant 根据当前 diff 写一条 Conventional Commit message。
+```
+
+## Subagents 的角色
+
+Subagents 可以承担研究、实现、审查、监督等专门角色。主会话负责保留目标和最终判断，Subagents 负责局部任务。
+
+这种结构适合：
+
+- 需要读很多文件或资料的调研。
+- 需要实现和审查分离的代码任务。
+- 需要持续检查“是否真的完成”的目标。
+- 需要外部工具参与但不能丢失主线的工作。
+
+## 工具和本地工作区
+
+Anda 的基础工具包括 memory、note、shell、文件读写、todo、Skills、Cron 和 Subagents。文件和 shell 工具默认在 `~/.anda/workspace` 工作。
+
+当任务涉及当前仓库或外部工具时，请明确告诉 Anda 目标、验收条件和不能触碰的边界。
+
+```text
+/goal 在当前仓库修复 docs 构建。不要改 Rust 代码。完成条件是 pnpm --dir docsite build 通过。
+```
+
+## 什么时候不要用 /goal
+
+简单问答、一次性解释、短命令查询不需要 `/goal`。直接发送普通消息即可。把 `/goal` 留给真正需要持续推进、验证和复盘的任务。

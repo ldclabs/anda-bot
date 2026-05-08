@@ -1,0 +1,60 @@
+name: Deploy Anda Bot Docs to GitHub Pages
+
+on:
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - docsite/**
+  #     - .github/workflows/docsite.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Docusaurus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: npm install -g pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build website
+        run: pnpm --dir docsite build
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Build Artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docsite/build
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+
+    # Deploy to the github-pages environment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

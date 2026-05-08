@@ -1,0 +1,44 @@
+---
+sidebar_position: 1
+title: Cerveau mémoire Hippocampus
+description: La boucle Formation, Recall et Maintenance de la mémoire longue Anda Hippocampus.
+---
+
+# Cerveau mémoire Hippocampus
+
+Anda Hippocampus est le système de mémoire longue d'Anda Bot. Ce n'est pas une simple base vectorielle ni un fichier Markdown infini, mais un cerveau mémoire conçu pour agents.
+
+Il transforme conversations, fichiers, résultats d'outils et contexte de canaux en Cognitive Nexus : personnes, projets, préférences, événements, décisions, chronologies et relations.
+
+## Boucle en trois phases
+
+### Formation
+
+Encode les conversations et résultats utiles en mémoire structurée : qui, quel projet, quelle préférence, quelle décision et quand.
+
+### Recall
+
+Permet d'interroger le graphe en langage naturel. Un bon rappel explique la tâche actuelle plutôt que de renvoyer seulement du texte similaire.
+
+### Maintenance
+
+Consolide les fragments, fusionne les doublons, réduit les connaissances anciennes et conserve les chronologies quand les faits changent.
+
+## Enseigner à Anda
+
+```text
+Souviens-toi : je préfère des release notes courtes avec une section risques.
+Le fournisseur de modèles de ce workspace est passé de A à B.
+Quand nous parlons d'Alice, il s'agit de la designer mobile.
+```
+
+## Bonne mémoire
+
+- Contexte clair : projet, personne, fichier, canal ou période.
+- Évolution : indiquez l'ancienne et la nouvelle version.
+- Limite : marquez les informations temporaires.
+- Correction : donnez directement la bonne version.
+
+## Données locales et fournisseurs
+
+Le graphe est stocké dans `~/.anda/db` par défaut. Les fournisseurs de modèles peuvent participer à formation, rappel et résumé ; choisissez vos endpoints selon votre confidentialité.

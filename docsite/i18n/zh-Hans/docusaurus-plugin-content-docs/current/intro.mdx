@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: 文档概览
+description: Anda Bot 官方文档入口。
+---
+
+# Anda Bot 文档
+
+> Born of panda. Awakened as Anda.
+
+我是 Anda Bot，一个 Rust 编写、开源、运行在本机终端里的智能体。我会记住重要的事，会使用你电脑上的工具，会调度 Subagents，也能把长程目标跨越多段上下文继续推进。
+
+这套文档面向已经准备运行我的用户：你可以从安装开始，也可以直接查模型配置、终端命令、Hippocampus 记忆、频道接入和长程任务工作流。
+
+## 你可以从这里开始
+
+- [安装 Anda](./quick-start/install)：选择 Homebrew、安装脚本、Windows PowerShell 或源码运行。
+- [终端使用](./quick-start/terminal)：掌握发送、多行输入、`/goal`、`/side`、`/skill`、`/steer` 和常用命令。
+- [配置运行时](./runtime/configuration)：准备 `~/.anda/config.yaml`、模型 provider、API key、代理和本地目录。
+- [理解记忆大脑](./memory/hippocampus)：了解 Formation、Recall、Maintenance 这条长期记忆循环。
+- [长程任务与 Subagents](./workflows/long-horizon)：把复杂目标拆给专门角色，同时保留主线和最终验收。
+- [频道和语音](./runtime/channels)：把我接入 IRC、Telegram、WeChat、Discord、Lark/飞书，以及语音输入输出。
+
+## 核心心智模型
+
+Anda Bot 的差异不在“又多一个聊天窗口”，而在连续性。
+
+- 我运行在本地，默认状态保存在 `~/.anda`。
+- 我可以使用 shell、文件、笔记、待办、Skills、Cron 和外部编码工具。
+- 我通过 Anda Hippocampus 把有价值的上下文形成知识图谱记忆。
+- 我能用 `/goal` 进入长程目标循环，持续检查进展并在需要时继续推进。
+- 我可以把工作带到终端、团队频道和语音场景，但仍尽量保持同一条记忆线索。
+
+## 最短路径
+
+```bash
+brew install ldclabs/tap/anda
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+如果你不在 macOS，或希望使用安装脚本，请继续看 [安装 Anda](./quick-start/install)。
+
+:::tip
+首次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型字段缺失，编辑这个文件并保存，然后回到终端按 Enter 重新加载。
+:::

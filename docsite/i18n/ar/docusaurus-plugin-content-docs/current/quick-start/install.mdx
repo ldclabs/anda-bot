@@ -1,0 +1,96 @@
+---
+sidebar_position: 1
+title: تثبيت Anda
+description: ثبّت إصدار Anda Bot أو شغّله من المصدر.
+---
+
+# تثبيت Anda
+
+يمكن تثبيت Anda Bot من إصدار جاهز أو تشغيله مباشرة من المستودع. استخدم الإصدار اليومي للعمل المعتاد، والمصدر للمساهمة أو التصحيح أو التجربة.
+
+## تثبيت أحدث إصدار
+
+على macOS نوصي بـ Homebrew:
+
+```bash
+brew install ldclabs/tap/anda
+```
+
+يمكن لـ macOS وLinux استخدام السكربت:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
+```
+
+ثم افتح طرفية جديدة:
+
+```bash
+anda
+```
+
+## إعداد مفتاح API
+
+تحتاج إلى مفتاح API واحد على الأقل لمزود نماذج:
+
+```bash
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+```
+
+يمكنك أيضًا حفظ المفتاح في `~/.anda/config.yaml`، وله أولوية على متغيرات البيئة.
+
+## أول تشغيل
+
+ينشئ Anda ملف `~/.anda/config.yaml`. إذا كان الإعداد ناقصًا، ستعرض واجهة الطرفية الحقول المطلوبة.
+
+1. افتح `~/.anda/config.yaml`.
+2. املأ `family` و `model` و `api_base` و `api_key` أو متغير البيئة.
+3. احفظ الملف.
+4. ارجع إلى الواجهة واضغط Enter.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+تجعل علامة `hippocampus` هذا المزود مفضلاً لمهام الذاكرة.
+
+## التشغيل من المصدر
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo run -p anda_bot --
+```
+
+لعزل المشاريع أو الاختبارات:
+
+```bash
+anda --home /path/to/.anda
+```
+
+## التحديث
+
+```bash
+anda update
+anda stop
+anda restart
+```

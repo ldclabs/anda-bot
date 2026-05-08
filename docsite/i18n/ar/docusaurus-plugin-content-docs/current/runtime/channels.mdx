@@ -1,0 +1,78 @@
+---
+sidebar_position: 2
+title: القنوات والصوت
+description: إعداد قنوات IM والإدخال الصوتي والتفريغ و TTS.
+---
+
+# القنوات والصوت
+
+يمكن أن يبقى Anda في الطرفية أو ينضم إلى قنوات الفريق. تعيد القنوات السياق إلى وقت التشغيل ونظام الذاكرة نفسه.
+
+## القنوات المدعومة
+
+- IRC
+- Telegram
+- WeChat
+- Discord
+- Lark / Feishu
+
+يوجد الإعداد تحت `channels` في `~/.anda/config.yaml`.
+
+## Telegram
+
+```yaml
+channels:
+  telegram:
+    - id: personal
+      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      allowed_users:
+        - "*"
+      mention_only: false
+```
+
+## WeChat
+
+```yaml
+channels:
+  wechat:
+    - id: personal
+      bot_token: ""
+      username: anda-wechat
+      allowed_users:
+        - "*"
+```
+
+عند ترك `bot_token` فارغًا يمكن استخدام `anda channel init wechat` ومسح QR.
+
+## Lark / Feishu
+
+```yaml
+channels:
+  lark:
+    - id: work
+      app_id: "cli_xxx"
+      app_secret: "YOUR_APP_SECRET"
+      platform: feishu
+      receive_mode: websocket
+      mention_only: true
+```
+
+## الأمان
+
+- يحدد `allowed_users` من يمكنه تشغيل Anda.
+- استخدم `"*"` فقط عند قبول الوصول المفتوح.
+- يحتاج Lark/Feishu إلى `app_id` و `app_secret`.
+- تحفظ مسارات القنوات للرد في الخيط أو الغرفة الصحيحة.
+
+## الصوت
+
+```bash
+anda voice --record-secs 8
+```
+
+يتطلب الإدخال الصوتي `transcription.enabled: true` ويتطلب تشغيل الرد `tts.enabled: true`. للصوت كإدخال والنص كمخرج:
+
+```bash
+anda voice --record-secs 8 --no-playback
+```

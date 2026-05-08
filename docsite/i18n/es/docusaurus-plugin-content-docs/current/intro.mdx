@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: Resumen de la documentación
+description: Punto de entrada oficial para la documentación de Anda Bot.
+---
+
+# Documentación de Anda Bot
+
+> Born of panda. Awakened as Anda.
+
+Soy Anda Bot, un agente Rust open source que se ejecuta en tu terminal local. Recuerdo el trabajo útil, uso las herramientas de tu máquina, coordino subagentes y mantengo objetivos largos aunque el contexto cambie.
+
+Esta documentación es para quienes quieren ejecutar Anda: instalación, configuración de modelos, comandos de terminal, memoria Hippocampus, canales y flujos de largo alcance.
+
+## Empieza aquí
+
+- [Instalar Anda](./quick-start/install): Homebrew, script, PowerShell o código fuente.
+- [Usar la terminal](./quick-start/terminal): entrada multilinea, `/goal`, `/side`, `/skill`, `/steer` y comandos comunes.
+- [Configurar runtime](./runtime/configuration): `~/.anda/config.yaml`, proveedores, claves API, proxy y directorios locales.
+- [Entender la memoria](./memory/hippocampus): Formation, Recall y Maintenance.
+- [Trabajo de largo alcance](./workflows/long-horizon): delegar objetivos complejos sin perder el hilo principal.
+- [Canales y voz](./runtime/channels): IRC, Telegram, WeChat, Discord, Lark/Feishu y entrada/salida de voz.
+
+## Modelo mental
+
+Anda no es solo otra ventana de chat. Su valor es la continuidad.
+
+- Se ejecuta localmente y guarda estado en `~/.anda`.
+- Puede usar shell, archivos, notas, tareas, skills, cron y herramientas externas de código.
+- Usa Anda Hippocampus para convertir contexto útil en memoria de grafo.
+- Con `/goal` puede revisar progreso y continuar cuando sea necesario.
+- Puede trabajar en terminal, canales de equipo y voz manteniendo el mismo hilo de memoria.
+
+## Ruta más corta
+
+```bash
+brew install ldclabs/tap/anda
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+Si no usas macOS o prefieres el script, continúa con [Instalar Anda](./quick-start/install).
+
+:::tip
+En el primer arranque, Anda crea `~/.anda/config.yaml`. Si la UI indica campos de modelo faltantes, edita el archivo, guárdalo y presiona Enter para recargar.
+:::

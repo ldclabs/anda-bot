@@ -1,0 +1,58 @@
+---
+sidebar_position: 2
+title: 终端使用
+description: Anda Bot 终端 UI 控制、slash 命令和常用 CLI 命令。
+---
+
+# 终端使用
+
+运行 `anda` 后，终端 UI 会连接本地 daemon。会话成功完成时，对话会在后台提交给 Hippocampus 形成长期记忆。
+
+## 输入控制
+
+| 按键 | 作用 |
+| --- | --- |
+| Enter | 发送当前消息 |
+| Shift+Enter | 插入换行 |
+| Ctrl+U | 清空输入框 |
+| Ctrl+A / Ctrl+E | 跳到输入开头或结尾 |
+| Esc | 查看状态 |
+| Ctrl+C | 退出 |
+
+修改 `~/.anda/config.yaml` 后，可以输入：
+
+```text
+/reload
+```
+
+## Slash 命令
+
+| 命令 | 何时使用 |
+| --- | --- |
+| `/goal message` 或 `/loop message` | 让一个目标进入长程循环，直到检查结果认为目标完成或需要继续。 |
+| `/side message` 或 `/btw message` | 开一个旁路子任务，适合临时研究、检查或不想打断主会话的请求。 |
+| `/skill skill-name message` | 指定某个运行时 Skill 处理请求。 |
+| `/steer message` | 中断接下来的工具调用，并用新指令纠偏当前回复。 |
+| `/stop message` 或 `/cancel message` | 中断当前回复；可附带原因。 |
+
+示例：
+
+```text
+/goal 帮我完成这个 release checklist，直到测试和 changelog 都确认通过。
+/side 查一下这个依赖最近有什么兼容性风险。
+/skill git-assistant 帮我整理这次改动的提交说明。
+/steer 不要继续重构，先只修复构建错误。
+```
+
+## 常用 CLI 命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `anda` | 打开交互式终端 UI。 |
+| `anda update` | 更新通过安装脚本安装的发布版。 |
+| `anda stop` | Unix 平台停止后台 daemon。 |
+| `anda restart` | Unix 平台重启后台 daemon。 |
+| `anda agent run --prompt "..."` | 不打开 UI，直接发起一次请求。 |
+| `anda voice --record-secs 8` | 启动语音输入；需要配置 transcription。 |
+
+语音播放还需要 `tts.enabled: true`。如果只想语音输入、文字输出，可以加 `--no-playback`。

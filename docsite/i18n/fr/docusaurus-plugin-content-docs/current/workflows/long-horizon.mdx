@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: Travail longue durée et sous-agents
+description: Utiliser /goal, sous-agents, skills et outils pour mener des objectifs complexes jusqu'à vérification.
+---
+
+# Travail longue durée et sous-agents
+
+Anda Bot vise les objectifs complexes qui demandent de la continuité. Il conserve l'objectif, vérifie la progression, compacte le contexte et continue si nécessaire.
+
+## Utiliser /goal
+
+```text
+/goal Termine cette release : tests, changelog, docs d'installation et résumé des risques.
+```
+
+`/goal` ou `/loop` ouvre une boucle longue. Quand l'agent principal est libre, le vérificateur décide si le résultat est complet ou doit continuer.
+
+## Utiliser /side
+
+`/side` ou `/btw` crée une tâche latérale pour rechercher, relire ou collecter du contexte sans interrompre la conversation principale.
+
+```text
+/side Vérifie si cette dépendance affecte macOS arm64.
+```
+
+## Utiliser /skill
+
+```text
+/skill git-assistant Rédige un Conventional Commit depuis le diff actuel.
+```
+
+## Rôle des sous-agents
+
+Ils peuvent rechercher, implémenter, relire ou superviser. La session principale garde l'objectif et le jugement final ; les sous-agents font le travail ciblé.
+
+## Outils et workspace local
+
+Anda inclut mémoire, notes, shell, fichiers, tâches, skills, cron et sous-agents. Shell et fichiers utilisent `~/.anda/workspace` par défaut.
+
+Indiquez clairement l'objectif, les critères d'acceptation et les limites.
+
+```text
+/goal Corrige le build docs. Ne modifie pas Rust. Terminé quand pnpm --dir docsite build passe.
+```

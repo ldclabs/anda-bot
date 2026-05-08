@@ -1,0 +1,77 @@
+---
+sidebar_position: 1
+title: Configuración del runtime
+description: Configura proveedores de modelos, directorios locales, proxy, privacidad y datos de runtime.
+---
+
+# Configuración del runtime
+
+Anda guarda su estado en `~/.anda` por defecto. El archivo principal es `~/.anda/config.yaml`, creado en el primer arranque.
+
+## Proveedores de modelos
+
+El proveedor activo debe incluir `family`, `model` y `api_base`. `api_key` puede estar en el archivo o venir de una variable de entorno.
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+Variables soportadas:
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## Ajustes principales
+
+| Ajuste | Propósito |
+| --- | --- |
+| `addr` | Dirección del gateway local, por defecto `127.0.0.1:8042`. |
+| `sandbox` | Si es true, shell usa `~/.anda/sandbox`. |
+| `https_proxy` | Proxy para modelos y canales. |
+| `model` | Proveedores para el agente y la memoria. |
+| `transcription` | Proveedor para voz y adjuntos de audio. |
+| `tts` | Proveedor para reproducción de voz. |
+| `channels` | Configuración de IRC, Telegram, WeChat, Discord y Lark/Feishu. |
+
+## Directorios locales
+
+```text
+~/.anda/
+  config.yaml
+  channels/
+  db/
+  keys/
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+`db/` contiene memoria, conversaciones, estado de canales y cron. `keys/` contiene claves locales. `workspace/` es el espacio por defecto para shell y archivos.
+
+## Privacidad
+
+Los datos locales se guardan en tu máquina, pero los proveedores de modelos pueden recibir prompts, resúmenes y solicitudes de memoria. Elige proveedores, endpoints y proxy según tus necesidades.
+
+:::tip
+Usa `anda --home /path/to/.anda` para aislar proyectos, identidades o pruebas.
+:::

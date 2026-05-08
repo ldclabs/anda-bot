@@ -1,0 +1,90 @@
+---
+sidebar_position: 1
+title: 配置运行时
+description: 配置模型 provider、本地目录、代理、隐私边界和运行时数据。
+---
+
+# 配置运行时
+
+Anda 的运行状态默认保存在 `~/.anda`。配置文件是 `~/.anda/config.yaml`，首次启动时会自动创建。
+
+## 模型 provider
+
+active provider 必须包含 `family`、`model` 和 `api_base`。`api_key` 可以写在配置文件中，也可以留空并通过环境变量提供。
+
+```yaml
+model:
+  active: "deepseek-v4-pro"
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+      disabled: false
+```
+
+支持的模型密钥环境变量包括：
+
+```text
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+GEMINI_API_KEY
+GOOGLE_API_KEY
+DEEPSEEK_API_KEY
+MINIMAX_API_KEY
+MIMO_API_KEY
+MOONSHOT_API_KEY
+KIMI_API_KEY
+BIGMODEL_API_KEY
+GLM_API_KEY
+```
+
+## 常用顶层配置
+
+| 设置 | 作用 |
+| --- | --- |
+| `addr` | 本地 gateway 地址，默认 `127.0.0.1:8042`。 |
+| `sandbox` | 为 true 时，shell 执行会经过 `~/.anda/sandbox`。 |
+| `https_proxy` | 模型和频道请求使用的代理。 |
+| `model` | Agent 和记忆大脑使用的模型 provider。 |
+| `transcription` | 语音输入和音频附件转写 provider。 |
+| `tts` | 语音播放 provider。 |
+| `channels` | IRC、Telegram、WeChat、Discord、Lark/飞书等频道配置。 |
+
+## 本地目录结构
+
+```text
+~/.anda/
+  config.yaml
+  anda-daemon.pid
+  channels/
+  db/
+  keys/
+    anda_bot.key
+    user.key
+  logs/
+  sandbox/
+  skills/
+  workspace/
+```
+
+| 目录 | 内容 |
+| --- | --- |
+| `db/` | 记忆、会话、频道状态、Cron、对象状态等本地数据。 |
+| `keys/` | daemon 和用户的本地签名密钥。 |
+| `logs/` | daemon 和 CLI 日志。 |
+| `channels/` | 频道运行状态。 |
+| `sandbox/` | 开启 sandbox 时的 shell 隔离目录。 |
+| `skills/` | 运行时 Skills。 |
+| `workspace/` | 文件和 shell 工具默认工作区。 |
+
+## 隐私边界
+
+Anda 的本地状态、记忆图谱、会话、频道状态、Cron、密钥、日志和工作区数据默认都保存在你的机器上。
+
+但是，模型 provider 仍可能接收 prompt、工具结果摘要、记忆形成或召回相关请求。请根据自己的隐私需求选择可信 provider、私有 endpoint 或代理策略。
+
+:::tip
+为不同身份、项目或测试准备独立数据时，使用 `anda --home /path/to/.anda`。
+:::

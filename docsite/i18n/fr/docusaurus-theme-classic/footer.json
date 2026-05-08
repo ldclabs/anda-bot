@@ -1,0 +1,54 @@
+{
+  "link.title.Start": {
+    "message": "Départ",
+    "description": "The title of the footer links column with title=Start in the footer"
+  },
+  "link.title.Core": {
+    "message": "Noyau",
+    "description": "The title of the footer links column with title=Core in the footer"
+  },
+  "link.title.Project": {
+    "message": "Projet",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.item.label.Overview": {
+    "message": "Vue d'ensemble",
+    "description": "The label of footer link with label=Overview linking to /docs/intro"
+  },
+  "link.item.label.Install Anda": {
+    "message": "Installer Anda",
+    "description": "The label of footer link with label=Install Anda linking to /docs/quick-start/install"
+  },
+  "link.item.label.Terminal": {
+    "message": "Terminal",
+    "description": "The label of footer link with label=Terminal linking to /docs/quick-start/terminal"
+  },
+  "link.item.label.Hippocampus Memory": {
+    "message": "Mémoire Hippocampus",
+    "description": "The label of footer link with label=Hippocampus Memory linking to /docs/memory/hippocampus"
+  },
+  "link.item.label.Long-Horizon Work": {
+    "message": "Travail longue durée",
+    "description": "The label of footer link with label=Long-Horizon Work linking to /docs/workflows/long-horizon"
+  },
+  "link.item.label.Channels and Voice": {
+    "message": "Canaux et voix",
+    "description": "The label of footer link with label=Channels and Voice linking to /docs/runtime/channels"
+  },
+  "link.item.label.Anda Bot": {
+    "message": "Anda Bot",
+    "description": "The label of footer link with label=Anda Bot linking to https://github.com/ldclabs/anda-bot"
+  },
+  "link.item.label.Anda Hippocampus": {
+    "message": "Anda Hippocampus",
+    "description": "The label of footer link with label=Anda Hippocampus linking to https://github.com/ldclabs/anda-hippocampus"
+  },
+  "link.item.label.Product Site": {
+    "message": "Site produit",
+    "description": "The label of footer link with label=Product Site linking to https://anda.bot"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 LDC Labs. Built with Docusaurus.",
+    "description": "The footer copyright"
+  }
+}

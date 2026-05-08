@@ -17,6 +17,7 @@
 	} from '$lib/content/landing';
 	import {
 		ArrowRight,
+		BookOpen,
 		Brain,
 		CheckCircle,
 		Clock3,
@@ -236,6 +237,13 @@
 				<a href="#work" class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
 					>{copy.nav.surfaces}</a
 				>
+				<a
+					href="https://docs.anda.bot"
+					target="_blank"
+					rel="noreferrer"
+					class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
+					>{copy.nav.docs}</a
+				>
 			</nav>
 
 			<div class="header-actions">
@@ -253,6 +261,17 @@
 						{/each}
 					</select>
 				</label>
+
+				<Button
+					href="https://docs.anda.bot"
+					target="_blank"
+					rel="noreferrer"
+					variant="ghost"
+					size="sm"
+				>
+					<BookOpen class="size-5" />
+					{copy.nav.docs}
+				</Button>
 
 				<Button
 					href="https://github.com/ldclabs/anda-bot"

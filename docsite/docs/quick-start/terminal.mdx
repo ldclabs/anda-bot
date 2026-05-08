@@ -1,0 +1,58 @@
+---
+sidebar_position: 2
+title: Terminal
+description: Anda Bot terminal UI controls, slash commands, and common CLI commands.
+---
+
+# Terminal
+
+After you run `anda`, the terminal UI connects to the local daemon. When a conversation completes successfully, it is submitted to Hippocampus in the background for long-term memory formation.
+
+## Input Controls
+
+| Key | Action |
+| --- | --- |
+| Enter | Send the current message |
+| Shift+Enter | Insert a newline |
+| Ctrl+U | Clear the input box |
+| Ctrl+A / Ctrl+E | Move to the beginning or end of input |
+| Esc | View status |
+| Ctrl+C | Exit |
+
+After editing `~/.anda/config.yaml`, type:
+
+```text
+/reload
+```
+
+## Slash Commands
+
+| Command | When to use it |
+| --- | --- |
+| `/goal message` or `/loop message` | Put a goal into the long-horizon loop until the checker decides it is complete or needs more work. |
+| `/side message` or `/btw message` | Start a side task for research, inspection, or work that should not interrupt the main conversation. |
+| `/skill skill-name message` | Ask a specific runtime skill to handle the request. |
+| `/steer message` | Interrupt the next tool call and steer the current response with new instructions. |
+| `/stop message` or `/cancel message` | Stop the current response; the message can include a reason. |
+
+Examples:
+
+```text
+/goal Finish this release checklist until tests and the changelog are confirmed.
+/side Check whether this dependency upgrade has compatibility risk.
+/skill git-assistant Draft a commit message from the current diff.
+/steer Stop refactoring and only fix the build error first.
+```
+
+## Common CLI Commands
+
+| Command | Purpose |
+| --- | --- |
+| `anda` | Open the interactive terminal UI. |
+| `anda update` | Update a release installed by the install script. |
+| `anda stop` | Stop the background daemon on Unix platforms. |
+| `anda restart` | Restart the background daemon on Unix platforms. |
+| `anda agent run --prompt "..."` | Send one request without opening the UI. |
+| `anda voice --record-secs 8` | Start voice input; requires transcription configuration. |
+
+Voice playback also requires `tts.enabled: true`. If you only want spoken input and text output, add `--no-playback`.

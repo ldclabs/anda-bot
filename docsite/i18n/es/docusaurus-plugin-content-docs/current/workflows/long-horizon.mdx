@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: Trabajo de largo alcance y subagentes
+description: Usa /goal, subagentes, skills y herramientas para avanzar objetivos complejos hasta verificarlos.
+---
+
+# Trabajo de largo alcance y subagentes
+
+Anda Bot está diseñado para objetivos complejos que necesitan continuidad. Conserva el objetivo, revisa progreso, compacta contexto y continúa cuando hace falta.
+
+## Usar /goal
+
+```text
+/goal Termina este release: tests, changelog, docs de instalación y resumen de riesgos.
+```
+
+`/goal` o `/loop` abre un ciclo de largo alcance. Cuando el agente queda libre, el verificador decide si el resultado está completo o necesita continuar.
+
+## Usar /side
+
+`/side` o `/btw` crea una tarea lateral para investigar, revisar o recoger contexto sin interrumpir la conversación principal.
+
+```text
+/side Comprueba si esta dependencia afecta a macOS arm64.
+```
+
+## Usar /skill
+
+```text
+/skill git-assistant Redacta un Conventional Commit desde el diff actual.
+```
+
+## Qué hacen los subagentes
+
+Pueden investigar, implementar, revisar o supervisar. La sesión principal mantiene el objetivo y el juicio final; los subagentes hacen trabajo focalizado.
+
+## Herramientas y workspace local
+
+Anda incluye memoria, notas, shell, archivos, tareas, skills, cron y subagentes. Las herramientas de archivo y shell usan `~/.anda/workspace` por defecto.
+
+Di claramente el objetivo, los criterios de aceptación y los límites.
+
+```text
+/goal Arregla el build de docs. No edites Rust. Termina cuando pnpm --dir docsite build pase.
+```

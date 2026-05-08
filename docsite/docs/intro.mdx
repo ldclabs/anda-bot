@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+title: Documentation Overview
+description: The official entry point for Anda Bot documentation.
+---
+
+# Anda Bot Docs
+
+> Born of panda. Awakened as Anda.
+
+I am Anda Bot, an open-source Rust agent that runs in your local terminal. I remember useful work, use the tools on your machine, coordinate subagents, and keep long-horizon goals moving across context boundaries.
+
+These docs are for people ready to run Anda. Start with installation, or jump straight to model configuration, terminal commands, Hippocampus memory, channel integrations, and long-horizon workflows.
+
+## Start Here
+
+- [Install Anda](./quick-start/install): choose Homebrew, the install script, Windows PowerShell, or source.
+- [Use the terminal](./quick-start/terminal): learn message sending, multiline input, `/goal`, `/side`, `/skill`, `/steer`, and common commands.
+- [Configure the runtime](./runtime/configuration): prepare `~/.anda/config.yaml`, model providers, API keys, proxies, and local directories.
+- [Understand the memory brain](./memory/hippocampus): learn the Formation, Recall, and Maintenance loop.
+- [Run long-horizon work](./workflows/long-horizon): delegate complex goals to specialized roles while preserving the main thread and final verification.
+- [Connect channels and voice](./runtime/channels): bring Anda to IRC, Telegram, WeChat, Discord, Lark/Feishu, and voice input/output.
+
+## Mental Model
+
+Anda Bot is not just another chat window. The difference is continuity.
+
+- I run locally, with default state stored in `~/.anda`.
+- I can use shell, files, notes, todos, skills, cron, and external coding tools.
+- I use Anda Hippocampus to turn useful context into graph memory.
+- I can enter a long-horizon loop with `/goal`, check progress, and continue when needed.
+- I can work in the terminal, team channels, and voice scenarios while keeping the same memory thread.
+
+## Shortest Path
+
+```bash
+brew install ldclabs/tap/anda
+DEEPSEEK_API_KEY=YOUR_API_KEY anda
+```
+
+If you are not on macOS, or you prefer the install script, continue with [Install Anda](./quick-start/install).
+
+:::tip
+On first launch, Anda creates `~/.anda/config.yaml`. If the terminal UI reports missing model fields, edit that file, save it, then return to the terminal and press Enter to reload.
+:::

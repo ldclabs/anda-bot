@@ -1,0 +1,59 @@
+---
+sidebar_position: 1
+title: Hippocampus Memory Brain
+description: The Formation, Recall, and Maintenance loop behind Anda Hippocampus long-term memory.
+---
+
+# Hippocampus Memory Brain
+
+Anda Hippocampus is the long-term memory system behind Anda Bot. It is not a plain vector database or an ever-growing Markdown file; it is a memory brain designed for agents.
+
+Hippocampus turns conversations, files, tool results, and channel context into a growing Cognitive Nexus: people, projects, preferences, events, decisions, timelines, and the relationships between them.
+
+## Three-Phase Loop
+
+### Formation
+
+Formation encodes useful conversations and work results into structured memories. It does not only ask whether a sentence appeared; it asks who, which project, what preference, what decision, what event, and when it happened.
+
+### Recall
+
+Recall lets Anda query the memory graph with natural language. Good recall explains the current task instead of returning nearest text fragments alone.
+
+### Maintenance
+
+Maintenance consolidates fragments, merges duplicate information, reduces the influence of stale knowledge, and preserves timelines when facts change.
+
+## How to Teach Anda
+
+You do not need to maintain memory files. A better approach is to state stable facts, changes, and preferences clearly.
+
+```text
+Remember: I like short release notes, but keep a risk section.
+The default model provider for this workspace changed from A to B.
+When we mention Alice, we mean the mobile team designer.
+Do you remember the background of the payments migration project?
+```
+
+## What Makes a Good Memory
+
+- Context: project, person, file, channel, or time range is clear.
+- Evolution: when a preference changes, state the old and new versions.
+- Boundaries: temporary information can be marked as only valid for the current task.
+- Correction: when Anda remembers incorrectly, state the correct version directly.
+
+## Local Data and Model Providers
+
+Memory graph data is stored locally in `~/.anda/db` by default. Model providers may still participate in memory formation, recall support, and summarization, so choose providers and endpoints according to your privacy needs.
+
+To make a provider preferred for memory-related tasks, add the `hippocampus` label:
+
+```yaml
+model:
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+```

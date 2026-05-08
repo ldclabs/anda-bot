@@ -1,0 +1,44 @@
+---
+sidebar_position: 1
+title: Cerebro de memoria Hippocampus
+description: El ciclo Formation, Recall y Maintenance de la memoria a largo plazo de Anda Hippocampus.
+---
+
+# Cerebro de memoria Hippocampus
+
+Anda Hippocampus es el sistema de memoria a largo plazo de Anda Bot. No es una base vectorial simple ni un archivo Markdown interminable: es un cerebro de memoria para agentes.
+
+Convierte conversaciones, archivos, resultados de herramientas y contexto de canales en un Cognitive Nexus: personas, proyectos, preferencias, eventos, decisiones, líneas de tiempo y relaciones.
+
+## Ciclo de tres fases
+
+### Formation
+
+Codifica conversaciones y resultados útiles como memoria estructurada: quién, qué proyecto, qué preferencia, qué decisión y cuándo ocurrió.
+
+### Recall
+
+Permite consultar el grafo con lenguaje natural. Una buena recuperación explica la tarea actual, no solo devuelve texto parecido.
+
+### Maintenance
+
+Consolida fragmentos, fusiona duplicados, reduce conocimiento viejo y preserva líneas de tiempo cuando los hechos cambian.
+
+## Cómo enseñar a Anda
+
+```text
+Recuerda: prefiero notas de release cortas, pero con sección de riesgos.
+El proveedor de modelos de este workspace cambió de A a B.
+Cuando hablemos de Alice, nos referimos a la diseñadora móvil.
+```
+
+## Buenas memorias
+
+- Contexto claro: proyecto, persona, archivo, canal o periodo.
+- Evolución: indica versión anterior y nueva.
+- Límite: marca información temporal como temporal.
+- Corrección: si Anda recuerda mal, da la versión correcta.
+
+## Datos locales y proveedores
+
+El grafo vive en `~/.anda/db` por defecto. Los proveedores de modelos pueden participar en formation, recall y resumen, así que elige endpoints según tu privacidad.

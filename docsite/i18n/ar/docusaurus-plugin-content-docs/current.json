@@ -1,0 +1,22 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.Quick Start": {
+    "message": "البدء السريع",
+    "description": "The label for category 'Quick Start' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Runtime": {
+    "message": "وقت التشغيل",
+    "description": "The label for category 'Runtime' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Memory": {
+    "message": "الذاكرة",
+    "description": "The label for category 'Memory' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Workflows": {
+    "message": "سير العمل",
+    "description": "The label for category 'Workflows' in sidebar 'docsSidebar'"
+  }
+}

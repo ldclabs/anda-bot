@@ -1,0 +1,22 @@
+{
+  "version.label": {
+    "message": "Next",
+    "description": "The label for version current"
+  },
+  "sidebar.docsSidebar.category.Quick Start": {
+    "message": "快速开始",
+    "description": "The label for category 'Quick Start' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Runtime": {
+    "message": "运行时",
+    "description": "The label for category 'Runtime' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Memory": {
+    "message": "记忆",
+    "description": "The label for category 'Memory' in sidebar 'docsSidebar'"
+  },
+  "sidebar.docsSidebar.category.Workflows": {
+    "message": "工作流",
+    "description": "The label for category 'Workflows' in sidebar 'docsSidebar'"
+  }
+}

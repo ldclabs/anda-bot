@@ -1,0 +1,59 @@
+---
+sidebar_position: 1
+title: Hippocampus 记忆大脑
+description: Anda Hippocampus 的 Formation、Recall、Maintenance 长期记忆循环。
+---
+
+# Hippocampus 记忆大脑
+
+Anda Hippocampus 是 Anda Bot 的长期记忆系统。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的记忆大脑。
+
+Hippocampus 会把对话、文件、工具结果和频道上下文转化为一个持续生长的 Cognitive Nexus：里面有用户、项目、偏好、事件、决策、时间线，以及这些节点之间的关系。
+
+## 三阶段循环
+
+### Formation
+
+Formation 会把有价值的对话和工作结果编码为结构化记忆。它关心的不只是“这句话出现过”，而是：谁、什么项目、什么偏好、什么决策、什么事件，以及它们在什么时候发生。
+
+### Recall
+
+Recall 让 Anda 可以用自然语言向记忆图谱提问。召回结果应该解释当前任务，而不是只返回相似文本片段。
+
+### Maintenance
+
+Maintenance 会在后台巩固碎片、合并重复信息、降低陈旧知识的影响，并在事实变化时保留演化时间线。
+
+## 如何教会 Anda
+
+你不需要维护记忆文件。更好的方式是把稳定事实、变化和偏好直接说清楚。
+
+```text
+记住：我喜欢简短的发布说明，但要保留风险段落。
+这个 workspace 的默认模型 provider 已经从 A 改成 B。
+以后我们提到 Alice，指的是移动端团队的设计师。
+你还记得支付迁移项目的背景吗？
+```
+
+## 好记忆的特点
+
+- 有上下文：项目、人物、文件、频道或时间范围明确。
+- 有演化：偏好变化时说明旧状态和新状态。
+- 有边界：临时信息可以说清楚只是本次任务有效。
+- 有纠正：当 Anda 记错时直接指出正确版本。
+
+## 本地和模型 provider
+
+记忆图谱数据默认保存在本机 `~/.anda/db`。模型 provider 仍可能参与记忆形成、召回支持和摘要处理，所以请根据隐私需求选择 provider 和 endpoint。
+
+想让某个 provider 优先承担记忆相关任务，可以添加 `hippocampus` 标签：
+
+```yaml
+model:
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["pro", "hippocampus"]
+```
