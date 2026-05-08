@@ -164,7 +164,7 @@ fn print_session_state(session: &SessionState) {
 
     println!("  background_tasks:");
     let mut tasks = session.background_tasks.iter().collect::<Vec<_>>();
-    tasks.sort_by(|(left, _), (right, _)| left.cmp(right));
+    tasks.sort_by_key(|(left, _)| *left);
     for (task_id, task) in tasks {
         println!(
             "    - {} agent={} tool={} progress={}",
