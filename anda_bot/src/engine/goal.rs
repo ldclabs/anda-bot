@@ -6,6 +6,8 @@ use anda_engine::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::system::system_runtime_prompt;
+
 const EVALUATION_HISTORY_LIMIT: usize = 21;
 pub const SUPERVISOR_AGENT_NAME: &str = "supervisor_agent";
 const SUPERVISOR_INSTRUCTIONS: &str = include_str!("../../assets/SupervisorInstructions.md");
@@ -182,7 +184,7 @@ fn continuation_prompt(objective: &str, evaluation: &GoalEvaluation) -> String {
         prompt.push_str(&format!("\n\nSupervisor reason:\n{reason}"));
     }
 
-    prompt
+    system_runtime_prompt("goal continuation", prompt)
 }
 
 fn parse_goal_evaluation(content: &str) -> Result<GoalEvaluation, BoxError> {
@@ -258,6 +260,7 @@ mod tests {
 
         let prompt = continuation_prompt("ship it", &evaluation);
 
+        assert!(prompt.starts_with("[$system runtime message: goal continuation]"));
         assert!(prompt.contains("Continue working toward the active `/goal` objective"));
         assert!(prompt.contains("completion audit"));
         assert!(prompt.contains("Choose the next concrete action toward the objective"));
@@ -277,6 +280,7 @@ mod tests {
 
         let prompt = continuation_prompt("verify release", &evaluation);
 
+        assert!(prompt.starts_with("[$system runtime message: goal continuation]"));
         assert!(prompt.contains("Run the focused test command and inspect failures."));
         assert!(prompt.contains("Do not accept intent"));
         assert!(prompt.contains("bounded computation, literature summaries, promising reductions, or partial constructions do not satisfy terminal success criteria"));

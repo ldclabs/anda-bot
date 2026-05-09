@@ -94,6 +94,15 @@ impl Daemon {
         self.home.join("workspace")
     }
 
+    pub fn workspaces(&self) -> Vec<PathBuf> {
+        vec![
+            self.workspace_dir_path(),
+            self.sandbox_dir_path(),
+            self.channels_dir_path(),
+            self.skills_dir_path(),
+        ]
+    }
+
     pub fn log_file_path(&self) -> PathBuf {
         logger::current_daily_log_file_path(self.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)
     }
@@ -222,7 +231,7 @@ impl Daemon {
             brain_base_url: self.cfg.brain_base_url(),
             home_dir: self.home.clone(),
             skills_dir: self.skills_dir_path(),
-            workspace_dir: self.workspace_dir_path(),
+            workspaces: self.workspaces(),
             tts: self.cfg.tts.clone(),
             transcription: self.cfg.transcription.clone(),
             https_proxy: self.cfg.https_proxy.clone(),

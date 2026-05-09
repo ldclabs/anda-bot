@@ -23,6 +23,7 @@ mod conversation;
 mod goal;
 mod prompt;
 mod side;
+mod system;
 
 use crate::util::{
     http_client::{NO_PROXY, build_http_client},
@@ -49,7 +50,7 @@ pub struct EngineConfig {
     pub brain_base_url: String,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
-    pub workspace_dir: PathBuf,
+    pub workspaces: Vec<PathBuf>,
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
     pub https_proxy: Option<String>,
@@ -100,10 +101,15 @@ impl Engines {
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
             .with_http_client(brain_http_client);
 
+        let default_workspace = cfg
+            .workspaces
+            .first()
+            .cloned()
+            .ok_or_else(|| "At least one workspace must be provided")?;
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let conversations_tool = Arc::new(ConversationsTool::new(
             conversations.clone(),
-            cfg.workspace_dir.to_string_lossy().to_string(),
+            default_workspace.to_string_lossy().to_string(),
         ));
         let tts_manager = {
             let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
@@ -118,7 +124,7 @@ impl Engines {
         };
 
         let shell_tool = {
-            let runtime = Arc::new(shell::NativeRuntime::new(cfg.workspace_dir.clone()));
+            let runtime = Arc::new(shell::NativeRuntime::new(default_workspace));
             let mut envs = vec![shell::CustomEnv {
                 key: "ANDA_HOME".to_string(),
                 value: cfg.home_dir.to_string_lossy().to_string(),
@@ -178,10 +184,18 @@ impl Engines {
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
-            .register_tool(Arc::new(fs::ReadFileTool::new(cfg.workspace_dir.clone())))?
-            .register_tool(Arc::new(fs::SearchFileTool::new(cfg.workspace_dir.clone())))?
-            .register_tool(Arc::new(fs::EditFileTool::new(cfg.workspace_dir.clone())))?
-            .register_tool(Arc::new(fs::WriteFileTool::new(cfg.workspace_dir.clone())))?
+            .register_tool(Arc::new(fs::ReadFileTool::with_workspaces(
+                cfg.workspaces.clone(),
+            )))?
+            .register_tool(Arc::new(fs::SearchFileTool::with_workspaces(
+                cfg.workspaces.clone(),
+            )))?
+            .register_tool(Arc::new(fs::EditFileTool::with_workspaces(
+                cfg.workspaces.clone(),
+            )))?
+            .register_tool(Arc::new(fs::WriteFileTool::with_workspaces(
+                cfg.workspaces.clone(),
+            )))?
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
