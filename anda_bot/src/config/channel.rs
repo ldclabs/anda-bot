@@ -99,6 +99,9 @@ pub struct LarkChannelSettings {
     pub allowed_users: Vec<String>,
 
     #[serde(default)]
+    pub allow_external_users: bool,
+
+    #[serde(default)]
     pub mention_only: bool,
 
     #[serde(default)]
@@ -121,6 +124,7 @@ impl Default for LarkChannelSettings {
             verification_token: None,
             port: None,
             allowed_users: Vec::new(),
+            allow_external_users: false,
             mention_only: false,
             platform: LarkPlatform::default(),
             receive_mode: LarkReceiveMode::default(),
@@ -156,6 +160,7 @@ impl LarkChannelSettings {
             && normalize_optional(&self.verification_token).is_none()
             && self.port.is_none()
             && normalize_list(&self.allowed_users).is_empty()
+            && !self.allow_external_users
             && !self.mention_only
             && self.platform == LarkPlatform::default()
             && self.receive_mode == LarkReceiveMode::default()
@@ -181,6 +186,9 @@ pub struct DiscordChannelSettings {
     pub allowed_users: Vec<String>,
 
     #[serde(default)]
+    pub allow_external_users: bool,
+
+    #[serde(default)]
     pub listen_to_bots: bool,
 
     #[serde(default)]
@@ -198,6 +206,7 @@ impl Default for DiscordChannelSettings {
             username: None,
             guild_id: None,
             allowed_users: Vec::new(),
+            allow_external_users: false,
             listen_to_bots: false,
             mention_only: false,
             ack_reactions: true,
@@ -230,6 +239,7 @@ impl DiscordChannelSettings {
             && normalize_optional(&self.username).is_none()
             && normalize_optional(&self.guild_id).is_none()
             && normalize_list(&self.allowed_users).is_empty()
+            && !self.allow_external_users
             && !self.listen_to_bots
             && !self.mention_only
             && self.ack_reactions
@@ -251,6 +261,9 @@ pub struct TelegramChannelSettings {
     pub allowed_users: Vec<String>,
 
     #[serde(default)]
+    pub allow_external_users: bool,
+
+    #[serde(default)]
     pub mention_only: bool,
 
     #[serde(default = "default_true")]
@@ -264,6 +277,7 @@ impl Default for TelegramChannelSettings {
             bot_token: String::new(),
             username: None,
             allowed_users: Vec::new(),
+            allow_external_users: false,
             mention_only: false,
             ack_reactions: true,
         }
@@ -294,6 +308,7 @@ impl TelegramChannelSettings {
             && self.bot_token.trim().is_empty()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
+            && !self.allow_external_users
             && !self.mention_only
             && self.ack_reactions
     }
@@ -312,6 +327,9 @@ pub struct WechatChannelSettings {
 
     #[serde(default)]
     pub allowed_users: Vec<String>,
+
+    #[serde(default)]
+    pub allow_external_users: bool,
 
     #[serde(default)]
     pub route_tag: Option<u32>,
@@ -341,6 +359,7 @@ impl WechatChannelSettings {
             && self.bot_token.trim().is_empty()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
+            && !self.allow_external_users
             && self.route_tag.is_none()
     }
 }
@@ -369,6 +388,9 @@ pub struct IrcChannelSettings {
     pub allowed_users: Vec<String>,
 
     #[serde(default)]
+    pub allow_external_users: bool,
+
+    #[serde(default)]
     pub server_password: Option<String>,
 
     #[serde(default)]
@@ -391,6 +413,7 @@ impl Default for IrcChannelSettings {
             username: None,
             channels: Vec::new(),
             allowed_users: Vec::new(),
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -425,6 +448,7 @@ impl IrcChannelSettings {
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.channels).is_empty()
             && normalize_list(&self.allowed_users).is_empty()
+            && !self.allow_external_users
             && normalize_optional(&self.server_password).is_none()
             && normalize_optional(&self.nickserv_password).is_none()
             && normalize_optional(&self.sasl_password).is_none()

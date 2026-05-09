@@ -80,6 +80,7 @@ pub struct TelegramChannel {
     bot_token: String,
     username: String,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     mention_only: bool,
     api_base: String,
     ack_reactions: bool,
@@ -104,6 +105,7 @@ impl TelegramChannel {
                 .iter()
                 .map(|s| normalize_identity(s))
                 .collect(),
+            allow_external_users: cfg.allow_external_users,
             mention_only: cfg.mention_only,
             api_base: config::DEFAULT_TELEGRAM_API_BASE.to_string(),
             ack_reactions: cfg.ack_reactions,
@@ -359,7 +361,8 @@ impl TelegramChannel {
         if let Some(sender_id) = sender_id.as_deref() {
             identities.push(sender_id);
         }
-        if !self.is_any_user_allowed(identities.iter().copied()) {
+        let trusted_user = self.is_any_user_allowed(identities.iter().copied());
+        if !trusted_user && !self.allow_external_users {
             self.log_unauthorized(message);
             return None;
         }
@@ -375,13 +378,20 @@ impl TelegramChannel {
             text.to_string()
         };
 
-        self.channel_message_from_parts(message, sender_identity, content, Vec::new())
+        self.channel_message_from_parts(
+            message,
+            sender_identity,
+            !trusted_user,
+            content,
+            Vec::new(),
+        )
     }
 
     fn channel_message_from_parts(
         &self,
         message: &Value,
         sender: String,
+        external_user: bool,
         content: String,
         attachments: Vec<Resource>,
     ) -> Option<ChannelMessage> {
@@ -422,6 +432,7 @@ impl TelegramChannel {
 
         Some(ChannelMessage {
             sender,
+            external_user: external_user.then_some(true),
             reply_target,
             content,
             channel: self.id(),
@@ -527,7 +538,8 @@ impl TelegramChannel {
         if let Some(sender_id) = sender_id.as_deref() {
             identities.push(sender_id);
         }
-        if !self.is_any_user_allowed(identities.iter().copied()) {
+        let trusted_user = self.is_any_user_allowed(identities.iter().copied());
+        if !trusted_user && !self.allow_external_users {
             self.log_unauthorized(message);
             return None;
         }
@@ -579,7 +591,13 @@ impl TelegramChannel {
             caption
         };
 
-        self.channel_message_from_parts(message, sender_identity, content, vec![resource])
+        self.channel_message_from_parts(
+            message,
+            sender_identity,
+            !trusted_user,
+            content,
+            vec![resource],
+        )
     }
 
     async fn get_file_path(&self, file_id: &str) -> Result<String, BoxError> {
@@ -1284,6 +1302,7 @@ mod tests {
             bot_token: "123:ABC".to_string(),
             username: Some("anda_bot".to_string()),
             allowed_users: vec!["@Alice".to_string(), "12345".to_string()],
+            allow_external_users: false,
             mention_only: true,
             ack_reactions: true,
         }
@@ -1316,6 +1335,29 @@ mod tests {
         assert!(channel.is_user_allowed("Alice"));
         assert!(channel.is_user_allowed("12345"));
         assert!(!channel.is_user_allowed("bob"));
+    }
+
+    #[tokio::test]
+    async fn parse_message_marks_non_allowlisted_sender_external_when_enabled() {
+        let mut cfg = test_config();
+        cfg.allowed_users = vec!["Alice".to_string()];
+        cfg.allow_external_users = true;
+        cfg.mention_only = false;
+        let channel = TelegramChannel::new(&cfg, Client::new());
+        let update = serde_json::json!({
+            "message": {
+                "message_id": 42,
+                "text": "hello",
+                "from": { "id": 67890, "username": "Bob" },
+                "chat": { "id": 12345, "type": "private" }
+            }
+        });
+
+        let message = channel.parse_update_message(&update).await.unwrap();
+
+        assert_eq!(message.sender, "Bob");
+        assert_eq!(message.content, "hello");
+        assert!(message.external_user.unwrap_or_default());
     }
 
     #[test]

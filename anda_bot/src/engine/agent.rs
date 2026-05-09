@@ -43,8 +43,7 @@ use super::{
     prompt::{PromptCommand, skill_subagent},
     side,
     system::{
-        SYSTEM_PERSON_NAME, mark_system_runtime_messages, system_runtime_prompt,
-        system_user_message,
+        SYSTEM_PERSON_NAME, mark_special_user_messages, system_runtime_prompt, system_user_message,
     },
 };
 use crate::{
@@ -698,15 +697,18 @@ impl Agent<AgentCtx> for AndaBot {
             );
         }
 
+        let mut initial_messages = vec![Message {
+            role: "user".into(),
+            content: vec![prompt.clone().into()],
+            timestamp: Some(now_ms),
+            ..Default::default()
+        }];
+        mark_special_user_messages(&mut initial_messages);
+
         let mut conversation = Conversation {
             user: *caller,
             thread: Some(sess_id.clone()),
-            messages: vec![serde_json::json!(Message {
-                role: "user".into(),
-                content: vec![prompt.clone().into()],
-                timestamp: Some(now_ms),
-                ..Default::default()
-            })],
+            messages: initial_messages.into_iter().map(|msg| json!(msg)).collect(),
             ancestors,
             resources: vec![], // Don't save the resources in the conversation, as they are already included in the message content as documents
             period: now_ms / 3600 / 1000,
@@ -742,6 +744,20 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let (sender, mut rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
+        let external_user = ctx
+            .meta()
+            .get_extra_as::<bool>("external_user")
+            .unwrap_or(false);
+        let formation_counterparty = if external_user {
+            ctx.meta()
+                .user
+                .as_ref()
+                .map(|sender| format!("$external_user:{sender}"))
+                .or_else(|| Some("$external_user".to_string()))
+        } else {
+            Some(caller.to_string())
+        };
+
         let session = Arc::new(Session {
             id: sess_id,
             caller: caller.to_string(),
@@ -755,7 +771,7 @@ impl Agent<AgentCtx> for AndaBot {
             submit_formation_at: AtomicU64::new(0),
             active_at: AtomicU64::new(unix_ms()),
             formation_context: Some(InputContext {
-                counterparty: Some(caller.to_string()),
+                counterparty: formation_counterparty,
                 agent: Some(AndaBot::NAME.to_string()),
                 source: Some(source),
                 topic: None,
@@ -907,7 +923,7 @@ impl SessionRunner {
                 }
             })
             .collect::<Vec<_>>();
-        mark_system_runtime_messages(&mut messages);
+        mark_special_user_messages(&mut messages);
 
         let next_submit_formation_at = chat_history.len();
         if messages.is_empty() {
@@ -1066,7 +1082,7 @@ impl SessionRunner {
                         .runner
                         .finalize(Some(COMPACTION_PROMPT.to_string()))
                         .await?;
-                    mark_system_runtime_messages(&mut output.chat_history);
+                    mark_special_user_messages(&mut output.chat_history);
 
                     let now_ms = unix_ms();
                     if let Some(failed_reason) = output.failed_reason {
@@ -1203,7 +1219,7 @@ impl SessionRunner {
                 self.session.active_at.store(now_ms, Ordering::SeqCst);
                 let is_done = self.runner.is_done();
                 res.conversation = Some(self.conversation._id);
-                mark_system_runtime_messages(&mut res.chat_history);
+                mark_special_user_messages(&mut res.chat_history);
 
                 self.session.on_completion(&self.ctx, &res).await;
 
@@ -1758,7 +1774,7 @@ mod tests {
 
     #[test]
     fn compaction_prompt_preserves_goal_continuation_evidence() {
-        assert!(COMPACTION_PROMPT.contains("$system runtime message"));
+        assert!(COMPACTION_PROMPT.contains("$system: kind="));
         assert!(COMPACTION_PROMPT.contains("not a final answer"));
         assert!(COMPACTION_PROMPT.contains("user-provided task data"));
         assert!(COMPACTION_PROMPT.contains("prompt-to-artifact checklist"));
@@ -1783,6 +1799,8 @@ mod tests {
     #[test]
     fn system_instructions_explain_system_identity_and_tool_selection() {
         assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$system" }"#));
+        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$external_user" }"#));
+        assert!(SELF_INSTRUCTIONS.contains("external untrusted user"));
         assert!(SELF_INSTRUCTIONS.contains("Available Callable Names"));
         assert!(SELF_INSTRUCTIONS.contains("tools_select"));
         assert!(SELF_INSTRUCTIONS.contains("Never invent tool parameters"));

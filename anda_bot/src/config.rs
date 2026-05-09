@@ -289,11 +289,11 @@ model:
       api_base: https://api.openai.com/v1
       api_key: sk-openai
 channels:
- irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
- telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
- wechat: [{id: personal, bot_token: "wx-token", username: anda-wechat, allowed_users: [wx_alice], base_url: https://ilinkai.weixin.qq.com/, cdn_base_url: https://novac2c.cdn.weixin.qq.com/c2c, route_tag: 42}]
- discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
- lark: [{id: work, app_id: cli_a, app_secret: secret, username: anda-lark, verification_token: verify, port: 8090, allowed_users: [ou_alice], mention_only: true, platform: feishu, receive_mode: webhook, api_base: https://open.feishu.cn/open-apis, ws_base: https://open.feishu.cn, ack_reactions: false}]
+ irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], allow_external_users: true, server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
+ telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], allow_external_users: true, mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
+ wechat: [{id: personal, bot_token: "wx-token", username: anda-wechat, allowed_users: [wx_alice], allow_external_users: true, base_url: https://ilinkai.weixin.qq.com/, cdn_base_url: https://novac2c.cdn.weixin.qq.com/c2c, route_tag: 42}]
+ discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], allow_external_users: true, listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
+ lark: [{id: work, app_id: cli_a, app_secret: secret, username: anda-lark, verification_token: verify, port: 8090, allowed_users: [ou_alice], allow_external_users: true, mention_only: true, platform: feishu, receive_mode: webhook, api_base: https://open.feishu.cn/open-apis, ws_base: https://open.feishu.cn, ack_reactions: false}]
 "##,
         )
         .unwrap();
@@ -315,6 +315,7 @@ channels:
         assert_eq!(config.channels.irc[0].username.as_deref(), Some("anda"));
         assert_eq!(config.channels.irc[0].channels, vec!["#anda", "#ops"]);
         assert_eq!(config.channels.irc[0].allowed_users, vec!["alice", "bob"]);
+        assert!(config.channels.irc[0].allow_external_users);
         assert!(!config.channels.irc[0].verify_tls);
         assert_eq!(config.channels.telegram.len(), 1);
         assert_eq!(config.channels.telegram[0].id.as_deref(), Some("personal"));
@@ -327,6 +328,7 @@ channels:
             config.channels.telegram[0].allowed_users,
             vec!["alice", "123456789"]
         );
+        assert!(config.channels.telegram[0].allow_external_users);
         assert!(config.channels.telegram[0].mention_only);
         assert!(!config.channels.telegram[0].ack_reactions);
         assert_eq!(config.channels.wechat.len(), 1);
@@ -337,6 +339,7 @@ channels:
             Some("anda-wechat")
         );
         assert_eq!(config.channels.wechat[0].allowed_users, vec!["wx_alice"]);
+        assert!(config.channels.wechat[0].allow_external_users);
         assert_eq!(config.channels.wechat[0].route_tag, Some(42));
         assert_eq!(config.channels.discord.len(), 1);
         assert_eq!(config.channels.discord[0].id.as_deref(), Some("server"));
@@ -350,6 +353,7 @@ channels:
             Some("987654321")
         );
         assert_eq!(config.channels.discord[0].allowed_users, vec!["111", "222"]);
+        assert!(config.channels.discord[0].allow_external_users);
         assert!(config.channels.discord[0].listen_to_bots);
         assert!(config.channels.discord[0].mention_only);
         assert!(!config.channels.discord[0].ack_reactions);
@@ -367,6 +371,7 @@ channels:
         );
         assert_eq!(config.channels.lark[0].port, Some(8090));
         assert_eq!(config.channels.lark[0].allowed_users, vec!["ou_alice"]);
+        assert!(config.channels.lark[0].allow_external_users);
         assert!(config.channels.lark[0].mention_only);
         assert_eq!(config.channels.lark[0].platform, LarkPlatform::Feishu);
         assert_eq!(
