@@ -1,11 +1,11 @@
-use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
+use anda_core::{BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolOutput};
 use anda_engine::context::BaseCtx;
 use anda_kip::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{runtime::CronRuntime, types::CreateCronJobArgs};
+use super::{runtime::CronRuntime, types::CreateCronJobArgs, types::CronJobOrigin};
 
 #[derive(Clone)]
 pub struct CreateCronTool {
@@ -81,11 +81,12 @@ impl Tool<BaseCtx> for CreateCronTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let job = self.cron.store.insert_job(args).await?;
+        let origin = CronJobOrigin::from_meta(ctx.meta());
+        let job = self.cron.store.insert_job(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: json!(job),
             next_cursor: None,

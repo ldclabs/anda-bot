@@ -1,5 +1,7 @@
-use anda_core::{AgentOutput, ToolOutput};
-use anda_db::schema::{AndaDBSchema, BoxError, FieldEntry, FieldType, Schema, SchemaError};
+use anda_core::{AgentOutput, RequestMeta, ToolOutput};
+use anda_db::schema::{
+    AndaDBSchema, BoxError, FieldEntry, FieldKey, FieldType, Schema, SchemaError,
+};
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronExprSchedule;
 use serde::{Deserialize, Serialize};
@@ -74,9 +76,94 @@ pub enum ScheduleKind {
     Once,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CronJobOrigin {
+    pub user: Option<String>,
+    pub source: Option<String>,
+    pub reply_target: Option<String>,
+    pub thread: Option<String>,
+    pub workspace: Option<String>,
+    pub conversation_id: Option<u64>,
+    pub external_user: Option<bool>,
+}
+
+impl CronJobOrigin {
+    pub fn from_meta(meta: &RequestMeta) -> Option<Self> {
+        let origin = Self {
+            user: meta.user.as_deref().and_then(normalize_optional_name),
+            source: meta
+                .get_extra_as::<String>("source")
+                .as_deref()
+                .and_then(normalize_optional_name),
+            reply_target: meta
+                .get_extra_as::<String>("reply_target")
+                .as_deref()
+                .and_then(normalize_optional_name),
+            thread: meta
+                .get_extra_as::<String>("thread")
+                .as_deref()
+                .and_then(normalize_optional_name),
+            workspace: meta
+                .get_extra_as::<String>("workspace")
+                .as_deref()
+                .and_then(normalize_optional_name),
+            conversation_id: meta
+                .get_extra_as::<u64>("conversation")
+                .filter(|conversation_id| *conversation_id > 0),
+            external_user: meta.get_extra_as::<bool>("external_user"),
+        };
+
+        (!origin.is_empty()).then_some(origin)
+    }
+
+    pub fn to_request_meta(&self, conversation_id: Option<u64>) -> RequestMeta {
+        let mut extra = serde_json::Map::new();
+        let conversation_id = conversation_id.or(self.conversation_id);
+        if let Some(conversation_id) =
+            conversation_id.filter(|conversation_id| *conversation_id > 0)
+        {
+            extra.insert("conversation".to_string(), conversation_id.into());
+        }
+        if let Some(source) = &self.source {
+            extra.insert("source".to_string(), source.clone().into());
+        }
+        if let Some(reply_target) = &self.reply_target {
+            extra.insert("reply_target".to_string(), reply_target.clone().into());
+        }
+        if let Some(thread) = &self.thread {
+            extra.insert("thread".to_string(), thread.clone().into());
+        }
+        if let Some(workspace) = &self.workspace {
+            extra.insert("workspace".to_string(), workspace.clone().into());
+        }
+        if let Some(external_user) = self.external_user {
+            extra.insert("external_user".to_string(), external_user.into());
+        }
+
+        RequestMeta {
+            user: self.user.clone(),
+            extra,
+            ..Default::default()
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.user.is_none()
+            && self.source.is_none()
+            && self.reply_target.is_none()
+            && self.thread.is_none()
+            && self.workspace.is_none()
+            && self.conversation_id.is_none()
+            && self.external_user.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, AndaDBSchema)]
 pub struct CronJob {
     pub _id: u64,
+
+    #[field_type = "Option<Map<Text, Json>>"]
+    pub origin: Option<CronJobOrigin>,
 
     #[field_type = "Text"]
     pub job_kind: JobKind,
@@ -100,6 +187,16 @@ pub struct CronJob {
 impl CronJob {
     pub fn schedule(&self) -> Result<Schedule, BoxError> {
         build_schedule(&self.schedule_kind, &self.schedule, self.tz.as_ref())
+    }
+
+    pub fn request_meta(&self) -> Option<RequestMeta> {
+        let origin = self.origin.clone().unwrap_or_default();
+        let conversation_id = self.last_conversation_id.or(origin.conversation_id);
+        if origin.is_empty() && conversation_id.is_none() {
+            return None;
+        }
+
+        Some(origin.to_request_meta(conversation_id))
     }
 }
 
@@ -129,7 +226,16 @@ pub struct CreateCronJobArgs {
 }
 
 impl CreateCronJobArgs {
+    #[allow(unused)]
     pub fn into_cron_job(self, now_ms: u64) -> Result<CronJob, BoxError> {
+        self.into_cron_job_with_origin(now_ms, None)
+    }
+
+    pub fn into_cron_job_with_origin(
+        self,
+        now_ms: u64,
+        origin: Option<CronJobOrigin>,
+    ) -> Result<CronJob, BoxError> {
         let schedule = build_schedule(&self.schedule_kind, &self.schedule, self.tz.as_ref())?;
         schedule.validate(now_ms)?;
         let next_run = schedule.next_run(now_ms);
@@ -137,6 +243,7 @@ impl CreateCronJobArgs {
             persisted_schedule(&self.schedule_kind, &self.schedule, &schedule)?;
         Ok(CronJob {
             _id: 0, // to be set by the store
+            origin,
             job_kind: self.job_kind,
             job: self.job,
             schedule_kind,
@@ -463,6 +570,81 @@ mod tests {
         assert_eq!(args.schedule, "0 9 * * 1-5");
         assert_eq!(args.name, Some("daily-summary".to_string()));
         assert_eq!(args.tz, Some("Asia/Shanghai".to_string()));
+    }
+
+    #[test]
+    fn cron_origin_round_trips_request_meta() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("source".to_string(), "wechat:daily".into());
+        extra.insert("reply_target".to_string(), "alice".into());
+        extra.insert("thread".to_string(), "morning".into());
+        extra.insert("workspace".to_string(), "/tmp/anda/wechat".into());
+        extra.insert("conversation".to_string(), 42.into());
+        extra.insert("external_user".to_string(), true.into());
+        let meta = RequestMeta {
+            user: Some("alice".to_string()),
+            extra,
+            ..Default::default()
+        };
+
+        let origin = CronJobOrigin::from_meta(&meta).unwrap();
+        assert_eq!(origin.user, Some("alice".to_string()));
+        assert_eq!(origin.source, Some("wechat:daily".to_string()));
+        assert_eq!(origin.reply_target, Some("alice".to_string()));
+        assert_eq!(origin.thread, Some("morning".to_string()));
+        assert_eq!(origin.workspace, Some("/tmp/anda/wechat".to_string()));
+        assert_eq!(origin.conversation_id, Some(42));
+        assert_eq!(origin.external_user, Some(true));
+
+        let meta = origin.to_request_meta(Some(77));
+        assert_eq!(meta.user, Some("alice".to_string()));
+        assert_eq!(
+            meta.get_extra_as::<String>("source"),
+            Some("wechat:daily".to_string())
+        );
+        assert_eq!(
+            meta.get_extra_as::<String>("reply_target"),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            meta.get_extra_as::<String>("thread"),
+            Some("morning".to_string())
+        );
+        assert_eq!(meta.get_extra_as::<u64>("conversation"), Some(77));
+        assert_eq!(meta.get_extra_as::<bool>("external_user"), Some(true));
+    }
+
+    #[test]
+    fn cron_job_request_meta_prefers_last_conversation() {
+        let now_ms = Utc::now().timestamp_millis() as u64;
+        let origin = CronJobOrigin {
+            source: Some("wechat:daily".to_string()),
+            reply_target: Some("alice".to_string()),
+            conversation_id: Some(42),
+            ..Default::default()
+        };
+        let mut job = CreateCronJobArgs {
+            job_kind: JobKind::Agent,
+            job: "Send the daily summary to me".to_string(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "1h".to_string(),
+            name: Some("daily-summary".to_string()),
+            tz: None,
+        }
+        .into_cron_job_with_origin(now_ms, Some(origin))
+        .unwrap();
+        job.last_conversation_id = Some(88);
+
+        let meta = job.request_meta().unwrap();
+        assert_eq!(meta.get_extra_as::<u64>("conversation"), Some(88));
+        assert_eq!(
+            meta.get_extra_as::<String>("source"),
+            Some("wechat:daily".to_string())
+        );
+        assert_eq!(
+            meta.get_extra_as::<String>("reply_target"),
+            Some("alice".to_string())
+        );
     }
 
     #[test]

@@ -23,9 +23,11 @@ pub struct CronStore {
 
 impl CronStore {
     pub async fn connect(db: Arc<AndaDB>) -> Result<Self, BoxError> {
+        let mut jobs_schema = CronJob::schema()?;
+        jobs_schema.with_version(2);
         let jobs = db
             .open_or_create_collection(
-                CronJob::schema()?,
+                jobs_schema,
                 CollectionConfig {
                     name: "cron_jobs".to_string(),
                     description: "Scheduled prompt jobs".to_string(),
@@ -56,9 +58,13 @@ impl CronStore {
         Ok(Self { jobs, runs })
     }
 
-    pub async fn insert_job(&self, args: CreateCronJobArgs) -> Result<CronJob, BoxError> {
+    pub async fn insert_job(
+        &self,
+        args: CreateCronJobArgs,
+        origin: Option<CronJobOrigin>,
+    ) -> Result<CronJob, BoxError> {
         let now_ms = unix_ms();
-        let mut job = args.into_cron_job(now_ms)?;
+        let mut job = args.into_cron_job_with_origin(now_ms, origin)?;
 
         let id = self.jobs.add_from(&job).await?;
         job._id = id;
@@ -349,14 +355,17 @@ mod tests {
 
     async fn insert_test_job(store: &CronStore, name: &str) -> CronJob {
         store
-            .insert_job(CreateCronJobArgs {
-                job_kind: JobKind::Agent,
-                job: format!("run {name}"),
-                schedule_kind: ScheduleKind::Every,
-                schedule: "60".to_string(),
-                name: Some(name.to_string()),
-                tz: None,
-            })
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Agent,
+                    job: format!("run {name}"),
+                    schedule_kind: ScheduleKind::Every,
+                    schedule: "60".to_string(),
+                    name: Some(name.to_string()),
+                    tz: None,
+                },
+                None,
+            )
             .await
             .unwrap()
     }
@@ -366,14 +375,17 @@ mod tests {
             .unwrap()
             .to_rfc3339();
         store
-            .insert_job(CreateCronJobArgs {
-                job_kind: JobKind::Agent,
-                job: format!("run {name}"),
-                schedule_kind: ScheduleKind::At,
-                schedule: at,
-                name: Some(name.to_string()),
-                tz: None,
-            })
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Agent,
+                    job: format!("run {name}"),
+                    schedule_kind: ScheduleKind::At,
+                    schedule: at,
+                    name: Some(name.to_string()),
+                    tz: None,
+                },
+                None,
+            )
             .await
             .unwrap()
     }
