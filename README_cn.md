@@ -176,6 +176,7 @@ channels:
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
         - "*"
+      allow_external_users: false
       mention_only: false
 ```
 
@@ -189,8 +190,11 @@ channels:
       username: anda-wechat
       allowed_users:
         - "*"
+      allow_external_users: false
       route_tag:
 ```
+
+  设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
 
 更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
 

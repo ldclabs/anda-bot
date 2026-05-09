@@ -260,7 +260,7 @@ mod tests {
 
         let prompt = continuation_prompt("ship it", &evaluation);
 
-        assert!(prompt.starts_with("[$system runtime message: goal continuation]"));
+        assert!(prompt.starts_with("[$system: kind=\"goal continuation\"]"));
         assert!(prompt.contains("Continue working toward the active `/goal` objective"));
         assert!(prompt.contains("completion audit"));
         assert!(prompt.contains("Choose the next concrete action toward the objective"));
@@ -280,7 +280,7 @@ mod tests {
 
         let prompt = continuation_prompt("verify release", &evaluation);
 
-        assert!(prompt.starts_with("[$system runtime message: goal continuation]"));
+        assert!(prompt.starts_with("[$system: kind=\"goal continuation\"]"));
         assert!(prompt.contains("Run the focused test command and inspect failures."));
         assert!(prompt.contains("Do not accept intent"));
         assert!(prompt.contains("bounded computation, literature summaries, promising reductions, or partial constructions do not satisfy terminal success criteria"));

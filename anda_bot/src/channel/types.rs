@@ -21,10 +21,15 @@ pub struct SendMessage {
 }
 
 /// A message received from or sent to a channel
+/// version 2: adds `external_user`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, FieldTyped, AndaDBSchema)]
 pub struct ChannelMessage {
     pub _id: u64,
     pub sender: String,
+
+    /// True when the sender is accepted as an external untrusted IM user.
+    pub external_user: Option<bool>,
+
     pub reply_target: String,
     pub content: String,
     pub channel: String,

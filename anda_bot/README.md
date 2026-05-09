@@ -139,6 +139,7 @@ channels:
 Channel notes:
 
 - `allowed_users` restricts who can trigger me. Use `"*"` only when that is acceptable.
+- `allow_external_users: true` lets non-allowlisted IM senders talk to me as `$external_user`; they are treated as untrusted and are not the owner/partner.
 - Telegram and Discord require `bot_token`.
 - WeChat can use a saved token or QR login when `bot_token` is empty.
 - Lark and Feishu require `app_id` and `app_secret`; use `platform: feishu` for Feishu endpoints.

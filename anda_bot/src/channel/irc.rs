@@ -30,6 +30,7 @@ pub struct IrcChannel {
     username: String,
     channels: Vec<String>,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     server_password: Option<String>,
     nickserv_password: Option<String>,
     sasl_password: Option<String>,
@@ -121,6 +122,7 @@ pub struct IrcChannelConfig {
     pub username: Option<String>,
     pub channels: Vec<String>,
     pub allowed_users: Vec<String>,
+    pub allow_external_users: bool,
     pub server_password: Option<String>,
     pub nickserv_password: Option<String>,
     pub sasl_password: Option<String>,
@@ -137,6 +139,7 @@ impl From<&config::IrcChannelSettings> for IrcChannelConfig {
             username: config::normalize_optional(&irc_cfg.username),
             channels: config::normalize_list(&irc_cfg.channels),
             allowed_users: config::normalize_list(&irc_cfg.allowed_users),
+            allow_external_users: irc_cfg.allow_external_users,
             server_password: config::normalize_optional(&irc_cfg.server_password),
             nickserv_password: config::normalize_optional(&irc_cfg.nickserv_password),
             sasl_password: config::normalize_optional(&irc_cfg.sasl_password),
@@ -189,6 +192,7 @@ impl IrcChannel {
             username,
             channels: cfg.channels,
             allowed_users: cfg.allowed_users,
+            allow_external_users: cfg.allow_external_users,
             server_password: cfg.server_password,
             nickserv_password: cfg.nickserv_password,
             sasl_password: cfg.sasl_password,
@@ -494,7 +498,8 @@ impl Channel for IrcChannel {
                         continue;
                     }
 
-                    if !self.is_user_allowed(sender_nick) {
+                    let trusted_user = self.is_user_allowed(sender_nick);
+                    if !trusted_user && !self.allow_external_users {
                         continue;
                     }
 
@@ -514,6 +519,7 @@ impl Channel for IrcChannel {
 
                     let channel_msg = ChannelMessage {
                         sender: sender_nick.to_string(),
+                        external_user: (!trusted_user).then_some(true),
                         reply_target,
                         content,
                         channel: self.id(),
@@ -690,6 +696,7 @@ mod tests {
             username: None,
             channels: vec!["#anda".into()],
             allowed_users: vec!["*".into()],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -908,6 +915,7 @@ mod tests {
             username: None,
             channels: vec![],
             allowed_users: vec!["alice".into(), "bob".into()],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -928,6 +936,7 @@ mod tests {
             username: None,
             channels: vec![],
             allowed_users: vec!["Alice".into()],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -948,6 +957,7 @@ mod tests {
             username: None,
             channels: vec![],
             allowed_users: vec![],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -968,6 +978,7 @@ mod tests {
             username: None,
             channels: vec![],
             allowed_users: vec![],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -986,6 +997,7 @@ mod tests {
             username: Some("customuser".into()),
             channels: vec![],
             allowed_users: vec![],
+            allow_external_users: false,
             server_password: None,
             nickserv_password: None,
             sasl_password: None,
@@ -1011,6 +1023,7 @@ mod tests {
             username: Some("anda".into()),
             channels: vec!["#test".into()],
             allowed_users: vec!["alice".into()],
+            allow_external_users: true,
             server_password: Some("serverpass".into()),
             nickserv_password: Some("nspass".into()),
             sasl_password: Some("saslpass".into()),
@@ -1022,6 +1035,7 @@ mod tests {
         assert_eq!(ch.username, "anda");
         assert_eq!(ch.channels, vec!["#test"]);
         assert_eq!(ch.allowed_users, vec!["alice"]);
+        assert!(ch.allow_external_users);
         assert_eq!(ch.server_password.as_deref(), Some("serverpass"));
         assert_eq!(ch.nickserv_password.as_deref(), Some("nspass"));
         assert_eq!(ch.sasl_password.as_deref(), Some("saslpass"));

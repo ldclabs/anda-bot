@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::types::*;
-use crate::engine::CompletionHook;
+use crate::engine::{CompletionHook, external_user_prompt};
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
 
@@ -137,7 +137,8 @@ impl ChannelRuntime {
         work_dir: PathBuf,
     ) -> Result<Self, BoxError> {
         let (tx, rx) = tokio::sync::mpsc::channel(21);
-        let schema = ChannelMessage::schema()?;
+        let mut schema = ChannelMessage::schema()?;
+        schema.with_version(2);
         let messages = db
             .open_or_create_collection(
                 schema,
@@ -252,12 +253,14 @@ impl ChannelRuntime {
                         {
                             extra.insert("thread".to_string(), thread.clone().into());
                         }
+                        extra.insert("external_user".to_string(), message.external_user.into());
+                        let prompt = agent_prompt_from_message(&message);
                         match engine
                             .agent_run(
                                 self.inner.user,
                                 AgentInput {
                                     name: String::new(),
-                                    prompt: message.content.clone(),
+                                    prompt,
                                     resources: message.attachments.clone(),
                                     meta: Some(RequestMeta {
                                         user: Some(message.sender.clone()),
@@ -436,6 +439,14 @@ fn completion_message(output: &AgentOutput, route: ChannelRoute) -> SendMessage 
     SendMessage::new(output.content.clone(), route.reply_target)
         .in_thread(route.thread)
         .with_attachments(output.artifacts.clone())
+}
+
+fn agent_prompt_from_message(message: &ChannelMessage) -> String {
+    if message.external_user.unwrap_or_default() {
+        external_user_prompt(&message.channel, &message.sender, &message.content)
+    } else {
+        message.content.clone()
+    }
 }
 
 async fn serve_channel_with_reconnect(
@@ -735,6 +746,37 @@ mod tests {
         assert_eq!(message.recipient, route.reply_target);
         assert_eq!(message.thread, route.thread);
         assert!(message.attachments.is_empty());
+    }
+
+    #[test]
+    fn agent_prompt_preserves_trusted_channel_message() {
+        let message = ChannelMessage {
+            sender: "alice".to_string(),
+            channel: "telegram:personal".to_string(),
+            content: "hello".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(agent_prompt_from_message(&message), "hello");
+    }
+
+    #[test]
+    fn agent_prompt_marks_external_untrusted_channel_message() {
+        let message = ChannelMessage {
+            sender: "bob".to_string(),
+            channel: "telegram:public".to_string(),
+            content: "hello".to_string(),
+            external_user: Some(true),
+            ..Default::default()
+        };
+
+        let prompt = agent_prompt_from_message(&message);
+
+        assert!(
+            prompt.starts_with("[$external_user: channel=\"telegram:public\", sender=\"bob\"]")
+        );
+        assert!(prompt.contains("external untrusted IM user"));
+        assert!(prompt.ends_with("hello"));
     }
 
     #[tokio::test]

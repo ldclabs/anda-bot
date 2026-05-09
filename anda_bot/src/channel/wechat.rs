@@ -58,6 +58,7 @@ pub struct WechatChannel {
     bot_token: Option<String>,
     username: String,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     base_url: String,
     cdn_base_url: String,
     route_tag: Option<u32>,
@@ -75,6 +76,7 @@ impl WechatChannel {
                 .iter()
                 .map(|s| normalize_identity(s))
                 .collect(),
+            allow_external_users: cfg.allow_external_users,
             base_url: config::DEFAULT_WECHAT_API_BASE.to_string(),
             cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
@@ -366,6 +368,7 @@ impl Channel for WechatChannel {
         let handler = WechatMessageHandler {
             channel_id: self.id(),
             allowed_users: self.allowed_users.clone(),
+            allow_external_users: self.allow_external_users,
             tx,
             workspace: self.workspace.clone(),
             cancel_token: cancel_token.clone(),
@@ -399,6 +402,7 @@ impl MessageHandler for NoopMessageHandler {
 struct WechatMessageHandler {
     channel_id: String,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     tx: mpsc::Sender<ChannelMessage>,
     workspace: Arc<ChannelWorkspace>,
     cancel_token: CancellationToken,
@@ -407,7 +411,8 @@ struct WechatMessageHandler {
 #[async_trait]
 impl MessageHandler for WechatMessageHandler {
     async fn on_message(&self, ctx: &MessageContext) -> WeixinResult<()> {
-        if !is_identity_allowed(&self.allowed_users, &ctx.from) {
+        let trusted_user = is_identity_allowed(&self.allowed_users, &ctx.from);
+        if !trusted_user && !self.allow_external_users {
             log::warn!(
                 "WeChat ignoring message from unauthorized user: {}",
                 ctx.from
@@ -415,11 +420,12 @@ impl MessageHandler for WechatMessageHandler {
             return Ok(());
         }
 
-        let Some(message) =
+        let Some(mut message) =
             channel_message_from_context(ctx, &self.channel_id, &self.workspace).await
         else {
             return Ok(());
         };
+        message.external_user = (!trusted_user).then_some(true);
 
         if self.tx.send(message).await.is_err() {
             self.cancel_token.cancel();
@@ -750,6 +756,7 @@ mod tests {
             bot_token: "token".to_string(),
             username: Some("anda-wechat".to_string()),
             allowed_users: vec!["alice".to_string(), "wxid_123".to_string()],
+            allow_external_users: false,
             route_tag: None,
         }
     }

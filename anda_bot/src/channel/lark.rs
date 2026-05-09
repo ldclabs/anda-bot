@@ -222,6 +222,7 @@ pub struct LarkChannel {
     verification_token: String,
     port: Option<u16>,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     mention_only: bool,
     platform: config::LarkPlatform,
     receive_mode: config::LarkReceiveMode,
@@ -253,6 +254,7 @@ impl LarkChannel {
                 .iter()
                 .map(|s| normalize_identity(s))
                 .collect(),
+            allow_external_users: cfg.allow_external_users,
             mention_only: cfg.mention_only,
             platform: cfg.platform,
             receive_mode: cfg.receive_mode,
@@ -822,7 +824,8 @@ impl LarkChannel {
         }
 
         let sender_open_id = recv.sender.sender_id.open_id.as_deref().unwrap_or("");
-        if !self.is_user_allowed(sender_open_id) {
+        let trusted_user = self.is_user_allowed(sender_open_id);
+        if !trusted_user && !self.allow_external_users {
             log::warn!("Lark ignoring message from unauthorized user: open_id={sender_open_id}");
             return None;
         }
@@ -874,6 +877,7 @@ impl LarkChannel {
 
         Some(ChannelMessage {
             sender: sender_open_id.to_string(),
+            external_user: (!trusted_user).then_some(true),
             reply_target: lark_message.chat_id,
             content,
             channel: self.id(),
@@ -1868,6 +1872,7 @@ mod tests {
             verification_token: Some("test_verification_token".to_string()),
             port: None,
             allowed_users: vec!["ou_testuser123".to_string()],
+            allow_external_users: false,
             mention_only: true,
             platform: config::LarkPlatform::Lark,
             receive_mode: config::LarkReceiveMode::Websocket,
@@ -2016,5 +2021,31 @@ mod tests {
         });
 
         assert!(channel.parse_event_object(&payload).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn lark_parse_external_user_when_enabled() {
+        let mut cfg = test_config();
+        cfg.allow_external_users = true;
+        let channel = LarkChannel::new(&cfg, Client::new());
+        channel.set_resolved_bot_open_id(Some("ou_bot".to_string()));
+        let payload = serde_json::json!({
+            "sender": {
+                "sender_id": { "open_id": "ou_external" }
+            },
+            "message": {
+                "message_id": "om_external",
+                "message_type": "text",
+                "content": "{\"text\":\"hello\"}",
+                "chat_id": "oc_chat123",
+                "chat_type": "p2p"
+            }
+        });
+
+        let message = channel.parse_event_object(&payload).await.unwrap();
+
+        assert_eq!(message.sender, "ou_external");
+        assert_eq!(message.content, "hello");
+        assert!(message.external_user.unwrap_or_default());
     }
 }

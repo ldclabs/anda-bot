@@ -188,6 +188,8 @@ channels:
   #       - "#anda"
   #     allowed_users:
   #       - "*"
+  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
+  #     allow_external_users: false
   #     verify_tls: true
   # telegram:
   #   - id: personal
@@ -195,6 +197,8 @@ channels:
   #     username: anda_bot
   #     allowed_users:
   #       - "*"
+  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
+  #     allow_external_users: false
   #     mention_only: false
   #     ack_reactions: true
   # wechat:
@@ -205,6 +209,8 @@ channels:
   #     username: anda-wechat
   #     allowed_users:
   #       - "*"
+  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
+  #     allow_external_users: false
   #     route_tag:
   # discord:
   #   - id: server
@@ -213,6 +219,8 @@ channels:
   #     guild_id:
   #     allowed_users:
   #       - "*"
+  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
+  #     allow_external_users: false
   #     listen_to_bots: false
   #     mention_only: true
   #     ack_reactions: true
@@ -225,6 +233,8 @@ channels:
   #     port:
   #     allowed_users:
   #       - "*"
+  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
+  #     allow_external_users: false
   #     mention_only: true
   #     platform: lark # or feishu
   #     receive_mode: websocket # or webhook

@@ -89,6 +89,7 @@ pub struct DiscordChannel {
     username: String,
     guild_id: Option<String>,
     allowed_users: Vec<String>,
+    allow_external_users: bool,
     listen_to_bots: bool,
     mention_only: bool,
     api_base: String,
@@ -115,6 +116,7 @@ impl DiscordChannel {
                 .iter()
                 .map(|s| normalize_identity(s))
                 .collect(),
+            allow_external_users: cfg.allow_external_users,
             listen_to_bots: cfg.listen_to_bots,
             mention_only: cfg.mention_only,
             api_base: config::DEFAULT_DISCORD_API_BASE.to_string(),
@@ -311,7 +313,8 @@ impl DiscordChannel {
             return None;
         }
 
-        if !self.is_user_allowed(author_id) {
+        let trusted_user = self.is_user_allowed(author_id);
+        if !trusted_user && !self.allow_external_users {
             let username = author
                 .get("username")
                 .and_then(Value::as_str)
@@ -398,6 +401,7 @@ impl DiscordChannel {
 
         Some(ChannelMessage {
             sender: author_id.to_string(),
+            external_user: (!trusted_user).then_some(true),
             reply_target: channel_id,
             content,
             channel: self.id(),
@@ -1236,6 +1240,7 @@ mod tests {
             username: Some("anda-discord".to_string()),
             guild_id: Some("987".to_string()),
             allowed_users: vec!["111".to_string(), "*".to_string()],
+            allow_external_users: false,
             listen_to_bots: false,
             mention_only: true,
             ack_reactions: true,
@@ -1264,6 +1269,32 @@ mod tests {
         assert!(channel.is_user_allowed("111"));
         assert!(channel.is_user_allowed("222"));
         assert!(!channel.is_user_allowed(""));
+    }
+
+    #[tokio::test]
+    async fn parse_gateway_message_marks_non_allowlisted_sender_external_when_enabled() {
+        let mut cfg = test_config();
+        cfg.allowed_users = vec!["111".to_string()];
+        cfg.allow_external_users = true;
+        cfg.mention_only = false;
+        let channel = DiscordChannel::new(&cfg, Client::new());
+        let payload = serde_json::json!({
+            "id": "msg_1",
+            "channel_id": "chan_1",
+            "guild_id": "987",
+            "content": "hello",
+            "author": { "id": "222", "username": "bob", "bot": false },
+            "attachments": []
+        });
+
+        let message = channel
+            .parse_gateway_message(&payload, "999")
+            .await
+            .unwrap();
+
+        assert_eq!(message.sender, "222");
+        assert_eq!(message.content, "hello");
+        assert!(message.external_user.unwrap_or_default());
     }
 
     #[test]

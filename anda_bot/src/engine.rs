@@ -33,6 +33,7 @@ use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsMa
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary};
 pub use conversation::*;
+pub(crate) use system::external_user_prompt;
 
 pub struct Engines {
     state: AppState,

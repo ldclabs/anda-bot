@@ -176,6 +176,7 @@ channels:
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
         - "*"
+      allow_external_users: false
       mention_only: false
 ```
 
@@ -189,8 +190,11 @@ channels:
       username: anda-wechat
       allowed_users:
         - "*"
+      allow_external_users: false
       route_tag:
 ```
+
+  Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
 
 See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel, transcription, and TTS examples.
 
