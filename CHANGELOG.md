@@ -2,6 +2,23 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.0] — 2026-05-09
+
+### Added
+
+- **External user support with trust boundaries**: new `allow_external_users` config field for all 5 channel types (Discord, Telegram, IRC, Lark, WeChat). When enabled, messages from non-allowlisted senders are tagged as `external_user: true` and wrapped with `[$external_user: channel="...", sender="..."]` prefix, allowing the agent to distinguish untrusted guests from the owner/partner. A comprehensive Trust Boundaries section in `SelfInstructions.md` governs how the agent handles external user data.
+- **Cron job origin context**: new `CronJobOrigin` struct captures the full request context (user, source, reply_target, thread, workspace, conversation_id, external_user) when a cron job is created. Origin is persisted in the job record (schema v2) and round-tripped back into `RequestMeta` on each execution, so scheduled jobs "remember" which channel and conversation they came from.
+- **Shell cron result notification**: when a scheduled shell job completes, the result (stdout or error) is fed back to the agent via `system_runtime_prompt("cron shell job result")`, enabling the agent to incorporate the outcome and notify the originating user in-channel.
+- **Channel route recovery from RequestMeta**: `on_completion` hook now falls back to `route_from_meta()` when `route_for_conversation()` misses, reconstructing the channel route from persisted `RequestMeta` extras. New bindings are persisted for future lookups.
+
+### Changed
+
+- **System prompt format upgrade**: `[$system runtime message: ...]` → `[$system: kind="..."]` (structured key-value format) across compaction, goal continuation, subagent progress/final output, and background shell task notifications. New `mark_special_user_messages()` unifies backfilling for both `$system` and `$external_user` names.
+- **Formation attribution for external users**: memory formation now uses `$external_user:<sender>` as counterparty instead of the caller when `external_user` is set, keeping guest memories isolated from the trusted user's profile.
+- **Channel message schema v2**: `ChannelMessage` gains `external_user: Option<bool>` field, with all channel implementations updated to populate it and tests added for the new behavior.
+- **CronRuntime::connect** simplified: controller Principal now derived from `Principal::management_canister()` instead of requiring an explicit `engine_id` parameter.
+- **Documentation**: `allow_external_users` documented in README.md, README_cn.md, and anda_bot/README.md; config.yaml updated with commented examples; config tests assert the new field.
+
 ## [0.5.4] — 2026-05-09
 
 ### Added
