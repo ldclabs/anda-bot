@@ -181,9 +181,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.17"
+version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e4695c1f9cc9e6f5f6a46775f4ac1756172f30813acece38e2c08ab06af24c"
+checksum = "5ac6f984d635a74f4cb12f28042d5e949b5f76abd286c0bb369e186985fcfd34"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -356,9 +356,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24b35a6d9d2f934fb5936ea29b49f295486b720e3191d074c7a25c99990ea5b2"
+checksum = "e73ef0e52675b66abca39bfae5c39b703179c11b013b264f4ad84a4a5721b2b2"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -430,9 +430,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64e5bc115f83d8f07de9bcb2db895ca1e53f4ac04fe35f2506c6ea596c61066b"
+checksum = "0337f720bacc076acf5be8ba2d7941c629441747207d277a2146c55c97eca54a"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -2487,9 +2487,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "allocator-api2 0.2.21",
  "equivalent",
@@ -3427,7 +3427,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
  "serde",
  "serde_core",
 ]
@@ -3818,7 +3818,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -4826,9 +4826,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.39.3"
+version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "721da970c312655cde9b4ffe0547f20a8494866a4af5ff51f18b7c633d0c870b"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
 dependencies = [
  "memchr",
  "serde",
@@ -5015,7 +5015,7 @@ dependencies = [
  "bitflags 2.11.1",
  "compact_str",
  "critical-section",
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
  "indoc",
  "itertools",
  "kasuari",
@@ -5064,7 +5064,7 @@ version = "0.3.0"
 source = "git+https://github.com/ldclabs/ratatui.git?branch=main#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
 dependencies = [
  "bitflags 2.11.1",
- "hashbrown 0.17.0",
+ "hashbrown 0.17.1",
  "indoc",
  "instability",
  "itertools",
@@ -6464,9 +6464,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.52.2"
+version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110a78583f19d5cdb2c5ccf321d1290344e71313c6c37d43520d386027d18386"
+checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
 dependencies = [
  "bytes",
  "libc",

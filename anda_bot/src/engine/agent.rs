@@ -42,6 +42,10 @@ use super::{
     goal::{self, GoalStateSnapshot},
     prompt::{PromptCommand, skill_subagent},
     side,
+    system::{
+        SYSTEM_PERSON_NAME, mark_system_runtime_messages, system_runtime_prompt,
+        system_user_message,
+    },
 };
 use crate::{
     brain, cron,
@@ -54,6 +58,38 @@ const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 static COMPACTION_PROMPT: &str = include_str!("../../assets/CompactionPrompt.md");
+
+struct SystemInstructionSections<'a> {
+    self_knowledge: &'a str,
+    notes: &'a str,
+    available_tools: &'a [String],
+    home_dir: &'a str,
+    workspace: &'a str,
+    user_profile: &'a str,
+    datetime: &'a str,
+}
+
+fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
+    format!(
+        "{}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{}\n\n## Notes\n{}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{}\n\n## Environment\n- home: {}\n- current workspace (authoritative): {}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{}\n\n## Current Datetime: {}",
+        SELF_INSTRUCTIONS.trim(),
+        sections.self_knowledge,
+        sections.notes,
+        format_available_tools(sections.available_tools),
+        sections.home_dir,
+        sections.workspace,
+        sections.user_profile,
+        sections.datetime,
+    )
+}
+
+fn format_available_tools(available_tools: &[String]) -> String {
+    if available_tools.is_empty() {
+        "none".to_string()
+    } else {
+        available_tools.join(", ")
+    }
+}
 
 #[derive(Clone)]
 pub struct AndaBot {
@@ -250,16 +286,20 @@ impl AndaBot {
         let primer = self.inner.brain.describe_primer().await?;
         let user_profile = self.inner.brain.user_info(*ctx.caller(), None).await?;
         let notes = load_notes(ctx).await.unwrap_or_default();
+        let datetime = rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"));
+        let self_knowledge = serde_json::to_string(primer.get("identity").unwrap_or(&primer))?;
+        let notes = serde_json::to_string(&notes.notes)?;
+        let user_profile = serde_json::to_string(&user_profile)?;
 
-        Ok(format!(
-            "{}\n\n---\n\n# Your Context\n\n## Identity & Knowledge Domains:\n\n{}\n\n## Notes:\n\n{}\n\n## Tools:\n\n{}\n\n## Home:\n\n{home_dir}\n\n---\n\n# User Context\n\n## User Profile:\n\n{}\n\n## Current Workspace (AUTHORITATIVE):\n{workspace}\n\n> **IMPORTANT**: The path above is the user's **current active workspace** for this session. Always use this path for all file system operations and shell commands. Never use workspace paths mentioned in `user_history_conversations` — those belong to past sessions and must not override this current workspace.\n\n---\n\n# Current Datetime: {}",
-            SELF_INSTRUCTIONS,
-            primer,
-            serde_json::to_string(&notes.notes)?,
-            serde_json::to_string(&available_tools)?,
-            serde_json::to_string(&user_profile)?,
-            rfc3339_datetime(now_ms).unwrap_or_else(|| format!("{now_ms} in unix ms"))
-        ))
+        Ok(render_system_instructions(SystemInstructionSections {
+            self_knowledge: &self_knowledge,
+            notes: &notes,
+            available_tools,
+            home_dir,
+            workspace,
+            user_profile: &user_profile,
+            datetime: &datetime,
+        }))
     }
 
     async fn submit_formation(
@@ -630,7 +670,7 @@ impl Agent<AgentCtx> for AndaBot {
         let mut msg = Message {
             role: "user".into(),
             content: vec![],
-            name: Some("$system".into()),
+            name: Some(SYSTEM_PERSON_NAME.into()),
             timestamp: Some(now_ms),
             ..Default::default()
         };
@@ -854,7 +894,7 @@ impl SessionRunner {
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
-        let messages = chat_history
+        let mut messages = chat_history
             .iter()
             .skip(self.session.submit_formation_at.load(Ordering::SeqCst) as usize)
             .filter_map(|msg| {
@@ -867,6 +907,7 @@ impl SessionRunner {
                 }
             })
             .collect::<Vec<_>>();
+        mark_system_runtime_messages(&mut messages);
 
         let next_submit_formation_at = chat_history.len();
         if messages.is_empty() {
@@ -1021,10 +1062,11 @@ impl SessionRunner {
 
                 if needs_compaction(&self.runner) {
                     // 上下文过长，先进行一次压缩总结，更新conversation状态和历史消息，再继续后续的处理
-                    let output = self
+                    let mut output = self
                         .runner
                         .finalize(Some(COMPACTION_PROMPT.to_string()))
                         .await?;
+                    mark_system_runtime_messages(&mut output.chat_history);
 
                     let now_ms = unix_ms();
                     if let Some(failed_reason) = output.failed_reason {
@@ -1059,12 +1101,7 @@ impl SessionRunner {
                             thread: Some(self.session.id.clone()),
                             messages: vec![
                                 serde_json::json!(compaction_msg),
-                                serde_json::json!(Message {
-                                    role: "user".into(),
-                                    content: vec![prompt.clone().into()],
-                                    timestamp: Some(now_ms),
-                                    ..Default::default()
-                                }),
+                                serde_json::json!(system_user_message(prompt.clone(), now_ms)),
                             ],
                             ancestors: Some(ancestors),
                             period: now_ms / 3600 / 1000,
@@ -1166,6 +1203,7 @@ impl SessionRunner {
                 self.session.active_at.store(now_ms, Ordering::SeqCst);
                 let is_done = self.runner.is_done();
                 res.conversation = Some(self.conversation._id);
+                mark_system_runtime_messages(&mut res.chat_history);
 
                 self.session.on_completion(&self.ctx, &res).await;
 
@@ -1324,17 +1362,23 @@ impl AgentHook for Session {
         output: AgentOutput,
     ) {
         let prompt = if !output.content.is_empty() {
-            format!(
-                "Subagent session {session_id} intermediate output:\n\n{}",
-                output.content
+            system_runtime_prompt(
+                "subagent progress",
+                format!(
+                    "Subagent session {session_id} intermediate output:\n\n{}",
+                    output.content
+                ),
             )
         } else if let Some(failed_reason) = output.failed_reason {
-            format!(
-                "Subagent session {session_id} failed with reason: {:?}",
-                failed_reason
+            system_runtime_prompt(
+                "subagent progress",
+                format!(
+                    "Subagent session {session_id} failed with reason: {:?}",
+                    failed_reason
+                ),
             )
         } else {
-            format!("Subagent session {session_id} completed")
+            return;
         };
         self.sender
             .send(ConversationInput {
@@ -1352,17 +1396,26 @@ impl AgentHook for Session {
         }
 
         let prompt = if !output.content.is_empty() {
-            format!(
-                "Subagent session {session_id} final output:\n\n{}",
-                output.content
+            system_runtime_prompt(
+                "subagent final output",
+                format!(
+                    "Subagent session {session_id} final output:\n\n{}",
+                    output.content
+                ),
             )
         } else if let Some(failed_reason) = output.failed_reason {
-            format!(
-                "Subagent session {session_id} failed with reason: {:?}",
-                failed_reason
+            system_runtime_prompt(
+                "subagent final output",
+                format!(
+                    "Subagent session {session_id} failed with reason: {:?}",
+                    failed_reason
+                ),
             )
         } else {
-            format!("Subagent session {session_id} completed")
+            system_runtime_prompt(
+                "subagent final output",
+                format!("Subagent session {session_id} completed"),
+            )
         };
         self.sender
             .send(ConversationInput {
@@ -1401,9 +1454,12 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain {
-                    prompt: format!(
-                        "Background task {task_id} completed:\n\n{}",
-                        serde_json::to_string(&output.output).unwrap_or_default()
+                    prompt: system_runtime_prompt(
+                        "background shell task",
+                        format!(
+                            "Background task {task_id} completed:\n\n{}",
+                            serde_json::to_string(&output.output).unwrap_or_default()
+                        ),
                     ),
                 },
                 usage: output.usage,
@@ -1702,6 +1758,7 @@ mod tests {
 
     #[test]
     fn compaction_prompt_preserves_goal_continuation_evidence() {
+        assert!(COMPACTION_PROMPT.contains("$system runtime message"));
         assert!(COMPACTION_PROMPT.contains("not a final answer"));
         assert!(COMPACTION_PROMPT.contains("user-provided task data"));
         assert!(COMPACTION_PROMPT.contains("prompt-to-artifact checklist"));
@@ -1721,5 +1778,33 @@ mod tests {
         assert!(text.contains("Goal completed."));
         assert!(text.contains("Supervisor evaluation:"));
         assert!(text.contains("All deliverables verified"));
+    }
+
+    #[test]
+    fn system_instructions_explain_system_identity_and_tool_selection() {
+        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$system" }"#));
+        assert!(SELF_INSTRUCTIONS.contains("Available Callable Names"));
+        assert!(SELF_INSTRUCTIONS.contains("tools_select"));
+        assert!(SELF_INSTRUCTIONS.contains("Never invent tool parameters"));
+    }
+
+    #[test]
+    fn render_system_instructions_groups_runtime_context() {
+        let tools = vec!["shell".to_string(), "tools_select".to_string()];
+        let prompt = render_system_instructions(SystemInstructionSections {
+            self_knowledge: "{}",
+            notes: "[]",
+            available_tools: &tools,
+            home_dir: "/home/anda",
+            workspace: "/workspace/current",
+            user_profile: "{}",
+            datetime: "2026-05-09T00:00:00Z",
+        });
+
+        assert!(prompt.contains("# Runtime Context"));
+        assert!(prompt.contains("## Available Callable Names"));
+        assert!(prompt.contains("shell, tools_select"));
+        assert!(prompt.contains("schemas are intentionally omitted"));
+        assert!(prompt.contains("current workspace (authoritative): /workspace/current"));
     }
 }

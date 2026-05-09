@@ -1,3 +1,4 @@
+[$system runtime message: context compaction]
 Compress the current conversation into a concise continuation handoff. This is not a final answer to the user. Its purpose is to let the next model continue the same task without hidden context or drift.
 
 Preserve objective fidelity:
