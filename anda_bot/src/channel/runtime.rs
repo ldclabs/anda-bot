@@ -1,4 +1,4 @@
-use anda_core::{AgentInput, AgentOutput, BoxError, Principal, RequestMeta};
+use anda_core::{AgentInput, AgentOutput, BoxError, Principal, RequestMeta, StateFeatures};
 use anda_db::{
     collection::{Collection, CollectionConfig},
     database::AndaDB,
@@ -235,11 +235,6 @@ impl ChannelRuntime {
                                 .unwrap_or(0)
                         };
                         extra.insert("conversation".to_string(), conv_id.into());
-                        extra.insert("source".to_string(), message.channel.clone().into());
-                        extra.insert(
-                            "reply_target".to_string(),
-                            message.reply_target.clone().into(),
-                        );
                         extra.insert(
                             "workspace".to_string(),
                             self.inner
@@ -248,11 +243,17 @@ impl ChannelRuntime {
                                 .to_string_lossy()
                                 .into(),
                         );
+                        extra.insert("source".to_string(), message.channel.clone().into());
+                        extra.insert(
+                            "reply_target".to_string(),
+                            message.reply_target.clone().into(),
+                        );
                         if let Some(thread) = &message.thread
                             && !thread.is_empty()
                         {
                             extra.insert("thread".to_string(), thread.clone().into());
                         }
+
                         extra.insert("external_user".to_string(), message.external_user.into());
                         let prompt = agent_prompt_from_message(&message);
                         match engine
@@ -363,6 +364,28 @@ impl ChannelRuntimeInner {
         self.conversation_routes.read().get(&conv_id).cloned()
     }
 
+    fn route_from_meta(&self, meta: &RequestMeta) -> Option<ChannelRoute> {
+        let channel = meta
+            .get_extra_as::<String>("source")
+            .and_then(|value| normalize_non_empty(value.as_str()))?;
+        if !self.channels.contains_key(&channel) {
+            return None;
+        }
+
+        let reply_target = meta
+            .get_extra_as::<String>("reply_target")
+            .and_then(|value| normalize_non_empty(value.as_str()))?;
+        let thread = meta
+            .get_extra_as::<String>("thread")
+            .and_then(|value| normalize_non_empty(value.as_str()));
+
+        Some(ChannelRoute {
+            channel,
+            reply_target,
+            thread,
+        })
+    }
+
     async fn try_send(
         &self,
         channel: String,
@@ -398,23 +421,45 @@ impl ChannelRuntimeInner {
 
 #[async_trait]
 impl CompletionHook for Arc<ChannelRuntimeInner> {
-    async fn on_completion(&self, _ctx: &AgentCtx, output: &AgentOutput) {
-        if let Some(conv_id) = output.conversation
-            && !output.content.is_empty()
-            && let Some(route) = self.route_for_conversation(conv_id)
-        {
-            let channel = route.channel.clone();
-            let msg = completion_message(output, route);
+    async fn on_completion(&self, ctx: &AgentCtx, output: &AgentOutput) {
+        let Some(conv_id) = output.conversation else {
+            return;
+        };
+        if output.content.is_empty() {
+            return;
+        }
 
-            tokio::spawn({
-                let this = self.clone();
-                async move {
-                    if let Err(err) = this.try_send(channel.clone(), msg, Some(conv_id)).await {
-                        log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
+        let route = match self.route_for_conversation(conv_id) {
+            Some(route) => route,
+            None => {
+                let Some(route) = self.route_from_meta(ctx.meta()) else {
+                    return;
+                };
+                if let Some(channels_conversation) = self.bind_conversation(route.clone(), conv_id)
+                {
+                    self.messages.set_extension_from::<ChannelConversationMap>(
+                        "channels_conversation".to_string(),
+                        channels_conversation,
+                    );
+                    if let Err(err) = self.messages.flush(unix_ms()).await {
+                        log::error!(name = "channel"; "failed to flush channel route binding: {err}");
                     }
                 }
-            });
-        }
+                route
+            }
+        };
+
+        let channel = route.channel.clone();
+        let msg = completion_message(output, route);
+
+        tokio::spawn({
+            let this = self.clone();
+            async move {
+                if let Err(err) = this.try_send(channel.clone(), msg, Some(conv_id)).await {
+                    log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
+                }
+            }
+        });
     }
 }
 
@@ -433,6 +478,15 @@ fn build_conversation_routes(
         );
     }
     conversation_routes
+}
+
+fn normalize_non_empty(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 fn completion_message(output: &AgentOutput, route: ChannelRoute) -> SendMessage {
@@ -725,6 +779,28 @@ mod tests {
             Some(&42)
         );
         assert_eq!(runtime.inner.route_for_conversation(42), Some(route));
+    }
+
+    #[tokio::test]
+    async fn route_from_meta_recovers_channel_reply_context() {
+        let channel = Arc::new(TestChannel::new("test:meta-route", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let mut extra = serde_json::Map::new();
+        extra.insert("source".to_string(), channel.id().into());
+        extra.insert("reply_target".to_string(), "#anda".into());
+        extra.insert("thread".to_string(), "thread-1".into());
+
+        let route = runtime
+            .inner
+            .route_from_meta(&RequestMeta {
+                extra,
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(route.channel, channel.id());
+        assert_eq!(route.reply_target, "#anda");
+        assert_eq!(route.thread, Some("thread-1".to_string()));
     }
 
     #[test]

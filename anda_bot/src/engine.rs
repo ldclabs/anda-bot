@@ -33,7 +33,7 @@ use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsMa
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary};
 pub use conversation::*;
-pub(crate) use system::external_user_prompt;
+pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
 pub struct Engines {
     state: AppState,
@@ -106,7 +106,7 @@ impl Engines {
             .workspaces
             .first()
             .cloned()
-            .ok_or_else(|| "At least one workspace must be provided")?;
+            .ok_or("At least one workspace must be provided")?;
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let conversations_tool = Arc::new(ConversationsTool::new(
             conversations.clone(),

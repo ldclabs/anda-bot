@@ -161,7 +161,13 @@ impl Daemon {
             .stderr(Stdio::null());
         configure_background_daemon_command(&mut command);
 
-        let child = command.spawn()?;
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                log::error!("Failed to spawn background daemon process: {err}");
+                return Err(err.into());
+            }
+        };
 
         Ok(BackgroundDaemon {
             pid: child.id(),
@@ -214,7 +220,6 @@ impl Daemon {
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
         let models = self.cfg.models(outer_http_client.clone());
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
-        let engine_id = id_key.id();
         let user_id = user_pubkey.id();
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
@@ -258,9 +263,8 @@ impl Daemon {
         let bot_db = AndaDB::connect(object_store, db_config).await?;
         let bot_db = Arc::new(bot_db);
 
-        let cron_runtime = Arc::new(
-            cron::CronRuntime::connect(engine_ref.clone(), bot_db.clone(), engine_id).await?,
-        );
+        let cron_runtime =
+            Arc::new(cron::CronRuntime::connect(engine_ref.clone(), bot_db.clone()).await?);
         let cron_handle = cron_runtime
             .as_ref()
             .clone()
