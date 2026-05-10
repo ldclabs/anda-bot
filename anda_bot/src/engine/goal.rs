@@ -1,10 +1,17 @@
-use anda_core::{Agent, BoxError, Message, Usage};
+use anda_core::{Agent, BoxError, FunctionDefinition, Message, Resource, Tool, ToolOutput, Usage};
 use anda_engine::{
-    context::{AgentCtx, CompletionRunner, json_candidates},
+    context::{AgentCtx, BaseCtx, CompletionRunner, json_candidates},
     subagent::SubAgent,
+    unix_ms,
 };
+use anda_kip::Response;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use super::system::system_runtime_prompt;
 
@@ -42,10 +49,148 @@ pub struct GoalProgressCheck {
     pub usage: Usage,
 }
 
+#[derive(Clone, Default)]
+pub struct GoalTool;
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GoalToolArgs {
+    pub objective: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GoalToolResult {
+    pub status: String,
+    pub goal: GoalStateSnapshot,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct GoalToolState {
+    goal: Arc<RwLock<Option<GoalState>>>,
+    active_at: Arc<AtomicU64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GoalAction {
     Complete(String),
     Continue(String),
+}
+
+impl GoalTool {
+    pub const NAME: &'static str = "goal";
+
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl GoalToolState {
+    pub fn new(goal: Arc<RwLock<Option<GoalState>>>, active_at: Arc<AtomicU64>) -> Self {
+        Self { goal, active_at }
+    }
+
+    fn activate(&self, objective: String, reason: Option<String>) -> GoalToolResult {
+        let result = activate_goal(&self.goal, objective, reason);
+        self.active_at.store(unix_ms(), Ordering::SeqCst);
+        result
+    }
+}
+
+impl Tool<BaseCtx> for GoalTool {
+    type Args = GoalToolArgs;
+    type Output = Response;
+
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
+    fn description(&self) -> String {
+        concat!(
+            "Starts or updates autonomous goal mode for the current AndaBot session. ",
+            "Use this for complex, long-running, high-uncertainty objectives that may require multiple rounds, strict completion audits, background tasks, or context compaction. ",
+            "Provide a concrete objective with explicit deliverables and verification criteria. Do not call this for small one-shot requests."
+        )
+        .to_string()
+    }
+
+    fn definition(&self) -> FunctionDefinition {
+        FunctionDefinition {
+            name: self.name(),
+            description: self.description(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "objective": {
+                        "type": "string",
+                        "description": "The concrete long-running objective to keep active, including explicit deliverables, named artifacts, commands, tests, gates, and verification requirements when known."
+                    },
+                    "reason": {
+                        "type": ["string", "null"],
+                        "description": "Brief reason goal mode is needed for this request."
+                    }
+                },
+                "required": ["objective"],
+                "additionalProperties": false
+            }),
+            strict: Some(true),
+        }
+    }
+
+    async fn call(
+        &self,
+        ctx: BaseCtx,
+        args: Self::Args,
+        _resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let objective = args.objective.trim();
+        if objective.is_empty() {
+            return Err("goal objective cannot be empty".into());
+        }
+
+        let Some(state) = ctx.get_state::<GoalToolState>() else {
+            return Err("goal tool requires an active AndaBot session".into());
+        };
+
+        let result = state.activate(objective.to_string(), normalize_goal_reason(args.reason));
+
+        Ok(ToolOutput::new(Response::Ok {
+            result: json!(result),
+            next_cursor: None,
+        }))
+    }
+}
+
+fn normalize_goal_reason(reason: Option<String>) -> Option<String> {
+    reason
+        .map(|reason| reason.trim().to_string())
+        .filter(|reason| !reason.is_empty())
+}
+
+fn activate_goal(
+    goal_slot: &RwLock<Option<GoalState>>,
+    objective: String,
+    reason: Option<String>,
+) -> GoalToolResult {
+    let mut active_goal = goal_slot.write();
+    let status = if let Some(existing_goal) = active_goal.as_mut() {
+        existing_goal.update_objective(objective);
+        "updated"
+    } else {
+        *active_goal = Some(GoalState::new(objective));
+        "started"
+    };
+    let goal = active_goal
+        .as_ref()
+        .expect("goal was just initialized or updated")
+        .snapshot();
+
+    GoalToolResult {
+        status: status.to_string(),
+        goal,
+        reason,
+    }
 }
 
 pub fn supervisor_agent() -> SubAgent {
@@ -200,6 +345,7 @@ fn parse_goal_evaluation(content: &str) -> Result<GoalEvaluation, BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU64;
 
     #[test]
     fn supervisor_agent_requires_evidence_based_json() {
@@ -248,6 +394,57 @@ mod tests {
         assert!(!evaluation.complete);
         assert_eq!(evaluation.reason, "Need CLI verification");
         assert_eq!(evaluation.follow_up, "Run cargo check");
+    }
+
+    #[test]
+    fn goal_tool_definition_explains_autonomous_goal_mode() {
+        let tool = GoalTool::new();
+        let definition = tool.definition();
+
+        assert_eq!(definition.name, GoalTool::NAME);
+        assert!(definition.description.contains("autonomous goal mode"));
+        assert_eq!(definition.strict, Some(true));
+        assert!(definition.parameters.to_string().contains("objective"));
+    }
+
+    #[test]
+    fn goal_tool_state_starts_goal_and_touches_session() {
+        let goal_slot = Arc::new(RwLock::new(None));
+        let active_at = Arc::new(AtomicU64::new(0));
+        let state = GoalToolState::new(goal_slot.clone(), active_at.clone());
+
+        let result = state.activate(
+            "Finish the migration and run cargo test".to_string(),
+            Some("multi-step task".to_string()),
+        );
+
+        assert_eq!(result.status, "started");
+        assert_eq!(result.reason.as_deref(), Some("multi-step task"));
+        assert_eq!(
+            result.goal.objective,
+            "Finish the migration and run cargo test"
+        );
+        assert!(goal_slot.read().is_some());
+        assert!(active_at.load(Ordering::SeqCst) > 0);
+    }
+
+    #[test]
+    fn activate_goal_updates_existing_goal() {
+        let goal_slot = RwLock::new(Some(GoalState::new("Inspect the release".to_string())));
+
+        let result = activate_goal(
+            &goal_slot,
+            "Ship the release after verification".to_string(),
+            None,
+        );
+
+        assert_eq!(result.status, "updated");
+        assert_eq!(result.goal.objective, "Ship the release after verification");
+        assert_eq!(
+            result.goal.prev_objective.as_deref(),
+            Some("Inspect the release")
+        );
+        assert!(result.reason.is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use anda_core::{AgentOutput, BoxError, Tool};
+use anda_core::{AgentOutput, BoxError, Principal, Tool};
 use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
@@ -16,7 +16,11 @@ use async_trait::async_trait;
 use axum::{Router, response::IntoResponse, routing};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 mod agent;
 mod conversation;
@@ -33,6 +37,7 @@ use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsMa
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary};
 pub use conversation::*;
+pub use goal::GoalTool;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
 pub struct Engines {
@@ -82,7 +87,8 @@ impl Engines {
         let web3 = Arc::new(web3);
         let my_principal = web3.get_principal();
 
-        let managers = cfg.managers.iter().map(|k| k.id()).collect();
+        let mut managers = BTreeSet::from([Principal::management_canister()]);
+        managers.extend(cfg.managers.iter().map(|k| k.id()));
         let management = Arc::new(BaseManagement {
             controller: my_principal,
             managers,
@@ -184,6 +190,7 @@ impl Engines {
             .register_tool(Arc::new(brain_client))?
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(note::NoteTool::new()))?
+            .register_tool(Arc::new(GoalTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
             .register_tool(Arc::new(fs::ReadFileTool::with_workspaces(
                 cfg.workspaces.clone(),

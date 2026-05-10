@@ -39,7 +39,7 @@ use std::{
 use super::{
     CompletionHook,
     conversation::{ConversationsTool, RequestState, SourceState},
-    goal::{self, GoalStateSnapshot},
+    goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
     prompt::{PromptCommand, skill_subagent},
     side,
     system::{
@@ -163,6 +163,7 @@ fn base_tool_dependencies() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
         NoteTool::NAME.to_string(),
+        GoalTool::NAME.to_string(),
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         ShellTool::NAME.to_string(),
@@ -184,6 +185,7 @@ fn base_tools() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
         NoteTool::NAME.to_string(),
+        GoalTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         ShellTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
@@ -766,10 +768,10 @@ impl Agent<AgentCtx> for AndaBot {
             conversation_id: AtomicU64::new(conv_id),
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
-            goal: RwLock::new(initial_goal.map(goal::GoalState::new)),
+            goal: Arc::new(RwLock::new(initial_goal.map(goal::GoalState::new))),
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
-            active_at: AtomicU64::new(unix_ms()),
+            active_at: Arc::new(AtomicU64::new(unix_ms())),
             formation_context: Some(InputContext {
                 counterparty: formation_counterparty,
                 agent: Some(AndaBot::NAME.to_string()),
@@ -777,6 +779,11 @@ impl Agent<AgentCtx> for AndaBot {
                 topic: None,
             }),
         });
+
+        ctx.base.set_state(GoalToolState::new(
+            session.goal.clone(),
+            session.active_at.clone(),
+        ));
 
         let agent_hook = DynAgentHook::new(session.clone());
         ctx.base.set_state(agent_hook);
@@ -1261,7 +1268,7 @@ impl SessionRunner {
 
                 if self.conversation.status == ConversationStatus::Cancelled
                     || self.conversation.status == ConversationStatus::Failed
-                    || is_done
+                    || (is_done && self.session.goal.read().is_none())
                 {
                     return Ok(false);
                 }
@@ -1304,10 +1311,10 @@ struct Session {
     sender: tokio::sync::mpsc::Sender<ConversationInput>,
     // task_id -> BackgroundTaskInfo
     background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
-    goal: RwLock<Option<goal::GoalState>>,
+    goal: Arc<RwLock<Option<goal::GoalState>>>,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     submit_formation_at: AtomicU64,
-    active_at: AtomicU64,
+    active_at: Arc<AtomicU64>,
     formation_context: Option<InputContext>,
 }
 
@@ -1642,6 +1649,12 @@ mod tests {
         .expect_err("get session requires session_id");
 
         assert!(err.to_string().contains("session_id"));
+    }
+
+    #[test]
+    fn base_agent_tools_include_goal_tool() {
+        assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
+        assert!(base_tools().contains(&GoalTool::NAME.to_string()));
     }
 
     #[test]
