@@ -1,4 +1,4 @@
-use anda_core::{AgentOutput, RequestMeta, ToolOutput};
+use anda_core::{AgentOutput, Principal, RequestMeta, ToolOutput};
 use anda_db::schema::{
     AndaDBSchema, BoxError, FieldEntry, FieldKey, FieldType, Schema, SchemaError,
 };
@@ -78,6 +78,7 @@ pub enum ScheduleKind {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CronJobOrigin {
+    pub caller: Option<String>,
     pub user: Option<String>,
     pub source: Option<String>,
     pub reply_target: Option<String>,
@@ -88,8 +89,13 @@ pub struct CronJobOrigin {
 }
 
 impl CronJobOrigin {
-    pub fn from_meta(meta: &RequestMeta) -> Option<Self> {
+    pub fn from_meta_with_caller(meta: &RequestMeta, caller: &Principal) -> Option<Self> {
+        Self::from_meta_and_caller(meta, Some(caller))
+    }
+
+    fn from_meta_and_caller(meta: &RequestMeta, caller: Option<&Principal>) -> Option<Self> {
         let origin = Self {
+            caller: caller.map(Principal::to_text),
             user: meta.user.as_deref().and_then(normalize_optional_name),
             source: meta
                 .get_extra_as::<String>("source")
@@ -114,6 +120,12 @@ impl CronJobOrigin {
         };
 
         (!origin.is_empty()).then_some(origin)
+    }
+
+    pub fn caller_principal(&self) -> Option<Principal> {
+        self.caller
+            .as_deref()
+            .and_then(|caller| Principal::from_text(caller).ok())
     }
 
     pub fn to_request_meta(&self, conversation_id: Option<u64>) -> RequestMeta {
@@ -148,7 +160,8 @@ impl CronJobOrigin {
     }
 
     fn is_empty(&self) -> bool {
-        self.user.is_none()
+        self.caller.is_none()
+            && self.user.is_none()
             && self.source.is_none()
             && self.reply_target.is_none()
             && self.thread.is_none()
@@ -574,6 +587,7 @@ mod tests {
 
     #[test]
     fn cron_origin_round_trips_request_meta() {
+        let caller = Principal::from_text("aaaaa-aa").unwrap();
         let mut extra = serde_json::Map::new();
         extra.insert("source".to_string(), "wechat:daily".into());
         extra.insert("reply_target".to_string(), "alice".into());
@@ -587,7 +601,9 @@ mod tests {
             ..Default::default()
         };
 
-        let origin = CronJobOrigin::from_meta(&meta).unwrap();
+        let origin = CronJobOrigin::from_meta_with_caller(&meta, &caller).unwrap();
+        assert_eq!(origin.caller, Some(caller.to_text()));
+        assert_eq!(origin.caller_principal(), Some(caller));
         assert_eq!(origin.user, Some("alice".to_string()));
         assert_eq!(origin.source, Some("wechat:daily".to_string()));
         assert_eq!(origin.reply_target, Some("alice".to_string()));

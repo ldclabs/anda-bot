@@ -35,7 +35,7 @@ use crate::util::{
 };
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
 
-pub use agent::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary};
+pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary};
 pub use conversation::*;
 pub use goal::GoalTool;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};

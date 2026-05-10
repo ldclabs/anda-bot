@@ -2,6 +2,13 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.2] — 2026-05-10
+
+### Changed
+
+- **Cron jobs run as original caller**: `CronJobOrigin` now captures the `caller` Principal at creation time via `from_meta_with_caller()`. When a cron job executes (shell or agent), it impersonates the original creator rather than the system controller. `notify_shell_result` also uses the caller for agent notification. This ensures scheduled jobs remember who created them and operate with the correct identity.
+- **SessionRequestMeta**: new `SessionRequestMeta` struct (stored as session state via `ctx.base.set_state`) persists the original request metadata across the session lifetime. When an agent reconnects to an existing session, `request_meta` is updated with the current conversation ID. `CreateCronTool` reads `SessionRequestMeta` from context state to resolve the caller identity for cron job origin capture.
+
 ## [0.6.1] — 2026-05-10
 
 ### Added

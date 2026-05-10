@@ -115,10 +115,15 @@ impl CronRuntime {
 
     async fn process_due_job(&self, engine: Arc<Engine>, job: CronJob, run: CronRun) {
         let request_meta = job.request_meta();
+        let caller = job
+            .origin
+            .as_ref()
+            .and_then(CronJobOrigin::caller_principal)
+            .unwrap_or(self.controller);
         let result: CronJobResult = match &job.job_kind {
             JobKind::Shell => match engine
                 .tool_call(
-                    self.controller,
+                    caller,
                     ToolInput {
                         name: ShellTool::NAME.to_string(),
                         args: json!(ExecArgs {
@@ -134,7 +139,13 @@ impl CronRuntime {
                 Ok(result) => {
                     let mut result: CronJobResult = result.into();
                     if let Some(conversation_id) = self
-                        .notify_shell_result(engine.clone(), &job, &result, request_meta.clone())
+                        .notify_shell_result(
+                            engine.clone(),
+                            caller,
+                            &job,
+                            &result,
+                            request_meta.clone(),
+                        )
                         .await
                     {
                         result.conversation_id.get_or_insert(conversation_id);
@@ -144,15 +155,21 @@ impl CronRuntime {
                 Err(err) => {
                     log::error!(name = "cron"; "failed to submit cron job {}: {err}", job._id);
                     let result: CronJobResult = err.into();
-                    self.notify_shell_result(engine.clone(), &job, &result, request_meta.clone())
-                        .await;
+                    self.notify_shell_result(
+                        engine.clone(),
+                        caller,
+                        &job,
+                        &result,
+                        request_meta.clone(),
+                    )
+                    .await;
                     result
                 }
             },
             JobKind::Agent => {
                 let mut input = AgentInput::new(String::new(), job.job.clone());
                 input.meta = request_meta;
-                match engine.agent_run(self.controller, input).await {
+                match engine.agent_run(caller, input).await {
                     Ok(result) => result.into(),
                     Err(err) => {
                         log::error!(name = "cron"; "failed to submit cron job {}: {err}", job._id);
@@ -173,6 +190,7 @@ impl CronRuntime {
     async fn notify_shell_result(
         &self,
         engine: Arc<Engine>,
+        caller: Principal,
         job: &CronJob,
         result: &CronJobResult,
         request_meta: Option<anda_core::RequestMeta>,
@@ -180,7 +198,7 @@ impl CronRuntime {
         let request_meta = request_meta?;
         let mut input = AgentInput::new(String::new(), cron_shell_result_prompt(job, result));
         input.meta = Some(request_meta);
-        match engine.agent_run(self.controller, input).await {
+        match engine.agent_run(caller, input).await {
             Ok(output) => output.conversation,
             Err(err) => {
                 log::error!(name = "cron"; "failed to notify agent about cron job {} result: {err}", job._id);

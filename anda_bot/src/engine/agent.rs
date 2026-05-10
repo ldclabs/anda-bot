@@ -1,6 +1,6 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
-    FunctionDefinition, Message, Resource, StateFeatures, Tool, ToolOutput, Usage,
+    FunctionDefinition, Message, RequestMeta, Resource, StateFeatures, Tool, ToolOutput, Usage,
     prompt_with_resources, select_resources, text_resource_documents,
 };
 use anda_engine::{
@@ -613,6 +613,10 @@ impl Agent<AgentCtx> for AndaBot {
             .unwrap_or_else(Xid::new);
         if let Some(session) = self.get_session(&sess_id) {
             // Join existing conversation session if it's active
+            session.request_meta.set(request_meta_for_conversation(
+                ctx.meta(),
+                current_conversation_id.unwrap_or(current_conv_id),
+            ));
             match session.sender.send(input).await {
                 Ok(_) => {
                     return Ok(AgentOutput {
@@ -746,6 +750,8 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let (sender, mut rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
+        let session_request_meta =
+            SessionRequestMeta::new(request_meta_for_conversation(ctx.meta(), conv_id));
         let external_user = ctx
             .meta()
             .get_extra_as::<bool>("external_user")
@@ -769,6 +775,7 @@ impl Agent<AgentCtx> for AndaBot {
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(initial_goal.map(goal::GoalState::new))),
+            request_meta: session_request_meta.clone(),
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(unix_ms())),
@@ -784,6 +791,7 @@ impl Agent<AgentCtx> for AndaBot {
             session.goal.clone(),
             session.active_at.clone(),
         ));
+        ctx.base.set_state(session_request_meta);
 
         let agent_hook = DynAgentHook::new(session.clone());
         ctx.base.set_state(agent_hook);
@@ -1312,10 +1320,41 @@ struct Session {
     // task_id -> BackgroundTaskInfo
     background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
     goal: Arc<RwLock<Option<goal::GoalState>>>,
+    request_meta: SessionRequestMeta,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     submit_formation_at: AtomicU64,
     active_at: Arc<AtomicU64>,
     formation_context: Option<InputContext>,
+}
+
+#[derive(Clone)]
+pub struct SessionRequestMeta {
+    meta: Arc<RwLock<RequestMeta>>,
+}
+
+impl SessionRequestMeta {
+    pub fn new(meta: RequestMeta) -> Self {
+        Self {
+            meta: Arc::new(RwLock::new(meta)),
+        }
+    }
+
+    pub fn get(&self) -> RequestMeta {
+        self.meta.read().clone()
+    }
+
+    fn set(&self, meta: RequestMeta) {
+        *self.meta.write() = meta;
+    }
+}
+
+fn request_meta_for_conversation(meta: &RequestMeta, conversation_id: u64) -> RequestMeta {
+    let mut meta = meta.clone();
+    if conversation_id > 0 {
+        meta.extra
+            .insert("conversation".to_string(), conversation_id.into());
+    }
+    meta
 }
 
 impl Session {
@@ -1655,6 +1694,27 @@ mod tests {
     fn base_agent_tools_include_goal_tool() {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(base_tools().contains(&GoalTool::NAME.to_string()));
+    }
+
+    #[test]
+    fn request_meta_for_conversation_sets_current_conversation() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("conversation".to_string(), 0.into());
+        extra.insert("source".to_string(), "cli:/tmp/workspace".into());
+        let meta = RequestMeta {
+            user: Some("alice".to_string()),
+            extra,
+            ..Default::default()
+        };
+
+        let meta = request_meta_for_conversation(&meta, 140);
+
+        assert_eq!(meta.user.as_deref(), Some("alice"));
+        assert_eq!(meta.get_extra_as::<u64>("conversation"), Some(140));
+        assert_eq!(
+            meta.get_extra_as::<String>("source"),
+            Some("cli:/tmp/workspace".to_string())
+        );
     }
 
     #[test]
