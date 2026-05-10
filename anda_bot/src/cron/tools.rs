@@ -6,6 +6,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use super::{runtime::CronRuntime, types::CreateCronJobArgs, types::CronJobOrigin};
+use crate::engine::SessionRequestMeta;
 
 #[derive(Clone)]
 pub struct CreateCronTool {
@@ -85,7 +86,11 @@ impl Tool<BaseCtx> for CreateCronTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let origin = CronJobOrigin::from_meta(ctx.meta());
+        let meta = ctx
+            .get_state::<SessionRequestMeta>()
+            .map(|state| state.get())
+            .unwrap_or_else(|| ctx.meta().clone());
+        let origin = CronJobOrigin::from_meta_with_caller(&meta, ctx.caller());
         let job = self.cron.store.insert_job(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: json!(job),
