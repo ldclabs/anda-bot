@@ -2,6 +2,12 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.1] — 2026-05-10
+
+### Added
+
+- **Goal as a first-class agent-callable tool**: the `goal` tool is now directly callable by the agent (not just via `/goal` slash command). When the agent encounters a complex multi-turn request, it can autonomously start or update goal mode by calling `goal` with a concrete objective and verification criteria, then continue working normally. The session stays alive as long as a goal is active. `GoalTool` shares the session's goal state and `active_at` timestamp via `Arc`, and `SelfInstructions.md` includes explicit guidance on when the agent should (and should not) use the tool.
+
 ## [0.6.0] — 2026-05-09
 
 ### Added
