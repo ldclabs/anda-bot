@@ -2,6 +2,23 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.3] — 2026-05-11
+
+### Added
+
+- **Markdown rendering in TUI chat messages**: assistant `ContentPart::Text` messages are now rendered through a GFM-compliant markdown pipeline (`tui/markdown.rs`, ~450 lines) using the `markdown` crate. Supported elements receive distinct ratatui styles: 4 heading levels (panda white / bamboo light / bamboo green / leaf mint, all bold), **bold** (bold modifier), *emphasis* (italic), ~~strikethrough~~ (dim + crossed-out), `inline code` and code blocks (accent teal on footer background), [links](url) (underlined teal), > blockquotes (dim italic), lists (bamboo light), and tables with left/center/right alignment support plus styled header/separator/body rows. Grayscale fallback: when markdown parse fails, text is rendered as plain text instead of erroring.
+- **Grapheme-aware line wrapping for styled spans**: the new `wrap_styled_body_line` function wraps styled `Line<'static>` values grapheme-by-grapheme, preserving individual span styles across line boundaries. Control characters and zero-width graphemes are filtered during wrap. Consecutive same-style spans are merged into single spans where possible.
+- **Table rendering in TUI**: GFM tables are parsed from the source text, column-widths computed via Unicode display width, and cells aligned according to the source alignment hints (`:---`, `:---:`, `---:`). Separator rows are rendered between header and body. Alignment defaults to `---` (3 dashes, right-padded).
+- **New tests**: `chat_message_lines_render_markdown_source_styles` (verifies heading bold + color, inline bold + inline code styles), `chat_message_lines_render_markdown_tables` (verifies aligned markdown source output for tables).
+- **Background shell intermediate output streaming**: the `Session` tool hook now implements `on_background_progress`, forwarding intermediate background task output to the agent as `$system` runtime prompts (not just final completion). This lets the agent see long-running task progress in real time.
+
+### Changed
+
+- **Shell runtime runs in insecure mode**: `NativeRuntime::new(workspace).insecure()` allows shell commands wider system access when needed.
+- **anda_engine upgraded to 0.12.4**.
+- **`push_wrapped_block` renamed → `push_markdown_block`**: now delegates to `markdown::render()` instead of doing simple `text.lines()` + `wrap_visual()`. The old plain-text wrapping logic is replaced by styled span wrapping.
+- **Background shell prompt label unified**: `"background shell task"` → `"background shell"` across both `on_background_end` and the new `on_background_progress` hooks.
+
 ## [0.6.2] — 2026-05-10
 
 ### Changed

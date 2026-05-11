@@ -1503,6 +1503,30 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         );
     }
 
+    async fn on_background_progress(
+        &self,
+        _ctx: &BaseCtx,
+        task_id: String,
+        output: ToolOutput<ExecOutput>,
+    ) {
+        self.sender
+            .send(ConversationInput {
+                command: PromptCommand::Plain {
+                    prompt: system_runtime_prompt(
+                        "background shell",
+                        format!(
+                            "Background task {task_id} intermediate output:\n\n{}",
+                            serde_json::to_string(&output.output).unwrap_or_default()
+                        ),
+                    ),
+                },
+                usage: output.usage,
+                resources: output.artifacts,
+            })
+            .await
+            .ok();
+    }
+
     async fn on_background_end(
         &self,
         _ctx: &BaseCtx,
@@ -1517,7 +1541,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             .send(ConversationInput {
                 command: PromptCommand::Plain {
                     prompt: system_runtime_prompt(
-                        "background shell task",
+                        "background shell",
                         format!(
                             "Background task {task_id} completed:\n\n{}",
                             serde_json::to_string(&output.output).unwrap_or_default()

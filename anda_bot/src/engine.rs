@@ -131,7 +131,7 @@ impl Engines {
         };
 
         let shell_tool = {
-            let runtime = Arc::new(shell::NativeRuntime::new(default_workspace));
+            let runtime = Arc::new(shell::NativeRuntime::new(default_workspace).insecure());
             let mut envs = vec![shell::CustomEnv {
                 key: "ANDA_HOME".to_string(),
                 value: cfg.home_dir.to_string_lossy().to_string(),

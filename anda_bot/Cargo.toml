@@ -1,7 +1,7 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.6.2"
+version = "0.6.3"
 description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Hippocampus."
 edition.workspace = true
 
@@ -54,6 +54,7 @@ libc = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }
+markdown = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 tokio-rustls = { workspace = true }

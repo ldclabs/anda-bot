@@ -35,6 +35,7 @@ use crate::{
     gateway,
 };
 
+mod markdown;
 mod theme;
 mod widgets;
 
@@ -1021,7 +1022,7 @@ fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'stat
         ensure_part_spacing(&mut rendered_lines, prev_kind, kind);
         match part {
             ContentPart::Text { text } => {
-                push_wrapped_block(
+                push_markdown_block(
                     &mut rendered_lines,
                     text,
                     &mut first,
@@ -1565,7 +1566,7 @@ fn truncate_visual(text: &str, width: usize) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn push_wrapped_block(
+fn push_markdown_block(
     rendered_lines: &mut Vec<Line<'static>>,
     text: &str,
     first: &mut bool,
@@ -1576,42 +1577,110 @@ fn push_wrapped_block(
     body_style: Style,
     content_width: usize,
 ) {
-    for text_line in text.lines() {
-        let text_line = compact_cjk_spacing(text_line);
-        if text_line.is_empty() {
-            let marker = if *first {
-                prefix.to_string()
-            } else {
-                continuation_prefix.to_string()
-            };
-            let marker_style = if *first {
-                first_prefix_style
-            } else {
-                continuation_prefix_style
-            };
-            rendered_lines.push(Line::from(vec![Span::styled(marker, marker_style)]));
-            *first = false;
-            continue;
-        }
-
-        for chunk in wrap_visual(text_line.as_ref(), content_width) {
-            let marker = if *first {
-                prefix.to_string()
-            } else {
-                continuation_prefix.to_string()
-            };
-            let marker_style = if *first {
-                first_prefix_style
-            } else {
-                continuation_prefix_style
-            };
-            rendered_lines.push(Line::from(vec![
-                Span::styled(marker, marker_style),
-                Span::styled(chunk, body_style),
-            ]));
-            *first = false;
+    for line in markdown::render(text) {
+        for body_line in wrap_styled_body_line(line, body_style, content_width) {
+            push_prefixed_body_line(
+                rendered_lines,
+                first,
+                prefix,
+                continuation_prefix,
+                first_prefix_style,
+                continuation_prefix_style,
+                body_line,
+            );
         }
     }
+}
+
+fn wrap_styled_body_line(
+    line: Line<'static>,
+    base_style: Style,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let line_style = base_style.patch(line.style);
+    let alignment = line.alignment;
+    let mut wrapped = Vec::new();
+    let mut current = Vec::new();
+    let mut current_width = 0;
+
+    for span in line.spans {
+        let style = line_style.patch(span.style);
+        for grapheme in UnicodeSegmentation::graphemes(span.content.as_ref(), true) {
+            if grapheme.chars().any(char::is_control) {
+                continue;
+            }
+
+            let grapheme_width = display_width(grapheme);
+            if grapheme_width == 0 {
+                continue;
+            }
+            if current_width + grapheme_width > width && !current.is_empty() {
+                wrapped.push(body_line_from_spans(
+                    std::mem::take(&mut current),
+                    alignment,
+                ));
+                current_width = 0;
+            }
+
+            push_styled_grapheme(&mut current, grapheme, style);
+            current_width += grapheme_width;
+        }
+    }
+
+    if !current.is_empty() || wrapped.is_empty() {
+        wrapped.push(body_line_from_spans(current, alignment));
+    }
+
+    wrapped
+}
+
+fn body_line_from_spans(
+    spans: Vec<Span<'static>>,
+    alignment: Option<ratatui::layout::Alignment>,
+) -> Line<'static> {
+    let mut line = Line::from(spans);
+    line.alignment = alignment;
+    line
+}
+
+fn push_styled_grapheme(spans: &mut Vec<Span<'static>>, grapheme: &str, style: Style) {
+    if let Some(last) = spans.last_mut()
+        && last.style == style
+    {
+        last.content.to_mut().push_str(grapheme);
+        return;
+    }
+
+    spans.push(Span::styled(grapheme.to_string(), style));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_prefixed_body_line(
+    rendered_lines: &mut Vec<Line<'static>>,
+    first: &mut bool,
+    prefix: &str,
+    continuation_prefix: &str,
+    first_prefix_style: Style,
+    continuation_prefix_style: Style,
+    body_line: Line<'static>,
+) {
+    let marker = if *first {
+        prefix.to_string()
+    } else {
+        continuation_prefix.to_string()
+    };
+    let marker_style = if *first {
+        first_prefix_style
+    } else {
+        continuation_prefix_style
+    };
+
+    let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
+    spans.push(Span::styled(marker, marker_style));
+    spans.extend(body_line.spans);
+    rendered_lines.push(Line::from(spans));
+    *first = false;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2154,6 +2223,70 @@ mod tests {
         assert_eq!(line_text(&lines[1]), "     line two");
         assert_eq!(line_text(&lines[2]), "     line three");
         assert_eq!(line_text(&lines[3]), "");
+    }
+
+    #[test]
+    fn chat_message_lines_render_markdown_source_styles() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::Text {
+                text: "## Title\n\nHello **bold** and `code`.".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert_eq!(line_text(&lines[0]), "🐼 ❯ ## Title");
+        assert!(
+            lines[0].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(lines[0].spans[1].style.fg, Some(theme::BAMBOO_LIGHT));
+
+        let paragraph = lines
+            .iter()
+            .find(|line| line_text(line).contains("Hello"))
+            .expect("paragraph line");
+        let bold = paragraph
+            .spans
+            .iter()
+            .find(|span| span.content.contains("**bold**"))
+            .expect("bold span");
+        let code = paragraph
+            .spans
+            .iter()
+            .find(|span| span.content.contains("`code`"))
+            .expect("code span");
+
+        assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line_text(paragraph), "     Hello **bold** and `code`.");
+        assert_eq!(code.style.fg, Some(theme::ACCENT_TEAL));
+        assert_eq!(code.style.bg, Some(theme::FOOTER_BG));
+        assert_eq!(line_text(lines.last().expect("blank line")), "");
+    }
+
+    #[test]
+    fn chat_message_lines_render_markdown_tables() {
+        let mut app = ready_app();
+        app.chat.messages.push(anda_core::Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::Text {
+                text: "| Name | Count |\n| :--- | ---: |\n| alpha | 2 |\n| beta | 10 |".to_string(),
+            }],
+            ..Default::default()
+        });
+
+        let lines = chat_message_lines(&app, 80);
+
+        assert_eq!(line_text(&lines[0]), "🐼 ❯ | Name  | Count |");
+        assert_eq!(line_text(&lines[1]), "     | :---- | ----: |");
+        assert_eq!(line_text(&lines[2]), "     | alpha |     2 |");
+        assert_eq!(line_text(&lines[3]), "     | beta  |    10 |");
+        assert_eq!(line_text(lines.last().expect("blank line")), "");
     }
 
     #[test]
