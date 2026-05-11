@@ -101,7 +101,8 @@ anda --home /path/to/.anda
 When the terminal UI is running:
 
 - Press Enter to send.
-- Press Shift+Enter to insert a newline.
+- Press Shift+Enter, or Ctrl+J in terminals that do not report Shift+Enter, to insert a newline.
+- Press Up or Down to move through multi-line input.
 - Press Ctrl+U to clear the input.
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
 - Use `/reload` after editing `config.yaml`.

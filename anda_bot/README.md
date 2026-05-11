@@ -59,7 +59,8 @@ Useful top-level settings:
 ## Chat UI Controls
 
 - Enter sends the message.
-- Shift+Enter inserts a newline.
+- Shift+Enter inserts a newline; use Ctrl+J in terminals that do not report Shift+Enter.
+- Up and Down move through multi-line input.
 - Ctrl+U clears the input.
 - Ctrl+A and Ctrl+E move to the start and end of the input.
 - `/reload` reloads `config.yaml` and reconnects.

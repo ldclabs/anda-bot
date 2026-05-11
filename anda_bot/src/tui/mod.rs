@@ -18,7 +18,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Widget},
+    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
 use std::{
     borrow::Cow,
@@ -53,6 +53,7 @@ const INPUT_DIVIDER_PADDED_HEIGHT: u16 = 3;
 const INPUT_DIVIDER_FLOW_SPEED: f32 = 1.25;
 const INPUT_DIVIDER_GLOW_RADIUS: f32 = 15.0;
 const INPUT_DIVIDER_TRAIL_OFFSET: f32 = 9.0;
+const INPUT_SCROLLBAR_WIDTH: u16 = 1;
 const STATUS_FOOTER_MAX_LINES: usize = 3;
 const SECONDARY_PART_MAX_LINES: usize = 3;
 const THINKING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -126,6 +127,7 @@ struct App {
     chat: gateway::ChatSession,
     input_buf: String,
     input_cursor: usize,
+    input_preferred_col: Option<u16>,
     animation_tick: u64,
     static_panel_flushed: bool,
     flushed_message_count: usize,
@@ -146,6 +148,7 @@ impl App {
             chat: gateway::ChatSession::new(client),
             input_buf: String::new(),
             input_cursor: 0,
+            input_preferred_col: None,
             animation_tick: 0,
             static_panel_flushed: false,
             flushed_message_count: 0,
@@ -204,6 +207,7 @@ impl App {
         let (normalized, cursor) = compact_cjk_spacing_with_cursor(&new, cursor);
         self.input_buf = normalized;
         self.input_cursor = cursor;
+        self.input_preferred_col = None;
     }
 
     fn handle_paste(&mut self, text: String) {
@@ -231,6 +235,7 @@ impl App {
 
         self.input_buf.clear();
         self.input_cursor = 0;
+        self.input_preferred_col = None;
         if let Some(err) = self.chat.start_send(text) {
             self.notice = err;
         } else {
@@ -351,7 +356,11 @@ impl App {
     //     self.notice = "New conversation.".to_string();
     // }
 
-    async fn handle_key(&mut self, key: KeyEvent) -> Result<(), BoxError> {
+    async fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        input_content_width: u16,
+    ) -> Result<(), BoxError> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') => {
@@ -361,14 +370,17 @@ impl App {
                 KeyCode::Char('u') if self.chat_enabled() => {
                     self.input_buf.clear();
                     self.input_cursor = 0;
+                    self.input_preferred_col = None;
                     return Ok(());
                 }
                 KeyCode::Char('a') if self.chat_enabled() => {
                     self.input_cursor = 0;
+                    self.input_preferred_col = None;
                     return Ok(());
                 }
                 KeyCode::Char('e') if self.chat_enabled() => {
                     self.input_cursor = self.input_buf.chars().count();
+                    self.input_preferred_col = None;
                     return Ok(());
                 }
                 _ => {}
@@ -402,7 +414,7 @@ impl App {
                 self.notice.clear();
                 self.input_focused = false;
             }
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            _ if input_newline_key(key) => {
                 self.insert_input_text("\n");
             }
             KeyCode::Enter => {
@@ -413,6 +425,7 @@ impl App {
                 let pos = self.input_cursor - 1;
                 self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
                 self.input_cursor -= 1;
+                self.input_preferred_col = None;
             }
             KeyCode::Delete => {
                 let chars: Vec<char> = self.input_buf.chars().collect();
@@ -421,19 +434,34 @@ impl App {
                         .iter()
                         .chain(chars[self.input_cursor + 1..].iter())
                         .collect();
+                    self.input_preferred_col = None;
                 }
             }
             KeyCode::Left if self.input_cursor > 0 => {
                 self.input_cursor -= 1;
+                self.input_preferred_col = None;
             }
             KeyCode::Right => {
                 let len = self.input_buf.chars().count();
                 if self.input_cursor < len {
                     self.input_cursor += 1;
+                    self.input_preferred_col = None;
                 }
             }
-            KeyCode::Home => self.input_cursor = 0,
-            KeyCode::End => self.input_cursor = self.input_buf.chars().count(),
+            KeyCode::Up => {
+                self.move_input_cursor_vertically(InputCursorDirection::Up, input_content_width);
+            }
+            KeyCode::Down => {
+                self.move_input_cursor_vertically(InputCursorDirection::Down, input_content_width);
+            }
+            KeyCode::Home => {
+                self.input_cursor = 0;
+                self.input_preferred_col = None;
+            }
+            KeyCode::End => {
+                self.input_cursor = self.input_buf.chars().count();
+                self.input_preferred_col = None;
+            }
             KeyCode::Char(ch)
                 if !key
                     .modifiers
@@ -447,6 +475,29 @@ impl App {
         }
         Ok(())
     }
+
+    fn move_input_cursor_vertically(&mut self, direction: InputCursorDirection, width: u16) {
+        let (cursor, preferred_col) = move_cursor_vertically(
+            &self.input_buf,
+            self.input_cursor,
+            width,
+            direction,
+            self.input_preferred_col,
+        );
+        self.input_cursor = cursor;
+        self.input_preferred_col = Some(preferred_col);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum InputCursorDirection {
+    Up,
+    Down,
+}
+
+fn input_newline_key(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT))
+        || matches!(key.code, KeyCode::Char('j') if key.modifiers == KeyModifiers::CONTROL)
 }
 
 async fn run_app(
@@ -457,14 +508,17 @@ async fn run_app(
     let (mut term_w, mut term_h) = size()?;
     term_h = term_h.max(1);
     let mut current_viewport_height = terminal.get_frame().area().height;
+    let mut needs_render = true;
 
     loop {
-        app.animation_tick = app.animation_tick.wrapping_add(1);
-
-        if app.chat_enabled()
-            && let Some(err) = app.chat.finish_pending_send().await
-        {
-            app.notice = err;
+        let before_send = chat_render_snapshot(app);
+        let notice_before_send = app.notice.clone();
+        if app.chat_enabled() {
+            if let Some(err) = app.chat.finish_pending_send().await {
+                app.notice = err;
+            }
+            needs_render |=
+                before_send != chat_render_snapshot(app) || notice_before_send != app.notice;
         }
 
         // Recreate the terminal when:
@@ -479,6 +533,7 @@ async fn run_app(
         if terminal_resized {
             term_w = w;
             term_h = h;
+            needs_render = true;
         }
 
         let desired = dynamic_viewport_height(app, term_w, term_h);
@@ -496,17 +551,27 @@ async fn run_app(
             stdout.execute(Clear(ClearType::FromCursorDown))?;
             *terminal = create_terminal_with_height(new_height)?;
             current_viewport_height = new_height;
+            needs_render = true;
         }
 
-        terminal.autoresize()?;
-        flush_static_scrollback(terminal, app)?;
-        terminal.draw(|frame| render(frame, app))?;
+        if app.chat.is_thinking() {
+            needs_render = true;
+        }
+
+        if needs_render {
+            app.animation_tick = app.animation_tick.wrapping_add(1);
+            terminal.autoresize()?;
+            flush_static_scrollback(terminal, app)?;
+            terminal.draw(|frame| render(frame, app))?;
+            needs_render = false;
+        }
 
         if app.should_quit {
             break;
         }
 
         if last_status_refresh.elapsed() >= STATUS_REFRESH_INTERVAL {
+            let status_before = status_render_snapshot(app);
             let was_running = app.daemon_running;
             let _ = app.refresh_status().await;
             if app.setup.is_ready() && was_running && !app.daemon_running && app.notice.is_empty() {
@@ -514,11 +579,14 @@ async fn run_app(
                     "Daemon connection lost. Press Enter to reload config.yaml and reconnect."
                         .to_string();
             }
+            needs_render |= status_before != status_render_snapshot(app);
             last_status_refresh = Instant::now();
         }
 
         if app.chat_enabled() {
-            let _ = app.chat.poll(None).await;
+            let before_poll = chat_render_snapshot(app);
+            let received = app.chat.poll(None).await;
+            needs_render |= received || before_poll != chat_render_snapshot(app);
         }
 
         if !event::poll(Duration::from_millis(150))? {
@@ -530,15 +598,64 @@ async fn run_app(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                if let Err(err) = app.handle_key(key).await {
+                let input_content_width =
+                    input_navigation_content_width(app, terminal.get_frame().area());
+                if let Err(err) = app.handle_key(key, input_content_width).await {
                     app.notice = err.to_string();
                 }
+                needs_render = true;
             }
-            Event::Paste(text) => app.handle_paste(text),
+            Event::Paste(text) => {
+                app.handle_paste(text);
+                needs_render = true;
+            }
+            Event::Resize(_, _) => {
+                needs_render = true;
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ChatRenderSnapshot {
+    conv_id: Option<u64>,
+    conversation_id: Option<u64>,
+    messages_len: usize,
+    errors_len: usize,
+    sending: bool,
+    thinking: bool,
+    status_label: &'static str,
+}
+
+fn chat_render_snapshot(app: &App) -> ChatRenderSnapshot {
+    ChatRenderSnapshot {
+        conv_id: app.chat.conv_id,
+        conversation_id: app.chat.conversation.as_ref().map(|conv| conv._id),
+        messages_len: app.chat.messages.len(),
+        errors_len: app.chat.errors.len(),
+        sending: app.chat.sending,
+        thinking: app.chat.is_thinking(),
+        status_label: app.chat.status_label(),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct StatusRenderSnapshot {
+    pid: Option<u32>,
+    daemon_running: bool,
+    setup_ready: bool,
+    notice: String,
+}
+
+fn status_render_snapshot(app: &App) -> StatusRenderSnapshot {
+    StatusRenderSnapshot {
+        pid: app.pid,
+        daemon_running: app.daemon_running,
+        setup_ready: app.setup.is_ready(),
+        notice: app.notice.clone(),
+    }
 }
 
 fn render(frame: &mut Frame, app: &mut App) {
@@ -554,6 +671,28 @@ fn render(frame: &mut Frame, app: &mut App) {
 
     render_input(frame, app, chunks[0]);
     render_status_footer(frame, app, chunks[1]);
+}
+
+fn input_navigation_content_width(app: &App, area: Rect) -> u16 {
+    if area.width == 0 || area.height == 0 {
+        return 1;
+    }
+
+    let (input_height, _) = dynamic_layout_heights(app, area);
+    let input_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: input_height,
+    };
+    let (_, prompt_area) = split_input_area(input_area);
+    if prompt_area.width == 0 || prompt_area.height == 0 {
+        return 1;
+    }
+
+    let placeholder = input_placeholder(app);
+    let (_, _, viewport) = input_viewport(app, placeholder, prompt_area);
+    viewport.content_width.max(1)
 }
 
 fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
@@ -639,29 +778,48 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let prompt_lines = build_prompt_lines(app, placeholder, prompt_area.width as usize);
+    let (text_area, scrollbar_area, input_viewport) = input_viewport(app, placeholder, prompt_area);
     frame.render_widget(
-        PackedLines::new(prompt_lines).style(theme::body_style()),
-        prompt_area,
+        PackedLines::new(input_viewport.lines).style(theme::body_style()),
+        text_area,
     );
+
+    if let Some(scrollbar_area) = scrollbar_area {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .thumb_symbol("┃")
+            .track_style(theme::dim_style())
+            .thumb_style(theme::accent_style());
+        let mut scrollbar_state = ScrollbarState::new(input_viewport.total_lines)
+            .position(input_viewport.scroll_top)
+            .viewport_content_length(text_area.height as usize);
+
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
 
     if !app.chat_enabled()
         || !app.input_focused
         || app.chat.sending
-        || prompt_area.width <= 2
-        || prompt_area.height == 0
+        || text_area.width <= 2
+        || text_area.height == 0
     {
         return;
     }
 
     let prompt_prefix_width = input_prompt_prefix_width();
-    let content_width = prompt_area.width.saturating_sub(prompt_prefix_width);
-    let (cursor_col, cursor_row) =
-        wrapped_cursor_position(&app.input_buf, app.input_cursor, content_width);
-    if cursor_row < prompt_area.height {
+    let cursor_row = input_viewport
+        .cursor_row
+        .saturating_sub(input_viewport.scroll_top);
+    if cursor_row < text_area.height as usize {
         frame.set_cursor_position((
-            prompt_area.x + prompt_prefix_width + cursor_col.min(content_width.saturating_sub(1)),
-            prompt_area.y + cursor_row,
+            text_area.x
+                + prompt_prefix_width
+                + input_viewport
+                    .cursor_col
+                    .min(input_viewport.content_width.saturating_sub(1)),
+            text_area.y + cursor_row as u16,
         ));
     }
 }
@@ -745,7 +903,7 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "Shift+Enter newline  •  Ctrl+U clear  •  Ctrl+A/E move  •  Ctrl+C quit  •  Esc status",
+                        "Enter send  •  Shift+Enter/Ctrl+J newline  •  ↑/↓ move lines  •  Ctrl+U clear  •  Ctrl+C quit",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),
@@ -960,6 +1118,98 @@ fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'s
     }
 
     lines
+}
+
+struct InputViewport {
+    lines: Vec<Line<'static>>,
+    total_lines: usize,
+    scroll_top: usize,
+    cursor_col: u16,
+    cursor_row: usize,
+    content_width: u16,
+}
+
+fn input_viewport(
+    app: &App,
+    placeholder: &str,
+    prompt_area: Rect,
+) -> (Rect, Option<Rect>, InputViewport) {
+    let viewport = build_input_viewport(app, placeholder, prompt_area.width, prompt_area.height);
+    if viewport.total_lines <= prompt_area.height as usize
+        || prompt_area.width <= input_prompt_prefix_width() + INPUT_SCROLLBAR_WIDTH
+    {
+        return (prompt_area, None, viewport);
+    }
+
+    let text_area = Rect {
+        x: prompt_area.x,
+        y: prompt_area.y,
+        width: prompt_area.width.saturating_sub(INPUT_SCROLLBAR_WIDTH),
+        height: prompt_area.height,
+    };
+    let scrollbar_area = Rect {
+        x: text_area.x + text_area.width,
+        y: text_area.y,
+        width: INPUT_SCROLLBAR_WIDTH,
+        height: text_area.height,
+    };
+    let viewport = build_input_viewport(app, placeholder, text_area.width, text_area.height);
+
+    (text_area, Some(scrollbar_area), viewport)
+}
+
+fn build_input_viewport(app: &App, placeholder: &str, width: u16, height: u16) -> InputViewport {
+    let content_width = width.saturating_sub(input_prompt_prefix_width()).max(1);
+    let mut lines = build_prompt_lines(app, placeholder, width as usize);
+    let (cursor_col, cursor_row) = if input_cursor_visible(app) {
+        wrapped_cursor_position(&app.input_buf, app.input_cursor, content_width)
+    } else {
+        (0, 0)
+    };
+    let cursor_row = cursor_row as usize;
+
+    if input_cursor_visible(app) {
+        while cursor_row >= lines.len() {
+            lines.push(Line::from(vec![Span::styled(
+                INPUT_CONTINUATION_PREFIX.to_string(),
+                theme::accent_style(),
+            )]));
+        }
+    }
+
+    let total_lines = lines.len().max(1);
+    let scroll_top = input_scroll_top(cursor_row, height as usize, total_lines);
+    let lines = lines
+        .into_iter()
+        .skip(scroll_top)
+        .take(height as usize)
+        .collect();
+
+    InputViewport {
+        lines,
+        total_lines,
+        scroll_top,
+        cursor_col,
+        cursor_row,
+        content_width,
+    }
+}
+
+fn input_cursor_visible(app: &App) -> bool {
+    app.chat_enabled() && app.input_focused && !app.chat.sending
+}
+
+fn input_scroll_top(cursor_row: usize, viewport_height: usize, total_lines: usize) -> usize {
+    if viewport_height == 0 || total_lines <= viewport_height {
+        return 0;
+    }
+
+    let max_scroll = total_lines - viewport_height;
+    cursor_row
+        .min(total_lines.saturating_sub(1))
+        .saturating_add(1)
+        .saturating_sub(viewport_height)
+        .min(max_scroll)
 }
 
 fn input_prompt_prefix_width() -> u16 {
@@ -1834,7 +2084,115 @@ fn wrap_visual(text: &str, width: usize) -> Vec<String> {
     wrapped
 }
 
+#[derive(Clone, Copy)]
+struct InputCursorPoint {
+    cursor: usize,
+    row: usize,
+    col: u16,
+}
+
+fn move_cursor_vertically(
+    text: &str,
+    cursor_chars: usize,
+    width: u16,
+    direction: InputCursorDirection,
+    preferred_col: Option<u16>,
+) -> (usize, u16) {
+    let width = width.max(1);
+    let cursor_chars = cursor_chars.min(text.chars().count());
+    let points = input_cursor_points(text, width);
+    let (_, current_row) = wrapped_cursor_position_usize(text, cursor_chars, width);
+    let current_col = input_cursor_col(text, cursor_chars, width);
+    let desired_col = preferred_col.unwrap_or(current_col);
+    let Some(last_row) = points.last().map(|point| point.row) else {
+        return (cursor_chars, desired_col);
+    };
+
+    let target_row = match direction {
+        InputCursorDirection::Up => current_row.saturating_sub(1),
+        InputCursorDirection::Down => (current_row + 1).min(last_row),
+    };
+
+    if target_row == current_row {
+        return (cursor_chars, desired_col);
+    }
+
+    let target_cursor = input_cursor_for_visual_position(&points, target_row, desired_col);
+    (target_cursor, desired_col)
+}
+
+fn input_cursor_points(text: &str, width: u16) -> Vec<InputCursorPoint> {
+    let width = width.max(1) as usize;
+    let mut points = vec![InputCursorPoint {
+        cursor: 0,
+        row: 0,
+        col: 0,
+    }];
+    let mut row = 0usize;
+    let mut col = 0usize;
+
+    for (idx, ch) in text.chars().enumerate() {
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+            points.push(InputCursorPoint {
+                cursor: idx + 1,
+                row,
+                col: 0,
+            });
+            continue;
+        }
+
+        let ch_width = char_display_width(ch);
+        if col + ch_width > width && col != 0 {
+            row += 1;
+            col = 0;
+        }
+        col += ch_width;
+        if col >= width {
+            row += col / width;
+            col %= width;
+        }
+
+        points.push(InputCursorPoint {
+            cursor: idx + 1,
+            row,
+            col: col.min(u16::MAX as usize) as u16,
+        });
+    }
+
+    points
+}
+
+fn input_cursor_for_visual_position(
+    points: &[InputCursorPoint],
+    target_row: usize,
+    target_col: u16,
+) -> usize {
+    points
+        .iter()
+        .filter(|point| point.row == target_row)
+        .min_by_key(|point| {
+            (
+                point.col.abs_diff(target_col),
+                point.col > target_col,
+                point.cursor,
+            )
+        })
+        .map(|point| point.cursor)
+        .unwrap_or_else(|| points.last().map(|point| point.cursor).unwrap_or_default())
+}
+
+fn input_cursor_col(text: &str, cursor_chars: usize, width: u16) -> u16 {
+    wrapped_cursor_position_usize(text, cursor_chars, width).0
+}
+
 fn wrapped_cursor_position(text: &str, cursor_chars: usize, width: u16) -> (u16, u16) {
+    let (col, row) = wrapped_cursor_position_usize(text, cursor_chars, width);
+    (col, row.min(u16::MAX as usize) as u16)
+}
+
+fn wrapped_cursor_position_usize(text: &str, cursor_chars: usize, width: u16) -> (u16, usize) {
     if width == 0 {
         return (0, 0);
     }
@@ -1862,7 +2220,7 @@ fn wrapped_cursor_position(text: &str, cursor_chars: usize, width: u16) -> (u16,
         }
     }
 
-    (col as u16, row as u16)
+    (col.min(u16::MAX as usize) as u16, row)
 }
 
 #[cfg(unix)]
@@ -1955,6 +2313,60 @@ mod tests {
     }
 
     #[test]
+    fn input_newline_key_accepts_shift_enter_and_ctrl_j() {
+        assert!(input_newline_key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+        )));
+        assert!(input_newline_key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(!input_newline_key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+    }
+
+    #[test]
+    fn move_cursor_vertically_preserves_visual_column() {
+        let text = "one\ntwo\nthree";
+
+        let (cursor, preferred_col) =
+            move_cursor_vertically(text, 2, 20, InputCursorDirection::Down, None);
+        assert_eq!(cursor, 6);
+        assert_eq!(preferred_col, 2);
+
+        let (cursor, preferred_col) = move_cursor_vertically(
+            text,
+            cursor,
+            20,
+            InputCursorDirection::Down,
+            Some(preferred_col),
+        );
+        assert_eq!(cursor, 10);
+        assert_eq!(preferred_col, 2);
+
+        let (cursor, _) = move_cursor_vertically(
+            text,
+            cursor,
+            20,
+            InputCursorDirection::Up,
+            Some(preferred_col),
+        );
+        assert_eq!(cursor, 6);
+    }
+
+    #[test]
+    fn move_cursor_vertically_handles_wrapped_lines() {
+        let (cursor, preferred_col) =
+            move_cursor_vertically("abcdef", 6, 3, InputCursorDirection::Up, None);
+
+        assert_eq!(cursor, 3);
+        assert_eq!(preferred_col, 0);
+    }
+
+    #[test]
     fn build_prompt_lines_uses_continuation_prefix_for_multiline_input() {
         let mut app = ready_app();
         app.input_buf = "alpha\nbeta".to_string();
@@ -1975,6 +2387,56 @@ mod tests {
 
         assert_eq!(lines.len(), 1);
         assert_eq!(line_text(&lines[0]), "❯ ");
+    }
+
+    #[test]
+    fn input_viewport_follows_cursor_to_bottom_of_long_paste() {
+        let mut app = ready_app();
+        app.input_buf = "one\ntwo\nthree\nfour\nfive\nsix".to_string();
+        app.input_cursor = app.input_buf.chars().count();
+
+        let viewport = build_input_viewport(&app, "", 24, 4);
+        let visible: Vec<_> = viewport.lines.iter().map(line_text).collect();
+
+        assert_eq!(viewport.total_lines, 6);
+        assert_eq!(viewport.scroll_top, 2);
+        assert_eq!(visible, vec!["  three", "  four", "  five", "  six"]);
+    }
+
+    #[test]
+    fn input_viewport_keeps_cursor_line_visible_when_moved_up() {
+        let mut app = ready_app();
+        app.input_buf = "one\ntwo\nthree\nfour\nfive\nsix".to_string();
+        app.input_cursor = 0;
+
+        let viewport = build_input_viewport(&app, "", 24, 4);
+        let visible: Vec<_> = viewport.lines.iter().map(line_text).collect();
+
+        assert_eq!(viewport.scroll_top, 0);
+        assert_eq!(visible, vec!["❯ one", "  two", "  three", "  four"]);
+    }
+
+    #[test]
+    fn input_viewport_adds_virtual_line_when_cursor_wraps_past_full_row() {
+        let mut app = ready_app();
+        app.input_buf = "abcd".to_string();
+        app.input_cursor = app.input_buf.chars().count();
+
+        let viewport = build_input_viewport(&app, "", input_prompt_prefix_width() + 4, 4);
+        let visible: Vec<_> = viewport.lines.iter().map(line_text).collect();
+
+        assert_eq!(viewport.cursor_row, 1);
+        assert_eq!(viewport.total_lines, 2);
+        assert_eq!(visible, vec!["❯ abcd", "  "]);
+    }
+
+    #[test]
+    fn input_scroll_top_tracks_cursor_without_exceeding_content() {
+        assert_eq!(input_scroll_top(0, 4, 6), 0);
+        assert_eq!(input_scroll_top(3, 4, 6), 0);
+        assert_eq!(input_scroll_top(4, 4, 6), 1);
+        assert_eq!(input_scroll_top(9, 4, 6), 2);
+        assert_eq!(input_scroll_top(9, 0, 6), 0);
     }
 
     #[test]

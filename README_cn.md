@@ -101,7 +101,8 @@ anda --home /path/to/.anda
 终端 UI 启动后：
 
 - Enter 发送消息。
-- Shift+Enter 插入换行。
+- Shift+Enter 插入换行；如果终端不支持区分 Shift+Enter，可以用 Ctrl+J。
+- 上/下方向键在多行输入中移动光标。
 - Ctrl+U 清空输入。
 - Ctrl+A / Ctrl+E 跳到输入开头或结尾。
 - 修改 `config.yaml` 后输入 `/reload` 重新加载。

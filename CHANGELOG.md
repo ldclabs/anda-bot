@@ -2,6 +2,26 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.4] — 2026-05-11
+
+### Fixed
+
+- **IME composition jitter in TUI input** ([#1](https://github.com/ldclabs/anda-bot/issues/1)): the main render loop now only redraws the terminal when observable state has actually changed, using `ChatRenderSnapshot` / `StatusRenderSnapshot` comparison plus a `needs_render` flag. Previously the terminal was redrawn on every loop iteration (~6–7 fps), causing IME composition candidate windows to flicker and shift on systems like Fedora 42. Render-on-demand triggers include: chat message changes, new streaming tokens, terminal resize, key input, paste, thinking state transitions, and daemon status changes.
+
+### Added
+
+- **↑/↓ cursor navigation in multi-line input**: `Up` and `Down` arrow keys now move the cursor vertically through multi-line input, tracking a preferred visual column (`input_preferred_col`) so repeated ↑/↓ stays on the same column. Built on `move_cursor_vertically()`, `input_cursor_points()`, and `input_cursor_for_visual_position()`.
+- **Input scrollbar**: when input text exceeds the available area, a vertical scrollbar (`┃` thumb on `│` track) appears at the right edge. The viewport auto-scrolls to keep the cursor visible, using `InputViewport` + `input_scroll_top()`.
+- **Ctrl+J as alternative newline**: for terminals that do not distinguish `Shift+Enter`, `Ctrl+J` now also inserts a newline (`input_newline_key()`).
+- **Input viewport abstraction**: new `InputViewport` struct and `build_input_viewport()` encapsulate line rendering, scroll position, cursor placement, and virtual continuation lines when the cursor wraps to a new row after the last actual character.
+- **7 new tests**: `input_newline_key_accepts_shift_enter_and_ctrl_j`, `move_cursor_vertically_preserves_visual_column`, `move_cursor_vertically_handles_wrapped_lines`, `input_viewport_follows_cursor_to_bottom_of_long_paste`, `input_viewport_keeps_cursor_line_visible_when_moved_up`, `input_viewport_adds_virtual_line_when_cursor_wraps_past_full_row`, `input_scroll_top_tracks_cursor_without_exceeding_content`.
+
+### Changed
+
+- **Keyboard shortcut help updated**: status bar now reads `"Enter send  •  Shift+Enter/Ctrl+J newline  •  ↑/↓ move lines  •  Ctrl+U clear  •  Ctrl+C quit"`. README.md, README_cn.md, and anda_bot/README.md all reflect the new shortcuts.
+- **`handle_key` now receives `input_content_width`**: needed for vertical cursor movement calculations, which depend on the actual visible content width.
+- **`wrapped_cursor_position` split**: new `wrapped_cursor_position_usize` internal variant returns `(u16, usize)` for scroll-aware cursor row tracking.
+
 ## [0.6.3] — 2026-05-11
 
 ### Added
