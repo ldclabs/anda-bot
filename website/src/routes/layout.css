@@ -152,6 +152,10 @@
 	}
 }
 
+img {
+	dynamic-range-limit: constrained;
+}
+
 .anda-display {
 	font-family: 'Iowan Old Style', Palatino, 'Palatino Linotype', Georgia, serif;
 }

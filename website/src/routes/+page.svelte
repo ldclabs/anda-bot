@@ -212,11 +212,7 @@
 			class="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-6 lg:px-8"
 		>
 			<a href="/" class="group inline-flex items-center gap-3 text-sm font-semibold text-white">
-				<span
-					class="brand-mark grid size-12 place-items-center rounded-lg border border-[rgba(241,166,78,0.44)] bg-[rgba(53,178,171,0.35)] text-(--anda-amber-soft) shadow-[0_0_38px_rgba(241,166,78,0.2)] transition group-hover:scale-105"
-				>
-					<Anda class="size-10" />
-				</span>
+				<img src="/_assets/logo.hdr.png" alt="Anda Bot" class="hdr-img size-12 rounded-lg" />
 				<span class="text-2xl">Anda Bot</span>
 			</a>
 
