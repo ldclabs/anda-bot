@@ -454,7 +454,7 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         };
 
         let channel = route.channel.clone();
-        let msg = completion_message(output, route);
+        let msg = completion_message(ctx, output, route);
 
         tokio::spawn({
             let this = self.clone();
@@ -493,8 +493,20 @@ fn normalize_non_empty(value: &str) -> Option<String> {
     }
 }
 
-fn completion_message(output: &AgentOutput, route: ChannelRoute) -> SendMessage {
-    SendMessage::new(output.content.clone(), route.reply_target)
+fn completion_message(ctx: &AgentCtx, output: &AgentOutput, route: ChannelRoute) -> SendMessage {
+    let mut msg = String::new();
+    let meta = ctx.meta();
+    if let Some(cron_job) = meta.get_extra_as::<String>("cron_job") {
+        let name = meta
+            .get_extra_as::<String>("cron_job_name")
+            .unwrap_or_default();
+        let kind = meta
+            .get_extra_as::<String>("cron_job_kind")
+            .unwrap_or_default();
+        msg.push_str(&format!("Cron Job ({kind}): {name}\n{cron_job}\n\n"));
+    }
+    msg.push_str(&output.content);
+    SendMessage::new(msg, route.reply_target)
         .in_thread(route.thread)
         .with_attachments(output.artifacts.clone())
 }
@@ -609,6 +621,7 @@ mod tests {
         database::{AndaDB, DBConfig},
         storage::StorageConfig,
     };
+    use anda_engine::engine::Engine;
     use object_store::{ObjectStore, memory::InMemory};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
@@ -809,6 +822,7 @@ mod tests {
 
     #[test]
     fn completion_message_preserves_thread_context() {
+        let ctx = Engine::builder().mock_ctx();
         let route = ChannelRoute {
             channel: "test:threaded".to_string(),
             reply_target: "#anda".to_string(),
@@ -820,7 +834,7 @@ mod tests {
             ..Default::default()
         };
 
-        let message = completion_message(&output, route.clone());
+        let message = completion_message(&ctx, &output, route.clone());
 
         assert_eq!(message.content, output.content);
         assert_eq!(message.recipient, route.reply_target);

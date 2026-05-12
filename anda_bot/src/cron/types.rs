@@ -5,7 +5,7 @@ use anda_db::schema::{
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronExprSchedule;
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, time::Duration};
+use std::{fmt, str::FromStr, time::Duration};
 
 // Number.MAX_SAFE_INTEGER in JavaScript, used to represent "never" for disabled jobs
 pub const DISABLED_JOB_NEXT_RUN: u64 = (1 << 53) - 1;
@@ -65,6 +65,15 @@ impl Schedule {
 pub enum JobKind {
     Shell,
     Agent,
+}
+
+impl fmt::Display for JobKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JobKind::Shell => write!(f, "shell"),
+            JobKind::Agent => write!(f, "agent"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -208,8 +217,19 @@ impl CronJob {
         if origin.is_empty() && conversation_id.is_none() {
             return None;
         }
+        let mut meta = origin.to_request_meta(conversation_id);
+        meta.extra.insert(
+            "cron_job_name".to_string(),
+            self.name.clone().unwrap_or_default().into(),
+        );
+        meta.extra.insert(
+            "cron_job_kind".to_string(),
+            self.job_kind.to_string().into(),
+        );
+        meta.extra
+            .insert("cron_job".to_string(), self.job.clone().into());
 
-        Some(origin.to_request_meta(conversation_id))
+        Some(meta)
     }
 }
 
