@@ -192,6 +192,10 @@ impl ChannelRuntime {
         Arc::new(self.inner.clone())
     }
 
+    pub fn active_channels(&self) -> Vec<String> {
+        self.inner.channels.keys().cloned().collect()
+    }
+
     pub async fn serve(
         self,
         cancel_token: CancellationToken,
@@ -390,7 +394,7 @@ impl ChannelRuntimeInner {
         &self,
         channel: String,
         message: SendMessage,
-        conv_id: Option<u64>,
+        conversation: Option<u64>,
     ) -> Result<(), BoxError> {
         if let Some(chan) = self.channels.get(&channel) {
             send_message_with_retry(&channel, chan, &message, ChannelSendRetryPolicy::default())
@@ -400,13 +404,13 @@ impl ChannelRuntimeInner {
             self.messages
                 .add_from(&ChannelMessage {
                     sender: chan.username().to_string(),
-                    reply_target: message.recipient.clone(),
-                    content: message.content.clone(),
-                    channel: channel.clone(),
+                    reply_target: message.recipient,
+                    content: message.content,
+                    channel,
                     timestamp,
-                    thread: message.thread.clone(),
-                    attachments: message.attachments.clone(),
-                    conversation: conv_id,
+                    thread: message.thread,
+                    attachments: message.attachments,
+                    conversation,
                     ..Default::default()
                 })
                 .await?;
@@ -852,7 +856,7 @@ mod tests {
             prompt.starts_with("[$external_user: channel=\"telegram:public\", sender=\"bob\"]")
         );
         assert!(prompt.contains("external untrusted IM user"));
-        assert!(prompt.ends_with("hello"));
+        assert!(prompt.ends_with("hello\""));
     }
 
     #[tokio::test]

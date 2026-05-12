@@ -167,7 +167,16 @@ impl CronRuntime {
                 }
             },
             JobKind::Agent => {
-                let mut input = AgentInput::new(String::new(), job.job.clone());
+                let prompt = system_runtime_prompt(
+                    "cron agent job",
+                    format!(
+                        "Scheduled agent job is running. Execute the following instructions and produce a helpful result for the user.\n\nJob id: {}\nJob name: {}\nInstructions:\n{}",
+                        job._id,
+                        job.name.as_deref().unwrap_or("unnamed"),
+                        job.job
+                    ),
+                );
+                let mut input = AgentInput::new(String::new(), prompt);
                 input.meta = request_meta;
                 match engine.agent_run(caller, input).await {
                     Ok(result) => result.into(),

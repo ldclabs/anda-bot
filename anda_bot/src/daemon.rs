@@ -280,6 +280,7 @@ impl Daemon {
         )
         .await?;
         let channel_hook = channel_runtime.hook();
+        let active_channels = channel_runtime.active_channels();
         let channel_handle = channel_runtime
             .serve(global_cancel_token.child_token())
             .await?;
@@ -293,6 +294,7 @@ impl Daemon {
             engine_ref,
             cron_runtime,
             vec![channel_hook],
+            active_channels,
         )
         .await?;
 

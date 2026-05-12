@@ -463,8 +463,8 @@ mod tests {
         assert!(prompt.contains("Choose the next concrete action toward the objective"));
         assert!(prompt.contains("PROVEN, VERIFIED, CONJECTURED, REFUTED, or OPEN"));
         assert!(prompt.contains("Prefer absolute paths over `~`"));
-        assert!(prompt.contains("Supervisor reason:\nNeed more verification"));
-        assert!(prompt.contains("\"ship it\""));
+        assert!(prompt.contains("Supervisor reason:\\nNeed more verification"));
+        assert!(prompt.contains("\\\"ship it\\\""));
     }
 
     #[test]
@@ -482,7 +482,7 @@ mod tests {
         assert!(prompt.contains("Do not accept intent"));
         assert!(prompt.contains("bounded computation, literature summaries, promising reductions, or partial constructions do not satisfy terminal success criteria"));
         assert!(prompt.contains("Treat handoffs, local notes, long-term memory recalls, and filesystem artifacts as separate state sources"));
-        assert!(prompt.contains("Supervisor reason:\nTests were not run"));
+        assert!(prompt.contains("Supervisor reason:\\nTests were not run"));
     }
 
     #[test]

@@ -91,6 +91,10 @@ impl ConversationsTool {
         self.source_conversation.read().get(source).cloned()
     }
 
+    pub fn source_conversations(&self) -> HashMap<String, SourceState> {
+        self.source_conversation.read().clone()
+    }
+
     pub fn state_from_meta(&self, meta: &RequestMeta) -> RequestState {
         let workspace = meta
             .get_extra_as::<String>("workspace")
@@ -270,6 +274,14 @@ impl Tool<BaseCtx> for ConversationsTool {
                 }))
             }
             ConversationsToolArgs::GetConversation { _id } => {
+                let _id = if _id == 0 {
+                    self.conversations
+                        .conversations
+                        .latest_document_id()
+                        .unwrap_or_default()
+                } else {
+                    _id
+                };
                 let conversation = self.conversations.get_conversation(_id).await?;
                 if &conversation.user != ctx.caller() {
                     return Err("permission denied".into());

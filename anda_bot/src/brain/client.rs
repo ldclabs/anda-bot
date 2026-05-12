@@ -1,6 +1,4 @@
-use anda_core::{
-    AgentOutput, BoxError, FunctionDefinition, Json, Principal, Resource, Tool, ToolOutput,
-};
+use anda_core::{AgentOutput, BoxError, FunctionDefinition, Json, Resource, Tool, ToolOutput};
 use anda_engine::context::BaseCtx;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
@@ -82,7 +80,7 @@ impl Client {
         }
     }
 
-    pub async fn user_info(&self, user: Principal, name: Option<String>) -> Result<Json, BoxError> {
+    pub async fn user_info(&self, user: String, name: Option<String>) -> Result<Json, BoxError> {
         let rt: Json = self
             .post("/get_or_init_user", &GetOrInitUserInput { user, name })
             .await?;

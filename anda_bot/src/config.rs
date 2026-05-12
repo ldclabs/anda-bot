@@ -28,6 +28,9 @@ pub struct Config {
     #[serde(default = "default_gateway_addr")]
     pub addr: String,
 
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+
     #[serde(default)]
     pub https_proxy: Option<String>,
 
@@ -48,6 +51,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             addr: default_gateway_addr(),
+            log_level: default_log_level(),
             https_proxy: None,
             model: ModelSettings::default(),
             channels: ChannelSettings::default(),
@@ -240,6 +244,10 @@ impl Config {
 
 fn default_gateway_addr() -> String {
     DEFAULT_GATEWAY_ADDR.to_string()
+}
+
+fn default_log_level() -> String {
+    "warn".to_string()
 }
 
 pub fn default_true() -> bool {

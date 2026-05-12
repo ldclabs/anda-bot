@@ -2,6 +2,35 @@
 
 All notable changes to Anda Bot.
 
+## [0.6.5] — 2026-05-12
+
+### Added
+
+- **Startup self-check & conversation recovery**: `AndaBot::init()` now triggers a startup self-check (5s after launch) that scans all source-bound conversations and auto-resumes any in `Submitted`/`Working` state from the last saved history. Interrupted conversations survive process restarts: the agent reconstructs system instructions, chat history, request metadata, and tool selection, then sends a recovery prompt and continues the session. Recovery is scoped to currently active IM channels.
+- **`log_level` config**: new `log_level` field in `config.yaml` (default `warn`) controls structured log verbosity. `logger::init_daily_json_logger` now accepts an explicit level parameter instead of reading from env.
+- **Cron agent job prompt enrichment**: cron-triggered agent jobs now receive a system runtime prompt including `_id`, `name`, and `instructions` metadata, helping the agent distinguish scheduled work from user-initiated requests.
+- **Conversation child chaining**: new conversations are now linked as the `child` of the previous conversation in the chain. `latest_conversation_in_chain()` traverses the child chain (up to 256 hops, with cycle detection) to find the latest conversation for a given source.
+- **`conversation_chat_history()`**: extracts and marks messages from stored conversation JSON, stripping dangling `tool_calls` without corresponding `tool_result` blocks.
+- **`GetConversation` with `_id: 0`**: resolves to the latest conversation document via `latest_document_id()`.
+- **`external_user_name()` helper**: formats `$external_user:<name>` participant names consistently.
+- **Tests**: `startup_status_policy_resumes_only_running_states`, `request_meta_from_conversation_recovers_route_from_source_key`, `conversation_chat_history_marks_startup_runtime_messages`, `format_local_date_returns_datetime_with_timezone`.
+
+### Changed
+
+- **System instructions use local datetime format**: `format_local_date()` produces `"YYYY-MM-DD HH(AM/PM) ±TZ"` via chrono `clock` feature, replacing the RFC 3339 `rfc3339_datetime()` format across all system instruction rendering.
+- **Conversation continuation semantics**: existing conversations in `Submitted`/`Working`/`Idle` state can now be continued with an empty prompt (the session enters wait mode). Previously all prompts required non-empty content.
+- **`user_info()` parameter type**: `Principal` → `String` for broader compatibility (aligned with anda_hippocampus v0.5.2 changes).
+- **`mark_special_user_messages` unified**: `mark_system_runtime_messages` and `mark_external_user_messages` merged into a single function. External user messages with existing names now preserve them via `external_user_name()`.
+- **Session field renamed**: `source` → `source_key` for clarity.
+- **`source_state` updated on compaction**: compaction now updates the source→conversation mapping to the new conversation id.
+- **Runtime prompt wording**: `"not from the external user"` → `"not from the user"`.
+- **Code extraction**: `persist_conversation_state()`, `spawn_session_runner()`, `available_tool_names()` extracted from inline logic to reusable methods for startup recovery code paths.
+- **`chrono`**: `clock` feature enabled for local timezone support.
+
+### Dependencies
+
+- `anda_hippocampus` → 0.5.2 (user init routing, local_date_hour, prompt improvements)
+
 ## [0.6.4] — 2026-05-11
 
 ### Fixed

@@ -6,13 +6,17 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use structured_logger::{Builder, Writer, get_env_level};
+use structured_logger::{Builder, Writer};
 
 pub const CLI_LOG_FILE_PREFIX: &str = "anda-cli";
 pub const DAEMON_LOG_FILE_PREFIX: &str = "anda-daemon";
 
-pub fn init_daily_json_logger(logs_dir: PathBuf, file_prefix: &'static str) -> io::Result<()> {
-    Builder::with_level(&get_env_level().to_string())
+pub fn init_daily_json_logger(
+    level: &str,
+    logs_dir: PathBuf,
+    file_prefix: &'static str,
+) -> io::Result<()> {
+    Builder::with_level(level)
         .with_target_writer("*", new_daily_json_writer(logs_dir, file_prefix)?)
         .init();
     Ok(())

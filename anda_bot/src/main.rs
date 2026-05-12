@@ -127,9 +127,17 @@ async fn main() -> Result<(), BoxError> {
     }
 
     if matches!(command, Some(Commands::Daemon)) {
-        logger::init_daily_json_logger(daemon.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)?;
+        logger::init_daily_json_logger(
+            &daemon.cfg.log_level,
+            daemon.logs_dir_path(),
+            logger::DAEMON_LOG_FILE_PREFIX,
+        )?;
     } else {
-        logger::init_daily_json_logger(daemon.logs_dir_path(), logger::CLI_LOG_FILE_PREFIX)?;
+        logger::init_daily_json_logger(
+            &daemon.cfg.log_level,
+            daemon.logs_dir_path(),
+            logger::CLI_LOG_FILE_PREFIX,
+        )?;
     }
 
     match command {

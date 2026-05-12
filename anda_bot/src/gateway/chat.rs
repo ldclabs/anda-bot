@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use super::Client;
 use crate::engine::{ConversationsTool, ConversationsToolArgs, SourceState};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(1500);
+const POLL_INTERVAL: Duration = Duration::from_millis(2000);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Build a synthetic system message (used for local notices / errors that
@@ -327,10 +327,9 @@ impl ChatSession {
         }
 
         self.last_ping = Instant::now();
-        let _ = self
-            .client
-            .agent_run(&AgentInput::new(String::new(), String::new()))
-            .await;
+        let mut input = AgentInput::new(String::new(), String::new());
+        input.meta = Some(current_request_meta(self.conv_id.unwrap_or_default()));
+        let _ = self.client.agent_run(&input).await;
     }
 
     /// Poll the conversation for updates. Returns `true` if new messages were received.

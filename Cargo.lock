@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "anda_core",
  "anda_db",
@@ -357,9 +357,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.4"
+version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0582f6cd69810c498e4341eb82353c5a9395c5bc60507edc9dbd9dd9b6556e1"
+checksum = "9e9e7bb5de434558ebc1063d8b367dae4ae45a4ae0cc8112e74360aac04976af"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -431,9 +431,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0337f720bacc076acf5be8ba2d7941c629441747207d277a2146c55c97eca54a"
+checksum = "dc0bb647626df8818ddb7ededef6a8d85245068088e32f77ac31597b4eb83d43"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",

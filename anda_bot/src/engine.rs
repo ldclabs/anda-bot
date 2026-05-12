@@ -69,6 +69,7 @@ impl Engines {
         engine_ref: Arc<EngineRef>,
         cron_runtime: Arc<cron::CronRuntime>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
+        active_im_channels: Vec<String>,
     ) -> Result<Self, BoxError> {
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
@@ -181,6 +182,7 @@ impl Engines {
             skills_tool.clone(),
             tts_manager.clone(),
             transcription_manager.clone(),
+            active_im_channels,
         ));
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)

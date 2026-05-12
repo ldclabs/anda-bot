@@ -24,10 +24,19 @@ pub async fn serve(
     engine_ref: Arc<EngineRef>,
     cron: Arc<cron::CronRuntime>,
     completion_hooks: Vec<Arc<dyn engine::CompletionHook>>,
+    active_im_channels: Vec<String>,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
     let hippocampus = brain::Hippocampus::new(db.object_store(), brain_cfg).await?;
     let hippocampus_state = hippocampus.state.clone();
-    let engines = engine::Engines::new(engine_cfg, db, engine_ref, cron, completion_hooks).await?;
+    let engines = engine::Engines::new(
+        engine_cfg,
+        db,
+        engine_ref,
+        cron,
+        completion_hooks,
+        active_im_channels,
+    )
+    .await?;
 
     let addr: SocketAddr = addr.parse()?;
     // create_reuse_port_listener(addr).await?;
