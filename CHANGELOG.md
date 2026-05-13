@@ -2,6 +2,33 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.0] — 2026-05-13
+
+### Added
+
+- **Streaming TTS playback with chunked synthesis**: long assistant responses are split into ~800-character chunks and synthesized/played back in a pipeline (play current chunk while synthesizing the next), replacing the previous wait-for-full-synthesis approach. This dramatically reduces response latency in voice conversations.
+- **Markdown-to-speech text normalization**: `prepare_voice_tts_text()` strips markdown formatting prefixes (`>`, `-`, `#`, `*`, `|`), collapses whitespace, filters TTS-unsafe characters (emoji, control chars), and normalizes punctuation for natural-sounding speech synthesis.
+- **Stepfun STT provider**: new `transcription/stepfun.rs` module with SSE-based streaming ASR, supporting hotwords, ITN, PCM codec/rate/bits/channel configuration, and optional prompts.
+- **Stepfun TTS provider**: new `tts/stepfun.rs` module supporting `stepaudio-2.5-tts` with configurable voice, speed, volume, sample rate, optional pronunciation maps, and markdown filtering.
+- **Per-provider audio format**: each TTS provider now declares its native audio format via `audio_format()` (e.g., `stepfun` returns `pcm`, others `mp3`). `audio_artifact_for_provider()` builds artifacts with the correct MIME type for each provider.
+- **Voice status spinner**: `VoiceStatusSpinner` renders rotating progress indicators during long operations (sending, waiting, synthesizing, playing) for clear feedback in voice mode.
+- **Graceful Ctrl-C in voice mode**: all async await points in the voice loop are wrapped through `wait_with_voice_status()`, enabling clean interruption during any phase (send, poll, synthesize, play).
+- **Daemon startup diagnostics**: background daemons now capture stdout/stderr to a log file. On startup failure, the last 64KB of the daemon log is tailed and parsed for structured JSON log entries or plain error lines, surfaced in the error message.
+- **`try_wait()` on `BackgroundDaemon`**: exposes the child process for early exit detection during startup wait loops.
+- **Cron job metadata in channel output**: cron-triggered agent completions now display the job name, kind (shell/agent), and job content in the IM channel message, so recipients know which scheduled job produced the output.
+- **`fmt::Display` for `JobKind`**: human-readable `"shell"` / `"agent"` labels.
+
+### Changed
+
+- **Voice response text includes artifacts**: `VoiceConversationCursor` now tracks `seen_artifacts`, and `assistant_text_from_messages()` includes artifact descriptions in the synthesized text when present (e.g., "I created a file for you").
+- **Error handling**: `main()` wrapped in `run()` for proper `log::error` on unhandled failures instead of default Rust panic output.
+- **TTS config**: `default_voice` field removed; per-provider voices are configured directly under each provider section.
+
+### Refactored
+
+- **TTS providers modularized**: monolithic `tts.rs` split into per-provider modules: `tts/edge.rs`, `tts/google.rs`, `tts/openai.rs`, `tts/stepfun.rs`. Provider-specific config types moved to `config/tts.rs`.
+- **Transcription providers modularized**: monolithic `transcription.rs` split into per-provider modules: `transcription/google.rs`, `transcription/groq.rs`, `transcription/local_whisper.rs`, `transcription/openai.rs`, `transcription/stepfun.rs`. Provider-specific config types moved to `config/transcription.rs`.
+
 ## [0.6.5] — 2026-05-12
 
 ### Added
