@@ -25,4 +25,5 @@ target
 .vscode/
 node_modules/
 dist/
+misc/
 claw

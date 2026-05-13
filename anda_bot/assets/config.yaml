@@ -156,6 +156,22 @@ tts:
   #   api_key: ""
   #   language_code: en-US
   #   voice: en-US-Standard-A
+  # stepfun:
+  #   api_key: ""
+  #   api_url: https://api.stepfun.com/v1/audio/speech
+  #   model: stepaudio-2.5-tts
+  #   voice: ruyananshi
+  #   speed: 1.0
+  #   volume: 1.0
+  #   sample_rate: 24000
+  #   markdown_filter:
+  #   # Use exactly one of language, emotion, or style. Do not use voice_label with stepaudio-2.5-tts.
+  #   # voice_label:
+  #   #   language: 粤语
+  #   # instruction is only supported by stepaudio-2.5-tts and is limited to 200 chars.
+  #   # instruction: 语气自然，表达清晰
+  #   pronunciation_map:
+  #     tone: []
 
 transcription:
   enabled: false
@@ -173,6 +189,18 @@ transcription:
   # google:
   #   api_key: ""
   #   language_code: en-US
+  # stepfun:
+  #   api_key: ""
+  #   api_url: https://api.stepfun.com/v1/audio/asr/sse
+  #   model: stepaudio-2.5-asr
+  #   language: zh
+  #   hotwords: []
+  #   prompt:
+  #   enable_itn: true
+  #   pcm_codec: pcm_s16le
+  #   pcm_rate: 16000
+  #   pcm_bits: 16
+  #   pcm_channel: 1
   # local_whisper:
   #   url: http://127.0.0.1:8001/v1/transcribe
   #   bearer_token:

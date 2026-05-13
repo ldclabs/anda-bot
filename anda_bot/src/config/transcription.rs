@@ -9,7 +9,7 @@ pub struct TranscriptionConfig {
     /// Enable voice transcription for channels that support it.
     #[serde(default)]
     pub enabled: bool,
-    /// Default STT provider: "groq", "openai", "google".
+    /// Default STT provider: "groq", "openai", "google", "stepfun", "local_whisper".
     #[serde(default = "default_transcription_provider")]
     pub default_provider: String,
     /// Optional initial prompt to bias transcription toward expected vocabulary
@@ -29,6 +29,9 @@ pub struct TranscriptionConfig {
     /// Google Cloud Speech-to-Text provider configuration.
     #[serde(default)]
     pub google: Option<GoogleSttConfig>,
+    /// StepFun Stepaudio ASR provider configuration.
+    #[serde(default)]
+    pub stepfun: Option<StepFunSttConfig>,
     /// Local/self-hosted Whisper-compatible STT provider.
     #[serde(default)]
     pub local_whisper: Option<LocalWhisperConfig>,
@@ -48,6 +51,7 @@ impl Default for TranscriptionConfig {
             groq: None,
             openai: None,
             google: None,
+            stepfun: None,
             local_whisper: None,
             transcribe_non_ptt_audio: false,
         }
@@ -89,6 +93,63 @@ pub struct GoogleSttConfig {
     /// BCP-47 language code (default: "en-US").
     #[serde(default = "default_google_stt_language_code")]
     pub language_code: String,
+}
+
+/// StepFun Stepaudio ASR provider configuration (`[transcription.stepfun]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepFunSttConfig {
+    /// StepFun API key.
+    #[serde(default)]
+    pub api_key: String,
+    /// StepFun HTTP+SSE ASR endpoint.
+    #[serde(default = "default_stepfun_stt_api_url")]
+    pub api_url: String,
+    /// ASR model name (default: "stepaudio-2.5-asr").
+    #[serde(default = "default_stepfun_stt_model")]
+    pub model: String,
+    /// Recognition language (default: "zh").
+    #[serde(default = "default_stepfun_stt_language")]
+    pub language: String,
+    /// Hotwords to bias recognition.
+    #[serde(default)]
+    pub hotwords: Vec<String>,
+    /// Optional transcription prompt. StepFun documents this as effective for
+    /// `stepaudio-2-asr-pro`.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    /// Whether to enable inverse text normalization.
+    #[serde(default = "default_stepfun_enable_itn")]
+    pub enable_itn: bool,
+    /// PCM codec when transcribing raw `.pcm` audio.
+    #[serde(default = "default_stepfun_pcm_codec")]
+    pub pcm_codec: String,
+    /// PCM sample rate when transcribing raw `.pcm` audio.
+    #[serde(default = "default_stepfun_pcm_rate")]
+    pub pcm_rate: u32,
+    /// PCM bit depth when transcribing raw `.pcm` audio.
+    #[serde(default = "default_stepfun_pcm_bits")]
+    pub pcm_bits: u32,
+    /// PCM channel count when transcribing raw `.pcm` audio.
+    #[serde(default = "default_stepfun_pcm_channel")]
+    pub pcm_channel: u32,
+}
+
+impl Default for StepFunSttConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            api_url: default_stepfun_stt_api_url(),
+            model: default_stepfun_stt_model(),
+            language: default_stepfun_stt_language(),
+            hotwords: Vec::new(),
+            prompt: None,
+            enable_itn: default_stepfun_enable_itn(),
+            pcm_codec: default_stepfun_pcm_codec(),
+            pcm_rate: default_stepfun_pcm_rate(),
+            pcm_bits: default_stepfun_pcm_bits(),
+            pcm_channel: default_stepfun_pcm_channel(),
+        }
+    }
 }
 
 /// Local/self-hosted Whisper-compatible STT endpoint (`[transcription.local_whisper]`).
@@ -136,6 +197,38 @@ fn default_transcription_max_duration_secs() -> u64 {
 
 fn default_transcription_provider() -> String {
     "groq".into()
+}
+
+fn default_stepfun_stt_api_url() -> String {
+    "https://api.stepfun.com/v1/audio/asr/sse".into()
+}
+
+fn default_stepfun_stt_model() -> String {
+    "stepaudio-2.5-asr".into()
+}
+
+fn default_stepfun_stt_language() -> String {
+    "zh".into()
+}
+
+fn default_stepfun_enable_itn() -> bool {
+    true
+}
+
+fn default_stepfun_pcm_codec() -> String {
+    "pcm_s16le".into()
+}
+
+fn default_stepfun_pcm_rate() -> u32 {
+    16000
+}
+
+fn default_stepfun_pcm_bits() -> u32 {
+    16
+}
+
+fn default_stepfun_pcm_channel() -> u32 {
+    1
 }
 
 fn default_openai_stt_model() -> String {

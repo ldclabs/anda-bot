@@ -1,12 +1,21 @@
 use anda_core::{BoxError, ByteBufB64, FunctionDefinition, Resource, Tool, ToolOutput};
 use anda_engine::context::BaseCtx;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use ic_auth_types::Xid;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config;
+
+mod edge;
+mod google;
+mod openai;
+mod stepfun;
+
+pub use edge::EdgeTtsProvider;
+pub use google::GoogleTtsProvider;
+pub use openai::OpenAiTtsProvider;
+pub use stepfun::StepFunTtsProvider;
 
 /// Maximum text length before synthesis is rejected (default: 4096 chars).
 const DEFAULT_MAX_TEXT_LENGTH: usize = 4096;
@@ -105,6 +114,17 @@ impl TtsManager {
                 }
                 Err(e) => {
                     log::warn!("Skipping Edge TTS provider: {e}");
+                }
+            }
+        }
+
+        if let Some(ref stepfun_cfg) = config.stepfun {
+            match StepFunTtsProvider::new(stepfun_cfg, &config.default_format, http.clone()) {
+                Ok(p) => {
+                    providers.insert(p.name().to_string(), Box::new(p));
+                }
+                Err(e) => {
+                    log::warn!("Skipping StepFun TTS provider: {e}");
                 }
             }
         }
@@ -265,6 +285,8 @@ fn normalize_audio_format(format: &str) -> &'static str {
         "wav" => "wav",
         "opus" => "opus",
         "ogg" => "ogg",
+        "flac" => "flac",
+        "pcm" => "pcm",
         _ => "mp3",
     }
 }
@@ -274,6 +296,8 @@ fn mime_for_audio_format(format: &str) -> &'static str {
         "wav" => "audio/wav",
         "opus" => "audio/opus",
         "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "pcm" => "audio/pcm",
         _ => "audio/mpeg",
     }
 }
@@ -287,238 +311,5 @@ fn normalize_artifact_name(name: Option<String>, format: &str) -> String {
         name
     } else {
         format!("{name}.{format}")
-    }
-}
-
-// ── OpenAI TTS ───────────────────────────────────────────────────
-
-/// OpenAI TTS provider (`POST /v1/audio/speech`).
-pub struct OpenAiTtsProvider {
-    api_key: String,
-    model: String,
-    speed: f64,
-    voice: String,
-    http: reqwest::Client,
-}
-
-impl OpenAiTtsProvider {
-    pub fn new(config: &config::OpenAiTtsConfig, http: reqwest::Client) -> Result<Self, BoxError> {
-        if config.api_key.trim().is_empty() {
-            return Err("OpenAI TTS API key must not be empty".into());
-        }
-
-        Ok(Self {
-            api_key: config.api_key.trim().to_string(),
-            model: config.model.clone(),
-            speed: config.speed,
-            voice: config.voice.clone(),
-            http,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl TtsProvider for OpenAiTtsProvider {
-    fn name(&self) -> &str {
-        "openai"
-    }
-
-    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        let body = serde_json::json!({
-            "model": self.model,
-            "input": text,
-            "voice": self.voice,
-            "speed": self.speed,
-            "response_format": "mp3",
-        });
-
-        let resp = self
-            .http
-            .post("https://api.openai.com/v1/audio/speech")
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| "Failed to send OpenAI TTS request")?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let error_body: serde_json::Value = resp
-                .json()
-                .await
-                .unwrap_or_else(|_| serde_json::json!({"error": "unknown"}));
-            let msg = error_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
-            return Err(format!("OpenAI TTS API error ({}): {}", status, msg).into());
-        }
-
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|_| "Failed to read OpenAI TTS response body")?;
-        Ok(bytes.to_vec())
-    }
-}
-
-// ── Google Cloud TTS ─────────────────────────────────────────────
-
-/// Google Cloud TTS provider (`POST /v1/text:synthesize`).
-pub struct GoogleTtsProvider {
-    api_key: String,
-    language_code: String,
-    voice: String,
-    http: reqwest::Client,
-}
-
-impl GoogleTtsProvider {
-    pub fn new(config: &config::GoogleTtsConfig, http: reqwest::Client) -> Result<Self, BoxError> {
-        if config.api_key.trim().is_empty() {
-            return Err("Google TTS API key must not be empty".into());
-        }
-
-        Ok(Self {
-            api_key: config.api_key.trim().to_string(),
-            language_code: config.language_code.clone(),
-            voice: config.voice.clone(),
-            http,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl TtsProvider for GoogleTtsProvider {
-    fn name(&self) -> &str {
-        "google"
-    }
-
-    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
-        let body = serde_json::json!({
-            "input": { "text": text },
-            "voice": {
-                "languageCode": self.language_code,
-                "name": self.voice,
-            },
-            "audioConfig": {
-                "audioEncoding": "MP3",
-            },
-        });
-
-        let resp = self
-            .http
-            .post(url)
-            .header("x-goog-api-key", &self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|_| "Failed to send Google TTS request")?;
-
-        let status = resp.status();
-        let resp_body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|_| "Failed to parse Google TTS response")?;
-
-        if !status.is_success() {
-            let msg = resp_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
-            return Err(format!("Google TTS API error ({}): {}", status, msg).into());
-        }
-
-        let audio_b64 = resp_body["audioContent"]
-            .as_str()
-            .ok_or("Google TTS response missing 'audioContent' field")?;
-
-        let bytes = STANDARD
-            .decode(audio_b64)
-            .map_err(|_| "Failed to decode Google TTS base64 audio")?;
-        Ok(bytes)
-    }
-}
-
-// ── Edge TTS (subprocess) ────────────────────────────────────────
-
-/// Edge TTS provider — free, uses the `edge-tts` CLI subprocess.
-pub struct EdgeTtsProvider {
-    binary_path: String,
-    voice: String,
-}
-
-impl EdgeTtsProvider {
-    /// Allowed basenames for the Edge TTS binary.
-    const ALLOWED_BINARIES: &[&str] = &["edge-tts", "edge-playback"];
-
-    /// Create a new Edge TTS provider from config.
-    ///
-    /// `binary_path` must be a bare command name (no path separators) matching
-    /// one of [`Self::ALLOWED_BINARIES`]. This prevents arbitrary executable
-    /// paths like `/tmp/malicious/edge-tts` from passing the basename check.
-    pub fn new(config: &config::EdgeTtsConfig) -> Result<Self, BoxError> {
-        let path = &config.binary_path;
-        if path.contains('/') || path.contains('\\') {
-            return Err(format!(
-                "Edge TTS binary_path must be a bare command name without path separators, got: {path}"
-            )
-            .into());
-        }
-        if !Self::ALLOWED_BINARIES.contains(&path.as_str()) {
-            return Err(format!(
-                "Edge TTS binary_path must be one of {:?}, got: {path}",
-                Self::ALLOWED_BINARIES,
-            )
-            .into());
-        }
-        Ok(Self {
-            binary_path: config.binary_path.clone(),
-            voice: config.voice.clone(),
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl TtsProvider for EdgeTtsProvider {
-    fn name(&self) -> &str {
-        "edge"
-    }
-
-    async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        let temp_dir = std::env::temp_dir();
-        let output_file = temp_dir.join(format!("anda_bot_tts_{}.mp3", Xid::new()));
-        let output_path = output_file
-            .to_str()
-            .ok_or("Failed to build temp file path for Edge TTS")?;
-
-        let output = tokio::time::timeout(
-            TTS_HTTP_TIMEOUT,
-            tokio::process::Command::new(&self.binary_path)
-                .arg("--text")
-                .arg(text)
-                .arg("--voice")
-                .arg(&self.voice)
-                .arg("--write-media")
-                .arg(output_path)
-                .output(),
-        )
-        .await
-        .map_err(|_| "Edge TTS subprocess timed out")?
-        .map_err(|_| "Failed to spawn edge-tts subprocess")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Clean up temp file on failure.
-            let _ = tokio::fs::remove_file(&output_file).await;
-            return Err(format!("edge-tts failed (exit {}): {}", output.status, stderr).into());
-        }
-
-        let bytes = tokio::fs::read(&output_file)
-            .await
-            .map_err(|_| "Failed to read edge-tts output file")?;
-
-        // Clean up temp file.
-        let _ = tokio::fs::remove_file(&output_file).await;
-
-        Ok(bytes)
     }
 }

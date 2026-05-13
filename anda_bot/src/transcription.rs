@@ -2,12 +2,23 @@ use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
 use anda_engine::context::BaseCtx;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
-use crate::config::{self, TranscriptionConfig};
+use crate::config::TranscriptionConfig;
+
+mod google;
+mod groq;
+mod local_whisper;
+mod openai;
+mod stepfun;
+
+pub use google::GoogleSttProvider;
+pub use groq::GroqProvider;
+pub use local_whisper::LocalWhisperProvider;
+pub use openai::OpenAiWhisperProvider;
+pub use stepfun::StepFunProvider;
 
 /// Maximum upload size accepted by most Whisper-compatible APIs (25 MB).
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
@@ -33,7 +44,8 @@ fn mime_for_audio(extension: &str) -> Option<&'static str> {
 
 pub fn supported_audio_resource_tags() -> Vec<String> {
     [
-        "audio", "flac", "mp3", "mp4", "m4a", "mpeg", "mpga", "oga", "ogg", "opus", "wav", "webm",
+        "audio", "flac", "mp3", "mp4", "m4a", "mpeg", "mpga", "oga", "ogg", "opus", "pcm", "wav",
+        "webm",
     ]
     .into_iter()
     .map(ToString::to_string)
@@ -43,7 +55,7 @@ pub fn supported_audio_resource_tags() -> Vec<String> {
 pub fn is_audio_resource(resource: &Resource) -> bool {
     resource.tags.iter().any(|tag| {
         let tag = tag.to_ascii_lowercase();
-        tag == "audio" || mime_for_audio(&tag).is_some()
+        tag == "audio" || tag == "pcm" || mime_for_audio(&tag).is_some()
     }) || resource
         .mime_type
         .as_deref()
@@ -57,7 +69,7 @@ pub fn audio_resource_file_name(resource: &Resource, fallback_stem: &str) -> Str
 
     if let Some(ext) = resource.tags.iter().find_map(|tag| {
         let tag = tag.to_ascii_lowercase();
-        mime_for_audio(&tag).map(|_| tag)
+        (tag == "pcm" || mime_for_audio(&tag).is_some()).then_some(tag)
     }) {
         return format!("{fallback_stem}.{ext}");
     }
@@ -80,6 +92,7 @@ fn extension_for_audio_mime(mime: &str) -> Option<&'static str> {
         "audio/mpeg" | "audio/mp3" => Some("mp3"),
         "audio/ogg" | "audio/oga" => Some("ogg"),
         "audio/opus" => Some("opus"),
+        "audio/pcm" | "audio/l16" => Some("pcm"),
         "audio/wav" | "audio/x-wav" => Some("wav"),
         "audio/webm" => Some("webm"),
         _ => None,
@@ -130,6 +143,12 @@ fn validate_audio(audio_data: &[u8], file_name: &str) -> Result<(String, &'stati
     }
 }
 
+fn audio_extension(file_name: &str) -> Option<String> {
+    normalize_audio_filename(file_name)
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+}
+
 // ── TranscriptionProvider trait ─────────────────────────────────
 
 /// Trait for speech-to-text provider implementations.
@@ -141,334 +160,6 @@ pub trait TranscriptionProvider: Send + Sync {
     /// Transcribe raw audio bytes. `file_name` includes the extension for
     /// format detection (e.g. "voice.ogg").
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError>;
-}
-
-// ── GroqProvider ────────────────────────────────────────────────
-
-/// Groq Whisper API provider (default, backward-compatible with existing config).
-pub struct GroqProvider {
-    api_url: String,
-    model: String,
-    api_key: String,
-    language: Option<String>,
-    http: reqwest::Client,
-}
-
-impl GroqProvider {
-    /// Build from the Groq provider configuration.
-    pub fn from_config(
-        config: &config::GroqSttConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        if config.api_key.trim().is_empty() {
-            return Err("transcription.api_key must not be empty".into());
-        }
-
-        Ok(Self {
-            api_url: config.api_url.clone(),
-            model: config.model.clone(),
-            api_key: config.api_key.clone(),
-            language: config.language.clone(),
-            http,
-        })
-    }
-}
-
-#[async_trait]
-impl TranscriptionProvider for GroqProvider {
-    fn name(&self) -> &str {
-        "groq"
-    }
-
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let (normalized_name, mime) = validate_audio(audio_data, file_name)?;
-
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
-
-        let mut form = Form::new()
-            .part("file", file_part)
-            .text("model", self.model.clone())
-            .text("response_format", "json");
-
-        if let Some(ref lang) = self.language {
-            form = form.text("language", lang.clone());
-        }
-
-        let resp = self
-            .http
-            .post(&self.api_url)
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
-            .send()
-            .await
-            .map_err(|_| "Failed to send transcription request to Groq")?;
-
-        parse_whisper_response(resp).await
-    }
-}
-
-// ── OpenAiWhisperProvider ───────────────────────────────────────
-
-/// OpenAI Whisper API provider.
-pub struct OpenAiWhisperProvider {
-    api_key: String,
-    model: String,
-    http: reqwest::Client,
-}
-
-impl OpenAiWhisperProvider {
-    pub fn from_config(
-        config: &crate::config::OpenAiSttConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        let api_key = config.api_key.trim();
-        if api_key.is_empty() {
-            return Err("Missing OpenAI STT API key: set [transcription.openai].api_key".into());
-        }
-
-        Ok(Self {
-            api_key: api_key.to_string(),
-            model: config.model.clone(),
-            http,
-        })
-    }
-}
-
-#[async_trait]
-impl TranscriptionProvider for OpenAiWhisperProvider {
-    fn name(&self) -> &str {
-        "openai"
-    }
-
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let (normalized_name, mime) = validate_audio(audio_data, file_name)?;
-
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
-
-        let form = Form::new()
-            .part("file", file_part)
-            .text("model", self.model.clone())
-            .text("response_format", "json");
-
-        let resp = self
-            .http
-            .post("https://api.openai.com/v1/audio/transcriptions")
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
-            .send()
-            .await
-            .map_err(|_| "Failed to send transcription request to OpenAI")?;
-
-        parse_whisper_response(resp).await
-    }
-}
-
-// ── GoogleSttProvider ───────────────────────────────────────────
-
-/// Google Cloud Speech-to-Text API provider.
-pub struct GoogleSttProvider {
-    api_key: String,
-    language_code: String,
-    http: reqwest::Client,
-}
-
-impl GoogleSttProvider {
-    pub fn from_config(
-        config: &crate::config::GoogleSttConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        let api_key = config.api_key.trim();
-        if api_key.is_empty() {
-            return Err("Missing Google STT API key: set [transcription.google].api_key".into());
-        }
-
-        Ok(Self {
-            api_key: api_key.to_string(),
-            language_code: config.language_code.clone(),
-            http,
-        })
-    }
-}
-
-#[async_trait]
-impl TranscriptionProvider for GoogleSttProvider {
-    fn name(&self) -> &str {
-        "google"
-    }
-
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let (normalized_name, _) = validate_audio(audio_data, file_name)?;
-
-        let encoding = match normalized_name
-            .rsplit_once('.')
-            .map(|(_, e)| e.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("flac") => "FLAC",
-            Some("wav") => "LINEAR16",
-            Some("ogg" | "opus") => "OGG_OPUS",
-            Some("mp3") => "MP3",
-            Some("webm") => "WEBM_OPUS",
-            Some(ext) => return Err(format!("Google STT does not support '.{ext}' input").into()),
-            None => return Err("Google STT requires a file extension".into()),
-        };
-
-        let audio_content = STANDARD.encode(audio_data);
-
-        let request_body = serde_json::json!({
-            "config": {
-                "encoding": encoding,
-                "languageCode": &self.language_code,
-                "enableAutomaticPunctuation": true,
-            },
-            "audio": {
-                "content": audio_content,
-            }
-        });
-
-        let url = format!(
-            "https://speech.googleapis.com/v1/speech:recognize?key={}",
-            self.api_key
-        );
-
-        let resp = self
-            .http
-            .post(&url)
-            .json(&request_body)
-            .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
-            .send()
-            .await
-            .map_err(|_| "Failed to send transcription request to Google STT")?;
-
-        let status = resp.status();
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|_| "Failed to parse Google STT response")?;
-
-        if !status.is_success() {
-            let error_msg = body["error"]["message"].as_str().unwrap_or("unknown error");
-            return Err(format!("Google STT API error ({}): {}", status, error_msg).into());
-        }
-
-        let text = body["results"][0]["alternatives"][0]["transcript"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-
-        Ok(text)
-    }
-}
-
-// ── LocalWhisperProvider ────────────────────────────────────────
-
-/// Self-hosted faster-whisper-compatible STT provider.
-///
-/// POSTs audio as `multipart/form-data` (field name `file`) to a configurable
-/// HTTP endpoint (e.g. `http://localhost:8000` or a private network host). The endpoint
-/// must return `{"text": "..."}`. No cloud API key required. Size limit is
-/// configurable — not constrained by the 25 MB cloud API cap.
-pub struct LocalWhisperProvider {
-    url: String,
-    bearer_token: Option<String>,
-    max_audio_bytes: usize,
-    timeout_secs: u64,
-    http: reqwest::Client,
-}
-
-impl LocalWhisperProvider {
-    /// Build from config. Fails if `url` is empty or invalid, if `url` is not
-    /// HTTP/HTTPS, if `max_audio_bytes` is zero, or if `timeout_secs` is zero.
-    pub fn from_config(
-        config: &crate::config::LocalWhisperConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        let url = config.url.trim().to_string();
-        if url.is_empty() {
-            return Err("local_whisper: `url` must not be empty".into());
-        }
-
-        let parsed = url
-            .parse::<reqwest::Url>()
-            .map_err(|e| format!("local_whisper: invalid `url` {url:?}: {e}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(format!(
-                "local_whisper: `url` must use http or https scheme, got {:?}",
-                parsed.scheme()
-            )
-            .into());
-        }
-
-        let bearer_token = config
-            .bearer_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-            .map(ToOwned::to_owned);
-
-        if config.max_audio_bytes == 0 {
-            return Err("local_whisper: `max_audio_bytes` must be greater than zero".into());
-        }
-
-        if config.timeout_secs == 0 {
-            return Err("local_whisper: `timeout_secs` must be greater than zero".into());
-        }
-
-        Ok(Self {
-            url,
-            bearer_token,
-            max_audio_bytes: config.max_audio_bytes,
-            timeout_secs: config.timeout_secs,
-            http,
-        })
-    }
-}
-
-#[async_trait]
-impl TranscriptionProvider for LocalWhisperProvider {
-    fn name(&self) -> &str {
-        "local_whisper"
-    }
-
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        if audio_data.len() > self.max_audio_bytes {
-            return Err(format!(
-                "Audio file too large ({} bytes, local_whisper max {})",
-                audio_data.len(),
-                self.max_audio_bytes
-            )
-            .into());
-        }
-
-        let (normalized_name, mime) = resolve_audio_format(file_name)?;
-
-        // to_vec() clones the buffer for the multipart payload; peak memory per
-        // call is ~2× max_audio_bytes. TODO: replace with streaming upload once
-        // reqwest supports body streaming in multipart parts.
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
-
-        let mut request = self.http.post(&self.url);
-        if let Some(ref bearer_token) = self.bearer_token {
-            request = request.bearer_auth(bearer_token);
-        }
-
-        let resp = request
-            .multipart(Form::new().part("file", file_part))
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .send()
-            .await
-            .map_err(|_| "Failed to send audio to local Whisper endpoint")?;
-
-        parse_whisper_response(resp).await
-    }
 }
 
 // ── Shared response parsing ─────────────────────────────────────
@@ -572,6 +263,17 @@ impl TranscriptionManager {
                 }
                 Err(e) => {
                     log::warn!("Skipping Google STT provider: {e}");
+                }
+            }
+        }
+
+        if let Some(ref stepfun_cfg) = config.stepfun {
+            match StepFunProvider::from_config(stepfun_cfg, http.clone()) {
+                Ok(p) => {
+                    providers.insert(p.name().to_string(), Box::new(p));
+                }
+                Err(e) => {
+                    log::warn!("Skipping StepFun STT provider: {e}");
                 }
             }
         }
@@ -750,7 +452,11 @@ pub async fn transcribe_audio(
 ) -> Result<String, BoxError> {
     // Validate audio before resolving credentials so that size/format errors
     // are reported before missing-key errors (preserves original behavior).
-    validate_audio(&audio_data, file_name)?;
+    if config.default_provider == "stepfun" {
+        stepfun::validate_audio(&audio_data, file_name)?;
+    } else {
+        validate_audio(&audio_data, file_name)?;
+    }
 
     let http = reqwest::Client::new();
 
@@ -775,6 +481,13 @@ pub async fn transcribe_audio(
             )?;
             let google = GoogleSttProvider::from_config(google_cfg, http)?;
             google.transcribe(&audio_data, file_name).await
+        }
+        "stepfun" => {
+            let stepfun_cfg = config.stepfun.as_ref().ok_or(
+                "Default transcription provider 'stepfun' is not configured. Add [transcription.stepfun]",
+            )?;
+            let stepfun = StepFunProvider::from_config(stepfun_cfg, http)?;
+            stepfun.transcribe(&audio_data, file_name).await
         }
         "local_whisper" => {
             let local_cfg = config.local_whisper.as_ref().ok_or(

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct TtsConfig {
     /// Enable TTS synthesis.
     pub enabled: bool,
-    /// Default TTS provider (`"openai"`, `"google"`, `"edge"`).
+    /// Default TTS provider (`"openai"`, `"google"`, `"edge"`, `"stepfun"`).
     pub default_provider: String,
     /// Default voice ID passed to the selected provider.
     pub default_voice: String,
@@ -22,6 +22,9 @@ pub struct TtsConfig {
     /// Edge TTS provider configuration.
     #[serde(default)]
     pub edge: Option<EdgeTtsConfig>,
+    /// StepFun TTS provider configuration.
+    #[serde(default)]
+    pub stepfun: Option<StepFunTtsConfig>,
 }
 
 impl Default for TtsConfig {
@@ -35,8 +38,83 @@ impl Default for TtsConfig {
             openai: None,
             google: None,
             edge: None,
+            stepfun: None,
         }
     }
+}
+
+/// StepFun TTS provider configuration (`[tts.stepfun]`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StepFunTtsConfig {
+    /// StepFun API key.
+    #[serde(default)]
+    pub api_key: String,
+    /// StepFun TTS endpoint.
+    #[serde(default = "default_stepfun_tts_api_url")]
+    pub api_url: String,
+    /// TTS model name (default `"step-tts-mini"`).
+    #[serde(default = "default_stepfun_tts_model")]
+    pub model: String,
+    /// Voice ID, either an official voice or a generated custom voice.
+    #[serde(default = "default_stepfun_tts_voice")]
+    pub voice: String,
+    /// Playback speed multiplier, from 0.5 to 2.0.
+    #[serde(default = "default_stepfun_tts_speed")]
+    pub speed: f64,
+    /// Output volume multiplier, from 0.1 to 2.0.
+    #[serde(default = "default_stepfun_tts_volume")]
+    pub volume: f64,
+    /// Optional voice label for language, emotion, or style.
+    #[serde(default)]
+    pub voice_label: Option<StepFunTtsVoiceLabel>,
+    /// Optional global natural-language instruction for `stepaudio-2.5-tts`.
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// Audio sample rate. StepFun supports 8000, 16000, 22050, 24000, and 48000.
+    #[serde(default = "default_stepfun_tts_sample_rate")]
+    pub sample_rate: u32,
+    /// Optional pronunciation replacement map.
+    #[serde(default)]
+    pub pronunciation_map: StepFunTtsPronunciationMap,
+    /// Whether StepFun should filter Markdown before synthesis.
+    #[serde(default)]
+    pub markdown_filter: Option<bool>,
+}
+
+impl Default for StepFunTtsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            api_url: default_stepfun_tts_api_url(),
+            model: default_stepfun_tts_model(),
+            voice: default_stepfun_tts_voice(),
+            speed: default_stepfun_tts_speed(),
+            volume: default_stepfun_tts_volume(),
+            voice_label: None,
+            instruction: None,
+            sample_rate: default_stepfun_tts_sample_rate(),
+            pronunciation_map: StepFunTtsPronunciationMap::default(),
+            markdown_filter: None,
+        }
+    }
+}
+
+/// StepFun voice label. Only one of `language`, `emotion`, or `style` may be set.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StepFunTtsVoiceLabel {
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub emotion: Option<String>,
+    #[serde(default)]
+    pub style: Option<String>,
+}
+
+/// StepFun pronunciation map. Each `tone` entry uses `source/replacement` syntax.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct StepFunTtsPronunciationMap {
+    #[serde(default)]
+    pub tone: Vec<String>,
 }
 
 /// OpenAI TTS provider configuration.
@@ -98,4 +176,28 @@ impl Default for EdgeTtsConfig {
             voice: "en-US-AriaNeural".into(),
         }
     }
+}
+
+fn default_stepfun_tts_api_url() -> String {
+    "https://api.stepfun.com/v1/audio/speech".into()
+}
+
+fn default_stepfun_tts_model() -> String {
+    "stepaudio-2.5-tts".into()
+}
+
+fn default_stepfun_tts_voice() -> String {
+    "ruyananshi".into()
+}
+
+fn default_stepfun_tts_speed() -> f64 {
+    1.0
+}
+
+fn default_stepfun_tts_volume() -> f64 {
+    1.0
+}
+
+fn default_stepfun_tts_sample_rate() -> u32 {
+    24000
 }
