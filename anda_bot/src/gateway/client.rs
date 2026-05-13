@@ -3,9 +3,16 @@ use anda_core::{
     http::{RPCRequestRef, RPCResponse},
 };
 use anda_kip::{Request as KipRequest, Response as KipResponse};
-use std::time::{Duration, Instant};
+use std::{
+    io::SeekFrom,
+    path::Path,
+    time::{Duration, Instant},
+};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::daemon::{Daemon, LaunchState, process_exists};
+
+const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone)]
 pub struct Client {
@@ -92,12 +99,49 @@ impl Client {
             let _ = tokio::fs::remove_file(&pid_path).await;
         }
 
-        let child = daemon.spawn_background()?;
-        if let Err(err) = self.wait_for_daemon_ready(Duration::from_secs(20)).await {
+        let mut child = daemon.spawn_background()?;
+        if let Err(err) = self
+            .wait_for_spawned_daemon_ready(&mut child, Duration::from_secs(20))
+            .await
+        {
             return Err(format!("{err}; logs: {}", child.log_path.display()).into());
         }
 
         Ok(LaunchState::Started(child))
+    }
+
+    async fn wait_for_spawned_daemon_ready(
+        &self,
+        child: &mut crate::daemon::BackgroundDaemon,
+        timeout: Duration,
+    ) -> Result<(), BoxError> {
+        let deadline = Instant::now() + timeout;
+        let detail = loop {
+            match self.status().await {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    if let Some(status) = child.try_wait()? {
+                        let mut message = format!("Daemon exited during startup with {status}");
+                        if let Some(error) = daemon_startup_error(&child.log_path).await {
+                            message.push_str(": ");
+                            message.push_str(&error);
+                        }
+                        return Err(message.into());
+                    }
+                    if Instant::now() >= deadline {
+                        break err.to_string();
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+
+        let mut message = format!("Daemon not ready within {timeout:?}: {detail}");
+        if let Some(error) = daemon_startup_error(&child.log_path).await {
+            message.push_str("; last daemon error: ");
+            message.push_str(&error);
+        }
+        Err(message.into())
     }
 
     pub async fn wait_for_daemon_ready(&self, timeout: Duration) -> Result<(), BoxError> {
@@ -162,5 +206,94 @@ impl Client {
             )
             .into())
         }
+    }
+}
+
+async fn daemon_startup_error(log_path: &Path) -> Option<String> {
+    match read_daemon_log_tail(log_path).await {
+        Ok(log_tail) => extract_daemon_startup_error(&log_tail),
+        Err(err) => {
+            log::warn!("Failed to read daemon log at {}: {err}", log_path.display());
+            None
+        }
+    }
+}
+
+async fn read_daemon_log_tail(log_path: &Path) -> Result<String, BoxError> {
+    let mut file = tokio::fs::File::open(log_path).await?;
+    let len = file.metadata().await?.len();
+    let start = len.saturating_sub(DAEMON_STARTUP_LOG_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).await?;
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn extract_daemon_startup_error(log_tail: &str) -> Option<String> {
+    log_tail.lines().rev().find_map(error_from_log_line)
+}
+
+fn error_from_log_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+
+    if line.starts_with("{") {
+        return serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|value| error_from_json_log(&value));
+    }
+
+    if line.starts_with("Error:") || line.to_ascii_lowercase().contains("error") {
+        return Some(line.to_string());
+    }
+
+    None
+}
+
+fn error_from_json_log(value: &serde_json::Value) -> Option<String> {
+    let level = value
+        .get("level")
+        .or_else(|| value.get("severity"))
+        .and_then(|value| value.as_str())?;
+    if !level.eq_ignore_ascii_case("error") {
+        return None;
+    }
+
+    ["msg", "message", "error"]
+        .iter()
+        .find_map(|key| value.get(key).and_then(|value| value.as_str()))
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_plain_daemon_error_from_log_tail() {
+        let log_tail = r#"{"level":"INFO","msg":"Starting daemon"}
+Error: "Default TTS provider 'stepfun' is not configured. Available: []"
+"#;
+
+        assert_eq!(
+            extract_daemon_startup_error(log_tail).as_deref(),
+            Some("Error: \"Default TTS provider 'stepfun' is not configured. Available: []\"")
+        );
+    }
+
+    #[test]
+    fn extracts_structured_daemon_error_from_log_tail() {
+        let log_tail = r#"{"level":"INFO","msg":"Starting daemon"}
+{"level":"ERROR","msg":"Default TTS provider 'stepfun' is not configured. Available: []"}
+{"level":"INFO","msg":"daemon process exited"}
+"#;
+
+        assert_eq!(
+            extract_daemon_startup_error(log_tail).as_deref(),
+            Some("Default TTS provider 'stepfun' is not configured. Available: []")
+        );
     }
 }

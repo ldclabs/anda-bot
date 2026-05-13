@@ -31,6 +31,11 @@ pub trait TtsProvider: Send + Sync {
     /// Provider identifier (e.g. `"openai"`, `"google"`).
     fn name(&self) -> &str;
 
+    /// Audio format returned by this provider.
+    fn audio_format(&self) -> &str {
+        "mp3"
+    }
+
     /// Synthesize `text`, returning raw audio bytes.
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError>;
 }
@@ -194,26 +199,50 @@ impl TtsManager {
     }
 
     pub fn audio_format(&self) -> &str {
-        normalize_audio_format(&self.default_format)
+        self.providers
+            .get(&self.default_provider)
+            .map(|provider| normalize_audio_format(provider.audio_format()))
+            .unwrap_or_else(|| normalize_audio_format(&self.default_format))
     }
 
+    #[allow(unused)]
     pub fn audio_mime_type(&self) -> &'static str {
         mime_for_audio_format(self.audio_format())
     }
 
     pub fn audio_artifact(&self, bytes: Vec<u8>, name: Option<String>) -> Resource {
-        let format = self.audio_format();
-        let name = normalize_artifact_name(name, format);
-        let size = bytes.len() as u64;
-        Resource {
-            tags: vec!["audio".to_string(), format.to_string()],
-            name,
-            description: Some("Synthesized speech from anda_bot".to_string()),
-            mime_type: Some(self.audio_mime_type().to_string()),
-            blob: Some(ByteBufB64(bytes)),
-            size: Some(size),
-            ..Default::default()
-        }
+        audio_artifact_with_format(bytes, name, self.audio_format())
+    }
+
+    pub fn audio_artifact_for_provider(
+        &self,
+        provider: &str,
+        bytes: Vec<u8>,
+        name: Option<String>,
+    ) -> Result<Resource, BoxError> {
+        let tts = self.providers.get(provider).ok_or_else(|| {
+            format!(
+                "TTS provider '{}' not configured (available: {})",
+                provider,
+                self.available_providers().join(", ")
+            )
+        })?;
+        Ok(audio_artifact_with_format(bytes, name, tts.audio_format()))
+    }
+}
+
+fn audio_artifact_with_format(bytes: Vec<u8>, name: Option<String>, format: &str) -> Resource {
+    let format = normalize_audio_format(format);
+    let name = normalize_artifact_name(name, format);
+    let size = bytes.len() as u64;
+    Resource {
+        tags: vec!["audio".to_string(), format.to_string()],
+        name,
+        description: Some("Synthesized speech from anda_bot".to_string()),
+        mime_type: Some(mime_for_audio_format(format).to_string()),
+        blob: Some(ByteBufB64(bytes)),
+        size: Some(size),
+        ..Default::default()
     }
 }
 
@@ -266,12 +295,18 @@ impl Tool<BaseCtx> for TtsManager {
         let provider = config::normalize_optional(&args.provider)
             .unwrap_or_else(|| self.default_provider.clone());
         let bytes = self.synthesize_with_provider(&args.text, &provider).await?;
-        let artifact = self.audio_artifact(bytes, args.artifact_name);
+        let artifact = self.audio_artifact_for_provider(&provider, bytes, args.artifact_name)?;
+        let format = artifact
+            .tags
+            .iter()
+            .find(|tag| tag.as_str() != "audio")
+            .cloned()
+            .unwrap_or_else(|| self.audio_format().to_string());
         let output = TtsOutput {
             provider,
             artifact: artifact.name.clone(),
             mime_type: artifact.mime_type.clone().unwrap_or_default(),
-            format: self.audio_format().to_string(),
+            format,
             size: artifact.size.unwrap_or_default(),
         };
         let mut result = ToolOutput::new(output);
@@ -311,5 +346,78 @@ fn normalize_artifact_name(name: Option<String>, format: &str) -> String {
         name
     } else {
         format!("{name}.{format}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StaticTtsProvider {
+        name: &'static str,
+        format: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl TtsProvider for StaticTtsProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn audio_format(&self) -> &str {
+            self.format
+        }
+
+        async fn synthesize(&self, _text: &str) -> Result<Vec<u8>, BoxError> {
+            Ok(vec![1, 2, 3])
+        }
+    }
+
+    fn manager_with_provider(provider: StaticTtsProvider, default_format: &str) -> TtsManager {
+        let default_provider = provider.name.to_string();
+        let mut providers: HashMap<String, Box<dyn TtsProvider>> = HashMap::new();
+        providers.insert(default_provider.clone(), Box::new(provider));
+        TtsManager {
+            providers,
+            default_provider,
+            default_format: default_format.to_string(),
+            max_text_length: DEFAULT_MAX_TEXT_LENGTH,
+        }
+    }
+
+    #[test]
+    fn audio_artifact_uses_default_provider_actual_format() {
+        let manager = manager_with_provider(
+            StaticTtsProvider {
+                name: "edge",
+                format: "mp3",
+            },
+            "wav",
+        );
+
+        let artifact = manager.audio_artifact(vec![1, 2, 3], Some("voice".to_string()));
+
+        assert_eq!(artifact.name, "voice.mp3");
+        assert_eq!(artifact.tags, vec!["audio", "mp3"]);
+        assert_eq!(artifact.mime_type.as_deref(), Some("audio/mpeg"));
+    }
+
+    #[test]
+    fn audio_artifact_for_provider_uses_requested_provider_format() {
+        let manager = manager_with_provider(
+            StaticTtsProvider {
+                name: "stepfun",
+                format: "wav",
+            },
+            "mp3",
+        );
+
+        let artifact = manager
+            .audio_artifact_for_provider("stepfun", vec![1, 2, 3], Some("voice".to_string()))
+            .unwrap();
+
+        assert_eq!(artifact.name, "voice.wav");
+        assert_eq!(artifact.tags, vec!["audio", "wav"]);
+        assert_eq!(artifact.mime_type.as_deref(), Some("audio/wav"));
     }
 }

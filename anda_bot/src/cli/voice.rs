@@ -5,11 +5,13 @@
 //! future wake model can decide when to invoke these helpers.
 
 use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource, ToolInput};
-use anda_engine::memory::{Conversation, ConversationStatus};
+use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
 use anda_kip::Response as KipResponse;
 use clap::Args;
 use ic_auth_types::Xid;
 use std::{
+    future::Future,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -24,6 +26,10 @@ use crate::{
 
 const AUDIO_EVENT_BUFFER: usize = 16;
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+const VOICE_STATUS_INTERVAL: Duration = Duration::from_millis(120);
+const VOICE_TTS_CHUNK_CHARS: usize = 800;
+const VOICE_TTS_SHORT_CHUNK_CHARS: usize = 80;
+const VOICE_TTS_MAX_SHORT_LINES: usize = 4;
 
 #[derive(Args)]
 pub struct VoiceCommand {
@@ -50,6 +56,7 @@ struct VoiceRuntime {
 struct VoiceConversationCursor {
     conversation_id: Option<u64>,
     seen_messages: usize,
+    seen_artifacts: usize,
 }
 
 pub async fn run_voice_loop(
@@ -108,14 +115,11 @@ pub async fn run_voice_loop(
         let mut input = AgentInput::new(cmd.name.clone(), prompt);
         input.meta = Some(request_meta);
 
-        eprintln!("Sending voice turn...");
-        let output = tokio::select! {
-            result = client.agent_run(&input) => result?,
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Voice conversation stopped.");
-                break;
-            }
-        };
+        let output =
+            match wait_with_voice_status("Sending voice turn", client.agent_run(&input)).await? {
+                Some(output) => output,
+                None => break,
+            };
 
         if let Some(reason) = &output.failed_reason {
             eprintln!("Agent failed: {reason}");
@@ -123,12 +127,14 @@ pub async fn run_voice_loop(
         let conversation_id = output
             .conversation
             .ok_or("agent response did not include a conversation id")?;
-        let response_text = tokio::select! {
-            result = poll_voice_response(client, &mut cursor, conversation_id) => result?,
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Voice conversation stopped.");
-                break;
-            }
+        let response_text = match wait_with_voice_status(
+            "Waiting for assistant response",
+            poll_voice_response(client, &mut cursor, conversation_id),
+        )
+        .await?
+        {
+            Some(response_text) => response_text,
+            None => break,
         };
         if response_text.trim().is_empty() {
             eprintln!("No assistant response was found for this turn.");
@@ -142,16 +148,9 @@ pub async fn run_voice_loop(
                 .tts
                 .as_ref()
                 .ok_or("voice playback requires tts.enabled and a configured TTS provider")?;
-            eprintln!("Synthesizing speech...");
-            let audio = tokio::select! {
-                result = tts.synthesize(response_text.trim()) => result?,
-                _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Voice conversation stopped.");
-                    break;
-                }
-            };
-            let artifact = tts.audio_artifact(audio, Some(format!("anda_voice_turn_{turn}")));
-            voice_channel.play_audio_artifacts(&[artifact]).await?;
+            if !play_voice_response(tts, &voice_channel, response_text.trim(), turn).await? {
+                break;
+            }
         }
 
         turn += 1;
@@ -184,6 +183,304 @@ fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRunt
     Ok(VoiceRuntime { transcription, tts })
 }
 
+async fn play_voice_response(
+    tts: &tts::TtsManager,
+    voice_channel: &VoiceChannel,
+    text: &str,
+    turn: u64,
+) -> Result<bool, BoxError> {
+    let speech_text = prepare_voice_tts_text(text);
+    if speech_text.is_empty() {
+        return Err("assistant response did not contain speakable text".into());
+    }
+
+    let chunks = split_voice_tts_text(&speech_text, VOICE_TTS_CHUNK_CHARS);
+    let Some(first_chunk) = chunks.first() else {
+        return Err("assistant response did not contain speakable text".into());
+    };
+
+    let total = chunks.len();
+    eprintln!("Synthesizing speech in {total} segment(s)...");
+    let first_status = format!("Synthesizing speech segment 1/{total}");
+    let mut current_artifact = match wait_with_voice_status(
+        &first_status,
+        synthesize_voice_artifact(tts, first_chunk, turn, 0, total),
+    )
+    .await?
+    {
+        Some(artifact) => artifact,
+        None => return Ok(false),
+    };
+
+    for (index, next_chunk) in chunks.iter().enumerate().skip(1) {
+        eprintln!(
+            "Playing speech segment {}/{}; preparing {}/{}...",
+            index,
+            total,
+            index + 1,
+            total
+        );
+        let playback = voice_channel.play_audio_artifacts(std::slice::from_ref(&current_artifact));
+        let synthesis = synthesize_voice_artifact(tts, next_chunk, turn, index, total);
+        let (playback_result, synthesis_result) = tokio::join!(playback, synthesis);
+        playback_result?;
+        current_artifact = synthesis_result?;
+    }
+
+    eprintln!("Playing speech segment {total}/{total}...");
+    voice_channel
+        .play_audio_artifacts(std::slice::from_ref(&current_artifact))
+        .await?;
+    Ok(true)
+}
+
+async fn synthesize_voice_artifact(
+    tts: &tts::TtsManager,
+    chunk: &str,
+    turn: u64,
+    index: usize,
+    total: usize,
+) -> Result<Resource, BoxError> {
+    let audio = tts.synthesize(chunk).await?;
+    let name = if total == 1 {
+        format!("anda_voice_turn_{turn}")
+    } else {
+        format!("anda_voice_turn_{turn}_part_{}", index + 1)
+    };
+    Ok(tts.audio_artifact(audio, Some(name)))
+}
+
+fn prepare_voice_tts_text(text: &str) -> String {
+    text.lines()
+        .filter_map(|line| {
+            let line = strip_markdown_line_prefix(line);
+            let mut normalized = String::with_capacity(line.len());
+            let mut previous_was_space = false;
+            for ch in line.chars().filter_map(normalize_voice_tts_char) {
+                if ch.is_whitespace() {
+                    if !previous_was_space {
+                        normalized.push(' ');
+                    }
+                    previous_was_space = true;
+                } else {
+                    normalized.push(ch);
+                    previous_was_space = false;
+                }
+            }
+
+            let normalized = normalized.trim();
+            (!normalized.is_empty()).then(|| normalized.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn strip_markdown_line_prefix(line: &str) -> &str {
+    let mut trimmed = line.trim_start();
+    while let Some(rest) = trimmed.strip_prefix('>') {
+        trimmed = rest.trim_start();
+    }
+    while let Some(rest) = trimmed.strip_prefix('#') {
+        trimmed = rest.trim_start();
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("+ "))
+    {
+        return rest.trim_start();
+    }
+
+    let Some((prefix, rest)) = trimmed.split_once(['.', '、', ')']) else {
+        return trimmed;
+    };
+    if !prefix.is_empty() && prefix.chars().all(|ch| ch.is_ascii_digit()) {
+        rest.trim_start()
+    } else {
+        trimmed
+    }
+}
+
+fn normalize_voice_tts_char(ch: char) -> Option<char> {
+    if is_emoji_or_format_control(ch) {
+        return None;
+    }
+
+    match ch {
+        '`' | '*' | '_' | '#' => None,
+        '\r' | '\u{00a0}' => Some(' '),
+        '—' | '–' => Some('，'),
+        _ => Some(ch),
+    }
+}
+
+fn is_emoji_or_format_control(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x200D | 0xFE0E | 0xFE0F
+            | 0x2600..=0x27BF
+            | 0x1F000..=0x1FAFF
+            | 0xE0020..=0xE007F
+    )
+}
+
+fn split_voice_tts_text(text: &str, max_chars: usize) -> Vec<String> {
+    if max_chars == 0 {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    let mut current_lines = Vec::new();
+    let mut current_chars = 0usize;
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let line_chars = line.chars().count();
+        if line_chars > max_chars {
+            push_voice_tts_lines(&mut chunks, &mut current_lines, &mut current_chars);
+            chunks.extend(split_long_voice_tts_line(line, max_chars));
+            continue;
+        }
+
+        let separator_chars = usize::from(!current_lines.is_empty());
+        let next_chars = current_chars + separator_chars + line_chars;
+        if !current_lines.is_empty()
+            && (next_chars > max_chars
+                || current_lines.len() >= VOICE_TTS_MAX_SHORT_LINES
+                || current_lines.len() >= 2 && current_chars >= VOICE_TTS_SHORT_CHUNK_CHARS)
+        {
+            push_voice_tts_lines(&mut chunks, &mut current_lines, &mut current_chars);
+        }
+
+        current_chars += usize::from(!current_lines.is_empty()) + line_chars;
+        current_lines.push(line.to_string());
+    }
+    push_voice_tts_lines(&mut chunks, &mut current_lines, &mut current_chars);
+
+    chunks
+}
+
+fn push_voice_tts_lines(
+    chunks: &mut Vec<String>,
+    current_lines: &mut Vec<String>,
+    current_chars: &mut usize,
+) {
+    if !current_lines.is_empty() {
+        chunks.push(current_lines.join("\n"));
+        current_lines.clear();
+        *current_chars = 0;
+    }
+}
+
+fn split_long_voice_tts_line(line: &str, max_chars: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for segment in line.split_inclusive(is_tts_sentence_boundary) {
+        push_voice_tts_segment(&mut chunks, &mut current, segment, max_chars);
+    }
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+    chunks
+}
+
+fn push_voice_tts_segment(
+    chunks: &mut Vec<String>,
+    current: &mut String,
+    segment: &str,
+    max_chars: usize,
+) {
+    let segment = segment.trim();
+    if segment.is_empty() {
+        return;
+    }
+
+    let current_chars = current.chars().count();
+    let segment_chars = segment.chars().count();
+    let separator_chars = usize::from(!current.is_empty());
+    if current_chars + separator_chars + segment_chars <= max_chars {
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(segment);
+        return;
+    }
+
+    if !current.is_empty() {
+        chunks.push(current.trim().to_string());
+        current.clear();
+    }
+
+    if segment_chars <= max_chars {
+        current.push_str(segment);
+        return;
+    }
+
+    let mut hard_chunk = String::new();
+    for ch in segment.chars() {
+        if hard_chunk.chars().count() >= max_chars {
+            chunks.push(hard_chunk.trim().to_string());
+            hard_chunk.clear();
+        }
+        hard_chunk.push(ch);
+    }
+    if !hard_chunk.trim().is_empty() {
+        current.push_str(hard_chunk.trim());
+    }
+}
+
+fn is_tts_sentence_boundary(ch: char) -> bool {
+    matches!(ch, '。' | '！' | '？' | '.' | '!' | '?' | '\n')
+}
+
+async fn wait_with_voice_status<T>(
+    message: &str,
+    operation: impl Future<Output = Result<T, BoxError>>,
+) -> Result<Option<T>, BoxError> {
+    tokio::pin!(operation);
+    let mut spinner = VoiceStatusSpinner::new(message);
+    let mut interval = tokio::time::interval(VOICE_STATUS_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            result = &mut operation => {
+                spinner.finish();
+                return result.map(Some);
+            }
+            _ = tokio::signal::ctrl_c() => {
+                spinner.finish();
+                eprintln!("Voice conversation stopped.");
+                return Ok(None);
+            }
+            _ = interval.tick() => spinner.tick(),
+        }
+    }
+}
+
+struct VoiceStatusSpinner<'a> {
+    message: &'a str,
+    frame: usize,
+}
+
+impl<'a> VoiceStatusSpinner<'a> {
+    const FRAMES: [&'static str; 4] = ["|", "/", "-", "\\"];
+
+    fn new(message: &'a str) -> Self {
+        Self { message, frame: 0 }
+    }
+
+    fn tick(&mut self) {
+        let frame = Self::FRAMES[self.frame % Self::FRAMES.len()];
+        eprint!("\r\x1b[2K{}... {}", self.message, frame);
+        let _ = io::stderr().flush();
+        self.frame += 1;
+    }
+
+    fn finish(&mut self) {
+        eprint!("\r\x1b[2K");
+        let _ = io::stderr().flush();
+    }
+}
+
 async fn transcribe_voice_resource(
     transcription: &transcription::TranscriptionManager,
     resource: &Resource,
@@ -208,6 +505,7 @@ async fn initialize_voice_cursor(
     Ok(VoiceConversationCursor {
         conversation_id: Some(conversation._id),
         seen_messages: conversation.messages.len(),
+        seen_artifacts: conversation.artifacts.len(),
     })
 }
 
@@ -216,25 +514,40 @@ async fn poll_voice_response(
     cursor: &mut VoiceConversationCursor,
     conversation_id: u64,
 ) -> Result<String, BoxError> {
-    if cursor.conversation_id != Some(conversation_id) {
-        cursor.conversation_id = Some(conversation_id);
-        cursor.seen_messages = 0;
-    }
+    let mut conversation_id = conversation_id;
+    reset_voice_cursor_if_needed(cursor, conversation_id);
 
     loop {
-        let conversation = get_conversation(client, conversation_id).await?;
-        let response_text = assistant_text_since(&conversation, cursor.seen_messages);
-        let finished = matches!(
-            conversation.status,
-            ConversationStatus::Completed
-                | ConversationStatus::Cancelled
-                | ConversationStatus::Failed
-        );
+        let delta = get_conversation_delta(
+            client,
+            conversation_id,
+            cursor.seen_messages,
+            cursor.seen_artifacts,
+        )
+        .await?;
 
-        if finished {
-            cursor.seen_messages = conversation.messages.len();
-            if let Some(reason) = conversation.failed_reason.as_deref() {
+        let response_text = assistant_text_from_messages(&delta.messages);
+        cursor.seen_messages += delta.messages.len();
+        cursor.seen_artifacts += delta.artifacts.len();
+
+        if !response_text.trim().is_empty() {
+            return Ok(response_text);
+        }
+
+        if let Some(child_id) = delta.child
+            && child_id != conversation_id
+        {
+            conversation_id = child_id;
+            reset_voice_cursor_if_needed(cursor, conversation_id);
+            continue;
+        }
+
+        if is_terminal_conversation_status(&delta.status) {
+            if let Some(reason) = delta.failed_reason.as_deref() {
                 return Err(format!("voice conversation turn failed: {reason}").into());
+            }
+            if matches!(delta.status, ConversationStatus::Cancelled) {
+                return Err("voice conversation turn was cancelled".into());
             }
             return Ok(response_text);
         }
@@ -262,11 +575,47 @@ async fn get_conversation(
     }
 }
 
-fn assistant_text_since(conversation: &Conversation, offset: usize) -> String {
-    conversation
-        .messages
+async fn get_conversation_delta(
+    client: &gateway::Client,
+    conversation_id: u64,
+    messages_offset: usize,
+    artifacts_offset: usize,
+) -> Result<ConversationDelta, BoxError> {
+    let output = client
+        .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+            ConversationsTool::NAME.to_string(),
+            ConversationsToolArgs::GetConversationDelta {
+                _id: conversation_id,
+                messages_offset,
+                artifacts_offset,
+            },
+        ))
+        .await?;
+
+    match output.output {
+        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<ConversationDelta>(result)?),
+        other => Err(format!("conversation API returned an error: {other:?}").into()),
+    }
+}
+
+fn reset_voice_cursor_if_needed(cursor: &mut VoiceConversationCursor, conversation_id: u64) {
+    if cursor.conversation_id != Some(conversation_id) {
+        cursor.conversation_id = Some(conversation_id);
+        cursor.seen_messages = 0;
+        cursor.seen_artifacts = 0;
+    }
+}
+
+fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
+    matches!(
+        status,
+        ConversationStatus::Completed | ConversationStatus::Cancelled | ConversationStatus::Failed
+    )
+}
+
+fn assistant_text_from_messages(messages: &[serde_json::Value]) -> String {
+    messages
         .iter()
-        .skip(offset)
         .filter_map(|raw| serde_json::from_value::<Message>(raw.clone()).ok())
         .filter(|message| message.role == "assistant")
         .filter_map(|message| message.text())
@@ -377,8 +726,9 @@ impl VoiceChannel {
                 && let Some(blob) = &artifact.blob
             {
                 let path = write_temp_audio_artifact(artifact, &blob.0).await?;
-                play_audio_file(&path).await?;
+                let play_result = play_audio_file(&path).await;
                 let _ = tokio::fs::remove_file(path).await;
+                play_result?;
                 played = true;
             }
         }
@@ -577,25 +927,40 @@ async fn write_temp_audio_artifact(resource: &Resource, bytes: &[u8]) -> Result<
 
 async fn play_audio_file(path: &Path) -> Result<(), BoxError> {
     let output = path.to_str().ok_or("invalid temporary playback path")?;
-    if cfg!(target_os = "macos") && command_available("afplay") {
-        let mut command = tokio::process::Command::new("afplay");
-        command.arg(output);
-        return run_process(command, "afplay").await;
-    }
+    let mut errors = Vec::new();
 
     if command_available("ffplay") {
         let mut command = tokio::process::Command::new("ffplay");
         command.args(["-nodisp", "-autoexit", "-loglevel", "quiet", output]);
-        return run_process(command, "ffplay").await;
+        match run_process(command, "ffplay").await {
+            Ok(()) => return Ok(()),
+            Err(err) => errors.push(err.to_string()),
+        }
+    }
+
+    if cfg!(target_os = "macos") && command_available("afplay") {
+        let mut command = tokio::process::Command::new("afplay");
+        command.arg(output);
+        match run_process(command, "afplay").await {
+            Ok(()) => return Ok(()),
+            Err(err) => errors.push(err.to_string()),
+        }
     }
 
     if command_available("play") {
         let mut command = tokio::process::Command::new("play");
         command.args(["-q", output]);
-        return run_process(command, "play").await;
+        match run_process(command, "play").await {
+            Ok(()) => return Ok(()),
+            Err(err) => errors.push(err.to_string()),
+        }
     }
 
-    Err("audio playback requires `afplay`, `ffplay`, or `play` on PATH".into())
+    if errors.is_empty() {
+        Err("audio playback requires `ffplay`, `afplay`, or `play` on PATH".into())
+    } else {
+        Err(format!("audio playback failed: {}", errors.join("; ")).into())
+    }
 }
 
 async fn run_process(mut command: tokio::process::Command, label: &str) -> Result<(), BoxError> {
@@ -625,6 +990,7 @@ fn audio_mime_for_extension(extension: &str) -> Option<&'static str> {
         "mp4" | "m4a" => Some("audio/mp4"),
         "oga" | "ogg" => Some("audio/ogg"),
         "opus" => Some("audio/opus"),
+        "pcm" => Some("audio/pcm"),
         "wav" => Some("audio/wav"),
         "webm" => Some("audio/webm"),
         _ => None,
@@ -685,5 +1051,56 @@ mod tests {
         assert_eq!(resource.tags, vec!["audio", "wav"]);
         assert_eq!(resource.mime_type.as_deref(), Some("audio/wav"));
         assert_eq!(resource.size, Some(3));
+    }
+
+    #[test]
+    fn assistant_text_from_messages_uses_assistant_delta_only() {
+        let messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [{"type": "Text", "text": "hello"}],
+            }),
+            serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "Text", "text": "hi there"}],
+            }),
+        ];
+
+        assert_eq!(assistant_text_from_messages(&messages), "hi there");
+    }
+
+    #[test]
+    fn prepare_voice_tts_text_removes_markdown_and_emoji() {
+        let text = "## 回应 ✨\n- 确实，被中断了 😅\n1. 我们继续测试。";
+
+        assert_eq!(
+            prepare_voice_tts_text(text),
+            "回应\n确实，被中断了\n我们继续测试。"
+        );
+    }
+
+    #[test]
+    fn split_voice_tts_text_keeps_chunks_under_limit() {
+        let chunks = split_voice_tts_text("第一句。第二句很长。第三句。", 8);
+
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 8));
+        assert_eq!(chunks, vec!["第一句。", "第二句很长。", "第三句。"]);
+    }
+
+    #[test]
+    fn split_voice_tts_text_groups_short_lines() {
+        let chunks = split_voice_tts_text("一。\n二。\n三。\n四。\n五。", VOICE_TTS_CHUNK_CHARS);
+
+        assert_eq!(chunks, vec!["一。\n二。\n三。\n四。", "五。"]);
+    }
+
+    #[test]
+    fn split_voice_tts_text_prefers_two_lines_once_substantial() {
+        let line =
+            "这是一行足够长的语音合成分段测试内容，用来触发两行一段的策略，并保持单行不超过限制。";
+        let chunks =
+            split_voice_tts_text(&format!("{line}\n{line}\n{line}"), VOICE_TTS_CHUNK_CHARS);
+
+        assert_eq!(chunks, vec![format!("{line}\n{line}"), line.to_string()]);
     }
 }

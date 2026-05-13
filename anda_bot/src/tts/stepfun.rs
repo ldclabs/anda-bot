@@ -19,7 +19,6 @@ pub struct StepFunTtsProvider {
     response_format: String,
     speed: f64,
     volume: f64,
-    voice_label: Option<serde_json::Value>,
     instruction: Option<String>,
     sample_rate: u32,
     pronunciation_map: Vec<String>,
@@ -75,12 +74,8 @@ impl StepFunTtsProvider {
             );
         }
 
-        let voice_label = normalize_stepfun_voice_label(config.voice_label.as_ref())?;
         let instruction = config::normalize_optional(&config.instruction);
         let is_tts_25 = model == STEPFUN_TTS_25_MODEL;
-        if is_tts_25 && voice_label.is_some() {
-            return Err("stepfun tts: `voice_label` is not supported by stepaudio-2.5-tts; use `instruction` instead".into());
-        }
         if !is_tts_25 && instruction.is_some() {
             return Err("stepfun tts: `instruction` is only supported by stepaudio-2.5-tts".into());
         }
@@ -103,7 +98,6 @@ impl StepFunTtsProvider {
             response_format: normalize_stepfun_response_format(default_format)?.to_string(),
             speed: config.speed,
             volume: config.volume,
-            voice_label,
             instruction,
             sample_rate: config.sample_rate,
             pronunciation_map: config::normalize_list(&config.pronunciation_map.tone),
@@ -117,6 +111,10 @@ impl StepFunTtsProvider {
 impl TtsProvider for StepFunTtsProvider {
     fn name(&self) -> &str {
         "stepfun"
+    }
+
+    fn audio_format(&self) -> &str {
+        &self.response_format
     }
 
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
@@ -171,37 +169,6 @@ fn normalize_stepfun_response_format(format: &str) -> Result<&'static str, BoxEr
     }
 }
 
-fn normalize_stepfun_voice_label(
-    voice_label: Option<&config::StepFunTtsVoiceLabel>,
-) -> Result<Option<serde_json::Value>, BoxError> {
-    let Some(voice_label) = voice_label else {
-        return Ok(None);
-    };
-
-    let mut values = Vec::new();
-    if let Some(language) = config::normalize_optional(&voice_label.language) {
-        values.push(("language", language));
-    }
-    if let Some(emotion) = config::normalize_optional(&voice_label.emotion) {
-        values.push(("emotion", emotion));
-    }
-    if let Some(style) = config::normalize_optional(&voice_label.style) {
-        values.push(("style", style));
-    }
-
-    if values.is_empty() {
-        return Ok(None);
-    }
-    if values.len() > 1 {
-        return Err("stepfun tts: only one of `voice_label.language`, `voice_label.emotion`, or `voice_label.style` may be set".into());
-    }
-
-    let mut label = serde_json::Map::new();
-    let (key, value) = values.remove(0);
-    label.insert(key.to_string(), json!(value));
-    Ok(Some(serde_json::Value::Object(label)))
-}
-
 fn build_stepfun_tts_request_body(text: &str, provider: &StepFunTtsProvider) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     body.insert("model".to_string(), json!(&provider.model));
@@ -215,9 +182,6 @@ fn build_stepfun_tts_request_body(text: &str, provider: &StepFunTtsProvider) -> 
     body.insert("volume".to_string(), json!(provider.volume));
     body.insert("sample_rate".to_string(), json!(provider.sample_rate));
 
-    if let Some(ref voice_label) = provider.voice_label {
-        body.insert("voice_label".to_string(), voice_label.clone());
-    }
     if let Some(ref instruction) = provider.instruction {
         body.insert("instruction".to_string(), json!(instruction));
     }
@@ -235,8 +199,8 @@ fn build_stepfun_tts_request_body(text: &str, provider: &StepFunTtsProvider) -> 
 }
 
 fn parse_stepfun_tts_error_message(raw_body: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_body) {
-        if let Some(message) = value
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_body)
+        && let Some(message) = value
             .pointer("/error/message")
             .and_then(serde_json::Value::as_str)
             .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
@@ -244,7 +208,6 @@ fn parse_stepfun_tts_error_message(raw_body: &str) -> String {
         {
             return message.to_string();
         }
-    }
 
     let raw_body = raw_body.trim();
     if raw_body.is_empty() {
@@ -273,10 +236,6 @@ mod tests {
                 api_key: "sk-test".to_string(),
                 speed: 1.25,
                 volume: 1.5,
-                voice_label: Some(config::StepFunTtsVoiceLabel {
-                    style: Some("慢速".to_string()),
-                    ..Default::default()
-                }),
                 pronunciation_map: config::StepFunTtsPronunciationMap {
                     tone: vec!["阿胶/e1胶".to_string(), "扁舟/偏舟".to_string()],
                 },
@@ -288,20 +247,19 @@ mod tests {
 
         let body = build_stepfun_tts_request_body("智能阶跃", &provider);
 
-        assert_eq!(body["model"], "step-tts-mini");
+        assert_eq!(body["model"], "stepaudio-2.5-tts");
         assert_eq!(body["input"], "智能阶跃");
-        assert_eq!(body["voice"], "cixingnansheng");
+        assert_eq!(body["voice"], "ruyananshi");
         assert_eq!(body["response_format"], "wav");
         assert_eq!(body["speed"], json!(1.25));
         assert_eq!(body["volume"], json!(1.5));
         assert_eq!(body["sample_rate"], 24000);
-        assert_eq!(body["voice_label"]["style"], "慢速");
         assert_eq!(body["pronunciation_map"]["tone"][0], "阿胶/e1胶");
         assert_eq!(body["markdown_filter"], true);
     }
 
     #[test]
-    fn stepaudio_tts_25_accepts_instruction_without_voice_label() {
+    fn stepaudio_tts_25_accepts_instruction() {
         let provider = test_stepfun_provider(
             config::StepFunTtsConfig {
                 api_key: "sk-test".to_string(),
@@ -316,47 +274,6 @@ mod tests {
 
         assert_eq!(body["model"], STEPFUN_TTS_25_MODEL);
         assert_eq!(body["instruction"], "语气极其愤怒，压迫感强，语速偏快");
-        assert!(body.get("voice_label").is_none());
-    }
-
-    #[test]
-    fn stepfun_tts_rejects_invalid_voice_label_combination() {
-        let result = StepFunTtsProvider::new(
-            &config::StepFunTtsConfig {
-                api_key: "sk-test".to_string(),
-                voice_label: Some(config::StepFunTtsVoiceLabel {
-                    language: Some("粤语".to_string()),
-                    emotion: Some("高兴".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            "mp3",
-            reqwest::Client::new(),
-        );
-
-        let err = result.err().unwrap();
-        assert!(err.to_string().contains("only one of `voice_label"));
-    }
-
-    #[test]
-    fn stepfun_tts_25_rejects_voice_label() {
-        let result = StepFunTtsProvider::new(
-            &config::StepFunTtsConfig {
-                api_key: "sk-test".to_string(),
-                model: STEPFUN_TTS_25_MODEL.to_string(),
-                voice_label: Some(config::StepFunTtsVoiceLabel {
-                    emotion: Some("高兴".to_string()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            "mp3",
-            reqwest::Client::new(),
-        );
-
-        let err = result.err().unwrap();
-        assert!(err.to_string().contains("voice_label"));
     }
 
     #[test]

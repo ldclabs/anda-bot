@@ -10,7 +10,7 @@ use object_store::{ObjectStore, local::LocalFileSystem};
 use std::{
     io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,6 +32,13 @@ pub struct Daemon {
 pub struct BackgroundDaemon {
     pub pid: u32,
     pub log_path: PathBuf,
+    process: Child,
+}
+
+impl BackgroundDaemon {
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.process.try_wait()
+    }
 }
 
 pub enum LaunchState {
@@ -151,14 +158,20 @@ impl Daemon {
 
         let log_path = self.log_file_path();
 
+        let stderr = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        let stdout = stderr.try_clone()?;
+
         let mut command = Command::new(exe);
         command
             .arg("--home")
             .arg(&self.home)
             .arg("daemon")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
         configure_background_daemon_command(&mut command);
 
         let child = match command.spawn() {
@@ -172,6 +185,7 @@ impl Daemon {
         Ok(BackgroundDaemon {
             pid: child.id(),
             log_path,
+            process: child,
         })
     }
 

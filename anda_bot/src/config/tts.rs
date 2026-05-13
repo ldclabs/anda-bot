@@ -7,8 +7,6 @@ pub struct TtsConfig {
     pub enabled: bool,
     /// Default TTS provider (`"openai"`, `"google"`, `"edge"`, `"stepfun"`).
     pub default_provider: String,
-    /// Default voice ID passed to the selected provider.
-    pub default_voice: String,
     /// Default audio output format (`"mp3"`, `"opus"`, `"wav"`).
     pub default_format: String,
     /// Maximum input text length in characters (default 4096).
@@ -32,7 +30,6 @@ impl Default for TtsConfig {
         Self {
             enabled: false,
             default_provider: "edge".into(),
-            default_voice: "alloy".into(),
             default_format: "mp3".to_string(),
             max_text_length: 4096,
             openai: None,
@@ -64,9 +61,6 @@ pub struct StepFunTtsConfig {
     /// Output volume multiplier, from 0.1 to 2.0.
     #[serde(default = "default_stepfun_tts_volume")]
     pub volume: f64,
-    /// Optional voice label for language, emotion, or style.
-    #[serde(default)]
-    pub voice_label: Option<StepFunTtsVoiceLabel>,
     /// Optional global natural-language instruction for `stepaudio-2.5-tts`.
     #[serde(default)]
     pub instruction: Option<String>,
@@ -90,24 +84,12 @@ impl Default for StepFunTtsConfig {
             voice: default_stepfun_tts_voice(),
             speed: default_stepfun_tts_speed(),
             volume: default_stepfun_tts_volume(),
-            voice_label: None,
             instruction: None,
             sample_rate: default_stepfun_tts_sample_rate(),
             pronunciation_map: StepFunTtsPronunciationMap::default(),
             markdown_filter: None,
         }
     }
-}
-
-/// StepFun voice label. Only one of `language`, `emotion`, or `style` may be set.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct StepFunTtsVoiceLabel {
-    #[serde(default)]
-    pub language: Option<String>,
-    #[serde(default)]
-    pub emotion: Option<String>,
-    #[serde(default)]
-    pub style: Option<String>,
 }
 
 /// StepFun pronunciation map. Each `tone` entry uses `source/replacement` syntax.

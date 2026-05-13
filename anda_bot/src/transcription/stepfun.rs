@@ -208,7 +208,7 @@ async fn parse_stepfun_sse_response(resp: reqwest::Response) -> Result<String, B
         let chunk = chunk.map_err(|_| "Failed to read StepFun ASR SSE stream")?;
         for &byte in chunk.iter() {
             if byte == b'\n' {
-                if line_buf.ends_with(&[b'\r']) {
+                if line_buf.ends_with(b"\r") {
                     line_buf.pop();
                 }
                 let line = std::str::from_utf8(&line_buf)

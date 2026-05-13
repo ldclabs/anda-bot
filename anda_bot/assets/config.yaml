@@ -141,7 +141,6 @@ model:
 tts:
   enabled: false
   default_provider: edge
-  default_voice: alloy
   default_format: mp3
   max_text_length: 4096
   # edge:
@@ -165,9 +164,6 @@ tts:
   #   volume: 1.0
   #   sample_rate: 24000
   #   markdown_filter:
-  #   # Use exactly one of language, emotion, or style. Do not use voice_label with stepaudio-2.5-tts.
-  #   # voice_label:
-  #   #   language: 粤语
   #   # instruction is only supported by stepaudio-2.5-tts and is limited to 200 chars.
   #   # instruction: 语气自然，表达清晰
   #   pronunciation_map:

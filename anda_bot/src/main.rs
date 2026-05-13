@@ -107,6 +107,14 @@ pub enum AgentCommand {
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
+    let result = run().await;
+    if let Err(err) = &result {
+        log::error!("{err}");
+    }
+    result
+}
+
+async fn run() -> Result<(), BoxError> {
     let cli = Cli::parse();
     let Cli { home, command } = cli;
 
