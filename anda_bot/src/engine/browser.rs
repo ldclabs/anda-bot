@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -22,8 +23,6 @@ use tokio::{
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
-const DEFAULT_BROWSER_POLL_TIMEOUT_MS: u64 = 20_000;
-const MAX_BROWSER_POLL_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Default)]
 pub struct BrowserBridge {
@@ -51,8 +50,6 @@ pub struct BrowserSession {
 #[derive(Debug)]
 struct PendingBrowserRequest {
     session: String,
-    command: BrowserCommand,
-    picked: bool,
     response: Option<oneshot::Sender<BrowserActionResult>>,
 }
 
@@ -74,6 +71,11 @@ pub enum BrowserAction {
     Navigate,
     Screenshot,
     ReadSelection,
+    ListTabs,
+    SwitchTab,
+    OpenTab,
+    CloseTab,
+    LaunchBrowser,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -94,6 +96,15 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<i64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<i64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<i64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_links: Option<bool>,
@@ -134,39 +145,6 @@ pub struct BrowserActionResult {
 #[derive(Clone)]
 pub struct ChromeBrowserTool {
     bridge: Arc<BrowserBridge>,
-}
-
-#[derive(Clone)]
-pub struct ChromeBrowserApiTool {
-    bridge: Arc<BrowserBridge>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "type")]
-pub enum ChromeBrowserApiArgs {
-    Register {
-        session: String,
-        #[serde(default)]
-        tab_id: Option<i64>,
-        #[serde(default)]
-        url: Option<String>,
-        #[serde(default)]
-        title: Option<String>,
-    },
-    Poll {
-        session: String,
-        #[serde(default)]
-        timeout_ms: Option<u64>,
-    },
-    Complete {
-        session: String,
-        request_id: u64,
-        result: BrowserActionResult,
-    },
-    GetStatus {
-        #[serde(default)]
-        session: Option<String>,
-    },
 }
 
 impl BrowserBridge {
@@ -212,6 +190,7 @@ impl BrowserBridge {
                 sender,
             },
         );
+        self.notify.notify_waiters();
         Ok(session)
     }
 
@@ -245,7 +224,60 @@ impl BrowserBridge {
         entry.tab_id = tab_id;
         entry.url = normalize_optional_string(url);
         entry.title = normalize_optional_string(title);
-        Ok(entry.clone())
+        let session = entry.clone();
+        drop(sessions);
+        self.notify.notify_waiters();
+        Ok(session)
+    }
+
+    pub fn connected_session(&self, preferred: Option<&str>) -> Option<String> {
+        let preferred = preferred.and_then(|session| normalize_session(session.to_string()).ok());
+        let connections = self.connections.read();
+
+        if let Some(preferred) = preferred {
+            return connections.contains_key(&preferred).then_some(preferred);
+        }
+
+        let connected = connections.keys().cloned().collect::<Vec<_>>();
+        drop(connections);
+
+        let sessions = self.sessions();
+        sessions
+            .into_iter()
+            .find_map(|session| {
+                connected
+                    .contains(&session.session)
+                    .then_some(session.session)
+            })
+            .or_else(|| connected.into_iter().next())
+    }
+
+    pub async fn wait_for_connected_session(
+        &self,
+        preferred: Option<String>,
+        timeout_ms: u64,
+    ) -> Option<String> {
+        let preferred = preferred.and_then(|session| normalize_session(session).ok());
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let notified = self.notify.notified();
+
+            if let Some(session) = self.connected_session(preferred.as_deref()) {
+                return Some(session);
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+
+            if tokio::time::timeout(deadline - now, notified)
+                .await
+                .is_err()
+            {
+                return None;
+            }
+        }
     }
 
     pub async fn run_action(
@@ -257,7 +289,7 @@ impl BrowserBridge {
         let session = normalize_session(session)?;
         if self.session(&session).is_none() {
             return Err(format!(
-                "Chrome extension session {session:?} is not connected. Open the Anda Chrome side panel on the target tab and try again."
+                "Chrome extension session {session:?} is not connected. Open the Anda browser extension or launch the browser and try again."
             )
             .into());
         }
@@ -284,8 +316,6 @@ impl BrowserBridge {
                 request_id,
                 PendingBrowserRequest {
                     session,
-                    command: command.clone(),
-                    picked: action_sender.is_some(),
                     response: Some(sender),
                 },
             );
@@ -308,36 +338,6 @@ impl BrowserBridge {
                     format!("Chrome browser action {request_id} timed out after {timeout_ms}ms")
                         .into(),
                 )
-            }
-        }
-    }
-
-    pub async fn poll(&self, session: String, timeout_ms: Option<u64>) -> Option<BrowserCommand> {
-        let Ok(session) = normalize_session(session) else {
-            return None;
-        };
-        self.touch_session(&session);
-
-        let timeout_ms = timeout_ms
-            .unwrap_or(DEFAULT_BROWSER_POLL_TIMEOUT_MS)
-            .min(MAX_BROWSER_POLL_TIMEOUT_MS);
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-
-        loop {
-            if let Some(command) = self.next_pending_command(&session).await {
-                return Some(command);
-            }
-
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-
-            if tokio::time::timeout(deadline - now, self.notify.notified())
-                .await
-                .is_err()
-            {
-                return None;
             }
         }
     }
@@ -383,17 +383,6 @@ impl BrowserBridge {
         sessions
     }
 
-    async fn next_pending_command(&self, session: &str) -> Option<BrowserCommand> {
-        let mut pending = self.pending.lock().await;
-        for request in pending.values_mut() {
-            if request.session == session && !request.picked {
-                request.picked = true;
-                return Some(request.command.clone());
-            }
-        }
-        None
-    }
-
     fn touch_session(&self, session: &str) {
         if let Some(active_session) = self.sessions.write().get_mut(session) {
             active_session.last_seen_at = unix_ms();
@@ -407,6 +396,10 @@ impl ChromeBrowserTool {
     pub fn new(bridge: Arc<BrowserBridge>) -> Self {
         Self { bridge }
     }
+
+    pub fn is_active(&self) -> bool {
+        !self.bridge.sessions.read().is_empty()
+    }
 }
 
 impl Tool<BaseCtx> for ChromeBrowserTool {
@@ -418,12 +411,15 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     }
 
     fn description(&self) -> String {
-        concat!(
-            "Controls the user's current Chrome tab through the Anda Chrome extension. ",
-            "Use this when the user asks about or wants action on the current webpage. ",
-            "Start with snapshot or extract_text to inspect the page, then use click, type_text, press_key, scroll, navigate, screenshot, or read_selection as needed."
+        format!(
+            "{}\n\nActive sessions: {:?}",
+            concat!(
+                "Controls the user's browser tabs through the Anda browser extension. ",
+                "Use this when the user asks about or wants action on browser pages. ",
+                "Start with list_tabs, snapshot, or extract_text to inspect the browser, then use click, type_text, press_key, scroll, navigate, screenshot, read_selection, switch_tab, open_tab, or close_tab as needed."
+            ),
+            self.bridge.sessions()
         )
-        .to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -435,8 +431,8 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["snapshot", "extract_text", "click", "type_text", "press_key", "scroll", "navigate", "screenshot", "read_selection"],
-                        "description": "Browser action to perform on the connected Chrome tab."
+                        "enum": ["snapshot", "extract_text", "click", "type_text", "press_key", "scroll", "navigate", "screenshot", "read_selection", "list_tabs", "switch_tab", "open_tab", "close_tab", "launch_browser"],
+                        "description": "Browser action to perform through the connected Anda browser extension."
                     },
                     "selector": {
                         "type": ["string", "null"],
@@ -448,7 +444,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                     },
                     "url": {
                         "type": ["string", "null"],
-                        "description": "URL to open for navigate."
+                        "description": "URL to open for navigate, open_tab, or launch_browser."
                     },
                     "key": {
                         "type": ["string", "null"],
@@ -457,6 +453,18 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                     "amount": {
                         "type": ["integer", "null"],
                         "description": "Vertical scroll amount in pixels for scroll. Positive scrolls down, negative scrolls up."
+                    },
+                    "tab_id": {
+                        "type": ["integer", "null"],
+                        "description": "Target Chrome tab id. Use list_tabs to discover tab ids. If omitted, page actions use the current active tab. Required for switch_tab and close_tab."
+                    },
+                    "window_id": {
+                        "type": ["integer", "null"],
+                        "description": "Target Chrome window id for list_tabs filtering or open_tab placement."
+                    },
+                    "active": {
+                        "type": ["boolean", "null"],
+                        "description": "Whether open_tab or navigate should activate the target tab. Defaults to true where applicable."
                     },
                     "include_links": {
                         "type": ["boolean", "null"],
@@ -492,9 +500,41 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let session = browser_session_from_meta(ctx.meta()).ok_or(
-            "chrome_browser requires a Chrome extension request context with browser_session metadata",
-        )?;
+        let preferred_session = browser_session_from_meta(ctx.meta());
+        let timeout_ms = normalized_action_timeout(args.timeout_ms);
+
+        if args.action == BrowserAction::LaunchBrowser {
+            let launch = launch_browser(args.url.as_deref())?;
+            let session = self
+                .bridge
+                .wait_for_connected_session(preferred_session, timeout_ms)
+                .await;
+            let result = BrowserActionResult {
+                ok: true,
+                value: json!({
+                    "launched": true,
+                    "launch": launch,
+                    "connected": session.is_some(),
+                    "session": session,
+                }),
+                error: None,
+            };
+            return Ok(ToolOutput::new(Response::Ok {
+                result: json!(result),
+                next_cursor: None,
+            }));
+        }
+
+        let session = match self.bridge.connected_session(preferred_session.as_deref()) {
+            Some(session) => session,
+            None => {
+                let _launch = launch_browser(None)?;
+                self.bridge
+                    .wait_for_connected_session(preferred_session, timeout_ms)
+                    .await
+                    .ok_or("No connected Anda browser extension session. Install and configure the extension, then open the browser.")?
+            }
+        };
         let result = self.bridge.run_action(session, args).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: json!(result),
@@ -503,130 +543,10 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     }
 }
 
-impl ChromeBrowserApiTool {
-    pub const NAME: &'static str = "chrome_browser_api";
-
-    pub fn new(bridge: Arc<BrowserBridge>) -> Self {
-        Self { bridge }
-    }
-}
-
-impl Tool<BaseCtx> for ChromeBrowserApiTool {
-    type Args = ChromeBrowserApiArgs;
-    type Output = Response;
-
-    fn name(&self) -> String {
-        Self::NAME.to_string()
-    }
-
-    fn description(&self) -> String {
-        "Internal bridge API used by the Anda Chrome extension to register tabs, poll browser actions, and return action results."
-            .to_string()
-    }
-
-    fn definition(&self) -> FunctionDefinition {
-        FunctionDefinition {
-            name: self.name(),
-            description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "enum": ["Register", "Poll", "Complete", "GetStatus"],
-                        "description": "Bridge operation type."
-                    },
-                    "session": {
-                        "type": ["string", "null"],
-                        "description": "Chrome browser session identifier. Required for Register, Poll, and Complete."
-                    },
-                    "tab_id": {
-                        "type": ["integer", "null"],
-                        "description": "Chrome tab id associated with the session."
-                    },
-                    "url": {
-                        "type": ["string", "null"],
-                        "description": "Current tab URL."
-                    },
-                    "title": {
-                        "type": ["string", "null"],
-                        "description": "Current tab title."
-                    },
-                    "timeout_ms": {
-                        "type": ["integer", "null"],
-                        "description": "Long-poll timeout in milliseconds, capped at 30000."
-                    },
-                    "request_id": {
-                        "type": ["integer", "null"],
-                        "description": "Browser request id to complete."
-                    },
-                    "result": {
-                        "type": ["object", "null"],
-                        "description": "Browser action result for Complete."
-                    }
-                },
-                "required": ["type"],
-                "additionalProperties": false
-            }),
-            strict: Some(true),
-        }
-    }
-
-    async fn call(
-        &self,
-        _ctx: BaseCtx,
-        args: Self::Args,
-        _resources: Vec<Resource>,
-    ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let result = match args {
-            ChromeBrowserApiArgs::Register {
-                session,
-                tab_id,
-                url,
-                title,
-            } => {
-                let session = self.bridge.register(session, tab_id, url, title)?;
-                json!({ "registered": true, "session": session })
-            }
-            ChromeBrowserApiArgs::Poll {
-                session,
-                timeout_ms,
-            } => {
-                let command = self.bridge.poll(session, timeout_ms).await;
-                json!({ "command": command })
-            }
-            ChromeBrowserApiArgs::Complete {
-                session,
-                request_id,
-                result,
-            } => {
-                self.bridge.complete(session, request_id, result).await?;
-                json!({ "completed": true, "request_id": request_id })
-            }
-            ChromeBrowserApiArgs::GetStatus { session } => match session {
-                Some(session) => {
-                    let session = normalize_session(session)?;
-                    json!({ "session": self.bridge.session(&session) })
-                }
-                None => json!({ "sessions": self.bridge.sessions() }),
-            },
-        };
-
-        Ok(ToolOutput::new(Response::Ok {
-            result,
-            next_cursor: None,
-        }))
-    }
-}
-
 pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
-    meta.get_extra_as::<String>("browser_session")
-        .and_then(|session| normalize_session(session).ok())
-        .or_else(|| {
-            meta.get_extra_as::<String>("source")
-                .filter(|source| source.starts_with("chrome:"))
-                .and_then(|source| normalize_session(source).ok())
-        })
+    meta.get_extra_as::<String>("source")
+        .filter(|source| source.starts_with("browser:"))
+        .and_then(|source| normalize_session(source).ok())
 }
 
 fn normalize_session(session: String) -> Result<String, BoxError> {
@@ -655,16 +575,29 @@ fn validate_browser_action(args: &ChromeBrowserToolArgs) -> Result<(), BoxError>
         }
         BrowserAction::PressKey => require_field(&args.key, "key", "press_key"),
         BrowserAction::Navigate => require_field(&args.url, "url", "navigate"),
+        BrowserAction::SwitchTab => require_i64(&args.tab_id, "tab_id", "switch_tab"),
+        BrowserAction::CloseTab => require_i64(&args.tab_id, "tab_id", "close_tab"),
         BrowserAction::Snapshot
         | BrowserAction::ExtractText
         | BrowserAction::Scroll
         | BrowserAction::Screenshot
-        | BrowserAction::ReadSelection => Ok(()),
+        | BrowserAction::ReadSelection
+        | BrowserAction::ListTabs
+        | BrowserAction::OpenTab
+        | BrowserAction::LaunchBrowser => Ok(()),
     }
 }
 
 fn require_field(value: &Option<String>, field: &str, action: &str) -> Result<(), BoxError> {
     if value.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+        Ok(())
+    } else {
+        Err(format!("chrome_browser action {action:?} requires {field}").into())
+    }
+}
+
+fn require_i64(value: &Option<i64>, field: &str, action: &str) -> Result<(), BoxError> {
+    if value.is_some() {
         Ok(())
     } else {
         Err(format!("chrome_browser action {action:?} requires {field}").into())
@@ -681,6 +614,86 @@ fn json_null() -> Value {
     Value::Null
 }
 
+fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
+    let url = url.map(str::trim).filter(|url| !url.is_empty());
+
+    #[cfg(target_os = "macos")]
+    {
+        let browsers = ["Google Chrome", "Microsoft Edge", "Chromium"];
+        let mut last_error = None;
+        for browser in browsers {
+            let mut command = Command::new("open");
+            command.arg("-a").arg(browser);
+            if let Some(url) = url {
+                command.arg(url);
+            }
+
+            match command.status() {
+                Ok(status) if status.success() => {
+                    return Ok(json!({ "browser": browser, "url": url }));
+                }
+                Ok(status) => {
+                    last_error = Some(format!("{browser} exited with status {status}"));
+                }
+                Err(err) => {
+                    last_error = Some(format!("{browser}: {err}"));
+                }
+            }
+        }
+        return Err(format!(
+            "failed to launch a supported browser: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_string())
+        )
+        .into());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", "chrome"]);
+        if let Some(url) = url {
+            command.arg(url);
+        }
+        command
+            .status()
+            .map_err(|err| format!("failed to launch Chrome: {err}"))?;
+        return Ok(json!({ "browser": "chrome", "url": url }));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let browsers = [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium-browser",
+            "chromium",
+            "microsoft-edge",
+            "microsoft-edge-stable",
+        ];
+        let mut last_error = None;
+        for browser in browsers {
+            let mut command = Command::new(browser);
+            if let Some(url) = url {
+                command.arg(url);
+            }
+            match command.spawn() {
+                Ok(_child) => return Ok(json!({ "browser": browser, "url": url })),
+                Err(err) => last_error = Some(format!("{browser}: {err}")),
+            }
+        }
+        return Err(format!(
+            "failed to launch a supported browser: {}",
+            last_error.unwrap_or_else(|| "unknown error".to_string())
+        )
+        .into());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err("launch_browser is not supported on this operating system".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,6 +706,9 @@ mod tests {
             url: None,
             key: None,
             amount: None,
+            tab_id: None,
+            window_id: None,
+            active: None,
             include_links: None,
             include_forms: None,
             include_data_url: None,
@@ -724,50 +740,6 @@ mod tests {
 
         args.selector = Some("button[type=submit]".to_string());
         assert!(validate_browser_action(&args).is_ok());
-    }
-
-    #[tokio::test]
-    async fn bridge_polls_and_completes_browser_request() {
-        let bridge = Arc::new(BrowserBridge::new());
-        bridge
-            .register(
-                "chrome:tab:1".to_string(),
-                Some(1),
-                Some("https://example.com".to_string()),
-                Some("Example".to_string()),
-            )
-            .unwrap();
-
-        let worker_bridge = bridge.clone();
-        let action = tokio::spawn(async move {
-            worker_bridge
-                .run_action("chrome:tab:1".to_string(), snapshot_args())
-                .await
-                .unwrap()
-        });
-
-        let command = bridge
-            .poll("chrome:tab:1".to_string(), Some(1_000))
-            .await
-            .expect("browser command should be available");
-        assert_eq!(command.args.action, BrowserAction::Snapshot);
-
-        bridge
-            .complete(
-                "chrome:tab:1".to_string(),
-                command.request_id,
-                BrowserActionResult {
-                    ok: true,
-                    value: json!({ "title": "Example" }),
-                    error: None,
-                },
-            )
-            .await
-            .unwrap();
-
-        let result = action.await.unwrap();
-        assert!(result.ok);
-        assert_eq!(result.value["title"], "Example");
     }
 
     #[tokio::test]

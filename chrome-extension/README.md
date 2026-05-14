@@ -1,6 +1,6 @@
 # Anda Bot Chrome Extension
 
-This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a WebSocket RPC connection and exposes the current tab to the agent through the `chrome_browser` tool.
+This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a single WebSocket RPC connection per browser profile and exposes browser tabs to the agent through the `chrome_browser` tool.
 
 ## Setup
 
@@ -30,7 +30,7 @@ Chrome 116 or newer is required because the extension keeps its Manifest V3 serv
 
 ## Browser Actions
 
-When a request starts from this Side Panel, Anda receives request metadata with a `browser_session` and can call `chrome_browser` to inspect and operate the active tab. Supported actions include:
+When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The agent can call `chrome_browser` to inspect pages and manage tabs. Supported actions include:
 
 - `snapshot`
 - `extract_text`
@@ -41,5 +41,10 @@ When a request starts from this Side Panel, Anda receives request metadata with 
 - `navigate`
 - `screenshot`
 - `read_selection`
+- `list_tabs`
+- `switch_tab`
+- `open_tab`
+- `close_tab`
+- `launch_browser`
 
-Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.
+Most page actions accept `tab_id` to target a specific tab returned by `list_tabs`. Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.

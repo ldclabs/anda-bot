@@ -3,6 +3,10 @@ export interface SettingsState {
 	token: string
 }
 
+interface StorageState extends Partial<SettingsState> {
+	browserSessionId?: string
+}
+
 export interface ChromeTabInfo {
 	id?: number
 	windowId?: number
@@ -10,14 +14,48 @@ export interface ChromeTabInfo {
 	url?: string
 }
 
-export type MessageRole = 'user' | 'assistant' | 'system'
+export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
+
+export interface AttachmentSummary {
+	id: string
+	name: string
+	type?: string
+	size?: number
+}
+
+export interface ResourceInput {
+	_id?: number
+	tags: string[]
+	name: string
+	description?: string
+	uri?: string
+	mime_type?: string
+	blob?: string
+	size?: number
+	metadata?: Record<string, unknown>
+}
+
+export interface ChatAttachment extends AttachmentSummary {
+	resource: ResourceInput
+}
 
 export interface ChatMessage {
 	id: string
 	role: MessageRole
 	text: string
 	timestamp?: string | number | null
+	conversationId?: string
 	local?: boolean
+	attachments?: AttachmentSummary[]
+}
+
+export interface ConversationGroup {
+	id: string
+	status?: string
+	createdAt?: number | null
+	updatedAt?: number | null
+	current?: boolean
+	messages: ChatMessage[]
 }
 
 export interface ClientSnapshot {
@@ -25,9 +63,13 @@ export interface ClientSnapshot {
 	tab: ChromeTabInfo | null
 	session: string | null
 	conversationId: string | null
+	conversationGroups: ConversationGroup[]
 	messages: ChatMessage[]
 	sending: boolean
 	status: string
+	loadingPrevious: boolean
+	hasPreviousConversations: boolean
+	syncing: boolean
 }
 
 interface ChromeEvent<Listener extends (...args: never[]) => void> {
@@ -44,10 +86,13 @@ interface ChromeApi {
 	runtime: {
 		sendMessage<Result>(message: ExtensionMessage): Promise<ExtensionResponse<Result>>
 	}
+	extension?: {
+		inIncognitoContext?: boolean
+	}
 	storage: {
 		local: {
-			get(keys: string[]): Promise<Partial<SettingsState>>
-			set(items: SettingsState): Promise<void>
+			get(keys: string[]): Promise<StorageState>
+			set(items: StorageState): Promise<void>
 		}
 	}
 	tabs: {
@@ -60,7 +105,7 @@ interface ChromeApi {
 }
 
 interface AgentRunOutput {
-	conversation?: string
+	conversation?: string | number | null
 	content?: string
 	failed_reason?: string
 }
@@ -68,26 +113,56 @@ interface AgentRunOutput {
 interface RawConversationMessage {
 	role?: string
 	content?: unknown
+	name?: string | null
 	timestamp?: string | number | null
+	resources?: ResourceInput[]
+}
+
+interface RawConversation {
+	_id?: string | number
+	messages?: RawConversationMessage[]
+	artifacts?: unknown[]
+	child?: string | number | null
+	status?: string
+	failed_reason?: string | null
+	created_at?: number | null
+	updated_at?: number | null
 }
 
 interface ConversationDelta {
 	messages?: RawConversationMessage[]
 	artifacts?: unknown[]
-	child?: string
+	child?: string | number | null
 	status?: string
+	failed_reason?: string | null
+	updated_at?: number | null
+}
+
+interface SourceState {
+	c?: string | number | null
+	conv_id?: string | number | null
+}
+
+interface KipOutput<Result> {
+	result?: Result
+	next_cursor?: string | null
+	error?: unknown
+	Err?: unknown
 }
 
 interface ToolOutput<Result> {
-	output?: {
-		result?: Result
-		error?: unknown
-		Err?: unknown
-	}
+	output?: KipOutput<Result>
 }
 
 interface RequestMeta {
 	extra: Record<string, unknown>
+}
+
+interface AgentRunInput {
+	name: string
+	prompt: string
+	resources?: ResourceInput[]
+	meta: RequestMeta
 }
 
 interface ExtensionMessage {
@@ -108,6 +183,11 @@ const defaultSettings: SettingsState = {
 	token: ''
 }
 
+const browserSessionStorageKey = 'browserSessionId'
+const pollingIntervalMs = 2000
+const previousConversationPageSize = 8
+const localConversationId = 'local-draft'
+
 export class AndaSidePanelClient {
 	private chrome: ChromeApi | null = null
 	private destroyed = false
@@ -120,20 +200,25 @@ export class AndaSidePanelClient {
 		tab: ChromeTabInfo
 	) => void
 
-	private state: Omit<ClientSnapshot, 'messages'> & {
+	private state: Omit<ClientSnapshot, 'messages' | 'conversationGroups'> & {
 		messageOffset: number
 		artifactOffset: number
-		messages: ChatMessage[]
+		conversationGroups: ConversationGroup[]
+		previousCursor?: string | null
 	} = {
 		settings: { ...defaultSettings },
 		tab: null,
 		session: null,
 		conversationId: null,
+		conversationGroups: [],
 		messageOffset: 0,
 		artifactOffset: 0,
-		messages: [],
+		previousCursor: undefined,
 		sending: false,
-		status: 'starting'
+		status: 'starting',
+		loadingPrevious: false,
+		hasPreviousConversations: false,
+		syncing: false
 	}
 
 	constructor(private readonly onSnapshot: SnapshotListener) {}
@@ -141,10 +226,19 @@ export class AndaSidePanelClient {
 	async init(): Promise<void> {
 		this.chrome = getChromeApi()
 		await this.loadSettings()
+		this.state.session = await browserSession(this.chrome)
+		this.emit()
 		this.bindChromeEvents()
 		await this.refreshActiveTab()
 		this.updateStatus('ready')
 		void this.syncServiceWorker().catch(() => undefined)
+		if (this.state.settings.token) {
+			await this.restoreSourceConversation().catch((error) => {
+				this.appendSystemMessage(errorToMessage(error))
+				this.updateStatus('restore failed')
+			})
+			this.startConversationPolling()
+		}
 	}
 
 	destroy(): void {
@@ -158,14 +252,25 @@ export class AndaSidePanelClient {
 	}
 
 	getSnapshot(): ClientSnapshot {
+		const conversationGroups = this.state.conversationGroups.map((group) => ({
+			...group,
+			messages: group.messages.map((message) => ({
+				...message,
+				attachments: message.attachments?.map((attachment) => ({ ...attachment }))
+			}))
+		}))
 		return {
 			settings: { ...this.state.settings },
 			tab: this.state.tab ? { ...this.state.tab } : null,
 			session: this.state.session,
 			conversationId: this.state.conversationId,
-			messages: this.state.messages.map((message) => ({ ...message })),
+			conversationGroups,
+			messages: flattenMessages(conversationGroups),
 			sending: this.state.sending,
-			status: this.state.status
+			status: this.state.status,
+			loadingPrevious: this.state.loadingPrevious,
+			hasPreviousConversations: this.state.hasPreviousConversations,
+			syncing: this.state.syncing
 		}
 	}
 
@@ -177,7 +282,12 @@ export class AndaSidePanelClient {
 		if (!options.quiet) {
 			this.appendSystemMessage('Settings saved.')
 		}
-		void this.syncServiceWorker().catch(() => undefined)
+		await this.syncServiceWorker().catch(() => undefined)
+		if (this.state.settings.token) {
+			void this.restoreSourceConversation()
+				.then(() => this.startConversationPolling())
+				.catch((error) => this.appendSystemMessage(errorToMessage(error)))
+		}
 	}
 
 	async testConnection(settings: SettingsState): Promise<void> {
@@ -193,9 +303,9 @@ export class AndaSidePanelClient {
 		}
 	}
 
-	async sendPrompt(text: string): Promise<void> {
+	async sendPrompt(text: string, attachments: ChatAttachment[] = []): Promise<void> {
 		const prompt = text.trim()
-		if (!prompt || this.state.sending) {
+		if ((!prompt && attachments.length === 0) || this.state.sending) {
 			return
 		}
 		if (!this.state.settings.token) {
@@ -204,23 +314,35 @@ export class AndaSidePanelClient {
 		}
 
 		await this.refreshActiveTab()
+		const resources = attachments.map((attachment) => attachment.resource)
+		const effectivePrompt = prompt || 'Please review the attached files.'
 		this.state.sending = true
 		this.emit()
-		this.appendMessage({ role: 'user', text: prompt, local: true })
+		this.appendMessage(
+			{
+				role: 'user',
+				text: effectivePrompt,
+				local: true,
+				attachments: attachments.map(({ resource: _resource, ...attachment }) => attachment)
+			},
+			this.state.conversationId || localConversationId
+		)
 		this.updateStatus('sending')
 
 		try {
 			const meta = await this.requestMeta()
-			const output = await this.agentRun({ name: '', prompt, meta })
-			if (output.conversation) {
-				if (this.state.conversationId !== output.conversation) {
+			const output = await this.agentRun({ name: '', prompt: effectivePrompt, resources, meta })
+			const outputConversationId = normalizeId(output.conversation)
+			if (outputConversationId) {
+				this.promoteLocalConversation(outputConversationId)
+				if (this.state.conversationId !== outputConversationId) {
 					this.state.messageOffset = 0
 					this.state.artifactOffset = 0
 				}
-				this.state.conversationId = output.conversation
+				this.state.conversationId = outputConversationId
 			}
 			if (output.content && output.content.trim()) {
-				this.appendMessage({ role: 'assistant', text: output.content })
+				this.appendMessage({ role: 'assistant', text: output.content }, this.state.conversationId)
 			}
 			if (output.failed_reason) {
 				this.appendSystemMessage(output.failed_reason)
@@ -235,6 +357,83 @@ export class AndaSidePanelClient {
 		}
 	}
 
+	async restoreSourceConversation(): Promise<boolean> {
+		if (!this.state.settings.token) {
+			return false
+		}
+
+		this.state.syncing = true
+		this.emit()
+		try {
+			const meta = await this.requestMeta()
+			const toolOutput = await this.toolCall<SourceState>(
+				'conversations_api',
+				{ type: 'GetSourceState' },
+				meta
+			)
+			const state = kipResult(toolOutput)
+			const sourceConversationId = sourceStateConversationId(state)
+			if (!sourceConversationId) {
+				this.state.hasPreviousConversations = true
+				return false
+			}
+
+			const conversations = await this.fetchConversationChain(sourceConversationId)
+			if (conversations.length === 0) {
+				this.state.hasPreviousConversations = true
+				return false
+			}
+
+			this.replaceCurrentConversationChain(conversations)
+			this.state.hasPreviousConversations = true
+			this.updateStatus(
+				lastDefined(conversations.map((conversation) => conversation.status)) || 'idle'
+			)
+			return true
+		} finally {
+			this.state.syncing = false
+			this.emit()
+		}
+	}
+
+	async loadPreviousConversations(): Promise<boolean> {
+		if (
+			!this.state.settings.token ||
+			this.state.loadingPrevious ||
+			this.state.hasPreviousConversations === false
+		) {
+			return false
+		}
+
+		this.state.loadingPrevious = true
+		this.emit()
+		try {
+			const meta = await this.requestMeta()
+			const toolOutput = await this.toolCall<RawConversation[]>(
+				'conversations_api',
+				{
+					type: 'ListPrevConversations',
+					cursor: this.state.previousCursor ?? null,
+					limit: previousConversationPageSize
+				},
+				meta
+			)
+			const { result: conversations, nextCursor } = kipResultWithCursor(toolOutput)
+			const groups = conversations.map(conversationToGroup).filter((group) => group.messages.length)
+			const insertedCount = this.prependConversationGroups(groups)
+			this.state.previousCursor = nextCursor ?? null
+			this.state.hasPreviousConversations = Boolean(nextCursor)
+			return insertedCount > 0
+		} catch (error) {
+			this.appendSystemMessage(errorToMessage(error))
+			this.updateStatus('history failed')
+			return false
+		} finally {
+			this.state.loadingPrevious = false
+			this.emit()
+		}
+	}
+
 	private bindChromeEvents(): void {
 		const chrome = this.requireChrome()
 		this.tabActivatedListener = () => {
@@ -243,7 +442,6 @@ export class AndaSidePanelClient {
 		this.tabUpdatedListener = (tabId, changeInfo, tab) => {
 			if (this.state.tab && tabId === this.state.tab.id && (changeInfo.title || changeInfo.url)) {
 				this.state.tab = { ...this.state.tab, ...tab }
-				this.state.session = sessionForTab(this.state.tab)
 				this.emit()
 				void this.registerBrowserSession().catch(() => undefined)
 			}
@@ -265,18 +463,17 @@ export class AndaSidePanelClient {
 	private async refreshActiveTab(): Promise<void> {
 		const chrome = this.requireChrome()
 		const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+		if (!this.state.session) {
+			this.state.session = await browserSession(chrome)
+		}
 		this.state.tab = tab || null
-		this.state.session = tab ? sessionForTab(tab) : null
 		this.emit()
 		await this.registerBrowserSession().catch(() => undefined)
 	}
 
-	private async agentRun(input: {
-		name: string
-		prompt: string
-		meta: RequestMeta
-	}): Promise<AgentRunOutput> {
-		return this.rpc<AgentRunOutput>('agent_run', [input])
+	private async agentRun(input: AgentRunInput): Promise<AgentRunOutput> {
+		const payload = input.resources?.length ? input : { ...input, resources: undefined }
+		return this.rpc<AgentRunOutput>('agent_run', [payload])
 	}
 
 	private async toolCall<Result>(
@@ -319,7 +516,7 @@ export class AndaSidePanelClient {
 	}
 
 	private startConversationPolling(): void {
-		if (this.pollingConversation) {
+		if (this.pollingConversation || !this.state.conversationId) {
 			return
 		}
 		this.pollingConversation = true
@@ -334,7 +531,7 @@ export class AndaSidePanelClient {
 			if (!keepPolling) {
 				return
 			}
-			await delay(2000)
+			await delay(pollingIntervalMs)
 		}
 	}
 
@@ -344,13 +541,14 @@ export class AndaSidePanelClient {
 		}
 
 		try {
+			const conversationId = this.state.conversationId
 			const meta = await this.requestMeta()
-			meta.extra.conversation = this.state.conversationId
+			meta.extra.conversation = numericConversationId(conversationId)
 			const toolOutput = await this.toolCall<ConversationDelta>(
 				'conversations_api',
 				{
 					type: 'GetConversationDelta',
-					_id: this.state.conversationId,
+					_id: numericConversationId(conversationId),
 					messages_offset: this.state.messageOffset,
 					artifacts_offset: this.state.artifactOffset
 				},
@@ -358,13 +556,22 @@ export class AndaSidePanelClient {
 			)
 			const delta = kipResult(toolOutput)
 			const rawMessages = delta.messages || []
-			const incoming = rawMessages.map(normalizeMessage).filter(isChatMessageInput)
-			this.mergeIncomingMessages(incoming)
+			const incoming = rawMessages
+				.map((message, index) =>
+					normalizeMessage(message, {
+						conversationId,
+						index: this.state.messageOffset + index,
+						fallbackTimestamp: delta.updated_at
+					})
+				)
+				.filter(isChatMessageInput)
+			this.mergeIncomingMessages(conversationId, incoming, delta.status, delta.updated_at)
 			this.state.messageOffset += rawMessages.length
 			this.state.artifactOffset += (delta.artifacts || []).length
 
-			if (delta.child && delta.child !== this.state.conversationId) {
-				this.state.conversationId = delta.child
+			const childId = normalizeId(delta.child)
+			if (childId && childId !== this.state.conversationId) {
+				this.state.conversationId = childId
 				this.state.messageOffset = 0
 				this.state.artifactOffset = 0
 				this.emit()
@@ -381,11 +588,20 @@ export class AndaSidePanelClient {
 	}
 
 	private async registerBrowserSession(): Promise<void> {
-		if (!this.state.settings.token || !this.state.tab?.id || !this.state.session) {
+		const chrome = this.requireChrome()
+		if (!this.state.session) {
+			this.state.session = await browserSession(chrome)
+			this.emit()
+		}
+		if (!this.state.settings.token) {
 			return
 		}
 
-		await this.serviceWorkerMessage('anda_register')
+		const response = await this.serviceWorkerMessage<{ session?: string }>('anda_register')
+		if (response.result?.session && response.result.session !== this.state.session) {
+			this.state.session = response.result.session
+			this.emit()
+		}
 	}
 
 	private async requestMeta(): Promise<RequestMeta> {
@@ -393,48 +609,166 @@ export class AndaSidePanelClient {
 			await this.refreshActiveTab()
 		}
 
-		const session =
-			this.state.session || (this.state.tab ? sessionForTab(this.state.tab) : 'chrome:unknown')
+		const chrome = this.requireChrome()
+		const session = this.state.session || (await browserSession(chrome))
+		this.state.session = session
 		const extra: Record<string, unknown> = {
 			source: session,
-			browser_session: session,
 			browser_client: 'chrome_extension'
 		}
 
-		if (this.state.conversationId) {
-			extra.conversation = this.state.conversationId
+		if (this.state.conversationId && numericConversationId(this.state.conversationId) > 0) {
+			extra.conversation = numericConversationId(this.state.conversationId)
 		}
 		if (this.state.tab) {
-			extra.chrome_tab_id = this.state.tab.id
-			extra.chrome_window_id = this.state.tab.windowId
-			extra.tab_url = this.state.tab.url || ''
-			extra.tab_title = this.state.tab.title || ''
+			extra.tab = this.state.tab
 		}
 
 		return { extra }
 	}
 
-	private mergeIncomingMessages(incoming: Array<Omit<ChatMessage, 'id'>>): void {
-		if (!incoming.length) {
+	private async fetchConversation(conversationId: string): Promise<RawConversation> {
+		const meta = await this.requestMeta()
+		meta.extra.conversation = numericConversationId(conversationId)
+		const toolOutput = await this.toolCall<RawConversation>(
+			'conversations_api',
+			{ type: 'GetConversation', _id: numericConversationId(conversationId) },
+			meta
+		)
+		return kipResult(toolOutput)
+	}
+
+	private async fetchConversationChain(conversationId: string): Promise<RawConversation[]> {
+		const conversations: RawConversation[] = []
+		const seen = new Set<string>()
+		let nextId: string | null = conversationId
+
+		while (nextId && conversations.length < 64) {
+			if (seen.has(nextId)) {
+				break
+			}
+			seen.add(nextId)
+			const conversation = await this.fetchConversation(nextId)
+			conversations.push(conversation)
+			nextId = normalizeId(conversation.child)
+		}
+
+		return conversations
+	}
+
+	private replaceCurrentConversationChain(conversations: RawConversation[]): void {
+		const groups = conversations.map(conversationToGroup).filter((group) => group.messages.length)
+		const currentIds = new Set(groups.map((group) => group.id))
+		const preservedGroups = this.state.conversationGroups.filter((group) => !group.current)
+		const mergedPreserved = preservedGroups.filter((group) => !currentIds.has(group.id))
+		const currentGroups = groups.map((group, index) => ({
+			...group,
+			current: index === groups.length - 1
+		}))
+		this.state.conversationGroups = [...mergedPreserved, ...currentGroups]
+
+		const latestConversation = conversations[conversations.length - 1]
+		const latestGroup = currentGroups[currentGroups.length - 1]
+		this.state.conversationId = latestGroup?.id || normalizeId(latestConversation?._id)
+		this.state.messageOffset =
+			latestConversation?.messages?.length || latestGroup?.messages.length || 0
+		this.state.artifactOffset = latestConversation?.artifacts?.length || 0
+		this.emit()
+	}
+
+	private prependConversationGroups(groups: ConversationGroup[]): number {
+		if (!groups.length) {
+			return 0
+		}
+		const existingIds = new Set(this.state.conversationGroups.map((group) => group.id))
+		const uniqueGroups = groups.filter((group) => !existingIds.has(group.id))
+		if (!uniqueGroups.length) {
+			return 0
+		}
+		const ordered = uniqueGroups.sort(compareConversationGroups)
+		this.state.conversationGroups = [...ordered, ...this.state.conversationGroups]
+		this.emit()
+		return uniqueGroups.length
+	}
+
+	private mergeIncomingMessages(
+		conversationId: string,
+		incoming: ChatMessage[],
+		status?: string,
+		updatedAt?: number | null
+	): void {
+		if (!incoming.length && !status) {
 			return
 		}
-		const overlap = displayedSuffixPrefixOverlap(this.state.messages, incoming)
-		for (const message of incoming.slice(overlap)) {
-			this.appendMessage(message)
+		const group = this.ensureConversationGroup(conversationId)
+		if (status) {
+			group.status = status
 		}
+		if (updatedAt) {
+			group.updatedAt = updatedAt
+		}
+		const overlap = displayedSuffixPrefixOverlap(group.messages, incoming)
+		for (const message of incoming.slice(overlap)) {
+			group.messages = [...group.messages, message]
+		}
+		this.emit()
 	}
 
 	private appendSystemMessage(text: string): void {
-		this.appendMessage({ role: 'system', text })
+		this.appendMessage({ role: 'system', text }, this.state.conversationId || localConversationId)
 	}
 
-	private appendMessage(message: Omit<ChatMessage, 'id'>): void {
+	private appendMessage(message: Omit<ChatMessage, 'id'>, conversationId?: string | null): void {
+		const group = this.ensureConversationGroup(conversationId || localConversationId)
 		this.messageCounter += 1
-		this.state.messages = [
-			...this.state.messages,
-			{ ...message, id: `${Date.now()}-${this.messageCounter}` }
+		group.messages = [
+			...group.messages,
+			{
+				...message,
+				conversationId: group.id,
+				id: `${group.id}-local-${Date.now()}-${this.messageCounter}`,
+				timestamp: message.timestamp ?? Date.now()
+			}
 		]
 		this.emit()
+	}
+
+	private ensureConversationGroup(conversationId: string): ConversationGroup {
+		const existing = this.state.conversationGroups.find((group) => group.id === conversationId)
+		if (existing) {
+			return existing
+		}
+		const group: ConversationGroup = {
+			id: conversationId,
+			status: conversationId === localConversationId ? 'local' : undefined,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			current: conversationId !== localConversationId,
+			messages: []
+		}
+		this.state.conversationGroups = [...this.state.conversationGroups, group]
+		return group
+	}
+
+	private promoteLocalConversation(conversationId: string): void {
+		const localGroup = this.state.conversationGroups.find(
+			(group) => group.id === localConversationId
+		)
+		if (!localGroup) {
+			return
+		}
+		const existing = this.state.conversationGroups.find((group) => group.id === conversationId)
+		if (existing) {
+			existing.messages = [...existing.messages, ...localGroup.messages]
+			this.state.conversationGroups = this.state.conversationGroups.filter(
+				(group) => group.id !== localConversationId
+			)
+			return
+		}
+		localGroup.id = conversationId
+		localGroup.current = true
+		localGroup.status = 'submitted'
+		localGroup.messages = localGroup.messages.map((message) => ({ ...message, conversationId }))
 	}
 
 	private updateStatus(status: string): void {
@@ -464,8 +798,46 @@ function getChromeApi(): ChromeApi {
 	return chromeApi
 }
 
-function normalizeMessage(raw: RawConversationMessage): Omit<ChatMessage, 'id'> | null {
-	if (!raw || (raw.role !== 'user' && raw.role !== 'assistant' && raw.role !== 'system')) {
+function conversationToGroup(conversation: RawConversation): ConversationGroup {
+	const conversationId = normalizeId(conversation._id) || localConversationId
+	const messages = (conversation.messages || [])
+		.map((message, index) =>
+			normalizeMessage(message, {
+				conversationId,
+				index,
+				fallbackTimestamp: conversation.updated_at
+			})
+		)
+		.filter(isChatMessageInput)
+
+	if (conversation.status === 'failed' && conversation.failed_reason) {
+		messages.push({
+			id: `${conversationId}-failed`,
+			conversationId,
+			role: 'system',
+			text: `An error occurred:\n\n\`\`\`\n${conversation.failed_reason}\n\`\`\``,
+			timestamp: conversation.updated_at || Date.now()
+		})
+	}
+
+	return {
+		id: conversationId,
+		status: conversation.status,
+		createdAt: conversation.created_at ?? null,
+		updatedAt: conversation.updated_at ?? null,
+		current: false,
+		messages
+	}
+}
+
+function normalizeMessage(
+	raw: RawConversationMessage,
+	context: { conversationId: string; index: number; fallbackTimestamp?: string | number | null }
+): ChatMessage | null {
+	if (!raw || !isMessageRole(raw.role)) {
+		return null
+	}
+	if (raw.name?.startsWith('$')) {
 		return null
 	}
 	const text = contentToText(raw.content).trim()
@@ -473,9 +845,12 @@ function normalizeMessage(raw: RawConversationMessage): Omit<ChatMessage, 'id'> 
 		return null
 	}
 	return {
+		id: `${context.conversationId}-${context.index}`,
+		conversationId: context.conversationId,
 		role: raw.role,
 		text,
-		timestamp: raw.timestamp || null
+		timestamp: raw.timestamp || context.fallbackTimestamp || null,
+		attachments: raw.resources?.map(resourceToAttachmentSummary)
 	}
 }
 
@@ -491,8 +866,17 @@ function contentToText(content: unknown): string {
 			if (typeof part === 'string') {
 				return part
 			}
-			if (isContentPart(part) && (part.type === 'Text' || part.type === 'Reasoning')) {
-				return part.text || ''
+			if (!isContentPart(part)) {
+				return ''
+			}
+			if ((part.type === 'Text' || part.type === 'Reasoning') && typeof part.text === 'string') {
+				return part.text
+			}
+			if (part.type === 'ToolOutput') {
+				return fencedJson(part.output)
+			}
+			if (part.type === 'ToolCall') {
+				return fencedJson({ name: part.name, args: part.args })
 			}
 			return ''
 		})
@@ -500,20 +884,39 @@ function contentToText(content: unknown): string {
 		.join('\n\n')
 }
 
-function isContentPart(value: unknown): value is { type?: string; text?: string } {
+function isContentPart(value: unknown): value is Record<string, unknown> & { type?: string } {
 	return Boolean(value && typeof value === 'object')
 }
 
-function isChatMessageInput(
-	value: Omit<ChatMessage, 'id'> | null
-): value is Omit<ChatMessage, 'id'> {
+function fencedJson(value: unknown): string {
+	if (value === undefined || value === null) {
+		return ''
+	}
+	if (typeof value === 'string') {
+		return value
+	}
+	return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``
+}
+
+function isMessageRole(role: unknown): role is MessageRole {
+	return role === 'user' || role === 'assistant' || role === 'system' || role === 'tool'
+}
+
+function isChatMessageInput(value: ChatMessage | null): value is ChatMessage {
 	return Boolean(value)
 }
 
 function kipResult<Result>(toolOutput: ToolOutput<Result>): Result {
+	return kipResultWithCursor(toolOutput).result
+}
+
+function kipResultWithCursor<Result>(toolOutput: ToolOutput<Result>): {
+	result: Result
+	nextCursor?: string | null
+} {
 	const output = toolOutput && toolOutput.output
 	if (output && Object.prototype.hasOwnProperty.call(output, 'result')) {
-		return output.result as Result
+		return { result: output.result as Result, nextCursor: output.next_cursor }
 	}
 	if (output && (Object.prototype.hasOwnProperty.call(output, 'error') || output.Err)) {
 		throw new Error(JSON.stringify(output.error || output.Err))
@@ -521,10 +924,7 @@ function kipResult<Result>(toolOutput: ToolOutput<Result>): Result {
 	throw new Error('tool returned an unknown RPC response')
 }
 
-function displayedSuffixPrefixOverlap(
-	displayed: ChatMessage[],
-	incoming: Array<Omit<ChatMessage, 'id'>>
-): number {
+function displayedSuffixPrefixOverlap(displayed: ChatMessage[], incoming: ChatMessage[]): number {
 	const maxLength = Math.min(displayed.length, incoming.length)
 	for (let length = maxLength; length > 0; length -= 1) {
 		const displayedSuffix = displayed.slice(displayed.length - length)
@@ -538,12 +938,84 @@ function displayedSuffixPrefixOverlap(
 	return 0
 }
 
-function sameDisplayMessage(left: ChatMessage, right: Omit<ChatMessage, 'id'>): boolean {
-	return left.role === right.role && left.text === right.text
+function sameDisplayMessage(left: ChatMessage, right: ChatMessage | undefined): boolean {
+	return Boolean(right && left.role === right.role && left.text === right.text)
 }
 
-function sessionForTab(tab: ChromeTabInfo): string {
-	return `chrome:${tab.windowId || 'window'}:${tab.id || 'tab'}`
+function flattenMessages(conversationGroups: ConversationGroup[]): ChatMessage[] {
+	return conversationGroups.flatMap((group) => group.messages)
+}
+
+function compareConversationGroups(left: ConversationGroup, right: ConversationGroup): number {
+	return groupTime(left) - groupTime(right)
+}
+
+function groupTime(group: ConversationGroup): number {
+	return group.createdAt || group.updatedAt || firstMessageTime(group.messages) || 0
+}
+
+function firstMessageTime(messages: ChatMessage[]): number {
+	for (const message of messages) {
+		const time = Number(message.timestamp || 0)
+		if (Number.isFinite(time) && time > 0) {
+			return time
+		}
+	}
+	return 0
+}
+
+function resourceToAttachmentSummary(resource: ResourceInput): AttachmentSummary {
+	return {
+		id: `${resource.name}-${resource.size || 0}`,
+		name: resource.name,
+		type: resource.mime_type,
+		size: resource.size
+	}
+}
+
+function sourceStateConversationId(state: SourceState): string | null {
+	return normalizeId(state.c ?? state.conv_id)
+}
+
+function normalizeId(value: unknown): string | null {
+	if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+		return String(value)
+	}
+	if (typeof value === 'string' && value.trim() && value !== '0') {
+		return value.trim()
+	}
+	return null
+}
+
+function numericConversationId(conversationId: string): number {
+	const numeric = Number(conversationId)
+	if (Number.isFinite(numeric) && numeric > 0) {
+		return numeric
+	}
+	return 0
+}
+
+function lastDefined(values: Array<string | undefined>): string | undefined {
+	for (let index = values.length - 1; index >= 0; index -= 1) {
+		if (values[index]) {
+			return values[index]
+		}
+	}
+	return undefined
+}
+
+async function browserSession(chrome: ChromeApi): Promise<string> {
+	const saved = await chrome.storage.local.get([browserSessionStorageKey])
+	let id = saved.browserSessionId || '0'
+	if (parseInt(id, 10) < 1000) {
+		id = Date.now().toString()
+		await chrome.storage.local.set({ browserSessionId: id })
+	}
+	return `browser:${browserSessionScope(chrome)}:${id}`
+}
+
+function browserSessionScope(chrome: ChromeApi): string {
+	return chrome.extension?.inIncognitoContext ? 'incognito' : 'chrome'
 }
 
 function normalizeSettings(settings: SettingsState): SettingsState {

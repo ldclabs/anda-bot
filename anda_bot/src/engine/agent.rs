@@ -39,7 +39,7 @@ use std::{
 
 use super::{
     CompletionHook,
-    browser::{ChromeBrowserApiTool, ChromeBrowserTool},
+    browser::ChromeBrowserTool,
     conversation::{ConversationsTool, RequestState, SourceState},
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
     prompt::{PromptCommand, skill_subagent},
@@ -105,7 +105,7 @@ async fn available_tool_names(ctx: &AgentCtx) -> Vec<String> {
         .await
         .into_iter()
         .filter_map(|def| {
-            if def.name == AndaBot::NAME || def.name == ChromeBrowserApiTool::NAME {
+            if def.name == AndaBot::NAME {
                 None
             } else {
                 Some(def.name)
@@ -128,6 +128,7 @@ struct AndaBotInner {
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     home_dir: PathBuf,
     skills_manager: Arc<SkillManager>,
+    browser_manager: Arc<ChromeBrowserTool>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
     active_im_channels: HashSet<String>,
 }
@@ -213,11 +214,10 @@ fn base_tools() -> Vec<String> {
         NoteTool::NAME.to_string(),
         GoalTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
-        ShellTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
+        ShellTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
-        ChromeBrowserTool::NAME.to_string(),
     ]
 }
 
@@ -231,6 +231,7 @@ impl AndaBot {
         conversations: Arc<ConversationsTool>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         skills_manager: Arc<SkillManager>,
+        browser_manager: Arc<ChromeBrowserTool>,
         tts_manager: Option<Arc<TtsManager>>,
         transcription_manager: Option<Arc<TranscriptionManager>>,
         active_im_channels: Vec<String>,
@@ -257,6 +258,7 @@ impl AndaBot {
                 sessions: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 skills_manager,
+                browser_manager,
                 transcription_manager,
                 active_im_channels: active_im_channels.into_iter().collect(),
             }),
@@ -642,6 +644,9 @@ impl AndaBot {
             )
             .await?;
         let mut tools = self.inner.tools.clone();
+        if self.inner.browser_manager.is_active() {
+            tools.push(ChromeBrowserTool::NAME.to_string());
+        }
         let additional_tools = self
             .inner
             .conversations

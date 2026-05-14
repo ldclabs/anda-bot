@@ -1,8 +1,8 @@
-import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vite'
-import type { PluginOption } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+import type { PluginOption } from 'vite'
+import { defineConfig } from 'vite'
 
 const plugins: PluginOption[] = [tailwindcss() as PluginOption, svelte() as PluginOption]
 
@@ -11,6 +11,7 @@ export default defineConfig({
 	plugins,
 	build: {
 		outDir: 'dist',
+		chunkSizeWarningLimit: 1000,
 		rollupOptions: {
 			input: {
 				index: path.resolve('index.html'),

@@ -162,7 +162,7 @@ You can keep me in the terminal, open me from Chrome, or connect me to chat chan
 
 ### Chrome Side Panel
 
-The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect and operate the current tab through the `chrome_browser` tool.
+The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through the `chrome_browser` tool while keeping one stable browser session as you switch tabs.
 
 Generate a local bearer token for the extension:
 

@@ -3,9 +3,18 @@ type SettingsState = {
 	token: string
 }
 
+type StorageState = Partial<SettingsState> & {
+	browserSessionId?: string
+}
+
 type ChromeTabInfo = {
 	id?: number
 	windowId?: number
+	index?: number
+	active?: boolean
+	highlighted?: boolean
+	pinned?: boolean
+	status?: string
 	title?: string
 	url?: string
 }
@@ -17,6 +26,9 @@ type BrowserActionArgs = {
 	text?: string
 	key?: string
 	amount?: number
+	tab_id?: number
+	window_id?: number
+	active?: boolean
 	include_links?: boolean
 	include_forms?: boolean
 	include_data_url?: boolean
@@ -74,6 +86,9 @@ interface ChromeApi {
 			): void
 		}
 	}
+	extension?: {
+		inIncognitoContext?: boolean
+	}
 	action: {
 		onClicked: ChromeEvent<(tab: ChromeTabInfo) => void>
 	}
@@ -83,13 +98,25 @@ interface ChromeApi {
 	}
 	storage: {
 		local: {
-			get(keys: string[]): Promise<Partial<SettingsState>>
-			set(items: SettingsState): Promise<void>
+			get(keys: string[]): Promise<StorageState>
+			set(items: StorageState): Promise<void>
 		}
 	}
 	tabs: {
-		query(queryInfo: { active: boolean; lastFocusedWindow: boolean }): Promise<ChromeTabInfo[]>
+		query(queryInfo: {
+			active?: boolean
+			lastFocusedWindow?: boolean
+			currentWindow?: boolean
+			windowId?: number
+		}): Promise<ChromeTabInfo[]>
 		get(tabId: number): Promise<ChromeTabInfo>
+		create(createProperties: {
+			url?: string
+			active?: boolean
+			windowId?: number
+			index?: number
+		}): Promise<ChromeTabInfo>
+		remove(tabIds: number | number[]): Promise<void>
 		update(
 			tabId: number,
 			updateProperties: { url?: string; active?: boolean }
@@ -99,6 +126,9 @@ interface ChromeApi {
 		onUpdated: ChromeEvent<
 			(tabId: number, changeInfo: { title?: string; url?: string }, tab: ChromeTabInfo) => void
 		>
+	}
+	windows?: {
+		update(windowId: number, updateInfo: { focused?: boolean }): Promise<unknown>
 	}
 	scripting: {
 		executeScript<Result>(details: {
@@ -117,6 +147,7 @@ const defaultSettings: SettingsState = {
 const keepAliveIntervalMs = 20_000
 const reconnectDelayMs = 3_000
 const rpcTimeoutMs = 30 * 60 * 1000
+const browserSessionStorageKey = 'browserSessionId'
 
 const chromeApi = getChromeApi()
 let currentSettings: SettingsState = { ...defaultSettings }
@@ -146,12 +177,12 @@ chromeApi.action.onClicked.addListener((tab) => {
 })
 
 chromeApi.tabs.onActivated.addListener(() => {
-	void registerActiveTab().catch(() => undefined)
+	void registerBrowserSession().catch(() => undefined)
 })
 
 chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo) => {
 	if (changeInfo.title || changeInfo.url) {
-		void registerActiveTab().catch(() => undefined)
+		void registerBrowserSession().catch(() => undefined)
 	}
 })
 
@@ -183,7 +214,7 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
 			await chromeApi.storage.local.set(currentSettings)
 			if (currentSettings.token) {
 				await ensureSocket(currentSettings)
-				await registerActiveTab(currentSettings)
+				await registerBrowserSession(currentSettings)
 			} else {
 				closeSocket('missing bearer token')
 				status = 'ready'
@@ -191,8 +222,8 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
 			return { ok: true, status }
 		}
 		case 'anda_register': {
-			await registerActiveTab(currentSettings)
-			return { ok: true, status }
+			const session = await registerBrowserSession(currentSettings)
+			return { ok: true, result: { session }, status }
 		}
 		case 'anda_status': {
 			return { ok: true, result: { status }, status }
@@ -211,7 +242,7 @@ async function loadSettingsAndConnect(): Promise<void> {
 
 	try {
 		await ensureSocket(currentSettings)
-		await registerActiveTab(currentSettings)
+		await registerBrowserSession(currentSettings)
 	} catch (_error) {
 		scheduleReconnect(currentSettings)
 	}
@@ -317,6 +348,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
 			status = 'connected'
 			startKeepAlive()
 			resolve()
+			console.info('WebSocket connected')
 		}
 
 		ws.onmessage = (event) => {
@@ -373,7 +405,7 @@ function scheduleReconnect(settings: SettingsState): void {
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = null
 		void ensureSocket(settings)
-			.then(() => registerActiveTab(settings))
+			.then(() => registerBrowserSession(settings))
 			.catch(() => scheduleReconnect(settings))
 	}, reconnectDelayMs)
 }
@@ -454,51 +486,101 @@ async function handleBrowserActionRequest(message: RpcResponseMessage): Promise<
 	}
 }
 
-async function registerActiveTab(settings: SettingsState = currentSettings): Promise<void> {
+async function registerBrowserSession(settings: SettingsState = currentSettings): Promise<string> {
+	const session = await browserSession()
 	if (!settings.token) {
-		return
+		return session
 	}
 	const tab = await activeTab()
-	if (!tab?.id) {
-		return
-	}
 
 	await sendRpc(
 		'browser_register',
 		[
 			{
-				session: sessionForTab(tab),
-				tab_id: tab.id,
-				url: tab.url || '',
-				title: tab.title || ''
+				session,
+				tab_id: tab?.id,
+				url: tab?.url || '',
+				title: tab?.title || ''
 			}
 		],
 		settings
 	)
+
+	return session
 }
 
 async function executeBrowserAction(command: BrowserCommand): Promise<BrowserActionResult> {
 	const args = command.args || {}
-	const tab = await tabForCommand(command.session)
-	const tabId = tab?.id
-	if (!tabId) {
-		throw new Error('no active tab')
+
+	if (args.action === 'list_tabs') {
+		return listTabs(args)
+	}
+
+	if (args.action === 'open_tab') {
+		const tab = await chromeApi.tabs.create({
+			url: normalizeOptionalText(args.url),
+			active: args.active ?? true,
+			windowId: positiveInteger(args.window_id) || undefined
+		})
+		void registerBrowserSession().catch(() => undefined)
+		return { opened: true, tab: tabSummary(tab) }
+	}
+
+	if (args.action === 'switch_tab') {
+		const tabId = requirePositiveInteger(args.tab_id, 'switch_tab requires tab_id')
+		const tab = await activateTab(tabId)
+		void registerBrowserSession().catch(() => undefined)
+		return { switched: true, tab: tabSummary(tab) }
+	}
+
+	if (args.action === 'close_tab') {
+		const tabId = requirePositiveInteger(args.tab_id, 'close_tab requires tab_id')
+		await chromeApi.tabs.remove(tabId)
+		void registerBrowserSession().catch(() => undefined)
+		return { closed: true, tab_id: tabId }
+	}
+
+	if (args.action === 'launch_browser') {
+		return { launched: false, connected: true, reason: 'browser is already running' }
 	}
 
 	if (args.action === 'navigate') {
 		if (!args.url) {
 			throw new Error('navigate requires url')
 		}
-		const updated = await chromeApi.tabs.update(tabId, { url: args.url, active: true })
-		void registerActiveTab().catch(() => undefined)
-		return { navigated: true, url: args.url, tab_id: updated.id }
+		const tab = await tabForAction(args)
+		const active = args.active ?? true
+		if (!tab?.id) {
+			const created = await chromeApi.tabs.create({
+				url: args.url,
+				active,
+				windowId: positiveInteger(args.window_id) || undefined
+			})
+			void registerBrowserSession().catch(() => undefined)
+			return { navigated: true, url: args.url, tab: tabSummary(created) }
+		}
+		const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
+		if (active) {
+			await focusWindow(updated.windowId).catch(() => undefined)
+		}
+		void registerBrowserSession().catch(() => undefined)
+		return { navigated: true, url: args.url, tab: tabSummary(updated) }
+	}
+
+	const tab = await tabForAction(args)
+	const tabId = tab?.id
+	if (!tabId) {
+		throw new Error('no target tab')
 	}
 
 	if (args.action === 'screenshot') {
-		await chromeApi.tabs.update(tabId, { active: true }).catch(() => tab)
-		const dataUrl = await chromeApi.tabs.captureVisibleTab(tab?.windowId, { format: 'png' })
+		const activeTab = await activateTab(tabId).catch(() => tab)
+		const dataUrl = await chromeApi.tabs.captureVisibleTab(activeTab?.windowId || tab?.windowId, {
+			format: 'png'
+		})
 		return {
 			captured: true,
+			tab: tabSummary(activeTab || tab),
 			mime_type: 'image/png',
 			size: dataUrl.length,
 			data_url: args.include_data_url ? dataUrl : undefined
@@ -513,19 +595,80 @@ async function executeBrowserAction(command: BrowserCommand): Promise<BrowserAct
 	return execution ? execution.result : null
 }
 
-async function tabForCommand(session: string): Promise<ChromeTabInfo | null> {
-	const tabId = tabIdFromSession(session)
+async function listTabs(args: BrowserActionArgs): Promise<BrowserActionResult> {
+	const windowId = positiveInteger(args.window_id)
+	const queryInfo = windowId ? { windowId } : {}
+	const tabs = await chromeApi.tabs.query(queryInfo)
+	return {
+		tabs: tabs.map(tabSummary),
+		active_tab_id: tabs.find((tab) => tab.active)?.id || null
+	}
+}
+
+async function tabForAction(args: BrowserActionArgs): Promise<ChromeTabInfo | null> {
+	const tabId = positiveInteger(args.tab_id)
 	if (tabId) {
-		try {
-			return await chromeApi.tabs.get(tabId)
-		} catch (_error) {}
+		return chromeApi.tabs.get(tabId)
 	}
 	return activeTab()
 }
 
 async function activeTab(): Promise<ChromeTabInfo | null> {
 	const [tab] = await chromeApi.tabs.query({ active: true, lastFocusedWindow: true })
-	return tab || null
+	if (tab) {
+		return tab
+	}
+	const [currentWindowTab] = await chromeApi.tabs.query({ active: true, currentWindow: true })
+	if (currentWindowTab) {
+		return currentWindowTab
+	}
+	const [fallbackTab] = await chromeApi.tabs.query({})
+	return fallbackTab || null
+}
+
+async function activateTab(tabId: number): Promise<ChromeTabInfo> {
+	const tab = await chromeApi.tabs.update(tabId, { active: true })
+	await focusWindow(tab.windowId).catch(() => undefined)
+	return tab
+}
+
+async function focusWindow(windowId?: number): Promise<void> {
+	if (typeof windowId === 'number' && chromeApi.windows?.update) {
+		await chromeApi.windows.update(windowId, { focused: true })
+	}
+}
+
+function tabSummary(tab: ChromeTabInfo | null | undefined): Record<string, unknown> | null {
+	if (!tab) {
+		return null
+	}
+	return {
+		id: tab.id,
+		window_id: tab.windowId,
+		index: tab.index,
+		active: tab.active,
+		highlighted: tab.highlighted,
+		pinned: tab.pinned,
+		status: tab.status,
+		title: tab.title || '',
+		url: tab.url || ''
+	}
+}
+
+function positiveInteger(value: unknown): number | null {
+	return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
+function requirePositiveInteger(value: unknown, message: string): number {
+	const integer = positiveInteger(value)
+	if (!integer) {
+		throw new Error(message)
+	}
+	return integer
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 function pageActionDispatcher(args: BrowserActionArgs): BrowserActionResult {
@@ -730,13 +873,18 @@ function connectionKey(settings: SettingsState): string {
 	return `${trimTrailingSlash(settings.baseUrl)}\n${settings.token}`
 }
 
-function sessionForTab(tab: ChromeTabInfo): string {
-	return `chrome:${tab.windowId || 'window'}:${tab.id || 'tab'}`
+async function browserSession(): Promise<string> {
+	const saved = await chromeApi.storage.local.get([browserSessionStorageKey])
+	let id = saved.browserSessionId || '0'
+	if (parseInt(id, 10) < 1000) {
+		id = Date.now().toString()
+		await chromeApi.storage.local.set({ browserSessionId: id })
+	}
+	return `browser:${browserSessionScope()}:${id}`
 }
 
-function tabIdFromSession(session: string): number | null {
-	const value = Number(session.split(':').at(-1))
-	return Number.isInteger(value) && value > 0 ? value : null
+function browserSessionScope(): string {
+	return chromeApi.extension?.inIncognitoContext ? 'incognito' : 'chrome'
 }
 
 function normalizeSettings(settings: SettingsState): SettingsState {

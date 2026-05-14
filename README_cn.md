@@ -162,7 +162,7 @@ anda voice --record-secs 8
 
 ### Chrome 侧边栏
 
-仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过 `chrome_browser` 工具让智能体读取和操作当前标签页。
+仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过 `chrome_browser` 工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
 
 为扩展生成本地 bearer token：
 
