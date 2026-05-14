@@ -1,0 +1,77 @@
+@import '@fontsource-variable/inter';
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+
+:root {
+	color-scheme: light;
+	--radius: 0.5rem;
+	--background: #f6f8f5;
+	--foreground: #1f2521;
+	--card: #ffffff;
+	--card-foreground: #1f2521;
+	--popover: #ffffff;
+	--popover-foreground: #1f2521;
+	--primary: #047857;
+	--primary-foreground: #ffffff;
+	--secondary: #f4f4f2;
+	--secondary-foreground: #292524;
+	--muted: #f1f3ef;
+	--muted-foreground: #6b7280;
+	--accent: #ecfdf5;
+	--accent-foreground: #064e3b;
+	--destructive: #b91c1c;
+	--border: #d8ddd7;
+	--input: #d8ddd7;
+	--ring: #047857;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	width: 100%;
+}
+
+body {
+	background: var(--background);
+	color: var(--foreground);
+	font-family:
+		'Inter Variable',
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		sans-serif;
+	min-width: 320px;
+	overflow: hidden;
+}
+
+button,
+input,
+textarea {
+	font: inherit;
+}
+
+.scrollbar-slim {
+	scrollbar-color: #c7cec6 transparent;
+	scrollbar-width: thin;
+}
+
+.scrollbar-slim::-webkit-scrollbar {
+	width: 8px;
+}
+
+.scrollbar-slim::-webkit-scrollbar-thumb {
+	background: #c7cec6;
+	border: 2px solid transparent;
+	border-radius: 999px;
+	background-clip: padding-box;
+}

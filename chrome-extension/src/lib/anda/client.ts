@@ -1,0 +1,566 @@
+export interface SettingsState {
+	baseUrl: string
+	token: string
+}
+
+export interface ChromeTabInfo {
+	id?: number
+	windowId?: number
+	title?: string
+	url?: string
+}
+
+export type MessageRole = 'user' | 'assistant' | 'system'
+
+export interface ChatMessage {
+	id: string
+	role: MessageRole
+	text: string
+	timestamp?: string | number | null
+	local?: boolean
+}
+
+export interface ClientSnapshot {
+	settings: SettingsState
+	tab: ChromeTabInfo | null
+	session: string | null
+	conversationId: string | null
+	messages: ChatMessage[]
+	sending: boolean
+	status: string
+}
+
+interface ChromeEvent<Listener extends (...args: never[]) => void> {
+	addListener(listener: Listener): void
+	removeListener(listener: Listener): void
+}
+
+interface ChromeTabChangeInfo {
+	title?: string
+	url?: string
+}
+
+interface ChromeApi {
+	runtime: {
+		sendMessage<Result>(message: ExtensionMessage): Promise<ExtensionResponse<Result>>
+	}
+	storage: {
+		local: {
+			get(keys: string[]): Promise<Partial<SettingsState>>
+			set(items: SettingsState): Promise<void>
+		}
+	}
+	tabs: {
+		query(queryInfo: { active: boolean; lastFocusedWindow: boolean }): Promise<ChromeTabInfo[]>
+		onActivated: ChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>
+		onUpdated: ChromeEvent<
+			(tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
+		>
+	}
+}
+
+interface AgentRunOutput {
+	conversation?: string
+	content?: string
+	failed_reason?: string
+}
+
+interface RawConversationMessage {
+	role?: string
+	content?: unknown
+	timestamp?: string | number | null
+}
+
+interface ConversationDelta {
+	messages?: RawConversationMessage[]
+	artifacts?: unknown[]
+	child?: string
+	status?: string
+}
+
+interface ToolOutput<Result> {
+	output?: {
+		result?: Result
+		error?: unknown
+		Err?: unknown
+	}
+}
+
+interface RequestMeta {
+	extra: Record<string, unknown>
+}
+
+interface ExtensionMessage {
+	type: string
+	settings: SettingsState
+	method?: string
+	params?: unknown[]
+}
+
+type ExtensionResponse<Result> =
+	| { ok: true; result?: Result; status?: string }
+	| { ok: false; error: string; status?: string }
+
+type SnapshotListener = (snapshot: ClientSnapshot) => void
+
+const defaultSettings: SettingsState = {
+	baseUrl: 'http://127.0.0.1:8042',
+	token: ''
+}
+
+export class AndaSidePanelClient {
+	private chrome: ChromeApi | null = null
+	private destroyed = false
+	private pollingConversation = false
+	private messageCounter = 0
+	private tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
+	private tabUpdatedListener?: (
+		tabId: number,
+		changeInfo: ChromeTabChangeInfo,
+		tab: ChromeTabInfo
+	) => void
+
+	private state: Omit<ClientSnapshot, 'messages'> & {
+		messageOffset: number
+		artifactOffset: number
+		messages: ChatMessage[]
+	} = {
+		settings: { ...defaultSettings },
+		tab: null,
+		session: null,
+		conversationId: null,
+		messageOffset: 0,
+		artifactOffset: 0,
+		messages: [],
+		sending: false,
+		status: 'starting'
+	}
+
+	constructor(private readonly onSnapshot: SnapshotListener) {}
+
+	async init(): Promise<void> {
+		this.chrome = getChromeApi()
+		await this.loadSettings()
+		this.bindChromeEvents()
+		await this.refreshActiveTab()
+		this.updateStatus('ready')
+		void this.syncServiceWorker().catch(() => undefined)
+	}
+
+	destroy(): void {
+		this.destroyed = true
+		if (this.chrome && this.tabActivatedListener) {
+			this.chrome.tabs.onActivated.removeListener(this.tabActivatedListener)
+		}
+		if (this.chrome && this.tabUpdatedListener) {
+			this.chrome.tabs.onUpdated.removeListener(this.tabUpdatedListener)
+		}
+	}
+
+	getSnapshot(): ClientSnapshot {
+		return {
+			settings: { ...this.state.settings },
+			tab: this.state.tab ? { ...this.state.tab } : null,
+			session: this.state.session,
+			conversationId: this.state.conversationId,
+			messages: this.state.messages.map((message) => ({ ...message })),
+			sending: this.state.sending,
+			status: this.state.status
+		}
+	}
+
+	async saveSettings(settings: SettingsState, options: { quiet?: boolean } = {}): Promise<void> {
+		const chrome = this.requireChrome()
+		this.state.settings = normalizeSettings(settings)
+		await chrome.storage.local.set(this.state.settings)
+		this.emit()
+		if (!options.quiet) {
+			this.appendSystemMessage('Settings saved.')
+		}
+		void this.syncServiceWorker().catch(() => undefined)
+	}
+
+	async testConnection(settings: SettingsState): Promise<void> {
+		try {
+			await this.saveSettings(settings, { quiet: true })
+			await this.rpc('information', [])
+			this.updateStatus('connected')
+			this.appendSystemMessage('Connection test passed.')
+		} catch (error) {
+			this.updateStatus('connection failed')
+			this.appendSystemMessage(errorToMessage(error))
+			throw error
+		}
+	}
+
+	async sendPrompt(text: string): Promise<void> {
+		const prompt = text.trim()
+		if (!prompt || this.state.sending) {
+			return
+		}
+		if (!this.state.settings.token) {
+			this.appendSystemMessage('Paste a bearer token generated by `anda chrome token` first.')
+			return
+		}
+
+		await this.refreshActiveTab()
+		this.state.sending = true
+		this.emit()
+		this.appendMessage({ role: 'user', text: prompt, local: true })
+		this.updateStatus('sending')
+
+		try {
+			const meta = await this.requestMeta()
+			const output = await this.agentRun({ name: '', prompt, meta })
+			if (output.conversation) {
+				if (this.state.conversationId !== output.conversation) {
+					this.state.messageOffset = 0
+					this.state.artifactOffset = 0
+				}
+				this.state.conversationId = output.conversation
+			}
+			if (output.content && output.content.trim()) {
+				this.appendMessage({ role: 'assistant', text: output.content })
+			}
+			if (output.failed_reason) {
+				this.appendSystemMessage(output.failed_reason)
+			}
+			this.startConversationPolling()
+		} catch (error) {
+			this.appendSystemMessage(errorToMessage(error))
+			this.updateStatus('request failed')
+		} finally {
+			this.state.sending = false
+			this.emit()
+		}
+	}
+
+	private bindChromeEvents(): void {
+		const chrome = this.requireChrome()
+		this.tabActivatedListener = () => {
+			void this.refreshActiveTab().catch(() => undefined)
+		}
+		this.tabUpdatedListener = (tabId, changeInfo, tab) => {
+			if (this.state.tab && tabId === this.state.tab.id && (changeInfo.title || changeInfo.url)) {
+				this.state.tab = { ...this.state.tab, ...tab }
+				this.state.session = sessionForTab(this.state.tab)
+				this.emit()
+				void this.registerBrowserSession().catch(() => undefined)
+			}
+		}
+		chrome.tabs.onActivated.addListener(this.tabActivatedListener)
+		chrome.tabs.onUpdated.addListener(this.tabUpdatedListener)
+	}
+
+	private async loadSettings(): Promise<void> {
+		const chrome = this.requireChrome()
+		const saved = await chrome.storage.local.get(['baseUrl', 'token'])
+		this.state.settings = normalizeSettings({
+			baseUrl: saved.baseUrl || defaultSettings.baseUrl,
+			token: saved.token || ''
+		})
+		this.emit()
+	}
+
+	private async refreshActiveTab(): Promise<void> {
+		const chrome = this.requireChrome()
+		const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+		this.state.tab = tab || null
+		this.state.session = tab ? sessionForTab(tab) : null
+		this.emit()
+		await this.registerBrowserSession().catch(() => undefined)
+	}
+
+	private async agentRun(input: {
+		name: string
+		prompt: string
+		meta: RequestMeta
+	}): Promise<AgentRunOutput> {
+		return this.rpc<AgentRunOutput>('agent_run', [input])
+	}
+
+	private async toolCall<Result>(
+		name: string,
+		args: Record<string, unknown>,
+		meta: RequestMeta
+	): Promise<ToolOutput<Result>> {
+		return this.rpc<ToolOutput<Result>>('tool_call', [{ name, args, meta }])
+	}
+
+	private async rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result> {
+		if (!this.state.settings.token) {
+			throw new Error('missing bearer token')
+		}
+		const response = await this.serviceWorkerMessage<Result>('anda_rpc', {
+			method,
+			params: tupleArgs
+		})
+		return response.result as Result
+	}
+
+	private async syncServiceWorker(): Promise<void> {
+		await this.serviceWorkerMessage('anda_settings_changed')
+	}
+
+	private async serviceWorkerMessage<Result = unknown>(
+		type: string,
+		message: Partial<ExtensionMessage> = {}
+	): Promise<Extract<ExtensionResponse<Result>, { ok: true }>> {
+		const chrome = this.requireChrome()
+		const response = await chrome.runtime.sendMessage<Result>({
+			type,
+			settings: this.state.settings,
+			...message
+		})
+		if (!response?.ok) {
+			throw new Error(response?.error || 'extension service worker returned an error')
+		}
+		return response
+	}
+
+	private startConversationPolling(): void {
+		if (this.pollingConversation) {
+			return
+		}
+		this.pollingConversation = true
+		void this.pollConversationLoop().finally(() => {
+			this.pollingConversation = false
+		})
+	}
+
+	private async pollConversationLoop(): Promise<void> {
+		while (!this.destroyed && this.state.conversationId) {
+			const keepPolling = await this.pollConversationOnce()
+			if (!keepPolling) {
+				return
+			}
+			await delay(2000)
+		}
+	}
+
+	private async pollConversationOnce(): Promise<boolean> {
+		if (!this.state.conversationId) {
+			return false
+		}
+
+		try {
+			const meta = await this.requestMeta()
+			meta.extra.conversation = this.state.conversationId
+			const toolOutput = await this.toolCall<ConversationDelta>(
+				'conversations_api',
+				{
+					type: 'GetConversationDelta',
+					_id: this.state.conversationId,
+					messages_offset: this.state.messageOffset,
+					artifacts_offset: this.state.artifactOffset
+				},
+				meta
+			)
+			const delta = kipResult(toolOutput)
+			const rawMessages = delta.messages || []
+			const incoming = rawMessages.map(normalizeMessage).filter(isChatMessageInput)
+			this.mergeIncomingMessages(incoming)
+			this.state.messageOffset += rawMessages.length
+			this.state.artifactOffset += (delta.artifacts || []).length
+
+			if (delta.child && delta.child !== this.state.conversationId) {
+				this.state.conversationId = delta.child
+				this.state.messageOffset = 0
+				this.state.artifactOffset = 0
+				this.emit()
+				return true
+			}
+
+			this.updateStatus(delta.status || 'idle')
+			return ['submitted', 'working', 'idle'].includes(delta.status || '')
+		} catch (error) {
+			this.appendSystemMessage(errorToMessage(error))
+			this.updateStatus('poll failed')
+			return false
+		}
+	}
+
+	private async registerBrowserSession(): Promise<void> {
+		if (!this.state.settings.token || !this.state.tab?.id || !this.state.session) {
+			return
+		}
+
+		await this.serviceWorkerMessage('anda_register')
+	}
+
+	private async requestMeta(): Promise<RequestMeta> {
+		if (!this.state.tab) {
+			await this.refreshActiveTab()
+		}
+
+		const session =
+			this.state.session || (this.state.tab ? sessionForTab(this.state.tab) : 'chrome:unknown')
+		const extra: Record<string, unknown> = {
+			source: session,
+			browser_session: session,
+			browser_client: 'chrome_extension'
+		}
+
+		if (this.state.conversationId) {
+			extra.conversation = this.state.conversationId
+		}
+		if (this.state.tab) {
+			extra.chrome_tab_id = this.state.tab.id
+			extra.chrome_window_id = this.state.tab.windowId
+			extra.tab_url = this.state.tab.url || ''
+			extra.tab_title = this.state.tab.title || ''
+		}
+
+		return { extra }
+	}
+
+	private mergeIncomingMessages(incoming: Array<Omit<ChatMessage, 'id'>>): void {
+		if (!incoming.length) {
+			return
+		}
+		const overlap = displayedSuffixPrefixOverlap(this.state.messages, incoming)
+		for (const message of incoming.slice(overlap)) {
+			this.appendMessage(message)
+		}
+	}
+
+	private appendSystemMessage(text: string): void {
+		this.appendMessage({ role: 'system', text })
+	}
+
+	private appendMessage(message: Omit<ChatMessage, 'id'>): void {
+		this.messageCounter += 1
+		this.state.messages = [
+			...this.state.messages,
+			{ ...message, id: `${Date.now()}-${this.messageCounter}` }
+		]
+		this.emit()
+	}
+
+	private updateStatus(status: string): void {
+		this.state.status = status
+		this.emit()
+	}
+
+	private emit(): void {
+		if (!this.destroyed) {
+			this.onSnapshot(this.getSnapshot())
+		}
+	}
+
+	private requireChrome(): ChromeApi {
+		if (!this.chrome) {
+			throw new Error('Chrome extension APIs are unavailable. Load the built extension in Chrome.')
+		}
+		return this.chrome
+	}
+}
+
+function getChromeApi(): ChromeApi {
+	const chromeApi = (globalThis as typeof globalThis & { chrome?: ChromeApi }).chrome
+	if (!chromeApi?.runtime || !chromeApi.storage?.local || !chromeApi.tabs) {
+		throw new Error('Chrome extension APIs are unavailable. Load the built extension in Chrome.')
+	}
+	return chromeApi
+}
+
+function normalizeMessage(raw: RawConversationMessage): Omit<ChatMessage, 'id'> | null {
+	if (!raw || (raw.role !== 'user' && raw.role !== 'assistant' && raw.role !== 'system')) {
+		return null
+	}
+	const text = contentToText(raw.content).trim()
+	if (!text) {
+		return null
+	}
+	return {
+		role: raw.role,
+		text,
+		timestamp: raw.timestamp || null
+	}
+}
+
+function contentToText(content: unknown): string {
+	if (typeof content === 'string') {
+		return content
+	}
+	if (!Array.isArray(content)) {
+		return ''
+	}
+	return content
+		.map((part) => {
+			if (typeof part === 'string') {
+				return part
+			}
+			if (isContentPart(part) && (part.type === 'Text' || part.type === 'Reasoning')) {
+				return part.text || ''
+			}
+			return ''
+		})
+		.filter(Boolean)
+		.join('\n\n')
+}
+
+function isContentPart(value: unknown): value is { type?: string; text?: string } {
+	return Boolean(value && typeof value === 'object')
+}
+
+function isChatMessageInput(
+	value: Omit<ChatMessage, 'id'> | null
+): value is Omit<ChatMessage, 'id'> {
+	return Boolean(value)
+}
+
+function kipResult<Result>(toolOutput: ToolOutput<Result>): Result {
+	const output = toolOutput && toolOutput.output
+	if (output && Object.prototype.hasOwnProperty.call(output, 'result')) {
+		return output.result as Result
+	}
+	if (output && (Object.prototype.hasOwnProperty.call(output, 'error') || output.Err)) {
+		throw new Error(JSON.stringify(output.error || output.Err))
+	}
+	throw new Error('tool returned an unknown RPC response')
+}
+
+function displayedSuffixPrefixOverlap(
+	displayed: ChatMessage[],
+	incoming: Array<Omit<ChatMessage, 'id'>>
+): number {
+	const maxLength = Math.min(displayed.length, incoming.length)
+	for (let length = maxLength; length > 0; length -= 1) {
+		const displayedSuffix = displayed.slice(displayed.length - length)
+		const incomingPrefix = incoming.slice(0, length)
+		if (
+			displayedSuffix.every((message, index) => sameDisplayMessage(message, incomingPrefix[index]))
+		) {
+			return length
+		}
+	}
+	return 0
+}
+
+function sameDisplayMessage(left: ChatMessage, right: Omit<ChatMessage, 'id'>): boolean {
+	return left.role === right.role && left.text === right.text
+}
+
+function sessionForTab(tab: ChromeTabInfo): string {
+	return `chrome:${tab.windowId || 'window'}:${tab.id || 'tab'}`
+}
+
+function normalizeSettings(settings: SettingsState): SettingsState {
+	return {
+		baseUrl: trimTrailingSlash(settings.baseUrl.trim() || defaultSettings.baseUrl),
+		token: settings.token.trim()
+	}
+}
+
+function trimTrailingSlash(value: string): string {
+	return String(value || '').replace(/\/+$/, '')
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function errorToMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error)
+}

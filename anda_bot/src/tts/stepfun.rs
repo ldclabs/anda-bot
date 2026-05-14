@@ -205,9 +205,9 @@ fn parse_stepfun_tts_error_message(raw_body: &str) -> String {
             .and_then(serde_json::Value::as_str)
             .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
             .or_else(|| value.get("error").and_then(serde_json::Value::as_str))
-        {
-            return message.to_string();
-        }
+    {
+        return message.to_string();
+    }
 
     let raw_body = raw_body.trim();
     if raw_body.is_empty() {

@@ -158,7 +158,19 @@ Voice mode requires `transcription.enabled: true`. Spoken playback also requires
 
 ## Put Me Where You Work
 
-You can keep me in the terminal, or connect me to chat channels by editing `~/.anda/config.yaml`.
+You can keep me in the terminal, open me from Chrome, or connect me to chat channels by editing `~/.anda/config.yaml`.
+
+### Chrome Side Panel
+
+The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect and operate the current tab through the `chrome_browser` tool.
+
+Generate a local bearer token for the extension:
+
+```bash
+anda chrome token --days 30
+```
+
+Then load [chrome_extension](chrome_extension) from `chrome://extensions` with Developer mode enabled, paste the printed Gateway URL and token into the side panel settings, and start chatting from any webpage.
 
 Supported channel families:
 

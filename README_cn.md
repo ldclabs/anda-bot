@@ -158,7 +158,19 @@ anda voice --record-secs 8
 
 ## 把我放到你的工作场景里
 
-你可以只在终端里使用我，也可以编辑 `~/.anda/config.yaml`，把我接入聊天工具。
+你可以只在终端里使用我，也可以从 Chrome 打开我，或编辑 `~/.anda/config.yaml`，把我接入聊天工具。
+
+### Chrome 侧边栏
+
+仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过 `chrome_browser` 工具让智能体读取和操作当前标签页。
+
+为扩展生成本地 bearer token：
+
+```bash
+anda chrome token --days 30
+```
+
+然后在 `chrome://extensions` 开启开发者模式，加载 [chrome_extension](chrome_extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
 
 当前支持：
 

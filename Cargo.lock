@@ -130,6 +130,8 @@ dependencies = [
  "futures",
  "futures-util",
  "http",
+ "hyper",
+ "hyper-util",
  "ic-ed25519",
  "ic_auth_types",
  "ic_cose_types",

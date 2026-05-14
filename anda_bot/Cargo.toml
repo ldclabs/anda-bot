@@ -46,6 +46,8 @@ sha2 = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
 http = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 object_store = { workspace = true, features = ["aws", "integration"] }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }

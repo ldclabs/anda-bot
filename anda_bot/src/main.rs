@@ -1,7 +1,11 @@
 use anda_core::{AgentInput, BoxError, Json, RequestMeta, ToolInput};
 use clap::{Parser, Subcommand};
+use coset::cwt::Timestamp;
 use mimalloc::MiMalloc;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 mod brain;
 mod channel;
@@ -61,6 +65,9 @@ pub enum Commands {
     /// Agent-related operations against the running daemon.
     #[command(subcommand)]
     Agent(AgentCommand),
+    /// Browser (chrome) extension helper commands.
+    #[command(subcommand)]
+    Browser(BrowserCommand),
     /// Channel-related operations that run directly from this CLI.
     #[command(subcommand)]
     Channel(cli::channel::ChannelCommand),
@@ -99,6 +106,16 @@ pub enum AgentCommand {
         /// Optional request metadata as a JSON object.
         #[arg(long)]
         meta: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BrowserCommand {
+    /// Generate a bearer token for the Anda Chrome extension.
+    Token {
+        /// Number of days before the token expires.
+        #[arg(long, default_value_t = 30)]
+        days: u64,
     },
 }
 
@@ -254,6 +271,20 @@ async fn run() -> Result<(), BoxError> {
                 }
             }
         }
+        Some(Commands::Browser(cmd)) => {
+            log::info!(
+                "Starting CLI with command 'browser' at {}",
+                daemon.base_url()
+            );
+            match cmd {
+                BrowserCommand::Token { days } => {
+                    let token = build_browser_extension_token(&daemon, days).await?;
+                    println!("Gateway URL: {}", daemon.base_url());
+                    println!("Bearer token: {token}");
+                    println!("Extension directory: chrome_extension");
+                }
+            }
+        }
         Some(Commands::Channel(cmd)) => {
             log::info!(
                 "Starting CLI with command 'channel' at {}",
@@ -316,6 +347,28 @@ async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
 
     Ok(gateway::Client::new(daemon.base_url(), gateway_token).with_http_client(http_client))
+}
+
+async fn build_browser_extension_token(
+    daemon: &daemon::Daemon,
+    days: u64,
+) -> Result<String, BoxError> {
+    daemon.ensure_directories().await?;
+
+    let user_secret = load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_key = util::key::Ed25519Key::new(user_secret);
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+    let days = days.clamp(1, 3650);
+    let expires_secs = now_secs.saturating_add((days * 24 * 60 * 60) as i64);
+
+    user_key.sign_cwt(
+        util::key::ClaimsSetBuilder::new()
+            .issued_at(Timestamp::WholeSeconds(now_secs))
+            .expiration_time(Timestamp::WholeSeconds(expires_secs))
+            .claim(util::key::iana::CwtClaimName::Scope, "*".into())
+            .text_claim("client".to_string(), "chrome_extension".into())
+            .build(),
+    )
 }
 
 async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], BoxError> {

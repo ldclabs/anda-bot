@@ -23,6 +23,8 @@ use std::{
 };
 
 mod agent;
+mod browser;
+mod browser_ws;
 mod conversation;
 mod goal;
 mod prompt;
@@ -34,14 +36,17 @@ use crate::util::{
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
+use browser_ws::{BrowserWebSocketState, browser_websocket};
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary};
+pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
 pub struct Engines {
     state: AppState,
+    browser_bridge: Arc<BrowserBridge>,
 }
 
 #[async_trait]
@@ -119,6 +124,9 @@ impl Engines {
             conversations.clone(),
             default_workspace.to_string_lossy().to_string(),
         ));
+        let browser_bridge = Arc::new(BrowserBridge::new());
+        let chrome_browser_tool = Arc::new(ChromeBrowserTool::new(browser_bridge.clone()));
+        let chrome_browser_api_tool = Arc::new(ChromeBrowserApiTool::new(browser_bridge.clone()));
         let tts_manager = {
             let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
             manager.is_enabled().then_some(manager)
@@ -210,6 +218,8 @@ impl Engines {
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
+            .register_tool(chrome_browser_tool)?
+            .register_tool(chrome_browser_api_tool.clone())?
             .register_tool(skills_tool.clone())?
             .register_tool(conversations_tool.clone())?
             .register_tool(bot.clone())?;
@@ -225,6 +235,7 @@ impl Engines {
             .register_agent(bot.clone(), None)?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
+                ChromeBrowserApiTool::NAME.to_string(),
                 Tool::name(bot.as_ref()),
             ]);
 
@@ -247,14 +258,26 @@ impl Engines {
             extra_info: Arc::new(BTreeMap::new()),
             ed25519_pubkeys: Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
         };
-        Ok(Self { state })
+        Ok(Self {
+            state,
+            browser_bridge,
+        })
     }
 
     pub fn into_router(self) -> Router<()> {
+        let browser_ws_state = BrowserWebSocketState {
+            app: self.state.clone(),
+            bridge: self.browser_bridge,
+        };
+        let browser_ws_router = Router::new()
+            .route("/ws/engine/{*id}", routing::get(browser_websocket))
+            .with_state(browser_ws_state);
+
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
             .route("/engine/{*id}", routing::post(anda_engine))
-            .with_state(self.state);
+            .with_state(self.state)
+            .merge(browser_ws_router);
         app
     }
 }

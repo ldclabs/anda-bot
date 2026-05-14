@@ -39,6 +39,7 @@ use std::{
 
 use super::{
     CompletionHook,
+    browser::{ChromeBrowserApiTool, ChromeBrowserTool},
     conversation::{ConversationsTool, RequestState, SourceState},
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
     prompt::{PromptCommand, skill_subagent},
@@ -104,7 +105,7 @@ async fn available_tool_names(ctx: &AgentCtx) -> Vec<String> {
         .await
         .into_iter()
         .filter_map(|def| {
-            if def.name == AndaBot::NAME {
+            if def.name == AndaBot::NAME || def.name == ChromeBrowserApiTool::NAME {
                 None
             } else {
                 Some(def.name)
@@ -202,6 +203,7 @@ fn base_tool_dependencies() -> Vec<String> {
         cron::ManageCronJobTool::NAME.to_string(),
         cron::ListCronJobsTool::NAME.to_string(),
         cron::ListCronRunsTool::NAME.to_string(),
+        ChromeBrowserTool::NAME.to_string(),
     ]
 }
 
@@ -215,6 +217,7 @@ fn base_tools() -> Vec<String> {
         TodoTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
+        ChromeBrowserTool::NAME.to_string(),
     ]
 }
 
