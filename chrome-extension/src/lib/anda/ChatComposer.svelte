@@ -1375,12 +1375,11 @@
 			_id: 0,
 			tags,
 			name: file.name,
-			description: 'Chrome extension attachment',
 			mime_type: file.type || undefined,
 			blob,
 			size: file.size,
 			metadata: {
-				source: 'chrome_extension',
+				source: file.webkitRelativePath || 'chrome_extension',
 				last_modified: file.lastModified
 			}
 		}

@@ -1,3 +1,5 @@
+import { getPlainText } from '$lib/utils/markdown'
+
 export interface SettingsState {
 	baseUrl: string
 	token: string
@@ -12,6 +14,7 @@ export interface ChromeTabInfo {
 	windowId?: number
 	title?: string
 	url?: string
+	incognito?: boolean
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
@@ -1028,7 +1031,12 @@ export class AndaSidePanelClient {
 			extra.conversation = numericConversationId(this.state.conversationId)
 		}
 		if (this.state.tab) {
-			extra.tab = this.state.tab
+			extra.tab = {
+				id: this.state.tab.id,
+				url: this.state.tab.url,
+				title: this.state.tab.title,
+				incognito: this.state.tab.incognito
+			}
 		}
 
 		return { extra }
@@ -1811,7 +1819,7 @@ function audioMimeFromName(name: string): string | null {
 function prepareVoiceTtsText(text: string): string {
 	return text
 		.split(/\r?\n/)
-		.map(stripMarkdownLinePrefix)
+		.map(getPlainText)
 		.map((line) =>
 			Array.from(line)
 				.map(normalizeVoiceTtsCharacter)
@@ -1826,21 +1834,6 @@ function prepareVoiceTtsText(text: string): string {
 
 function normalTextForSpeech(text: string | undefined): string {
 	return text ? splitLegacyThoughtText(text).text.trim() : ''
-}
-
-function stripMarkdownLinePrefix(line: string): string {
-	let trimmed = line.trimStart()
-	while (trimmed.startsWith('>')) {
-		trimmed = trimmed.slice(1).trimStart()
-	}
-	while (trimmed.startsWith('#')) {
-		trimmed = trimmed.slice(1).trimStart()
-	}
-	if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('+ ')) {
-		return trimmed.slice(2).trimStart()
-	}
-	const orderedMatch = trimmed.match(/^\d+[.)、]\s*(.*)$/)
-	return orderedMatch ? orderedMatch[1] : trimmed
 }
 
 function normalizeVoiceTtsCharacter(character: string): string | null {

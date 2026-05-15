@@ -721,13 +721,13 @@ mod tests {
     fn browser_session_prefers_explicit_meta() {
         let mut meta = RequestMeta::default();
         meta.extra
-            .insert("source".to_string(), "chrome:window:1".into());
+            .insert("source".to_string(), "browser:chrome:1".into());
         meta.extra
-            .insert("browser_session".to_string(), "chrome:tab:2".into());
+            .insert("browser_client".to_string(), "chrome_extension".into());
 
         assert_eq!(
             browser_session_from_meta(&meta).as_deref(),
-            Some("chrome:tab:2")
+            Some("browser:chrome:1")
         );
     }
 

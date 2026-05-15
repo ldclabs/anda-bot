@@ -490,7 +490,7 @@ export function getPlainText(markdown: string): string {
 		return div.textContent || div.innerText || ''
 	} catch (err) {
 		console.warn('getPlainText failed:', err)
-		return markdown
+		return stripMarkdownLinePrefix(markdown)
 	}
 }
 
@@ -511,4 +511,19 @@ export default {
 	renderMarkdown,
 	getPlainText,
 	getMarkdownSummary
+}
+
+function stripMarkdownLinePrefix(line: string): string {
+	let trimmed = line.trimStart()
+	while (trimmed.startsWith('>')) {
+		trimmed = trimmed.slice(1).trimStart()
+	}
+	while (trimmed.startsWith('#')) {
+		trimmed = trimmed.slice(1).trimStart()
+	}
+	if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('+ ')) {
+		return trimmed.slice(2).trimStart()
+	}
+	const orderedMatch = trimmed.match(/^\d+[.)、]\s*(.*)$/)
+	return orderedMatch ? orderedMatch[1] : trimmed
 }
