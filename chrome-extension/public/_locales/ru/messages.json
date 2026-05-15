@@ -12,7 +12,55 @@
     "message": "Сообщение для Anda"
   },
   "placeholderSettings": {
-    "message": "Вставьте токен в настройки"
+    "message": "Сначала завершите локальную настройку"
+  },
+  "onboardingEyebrow": {
+    "message": "Локальная настройка"
+  },
+  "onboardingTitle": {
+    "message": "Подключите Anda на этом компьютере"
+  },
+  "onboardingIntro": {
+    "message": "Расширению Chrome нужны локальная программа Anda, настроенный поставщик модели и запущенный daemon, прежде чем можно будет начать чат."
+  },
+  "onboardingInstallTitle": {
+    "message": "Установить Anda"
+  },
+  "onboardingInstallBody": {
+    "message": "Сначала установите приложение командной строки на этот компьютер."
+  },
+  "macLinux": {
+    "message": "macOS / Linux"
+  },
+  "copyCommand": {
+    "message": "Копировать команду"
+  },
+  "onboardingConfigureTitle": {
+    "message": "Настроить и запустить"
+  },
+  "onboardingConfigureBody": {
+    "message": "Запустите Anda один раз, заполните поля поставщика модели в ~/.anda/config.yaml при запросе и оставьте daemon запущенным."
+  },
+  "launchCommandLabel": {
+    "message": "Запуск"
+  },
+  "onboardingTokenTitle": {
+    "message": "Создать токен расширения"
+  },
+  "onboardingTokenBody": {
+    "message": "Скопируйте напечатанные Gateway URL и Bearer token в поля ниже."
+  },
+  "tokenCommandLabel": {
+    "message": "Токен"
+  },
+  "connectionDetails": {
+    "message": "Данные подключения"
+  },
+  "savedConnection": {
+    "message": "Сохранено"
+  },
+  "tokenPlaceholder": {
+    "message": "Вставьте Bearer token, напечатанный `anda browser token --days 30`"
   },
   "settings": {
     "message": "Настройки"
@@ -115,5 +163,8 @@
   },
   "voiceNotConnected": {
     "message": "Голосовой режим не подключен."
+  },
+  "pasteTokenFirst": {
+    "message": "Сначала завершите настройку и вставьте Bearer token, созданный `anda browser token`."
   }
 }

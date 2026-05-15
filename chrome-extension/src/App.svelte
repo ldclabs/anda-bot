@@ -18,15 +18,21 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js'
 	import {
 		Bot,
+		Check,
 		CircleAlert,
+		Clipboard,
+		Download,
 		ExternalLink,
+		FileCog,
 		History,
 		KeyRound,
 		LoaderCircle,
+		Play,
 		PlugZap,
 		Radio,
 		Save,
-		Settings
+		Settings,
+		Terminal
 	} from '@lucide/svelte'
 	import { onMount, tick } from 'svelte'
 
@@ -52,7 +58,16 @@
 	})
 	let shouldStickToBottom = $state(true)
 	let historyLoadInFlight = $state(false)
+	let copiedCommand = $state('')
 	let messagesElement: HTMLElement | null = null
+
+	const installCommand = 'brew install ldclabs/tap/anda'
+	const installScriptCommand =
+		'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
+	const windowsInstallCommand =
+		'irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex'
+	const launchCommand = 'anda'
+	const tokenCommand = 'anda browser token --days 365'
 
 	const isBusy = $derived(
 		sending || syncing || ['sending', 'submitted', 'working', 'connecting'].includes(status)
@@ -160,6 +175,24 @@
 
 	function markSettingsDirty() {
 		settingsDirty = true
+	}
+
+	async function copyCommand(command: string) {
+		try {
+			await navigator.clipboard.writeText(command)
+			copiedCommand = command
+			window.setTimeout(() => {
+				if (copiedCommand === command) {
+					copiedCommand = ''
+				}
+			}, 1400)
+		} catch (error) {
+			console.warn('Failed to copy setup command', error)
+		}
+	}
+
+	function message(key: string, fallback: string, substitutions?: string | string[]): string {
+		return chrome.i18n.getMessage(key, substitutions) || fallback
 	}
 
 	async function saveSettings() {
@@ -394,52 +427,282 @@
 
 	{#if settingsOpen}
 		<section
-			class="grid gap-3 border-b border-stone-200 bg-[#fbfcfa] px-3 py-3"
+			class="scrollbar-slim grid max-h-[72vh] gap-4 overflow-y-auto border-b border-stone-200 bg-[#fbfcfa] px-3 py-3"
 			aria-label={chrome.i18n.getMessage('settings')}
 		>
-			<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="base-url">
-				<span class="flex items-center gap-1.5"
-					><ExternalLink class="size-3" />{chrome.i18n.getMessage('gatewayUrl')}</span
-				>
-				<Input
-					id="base-url"
-					type="url"
-					spellcheck={false}
-					bind:value={draftSettings.baseUrl}
-					oninput={markSettingsDirty}
-				/>
-			</label>
+			<div class="grid gap-1">
+				<div class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
+					<Terminal class="size-3.5" />
+					<span>{message('onboardingEyebrow', 'Local setup')}</span>
+				</div>
+				<h2 class="text-sm font-bold text-stone-900">
+					{message('onboardingTitle', 'Connect Anda on this computer')}
+				</h2>
+				<p class="text-[11px] leading-relaxed text-stone-600">
+					{message(
+						'onboardingIntro',
+						'The Chrome extension needs the local Anda program, a configured model provider, and a running daemon before chat is available.'
+					)}
+				</p>
+			</div>
 
-			<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="token">
-				<span class="flex items-center gap-1.5"
-					><KeyRound class="size-3" />{chrome.i18n.getMessage('bearerToken')}</span
-				>
-				<Textarea
-					id="token"
-					rows={4}
-					spellcheck={false}
-					bind:value={draftSettings.token}
-					oninput={markSettingsDirty}
-				/>
-			</label>
+			<div class="grid gap-3">
+				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
+					<div
+						class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
+					>
+						<Download class="size-3.5" />
+					</div>
+					<div class="grid min-w-0 gap-2">
+						<div class="grid gap-0.5">
+							<h3 class="text-xs font-bold text-stone-800">
+								{message('onboardingInstallTitle', 'Install Anda')}
+							</h3>
+							<p class="text-[11px] leading-relaxed text-stone-600">
+								{message(
+									'onboardingInstallBody',
+									'Install the command-line app on this computer first.'
+								)}
+							</p>
+						</div>
 
-			<div class="flex gap-2">
-				<Button size="sm" disabled={savingSettings} onclick={saveSettings}>
-					{#if savingSettings}
-						<LoaderCircle class="size-3.5 animate-spin" />
-					{:else}
-						<Save class="size-3.5" />
+						<div class="grid gap-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[10px] font-semibold text-stone-500">Homebrew</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									aria-label={message('copyCommand', 'Copy command')}
+									title={message('copyCommand', 'Copy command')}
+									onclick={() => copyCommand(installCommand)}
+								>
+									{#if copiedCommand === installCommand}
+										<Check class="size-3 text-emerald-700" />
+									{:else}
+										<Clipboard class="size-3" />
+									{/if}
+								</Button>
+							</div>
+							<code
+								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+								>{installCommand}</code
+							>
+						</div>
+
+						<div class="grid gap-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[10px] font-semibold text-stone-500">
+									{message('macLinux', 'macOS / Linux')}
+								</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									aria-label={message('copyCommand', 'Copy command')}
+									title={message('copyCommand', 'Copy command')}
+									onclick={() => copyCommand(installScriptCommand)}
+								>
+									{#if copiedCommand === installScriptCommand}
+										<Check class="size-3 text-emerald-700" />
+									{:else}
+										<Clipboard class="size-3" />
+									{/if}
+								</Button>
+							</div>
+							<code
+								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+								>{installScriptCommand}</code
+							>
+						</div>
+
+						<div class="grid gap-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[10px] font-semibold text-stone-500">Windows PowerShell</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									aria-label={message('copyCommand', 'Copy command')}
+									title={message('copyCommand', 'Copy command')}
+									onclick={() => copyCommand(windowsInstallCommand)}
+								>
+									{#if copiedCommand === windowsInstallCommand}
+										<Check class="size-3 text-emerald-700" />
+									{:else}
+										<Clipboard class="size-3" />
+									{/if}
+								</Button>
+							</div>
+							<code
+								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+								>{windowsInstallCommand}</code
+							>
+						</div>
+					</div>
+				</div>
+
+				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
+					<div
+						class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
+					>
+						<FileCog class="size-3.5" />
+					</div>
+					<div class="grid min-w-0 gap-2">
+						<div class="grid gap-0.5">
+							<h3 class="text-xs font-bold text-stone-800">
+								{message('onboardingConfigureTitle', 'Configure and start')}
+							</h3>
+							<p class="text-[11px] leading-relaxed text-stone-600">
+								{message(
+									'onboardingConfigureBody',
+									'Run Anda once, fill the model provider fields in ~/.anda/config.yaml when prompted, then keep the daemon running.'
+								)}
+							</p>
+						</div>
+
+						<div class="grid gap-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[10px] font-semibold text-stone-500">
+									{message('launchCommandLabel', 'Launch')}
+								</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									aria-label={message('copyCommand', 'Copy command')}
+									title={message('copyCommand', 'Copy command')}
+									onclick={() => copyCommand(launchCommand)}
+								>
+									{#if copiedCommand === launchCommand}
+										<Check class="size-3 text-emerald-700" />
+									{:else}
+										<Clipboard class="size-3" />
+									{/if}
+								</Button>
+							</div>
+							<code
+								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+								>{launchCommand}</code
+							>
+						</div>
+					</div>
+				</div>
+
+				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
+					<div
+						class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
+					>
+						<KeyRound class="size-3.5" />
+					</div>
+					<div class="grid min-w-0 gap-2">
+						<div class="grid gap-0.5">
+							<h3 class="text-xs font-bold text-stone-800">
+								{message('onboardingTokenTitle', 'Generate an extension token')}
+							</h3>
+							<p class="text-[11px] leading-relaxed text-stone-600">
+								{message(
+									'onboardingTokenBody',
+									'Copy the printed Gateway URL and Bearer token into the fields below.'
+								)}
+							</p>
+						</div>
+
+						<div class="grid gap-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[10px] font-semibold text-stone-500">
+									{message('tokenCommandLabel', 'Token')}
+								</span>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									aria-label={message('copyCommand', 'Copy command')}
+									title={message('copyCommand', 'Copy command')}
+									onclick={() => copyCommand(tokenCommand)}
+								>
+									{#if copiedCommand === tokenCommand}
+										<Check class="size-3 text-emerald-700" />
+									{:else}
+										<Clipboard class="size-3" />
+									{/if}
+								</Button>
+							</div>
+							<code
+								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+								>{tokenCommand}</code
+							>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="grid gap-3 border-t border-stone-200 pt-3">
+				<div class="flex items-center justify-between gap-2">
+					<div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-stone-800">
+						<Play class="size-3.5 text-emerald-800" />
+						<span class="truncate">{message('connectionDetails', 'Connection details')}</span>
+					</div>
+					{#if settings.token}
+						<span
+							class="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+						>
+							<Check class="size-3" />
+							{message('savedConnection', 'Saved')}
+						</span>
 					{/if}
-					{chrome.i18n.getMessage('save')}
-				</Button>
-				<Button variant="outline" size="sm" disabled={testingConnection} onclick={testConnection}>
-					{#if testingConnection}
-						<LoaderCircle class="size-3.5 animate-spin" />
-					{:else}
-						<PlugZap class="size-3.5" />
-					{/if}
-					{chrome.i18n.getMessage('test')}
-				</Button>
+				</div>
+
+				<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="base-url">
+					<span class="flex items-center gap-1.5"
+						><ExternalLink class="size-3" />{chrome.i18n.getMessage('gatewayUrl')}</span
+					>
+					<Input
+						id="base-url"
+						type="url"
+						spellcheck={false}
+						placeholder="http://127.0.0.1:8042"
+						bind:value={draftSettings.baseUrl}
+						oninput={markSettingsDirty}
+					/>
+				</label>
+
+				<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="token">
+					<span class="flex items-center gap-1.5"
+						><KeyRound class="size-3" />{chrome.i18n.getMessage('bearerToken')}</span
+					>
+					<Textarea
+						id="token"
+						rows={4}
+						spellcheck={false}
+						placeholder={message(
+							'tokenPlaceholder',
+							'Paste the Bearer token printed by `anda browser token --days 30`'
+						)}
+						bind:value={draftSettings.token}
+						oninput={markSettingsDirty}
+					/>
+				</label>
+
+				<div class="grid grid-cols-2 gap-2">
+					<Button size="sm" class="w-full" disabled={savingSettings} onclick={saveSettings}>
+						{#if savingSettings}
+							<LoaderCircle class="size-3.5 animate-spin" />
+						{:else}
+							<Save class="size-3.5" />
+						{/if}
+						{chrome.i18n.getMessage('save')}
+					</Button>
+					<Button
+						variant="outline"
+						size="sm"
+						class="w-full bg-white"
+						disabled={testingConnection}
+						onclick={testConnection}
+					>
+						{#if testingConnection}
+							<LoaderCircle class="size-3.5 animate-spin" />
+						{:else}
+							<PlugZap class="size-3.5" />
+						{/if}
+						{chrome.i18n.getMessage('test')}
+					</Button>
+				</div>
 			</div>
 		</section>
 	{/if}

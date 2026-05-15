@@ -12,7 +12,55 @@
     "message": "Mensaje para Anda"
   },
   "placeholderSettings": {
-    "message": "Pegue el token en Configuración"
+    "message": "Complete primero la configuración local"
+  },
+  "onboardingEyebrow": {
+    "message": "Configuración local"
+  },
+  "onboardingTitle": {
+    "message": "Conecta Anda en este equipo"
+  },
+  "onboardingIntro": {
+    "message": "La extensión de Chrome necesita el programa local de Anda, un proveedor de modelo configurado y el daemon en ejecución antes de poder chatear."
+  },
+  "onboardingInstallTitle": {
+    "message": "Instalar Anda"
+  },
+  "onboardingInstallBody": {
+    "message": "Instala primero la app de línea de comandos en este equipo."
+  },
+  "macLinux": {
+    "message": "macOS / Linux"
+  },
+  "copyCommand": {
+    "message": "Copiar comando"
+  },
+  "onboardingConfigureTitle": {
+    "message": "Configurar e iniciar"
+  },
+  "onboardingConfigureBody": {
+    "message": "Ejecuta Anda una vez, completa los campos del proveedor de modelo en ~/.anda/config.yaml cuando se solicite y mantén el daemon en ejecución."
+  },
+  "launchCommandLabel": {
+    "message": "Iniciar"
+  },
+  "onboardingTokenTitle": {
+    "message": "Generar un token para la extensión"
+  },
+  "onboardingTokenBody": {
+    "message": "Copia la Gateway URL y el Bearer token impresos en los campos de abajo."
+  },
+  "tokenCommandLabel": {
+    "message": "Token"
+  },
+  "connectionDetails": {
+    "message": "Datos de conexión"
+  },
+  "savedConnection": {
+    "message": "Guardado"
+  },
+  "tokenPlaceholder": {
+    "message": "Pega el Bearer token impreso por `anda browser token --days 30`"
   },
   "settings": {
     "message": "Configuración"
@@ -115,5 +163,8 @@
   },
   "voiceNotConnected": {
     "message": "El modo de voz no está conectado."
+  },
+  "pasteTokenFirst": {
+    "message": "Completa la configuración y pega primero un Bearer token generado por `anda browser token`."
   }
 }

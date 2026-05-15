@@ -13,7 +13,7 @@ cargo run -p anda_bot --
 2. Generate an extension token:
 
 ```bash
-cargo run -p anda_bot -- chrome token --days 30
+cargo run -p anda_bot -- browser token --days 30
 ```
 
 3. Build the extension:

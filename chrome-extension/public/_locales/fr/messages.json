@@ -12,7 +12,55 @@
     "message": "Message à Anda"
   },
   "placeholderSettings": {
-    "message": "Coller le jeton dans les Paramètres"
+    "message": "Terminez d'abord la configuration locale"
+  },
+  "onboardingEyebrow": {
+    "message": "Configuration locale"
+  },
+  "onboardingTitle": {
+    "message": "Connecter Anda sur cet ordinateur"
+  },
+  "onboardingIntro": {
+    "message": "L'extension Chrome a besoin du programme local Anda, d'un fournisseur de modèle configuré et d'un daemon en cours d'exécution avant de pouvoir discuter."
+  },
+  "onboardingInstallTitle": {
+    "message": "Installer Anda"
+  },
+  "onboardingInstallBody": {
+    "message": "Installez d'abord l'application en ligne de commande sur cet ordinateur."
+  },
+  "macLinux": {
+    "message": "macOS / Linux"
+  },
+  "copyCommand": {
+    "message": "Copier la commande"
+  },
+  "onboardingConfigureTitle": {
+    "message": "Configurer et démarrer"
+  },
+  "onboardingConfigureBody": {
+    "message": "Lancez Anda une fois, renseignez les champs du fournisseur de modèle dans ~/.anda/config.yaml quand cela est demandé, puis gardez le daemon en cours d'exécution."
+  },
+  "launchCommandLabel": {
+    "message": "Lancer"
+  },
+  "onboardingTokenTitle": {
+    "message": "Générer un jeton d'extension"
+  },
+  "onboardingTokenBody": {
+    "message": "Copiez la Gateway URL et le Bearer token affichés dans les champs ci-dessous."
+  },
+  "tokenCommandLabel": {
+    "message": "Jeton"
+  },
+  "connectionDetails": {
+    "message": "Détails de connexion"
+  },
+  "savedConnection": {
+    "message": "Enregistré"
+  },
+  "tokenPlaceholder": {
+    "message": "Collez le Bearer token affiché par `anda browser token --days 30`"
   },
   "settings": {
     "message": "Paramètres"
@@ -115,5 +163,8 @@
   },
   "voiceNotConnected": {
     "message": "Le mode vocal n'est pas connecté."
+  },
+  "pasteTokenFirst": {
+    "message": "Terminez la configuration et collez d'abord un Bearer token généré par `anda browser token`."
   }
 }

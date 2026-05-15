@@ -12,7 +12,55 @@
     "message": "给 Anda 发消息"
   },
   "placeholderSettings": {
-    "message": "在设置中粘贴 Token"
+    "message": "请先完成本机设置"
+  },
+  "onboardingEyebrow": {
+    "message": "本机设置"
+  },
+  "onboardingTitle": {
+    "message": "连接这台电脑上的 Anda"
+  },
+  "onboardingIntro": {
+    "message": "Chrome 扩展需要先安装本机 Anda 程序、配置模型服务商，并让守护进程保持运行，之后才能开始聊天。"
+  },
+  "onboardingInstallTitle": {
+    "message": "安装 Anda"
+  },
+  "onboardingInstallBody": {
+    "message": "先在这台电脑上安装命令行程序。"
+  },
+  "macLinux": {
+    "message": "macOS / Linux"
+  },
+  "copyCommand": {
+    "message": "复制命令"
+  },
+  "onboardingConfigureTitle": {
+    "message": "配置并启动"
+  },
+  "onboardingConfigureBody": {
+    "message": "运行一次 Anda，按提示补全 ~/.anda/config.yaml 里的模型服务商字段，然后保持守护进程运行。"
+  },
+  "launchCommandLabel": {
+    "message": "启动"
+  },
+  "onboardingTokenTitle": {
+    "message": "生成扩展令牌"
+  },
+  "onboardingTokenBody": {
+    "message": "把命令输出的 Gateway URL 和 Bearer 令牌复制到下方字段。"
+  },
+  "tokenCommandLabel": {
+    "message": "令牌"
+  },
+  "connectionDetails": {
+    "message": "连接信息"
+  },
+  "savedConnection": {
+    "message": "已保存"
+  },
+  "tokenPlaceholder": {
+    "message": "粘贴 `anda browser token --days 30` 输出的 Bearer 令牌"
   },
   "settings": {
     "message": "设置"
@@ -156,7 +204,7 @@
     "message": "缺少 Bearer 令牌"
   },
   "pasteTokenFirst": {
-    "message": "请先粘贴由 `anda chrome token` 生成的 Bearer 令牌。"
+    "message": "请先完成设置，并粘贴由 `anda browser token` 生成的 Bearer 令牌。"
   },
   "browserSpeechStartFailed": {
     "message": "浏览器语音识别未启动。"

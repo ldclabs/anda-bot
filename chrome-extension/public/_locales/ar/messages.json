@@ -12,7 +12,55 @@
     "message": "رسالة إلى Anda"
   },
   "placeholderSettings": {
-    "message": "الصق الرمز في الإعدادات"
+    "message": "أكمل الإعداد المحلي أولاً"
+  },
+  "onboardingEyebrow": {
+    "message": "الإعداد المحلي"
+  },
+  "onboardingTitle": {
+    "message": "وصّل Anda على هذا الكمبيوتر"
+  },
+  "onboardingIntro": {
+    "message": "تحتاج إضافة Chrome إلى برنامج Anda المحلي ومزوّد نموذج مُعدّ وdaemon يعمل قبل توفر الدردشة."
+  },
+  "onboardingInstallTitle": {
+    "message": "تثبيت Anda"
+  },
+  "onboardingInstallBody": {
+    "message": "ثبّت تطبيق سطر الأوامر على هذا الكمبيوتر أولاً."
+  },
+  "macLinux": {
+    "message": "macOS / Linux"
+  },
+  "copyCommand": {
+    "message": "نسخ الأمر"
+  },
+  "onboardingConfigureTitle": {
+    "message": "الإعداد والتشغيل"
+  },
+  "onboardingConfigureBody": {
+    "message": "شغّل Anda مرة واحدة، وأكمل حقول مزوّد النموذج في ~/.anda/config.yaml عند الطلب، ثم أبقِ daemon قيد التشغيل."
+  },
+  "launchCommandLabel": {
+    "message": "تشغيل"
+  },
+  "onboardingTokenTitle": {
+    "message": "إنشاء رمز للإضافة"
+  },
+  "onboardingTokenBody": {
+    "message": "انسخ Gateway URL وBearer token المطبوعين إلى الحقول أدناه."
+  },
+  "tokenCommandLabel": {
+    "message": "الرمز"
+  },
+  "connectionDetails": {
+    "message": "تفاصيل الاتصال"
+  },
+  "savedConnection": {
+    "message": "محفوظ"
+  },
+  "tokenPlaceholder": {
+    "message": "الصق Bearer token الذي يطبعه `anda browser token --days 30`"
   },
   "settings": {
     "message": "الإعدادات"
@@ -115,5 +163,8 @@
   },
   "voiceNotConnected": {
     "message": "وضع الصوت غير متصل."
+  },
+  "pasteTokenFirst": {
+    "message": "أكمل الإعداد والصق أولاً Bearer token تم إنشاؤه بواسطة `anda browser token`."
   }
 }

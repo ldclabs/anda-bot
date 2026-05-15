@@ -167,7 +167,7 @@ anda voice --record-secs 8
 为扩展生成本地 bearer token：
 
 ```bash
-anda chrome token --days 30
+anda browser token --days 30
 ```
 
 然后在 `chrome://extensions` 开启开发者模式，加载 [chrome_extension](chrome_extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
