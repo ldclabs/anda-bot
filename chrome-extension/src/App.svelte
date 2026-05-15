@@ -20,6 +20,7 @@
 	import {
 		Bot,
 		Check,
+		ChevronDown,
 		CircleAlert,
 		Clipboard,
 		Download,
@@ -46,6 +47,7 @@
 	let status = $state('starting')
 	let sending = $state(false)
 	let settingsOpen = $state(false)
+	let setupGuideOpen = $state(false)
 	let settingsDirty = $state(false)
 	let savingSettings = $state(false)
 	let testingConnection = $state(false)
@@ -67,7 +69,7 @@
 		'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
 	const windowsInstallCommand =
 		'irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex'
-	const launchCommand = 'anda'
+	const launchCommand = 'anda start'
 	const tokenCommand = 'anda browser token --days 365'
 
 	const isBusy = $derived(
@@ -105,6 +107,7 @@
 			voiceCapabilities = snapshot.voiceCapabilities
 			if (!snapshot.settings.token) {
 				settingsOpen = true
+				setupGuideOpen = true
 			}
 		})
 
@@ -126,6 +129,7 @@
 			]
 			messages = conversationGroups.flatMap((group) => group.messages)
 			settingsOpen = true
+			setupGuideOpen = true
 		})
 
 		return () => client?.destroy()
@@ -178,6 +182,13 @@
 		settingsDirty = true
 	}
 
+	function toggleSettingsPanel() {
+		settingsOpen = !settingsOpen
+		if (settingsOpen) {
+			setupGuideOpen = !settings.token.trim()
+		}
+	}
+
 	async function copyCommand(command: string) {
 		try {
 			await navigator.clipboard.writeText(command)
@@ -205,6 +216,9 @@
 			await client.saveSettings(draftSettings)
 			settingsDirty = false
 			settingsOpen = false
+			if (draftSettings.token.trim()) {
+				setupGuideOpen = false
+			}
 			draftSettings = { ...settings }
 		} finally {
 			savingSettings = false
@@ -424,7 +438,7 @@
 			size="icon"
 			aria-label={chrome.i18n.getMessage('settings')}
 			title={chrome.i18n.getMessage('settings')}
-			onclick={() => (settingsOpen = !settingsOpen)}
+			onclick={toggleSettingsPanel}
 		>
 			<Settings class="size-4" />
 		</Button>
@@ -432,209 +446,230 @@
 
 	{#if settingsOpen}
 		<section
-			class="scrollbar-slim grid max-h-[72vh] gap-4 overflow-y-auto border-b border-stone-200 bg-[#fbfcfa] px-3 py-3"
+			class="scrollbar-slim grid gap-4 border-b border-stone-200 bg-[#fbfcfa] px-3 py-3 shadow"
 			aria-label={chrome.i18n.getMessage('settings')}
 		>
-			<div class="grid gap-1">
-				<div class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
-					<Terminal class="size-3.5" />
-					<span>{message('onboardingEyebrow', 'Local setup')}</span>
-				</div>
-				<h2 class="text-sm font-bold text-stone-900">
-					{message('onboardingTitle', 'Connect Anda on this computer')}
-				</h2>
-				<p class="text-[11px] leading-relaxed text-stone-600">
-					{message(
-						'onboardingIntro',
-						'The Chrome extension needs the local Anda program, a configured model provider, and a running daemon before chat is available.'
-					)}
-				</p>
-			</div>
+			<div class="overflow-hidden rounded-lg border border-emerald-900/10 bg-white shadow-xs">
+				<button
+					type="button"
+					class="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-emerald-50/45 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-700"
+					aria-expanded={setupGuideOpen}
+					aria-controls="local-setup-guide"
+					aria-label={setupGuideOpen
+						? message('collapseLocalSetup', 'Collapse local setup')
+						: message('expandLocalSetup', 'Expand local setup')}
+					onclick={() => (setupGuideOpen = !setupGuideOpen)}
+				>
+					<span class="grid min-w-0 gap-1">
+						<span class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
+							<Terminal class="size-3.5" />
+							<span>{message('onboardingEyebrow', 'Local setup')}</span>
+						</span>
+						<span class="text-sm font-bold text-stone-900">
+							{message('onboardingTitle', 'Connect Anda on this computer')}
+						</span>
+						<span class="text-[11px] leading-relaxed text-stone-600">
+							{message(
+								'onboardingIntro',
+								'The Chrome extension needs the local Anda program, a configured model provider, and a running daemon before chat is available.'
+							)}
+						</span>
+					</span>
+					<ChevronDown
+						class={`mt-0.5 size-4 shrink-0 text-emerald-800 transition-transform ${setupGuideOpen ? 'rotate-180' : ''}`}
+					/>
+				</button>
 
-			<div class="grid gap-3">
-				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
+				{#if setupGuideOpen}
 					<div
-						class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
+						id="local-setup-guide"
+						class="scrollbar-slim grid max-h-80 gap-3 overflow-y-auto border-t border-stone-200 px-3 py-3"
 					>
-						<Download class="size-3.5" />
-					</div>
-					<div class="grid min-w-0 gap-2">
-						<div class="grid gap-0.5">
-							<h3 class="text-xs font-bold text-stone-800">
-								{message('onboardingInstallTitle', 'Install Anda')}
-							</h3>
-							<p class="text-[11px] leading-relaxed text-stone-600">
-								{message(
-									'onboardingInstallBody',
-									'Install the command-line app on this computer first.'
-								)}
-							</p>
-						</div>
-
-						<div class="grid gap-1.5">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500">Homebrew</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label={message('copyCommand', 'Copy command')}
-									title={message('copyCommand', 'Copy command')}
-									onclick={() => copyCommand(installCommand)}
-								>
-									{#if copiedCommand === installCommand}
-										<Check class="size-3 text-emerald-700" />
-									{:else}
-										<Clipboard class="size-3" />
-									{/if}
-								</Button>
-							</div>
-							<code
-								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
-								>{installCommand}</code
+						<div class="grid grid-cols-[1.75rem_1fr] gap-2 pb-2">
+							<div
+								class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
 							>
-						</div>
-
-						<div class="grid gap-1.5">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500">
-									{message('macLinux', 'macOS / Linux')}
-								</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label={message('copyCommand', 'Copy command')}
-									title={message('copyCommand', 'Copy command')}
-									onclick={() => copyCommand(installScriptCommand)}
-								>
-									{#if copiedCommand === installScriptCommand}
-										<Check class="size-3 text-emerald-700" />
-									{:else}
-										<Clipboard class="size-3" />
-									{/if}
-								</Button>
+								<Download class="size-3.5" />
 							</div>
-							<code
-								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
-								>{installScriptCommand}</code
-							>
-						</div>
+							<div class="grid min-w-0 gap-2">
+								<div class="grid gap-0.5">
+									<h3 class="text-xs font-bold text-stone-800">
+										{message('onboardingInstallTitle', 'Install Anda')}
+									</h3>
+									<p class="text-[11px] leading-relaxed text-stone-600">
+										{message(
+											'onboardingInstallBody',
+											'Install the command-line app on this computer first.'
+										)}
+									</p>
+								</div>
 
-						<div class="grid gap-1.5">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500">Windows PowerShell</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label={message('copyCommand', 'Copy command')}
-									title={message('copyCommand', 'Copy command')}
-									onclick={() => copyCommand(windowsInstallCommand)}
-								>
-									{#if copiedCommand === windowsInstallCommand}
-										<Check class="size-3 text-emerald-700" />
-									{:else}
-										<Clipboard class="size-3" />
-									{/if}
-								</Button>
+								<div class="grid gap-1.5">
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-[10px] font-semibold text-stone-500">Homebrew</span>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											aria-label={message('copyCommand', 'Copy command')}
+											title={message('copyCommand', 'Copy command')}
+											onclick={() => copyCommand(installCommand)}
+										>
+											{#if copiedCommand === installCommand}
+												<Check class="size-3 text-emerald-700" />
+											{:else}
+												<Clipboard class="size-3" />
+											{/if}
+										</Button>
+									</div>
+									<code
+										class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+										>{installCommand}</code
+									>
+								</div>
+
+								<div class="grid gap-1.5">
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-[10px] font-semibold text-stone-500">
+											{message('macLinux', 'macOS / Linux')}
+										</span>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											aria-label={message('copyCommand', 'Copy command')}
+											title={message('copyCommand', 'Copy command')}
+											onclick={() => copyCommand(installScriptCommand)}
+										>
+											{#if copiedCommand === installScriptCommand}
+												<Check class="size-3 text-emerald-700" />
+											{:else}
+												<Clipboard class="size-3" />
+											{/if}
+										</Button>
+									</div>
+									<code
+										class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+										>{installScriptCommand}</code
+									>
+								</div>
+
+								<div class="grid gap-1.5">
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-[10px] font-semibold text-stone-500">Windows PowerShell</span>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											aria-label={message('copyCommand', 'Copy command')}
+											title={message('copyCommand', 'Copy command')}
+											onclick={() => copyCommand(windowsInstallCommand)}
+										>
+											{#if copiedCommand === windowsInstallCommand}
+												<Check class="size-3 text-emerald-700" />
+											{:else}
+												<Clipboard class="size-3" />
+											{/if}
+										</Button>
+									</div>
+									<code
+										class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+										>{windowsInstallCommand}</code
+									>
+								</div>
 							</div>
-							<code
-								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
-								>{windowsInstallCommand}</code
+						</div>
+
+						<div class="grid grid-cols-[1.75rem_1fr] gap-2 pb-2">
+							<div
+								class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
 							>
-						</div>
-					</div>
-				</div>
-
-				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
-					<div
-						class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
-					>
-						<FileCog class="size-3.5" />
-					</div>
-					<div class="grid min-w-0 gap-2">
-						<div class="grid gap-0.5">
-							<h3 class="text-xs font-bold text-stone-800">
-								{message('onboardingConfigureTitle', 'Configure and start')}
-							</h3>
-							<p class="text-[11px] leading-relaxed text-stone-600">
-								{message(
-									'onboardingConfigureBody',
-									'Run Anda once, fill the model provider fields in ~/.anda/config.yaml when prompted, then keep the daemon running.'
-								)}
-							</p>
-						</div>
-
-						<div class="grid gap-1.5">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500">
-									{message('launchCommandLabel', 'Launch')}
-								</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label={message('copyCommand', 'Copy command')}
-									title={message('copyCommand', 'Copy command')}
-									onclick={() => copyCommand(launchCommand)}
-								>
-									{#if copiedCommand === launchCommand}
-										<Check class="size-3 text-emerald-700" />
-									{:else}
-										<Clipboard class="size-3" />
-									{/if}
-								</Button>
+								<FileCog class="size-3.5" />
 							</div>
-							<code
-								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
-								>{launchCommand}</code
-							>
-						</div>
-					</div>
-				</div>
+							<div class="grid min-w-0 gap-2">
+								<div class="grid gap-0.5">
+									<h3 class="text-xs font-bold text-stone-800">
+										{message('onboardingConfigureTitle', 'Configure and start')}
+									</h3>
+									<p class="text-[11px] leading-relaxed text-stone-600">
+										{message(
+											'onboardingConfigureBody',
+											'Review ~/.anda/config.yaml for model provider settings, then start the daemon in the background so this side panel can connect.'
+										)}
+									</p>
+								</div>
 
-				<div class="grid grid-cols-[1.75rem_1fr] gap-2">
-					<div
-						class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
-					>
-						<KeyRound class="size-3.5" />
-					</div>
-					<div class="grid min-w-0 gap-2">
-						<div class="grid gap-0.5">
-							<h3 class="text-xs font-bold text-stone-800">
-								{message('onboardingTokenTitle', 'Generate an extension token')}
-							</h3>
-							<p class="text-[11px] leading-relaxed text-stone-600">
-								{message(
-									'onboardingTokenBody',
-									'Copy the printed Gateway URL and Bearer token into the fields below.'
-								)}
-							</p>
-						</div>
-
-						<div class="grid gap-1.5">
-							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500">
-									{message('tokenCommandLabel', 'Token')}
-								</span>
-								<Button
-									variant="ghost"
-									size="icon-xs"
-									aria-label={message('copyCommand', 'Copy command')}
-									title={message('copyCommand', 'Copy command')}
-									onclick={() => copyCommand(tokenCommand)}
-								>
-									{#if copiedCommand === tokenCommand}
-										<Check class="size-3 text-emerald-700" />
-									{:else}
-										<Clipboard class="size-3" />
-									{/if}
-								</Button>
+								<div class="grid gap-1.5">
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-[10px] font-semibold text-stone-500">
+											{message('launchCommandLabel', 'Launch')}
+										</span>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											aria-label={message('copyCommand', 'Copy command')}
+											title={message('copyCommand', 'Copy command')}
+											onclick={() => copyCommand(launchCommand)}
+										>
+											{#if copiedCommand === launchCommand}
+												<Check class="size-3 text-emerald-700" />
+											{:else}
+												<Clipboard class="size-3" />
+											{/if}
+										</Button>
+									</div>
+									<code
+										class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+										>{launchCommand}</code
+									>
+								</div>
 							</div>
-							<code
-								class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
-								>{tokenCommand}</code
+						</div>
+
+						<div class="grid grid-cols-[1.75rem_1fr] gap-2 pb-2">
+							<div
+								class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
 							>
+								<KeyRound class="size-3.5" />
+							</div>
+							<div class="grid min-w-0 gap-2">
+								<div class="grid gap-0.5">
+									<h3 class="text-xs font-bold text-stone-800">
+										{message('onboardingTokenTitle', 'Generate an extension token')}
+									</h3>
+									<p class="text-[11px] leading-relaxed text-stone-600">
+										{message(
+											'onboardingTokenBody',
+											'Copy the printed Gateway URL and Bearer token into the fields below.'
+										)}
+									</p>
+								</div>
+
+								<div class="grid gap-1.5">
+									<div class="flex items-center justify-between gap-2">
+										<span class="text-[10px] font-semibold text-stone-500">
+											{message('tokenCommandLabel', 'Token')}
+										</span>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											aria-label={message('copyCommand', 'Copy command')}
+											title={message('copyCommand', 'Copy command')}
+											onclick={() => copyCommand(tokenCommand)}
+										>
+											{#if copiedCommand === tokenCommand}
+												<Check class="size-3 text-emerald-700" />
+											{:else}
+												<Clipboard class="size-3" />
+											{/if}
+										</Button>
+									</div>
+									<code
+										class="block min-w-0 overflow-x-auto rounded-md border border-stone-200 bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-stone-800 shadow-xs"
+										>{tokenCommand}</code
+									>
+								</div>
+							</div>
 						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 
 			<div class="grid gap-3 border-t border-stone-200 pt-3">
@@ -677,7 +712,7 @@
 						spellcheck={false}
 						placeholder={message(
 							'tokenPlaceholder',
-							'Paste the Bearer token printed by `anda browser token --days 30`'
+							'Paste the Bearer token printed by `anda browser token --days 365`'
 						)}
 						bind:value={draftSettings.token}
 						oninput={markSettingsDirty}

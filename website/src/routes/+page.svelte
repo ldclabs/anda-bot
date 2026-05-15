@@ -15,6 +15,7 @@
 		type Locale,
 		type OsKey
 	} from '$lib/content/landing';
+	import { infoCopy } from '$lib/content/info';
 	import {
 		ArrowRight,
 		BookOpen,
@@ -68,6 +69,7 @@
 	let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
 	let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
 	let copy = $derived(landingCopy[activeLocale]);
+	let info = $derived(infoCopy[activeLocale]);
 	let activeDirection = $derived(localeMeta[activeLocale].dir);
 	let activeInstallText = $derived(copy.install.options[activeOs]);
 	let activeInstall = $derived({ ...installCommands[activeOs], ...activeInstallText });
@@ -295,9 +297,7 @@
 					<span class="h-px w-8 bg-(--anda-amber)"></span>
 					{copy.hero.eyebrow}
 				</p>
-				<h1
-					class="anda-display max-w-3xl text-5xl text-white sm:text-4xl lg:text-6xl"
-				>
+				<h1 class="anda-display max-w-3xl text-5xl text-white sm:text-4xl lg:text-6xl">
 					{copy.hero.title}
 				</h1>
 				<p class="mt-6 max-w-2xl text-lg leading-8 text-white/78 sm:text-2xl">
@@ -752,4 +752,29 @@
 			</div>
 		</div>
 	</section>
+
+	<footer class="border-t border-black/10 bg-[#ead8bd] px-5 py-8 text-(--anda-ink) sm:px-6 lg:px-8">
+		<div
+			class="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between"
+		>
+			<a href="/" class="inline-flex items-center gap-3 font-semibold">
+				<img src="/_assets/logo.hdr.png" alt="Anda Bot" class="hdr-img size-10 rounded-lg" />
+				<span>Anda Bot</span>
+			</a>
+
+			<nav class="flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium text-black/62">
+				<a class="hover:text-(--anda-ink)" href="/privacy">{info.common.privacy}</a>
+				<a class="hover:text-(--anda-ink)" href="/terms">{info.common.terms}</a>
+				<a class="hover:text-(--anda-ink)" href="/support">{info.common.support}</a>
+				<a
+					class="hover:text-(--anda-ink)"
+					href="https://docs.anda.bot"
+					target="_blank"
+					rel="noreferrer"
+				>
+					{info.common.docs}
+				</a>
+			</nav>
+		</div>
+	</footer>
 </main>

@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "Chat with Anda Bot from Chrome and let the agent operate your browser and computer to help you complete tasks."
+    "message": "Connect Chrome to local Anda: an agent that uses browser and command-line tools, Skills, long reasoning, and graph memory."
   },
   "actionTitle": {
     "message": "Open Anda Bot"
@@ -16,6 +16,12 @@
   },
   "onboardingEyebrow": {
     "message": "Local setup"
+  },
+  "expandLocalSetup": {
+    "message": "Expand local setup"
+  },
+  "collapseLocalSetup": {
+    "message": "Collapse local setup"
   },
   "onboardingTitle": {
     "message": "Connect Anda on this computer"
@@ -39,7 +45,7 @@
     "message": "Configure and start"
   },
   "onboardingConfigureBody": {
-    "message": "Run Anda once, fill the model provider fields in ~/.anda/config.yaml when prompted, then keep the daemon running."
+    "message": "Review ~/.anda/config.yaml for model provider settings, then start the daemon in the background so this side panel can connect."
   },
   "launchCommandLabel": {
     "message": "Launch"
@@ -60,7 +66,7 @@
     "message": "Saved"
   },
   "tokenPlaceholder": {
-    "message": "Paste the Bearer token printed by `anda browser token --days 30`"
+    "message": "Paste the Bearer token printed by `anda browser token --days 365`"
   },
   "settings": {
     "message": "Settings"

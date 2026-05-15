@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "从 Chrome 与 Anda Bot 聊天，并让智能体操作您的浏览器和电脑，帮您完成任务。"
+    "message": "在 Chrome 连接本机 Anda：会使用浏览器、命令行工具和 AI 技能，并用图谱记忆持续学习与推进任务。"
   },
   "actionTitle": {
     "message": "打开 Anda Bot"
@@ -16,6 +16,12 @@
   },
   "onboardingEyebrow": {
     "message": "本机设置"
+  },
+  "expandLocalSetup": {
+    "message": "展开本机设置"
+  },
+  "collapseLocalSetup": {
+    "message": "折叠本机设置"
   },
   "onboardingTitle": {
     "message": "连接这台电脑上的 Anda"
@@ -39,7 +45,7 @@
     "message": "配置并启动"
   },
   "onboardingConfigureBody": {
-    "message": "运行一次 Anda，按提示补全 ~/.anda/config.yaml 里的模型服务商字段，然后保持守护进程运行。"
+    "message": "检查 ~/.anda/config.yaml 中的模型服务商配置，然后在后台启动守护进程，让侧边栏可以连接。"
   },
   "launchCommandLabel": {
     "message": "启动"
@@ -60,7 +66,7 @@
     "message": "已保存"
   },
   "tokenPlaceholder": {
-    "message": "粘贴 `anda browser token --days 30` 输出的 Bearer 令牌"
+    "message": "粘贴 `anda browser token --days 365` 输出的 Bearer 令牌"
   },
   "settings": {
     "message": "设置"

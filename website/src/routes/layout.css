@@ -702,6 +702,84 @@ img {
 	pointer-events: none;
 }
 
+.info-shell {
+	background:
+		linear-gradient(135deg, rgba(216, 75, 66, 0.08), transparent 28%),
+		linear-gradient(180deg, #07110f 0%, #0b1714 48%, #101f1b 100%);
+}
+
+.info-map {
+	background-image:
+		linear-gradient(rgba(244, 238, 227, 0.04) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(244, 238, 227, 0.028) 1px, transparent 1px),
+		radial-gradient(circle at 18% 22%, rgba(241, 166, 78, 0.16), transparent 30%),
+		radial-gradient(circle at 82% 8%, rgba(53, 178, 171, 0.16), transparent 28%);
+	background-size:
+		42px 42px,
+		42px 42px,
+		100% 100%,
+		100% 100%;
+	mask-image: linear-gradient(180deg, black, transparent 88%);
+}
+
+.info-section-card,
+.info-rail {
+	border: 1px solid rgba(255, 255, 255, 0.11);
+	border-radius: var(--radius-lg);
+	background:
+		linear-gradient(135deg, rgba(241, 166, 78, 0.08), transparent 36%), rgba(255, 255, 255, 0.042);
+	box-shadow: 0 28px 100px rgba(0, 0, 0, 0.22);
+	backdrop-filter: blur(22px);
+}
+
+.info-section-card {
+	padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.info-section-number {
+	flex: 0 0 auto;
+	color: rgba(255, 208, 138, 0.72);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+	font-size: 0.78rem;
+	line-height: 2.2rem;
+}
+
+.info-item {
+	min-width: 0;
+	border: 1px solid rgba(255, 255, 255, 0.09);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.045);
+	padding: 1rem;
+}
+
+.info-rail {
+	padding: 1rem;
+}
+
+.info-rail-link {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.04);
+	padding: 0.72rem 0.85rem;
+	color: rgba(244, 238, 227, 0.68);
+	font-size: 0.9rem;
+	font-weight: 650;
+	transition:
+		border-color 180ms ease,
+		background 180ms ease,
+		color 180ms ease;
+}
+
+.info-rail-link:hover,
+.info-rail-link-active {
+	border-color: rgba(255, 208, 138, 0.36);
+	background: rgba(241, 166, 78, 0.12);
+	color: #fff;
+}
+
 @keyframes signal-sweep {
 	0%,
 	100% {

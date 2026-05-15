@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "دردشة مع Anda Bot من Chrome واجعل الوكيل يقوم بتشغيل متصفحك وجهاز الكمبيوتر الخاص بك لمساعدتك في إكمال المهام."
+    "message": "صِل Chrome بـ Anda المحلي: وكيل يستخدم المتصفح وسطر الأوامر وSkills والتفكير الطويل وذاكرة الرسم البياني."
   },
   "actionTitle": {
     "message": "افتح Anda Bot"
@@ -16,6 +16,12 @@
   },
   "onboardingEyebrow": {
     "message": "الإعداد المحلي"
+  },
+  "expandLocalSetup": {
+    "message": "توسيع الإعداد المحلي"
+  },
+  "collapseLocalSetup": {
+    "message": "طي الإعداد المحلي"
   },
   "onboardingTitle": {
     "message": "وصّل Anda على هذا الكمبيوتر"
@@ -39,7 +45,7 @@
     "message": "الإعداد والتشغيل"
   },
   "onboardingConfigureBody": {
-    "message": "شغّل Anda مرة واحدة، وأكمل حقول مزوّد النموذج في ~/.anda/config.yaml عند الطلب، ثم أبقِ daemon قيد التشغيل."
+    "message": "راجع إعدادات مزوّد النموذج في ~/.anda/config.yaml، ثم ابدأ daemon في الخلفية حتى تتمكن هذه اللوحة الجانبية من الاتصال."
   },
   "launchCommandLabel": {
     "message": "تشغيل"
@@ -60,7 +66,7 @@
     "message": "محفوظ"
   },
   "tokenPlaceholder": {
-    "message": "الصق Bearer token الذي يطبعه `anda browser token --days 30`"
+    "message": "الصق Bearer token الذي يطبعه `anda browser token --days 365`"
   },
   "settings": {
     "message": "الإعدادات"

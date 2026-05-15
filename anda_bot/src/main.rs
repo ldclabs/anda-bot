@@ -53,6 +53,8 @@ pub enum Commands {
     Daemon,
     /// Stop the anda daemon if it's running.
     Stop,
+    /// Start the anda daemon if it's not running.
+    Start,
     /// Restart the anda daemon. If the daemon is not running, this will start it.
     Restart,
     /// Equal to running `anda restart`.
@@ -196,6 +198,25 @@ async fn run() -> Result<(), BoxError> {
                 }
             }
         }
+
+        Some(Commands::Start) => {
+            log::info!("Starting CLI with command 'start' at {}", daemon.base_url());
+
+            let client = build_control_client(&daemon).await?;
+            match client.ensure_daemon_running(&daemon).await? {
+                daemon::LaunchState::AlreadyRunning => {
+                    println!("anda daemon is already running at {}", daemon.base_url())
+                }
+                daemon::LaunchState::Started(child) => {
+                    println!(
+                        "Started anda daemon (pid {}). Logs: {}",
+                        child.pid,
+                        child.log_path.display()
+                    );
+                }
+            }
+        }
+
         Some(Commands::Restart) | Some(Commands::Reload) => {
             log::info!(
                 "Starting CLI with command 'restart' at {}",

@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "Chatea con Anda Bot desde Chrome y deja que el agente opere tu navegador y computadora para ayudarte a completar tareas."
+    "message": "Conecta Chrome con Anda local: agente que usa navegador, línea de comandos, Skills, razonamiento largo y memoria en grafo."
   },
   "actionTitle": {
     "message": "Abrir Anda Bot"
@@ -16,6 +16,12 @@
   },
   "onboardingEyebrow": {
     "message": "Configuración local"
+  },
+  "expandLocalSetup": {
+    "message": "Expandir configuración local"
+  },
+  "collapseLocalSetup": {
+    "message": "Contraer configuración local"
   },
   "onboardingTitle": {
     "message": "Conecta Anda en este equipo"
@@ -39,7 +45,7 @@
     "message": "Configurar e iniciar"
   },
   "onboardingConfigureBody": {
-    "message": "Ejecuta Anda una vez, completa los campos del proveedor de modelo en ~/.anda/config.yaml cuando se solicite y mantén el daemon en ejecución."
+    "message": "Revisa la configuración del proveedor de modelo en ~/.anda/config.yaml y luego inicia el daemon en segundo plano para que este panel lateral pueda conectarse."
   },
   "launchCommandLabel": {
     "message": "Iniciar"
@@ -60,7 +66,7 @@
     "message": "Guardado"
   },
   "tokenPlaceholder": {
-    "message": "Pega el Bearer token impreso por `anda browser token --days 30`"
+    "message": "Pega el Bearer token impreso por `anda browser token --days 365`"
   },
   "settings": {
     "message": "Configuración"

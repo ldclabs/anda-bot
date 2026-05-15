@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "Общайтесь с Anda Bot из Chrome и позвольте агенту управлять вашим браузером и компьютером, помогая вам выполнять задачи."
+    "message": "Подключите Chrome к локальному Anda: агент использует браузер, командную строку, Skills, долгие задачи и граф-память."
   },
   "actionTitle": {
     "message": "Открыть Anda Bot"
@@ -16,6 +16,12 @@
   },
   "onboardingEyebrow": {
     "message": "Локальная настройка"
+  },
+  "expandLocalSetup": {
+    "message": "Развернуть локальную настройку"
+  },
+  "collapseLocalSetup": {
+    "message": "Свернуть локальную настройку"
   },
   "onboardingTitle": {
     "message": "Подключите Anda на этом компьютере"
@@ -39,7 +45,7 @@
     "message": "Настроить и запустить"
   },
   "onboardingConfigureBody": {
-    "message": "Запустите Anda один раз, заполните поля поставщика модели в ~/.anda/config.yaml при запросе и оставьте daemon запущенным."
+    "message": "Проверьте настройки поставщика модели в ~/.anda/config.yaml, затем запустите daemon в фоне, чтобы эта боковая панель могла подключиться."
   },
   "launchCommandLabel": {
     "message": "Запуск"
@@ -60,7 +66,7 @@
     "message": "Сохранено"
   },
   "tokenPlaceholder": {
-    "message": "Вставьте Bearer token, напечатанный `anda browser token --days 30`"
+    "message": "Вставьте Bearer token, напечатанный `anda browser token --days 365`"
   },
   "settings": {
     "message": "Настройки"
