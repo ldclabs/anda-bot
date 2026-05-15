@@ -47,6 +47,9 @@ type ExtensionMessage = {
 	settings?: SettingsState
 	method?: string
 	params?: unknown[]
+	text?: string
+	language?: string
+	mimeType?: string
 }
 
 type ExtensionResponse =
@@ -74,6 +77,7 @@ interface ChromeEvent<Listener extends (...args: never[]) => void> {
 
 interface ChromeApi {
 	runtime: {
+		lastError?: { message?: string }
 		onInstalled: ChromeEvent<() => void>
 		onStartup: ChromeEvent<() => void>
 		onMessage: {
@@ -85,6 +89,23 @@ interface ChromeApi {
 				) => boolean | void
 			): void
 		}
+	}
+	tts?: {
+		speak(
+			utterance: string,
+			options?: {
+				enqueue?: boolean
+				rate?: number
+				pitch?: number
+				volume?: number
+				requiredEventTypes?: string[]
+				desiredEventTypes?: string[]
+				onEvent?: (event: { type?: string; errorMessage?: string }) => void
+			},
+			callback?: () => void
+		): void
+		stop?(): void
+		getVoices?(callback: (voices: unknown[]) => void): void
 	}
 	extension?: {
 		inIncognitoContext?: boolean
@@ -131,12 +152,45 @@ interface ChromeApi {
 		update(windowId: number, updateInfo: { focused?: boolean }): Promise<unknown>
 	}
 	scripting: {
-		executeScript<Result>(details: {
+		executeScript<Result, Args>(details: {
 			target: { tabId: number }
-			func: (args: BrowserActionArgs) => Result
-			args: [BrowserActionArgs]
-		}): Promise<Array<{ result: Result }>>
+			world?: 'ISOLATED' | 'MAIN'
+			func: (args: Args) => Result | Promise<Result>
+			args: [Args]
+		}): Promise<Array<{ result: Awaited<Result> }>>
 	}
+}
+
+type PageSpeechAction = 'available' | 'start' | 'stop' | 'cancel'
+
+type PageSpeechArgs = {
+	action: PageSpeechAction
+	language?: string
+}
+
+type PageSpeechResult = {
+	available?: boolean
+	started?: boolean
+	transcript?: string
+	canceled?: boolean
+	error?: string
+}
+
+type PageAudioAction = 'available' | 'start' | 'stop' | 'cancel'
+
+type PageAudioArgs = {
+	action: PageAudioAction
+	mimeType?: string
+}
+
+type PageAudioResult = {
+	available?: boolean
+	started?: boolean
+	audioBase64?: string
+	mimeType?: string
+	size?: number
+	canceled?: boolean
+	error?: string
 }
 
 const defaultSettings: SettingsState = {
@@ -227,6 +281,55 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
 		}
 		case 'anda_status': {
 			return { ok: true, result: { status }, status }
+		}
+		case 'anda_chrome_tts_available': {
+			return { ok: true, result: { available: chromeTtsAvailable() }, status }
+		}
+		case 'anda_chrome_tts_speak': {
+			await speakWithChromeTts(message.text || '')
+			return { ok: true, result: { spoken: true }, status }
+		}
+		case 'anda_chrome_tts_stop': {
+			chromeApi.tts?.stop?.()
+			return { ok: true, result: { stopped: true }, status }
+		}
+		case 'anda_page_speech_available': {
+			const result = await handlePageSpeechRecognition({ action: 'available' })
+			return { ok: true, result, status }
+		}
+		case 'anda_page_speech_start': {
+			const result = await handlePageSpeechRecognition({
+				action: 'start',
+				language: message.language
+			})
+			return { ok: true, result, status }
+		}
+		case 'anda_page_speech_stop': {
+			const result = await handlePageSpeechRecognition({ action: 'stop' })
+			return { ok: true, result, status }
+		}
+		case 'anda_page_speech_cancel': {
+			const result = await handlePageSpeechRecognition({ action: 'cancel' })
+			return { ok: true, result, status }
+		}
+		case 'anda_page_audio_available': {
+			const result = await handlePageAudioCapture({ action: 'available' })
+			return { ok: true, result, status }
+		}
+		case 'anda_page_audio_start': {
+			const result = await handlePageAudioCapture({
+				action: 'start',
+				mimeType: message.mimeType
+			})
+			return { ok: true, result, status }
+		}
+		case 'anda_page_audio_stop': {
+			const result = await handlePageAudioCapture({ action: 'stop' })
+			return { ok: true, result, status }
+		}
+		case 'anda_page_audio_cancel': {
+			const result = await handlePageAudioCapture({ action: 'cancel' })
+			return { ok: true, result, status }
 		}
 		default:
 			throw new Error(`unsupported extension message: ${message.type || 'unknown'}`)
@@ -595,6 +698,48 @@ async function executeBrowserAction(command: BrowserCommand): Promise<BrowserAct
 	return execution ? execution.result : null
 }
 
+async function handlePageSpeechRecognition(args: PageSpeechArgs): Promise<PageSpeechResult> {
+	const tab = await activeTab()
+	const tabId = tab?.id
+	if (!tabId) {
+		throw new Error('No active tab is available for browser speech recognition.')
+	}
+	if (!injectablePageUrl(tab.url)) {
+		throw new Error('Browser speech recognition needs an active http or https tab.')
+	}
+
+	const [execution] = await chromeApi.scripting.executeScript<PageSpeechResult, PageSpeechArgs>({
+		target: { tabId },
+		world: 'MAIN',
+		func: pageSpeechRecognitionDispatcher,
+		args: [args]
+	})
+	return execution?.result || { error: 'Browser speech recognition did not return a result.' }
+}
+
+async function handlePageAudioCapture(args: PageAudioArgs): Promise<PageAudioResult> {
+	const tab = await activeTab()
+	const tabId = tab?.id
+	if (!tabId) {
+		throw new Error('No active tab is available for voice recording.')
+	}
+	if (!injectablePageUrl(tab.url)) {
+		throw new Error('Anda voice recording needs an active http or https tab.')
+	}
+
+	const [execution] = await chromeApi.scripting.executeScript<PageAudioResult, PageAudioArgs>({
+		target: { tabId },
+		world: 'MAIN',
+		func: pageAudioCaptureDispatcher,
+		args: [args]
+	})
+	return execution?.result || { error: 'Anda voice recording did not return a result.' }
+}
+
+function injectablePageUrl(url?: string): boolean {
+	return /^https?:\/\//i.test(url || '')
+}
+
 async function listTabs(args: BrowserActionArgs): Promise<BrowserActionResult> {
 	const windowId = positiveInteger(args.window_id)
 	const queryInfo = windowId ? { windowId } : {}
@@ -669,6 +814,454 @@ function requirePositiveInteger(value: unknown, message: string): number {
 
 function normalizeOptionalText(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function pageSpeechRecognitionDispatcher(
+	args: PageSpeechArgs
+): PageSpeechResult | Promise<PageSpeechResult> {
+	type PageRecognitionEvent = {
+		resultIndex: number
+		results: ArrayLike<{
+			isFinal: boolean
+			[index: number]: { transcript: string }
+		}>
+	}
+	type PageRecognitionError = {
+		error?: string
+		message?: string
+	}
+	type PageRecognition = {
+		lang: string
+		continuous: boolean
+		interimResults: boolean
+		onstart: (() => void) | null
+		onresult: ((event: PageRecognitionEvent) => void) | null
+		onerror: ((event: PageRecognitionError) => void) | null
+		onend: (() => void) | null
+		start(): void
+		stop(): void
+		abort?: () => void
+	}
+	type PageRecognitionConstructor = new () => PageRecognition
+	type PageRecognitionState = {
+		recognition: PageRecognition | null
+		finalTranscript: string
+		interimTranscript: string
+		error: string
+		stopRequested: boolean
+		canceled: boolean
+		active: boolean
+		lastResult: PageSpeechResult | null
+		stopResolver: ((result: PageSpeechResult) => void) | null
+		stopTimer: number | null
+	}
+
+	const scope = globalThis as typeof globalThis & {
+		SpeechRecognition?: PageRecognitionConstructor
+		webkitSpeechRecognition?: PageRecognitionConstructor
+		__andaSpeechRecognition?: PageRecognitionState
+	}
+	const Recognition = scope.SpeechRecognition || scope.webkitSpeechRecognition
+	if (args.action === 'available') {
+		return { available: Boolean(Recognition) }
+	}
+	if (!Recognition) {
+		return { available: false, error: 'Browser speech recognition is unavailable on this page.' }
+	}
+
+	const state =
+		scope.__andaSpeechRecognition ||
+		(scope.__andaSpeechRecognition = {
+			recognition: null,
+			finalTranscript: '',
+			interimTranscript: '',
+			error: '',
+			stopRequested: false,
+			canceled: false,
+			active: false,
+			lastResult: null,
+			stopResolver: null,
+			stopTimer: null
+		})
+
+	function transcript(): string {
+		return `${state.finalTranscript} ${state.interimTranscript}`.trim()
+	}
+
+	function resetForStart(): void {
+		if (state.stopTimer !== null) {
+			clearTimeout(state.stopTimer)
+		}
+		state.finalTranscript = ''
+		state.interimTranscript = ''
+		state.error = ''
+		state.stopRequested = false
+		state.canceled = false
+		state.active = false
+		state.lastResult = null
+		state.stopResolver = null
+		state.stopTimer = null
+	}
+
+	function deactivate(result?: PageSpeechResult): PageSpeechResult {
+		const output =
+			result ||
+			(state.error
+				? { available: true, error: pageSpeechErrorMessage(state.error) }
+				: { available: true, transcript: transcript() })
+		if (state.stopTimer !== null) {
+			clearTimeout(state.stopTimer)
+		}
+		const resolver = state.stopResolver
+		state.recognition = null
+		state.finalTranscript = ''
+		state.interimTranscript = ''
+		state.error = ''
+		state.stopRequested = false
+		state.canceled = false
+		state.active = false
+		state.stopResolver = null
+		state.stopTimer = null
+		state.lastResult = output
+		resolver?.(output)
+		return output
+	}
+
+	function detachRecognition(recognition: PageRecognition): void {
+		recognition.onstart = null
+		recognition.onresult = null
+		recognition.onerror = null
+		recognition.onend = null
+	}
+
+	function cancelRecognition(): PageSpeechResult {
+		const recognition = state.recognition
+		state.canceled = true
+		state.stopRequested = true
+		if (recognition) {
+			detachRecognition(recognition)
+			try {
+				recognition.abort?.()
+			} catch (_error) {
+				try {
+					recognition.stop()
+				} catch (_stopError) {}
+			}
+		}
+		return deactivate({ available: true, canceled: true })
+	}
+
+	if (args.action === 'cancel') {
+		return cancelRecognition()
+	}
+
+	if (args.action === 'stop') {
+		if (!state.recognition) {
+			const result = state.lastResult || { available: true, transcript: transcript() }
+			state.lastResult = null
+			return result
+		}
+
+		state.stopRequested = true
+		return new Promise<PageSpeechResult>((resolve) => {
+			state.stopResolver = resolve
+			state.stopTimer = window.setTimeout(() => {
+				deactivate()
+			}, 3000)
+			try {
+				state.recognition?.stop()
+			} catch (_error) {
+				deactivate()
+			}
+		})
+	}
+
+	if (args.action !== 'start') {
+		return { available: true, error: 'Unknown browser speech recognition action.' }
+	}
+
+	if (state.recognition) {
+		cancelRecognition()
+	}
+	resetForStart()
+
+	const recognition = new Recognition()
+	state.recognition = recognition
+	state.active = true
+	recognition.lang = args.language || navigator.language || 'zh-CN'
+	recognition.continuous = true
+	recognition.interimResults = true
+
+	return new Promise<PageSpeechResult>((resolve) => {
+		let settled = false
+		let startTimer: number | null = null
+
+		function settle(result: PageSpeechResult): void {
+			if (settled) {
+				return
+			}
+			settled = true
+			if (startTimer !== null) {
+				clearTimeout(startTimer)
+			}
+			resolve(result)
+		}
+
+		recognition.onstart = () => {
+			settle({ available: true, started: true })
+		}
+		recognition.onresult = (event) => {
+			let interimTranscript = ''
+			for (let index = event.resultIndex; index < event.results.length; index += 1) {
+				const result = event.results[index]
+				const recognized = result[0]?.transcript?.trim() || ''
+				if (!recognized) {
+					continue
+				}
+				if (result.isFinal) {
+					state.finalTranscript = `${state.finalTranscript} ${recognized}`.trim()
+				} else {
+					interimTranscript = `${interimTranscript} ${recognized}`.trim()
+				}
+			}
+			state.interimTranscript = interimTranscript
+		}
+		recognition.onerror = (event) => {
+			const errorName = event.error || event.message || ''
+			if (errorName === 'no-speech') {
+				return
+			}
+			state.error = errorName || 'Browser speech recognition failed.'
+			settle({ available: true, started: false, error: pageSpeechErrorMessage(state.error) })
+		}
+		recognition.onend = () => {
+			if (state.stopRequested || state.canceled || state.error) {
+				deactivate()
+				return
+			}
+			try {
+				recognition.start()
+			} catch (error) {
+				state.error = error instanceof Error ? error.message : String(error)
+				deactivate()
+			}
+		}
+
+		try {
+			recognition.start()
+			startTimer = window.setTimeout(() => {
+				state.error = 'permission-timeout'
+				try {
+					recognition.abort?.()
+				} catch (_error) {}
+				settle({ available: true, started: false, error: pageSpeechErrorMessage(state.error) })
+			}, 8000)
+		} catch (error) {
+			state.error = error instanceof Error ? error.message : String(error)
+			deactivate()
+			settle({ available: true, started: false, error: pageSpeechErrorMessage(state.error) })
+		}
+	})
+
+	function pageSpeechErrorMessage(error: string): string {
+		const normalized = error.toLowerCase()
+		if (normalized.includes('permission dismissed')) {
+			return 'Chrome speech permission was dismissed.'
+		}
+		switch (error) {
+			case 'not-allowed':
+			case 'service-not-allowed':
+				return 'Microphone access was blocked for the current page.'
+			case 'permission-timeout':
+				return 'Chrome speech permission was not accepted.'
+			case 'audio-capture':
+				return 'No microphone was found.'
+			case 'network':
+				return 'Browser speech recognition is offline.'
+			default:
+				return error || 'Browser speech recognition failed.'
+		}
+	}
+}
+
+async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<PageAudioResult> {
+	type PageAudioState = {
+		stream: MediaStream | null
+		recorder: MediaRecorder | null
+		chunks: Blob[]
+		mimeType: string
+		canceled: boolean
+	}
+	const global = globalThis as typeof globalThis & { __andaAudioCapture?: PageAudioState }
+
+	function audioCaptureAvailable(): boolean {
+		return (
+			typeof navigator.mediaDevices?.getUserMedia === 'function' &&
+			typeof MediaRecorder !== 'undefined'
+		)
+	}
+
+	function audioErrorMessage(error: unknown): string {
+		const name =
+			error && typeof error === 'object' && 'name' in error ? String(error.name || '') : ''
+		const message = error instanceof Error ? error.message : String(error || '')
+		const normalized = `${name} ${message}`.toLowerCase()
+		if (normalized.includes('permission dismissed')) {
+			return 'Microphone permission was dismissed for the current page.'
+		}
+		if (
+			normalized.includes('notallowed') ||
+			normalized.includes('not-allowed') ||
+			normalized.includes('permission denied') ||
+			normalized.includes('permission blocked')
+		) {
+			return 'Microphone access was blocked for the current page.'
+		}
+		if (normalized.includes('notfound') || normalized.includes('devices not found')) {
+			return 'No microphone was found.'
+		}
+		return message || name || 'Anda voice recording failed.'
+	}
+
+	function supportedMimeType(mimeType?: string): string {
+		const requested = mimeType?.trim()
+		if (requested && MediaRecorder.isTypeSupported(requested)) {
+			return requested
+		}
+		return (
+			['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) =>
+				MediaRecorder.isTypeSupported(type)
+			) || ''
+		)
+	}
+
+	function cleanup(state: PageAudioState | undefined): void {
+		state?.stream?.getTracks().forEach((track) => track.stop())
+		global.__andaAudioCapture = undefined
+	}
+
+	function blobToBase64(blob: Blob): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader()
+			reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || '')
+			reader.onerror = () => reject(reader.error || new Error('Failed to read voice audio.'))
+			reader.readAsDataURL(blob)
+		})
+	}
+
+	async function finish(state: PageAudioState): Promise<PageAudioResult> {
+		const blob = new Blob(state.chunks, { type: state.mimeType })
+		cleanup(state)
+		if (state.canceled) {
+			return { available: true, canceled: true }
+		}
+		if (!blob.size) {
+			return { available: true, error: 'No voice audio was captured.' }
+		}
+		return {
+			available: true,
+			audioBase64: await blobToBase64(blob),
+			mimeType: blob.type || state.mimeType || 'audio/webm',
+			size: blob.size
+		}
+	}
+
+	if (!audioCaptureAvailable()) {
+		return { available: false, error: 'Browser audio recording is unavailable.' }
+	}
+
+	if (args.action === 'available') {
+		return { available: true }
+	}
+
+	if (args.action === 'cancel') {
+		const state = global.__andaAudioCapture
+		if (!state?.recorder) {
+			cleanup(state)
+			return { available: true, canceled: true }
+		}
+		state.canceled = true
+		return new Promise<PageAudioResult>((resolve) => {
+			state.recorder!.onstop = () => {
+				cleanup(state)
+				resolve({ available: true, canceled: true })
+			}
+			try {
+				if (state.recorder!.state === 'inactive') {
+					cleanup(state)
+					resolve({ available: true, canceled: true })
+				} else {
+					state.recorder!.stop()
+				}
+			} catch (_error) {
+				cleanup(state)
+				resolve({ available: true, canceled: true })
+			}
+		})
+	}
+
+	if (args.action === 'stop') {
+		const state = global.__andaAudioCapture
+		if (!state?.recorder) {
+			return { available: true, error: 'Anda voice recording is not active.' }
+		}
+		return new Promise<PageAudioResult>((resolve) => {
+			state.recorder!.ondataavailable = (event) => {
+				if (event.data.size > 0) {
+					state.chunks.push(event.data)
+				}
+			}
+			state.recorder!.onstop = () => {
+				void finish(state)
+					.then(resolve)
+					.catch((error) => {
+						cleanup(state)
+						resolve({ available: true, error: audioErrorMessage(error) })
+					})
+			}
+			try {
+				state.recorder!.stop()
+			} catch (error) {
+				cleanup(state)
+				resolve({ available: true, error: audioErrorMessage(error) })
+			}
+		})
+	}
+
+	if (args.action !== 'start') {
+		return { available: true, error: 'Unknown Anda voice recording action.' }
+	}
+
+	cleanup(global.__andaAudioCapture)
+	const mimeType = supportedMimeType(args.mimeType)
+	try {
+		const stream = await navigator.mediaDevices.getUserMedia({
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true
+			}
+		})
+		const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+		const state: PageAudioState = {
+			stream,
+			recorder,
+			chunks: [],
+			mimeType: recorder.mimeType || mimeType || 'audio/webm',
+			canceled: false
+		}
+		recorder.ondataavailable = (event) => {
+			if (event.data.size > 0) {
+				state.chunks.push(event.data)
+			}
+		}
+		global.__andaAudioCapture = state
+		recorder.start()
+		return { available: true, started: true, mimeType: state.mimeType }
+	} catch (error) {
+		cleanup(global.__andaAudioCapture)
+		return { available: true, started: false, error: audioErrorMessage(error) }
+	}
 }
 
 function pageActionDispatcher(args: BrowserActionArgs): BrowserActionResult {
@@ -861,6 +1454,78 @@ function getChromeApi(): ChromeApi {
 		throw new Error('Chrome extension APIs are unavailable.')
 	}
 	return chromeApi
+}
+
+function chromeTtsAvailable(): boolean {
+	return Boolean(chromeApi.tts?.speak)
+}
+
+async function speakWithChromeTts(text: string): Promise<void> {
+	const utterance = text.trim()
+	if (!utterance) {
+		return
+	}
+	const tts = chromeApi.tts
+	if (!tts?.speak) {
+		throw new Error('Chrome TTS is unavailable')
+	}
+
+	tts.stop?.()
+	await new Promise<void>((resolve, reject) => {
+		let settled = false
+		let timeout: ReturnType<typeof setTimeout>
+		const settle = (ok: boolean, error?: Error) => {
+			if (settled) {
+				return
+			}
+			settled = true
+			clearTimeout(timeout)
+			if (ok) {
+				resolve()
+			} else {
+				reject(error || new Error('Chrome TTS failed'))
+			}
+		}
+		timeout = setTimeout(() => settle(true), chromeTtsTimeoutMs(utterance))
+
+		try {
+			tts.speak(
+				utterance,
+				{
+					enqueue: false,
+					rate: 1,
+					pitch: 1,
+					volume: 1,
+					desiredEventTypes: ['end', 'error', 'interrupted', 'cancelled'],
+					onEvent: (event) => {
+						if (event.type === 'end') {
+							settle(true)
+						} else if (event.type === 'error') {
+							settle(false, new Error(event.errorMessage || 'Chrome TTS failed'))
+						} else if (event.type === 'interrupted' || event.type === 'cancelled') {
+							settle(false, new Error(`Chrome TTS ${event.type}`))
+						}
+					}
+				},
+				() => {
+					const error = chromeApi.runtime.lastError
+					if (error?.message) {
+						settle(false, new Error(error.message))
+					}
+				}
+			)
+		} catch (error) {
+			settle(false, errorToError(error))
+		}
+	})
+}
+
+function chromeTtsTimeoutMs(text: string): number {
+	return Math.min(120_000, Math.max(8_000, text.length * 180))
+}
+
+function errorToError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error))
 }
 
 function websocketUrl(settings: SettingsState): string {

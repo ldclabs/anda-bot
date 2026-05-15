@@ -26,6 +26,10 @@ const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 /// Request timeout for transcription API calls (seconds).
 const TRANSCRIPTION_TIMEOUT_SECS: u64 = 120;
 
+const WHISPER_COMPATIBLE_AUDIO_FORMATS: &[&str] = &[
+    "webm", "ogg", "mp4", "m4a", "mp3", "mpeg", "mpga", "wav", "flac", "opus",
+];
+
 // ── Audio utilities ─────────────────────────────────────────────
 
 /// Map file extension to MIME type for Whisper-compatible transcription APIs.
@@ -156,6 +160,11 @@ fn audio_extension(file_name: &str) -> Option<String> {
 pub trait TranscriptionProvider: Send + Sync {
     /// Human-readable provider name (e.g. "groq", "openai").
     fn name(&self) -> &str;
+
+    /// Audio container/extension names accepted by this provider.
+    fn supported_audio_formats(&self) -> &'static [&'static str] {
+        WHISPER_COMPATIBLE_AUDIO_FORMATS
+    }
 
     /// Transcribe raw audio bytes. `file_name` includes the extension for
     /// format detection (e.g. "voice.ogg").
@@ -336,6 +345,19 @@ impl TranscriptionManager {
         let mut names: Vec<_> = self.providers.keys().cloned().collect();
         names.sort();
         names
+    }
+
+    pub fn supported_audio_formats(&self) -> Vec<String> {
+        self.providers
+            .get(&self.default_provider)
+            .map(|provider| {
+                provider
+                    .supported_audio_formats()
+                    .iter()
+                    .map(|format| (*format).to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 

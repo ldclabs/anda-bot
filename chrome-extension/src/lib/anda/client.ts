@@ -39,10 +39,29 @@ export interface ChatAttachment extends AttachmentSummary {
 	resource: ResourceInput
 }
 
+export interface VoiceCapabilities {
+	transcription: string[]
+	daemonTts: string[]
+	chromeTts: boolean
+}
+
+export type VoiceProvider = 'chrome' | 'anda'
+
+export interface VoiceRecordingInput {
+	voiceProvider?: VoiceProvider
+	transcript?: string
+	audioBase64?: string
+	fileName?: string
+	mimeType?: string
+	size?: number
+	ttsEnabled: boolean
+}
+
 export interface ChatMessage {
 	id: string
 	role: MessageRole
 	text: string
+	thinkingText?: string
 	timestamp?: string | number | null
 	conversationId?: string
 	local?: boolean
@@ -70,6 +89,7 @@ export interface ClientSnapshot {
 	loadingPrevious: boolean
 	hasPreviousConversations: boolean
 	syncing: boolean
+	voiceCapabilities: VoiceCapabilities
 }
 
 interface ChromeEvent<Listener extends (...args: never[]) => void> {
@@ -150,8 +170,50 @@ interface KipOutput<Result> {
 	Err?: unknown
 }
 
-interface ToolOutput<Result> {
+interface KipToolOutput<Result> {
 	output?: KipOutput<Result>
+}
+
+interface DirectToolOutput<Result> {
+	output: Result
+	artifacts?: ResourceInput[]
+}
+
+interface DaemonVoiceCapabilities {
+	transcription?: boolean | string[]
+	tts?: boolean | string[]
+}
+
+interface TranscriptionToolOutput {
+	text: string
+	provider: string
+	file_name: string
+}
+
+interface TtsToolOutput {
+	provider: string
+	artifact: string
+	mime_type: string
+	format: string
+	size: number
+}
+
+interface PageSpeechResult {
+	available?: boolean
+	started?: boolean
+	transcript?: string
+	canceled?: boolean
+	error?: string
+}
+
+export interface PageAudioResult {
+	available?: boolean
+	started?: boolean
+	audioBase64?: string
+	mimeType?: string
+	size?: number
+	canceled?: boolean
+	error?: string
 }
 
 interface RequestMeta {
@@ -170,6 +232,9 @@ interface ExtensionMessage {
 	settings: SettingsState
 	method?: string
 	params?: unknown[]
+	text?: string
+	language?: string
+	mimeType?: string
 }
 
 type ExtensionResponse<Result> =
@@ -187,12 +252,17 @@ const browserSessionStorageKey = 'browserSessionId'
 const pollingIntervalMs = 2000
 const previousConversationPageSize = 8
 const localConversationId = 'local-draft'
+const voiceResponseTimeoutMs = 120_000
+const voiceTtsChunkChars = 800
+const voiceTtsShortChunkChars = 80
+const voiceTtsMaxShortLines = 4
 
 export class AndaSidePanelClient {
 	private chrome: ChromeApi | null = null
 	private destroyed = false
 	private pollingConversation = false
 	private messageCounter = 0
+	private conversationParents = new Map<string, string>()
 	private tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
 	private tabUpdatedListener?: (
 		tabId: number,
@@ -205,6 +275,7 @@ export class AndaSidePanelClient {
 		artifactOffset: number
 		conversationGroups: ConversationGroup[]
 		previousCursor?: string | null
+		voiceCapabilities: VoiceCapabilities
 	} = {
 		settings: { ...defaultSettings },
 		tab: null,
@@ -218,7 +289,8 @@ export class AndaSidePanelClient {
 		status: 'starting',
 		loadingPrevious: false,
 		hasPreviousConversations: false,
-		syncing: false
+		syncing: false,
+		voiceCapabilities: { transcription: [], daemonTts: [], chromeTts: false }
 	}
 
 	constructor(private readonly onSnapshot: SnapshotListener) {}
@@ -233,6 +305,7 @@ export class AndaSidePanelClient {
 		this.updateStatus('ready')
 		void this.syncServiceWorker().catch(() => undefined)
 		if (this.state.settings.token) {
+			await this.refreshVoiceCapabilities().catch(() => undefined)
 			await this.restoreSourceConversation().catch((error) => {
 				this.appendSystemMessage(errorToMessage(error))
 				this.updateStatus('restore failed')
@@ -270,7 +343,8 @@ export class AndaSidePanelClient {
 			status: this.state.status,
 			loadingPrevious: this.state.loadingPrevious,
 			hasPreviousConversations: this.state.hasPreviousConversations,
-			syncing: this.state.syncing
+			syncing: this.state.syncing,
+			voiceCapabilities: { ...this.state.voiceCapabilities }
 		}
 	}
 
@@ -288,12 +362,14 @@ export class AndaSidePanelClient {
 				.then(() => this.startConversationPolling())
 				.catch((error) => this.appendSystemMessage(errorToMessage(error)))
 		}
+		await this.refreshVoiceCapabilities().catch(() => undefined)
 	}
 
 	async testConnection(settings: SettingsState): Promise<void> {
 		try {
 			await this.saveSettings(settings, { quiet: true })
 			await this.rpc('information', [])
+			await this.refreshVoiceCapabilities().catch(() => undefined)
 			this.updateStatus('connected')
 			this.appendSystemMessage('Connection test passed.')
 		} catch (error) {
@@ -308,16 +384,167 @@ export class AndaSidePanelClient {
 		if ((!prompt && attachments.length === 0) || this.state.sending) {
 			return
 		}
+		await this.runPrompt(prompt, attachments, { manageSending: true })
+	}
+
+	async sendVoiceTurn(recording: VoiceRecordingInput): Promise<void> {
+		if (this.state.sending) {
+			return
+		}
 		if (!this.state.settings.token) {
 			this.appendSystemMessage('Paste a bearer token generated by `anda chrome token` first.')
 			return
 		}
 
+		this.state.sending = true
+		this.emit()
+		try {
+			await this.refreshActiveTab()
+			const prompt = await this.voiceTurnPrompt(recording)
+			if (!prompt) {
+				this.appendSystemMessage('No speech was recognized for this turn.')
+				this.updateStatus('idle')
+				return
+			}
+
+			const knownAssistantIds = new Set(
+				flattenMessages(this.state.conversationGroups)
+					.filter((message) => message.role === 'assistant')
+					.map((message) => message.id)
+			)
+			const output = await this.runPrompt(prompt, [], { manageSending: false })
+			if (!output || !recording.ttsEnabled) {
+				return
+			}
+
+			const responseText =
+				normalTextForSpeech(output.content) ||
+				(await this.waitForNextAssistantText(knownAssistantIds))
+			if (!responseText?.trim()) {
+				return
+			}
+
+			this.updateStatus('speaking')
+			const spokenBy = await this.speakAssistantText(
+				responseText,
+				recording.voiceProvider || 'chrome'
+			)
+			if (!spokenBy) {
+				this.appendSystemMessage('No TTS provider is available for voice playback.')
+			}
+		} catch (error) {
+			this.appendSystemMessage(errorToMessage(error))
+			this.updateStatus('voice failed')
+		} finally {
+			this.state.sending = false
+			if (this.state.status === 'transcribing' || this.state.status === 'speaking') {
+				this.state.status = 'idle'
+			}
+			this.emit()
+		}
+	}
+
+	async startBrowserSpeechRecognition(language: string): Promise<void> {
+		const response = await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_start', {
+			language
+		})
+		const result = response.result || {}
+		if (result.error || result.started === false) {
+			throw new Error(result.error || 'Browser speech recognition did not start.')
+		}
+	}
+
+	async stopBrowserSpeechRecognition(): Promise<string> {
+		const response = await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_stop')
+		const result = response.result || {}
+		if (result.error) {
+			throw new Error(result.error)
+		}
+		return result.transcript?.trim() || ''
+	}
+
+	async cancelBrowserSpeechRecognition(): Promise<void> {
+		await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_cancel').catch(
+			() => undefined
+		)
+	}
+
+	async startBrowserAudioCapture(mimeType?: string): Promise<void> {
+		const response = await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_start', {
+			mimeType
+		})
+		const result = response.result || {}
+		if (result.error || result.started === false) {
+			throw new Error(result.error || 'Anda voice recording did not start.')
+		}
+	}
+
+	async stopBrowserAudioCapture(): Promise<PageAudioResult> {
+		const response = await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_stop')
+		const result = response.result || {}
+		if (result.error) {
+			throw new Error(result.error)
+		}
+		if (!result.audioBase64 || !result.mimeType) {
+			throw new Error('No voice audio was captured.')
+		}
+		return result
+	}
+
+	async cancelBrowserAudioCapture(): Promise<void> {
+		await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_cancel').catch(
+			() => undefined
+		)
+	}
+
+	async refreshVoiceCapabilities(): Promise<VoiceCapabilities> {
+		const chromeTts = await this.chromeTtsAvailable().catch(() => false)
+		let next: VoiceCapabilities = { transcription: [], daemonTts: [], chromeTts }
+		if (this.state.settings.token) {
+			const daemon = await this.rpc<DaemonVoiceCapabilities>('capabilities', [])
+			next = {
+				transcription: normalizeCapabilityFormats(daemon.transcription, ['wav']),
+				daemonTts: normalizeCapabilityFormats(daemon.tts, ['mp3']),
+				chromeTts
+			}
+		}
+		this.state.voiceCapabilities = next
+		this.emit()
+		return next
+	}
+
+	private async voiceTurnPrompt(recording: VoiceRecordingInput): Promise<string> {
+		const transcript = recording.transcript?.trim()
+		if (transcript) {
+			return transcript
+		}
+
+		this.updateStatus('transcribing')
+		const meta = await this.requestMeta()
+		const transcription = await this.transcribeVoiceRecording(recording, meta)
+		return transcription.text.trim()
+	}
+
+	private async runPrompt(
+		prompt: string,
+		attachments: ChatAttachment[],
+		options: { manageSending: boolean }
+	): Promise<AgentRunOutput | null> {
+		if (!prompt && attachments.length === 0) {
+			return null
+		}
+		if (!this.state.settings.token) {
+			this.appendSystemMessage('Paste a bearer token generated by `anda chrome token` first.')
+			return null
+		}
+		if (options.manageSending) {
+			this.state.sending = true
+			this.emit()
+		}
+
 		await this.refreshActiveTab()
 		const resources = attachments.map((attachment) => attachment.resource)
 		const effectivePrompt = prompt || 'Please review the attached files.'
-		this.state.sending = true
-		this.emit()
 		this.appendMessage(
 			{
 				role: 'user',
@@ -342,18 +569,33 @@ export class AndaSidePanelClient {
 				this.state.conversationId = outputConversationId
 			}
 			if (output.content && output.content.trim()) {
-				this.appendMessage({ role: 'assistant', text: output.content }, this.state.conversationId)
+				const content = splitLegacyThoughtText(output.content)
+				this.appendMessage(
+					{
+						role: 'assistant',
+						text: content.text,
+						thinkingText: content.thinkingText || undefined
+					},
+					this.state.conversationId
+				)
 			}
 			if (output.failed_reason) {
-				this.appendSystemMessage(output.failed_reason)
+				this.appendConversationFailureMessage(
+					this.state.conversationId || localConversationId,
+					output.failed_reason
+				)
 			}
 			this.startConversationPolling()
+			return output
 		} catch (error) {
 			this.appendSystemMessage(errorToMessage(error))
 			this.updateStatus('request failed')
+			return null
 		} finally {
-			this.state.sending = false
-			this.emit()
+			if (options.manageSending) {
+				this.state.sending = false
+				this.emit()
+			}
 		}
 	}
 
@@ -480,8 +722,138 @@ export class AndaSidePanelClient {
 		name: string,
 		args: Record<string, unknown>,
 		meta: RequestMeta
-	): Promise<ToolOutput<Result>> {
-		return this.rpc<ToolOutput<Result>>('tool_call', [{ name, args, meta }])
+	): Promise<KipToolOutput<Result>> {
+		return this.rpc<KipToolOutput<Result>>('tool_call', [{ name, args, meta }])
+	}
+
+	private async directToolCall<Result>(
+		name: string,
+		args: Record<string, unknown>,
+		meta: RequestMeta,
+		resources: ResourceInput[] = []
+	): Promise<DirectToolOutput<Result>> {
+		const payload = resources.length ? { name, args, resources, meta } : { name, args, meta }
+		return this.rpc<DirectToolOutput<Result>>('tool_call', [payload])
+	}
+
+	private async transcribeVoiceRecording(
+		recording: VoiceRecordingInput,
+		meta: RequestMeta
+	): Promise<TranscriptionToolOutput> {
+		if (this.state.voiceCapabilities.transcription.length === 0) {
+			await this.refreshVoiceCapabilities()
+		}
+		if (this.state.voiceCapabilities.transcription.length === 0) {
+			throw new Error('Voice transcription is not configured in the Anda daemon.')
+		}
+		if (!recording.audioBase64 || !recording.fileName) {
+			throw new Error('Voice recording is missing audio data for Anda transcription.')
+		}
+		const normalizedRecording = await normalizeVoiceRecordingAudio(
+			recording,
+			this.state.voiceCapabilities.transcription
+		)
+		const result = await this.directToolCall<TranscriptionToolOutput>(
+			'transcribe_audio',
+			{
+				file_name: normalizedRecording.fileName,
+				audio_base64: normalizedRecording.audioBase64
+			},
+			meta
+		)
+		return result.output
+	}
+
+	private async speakAssistantText(
+		text: string,
+		preferredProvider: VoiceProvider
+	): Promise<'chrome' | 'anda' | null> {
+		const speechText = prepareVoiceTtsText(text)
+		const chunks = splitVoiceTtsText(speechText, voiceTtsChunkChars)
+		if (!chunks.length) {
+			return null
+		}
+
+		if (preferredProvider === 'anda') {
+			return (await this.trySpeakWithAndaTts(chunks)) ? 'anda' : null
+		}
+		return (await this.trySpeakWithChromeTts(chunks)) ? 'chrome' : null
+	}
+
+	private async trySpeakWithChromeTts(chunks: string[]): Promise<boolean> {
+		if (!this.state.voiceCapabilities.chromeTts) {
+			await this.refreshVoiceCapabilities().catch(() => undefined)
+		}
+		if (!this.state.voiceCapabilities.chromeTts) {
+			return false
+		}
+		try {
+			for (const chunk of chunks) {
+				await this.speakWithChromeTts(chunk)
+			}
+			return true
+		} catch (_error) {
+			await this.serviceWorkerMessage('anda_chrome_tts_stop').catch(() => undefined)
+			return false
+		}
+	}
+
+	private async trySpeakWithAndaTts(chunks: string[]): Promise<boolean> {
+		if (this.state.voiceCapabilities.daemonTts.length === 0) {
+			await this.refreshVoiceCapabilities().catch(() => undefined)
+		}
+		if (this.state.voiceCapabilities.daemonTts.length === 0) {
+			return false
+		}
+
+		const meta = await this.requestMeta()
+		try {
+			for (const [index, chunk] of chunks.entries()) {
+				const result = await this.directToolCall<TtsToolOutput>(
+					'synthesize_speech',
+					{
+						text: chunk,
+						artifact_name: `anda_chrome_voice_${Date.now()}_${index + 1}`
+					},
+					meta
+				)
+				const artifact = result.artifacts?.find(isAudioResource)
+				if (!artifact?.blob) {
+					throw new Error('Anda TTS did not return playable audio.')
+				}
+				await playAudioArtifact(artifact)
+			}
+			return true
+		} catch (_error) {
+			return false
+		}
+	}
+
+	private async speakWithChromeTts(text: string): Promise<void> {
+		await this.serviceWorkerMessage('anda_chrome_tts_speak', { text })
+	}
+
+	private async chromeTtsAvailable(): Promise<boolean> {
+		const response = await this.serviceWorkerMessage<{ available?: boolean }>(
+			'anda_chrome_tts_available'
+		)
+		return Boolean(response.result?.available)
+	}
+
+	private async waitForNextAssistantText(knownIds: Set<string>): Promise<string | null> {
+		const startedAt = Date.now()
+		while (!this.destroyed && Date.now() - startedAt < voiceResponseTimeoutMs) {
+			const message = flattenMessages(this.state.conversationGroups).find(
+				(message) =>
+					message.role === 'assistant' && !knownIds.has(message.id) && Boolean(message.text.trim())
+			)
+			if (message) {
+				return message.text
+			}
+			this.startConversationPolling()
+			await delay(300)
+		}
+		return null
 	}
 
 	private async rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result> {
@@ -569,8 +941,18 @@ export class AndaSidePanelClient {
 			this.state.messageOffset += rawMessages.length
 			this.state.artifactOffset += (delta.artifacts || []).length
 
+			let failedReason = delta.failed_reason?.trim() || ''
+			if (delta.status === 'failed' && !failedReason) {
+				const failedConversation = await this.fetchConversation(conversationId).catch(() => null)
+				failedReason = failedConversation?.failed_reason?.trim() || ''
+			}
+			if (delta.status === 'failed' || failedReason) {
+				this.appendConversationFailureMessage(conversationId, failedReason, delta.updated_at)
+			}
+
 			const childId = normalizeId(delta.child)
 			if (childId && childId !== this.state.conversationId) {
+				this.conversationParents.set(childId, conversationId)
 				this.state.conversationId = childId
 				this.state.messageOffset = 0
 				this.state.artifactOffset = 0
@@ -657,7 +1039,7 @@ export class AndaSidePanelClient {
 	}
 
 	private replaceCurrentConversationChain(conversations: RawConversation[]): void {
-		const groups = conversations.map(conversationToGroup).filter((group) => group.messages.length)
+		const groups = compactConversationChainGroups(conversations.map(conversationToGroup))
 		const currentIds = new Set(groups.map((group) => group.id))
 		const preservedGroups = this.state.conversationGroups.filter((group) => !group.current)
 		const mergedPreserved = preservedGroups.filter((group) => !currentIds.has(group.id))
@@ -669,7 +1051,7 @@ export class AndaSidePanelClient {
 
 		const latestConversation = conversations[conversations.length - 1]
 		const latestGroup = currentGroups[currentGroups.length - 1]
-		this.state.conversationId = latestGroup?.id || normalizeId(latestConversation?._id)
+		this.state.conversationId = normalizeId(latestConversation?._id) || latestGroup?.id
 		this.state.messageOffset =
 			latestConversation?.messages?.length || latestGroup?.messages.length || 0
 		this.state.artifactOffset = latestConversation?.artifacts?.length || 0
@@ -700,22 +1082,68 @@ export class AndaSidePanelClient {
 		if (!incoming.length && !status) {
 			return
 		}
-		const group = this.ensureConversationGroup(conversationId)
+		const existing = this.state.conversationGroups.find((group) => group.id === conversationId)
+		const incomingMessages = existing?.messages.length
+			? incoming
+			: this.withoutParentDuplicatePrompt(conversationId, incoming)
+		if (!incomingMessages.length && !status && !updatedAt) {
+			return
+		}
+		const group = existing || this.ensureConversationGroup(conversationId)
 		if (status) {
 			group.status = status
 		}
 		if (updatedAt) {
 			group.updatedAt = updatedAt
 		}
-		const overlap = displayedSuffixPrefixOverlap(group.messages, incoming)
-		for (const message of incoming.slice(overlap)) {
+		const overlap = displayedSuffixPrefixOverlap(group.messages, incomingMessages)
+		for (const message of incomingMessages.slice(overlap)) {
 			group.messages = [...group.messages, message]
 		}
 		this.emit()
 	}
 
+	private withoutParentDuplicatePrompt(
+		conversationId: string,
+		incoming: ChatMessage[]
+	): ChatMessage[] {
+		const parentId = this.conversationParents.get(conversationId)
+		const parent = parentId
+			? this.state.conversationGroups.find((group) => group.id === parentId)
+			: undefined
+		const parentTail = parent?.messages[parent.messages.length - 1]
+		if (parentTail && sameUserPromptMessage(parentTail, incoming[0])) {
+			return incoming.slice(1)
+		}
+		return incoming
+	}
+
 	private appendSystemMessage(text: string): void {
 		this.appendMessage({ role: 'system', text }, this.state.conversationId || localConversationId)
+	}
+
+	private appendConversationFailureMessage(
+		conversationId: string,
+		reason?: string | null,
+		timestamp?: string | number | null
+	): void {
+		const group = this.ensureConversationGroup(conversationId || localConversationId)
+		const text = failureReasonMessage(reason)
+		const id = `${group.id}-failed`
+		if (group.messages.some((message) => message.id === id || message.text === text)) {
+			return
+		}
+		group.messages = [
+			...group.messages,
+			{
+				id,
+				conversationId: group.id,
+				role: 'system',
+				text,
+				timestamp: timestamp ?? Date.now()
+			}
+		]
+		this.emit()
 	}
 
 	private appendMessage(message: Omit<ChatMessage, 'id'>, conversationId?: string | null): void {
@@ -810,14 +1238,17 @@ function conversationToGroup(conversation: RawConversation): ConversationGroup {
 		)
 		.filter(isChatMessageInput)
 
-	if (conversation.status === 'failed' && conversation.failed_reason) {
-		messages.push({
-			id: `${conversationId}-failed`,
-			conversationId,
-			role: 'system',
-			text: `An error occurred:\n\n\`\`\`\n${conversation.failed_reason}\n\`\`\``,
-			timestamp: conversation.updated_at || Date.now()
-		})
+	if (conversation.status === 'failed') {
+		const text = failureReasonMessage(conversation.failed_reason)
+		if (!messages.some((message) => message.role === 'system' && message.text === text)) {
+			messages.push({
+				id: `${conversationId}-failed`,
+				conversationId,
+				role: 'system',
+				text,
+				timestamp: conversation.updated_at || Date.now()
+			})
+		}
 	}
 
 	return {
@@ -830,6 +1261,32 @@ function conversationToGroup(conversation: RawConversation): ConversationGroup {
 	}
 }
 
+function compactConversationChainGroups(groups: ConversationGroup[]): ConversationGroup[] {
+	const compacted: ConversationGroup[] = []
+	let previousTail: ChatMessage | null = null
+
+	for (const group of groups) {
+		let messages = group.messages
+		if (previousTail && sameUserPromptMessage(previousTail, messages[0])) {
+			messages = messages.slice(1)
+		}
+		if (!messages.length) {
+			continue
+		}
+		compacted.push({ ...group, messages })
+		previousTail = messages[messages.length - 1]
+	}
+
+	return compacted
+}
+
+function failureReasonMessage(reason?: string | null): string {
+	const trimmed = reason?.trim()
+	return trimmed
+		? `Conversation failed:\n\n${trimmed}`
+		: 'Conversation failed, but no failure reason was returned.'
+}
+
 function normalizeMessage(
 	raw: RawConversationMessage,
 	context: { conversationId: string; index: number; fallbackTimestamp?: string | number | null }
@@ -840,48 +1297,73 @@ function normalizeMessage(
 	if (raw.name?.startsWith('$')) {
 		return null
 	}
-	const text = contentToText(raw.content).trim()
-	if (!text) {
+	const content = contentToMessageContent(raw.content)
+	if (!content.text && !content.thinkingText) {
 		return null
 	}
 	return {
 		id: `${context.conversationId}-${context.index}`,
 		conversationId: context.conversationId,
 		role: raw.role,
-		text,
+		text: content.text,
+		thinkingText: content.thinkingText || undefined,
 		timestamp: raw.timestamp || context.fallbackTimestamp || null,
 		attachments: raw.resources?.map(resourceToAttachmentSummary)
 	}
 }
 
-function contentToText(content: unknown): string {
+function contentToMessageContent(content: unknown): { text: string; thinkingText: string } {
 	if (typeof content === 'string') {
-		return content
+		return splitLegacyThoughtText(content)
 	}
 	if (!Array.isArray(content)) {
-		return ''
+		return { text: '', thinkingText: '' }
 	}
-	return content
-		.map((part) => {
-			if (typeof part === 'string') {
-				return part
+	const textParts: string[] = []
+	const thinkingParts: string[] = []
+	for (const part of content) {
+		if (typeof part === 'string') {
+			const split = splitLegacyThoughtText(part)
+			if (split.text) {
+				textParts.push(split.text)
 			}
-			if (!isContentPart(part)) {
-				return ''
+			if (split.thinkingText) {
+				thinkingParts.push(split.thinkingText)
 			}
-			if ((part.type === 'Text' || part.type === 'Reasoning') && typeof part.text === 'string') {
-				return part.text
+			continue
+		}
+		if (!isContentPart(part)) {
+			continue
+		}
+		if (part.type === 'Text' && typeof part.text === 'string') {
+			const split = splitLegacyThoughtText(part.text)
+			if (split.text) {
+				textParts.push(split.text)
 			}
-			if (part.type === 'ToolOutput') {
-				return fencedJson(part.output)
+			if (split.thinkingText) {
+				thinkingParts.push(split.thinkingText)
 			}
-			if (part.type === 'ToolCall') {
-				return fencedJson({ name: part.name, args: part.args })
-			}
-			return ''
-		})
-		.filter(Boolean)
-		.join('\n\n')
+			continue
+		}
+		if (part.type === 'Reasoning' && typeof part.text === 'string') {
+			thinkingParts.push(part.text)
+			continue
+		}
+		if (part.type === 'ToolOutput') {
+			thinkingParts.push(formatToolDetail('Tool output', part.output))
+			continue
+		}
+		if (part.type === 'ToolCall') {
+			thinkingParts.push(
+				formatToolDetail(`Tool call${part.name ? `: ${part.name}` : ''}`, part.args)
+			)
+			continue
+		}
+	}
+	return {
+		text: textParts.filter(Boolean).join('\n\n').trim(),
+		thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim()
+	}
 }
 
 function isContentPart(value: unknown): value is Record<string, unknown> & { type?: string } {
@@ -898,6 +1380,24 @@ function fencedJson(value: unknown): string {
 	return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``
 }
 
+function formatToolDetail(title: string, value: unknown): string {
+	const body = fencedJson(value)
+	return body ? `**${title}**\n\n${body}` : `**${title}**`
+}
+
+function splitLegacyThoughtText(content: string): { text: string; thinkingText: string } {
+	const thinkingParts: string[] = []
+	const text = content
+		.replace(/<think(?:ing)?\b[^>]*>([\s\S]*?)<\/think(?:ing)?>/gi, (_match, thinking) => {
+			if (typeof thinking === 'string' && thinking.trim()) {
+				thinkingParts.push(thinking.trim())
+			}
+			return ''
+		})
+		.trim()
+	return { text, thinkingText: thinkingParts.join('\n\n').trim() }
+}
+
 function isMessageRole(role: unknown): role is MessageRole {
 	return role === 'user' || role === 'assistant' || role === 'system' || role === 'tool'
 }
@@ -906,11 +1406,11 @@ function isChatMessageInput(value: ChatMessage | null): value is ChatMessage {
 	return Boolean(value)
 }
 
-function kipResult<Result>(toolOutput: ToolOutput<Result>): Result {
+function kipResult<Result>(toolOutput: KipToolOutput<Result>): Result {
 	return kipResultWithCursor(toolOutput).result
 }
 
-function kipResultWithCursor<Result>(toolOutput: ToolOutput<Result>): {
+function kipResultWithCursor<Result>(toolOutput: KipToolOutput<Result>): {
 	result: Result
 	nextCursor?: string | null
 } {
@@ -922,6 +1422,205 @@ function kipResultWithCursor<Result>(toolOutput: ToolOutput<Result>): {
 		throw new Error(JSON.stringify(output.error || output.Err))
 	}
 	throw new Error('tool returned an unknown RPC response')
+}
+
+type NormalizedVoiceRecording = {
+	audioBase64: string
+	fileName: string
+}
+
+function normalizeCapabilityFormats(
+	value: boolean | string[] | undefined,
+	legacyFallback: string[]
+): string[] {
+	if (Array.isArray(value)) {
+		return normalizeAudioFormats(value)
+	}
+	return value ? normalizeAudioFormats(legacyFallback) : []
+}
+
+async function normalizeVoiceRecordingAudio(
+	recording: VoiceRecordingInput,
+	acceptedFormats: string[]
+): Promise<NormalizedVoiceRecording> {
+	const audioBase64 = recording.audioBase64 || ''
+	const fileName = recording.fileName || 'chrome_voice.webm'
+	const accepted = normalizeAudioFormats(acceptedFormats)
+	const sourceFormat = recordingAudioFormat(fileName, recording.mimeType)
+	if (!sourceFormat || accepted.includes(sourceFormat)) {
+		return { audioBase64, fileName }
+	}
+	if (!accepted.includes('wav')) {
+		throw new Error(
+			`Voice recording format '.${sourceFormat}' is not supported by Anda transcription. Accepted: ${accepted.join(', ') || 'none'}.`
+		)
+	}
+
+	const mimeType = recording.mimeType || audioMimeFromName(fileName) || 'audio/webm'
+	const sourceBytes = base64ToUint8Array(audioBase64)
+	const sourceBlob = new Blob([sourceBytes], { type: mimeType })
+	const wavBytes = await audioBlobToWavBytes(sourceBlob)
+	return {
+		audioBase64: uint8ArrayToBase64(wavBytes),
+		fileName: `${fileStem(fileName) || 'chrome_voice'}.wav`
+	}
+}
+
+function normalizeAudioFormats(formats: string[]): string[] {
+	const seen = new Set<string>()
+	const normalized: string[] = []
+	for (const format of formats) {
+		const next = normalizeAudioFormat(format)
+		if (next && !seen.has(next)) {
+			seen.add(next)
+			normalized.push(next)
+		}
+	}
+	return normalized
+}
+
+function recordingAudioFormat(fileName: string, mimeType?: string): string {
+	return normalizeAudioFormat(mimeType || '') || normalizeAudioFormat(fileExtension(fileName))
+}
+
+function normalizeAudioFormat(format: string): string {
+	const normalized = format.trim().toLowerCase().split(';', 1)[0]
+	switch (normalized) {
+		case 'audio/webm':
+		case 'webm':
+			return 'webm'
+		case 'audio/ogg':
+		case 'audio/oga':
+		case 'oga':
+		case 'ogg':
+			return 'ogg'
+		case 'audio/mp4':
+		case 'mp4':
+			return 'mp4'
+		case 'audio/x-m4a':
+		case 'm4a':
+			return 'm4a'
+		case 'audio/mpeg':
+		case 'audio/mp3':
+		case 'mpeg':
+		case 'mpga':
+		case 'mp3':
+			return 'mp3'
+		case 'audio/wav':
+		case 'audio/x-wav':
+		case 'wav':
+			return 'wav'
+		case 'audio/flac':
+		case 'flac':
+			return 'flac'
+		case 'audio/opus':
+		case 'opus':
+			return 'opus'
+		case 'audio/pcm':
+		case 'audio/l16':
+		case 'pcm':
+			return 'pcm'
+		default:
+			return ''
+	}
+}
+
+async function audioBlobToWavBytes(blob: Blob): Promise<Uint8Array> {
+	const AudioContextCtor = globalThis.AudioContext
+	if (!AudioContextCtor) {
+		throw new Error('This browser cannot convert voice audio to WAV for Anda transcription.')
+	}
+	const context = new AudioContextCtor()
+	try {
+		const audioBuffer = await context.decodeAudioData(await blob.arrayBuffer())
+		return audioBufferToWavBytes(audioBuffer)
+	} catch (error) {
+		throw new Error(
+			`Failed to convert voice audio to WAV: ${error instanceof Error ? error.message : String(error)}`
+		)
+	} finally {
+		await context.close().catch(() => undefined)
+	}
+}
+
+function audioBufferToWavBytes(audioBuffer: AudioBuffer): Uint8Array<ArrayBuffer> {
+	const channelCount = Math.min(audioBuffer.numberOfChannels || 1, 2)
+	const sampleRate = audioBuffer.sampleRate
+	const bytesPerSample = 2
+	const blockAlign = channelCount * bytesPerSample
+	const dataSize = audioBuffer.length * blockAlign
+	const bytes = new Uint8Array(44 + dataSize)
+	const view = new DataView(bytes.buffer)
+	let offset = 0
+
+	const writeString = (value: string) => {
+		for (let index = 0; index < value.length; index += 1) {
+			view.setUint8(offset, value.charCodeAt(index))
+			offset += 1
+		}
+	}
+
+	writeString('RIFF')
+	view.setUint32(offset, 36 + dataSize, true)
+	offset += 4
+	writeString('WAVE')
+	writeString('fmt ')
+	view.setUint32(offset, 16, true)
+	offset += 4
+	view.setUint16(offset, 1, true)
+	offset += 2
+	view.setUint16(offset, channelCount, true)
+	offset += 2
+	view.setUint32(offset, sampleRate, true)
+	offset += 4
+	view.setUint32(offset, sampleRate * blockAlign, true)
+	offset += 4
+	view.setUint16(offset, blockAlign, true)
+	offset += 2
+	view.setUint16(offset, bytesPerSample * 8, true)
+	offset += 2
+	writeString('data')
+	view.setUint32(offset, dataSize, true)
+	offset += 4
+
+	const channels = Array.from({ length: channelCount }, (_unused, index) =>
+		audioBuffer.getChannelData(index)
+	)
+	for (let sampleIndex = 0; sampleIndex < audioBuffer.length; sampleIndex += 1) {
+		for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+			const sample = Math.max(-1, Math.min(1, channels[channelIndex][sampleIndex] || 0))
+			view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+			offset += bytesPerSample
+		}
+	}
+
+	return bytes
+}
+
+function base64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
+	const binary = atob(base64)
+	const bytes = new Uint8Array(binary.length)
+	for (let index = 0; index < binary.length; index += 1) {
+		bytes[index] = binary.charCodeAt(index)
+	}
+	return bytes
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+	const chunkSize = 0x8000
+	let binary = ''
+	for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+		binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+	}
+	return btoa(binary)
+}
+
+function fileExtension(fileName: string): string {
+	return fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() || '' : ''
+}
+
+function fileStem(fileName: string): string {
+	return fileName.includes('.') ? fileName.slice(0, fileName.lastIndexOf('.')) : fileName
 }
 
 function displayedSuffixPrefixOverlap(displayed: ChatMessage[], incoming: ChatMessage[]): number {
@@ -939,7 +1638,45 @@ function displayedSuffixPrefixOverlap(displayed: ChatMessage[], incoming: ChatMe
 }
 
 function sameDisplayMessage(left: ChatMessage, right: ChatMessage | undefined): boolean {
-	return Boolean(right && left.role === right.role && left.text === right.text)
+	return Boolean(
+		right &&
+		left.role === right.role &&
+		left.text === right.text &&
+		(left.thinkingText || '') === (right.thinkingText || '') &&
+		sameAttachmentSummaries(left.attachments, right.attachments)
+	)
+}
+
+function sameUserPromptMessage(
+	left: ChatMessage | undefined,
+	right: ChatMessage | undefined
+): boolean {
+	return Boolean(
+		left &&
+		right &&
+		left.role === 'user' &&
+		right.role === 'user' &&
+		sameDisplayMessage(left, right)
+	)
+}
+
+function sameAttachmentSummaries(
+	left: AttachmentSummary[] | undefined,
+	right: AttachmentSummary[] | undefined
+): boolean {
+	const leftAttachments = left || []
+	const rightAttachments = right || []
+	return (
+		leftAttachments.length === rightAttachments.length &&
+		leftAttachments.every((attachment, index) => {
+			const other = rightAttachments[index]
+			return (
+				attachment.name === other?.name &&
+				attachment.type === other?.type &&
+				(attachment.size || 0) === (other?.size || 0)
+			)
+		})
+	)
 }
 
 function flattenMessages(conversationGroups: ConversationGroup[]): ChatMessage[] {
@@ -971,6 +1708,193 @@ function resourceToAttachmentSummary(resource: ResourceInput): AttachmentSummary
 		type: resource.mime_type,
 		size: resource.size
 	}
+}
+
+function isAudioResource(resource: ResourceInput): boolean {
+	return (
+		resource.tags.some((tag) => tag.toLowerCase() === 'audio') ||
+		Boolean(resource.mime_type?.toLowerCase().startsWith('audio/'))
+	)
+}
+
+async function playAudioArtifact(resource: ResourceInput): Promise<void> {
+	if (!resource.blob) {
+		throw new Error('Audio artifact is missing inline data.')
+	}
+	const mimeType = resource.mime_type || audioMimeFromName(resource.name) || 'audio/mpeg'
+	const audio = new Audio(`data:${mimeType};base64,${resource.blob}`)
+	await new Promise<void>((resolve, reject) => {
+		let settled = false
+		const settle = (error?: unknown) => {
+			if (settled) {
+				return
+			}
+			settled = true
+			if (error) {
+				reject(error instanceof Error ? error : new Error(String(error)))
+			} else {
+				resolve()
+			}
+		}
+		audio.onended = () => settle()
+		audio.onerror = () => settle(new Error('Audio playback failed.'))
+		void audio.play().catch(settle)
+	})
+}
+
+function audioMimeFromName(name: string): string | null {
+	const extension = name.includes('.') ? name.split('.').pop()?.toLowerCase() : ''
+	switch (extension) {
+		case 'flac':
+			return 'audio/flac'
+		case 'm4a':
+		case 'mp4':
+			return 'audio/mp4'
+		case 'ogg':
+		case 'oga':
+			return 'audio/ogg'
+		case 'opus':
+			return 'audio/opus'
+		case 'wav':
+			return 'audio/wav'
+		case 'webm':
+			return 'audio/webm'
+		case 'mp3':
+		case 'mpeg':
+		case 'mpga':
+			return 'audio/mpeg'
+		default:
+			return null
+	}
+}
+
+function prepareVoiceTtsText(text: string): string {
+	return text
+		.split(/\r?\n/)
+		.map(stripMarkdownLinePrefix)
+		.map((line) =>
+			Array.from(line)
+				.map(normalizeVoiceTtsCharacter)
+				.filter((character): character is string => Boolean(character))
+				.join('')
+				.replace(/\s+/g, ' ')
+				.trim()
+		)
+		.filter(Boolean)
+		.join('\n')
+}
+
+function normalTextForSpeech(text: string | undefined): string {
+	return text ? splitLegacyThoughtText(text).text.trim() : ''
+}
+
+function stripMarkdownLinePrefix(line: string): string {
+	let trimmed = line.trimStart()
+	while (trimmed.startsWith('>')) {
+		trimmed = trimmed.slice(1).trimStart()
+	}
+	while (trimmed.startsWith('#')) {
+		trimmed = trimmed.slice(1).trimStart()
+	}
+	if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('+ ')) {
+		return trimmed.slice(2).trimStart()
+	}
+	const orderedMatch = trimmed.match(/^\d+[.)、]\s*(.*)$/)
+	return orderedMatch ? orderedMatch[1] : trimmed
+}
+
+function normalizeVoiceTtsCharacter(character: string): string | null {
+	const codePoint = character.codePointAt(0) || 0
+	if (
+		codePoint === 0x200d ||
+		codePoint === 0xfe0e ||
+		codePoint === 0xfe0f ||
+		(codePoint >= 0x2600 && codePoint <= 0x27bf) ||
+		(codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
+		(codePoint >= 0xe0020 && codePoint <= 0xe007f)
+	) {
+		return null
+	}
+	if (character === '`' || character === '*' || character === '_' || character === '#') {
+		return null
+	}
+	if (character === '\r' || character === '\u00a0') {
+		return ' '
+	}
+	if (codePoint === 0x2013 || codePoint === 0x2014) {
+		return ','
+	}
+	return character
+}
+
+function splitVoiceTtsText(text: string, maxChars: number): string[] {
+	if (maxChars <= 0) {
+		return []
+	}
+	const chunks: string[] = []
+	let currentLines: string[] = []
+	let currentChars = 0
+	for (const line of text
+		.split(/\r?\n/)
+		.map((value) => value.trim())
+		.filter(Boolean)) {
+		const lineChars = Array.from(line).length
+		if (lineChars > maxChars) {
+			pushVoiceTtsLines(chunks, currentLines)
+			currentLines = []
+			currentChars = 0
+			chunks.push(...splitLongVoiceTtsLine(line, maxChars))
+			continue
+		}
+
+		const separatorChars = currentLines.length ? 1 : 0
+		const nextChars = currentChars + separatorChars + lineChars
+		if (
+			currentLines.length &&
+			(nextChars > maxChars ||
+				currentLines.length >= voiceTtsMaxShortLines ||
+				(currentLines.length >= 2 && currentChars >= voiceTtsShortChunkChars))
+		) {
+			pushVoiceTtsLines(chunks, currentLines)
+			currentLines = []
+			currentChars = 0
+		}
+
+		currentChars += (currentLines.length ? 1 : 0) + lineChars
+		currentLines.push(line)
+	}
+	pushVoiceTtsLines(chunks, currentLines)
+	return chunks
+}
+
+function pushVoiceTtsLines(chunks: string[], lines: string[]): void {
+	if (lines.length) {
+		chunks.push(lines.join('\n'))
+	}
+}
+
+function splitLongVoiceTtsLine(line: string, maxChars: number): string[] {
+	const chunks: string[] = []
+	let current = ''
+	for (const character of Array.from(line)) {
+		if (Array.from(current).length >= maxChars) {
+			chunks.push(current.trim())
+			current = ''
+		}
+		current += character
+		if (isTtsSentenceBoundary(character) && Array.from(current).length >= maxChars / 2) {
+			chunks.push(current.trim())
+			current = ''
+		}
+	}
+	if (current.trim()) {
+		chunks.push(current.trim())
+	}
+	return chunks
+}
+
+function isTtsSentenceBoundary(character: string): boolean {
+	return ['.', '!', '?', '。', '！', '？'].includes(character)
 }
 
 function sourceStateConversationId(state: SourceState): string | null {

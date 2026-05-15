@@ -1,12 +1,17 @@
 <script lang="ts">
-	import ChatComposer, { type ComposerSubmitPayload } from '$lib/anda/ChatComposer.svelte'
+	import ChatComposer, {
+		type ComposerSubmitPayload,
+		type ComposerVoicePayload
+	} from '$lib/anda/ChatComposer.svelte'
 	import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
 	import {
 		AndaSidePanelClient,
 		type ChatMessage,
 		type ChromeTabInfo,
 		type ConversationGroup,
-		type SettingsState
+		type PageAudioResult,
+		type SettingsState,
+		type VoiceCapabilities
 	} from '$lib/anda/client'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { Input } from '$lib/components/ui/input/index.js'
@@ -40,6 +45,11 @@
 	let loadingPrevious = $state(false)
 	let hasPreviousConversations = $state(false)
 	let syncing = $state(false)
+	let voiceCapabilities = $state<VoiceCapabilities>({
+		transcription: [],
+		daemonTts: [],
+		chromeTts: false
+	})
 	let shouldStickToBottom = $state(true)
 	let historyLoadInFlight = $state(false)
 	let messagesElement: HTMLElement | null = null
@@ -54,10 +64,13 @@
 			'connection failed',
 			'extension unavailable',
 			'restore failed',
-			'history failed'
+			'history failed',
+			'voice failed',
+			'failed'
 		].includes(status)
 	)
 	const showHistoryControl = $derived(messages.length > 0 && hasPreviousConversations)
+	const visibleConversationGroups = $derived(displayConversationGroups(conversationGroups))
 
 	onMount(() => {
 		client = new AndaSidePanelClient((snapshot) => {
@@ -73,6 +86,7 @@
 			loadingPrevious = snapshot.loadingPrevious
 			hasPreviousConversations = snapshot.hasPreviousConversations
 			syncing = snapshot.syncing
+			voiceCapabilities = snapshot.voiceCapabilities
 			if (!snapshot.settings.token) {
 				settingsOpen = true
 			}
@@ -189,6 +203,122 @@
 		shouldStickToBottom = true
 		await tick()
 		scrollMessagesToBottom()
+	}
+
+	async function sendVoiceTurn(payload: ComposerVoicePayload) {
+		if (!client || sending) {
+			return
+		}
+		if (!settings.token) {
+			settingsOpen = true
+		}
+		await client.sendVoiceTurn(payload)
+		shouldStickToBottom = true
+		await tick()
+		scrollMessagesToBottom()
+	}
+
+	async function startBrowserSpeechRecognition(language: string) {
+		if (!client) {
+			throw new Error('Voice mode is not connected.')
+		}
+		await client.startBrowserSpeechRecognition(language)
+	}
+
+	async function stopBrowserSpeechRecognition() {
+		if (!client) {
+			throw new Error('Voice mode is not connected.')
+		}
+		return client.stopBrowserSpeechRecognition()
+	}
+
+	async function cancelBrowserSpeechRecognition() {
+		await client?.cancelBrowserSpeechRecognition()
+	}
+
+	async function startBrowserAudioCapture(mimeType?: string) {
+		if (!client) {
+			throw new Error('Voice mode is not connected.')
+		}
+		await client.startBrowserAudioCapture(mimeType)
+	}
+
+	async function stopBrowserAudioCapture(): Promise<PageAudioResult> {
+		if (!client) {
+			throw new Error('Voice mode is not connected.')
+		}
+		return client.stopBrowserAudioCapture()
+	}
+
+	async function cancelBrowserAudioCapture() {
+		await client?.cancelBrowserAudioCapture()
+	}
+
+	function displayMessages(sourceMessages: ChatMessage[]): ChatMessage[] {
+		const compacted: ChatMessage[] = []
+		let detailRun: ChatMessage[] = []
+
+		const flushDetails = () => {
+			if (!detailRun.length) {
+				return
+			}
+			if (detailRun.length === 1) {
+				const [message] = detailRun
+				const detailText = detailOnlyText(message)
+				compacted.push({
+					...message,
+					id: detailRunId(message),
+					text: '',
+					thinkingText: detailText || message.thinkingText
+				})
+				detailRun = []
+				return
+			}
+
+			const first = detailRun[0]
+			const last = detailRun[detailRun.length - 1]
+			const attachments = detailRun.flatMap((message) => message.attachments || [])
+			compacted.push({
+				id: detailRunId(first),
+				role: 'assistant',
+				text: '',
+				thinkingText: detailRun.map(detailOnlyText).filter(Boolean).join('\n\n---\n\n'),
+				timestamp: last.timestamp || first.timestamp,
+				conversationId: first.conversationId,
+				attachments: attachments.length ? attachments : undefined
+			})
+			detailRun = []
+		}
+
+		for (const message of sourceMessages) {
+			if (detailOnlyText(message)) {
+				detailRun = [...detailRun, message]
+				continue
+			}
+			flushDetails()
+			compacted.push(message)
+		}
+		flushDetails()
+		return compacted
+	}
+
+	function displayConversationGroups(sourceGroups: ConversationGroup[]): ConversationGroup[] {
+		return sourceGroups
+			.map((group) => ({ ...group, messages: displayMessages(group.messages) }))
+			.filter((group) => group.messages.length)
+	}
+
+	function detailRunId(message: ChatMessage): string {
+		return `${message.id}-detail-run`
+	}
+
+	function detailOnlyText(message: ChatMessage): string {
+		const mainText = message.text.trim()
+		const thinkingText = (message.thinkingText || '').trim()
+		if (mainText && message.role !== 'tool') {
+			return ''
+		}
+		return [thinkingText, message.role === 'tool' ? mainText : ''].filter(Boolean).join('\n\n')
 	}
 
 	function statusIconClass() {
@@ -347,9 +477,9 @@
 				</div>
 			{/if}
 
-			{#each conversationGroups as group (group.id)}
+			{#each visibleConversationGroups as group (group.id)}
 				<section class="grid w-full gap-2">
-					{#if conversationGroups.length > 1}
+					{#if visibleConversationGroups.length > 1}
 						<div
 							class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
 						>
@@ -377,7 +507,17 @@
 			placeholder={settings.token ? 'Message Anda' : 'Paste token in Settings'}
 			disabled={sending}
 			{sending}
+			working={isBusy}
+			voiceAvailable={voiceCapabilities.transcription.length > 0}
+			{voiceCapabilities}
 			onSend={sendPrompt}
+			onVoiceSend={sendVoiceTurn}
+			onBrowserSpeechStart={startBrowserSpeechRecognition}
+			onBrowserSpeechStop={stopBrowserSpeechRecognition}
+			onBrowserSpeechCancel={cancelBrowserSpeechRecognition}
+			onBrowserAudioStart={startBrowserAudioCapture}
+			onBrowserAudioStop={stopBrowserAudioCapture}
+			onBrowserAudioCancel={cancelBrowserAudioCapture}
 		/>
 	</footer>
 </div>

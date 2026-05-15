@@ -36,6 +36,11 @@ pub trait TtsProvider: Send + Sync {
         "mp3"
     }
 
+    /// Audio format names this provider can currently return through this manager.
+    fn supported_audio_formats(&self) -> Vec<String> {
+        vec![normalize_audio_format(self.audio_format()).to_string()]
+    }
+
     /// Synthesize `text`, returning raw audio bytes.
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError>;
 }
@@ -203,6 +208,13 @@ impl TtsManager {
             .get(&self.default_provider)
             .map(|provider| normalize_audio_format(provider.audio_format()))
             .unwrap_or_else(|| normalize_audio_format(&self.default_format))
+    }
+
+    pub fn supported_audio_formats(&self) -> Vec<String> {
+        self.providers
+            .get(&self.default_provider)
+            .map(|provider| provider.supported_audio_formats())
+            .unwrap_or_default()
     }
 
     #[allow(unused)]

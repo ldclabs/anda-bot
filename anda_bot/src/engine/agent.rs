@@ -1,7 +1,7 @@
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
     FunctionDefinition, Message, Principal, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
-    Usage, prompt_with_resources, select_resources, text_resource_documents,
+    Usage, prompt_with_resources, text_resource_documents,
 };
 use anda_engine::{
     ANONYMOUS,
@@ -49,11 +49,7 @@ use super::{
         system_user_message,
     },
 };
-use crate::{
-    brain, cron,
-    transcription::{TranscriptionManager, audio_resource_file_name, is_audio_resource},
-    tts::TtsManager,
-};
+use crate::{brain, cron, transcription::TranscriptionManager, tts::TtsManager};
 
 const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
@@ -395,60 +391,6 @@ impl AndaBot {
             })
             .await?;
         Ok(())
-    }
-
-    async fn prompt_with_audio_resources(
-        &self,
-        prompt: String,
-        resources: Vec<Resource>,
-    ) -> Result<String, BoxError> {
-        if resources.is_empty() {
-            return Ok(prompt);
-        }
-
-        let Some(manager) = &self.inner.transcription_manager else {
-            if prompt.trim().is_empty() {
-                return Err("voice transcription is not enabled".into());
-            }
-            return Ok(prompt);
-        };
-
-        let mut transcripts = Vec::new();
-        for (index, resource) in resources.into_iter().filter(is_audio_resource).enumerate() {
-            let file_name = audio_resource_file_name(&resource, &format!("voice_{}", index + 1));
-            let audio = resource
-                .blob
-                .as_ref()
-                .ok_or("audio resource missing inline blob data")?;
-
-            let text = manager.transcribe(audio, &file_name).await?;
-            if !text.trim().is_empty() {
-                transcripts.push((file_name, text.trim().to_string()));
-            }
-        }
-
-        if transcripts.is_empty() {
-            return Ok(prompt);
-        }
-
-        let transcript = if transcripts.len() == 1 {
-            transcripts.remove(0).1
-        } else {
-            transcripts
-                .into_iter()
-                .map(|(file_name, text)| format!("{file_name}: {text}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        if prompt.trim().is_empty() {
-            Ok(transcript)
-        } else {
-            Ok(format!(
-                "{}\n\nTranscribed voice input:\n{}",
-                prompt.trim(),
-                transcript
-            ))
-        }
     }
 
     async fn run_side_command(
@@ -924,7 +866,7 @@ impl Agent<AgentCtx> for AndaBot {
         &self,
         ctx: AgentCtx,
         prompt: String,
-        mut resources: Vec<Resource>,
+        resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
         let caller = ctx.caller();
         if caller == &ANONYMOUS {
@@ -955,11 +897,6 @@ impl Agent<AgentCtx> for AndaBot {
         };
         let current_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
 
-        let audio_resources: Vec<Resource> =
-            select_resources(&mut resources, &["audio".to_string()]);
-        let prompt = self
-            .prompt_with_audio_resources(prompt, audio_resources)
-            .await?;
         let command = PromptCommand::from(prompt);
         if let PromptCommand::Invalid { reason } = &command {
             return Err(reason.clone().into());

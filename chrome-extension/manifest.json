@@ -14,11 +14,10 @@
     "windows"
   ],
   "host_permissions": [
-    "http://*/",
-    "https://*/"
+    "*://*/*"
   ],
   "optional_host_permissions": [
-    "file:///"
+    "file:///*"
   ],
   "background": {
     "service_worker": "service_worker.js",

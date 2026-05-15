@@ -37,6 +37,10 @@ impl TranscriptionProvider for GoogleSttProvider {
         "google"
     }
 
+    fn supported_audio_formats(&self) -> &'static [&'static str] {
+        &["webm", "ogg", "opus", "mp3", "wav", "flac"]
+    }
+
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
         let (normalized_name, _) = validate_audio(audio_data, file_name)?;
 

@@ -106,6 +106,10 @@ impl TranscriptionProvider for StepFunProvider {
         "stepfun"
     }
 
+    fn supported_audio_formats(&self) -> &'static [&'static str] {
+        &["ogg", "mp3", "wav", "pcm"]
+    }
+
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
         validate_audio(audio_data, file_name)?;
 

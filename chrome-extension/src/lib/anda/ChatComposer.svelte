@@ -1,10 +1,19 @@
 <script lang="ts" module>
-	import type { ChatAttachment, ResourceInput } from '$lib/anda/client'
+	import type {
+		ChatAttachment,
+		PageAudioResult,
+		ResourceInput,
+		VoiceCapabilities,
+		VoiceProvider,
+		VoiceRecordingInput
+	} from '$lib/anda/client'
 
 	export interface ComposerSubmitPayload {
 		text: string
 		attachments: ChatAttachment[]
 	}
+
+	export type ComposerVoicePayload = VoiceRecordingInput
 </script>
 
 <script lang="ts">
@@ -16,20 +25,70 @@
 		Mic,
 		Paperclip,
 		SendHorizontal,
+		Square,
+		Volume2,
+		VolumeX,
 		X
 	} from '@lucide/svelte'
-	import { tick } from 'svelte'
+	import { onDestroy, onMount, tick } from 'svelte'
+
+	type BrowserSpeechRecognitionEvent = {
+		resultIndex: number
+		results: ArrayLike<{
+			isFinal: boolean
+			[index: number]: { transcript: string }
+		}>
+	}
+
+	type BrowserSpeechRecognitionError = {
+		error?: string
+		message?: string
+	}
+
+	type BrowserSpeechRecognition = {
+		lang: string
+		continuous: boolean
+		interimResults: boolean
+		onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null
+		onerror: ((event: BrowserSpeechRecognitionError) => void) | null
+		onend: (() => void) | null
+		start(): void
+		stop(): void
+		abort?: () => void
+	}
+
+	type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
 
 	let {
 		disabled = false,
 		sending = false,
 		placeholder = 'Message Anda',
-		onSend
+		working = false,
+		voiceAvailable = false,
+		voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
+		onSend,
+		onVoiceSend,
+		onBrowserSpeechStart,
+		onBrowserSpeechStop,
+		onBrowserSpeechCancel,
+		onBrowserAudioStart,
+		onBrowserAudioStop,
+		onBrowserAudioCancel
 	}: {
 		disabled?: boolean
 		sending?: boolean
 		placeholder?: string
+		working?: boolean
+		voiceAvailable?: boolean
+		voiceCapabilities?: VoiceCapabilities
 		onSend: (payload: ComposerSubmitPayload) => Promise<void> | void
+		onVoiceSend?: (payload: ComposerVoicePayload) => Promise<void> | void
+		onBrowserSpeechStart?: (language: string) => Promise<void>
+		onBrowserSpeechStop?: () => Promise<string>
+		onBrowserSpeechCancel?: () => Promise<void>
+		onBrowserAudioStart?: (mimeType?: string) => Promise<void>
+		onBrowserAudioStop?: () => Promise<PageAudioResult>
+		onBrowserAudioCancel?: () => Promise<void>
 	} = $props()
 
 	let text = $state('')
@@ -37,8 +96,30 @@
 	let attachmentError = $state('')
 	let preparingAttachments = $state(false)
 	let inputMode = $state<'text' | 'voice'>('text')
+	let voiceStage = $state<'idle' | 'recording' | 'processing'>('idle')
+	let voiceError = $state('')
+	let voiceTranscript = $state('')
+	let voiceLevel = $state(0)
+	let voiceProvider = $state<VoiceProvider>('anda')
+	let voiceProviderSelected = $state(false)
+	let ttsEnabled = $state(false)
+	let browserSpeechAvailable = $state(speechRecognitionSupported())
 	let textareaElement: HTMLTextAreaElement | null = $state(null)
 	let fileInputElement: HTMLInputElement | null = $state(null)
+	let speechRecognition: BrowserSpeechRecognition | null = null
+	let speechRecognitionMode: 'local' | 'page' | null = null
+	let speechFinalTranscript = ''
+	let ignoreNextRecognition = false
+	let speechRecognitionStopRequested = false
+	let speechRecognitionFatalError = ''
+	let mediaRecorder: MediaRecorder | null = null
+	let mediaStream: MediaStream | null = null
+	let audioRecordingMode: 'local' | 'page' | null = null
+	let audioChunks: Blob[] = []
+	let audioContext: AudioContext | null = null
+	let analyserNode: AnalyserNode | null = null
+	let levelAnimationFrame: number | null = null
+	let ignoreNextRecording = false
 
 	const canSend = $derived(
 		(Boolean(text.trim()) || attachments.length > 0) &&
@@ -49,6 +130,89 @@
 	const submitTitle = $derived(
 		isMacPlatform() ? 'Send with Command Enter' : 'Send with Control Enter'
 	)
+	const canUseBrowserSpeech = $derived(
+		Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable
+	)
+	const canUseAndaVoice = $derived(voiceAvailable || voiceCapabilities.transcription.length > 0)
+	const canUseSelectedVoiceProvider = $derived(
+		voiceProvider === 'chrome' ? canUseBrowserSpeech : canUseAndaVoice
+	)
+	const selectedVoiceTtsAvailable = $derived(
+		voiceProvider === 'chrome'
+			? voiceCapabilities.chromeTts
+			: voiceCapabilities.daemonTts.length > 0
+	)
+	const canUseVoice = $derived(canUseBrowserSpeech || canUseAndaVoice)
+	const canRecordVoice = $derived(
+		canUseSelectedVoiceProvider &&
+			!disabled &&
+			!sending &&
+			!preparingAttachments &&
+			voiceStage !== 'processing'
+	)
+	const voiceProviderLabel = $derived(voiceProvider === 'chrome' ? 'Chrome' : 'Anda')
+	const voiceProviderTitle = $derived(
+		voiceProvider === 'chrome' ? 'Chrome built-in voice service' : 'Anda voice service'
+	)
+	const voiceStatus = $derived(
+		voiceStage === 'recording'
+			? 'Listening'
+			: voiceStage === 'processing' || sending
+				? 'Working'
+				: 'Ready'
+	)
+	const voiceOrbStyle = $derived(`--voice-level: ${voiceLevel.toFixed(3)}`)
+
+	let workingPersisted = $state(false)
+	let workingTimeout: number | undefined
+
+	$effect(() => {
+		if (working || sending || voiceStage === 'processing') {
+			if (workingTimeout) {
+				clearTimeout(workingTimeout)
+				workingTimeout = undefined
+			}
+			workingPersisted = true
+		} else if (workingPersisted) {
+			workingTimeout = window.setTimeout(() => {
+				workingPersisted = false
+			}, 800)
+		}
+	})
+
+	const composerWorking = $derived(workingPersisted)
+
+	$effect(() => {
+		if (!canUseVoice && inputMode === 'voice') {
+			void cancelRecording()
+			inputMode = 'text'
+		}
+	})
+
+	$effect(() => {
+		if (voiceStage === 'idle') {
+			if (!voiceProviderSelected && canUseAndaVoice && voiceProvider !== 'anda') {
+				voiceProvider = 'anda'
+			}
+			if (voiceProvider === 'anda' && !canUseAndaVoice && canUseBrowserSpeech) {
+				voiceProvider = 'chrome'
+			}
+			if (voiceProvider === 'chrome' && !canUseBrowserSpeech && canUseAndaVoice) {
+				voiceProvider = 'anda'
+			}
+		}
+		if (ttsEnabled && !selectedVoiceTtsAvailable) {
+			ttsEnabled = false
+		}
+	})
+
+	onMount(() => {
+		browserSpeechAvailable = speechRecognitionSupported()
+	})
+
+	onDestroy(() => {
+		void cancelRecording()
+	})
 
 	function isSubmitEvent(event: KeyboardEvent): boolean {
 		if (event.shiftKey || disabled || sending || preparingAttachments || event.isComposing) {
@@ -123,15 +287,38 @@
 		}
 	}
 
-	async function addFiles(fileList: FileList | null) {
-		if (!fileList || fileList.length === 0) {
+	async function handlePaste(event: ClipboardEvent) {
+		if (disabled) return
+		const items = event.clipboardData?.items
+		if (!items) return
+
+		const files: File[] = []
+		for (let i = 0; i < items.length; i++) {
+			if (items[i].kind === 'file') {
+				const file = items[i].getAsFile()
+				if (file) files.push(file)
+			}
+		}
+
+		if (files.length > 0) {
+			event.preventDefault()
+			await addFiles(files as unknown as FileList)
+		}
+	}
+
+	async function addFiles(fileList: FileList | File[] | null) {
+		if (
+			!fileList ||
+			(fileList instanceof FileList ? fileList.length === 0 : (fileList as File[]).length === 0)
+		) {
 			return
 		}
 		attachmentError = ''
 		preparingAttachments = true
 		try {
 			const nextAttachments: ChatAttachment[] = []
-			for (const file of Array.from(fileList)) {
+			const filesArray = fileList instanceof FileList ? Array.from(fileList) : fileList
+			for (const file of filesArray) {
 				nextAttachments.push(await fileToAttachment(file))
 			}
 			const existingIds = new Set(attachments.map((attachment) => attachment.id))
@@ -151,8 +338,603 @@
 	}
 
 	function toggleInputMode() {
-		inputMode = inputMode === 'text' ? 'voice' : 'text'
-		void tick().then(() => textareaElement?.focus())
+		if (inputMode === 'voice') {
+			void cancelRecording()
+			inputMode = 'text'
+			void tick().then(() => textareaElement?.focus())
+			return
+		}
+		if (canUseVoice) {
+			inputMode = 'voice'
+			voiceError = ''
+		}
+	}
+
+	async function toggleRecording() {
+		if (!canRecordVoice) {
+			return
+		}
+		if (voiceStage === 'recording') {
+			stopRecording()
+			return
+		}
+		await startRecording()
+	}
+
+	async function startRecording() {
+		voiceTranscript = ''
+		if (voiceProvider === 'chrome' && canUseBrowserSpeech) {
+			const started = await startSpeechRecognition()
+			if (started) {
+				return
+			}
+			const chromeError = voiceError
+			if (canUseAndaVoice) {
+				voiceProvider = 'anda'
+				voiceError = ''
+				await startAndaRecording()
+				return
+			}
+			voiceError = chromeSpeechErrorMessage(chromeError)
+			return
+		}
+		if (canUseAndaVoice) {
+			voiceProvider = 'anda'
+			await startAndaRecording()
+			return
+		}
+		voiceError = 'Selected voice service is unavailable.'
+	}
+
+	async function startAndaRecording() {
+		if (onBrowserAudioStart && onBrowserAudioStop) {
+			const started = await startPageAudioRecording()
+			if (started) {
+				return
+			}
+			if (isPermissionError(voiceError)) {
+				return
+			}
+		}
+		await startAudioRecording()
+	}
+
+	async function startSpeechRecognition(): Promise<boolean> {
+		if (onBrowserSpeechStart && onBrowserSpeechStop) {
+			return startPageSpeechRecognition()
+		}
+		return startLocalSpeechRecognition()
+	}
+
+	async function startPageSpeechRecognition(): Promise<boolean> {
+		voiceError = ''
+		voiceTranscript = ''
+		speechFinalTranscript = ''
+		ignoreNextRecognition = false
+		speechRecognitionStopRequested = false
+		speechRecognitionFatalError = ''
+		speechRecognitionMode = 'page'
+		voiceStage = 'recording'
+		startSyntheticVoicePulse()
+		try {
+			await onBrowserSpeechStart?.(navigator.language || 'zh-CN')
+			return true
+		} catch (error) {
+			speechRecognitionMode = null
+			cleanupRecordingResources()
+			voiceStage = 'idle'
+			voiceLevel = 0
+			voiceError = chromeSpeechErrorMessage(error instanceof Error ? error.message : String(error))
+			return false
+		}
+	}
+
+	function startLocalSpeechRecognition(): boolean {
+		const Recognition = speechRecognitionConstructor()
+		if (!Recognition) {
+			browserSpeechAvailable = false
+			voiceError = 'Browser speech recognition is unavailable.'
+			return false
+		}
+
+		voiceError = ''
+		voiceTranscript = ''
+		speechFinalTranscript = ''
+		ignoreNextRecognition = false
+		speechRecognitionStopRequested = false
+		speechRecognitionFatalError = ''
+		try {
+			const recognition = new Recognition()
+			recognition.lang = navigator.language || 'zh-CN'
+			recognition.continuous = true
+			recognition.interimResults = true
+			recognition.onresult = handleSpeechRecognitionResult
+			recognition.onerror = (event) => {
+				handleSpeechRecognitionError(event)
+			}
+			recognition.onend = () => {
+				void handleSpeechRecognitionEnd(recognition)
+			}
+			speechRecognition = recognition
+			speechRecognitionMode = 'local'
+			recognition.start()
+			voiceStage = 'recording'
+			startSyntheticVoicePulse()
+			return true
+		} catch (error) {
+			speechRecognition = null
+			speechRecognitionMode = null
+			voiceStage = 'idle'
+			voiceError = chromeSpeechErrorMessage(error instanceof Error ? error.message : String(error))
+			return false
+		}
+	}
+
+	function selectVoiceProvider(provider: VoiceProvider) {
+		voiceProvider = provider
+		voiceProviderSelected = true
+		voiceError = ''
+	}
+
+	function chromeSpeechErrorMessage(error: string): string {
+		const normalized = error.toLowerCase()
+		if (normalized.includes('permission dismissed')) {
+			return 'Chrome speech permission was dismissed.'
+		}
+		if (normalized.includes('permission was not accepted')) {
+			return 'Chrome speech permission was not accepted.'
+		}
+		if (
+			normalized.includes('microphone access was blocked') ||
+			normalized.includes('not-allowed')
+		) {
+			return 'Chrome speech microphone access was blocked.'
+		}
+		return error || 'Chrome speech recognition did not start.'
+	}
+
+	async function startPageAudioRecording(): Promise<boolean> {
+		voiceError = ''
+		voiceTranscript = ''
+		ignoreNextRecording = false
+		audioRecordingMode = 'page'
+		voiceStage = 'recording'
+		startSyntheticVoicePulse()
+		try {
+			await onBrowserAudioStart?.(preferredRecordingMimeType(voiceCapabilities.transcription))
+			return true
+		} catch (error) {
+			audioRecordingMode = null
+			cleanupRecordingResources()
+			voiceStage = 'idle'
+			voiceLevel = 0
+			voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
+			return false
+		}
+	}
+
+	function audioCaptureErrorMessage(error: string): string {
+		const normalized = error.toLowerCase()
+		if (normalized.includes('permission dismissed')) {
+			return 'Microphone permission was dismissed for the current page.'
+		}
+		if (
+			normalized.includes('microphone access was blocked') ||
+			normalized.includes('notallowed') ||
+			normalized.includes('not-allowed')
+		) {
+			return 'Microphone access was blocked for the current page.'
+		}
+		return error || 'Anda voice recording did not start.'
+	}
+
+	function isPermissionError(error: string): boolean {
+		const normalized = error.toLowerCase()
+		return (
+			normalized.includes('permission') ||
+			normalized.includes('microphone access was blocked') ||
+			normalized.includes('notallowed') ||
+			normalized.includes('not-allowed')
+		)
+	}
+
+	async function startAudioRecording() {
+		if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+			voiceError = 'Voice input is unavailable in this browser.'
+			return
+		}
+		voiceError = ''
+		ignoreNextRecording = false
+		audioRecordingMode = 'local'
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					autoGainControl: true
+				}
+			})
+			const mimeType = preferredRecordingMimeType(voiceCapabilities.transcription)
+			const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+			mediaStream = stream
+			mediaRecorder = recorder
+			audioChunks = []
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) {
+					audioChunks.push(event.data)
+				}
+			}
+			recorder.onstop = () => {
+				void finishRecording(recorder.mimeType || mimeType || 'audio/webm')
+			}
+			startVoiceLevelMeter(stream)
+			recorder.start()
+			voiceStage = 'recording'
+		} catch (error) {
+			cleanupRecordingResources()
+			voiceStage = 'idle'
+			voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
+		}
+	}
+
+	function stopRecording() {
+		if (speechRecognitionMode === 'page') {
+			void finishPageSpeechRecognition()
+			return
+		}
+		if (audioRecordingMode === 'page') {
+			void finishPageAudioRecording()
+			return
+		}
+		if (speechRecognition) {
+			speechRecognitionStopRequested = true
+			voiceStage = 'processing'
+			speechRecognition.stop()
+			return
+		}
+		if (mediaRecorder?.state === 'recording') {
+			voiceStage = 'processing'
+			mediaRecorder.stop()
+		}
+	}
+
+	async function cancelRecording() {
+		ignoreNextRecognition = true
+		speechRecognitionStopRequested = false
+		speechRecognitionFatalError = ''
+		ignoreNextRecording = true
+		if (speechRecognitionMode === 'page') {
+			await onBrowserSpeechCancel?.().catch(() => undefined)
+			speechRecognitionMode = null
+		}
+		if (audioRecordingMode === 'page') {
+			await onBrowserAudioCancel?.().catch(() => undefined)
+			audioRecordingMode = null
+		}
+		if (speechRecognition) {
+			speechRecognition.onend = null
+			try {
+				speechRecognition.abort?.()
+			} catch (_error) {
+				try {
+					speechRecognition.stop()
+				} catch (_stopError) {}
+			}
+			speechRecognition = null
+		}
+		if (mediaRecorder?.state === 'recording') {
+			mediaRecorder.stop()
+		}
+		cleanupRecordingResources()
+		voiceStage = 'idle'
+		voiceLevel = 0
+	}
+
+	function handleSpeechRecognitionResult(event: BrowserSpeechRecognitionEvent) {
+		voiceError = ''
+		let interimTranscript = ''
+		for (let index = event.resultIndex; index < event.results.length; index += 1) {
+			const result = event.results[index]
+			const transcript = result[0]?.transcript?.trim() || ''
+			if (!transcript) {
+				continue
+			}
+			if (result.isFinal) {
+				speechFinalTranscript = `${speechFinalTranscript} ${transcript}`.trim()
+			} else {
+				interimTranscript = `${interimTranscript} ${transcript}`.trim()
+			}
+		}
+		voiceTranscript = `${speechFinalTranscript} ${interimTranscript}`.trim()
+		voiceLevel = Math.min(1, Math.max(0.28, voiceLevel + 0.18))
+	}
+
+	function handleSpeechRecognitionError(event: BrowserSpeechRecognitionError) {
+		const errorName = event.error || ''
+		if (errorName === 'no-speech') {
+			return
+		}
+		if (errorName === 'aborted' && ignoreNextRecognition) {
+			return
+		}
+		speechRecognitionFatalError = errorName || event.message || 'Browser speech recognition failed.'
+		voiceError = event.message || speechRecognitionErrorMessage(speechRecognitionFatalError)
+	}
+
+	async function handleSpeechRecognitionEnd(recognition: BrowserSpeechRecognition) {
+		if (ignoreNextRecognition || speechRecognitionFatalError) {
+			await finishSpeechRecognition()
+			return
+		}
+		if (!speechRecognitionStopRequested && voiceStage === 'recording') {
+			try {
+				recognition.start()
+				return
+			} catch (error) {
+				speechRecognitionFatalError = error instanceof Error ? error.message : String(error)
+				voiceError = speechRecognitionErrorMessage(speechRecognitionFatalError)
+			}
+		}
+		await finishSpeechRecognition()
+	}
+
+	function speechRecognitionErrorMessage(error: string): string {
+		switch (error) {
+			case 'not-allowed':
+			case 'service-not-allowed':
+				return 'Microphone access was blocked.'
+			case 'audio-capture':
+				return 'No microphone was found.'
+			case 'network':
+				return 'Browser speech recognition is offline.'
+			default:
+				return error || 'Browser speech recognition failed.'
+		}
+	}
+
+	async function finishPageSpeechRecognition() {
+		if (!onBrowserSpeechStop) {
+			voiceError = 'Voice mode is not connected.'
+			voiceStage = 'idle'
+			return
+		}
+		speechRecognitionStopRequested = true
+		voiceStage = 'processing'
+		try {
+			const transcript = (await onBrowserSpeechStop()).trim()
+			speechFinalTranscript = transcript
+			voiceTranscript = transcript
+			await finishSpeechRecognition()
+		} catch (error) {
+			speechRecognitionMode = null
+			cleanupRecordingResources()
+			voiceLevel = 0
+			voiceError = error instanceof Error ? error.message : String(error)
+			voiceStage = 'idle'
+		}
+	}
+
+	async function finishSpeechRecognition() {
+		const transcript = voiceTranscript.trim() || speechFinalTranscript.trim()
+		speechRecognition = null
+		speechRecognitionMode = null
+		cleanupRecordingResources()
+		voiceLevel = 0
+		speechRecognitionStopRequested = false
+		if (ignoreNextRecognition) {
+			ignoreNextRecognition = false
+			voiceStage = 'idle'
+			return
+		}
+		if (speechRecognitionFatalError) {
+			speechRecognitionFatalError = ''
+			voiceStage = 'idle'
+			return
+		}
+		if (!transcript) {
+			voiceError = 'No speech was recognized.'
+			voiceStage = 'idle'
+			return
+		}
+		if (!onVoiceSend) {
+			voiceError = 'Voice mode is not connected.'
+			voiceStage = 'idle'
+			return
+		}
+		try {
+			voiceStage = 'processing'
+			await onVoiceSend({ transcript, ttsEnabled, voiceProvider })
+			voiceError = ''
+		} catch (error) {
+			voiceError = error instanceof Error ? error.message : String(error)
+		} finally {
+			voiceStage = 'idle'
+		}
+	}
+
+	async function finishPageAudioRecording() {
+		if (!onBrowserAudioStop) {
+			voiceError = 'Voice mode is not connected.'
+			voiceStage = 'idle'
+			return
+		}
+		voiceStage = 'processing'
+		let result: PageAudioResult | null = null
+		try {
+			result = await onBrowserAudioStop()
+		} catch (error) {
+			voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
+		} finally {
+			cleanupRecordingResources()
+			voiceLevel = 0
+		}
+		if (ignoreNextRecording) {
+			ignoreNextRecording = false
+			voiceStage = 'idle'
+			return
+		}
+		if (!result) {
+			voiceStage = 'idle'
+			return
+		}
+		if (!result.audioBase64 || !result.mimeType) {
+			voiceError = 'No voice audio was captured.'
+			voiceStage = 'idle'
+			return
+		}
+		if (!onVoiceSend) {
+			voiceError = 'Voice mode is not connected.'
+			voiceStage = 'idle'
+			return
+		}
+		try {
+			await onVoiceSend({
+				voiceProvider: 'anda',
+				audioBase64: result.audioBase64,
+				fileName: `chrome_voice_${Date.now()}.${audioExtensionForMime(result.mimeType)}`,
+				mimeType: result.mimeType,
+				size: result.size,
+				ttsEnabled
+			})
+			voiceError = ''
+		} catch (error) {
+			voiceError = error instanceof Error ? error.message : String(error)
+		} finally {
+			voiceStage = 'idle'
+		}
+	}
+
+	async function finishRecording(mimeType: string) {
+		const chunks = audioChunks
+		cleanupRecordingResources()
+		voiceLevel = 0
+		if (ignoreNextRecording) {
+			ignoreNextRecording = false
+			voiceStage = 'idle'
+			return
+		}
+		const blob = new Blob(chunks, { type: mimeType })
+		if (!blob.size) {
+			voiceError = 'No voice audio was captured.'
+			voiceStage = 'idle'
+			return
+		}
+		if (!onVoiceSend) {
+			voiceError = 'Voice mode is not connected.'
+			voiceStage = 'idle'
+			return
+		}
+		try {
+			voiceStage = 'processing'
+			await onVoiceSend({
+				voiceProvider,
+				audioBase64: await blobToBase64(blob),
+				fileName: `chrome_voice_${Date.now()}.${audioExtensionForMime(mimeType)}`,
+				mimeType,
+				size: blob.size,
+				ttsEnabled
+			})
+			voiceError = ''
+		} catch (error) {
+			voiceError = error instanceof Error ? error.message : String(error)
+		} finally {
+			voiceStage = 'idle'
+		}
+	}
+
+	function cleanupRecordingResources() {
+		if (levelAnimationFrame !== null) {
+			cancelAnimationFrame(levelAnimationFrame)
+			levelAnimationFrame = null
+		}
+		void audioContext?.close().catch(() => undefined)
+		audioContext = null
+		analyserNode = null
+		mediaStream?.getTracks().forEach((track) => track.stop())
+		mediaStream = null
+		mediaRecorder = null
+		audioRecordingMode = null
+		audioChunks = []
+	}
+
+	function startSyntheticVoicePulse() {
+		if (levelAnimationFrame !== null) {
+			cancelAnimationFrame(levelAnimationFrame)
+		}
+		const tickLevel = () => {
+			voiceLevel = voiceStage === 'recording' ? Math.max(0.12, voiceLevel * 0.86) : 0
+			levelAnimationFrame = requestAnimationFrame(tickLevel)
+		}
+		tickLevel()
+	}
+
+	function startVoiceLevelMeter(stream: MediaStream) {
+		const context = new AudioContext()
+		const source = context.createMediaStreamSource(stream)
+		const analyser = context.createAnalyser()
+		analyser.fftSize = 256
+		source.connect(analyser)
+		audioContext = context
+		analyserNode = analyser
+		const samples = new Uint8Array(analyser.frequencyBinCount)
+		const updateLevel = () => {
+			analyser.getByteFrequencyData(samples)
+			const total = samples.reduce((sum, sample) => sum + sample, 0)
+			voiceLevel = Math.min(1, total / samples.length / 120)
+			levelAnimationFrame = requestAnimationFrame(updateLevel)
+		}
+		updateLevel()
+	}
+
+	function preferredRecordingMimeType(acceptedFormats: string[] = []): string {
+		if (typeof MediaRecorder === 'undefined') {
+			return ''
+		}
+		const accepted = new Set(acceptedFormats.map((format) => format.toLowerCase()))
+		const directTypes = [
+			{ format: 'webm', mimeType: 'audio/webm;codecs=opus' },
+			{ format: 'webm', mimeType: 'audio/webm' },
+			{ format: 'ogg', mimeType: 'audio/ogg;codecs=opus' },
+			{ format: 'mp4', mimeType: 'audio/mp4' },
+			{ format: 'm4a', mimeType: 'audio/mp4' }
+		]
+		const direct = directTypes.find(
+			({ format, mimeType }) => accepted.has(format) && MediaRecorder.isTypeSupported(mimeType)
+		)
+		if (direct) {
+			return direct.mimeType
+		}
+		const fallbackTypes = [
+			'audio/webm;codecs=opus',
+			'audio/webm',
+			'audio/ogg;codecs=opus',
+			'audio/mp4'
+		]
+		return fallbackTypes.find((type) => MediaRecorder.isTypeSupported(type)) || ''
+	}
+
+	function audioExtensionForMime(mimeType: string): string {
+		const normalized = mimeType.toLowerCase()
+		if (normalized.includes('ogg')) {
+			return 'ogg'
+		}
+		if (normalized.includes('mp4')) {
+			return 'm4a'
+		}
+		if (normalized.includes('wav')) {
+			return 'wav'
+		}
+		return 'webm'
+	}
+
+	async function blobToBase64(blob: Blob): Promise<string> {
+		const dataUrl = await new Promise<string>((resolve, reject) => {
+			const reader = new FileReader()
+			reader.onload = () => resolve(String(reader.result || ''))
+			reader.onerror = () => reject(reader.error || new Error('Failed to read voice audio.'))
+			reader.readAsDataURL(blob)
+		})
+		return dataUrl.split(',', 2)[1] || ''
 	}
 
 	function isMacPlatform(): boolean {
@@ -223,14 +1005,29 @@
 		}
 		return btoa(binary)
 	}
+
+	function speechRecognitionSupported(): boolean {
+		return Boolean(speechRecognitionConstructor())
+	}
+
+	function speechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
+		const scope = globalThis as typeof globalThis & {
+			SpeechRecognition?: BrowserSpeechRecognitionConstructor
+			webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor
+		}
+		return scope.SpeechRecognition || scope.webkitSpeechRecognition || null
+	}
 </script>
 
 <form
-	class="rounded-lg border border-stone-200 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)]"
+	class="composer-shell rounded-lg border border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)]"
+	class:composer-working={composerWorking}
+	aria-busy={composerWorking}
 	onsubmit={(event) => {
 		event.preventDefault()
 		void submitMessage()
 	}}
+	onpaste={handlePaste}
 	ondrop={handleDrop}
 	ondragover={handleDragover}
 >
@@ -243,25 +1040,45 @@
 	/>
 
 	{#if attachments.length}
-		<div class="mb-2 flex flex-wrap gap-1.5">
+		<div class="mb-2 flex flex-wrap gap-1.5 px-1">
 			{#each attachments as attachment (attachment.id)}
-				<span
-					class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-stone-200 bg-stone-50 px-2 py-1 text-[11px] text-stone-600"
-					title={attachment.name}
-				>
-					<FileText class="size-3 shrink-0 text-emerald-700" />
-					<span class="truncate">{attachment.name}</span>
-					<span class="shrink-0 text-stone-400">{fileSizeLabel(attachment.size || 0)}</span>
-					<button
-						type="button"
-						class="grid size-4 shrink-0 place-items-center rounded-sm text-stone-400 hover:bg-stone-200 hover:text-stone-700"
-						aria-label="Remove attachment"
-						title="Remove attachment"
-						onclick={() => removeAttachment(attachment.id)}
+				{#if attachment.type?.startsWith('image/')}
+					<div
+						class="group relative size-8 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-50 shadow-sm transition-all hover:border-emerald-500/50"
 					>
-						<X class="size-3" />
-					</button>
-				</span>
+						<img
+							src={`data:${attachment.type};base64,${attachment.resource.blob}`}
+							alt={attachment.name}
+							class="size-full object-cover"
+						/>
+						<button
+							type="button"
+							class="absolute top-0 right-0 grid size-3.5 place-items-center rounded-bl-md bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+							aria-label="Remove attachment"
+							onclick={() => removeAttachment(attachment.id)}
+						>
+							<X class="size-2" />
+						</button>
+					</div>
+				{:else}
+					<span
+						class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-stone-200 bg-stone-50 px-2 py-1 text-[11px] text-stone-600"
+						title={attachment.name}
+					>
+						<FileText class="size-3 shrink-0 text-emerald-700" />
+						<span class="max-w-[120px] truncate">{attachment.name}</span>
+						<span class="shrink-0 text-stone-400">{fileSizeLabel(attachment.size || 0)}</span>
+						<button
+							type="button"
+							class="grid size-4 shrink-0 place-items-center rounded-sm text-stone-400 hover:bg-stone-200 hover:text-stone-700"
+							aria-label="Remove attachment"
+							title="Remove attachment"
+							onclick={() => removeAttachment(attachment.id)}
+						>
+							<X class="size-3" />
+						</button>
+					</span>
+				{/if}
 			{/each}
 		</div>
 	{/if}
@@ -275,17 +1092,91 @@
 	{/if}
 
 	<div class="grid gap-2">
-		<textarea
-			bind:this={textareaElement}
-			bind:value={text}
-			rows="1"
-			placeholder={inputMode === 'voice' ? 'Voice input' : placeholder}
-			spellcheck="true"
-			disabled={disabled || sending}
-			class="max-h-38 min-h-20 w-full resize-none border-0 bg-transparent px-2 py-2 text-[13px] leading-5 text-stone-950 outline-none placeholder:text-stone-400 disabled:cursor-not-allowed disabled:opacity-60"
-			onkeydown={handleKeydown}
-			oninput={resizeTextarea}
-		></textarea>
+		{#if inputMode === 'voice'}
+			<div
+				class="voice-panel relative grid min-h-32 place-items-center overflow-hidden rounded-md border border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white"
+				class:active={voiceStage === 'recording' || voiceStage === 'processing' || sending}
+			>
+				<div class="voice-field"></div>
+				<button
+					type="button"
+					class="voice-orb relative grid place-items-center"
+					class:recording={voiceStage === 'recording'}
+					class:processing={voiceStage === 'processing' || sending}
+					style={voiceOrbStyle}
+					disabled={!canRecordVoice}
+					aria-label={voiceStage === 'recording' ? 'Stop recording' : 'Start recording'}
+					title={voiceStage === 'recording' ? 'Stop recording' : 'Start recording'}
+					onclick={toggleRecording}
+				>
+					<span class="voice-orb-core"></span>
+					<span class="voice-orb-icon">
+						{#if voiceStage === 'processing' || sending}
+							<LoaderCircle class="size-5 animate-spin" />
+						{:else if voiceStage === 'recording'}
+							<Square class="size-4 fill-current" />
+						{:else}
+							<Mic class="size-5" />
+						{/if}
+					</span>
+				</button>
+
+				<div class="relative z-10 mt-3 flex items-center gap-2 text-[11px] font-semibold">
+					<span class="voice-status-dot" class:recording={voiceStage === 'recording'}></span>
+					<span>{voiceStatus}</span>
+				</div>
+				<div class="voice-service relative z-10 mt-2 flex items-center gap-1 text-[11px]">
+					<div class="voice-service-switch" aria-label="Voice service">
+						<button
+							type="button"
+							class:active={voiceProvider === 'chrome'}
+							disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
+							title="Use Chrome built-in speech and TTS"
+							onclick={() => selectVoiceProvider('chrome')}
+						>
+							Chrome
+						</button>
+						<button
+							type="button"
+							class:active={voiceProvider === 'anda'}
+							disabled={!canUseAndaVoice || voiceStage !== 'idle'}
+							title="Use Anda speech and TTS"
+							onclick={() => selectVoiceProvider('anda')}
+						>
+							Anda
+						</button>
+					</div>
+					<span class="voice-service-label">{voiceProviderTitle}</span>
+				</div>
+				{#if voiceTranscript}
+					<div
+						class="voice-transcript relative z-10 mt-2 max-w-full truncate px-3 text-center text-[11px] text-emerald-50/90"
+					>
+						{voiceTranscript}
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<textarea
+				bind:this={textareaElement}
+				bind:value={text}
+				rows="1"
+				{placeholder}
+				spellcheck="true"
+				disabled={disabled || sending}
+				class="max-h-38 min-h-10 w-full resize-none border-0 bg-transparent px-2 py-2 leading-5 text-stone-950 outline-none placeholder:text-stone-400 disabled:cursor-not-allowed disabled:opacity-60"
+				onkeydown={handleKeydown}
+				oninput={resizeTextarea}
+			></textarea>
+		{/if}
+
+		{#if inputMode === 'voice' && voiceError}
+			<div
+				class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+			>
+				{voiceError}
+			</div>
+		{/if}
 
 		<div class="flex items-center justify-between gap-2">
 			<div class="flex items-center gap-1">
@@ -306,37 +1197,401 @@
 					{/if}
 				</Button>
 
-				<Button
-					type="button"
-					variant={inputMode === 'voice' ? 'secondary' : 'ghost'}
-					size="icon-sm"
-					class="hidden text-stone-500 hover:text-emerald-700"
-					{disabled}
-					aria-label={inputMode === 'voice' ? 'Switch to keyboard input' : 'Switch to voice input'}
-					title={inputMode === 'voice' ? 'Keyboard input' : 'Voice input'}
-					onclick={toggleInputMode}
-				>
-					{#if inputMode === 'voice'}
-						<Keyboard class="size-4" />
-					{:else}
-						<Mic class="size-4" />
-					{/if}
-				</Button>
+				{#if canUseVoice}
+					<Button
+						type="button"
+						variant={inputMode === 'voice' ? 'secondary' : 'ghost'}
+						size="icon-sm"
+						class="text-stone-500 hover:text-emerald-700"
+						disabled={disabled || sending}
+						aria-label={inputMode === 'voice'
+							? 'Switch to keyboard input'
+							: 'Switch to voice input'}
+						title={inputMode === 'voice' ? 'Keyboard input' : 'Voice input'}
+						onclick={toggleInputMode}
+					>
+						{#if inputMode === 'voice'}
+							<Keyboard class="size-4" />
+						{:else}
+							<Mic class="size-4" />
+						{/if}
+					</Button>
+				{/if}
 			</div>
 
-			<Button
-				type="submit"
-				size="icon-sm"
-				disabled={!canSend}
-				aria-label="Send"
-				title={submitTitle}
-			>
-				{#if sending}
-					<LoaderCircle class="size-4 animate-spin" />
+			<div class="flex items-center gap-1">
+				{#if inputMode === 'voice'}
+					<Button
+						type="button"
+						variant={ttsEnabled ? 'secondary' : 'ghost'}
+						size="icon-sm"
+						class="text-stone- stone-500 hover:text-emerald-700"
+						disabled={disabled ||
+							sending ||
+							voiceStage === 'recording' ||
+							!selectedVoiceTtsAvailable}
+						aria-label={ttsEnabled ? 'Disable speech playback' : 'Enable speech playback'}
+						title={selectedVoiceTtsAvailable
+							? `${voiceProviderLabel} speech playback ${ttsEnabled ? 'on' : 'off'}`
+							: `${voiceProviderLabel} speech playback unavailable`}
+						onclick={() => (ttsEnabled = !ttsEnabled)}
+					>
+						{#if ttsEnabled}
+							<Volume2 class="size-4" />
+						{:else}
+							<VolumeX class="size-4" />
+						{/if}
+					</Button>
 				{:else}
-					<SendHorizontal class="size-4" />
+					<div class="group relative flex items-center">
+						<span
+							class="pointer-events-none absolute right-full mr-2 hidden rounded bg-stone-800 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-white opacity-0 transition-opacity duration-200 group-hover:block group-hover:opacity-100"
+						>
+							{submitTitle}
+						</span>
+						<Button
+							type="submit"
+							size="icon-sm"
+							variant={canSend ? 'default' : 'ghost'}
+							disabled={!canSend}
+							class="transition-all duration-200 {canSend
+								? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
+								: 'text-stone-300'}"
+							aria-label="Send"
+						>
+							{#if sending}
+								<LoaderCircle class="size-4 animate-spin" />
+							{:else}
+								<SendHorizontal class="size-4" />
+							{/if}
+						</Button>
+					</div>
 				{/if}
-			</Button>
+			</div>
 		</div>
 	</div>
 </form>
+
+<style>
+	.composer-shell {
+		position: relative;
+		isolation: isolate;
+		overflow: visible;
+		transition:
+			border-color 180ms ease-out,
+			box-shadow 180ms ease-out;
+	}
+
+	.composer-shell::before,
+	.composer-shell::after {
+		position: absolute;
+		content: '';
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 300ms ease-in-out;
+		z-index: 0;
+	}
+
+	.composer-shell::before {
+		inset: -1px;
+		border-radius: 9px;
+		background: linear-gradient(90deg, #10b981, #3b82f6, #f59e0b, #10b981);
+		background-size: 300% 100%;
+		mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		mask-composite: exclude;
+		padding: 1.5px;
+	}
+
+	.composer-shell::after {
+		inset: -1px;
+		border-radius: 9px;
+		background: linear-gradient(
+			90deg,
+			rgba(16, 185, 129, 0.4),
+			rgba(59, 130, 246, 0.4),
+			rgba(245, 158, 11, 0.4),
+			rgba(16, 185, 129, 0.4)
+		);
+		background-size: 300% 100%;
+		filter: blur(4px);
+		mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		mask-composite: exclude;
+		padding: 3px;
+	}
+
+	.composer-shell > :global(*) {
+		position: relative;
+		z-index: 1;
+	}
+
+	.composer-shell.composer-working {
+		border-color: transparent;
+	}
+
+	.composer-shell.composer-working::before,
+	.composer-shell.composer-working::after {
+		opacity: 1;
+		animation: composer-border-flow 4s linear infinite;
+	}
+
+	.voice-panel {
+		isolation: isolate;
+	}
+
+	.voice-panel::before {
+		position: absolute;
+		inset: -50% -50%;
+		content: '';
+		background: conic-gradient(
+			from 0deg,
+			transparent,
+			rgba(16, 185, 129, 0.3),
+			rgba(59, 130, 246, 0.3),
+			rgba(245, 158, 11, 0.3),
+			transparent
+		);
+		filter: blur(40px);
+		opacity: 0;
+		transition: opacity 500ms ease-in-out;
+		z-index: -2;
+	}
+
+	.voice-panel.active::before {
+		opacity: 1;
+		animation: voice-panel-rotate 10s linear infinite;
+	}
+
+	.voice-panel::after {
+		position: absolute;
+		inset: 0;
+		content: '';
+		background-image: radial-gradient(
+			circle at 2px 2px,
+			rgba(255, 255, 255, 0.05) 1px,
+			transparent 0
+		);
+		background-size: 24px 24px;
+		mask-image: radial-gradient(circle, black 30%, transparent 80%);
+		opacity: 0.4;
+		z-index: -1;
+	}
+
+	.voice-field {
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: radial-gradient(circle at center, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
+		transform: scale(calc(0.5 + var(--voice-level, 0) * 1.2));
+		opacity: calc(0.1 + var(--voice-level, 0) * 0.5);
+		transition: transform 150ms cubic-bezier(0.2, 0, 0.3, 1);
+	}
+
+	.voice-orb {
+		width: 100px;
+		height: 100px;
+		border: 0;
+		border-radius: 999px;
+		color: white;
+		background: #06120f;
+		position: relative;
+		display: grid;
+		place-items: center;
+		transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+
+	.voice-orb:hover:not(:disabled) {
+		transform: scale(1.05);
+	}
+
+	.voice-orb::before {
+		content: '';
+		position: absolute;
+		inset: -2px;
+		border-radius: inherit;
+		background: linear-gradient(135deg, #10b981, #3b82f6, #f59e0b);
+		padding: 2px;
+		mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		mask-composite: exclude;
+		animation: voice-orb-border-rotate 4s linear infinite;
+	}
+
+	.voice-orb.recording::after {
+		content: '';
+		position: absolute;
+		inset: -8px;
+		border-radius: inherit;
+		border: 2px solid rgba(16, 185, 129, 0.4);
+		animation: voice-orb-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+	}
+
+	.voice-orb.recording {
+		transform: scale(calc(1 + var(--voice-level, 0) * 0.2));
+	}
+
+	.voice-orb.processing {
+		animation: voice-orb-breathing 2s ease-in-out infinite;
+	}
+
+	.voice-orb-core {
+		position: absolute;
+		inset: 6px;
+		border-radius: inherit;
+		background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.1), transparent);
+		box-shadow:
+			inset 0 0 20px rgba(16, 185, 129, 0.2),
+			0 0 30px rgba(16, 185, 129, 0.1);
+	}
+
+	.voice-orb-icon {
+		position: relative;
+		z-index: 2;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.05);
+		backdrop-filter: blur(4px);
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+		transition: all 0.3s ease;
+	}
+
+	.voice-orb.recording .voice-orb-icon {
+		background: rgba(16, 185, 129, 0.2);
+		box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+	}
+
+	.voice-status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 999px;
+		background: #10b981;
+		box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
+		transition: all 0.3s ease;
+	}
+
+	.voice-status-dot.recording {
+		background: #f59e0b;
+		box-shadow: 0 0 15px rgba(245, 158, 11, 0.9);
+		animation: status-dot-blink 1s ease-in-out infinite;
+	}
+
+	@keyframes status-dot-blink {
+		50% {
+			opacity: 0.5;
+			transform: scale(0.8);
+		}
+	}
+
+	@keyframes voice-orb-pulse {
+		0% {
+			transform: scale(1);
+			opacity: 0.8;
+		}
+		100% {
+			transform: scale(1.5);
+			opacity: 0;
+		}
+	}
+
+	@keyframes voice-orb-breathing {
+		0%,
+		100% {
+			transform: scale(1);
+			opacity: 0.9;
+		}
+		50% {
+			transform: scale(1.05);
+			opacity: 1;
+		}
+	}
+
+	@keyframes voice-orb-border-rotate {
+		from {
+			rotate: 0deg;
+		}
+		to {
+			rotate: 360deg;
+		}
+	}
+
+	@keyframes voice-panel-rotate {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.voice-service {
+		max-width: 100%;
+	}
+
+	.voice-service-label {
+		max-width: 136px;
+		overflow: hidden;
+		color: rgba(236, 253, 245, 0.78);
+		font-weight: 650;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.voice-service-switch {
+		display: inline-flex;
+		padding: 2px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-radius: 8px;
+		background: rgba(6, 18, 15, 0.42);
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+	}
+
+	.voice-service-switch button {
+		min-width: 48px;
+		border: 0;
+		border-radius: 6px;
+		padding: 3px 8px;
+		color: rgba(236, 253, 245, 0.68);
+		font-weight: 700;
+		line-height: 1.2;
+		transition:
+			background 140ms ease-out,
+			color 140ms ease-out,
+			opacity 140ms ease-out;
+	}
+
+	.voice-service-switch button.active {
+		background: rgba(236, 253, 245, 0.92);
+		color: #064e3b;
+	}
+
+	.voice-service-switch button:disabled {
+		cursor: not-allowed;
+	}
+
+	.voice-service-switch button:disabled:not(.active) {
+		opacity: 0.42;
+	}
+
+	@keyframes composer-border-flow {
+		0% {
+			background-position: 0% 50%;
+		}
+		100% {
+			background-position: 300% 50%;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.composer-shell.composer-working::before,
+		.composer-shell.composer-working::after {
+			animation: none;
+		}
+	}
+</style>

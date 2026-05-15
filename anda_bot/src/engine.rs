@@ -36,7 +36,7 @@ use crate::util::{
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
-use browser_ws::{BrowserWebSocketState, browser_websocket};
+use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary};
 pub use browser::*;
@@ -47,6 +47,7 @@ pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 pub struct Engines {
     state: AppState,
     browser_bridge: Arc<BrowserBridge>,
+    voice_capabilities: BrowserVoiceCapabilities,
 }
 
 #[async_trait]
@@ -192,6 +193,16 @@ impl Engines {
             transcription_manager.clone(),
             active_im_channels,
         ));
+        let voice_capabilities = BrowserVoiceCapabilities {
+            transcription: transcription_manager
+                .as_ref()
+                .map(|manager| manager.supported_audio_formats())
+                .unwrap_or_default(),
+            tts: tts_manager
+                .as_ref()
+                .map(|manager| manager.supported_audio_formats())
+                .unwrap_or_default(),
+        };
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
@@ -259,6 +270,7 @@ impl Engines {
         Ok(Self {
             state,
             browser_bridge,
+            voice_capabilities,
         })
     }
 
@@ -266,6 +278,7 @@ impl Engines {
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
             bridge: self.browser_bridge,
+            voice_capabilities: self.voice_capabilities,
         };
         let browser_ws_router = Router::new()
             .route("/ws/engine/{*id}", routing::get(browser_websocket))

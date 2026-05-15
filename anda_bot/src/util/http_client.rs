@@ -21,7 +21,7 @@ where
 {
     let mut http_client = request_client_builder()
         .https_only(false)
-        .timeout(Duration::from_secs(600))
+        .timeout(Duration::from_secs(120))
         .retry(
             reqwest::retry::for_host(AnyHost)
                 .max_retries_per_request(2)

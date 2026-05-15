@@ -23,6 +23,7 @@ use tokio_tungstenite::{
 };
 
 use super::browser::{BrowserActionResult, BrowserBridge, BrowserCommand};
+use crate::{transcription::TranscriptionManager, tts::TtsManager};
 
 const SEC_WEBSOCKET_ACCEPT: &str = "sec-websocket-accept";
 const SEC_WEBSOCKET_KEY: &str = "sec-websocket-key";
@@ -32,6 +33,13 @@ const SEC_WEBSOCKET_VERSION: &str = "sec-websocket-version";
 pub struct BrowserWebSocketState {
     pub app: AppState,
     pub bridge: Arc<BrowserBridge>,
+    pub voice_capabilities: BrowserVoiceCapabilities,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BrowserVoiceCapabilities {
+    pub transcription: Vec<String>,
+    pub tts: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +259,7 @@ async fn handle_browser_ws_request(
         "agent_run" => handle_agent_run(incoming.params, state, caller, engine_id).await,
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
         "information" => handle_information(state, engine_id),
+        "capabilities" => handle_capabilities(state, engine_id),
         method => Err(format!("{method} on WebSocket engine RPC not implemented")),
     };
 
@@ -327,6 +336,40 @@ fn handle_information(
         .get(&engine_id)
         .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
     serde_json::to_value(engine.information()).map_err(|err| err.to_string())
+}
+
+fn handle_capabilities(
+    state: &BrowserWebSocketState,
+    engine_id: Principal,
+) -> Result<Value, String> {
+    let engine = state
+        .app
+        .engines
+        .get(&engine_id)
+        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
+    let names = vec![
+        TranscriptionManager::NAME.to_string(),
+        TtsManager::NAME.to_string(),
+    ];
+    let tools = engine.tools(Some(&names));
+    let has_tool = |name: &str| {
+        tools
+            .iter()
+            .any(|tool| tool.definition.name.as_str() == name)
+    };
+
+    Ok(json!({
+        "transcription": if has_tool(TranscriptionManager::NAME) {
+            state.voice_capabilities.transcription.clone()
+        } else {
+            Vec::<String>::new()
+        },
+        "tts": if has_tool(TtsManager::NAME) {
+            state.voice_capabilities.tts.clone()
+        } else {
+            Vec::<String>::new()
+        },
+    }))
 }
 
 async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &BrowserWebSocketState) {
