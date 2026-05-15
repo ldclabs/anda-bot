@@ -2,6 +2,7 @@
 	import type {
 		ChatAttachment,
 		PageAudioResult,
+		PromptSkill,
 		ResourceInput,
 		VoiceCapabilities,
 		VoiceProvider,
@@ -59,6 +60,91 @@
 
 	type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
 
+	type PromptCommandContext = {
+		open: boolean
+		mode: 'command' | 'skill'
+		query: string
+		replaceStart: number
+		replaceEnd: number
+		key: string
+	}
+
+	type PromptCommandSuggestion = {
+		id: string
+		label: string
+		insertText: string
+		description: string
+		detail?: string
+		disabled?: boolean
+		kind: 'command' | 'skill' | 'status'
+	}
+
+	const emptyPromptCommandContext: PromptCommandContext = {
+		open: false,
+		mode: 'command',
+		query: '',
+		replaceStart: 0,
+		replaceEnd: 0,
+		key: 'closed'
+	}
+
+	const promptCommandItems: PromptCommandSuggestion[] = [
+		{
+			id: 'command:goal',
+			label: '/goal',
+			insertText: '/goal ',
+			description: 'Start a supervised long-running task.',
+			detail: 'alias: /loop',
+			kind: 'command'
+		},
+		{
+			id: 'command:side',
+			label: '/side',
+			insertText: '/side ',
+			description: 'Run a temporary side request in a subagent.',
+			detail: 'alias: /btw',
+			kind: 'command'
+		},
+		{
+			id: 'command:steer',
+			label: '/steer',
+			insertText: '/steer ',
+			description: 'Redirect the next model step with a new instruction.',
+			kind: 'command'
+		},
+		{
+			id: 'command:skill',
+			label: '/skill',
+			insertText: '/skill ',
+			description: 'Route the prompt to a named skill subagent.',
+			kind: 'command'
+		},
+		{
+			id: 'command:stop',
+			label: '/stop',
+			insertText: '/stop ',
+			description: 'Cancel the current task with an optional reason.',
+			detail: 'alias: /cancel',
+			kind: 'command'
+		},
+		{
+			id: 'command:cancel',
+			label: '/cancel',
+			insertText: '/cancel ',
+			description: 'Cancel the current task with an optional reason.',
+			detail: 'alias: /stop',
+			kind: 'command'
+		},
+		{
+			id: 'command:ping',
+			label: '/ping',
+			insertText: '/ping ',
+			description: 'Send a lightweight ping.',
+			kind: 'command'
+		}
+	]
+	const promptSkillsCacheMs = 60_000
+
 	let {
 		disabled = false,
 		sending = false,
@@ -73,7 +159,8 @@
 		onBrowserSpeechCancel,
 		onBrowserAudioStart,
 		onBrowserAudioStop,
-		onBrowserAudioCancel
+		onBrowserAudioCancel,
+		onLoadSkills
 	}: {
 		disabled?: boolean
 		sending?: boolean
@@ -89,6 +176,7 @@
 		onBrowserAudioStart?: (mimeType?: string) => Promise<void>
 		onBrowserAudioStop?: () => Promise<PageAudioResult>
 		onBrowserAudioCancel?: () => Promise<void>
+		onLoadSkills?: () => Promise<PromptSkill[]>
 	} = $props()
 
 	let text = $state('')
@@ -106,6 +194,16 @@
 	let browserSpeechAvailable = $state(speechRecognitionSupported())
 	let textareaElement: HTMLTextAreaElement | null = $state(null)
 	let fileInputElement: HTMLInputElement | null = $state(null)
+	let textareaFocused = $state(false)
+	let caretIndex = $state(0)
+	let activePromptCommandIndex = $state(0)
+	let promptCommandDismissedKey = $state('')
+	let promptCommandSelectionKey = $state('')
+	let promptCommandListElement: HTMLDivElement | null = $state(null)
+	let promptSkills = $state<PromptSkill[]>([])
+	let promptSkillsLoading = $state(false)
+	let promptSkillsLoadedAt = $state(0)
+	let promptSkillsError = $state('')
 	let speechRecognition: BrowserSpeechRecognition | null = null
 	let speechRecognitionMode: 'local' | 'page' | null = null
 	let speechFinalTranscript = ''
@@ -166,6 +264,29 @@
 				: chrome.i18n.getMessage('ready')
 	)
 	const voiceOrbStyle = $derived(`--voice-level: ${voiceLevel.toFixed(3)}`)
+	const promptCommandContext = $derived(readPromptCommandContext(text, caretIndex))
+	const promptCommandSuggestions = $derived(
+		buildPromptCommandSuggestions(
+			promptCommandContext,
+			promptSkills,
+			promptSkillsLoading,
+			promptSkillsError
+		)
+	)
+	const promptCommandPanelOpen = $derived(
+		textareaFocused &&
+			inputMode === 'text' &&
+			!disabled &&
+			!sending &&
+			promptCommandContext.open &&
+			promptCommandContext.key !== promptCommandDismissedKey &&
+			promptCommandSuggestions.length > 0
+	)
+	const promptCommandPanelTitle = $derived(
+		promptCommandContext.mode === 'skill'
+			? chrome.i18n.getMessage('promptSkillsLabel')
+			: chrome.i18n.getMessage('promptCommandsLabel')
+	)
 
 	let workingPersisted = $state(false)
 	let workingTimeout: number | undefined
@@ -191,6 +312,36 @@
 			void cancelRecording()
 			inputMode = 'text'
 		}
+	})
+
+	$effect(() => {
+		if (!promptCommandPanelOpen) {
+			return
+		}
+		const nextSelectionKey = `${promptCommandContext.key}:${promptCommandSuggestions.map((suggestion) => suggestion.id).join('|')}`
+		if (promptCommandSelectionKey !== nextSelectionKey) {
+			promptCommandSelectionKey = nextSelectionKey
+			activePromptCommandIndex = firstEnabledPromptCommandIndex(promptCommandSuggestions)
+			return
+		}
+		if (activePromptCommandIndex >= promptCommandSuggestions.length) {
+			activePromptCommandIndex = firstEnabledPromptCommandIndex(promptCommandSuggestions)
+		}
+	})
+
+	$effect(() => {
+		if (promptCommandPanelOpen && promptCommandContext.mode === 'skill') {
+			void ensurePromptSkillsLoaded()
+		}
+	})
+
+	$effect(() => {
+		if (!promptCommandPanelOpen) {
+			return
+		}
+		activePromptCommandIndex
+		promptCommandSelectionKey
+		void tick().then(scrollActivePromptCommandIntoView)
 	})
 
 	$effect(() => {
@@ -232,6 +383,251 @@
 		return isMacPlatform() ? event.metaKey : event.ctrlKey
 	}
 
+	function readPromptCommandContext(value: string, caret: number): PromptCommandContext {
+		const safeCaret = Math.max(0, Math.min(caret, value.length))
+		const firstLineBreak = value.indexOf('\n')
+		const commandLineEnd = firstLineBreak === -1 ? value.length : firstLineBreak
+		if (safeCaret > commandLineEnd) {
+			return emptyPromptCommandContext
+		}
+
+		const commandLine = value.slice(0, commandLineEnd)
+		const leadingWhitespace = commandLine.match(/^\s*/)?.[0] || ''
+		const slashIndex = leadingWhitespace.length
+		if (commandLine[slashIndex] !== '/' || safeCaret < slashIndex + 1) {
+			return emptyPromptCommandContext
+		}
+
+		const commandBody = commandLine.slice(slashIndex + 1)
+		const commandToken = commandBody.match(/^\S*/)?.[0] || ''
+		const commandTokenEnd = slashIndex + 1 + commandToken.length
+		const commandName = commandToken.toLowerCase()
+
+		if (commandName === 'skill' && safeCaret >= commandTokenEnd) {
+			const afterCommand = commandLine.slice(commandTokenEnd)
+			const spacesAfterCommand = afterCommand.match(/^\s+/)?.[0] || ''
+			if (spacesAfterCommand.length > 0) {
+				const skillStart = commandTokenEnd + spacesAfterCommand.length
+				const skillToken = commandLine.slice(skillStart).match(/^\S*/)?.[0] || ''
+				const skillEnd = skillStart + skillToken.length
+				if (safeCaret >= skillStart && safeCaret <= skillEnd) {
+					const query = commandLine.slice(skillStart, safeCaret)
+					return {
+						open: true,
+						mode: 'skill',
+						query,
+						replaceStart: skillStart,
+						replaceEnd: skillEnd,
+						key: `skill:${query}:${skillStart}:${skillEnd}`
+					}
+				}
+				return emptyPromptCommandContext
+			}
+		}
+
+		if (safeCaret > commandTokenEnd) {
+			return emptyPromptCommandContext
+		}
+
+		let replaceEnd = commandTokenEnd
+		while (replaceEnd < commandLineEnd && /[ \t]/.test(value[replaceEnd])) {
+			replaceEnd += 1
+		}
+		const query = commandLine.slice(slashIndex + 1, Math.min(safeCaret, commandTokenEnd))
+		return {
+			open: true,
+			mode: 'command',
+			query,
+			replaceStart: slashIndex,
+			replaceEnd,
+			key: `command:${query}:${slashIndex}:${replaceEnd}`
+		}
+	}
+
+	function buildPromptCommandSuggestions(
+		context: PromptCommandContext,
+		skills: PromptSkill[],
+		skillsLoading: boolean,
+		skillsError: string
+	): PromptCommandSuggestion[] {
+		if (!context.open) {
+			return []
+		}
+
+		const query = context.query.trim().toLowerCase()
+		if (context.mode === 'command') {
+			const matches = promptCommandItems.filter((item) => {
+				const label = item.label.slice(1).toLowerCase()
+				const detail = item.detail?.toLowerCase() || ''
+				return !query || label.startsWith(query) || detail.includes(`/${query}`)
+			})
+			return matches.length
+				? matches
+				: [promptCommandStatus('commands-empty', chrome.i18n.getMessage('promptCommandsEmpty'))]
+		}
+
+		if (skillsLoading && skills.length === 0) {
+			return [promptCommandStatus('skills-loading', chrome.i18n.getMessage('promptSkillsLoading'))]
+		}
+		if (skillsError) {
+			return [promptCommandStatus('skills-error', skillsError)]
+		}
+
+		const matches = skills
+			.filter((skill) => {
+				const name = skill.name.toLowerCase()
+				const description = skill.description?.toLowerCase() || ''
+				return !query || name.includes(query) || description.includes(query)
+			})
+			.slice(0, 20)
+		return matches.length
+			? matches.map((skill) => ({
+					id: `skill:${skill.name}`,
+					label: skill.name,
+					insertText: `${skill.name} `,
+					description: skill.description || chrome.i18n.getMessage('promptSkillDescription'),
+					detail: '/skill',
+					kind: 'skill'
+				}))
+			: [promptCommandStatus('skills-empty', chrome.i18n.getMessage('promptSkillsEmpty'))]
+	}
+
+	function promptCommandStatus(id: string, description: string): PromptCommandSuggestion {
+		return {
+			id,
+			label: '',
+			insertText: '',
+			description,
+			kind: 'status',
+			disabled: true
+		}
+	}
+
+	function firstEnabledPromptCommandIndex(suggestions: PromptCommandSuggestion[]): number {
+		const index = suggestions.findIndex((suggestion) => !suggestion.disabled)
+		return index === -1 ? 0 : index
+	}
+
+	function movePromptCommandSelection(delta: number) {
+		if (promptCommandSuggestions.length === 0) {
+			return
+		}
+		let nextIndex = activePromptCommandIndex
+		for (let step = 0; step < promptCommandSuggestions.length; step += 1) {
+			nextIndex =
+				(nextIndex + delta + promptCommandSuggestions.length) % promptCommandSuggestions.length
+			if (!promptCommandSuggestions[nextIndex]?.disabled) {
+				activePromptCommandIndex = nextIndex
+				return
+			}
+		}
+	}
+
+	function scrollActivePromptCommandIntoView() {
+		const activeOption = promptCommandListElement?.querySelector<HTMLElement>(
+			`[data-prompt-command-index="${activePromptCommandIndex}"]`
+		)
+		activeOption?.scrollIntoView({ block: 'nearest' })
+	}
+
+	async function ensurePromptSkillsLoaded() {
+		const now = Date.now()
+		if (
+			promptSkillsLoading ||
+			(promptSkillsLoadedAt > 0 && now - promptSkillsLoadedAt < promptSkillsCacheMs)
+		) {
+			return
+		}
+
+		promptSkillsLoading = true
+		promptSkillsError = ''
+		try {
+			promptSkills = onLoadSkills ? await onLoadSkills() : []
+		} catch (error) {
+			promptSkills = []
+			promptSkillsError = error instanceof Error ? error.message : String(error)
+		} finally {
+			promptSkillsLoadedAt = Date.now()
+			promptSkillsLoading = false
+		}
+	}
+
+	async function applyPromptCommandSuggestion(suggestion: PromptCommandSuggestion | undefined) {
+		if (!suggestion || suggestion.disabled || !promptCommandContext.open) {
+			return
+		}
+
+		const prefix = text.slice(0, promptCommandContext.replaceStart)
+		const suffix = text.slice(promptCommandContext.replaceEnd)
+		text = `${prefix}${suggestion.insertText}${suffix}`
+		const nextCaret = prefix.length + suggestion.insertText.length
+		promptCommandDismissedKey = ''
+		await tick()
+		textareaElement?.focus()
+		textareaElement?.setSelectionRange(nextCaret, nextCaret)
+		textareaFocused = true
+		caretIndex = nextCaret
+		resizeTextarea()
+	}
+
+	function handlePromptCommandKeydown(event: KeyboardEvent): boolean {
+		if (
+			!promptCommandPanelOpen ||
+			event.metaKey ||
+			event.ctrlKey ||
+			event.altKey ||
+			event.isComposing
+		) {
+			return false
+		}
+
+		if (event.key === 'ArrowDown') {
+			event.preventDefault()
+			movePromptCommandSelection(1)
+			return true
+		}
+		if (event.key === 'ArrowUp') {
+			event.preventDefault()
+			movePromptCommandSelection(-1)
+			return true
+		}
+		if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+			event.preventDefault()
+			void applyPromptCommandSuggestion(promptCommandSuggestions[activePromptCommandIndex])
+			return true
+		}
+		if (event.key === 'Escape') {
+			event.preventDefault()
+			promptCommandDismissedKey = promptCommandContext.key
+			return true
+		}
+		return false
+	}
+
+	function updateTextareaCaret() {
+		if (!textareaElement) {
+			return
+		}
+		caretIndex = textareaElement.selectionStart ?? text.length
+	}
+
+	function handleTextareaInput() {
+		promptCommandDismissedKey = ''
+		updateTextareaCaret()
+		resizeTextarea()
+	}
+
+	function handleTextareaFocus() {
+		textareaFocused = true
+		updateTextareaCaret()
+	}
+
+	function handleTextareaBlur() {
+		window.setTimeout(() => {
+			textareaFocused = false
+		}, 80)
+	}
+
 	async function submitMessage() {
 		if (!canSend) {
 			return
@@ -245,6 +641,8 @@
 		attachments = []
 		attachmentError = ''
 		inputMode = 'text'
+		promptCommandDismissedKey = ''
+		caretIndex = 0
 		await tick()
 		resizeTextarea()
 	}
@@ -253,6 +651,10 @@
 		if (isSubmitEvent(event)) {
 			event.preventDefault()
 			void submitMessage()
+			return
+		}
+		if (handlePromptCommandKeydown(event)) {
+			return
 		}
 	}
 
@@ -1169,17 +1571,56 @@
 				{/if}
 			</div>
 		{:else}
-			<textarea
-				bind:this={textareaElement}
-				bind:value={text}
-				rows="1"
-				{placeholder}
-				spellcheck="true"
-				disabled={disabled || sending}
-				class="max-h-38 min-h-10 w-full resize-none border-0 bg-transparent px-2 py-2 leading-5 text-stone-950 outline-none placeholder:text-stone-400 disabled:cursor-not-allowed disabled:opacity-60"
-				onkeydown={handleKeydown}
-				oninput={resizeTextarea}
-			></textarea>
+			<div class="prompt-input-wrap">
+				{#if promptCommandPanelOpen}
+					<div class="prompt-command-panel" role="listbox" aria-label={promptCommandPanelTitle}>
+						<div class="prompt-command-title">{promptCommandPanelTitle}</div>
+						<div class="prompt-command-list" bind:this={promptCommandListElement}>
+							{#each promptCommandSuggestions as suggestion, index (suggestion.id)}
+								{#if suggestion.disabled}
+									<div class="prompt-command-status">{suggestion.description}</div>
+								{:else}
+									<button
+										type="button"
+										class="prompt-command-option"
+										class:active={index === activePromptCommandIndex}
+										data-prompt-command-index={index}
+										role="option"
+										aria-selected={index === activePromptCommandIndex}
+										onmousedown={(event) => event.preventDefault()}
+										onclick={() => void applyPromptCommandSuggestion(suggestion)}
+									>
+										<span class="prompt-command-main">
+											<span class="prompt-command-label">{suggestion.label}</span>
+											{#if suggestion.detail}
+												<span class="prompt-command-detail">{suggestion.detail}</span>
+											{/if}
+										</span>
+										<span class="prompt-command-description">{suggestion.description}</span>
+									</button>
+								{/if}
+							{/each}
+						</div>
+					</div>
+				{/if}
+				<textarea
+					bind:this={textareaElement}
+					bind:value={text}
+					rows="1"
+					{placeholder}
+					spellcheck="true"
+					disabled={disabled || sending}
+					aria-haspopup="listbox"
+					class="max-h-38 min-h-10 w-full resize-none border-0 bg-transparent px-2 py-2 leading-5 text-stone-950 outline-none placeholder:text-stone-400 disabled:cursor-not-allowed disabled:opacity-60"
+					onkeydown={handleKeydown}
+					oninput={handleTextareaInput}
+					onfocus={handleTextareaFocus}
+					onblur={handleTextareaBlur}
+					onclick={updateTextareaCaret}
+					onkeyup={updateTextareaCaret}
+					onselect={updateTextareaCaret}
+				></textarea>
+			</div>
 		{/if}
 
 		{#if inputMode === 'voice' && voiceError}
@@ -1352,6 +1793,106 @@
 	.composer-shell.composer-working::after {
 		opacity: 1;
 		animation: composer-border-flow 4s linear infinite;
+	}
+
+	.prompt-input-wrap {
+		position: relative;
+		min-width: 0;
+	}
+
+	.prompt-command-panel {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(100% + 8px);
+		z-index: 30;
+		max-height: min(260px, 45vh);
+		overflow: hidden;
+		border: 1px solid rgba(120, 113, 108, 0.18);
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.98);
+		box-shadow:
+			0 18px 48px rgba(36, 45, 39, 0.16),
+			0 0 0 1px rgba(255, 255, 255, 0.7) inset;
+		backdrop-filter: blur(14px);
+	}
+
+	.prompt-command-title {
+		padding: 7px 9px 5px;
+		border-bottom: 1px solid rgba(231, 229, 228, 0.9);
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0;
+		text-transform: uppercase;
+		color: #78716c;
+	}
+
+	.prompt-command-list {
+		max-height: 218px;
+		overflow-y: auto;
+		padding: 4px;
+	}
+
+	.prompt-command-option {
+		width: 100%;
+		min-width: 0;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		padding: 7px 8px;
+		text-align: left;
+		transition:
+			background 140ms ease-out,
+			box-shadow 140ms ease-out;
+	}
+
+	.prompt-command-option:hover,
+	.prompt-command-option.active {
+		background: #ecfdf5;
+		box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.16);
+	}
+
+	.prompt-command-main {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.prompt-command-label {
+		flex: 0 0 auto;
+		font-family:
+			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+		font-size: 12px;
+		font-weight: 750;
+		color: #065f46;
+	}
+
+	.prompt-command-detail,
+	.prompt-command-description {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.prompt-command-detail {
+		font-size: 10px;
+		font-weight: 600;
+		color: #a16207;
+	}
+
+	.prompt-command-description {
+		display: block;
+		margin-top: 2px;
+		font-size: 11px;
+		color: #57534e;
+	}
+
+	.prompt-command-status {
+		padding: 9px 8px;
+		font-size: 11px;
+		color: #78716c;
 	}
 
 	.voice-panel {

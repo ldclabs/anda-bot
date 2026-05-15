@@ -86,6 +86,24 @@
   "ready": {
     "message": "Prêt"
   },
+  "promptCommandsLabel": {
+    "message": "Commandes système"
+  },
+  "promptSkillsLabel": {
+    "message": "Compétences"
+  },
+  "promptCommandsEmpty": {
+    "message": "Aucune commande correspondante"
+  },
+  "promptSkillsLoading": {
+    "message": "Chargement des compétences"
+  },
+  "promptSkillsEmpty": {
+    "message": "Aucune compétence correspondante"
+  },
+  "promptSkillDescription": {
+    "message": "Sous-agent de compétences"
+  },
   "syncing": {
     "message": "Synchronisation"
   },
@@ -164,7 +182,52 @@
   "voiceNotConnected": {
     "message": "Le mode vocal n'est pas connecté."
   },
+  "settingsSaved": {
+    "message": "Paramètres enregistrés."
+  },
+  "connectionTestPassed": {
+    "message": "Test de connexion réussi."
+  },
+  "voiceTranscriptionNotConfigured": {
+    "message": "La transcription vocale n'est pas configurée dans le daemon Anda."
+  },
+  "audioCaptureMissingData": {
+    "message": "L'enregistrement vocal manque de données audio pour la transcription Anda."
+  },
+  "audioFormatNotSupported": {
+    "message": "Le format d'enregistrement vocal '.$1' n'est pas pris en charge par la transcription Anda. Acceptés : $2."
+  },
+  "audioConversionFailed": {
+    "message": "Ce navigateur ne peut pas convertir l'audio vocal en WAV pour la transcription Anda."
+  },
+  "wavConversionFailed": {
+    "message": "Échec de la conversion de l'audio vocal en WAV : $1"
+  },
+  "audioPlaybackFailed": {
+    "message": "Échec de la lecture audio."
+  },
+  "conversationFailed": {
+    "message": "La conversation a échoué :\n\n$1"
+  },
+  "conversationFailedNoReason": {
+    "message": "La conversation a échoué, mais aucune raison d'échec n'a été renvoyée."
+  },
+  "rpcError": {
+    "message": "l'outil a renvoyé une réponse RPC inconnue"
+  },
+  "extensionError": {
+    "message": "le service worker de l'extension a renvoyé une erreur"
+  },
+  "tokenMissing": {
+    "message": "jeton Bearer manquant"
+  },
   "pasteTokenFirst": {
     "message": "Terminez la configuration et collez d'abord un Bearer token généré par `anda browser token`."
+  },
+  "browserSpeechStartFailed": {
+    "message": "La reconnaissance vocale du navigateur n'a pas démarré."
+  },
+  "andaVoiceStartFailed": {
+    "message": "L'enregistrement vocal Anda n'a pas démarré."
   }
 }

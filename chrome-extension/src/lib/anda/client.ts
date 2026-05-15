@@ -45,6 +45,11 @@ export interface VoiceCapabilities {
 	chromeTts: boolean
 }
 
+export interface PromptSkill {
+	name: string
+	description?: string
+}
+
 export type VoiceProvider = 'chrome' | 'anda'
 
 export interface VoiceRecordingInput {
@@ -518,6 +523,19 @@ export class AndaSidePanelClient {
 		this.state.voiceCapabilities = next
 		this.emit()
 		return next
+	}
+
+	async listPromptSkills(): Promise<PromptSkill[]> {
+		if (!this.state.settings.token) {
+			return []
+		}
+		const meta = await this.requestMeta()
+		const toolOutput = await this.toolCall<PromptSkill[]>(
+			'anda_bot_api',
+			{ type: 'ListSkills' },
+			meta
+		)
+		return normalizePromptSkills(kipResult(toolOutput))
 	}
 
 	private async voiceTurnPrompt(recording: VoiceRecordingInput): Promise<string> {
@@ -1429,6 +1447,16 @@ function kipResultWithCursor<Result>(toolOutput: KipToolOutput<Result>): {
 		throw new Error(JSON.stringify(output.error || output.Err))
 	}
 	throw new Error(chrome.i18n.getMessage('rpcError'))
+}
+
+function normalizePromptSkills(skills: PromptSkill[] | undefined): PromptSkill[] {
+	return (skills || [])
+		.filter((skill) => typeof skill?.name === 'string' && Boolean(skill.name.trim()))
+		.map((skill) => ({
+			name: skill.name.trim(),
+			description: skill.description?.trim() || undefined
+		}))
+		.sort((left, right) => left.name.localeCompare(right.name))
 }
 
 type NormalizedVoiceRecording = {

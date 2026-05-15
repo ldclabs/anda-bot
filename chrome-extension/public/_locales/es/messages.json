@@ -86,6 +86,24 @@
   "ready": {
     "message": "Listo"
   },
+  "promptCommandsLabel": {
+    "message": "Comandos de sistema"
+  },
+  "promptSkillsLabel": {
+    "message": "Habilidades"
+  },
+  "promptCommandsEmpty": {
+    "message": "No hay comandos coincidentes"
+  },
+  "promptSkillsLoading": {
+    "message": "Cargando habilidades"
+  },
+  "promptSkillsEmpty": {
+    "message": "No hay habilidades coincidentes"
+  },
+  "promptSkillDescription": {
+    "message": "Subagente de habilidades"
+  },
   "syncing": {
     "message": "Sincronizando"
   },
@@ -164,7 +182,52 @@
   "voiceNotConnected": {
     "message": "El modo de voz no está conectado."
   },
+  "settingsSaved": {
+    "message": "Configuración guardada."
+  },
+  "connectionTestPassed": {
+    "message": "Prueba de conexión exitosa."
+  },
+  "voiceTranscriptionNotConfigured": {
+    "message": "La transcripción de voz no está configurada en el daemon de Anda."
+  },
+  "audioCaptureMissingData": {
+    "message": "La grabación de voz no tiene datos de audio para la transcripción de Anda."
+  },
+  "audioFormatNotSupported": {
+    "message": "El formato de grabación de voz '.$1' no es compatible con la transcripción de Anda. Aceptados: $2."
+  },
+  "audioConversionFailed": {
+    "message": "Este navegador no puede convertir el audio de voz a WAV para la transcripción de Anda."
+  },
+  "wavConversionFailed": {
+    "message": "Error al convertir el audio de voz a WAV: $1"
+  },
+  "audioPlaybackFailed": {
+    "message": "Error en la reproducción de audio."
+  },
+  "conversationFailed": {
+    "message": "La conversación falló:\n\n$1"
+  },
+  "conversationFailedNoReason": {
+    "message": "La conversación falló, pero no se devolvió ningún motivo de fallo."
+  },
+  "rpcError": {
+    "message": "la herramienta devolvió una respuesta RPC desconocida"
+  },
+  "extensionError": {
+    "message": "el service worker de la extensión devolvió un error"
+  },
+  "tokenMissing": {
+    "message": "falta el token de portador"
+  },
   "pasteTokenFirst": {
     "message": "Completa la configuración y pega primero un Bearer token generado por `anda browser token`."
+  },
+  "browserSpeechStartFailed": {
+    "message": "El reconocimiento de voz del navegador no se inició."
+  },
+  "andaVoiceStartFailed": {
+    "message": "La grabación de voz de Anda no se inició."
   }
 }

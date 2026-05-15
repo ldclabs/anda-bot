@@ -86,6 +86,24 @@
   "ready": {
     "message": "准备就绪"
   },
+  "promptCommandsLabel": {
+    "message": "提示命令"
+  },
+  "promptSkillsLabel": {
+    "message": "技能"
+  },
+  "promptCommandsEmpty": {
+    "message": "没有匹配的命令"
+  },
+  "promptSkillsLoading": {
+    "message": "正在加载技能"
+  },
+  "promptSkillsEmpty": {
+    "message": "没有匹配的技能"
+  },
+  "promptSkillDescription": {
+    "message": "技能子智能体"
+  },
   "syncing": {
     "message": "同步中"
   },

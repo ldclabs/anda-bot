@@ -10,7 +10,7 @@ use anda_engine::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
         note::{NoteTool, load_notes},
         shell::{ExecArgs, ExecOutput, ShellTool, ShellToolHook},
-        skill::SkillManager,
+        skill::{SkillFrontmatter, SkillManager},
         todo::TodoTool,
     },
     hook::{AgentHook, DynAgentHook, ToolHook},
@@ -138,6 +138,8 @@ pub enum AndaBotToolArgs {
     ListSessions {},
     /// Get one currently active in-memory session by session id.
     GetSession { session_id: String },
+    /// List all available skills.
+    ListSkills {},
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -786,8 +788,8 @@ impl Tool<BaseCtx> for AndaBot {
                 "properties": {
                     "type": {
                         "type": "string",
-                        "enum": ["ListSessions", "GetSession"],
-                        "description": "The session operation to perform. Use ListSessions to list active sessions or GetSession to inspect one session."
+                        "enum": ["ListSessions", "GetSession", "ListSkills"],
+                        "description": "The API operation to perform. Use ListSessions to list active sessions, GetSession to inspect one session, or ListSkills to list available skills."
                     },
                     "session_id": {
                         "type": ["string", "null"],
@@ -815,6 +817,24 @@ impl Tool<BaseCtx> for AndaBot {
                     return Err(format!("session not found: {session_id}").into());
                 };
                 json!(state)
+            }
+            AndaBotToolArgs::ListSkills {} => {
+                let skills: Vec<SkillFrontmatter> = self
+                    .inner
+                    .skills_manager
+                    .list()
+                    .into_iter()
+                    .map(|(_, skill)| skill.frontmatter)
+                    .collect();
+                json!(
+                    skills
+                        .into_iter()
+                        .map(|skill| json!({
+                            "name": skill.name,
+                            "description": skill.description,
+                        }))
+                        .collect::<Vec<_>>()
+                )
             }
         };
 
@@ -2144,6 +2164,13 @@ mod tests {
         .expect("list sessions variant should parse");
 
         assert_eq!(args, AndaBotToolArgs::ListSessions {});
+
+        let args: AndaBotToolArgs = serde_json::from_value(serde_json::json!({
+            "type": "ListSkills",
+        }))
+        .expect("list skills variant should parse");
+
+        assert_eq!(args, AndaBotToolArgs::ListSkills {});
 
         let args: AndaBotToolArgs = serde_json::from_value(serde_json::json!({
             "type": "GetSession",

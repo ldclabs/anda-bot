@@ -86,6 +86,24 @@
   "ready": {
     "message": "Готово"
   },
+  "promptCommandsLabel": {
+    "message": "Системные команды"
+  },
+  "promptSkillsLabel": {
+    "message": "Навыки"
+  },
+  "promptCommandsEmpty": {
+    "message": "Нет подходящих команд"
+  },
+  "promptSkillsLoading": {
+    "message": "Загрузка навыков"
+  },
+  "promptSkillsEmpty": {
+    "message": "Нет подходящих навыков"
+  },
+  "promptSkillDescription": {
+    "message": "Субагент навыков"
+  },
   "syncing": {
     "message": "Синхронизация"
   },
@@ -164,7 +182,52 @@
   "voiceNotConnected": {
     "message": "Голосовой режим не подключен."
   },
+  "settingsSaved": {
+    "message": "Настройки сохранены."
+  },
+  "connectionTestPassed": {
+    "message": "Тест подключения пройден."
+  },
+  "voiceTranscriptionNotConfigured": {
+    "message": "Голосовая транскрипция не настроена в daemon Anda."
+  },
+  "audioCaptureMissingData": {
+    "message": "В записи голоса отсутствуют аудиоданные для транскрипции Anda."
+  },
+  "audioFormatNotSupported": {
+    "message": "Формат записи голоса '.$1' не поддерживается транскрипцией Anda. Доступные: $2."
+  },
+  "audioConversionFailed": {
+    "message": "Этот браузер не может конвертировать аудио в WAV для транскрипции Anda."
+  },
+  "wavConversionFailed": {
+    "message": "Ошибка конвертации аудио в WAV: $1"
+  },
+  "audioPlaybackFailed": {
+    "message": "Ошибка воспроизведения аудио."
+  },
+  "conversationFailed": {
+    "message": "Сбой разговора:\n\n$1"
+  },
+  "conversationFailedNoReason": {
+    "message": "Сбой разговора, причина не указана."
+  },
+  "rpcError": {
+    "message": "инструмент вернул неизвестный RPC-ответ"
+  },
+  "extensionError": {
+    "message": "extension service worker вернул ошибку"
+  },
+  "tokenMissing": {
+    "message": "отсутствует bearer token"
+  },
   "pasteTokenFirst": {
     "message": "Сначала завершите настройку и вставьте Bearer token, созданный `anda browser token`."
+  },
+  "browserSpeechStartFailed": {
+    "message": "Распознавание речи в браузере не запустилось."
+  },
+  "andaVoiceStartFailed": {
+    "message": "Запись голоса Anda не запустилась."
   }
 }

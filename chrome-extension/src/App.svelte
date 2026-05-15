@@ -10,6 +10,7 @@
 		type ChromeTabInfo,
 		type ConversationGroup,
 		type PageAudioResult,
+		type PromptSkill,
 		type SettingsState,
 		type VoiceCapabilities
 	} from '$lib/anda/client'
@@ -249,6 +250,10 @@
 		shouldStickToBottom = true
 		await tick()
 		scrollMessagesToBottom()
+	}
+
+	async function loadPromptSkills(): Promise<PromptSkill[]> {
+		return client ? client.listPromptSkills() : []
 	}
 
 	async function startBrowserSpeechRecognition(language: string) {
@@ -791,6 +796,7 @@
 			onBrowserAudioStart={startBrowserAudioCapture}
 			onBrowserAudioStop={stopBrowserAudioCapture}
 			onBrowserAudioCancel={cancelBrowserAudioCapture}
+			onLoadSkills={loadPromptSkills}
 		/>
 	</footer>
 </div>

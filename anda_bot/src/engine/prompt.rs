@@ -91,7 +91,9 @@ impl From<String> for PromptCommand {
 }
 
 pub fn skill_subagent(skill_manager: &SkillManager, skill: &str) -> Option<SubAgent> {
-    skill_manager.get_lowercase(&normalise_skill_agent_name(skill))
+    skill_manager.get_lowercase(&normalise_skill_agent_name(
+        skill.strip_prefix("skill_").unwrap_or(skill),
+    ))
 }
 
 fn required_prompt_command<F>(

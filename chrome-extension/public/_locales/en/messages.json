@@ -86,6 +86,24 @@
   "ready": {
     "message": "Ready"
   },
+  "promptCommandsLabel": {
+    "message": "Prompt commands"
+  },
+  "promptSkillsLabel": {
+    "message": "Skills"
+  },
+  "promptCommandsEmpty": {
+    "message": "No matching commands"
+  },
+  "promptSkillsLoading": {
+    "message": "Loading skills"
+  },
+  "promptSkillsEmpty": {
+    "message": "No matching skills"
+  },
+  "promptSkillDescription": {
+    "message": "Skill subagent"
+  },
   "syncing": {
     "message": "Syncing"
   },

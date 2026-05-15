@@ -86,6 +86,24 @@
   "ready": {
     "message": "جاهز"
   },
+  "promptCommandsLabel": {
+    "message": "أوامر المطالبة"
+  },
+  "promptSkillsLabel": {
+    "message": "المهارات"
+  },
+  "promptCommandsEmpty": {
+    "message": "لا توجد أوامر مطابقة"
+  },
+  "promptSkillsLoading": {
+    "message": "جارٍ تحميل المهارات"
+  },
+  "promptSkillsEmpty": {
+    "message": "لا توجد مهارات مطابقة"
+  },
+  "promptSkillDescription": {
+    "message": "وكيل المهارات الفرعي"
+  },
   "syncing": {
     "message": "مزامنة"
   },
@@ -164,7 +182,52 @@
   "voiceNotConnected": {
     "message": "وضع الصوت غير متصل."
   },
+  "settingsSaved": {
+    "message": "تم حفظ الإعدادات."
+  },
+  "connectionTestPassed": {
+    "message": "نجح اختبار الاتصال."
+  },
+  "voiceTranscriptionNotConfigured": {
+    "message": "لم يتم تكوين نسخ الصوت في daemon Anda."
+  },
+  "audioCaptureMissingData": {
+    "message": "تسجيل الصوت يفتقر إلى بيانات الصوت لنسخ Anda."
+  },
+  "audioFormatNotSupported": {
+    "message": "تنسيق تسجيل الصوت '.$1' غير مدعوم بواسطة نسخ Anda. المقبول: $2."
+  },
+  "audioConversionFailed": {
+    "message": "لا يمكن لهذا المتصفح تحويل صوت الصوت إلى WAV لنسخ Anda."
+  },
+  "wavConversionFailed": {
+    "message": "فشل تحويل صوت الصوت إلى WAV: $1"
+  },
+  "audioPlaybackFailed": {
+    "message": "فشل تشغيل الصوت."
+  },
+  "conversationFailed": {
+    "message": "فشلت المحادثة:\n\n$1"
+  },
+  "conversationFailedNoReason": {
+    "message": "فشلت المحادثة، ولكن لم يتم إرجاع سبب للفشل."
+  },
+  "rpcError": {
+    "message": "أداة أرجعت استجابة RPC غير معروفة"
+  },
+  "extensionError": {
+    "message": "عامل خدمة الإضافة أرجع خطأ"
+  },
+  "tokenMissing": {
+    "message": "رمز Bearer مفقود"
+  },
   "pasteTokenFirst": {
     "message": "أكمل الإعداد والصق أولاً Bearer token تم إنشاؤه بواسطة `anda browser token`."
+  },
+  "browserSpeechStartFailed": {
+    "message": "لم يبدأ التعرف على الكلام في المتصفح."
+  },
+  "andaVoiceStartFailed": {
+    "message": "لم يبدأ تسجيل صوت Anda."
   }
 }
