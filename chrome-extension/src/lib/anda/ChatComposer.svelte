@@ -62,7 +62,7 @@
 	let {
 		disabled = false,
 		sending = false,
-		placeholder = 'Message Anda',
+		placeholder = chrome.i18n.getMessage('placeholderMessage'),
 		working = false,
 		voiceAvailable = false,
 		voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
@@ -128,7 +128,9 @@
 			!preparingAttachments
 	)
 	const submitTitle = $derived(
-		isMacPlatform() ? 'Send with Command Enter' : 'Send with Control Enter'
+		isMacPlatform()
+			? chrome.i18n.getMessage('sendWithCmdEnter')
+			: chrome.i18n.getMessage('sendWithCtrlEnter')
 	)
 	const canUseBrowserSpeech = $derived(
 		Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable
@@ -152,14 +154,16 @@
 	)
 	const voiceProviderLabel = $derived(voiceProvider === 'chrome' ? 'Chrome' : 'Anda')
 	const voiceProviderTitle = $derived(
-		voiceProvider === 'chrome' ? 'Chrome built-in voice service' : 'Anda voice service'
+		voiceProvider === 'chrome'
+			? chrome.i18n.getMessage('useChromeVoice')
+			: chrome.i18n.getMessage('useAndaVoice')
 	)
 	const voiceStatus = $derived(
 		voiceStage === 'recording'
-			? 'Listening'
+			? chrome.i18n.getMessage('listening')
 			: voiceStage === 'processing' || sending
-				? 'Working'
-				: 'Ready'
+				? chrome.i18n.getMessage('working')
+				: chrome.i18n.getMessage('ready')
 	)
 	const voiceOrbStyle = $derived(`--voice-level: ${voiceLevel.toFixed(3)}`)
 
@@ -778,12 +782,12 @@
 			return
 		}
 		if (!result.audioBase64 || !result.mimeType) {
-			voiceError = 'No voice audio was captured.'
+			voiceError = chrome.i18n.getMessage('noVoiceCaptured')
 			voiceStage = 'idle'
 			return
 		}
 		if (!onVoiceSend) {
-			voiceError = 'Voice mode is not connected.'
+			voiceError = chrome.i18n.getMessage('voiceNotConnected')
 			voiceStage = 'idle'
 			return
 		}
@@ -815,12 +819,12 @@
 		}
 		const blob = new Blob(chunks, { type: mimeType })
 		if (!blob.size) {
-			voiceError = 'No voice audio was captured.'
+			voiceError = chrome.i18n.getMessage('noVoiceCaptured')
 			voiceStage = 'idle'
 			return
 		}
 		if (!onVoiceSend) {
-			voiceError = 'Voice mode is not connected.'
+			voiceError = chrome.i18n.getMessage('voiceNotConnected')
 			voiceStage = 'idle'
 			return
 		}
@@ -1054,7 +1058,7 @@
 						<button
 							type="button"
 							class="absolute top-0 right-0 grid size-3.5 place-items-center rounded-bl-md bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
-							aria-label="Remove attachment"
+							aria-label={chrome.i18n.getMessage('removeAttachment')}
 							onclick={() => removeAttachment(attachment.id)}
 						>
 							<X class="size-2" />
@@ -1066,13 +1070,13 @@
 						title={attachment.name}
 					>
 						<FileText class="size-3 shrink-0 text-emerald-700" />
-						<span class="max-w-[120px] truncate">{attachment.name}</span>
+						<span class="max-w-30 truncate">{attachment.name}</span>
 						<span class="shrink-0 text-stone-400">{fileSizeLabel(attachment.size || 0)}</span>
 						<button
 							type="button"
 							class="grid size-4 shrink-0 place-items-center rounded-sm text-stone-400 hover:bg-stone-200 hover:text-stone-700"
-							aria-label="Remove attachment"
-							title="Remove attachment"
+							aria-label={chrome.i18n.getMessage('removeAttachment')}
+							title={chrome.i18n.getMessage('removeAttachment')}
 							onclick={() => removeAttachment(attachment.id)}
 						>
 							<X class="size-3" />
@@ -1105,8 +1109,12 @@
 					class:processing={voiceStage === 'processing' || sending}
 					style={voiceOrbStyle}
 					disabled={!canRecordVoice}
-					aria-label={voiceStage === 'recording' ? 'Stop recording' : 'Start recording'}
-					title={voiceStage === 'recording' ? 'Stop recording' : 'Start recording'}
+					aria-label={voiceStage === 'recording'
+						? chrome.i18n.getMessage('stopRecording')
+						: chrome.i18n.getMessage('startRecording')}
+					title={voiceStage === 'recording'
+						? chrome.i18n.getMessage('stopRecording')
+						: chrome.i18n.getMessage('startRecording')}
 					onclick={toggleRecording}
 				>
 					<span class="voice-orb-core"></span>
@@ -1131,7 +1139,7 @@
 							type="button"
 							class:active={voiceProvider === 'chrome'}
 							disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
-							title="Use Chrome built-in speech and TTS"
+							title={chrome.i18n.getMessage('useChromeVoice')}
 							onclick={() => selectVoiceProvider('chrome')}
 						>
 							Chrome
@@ -1140,13 +1148,17 @@
 							type="button"
 							class:active={voiceProvider === 'anda'}
 							disabled={!canUseAndaVoice || voiceStage !== 'idle'}
-							title="Use Anda speech and TTS"
+							title={chrome.i18n.getMessage('useAndaVoice')}
 							onclick={() => selectVoiceProvider('anda')}
 						>
 							Anda
 						</button>
 					</div>
-					<span class="voice-service-label">{voiceProviderTitle}</span>
+					<span class="voice-service-label"
+						>{voiceProvider === 'chrome'
+							? chrome.i18n.getMessage('chromeVoiceService')
+							: chrome.i18n.getMessage('andaVoiceService')}</span
+					>
 				</div>
 				{#if voiceTranscript}
 					<div
@@ -1186,8 +1198,8 @@
 					size="icon-sm"
 					class="text-stone-500 hover:text-emerald-700"
 					disabled={disabled || preparingAttachments}
-					aria-label="Attach files"
-					title="Attach files"
+					aria-label={chrome.i18n.getMessage('attachFiles')}
+					title={chrome.i18n.getMessage('attachFiles')}
 					onclick={openFileDialog}
 				>
 					{#if preparingAttachments}
@@ -1205,9 +1217,11 @@
 						class="text-stone-500 hover:text-emerald-700"
 						disabled={disabled || sending}
 						aria-label={inputMode === 'voice'
-							? 'Switch to keyboard input'
-							: 'Switch to voice input'}
-						title={inputMode === 'voice' ? 'Keyboard input' : 'Voice input'}
+							? chrome.i18n.getMessage('switchToKeyboard')
+							: chrome.i18n.getMessage('switchToVoice')}
+						title={inputMode === 'voice'
+							? chrome.i18n.getMessage('keyboardInput')
+							: chrome.i18n.getMessage('voiceInput')}
 						onclick={toggleInputMode}
 					>
 						{#if inputMode === 'voice'}
@@ -1230,10 +1244,12 @@
 							sending ||
 							voiceStage === 'recording' ||
 							!selectedVoiceTtsAvailable}
-						aria-label={ttsEnabled ? 'Disable speech playback' : 'Enable speech playback'}
+						aria-label={ttsEnabled
+							? chrome.i18n.getMessage('disablePlayback')
+							: chrome.i18n.getMessage('enablePlayback')}
 						title={selectedVoiceTtsAvailable
-							? `${voiceProviderLabel} speech playback ${ttsEnabled ? 'on' : 'off'}`
-							: `${voiceProviderLabel} speech playback unavailable`}
+							? `${voiceProviderLabel} ${ttsEnabled ? chrome.i18n.getMessage('playbackOn') : chrome.i18n.getMessage('playbackOff')}`
+							: `${voiceProviderLabel} ${chrome.i18n.getMessage('playbackUnavailable')}`}
 						onclick={() => (ttsEnabled = !ttsEnabled)}
 					>
 						{#if ttsEnabled}
@@ -1257,7 +1273,7 @@
 							class="transition-all duration-200 {canSend
 								? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
 								: 'text-stone-300'}"
-							aria-label="Send"
+							aria-label={chrome.i18n.getMessage('send')}
 						>
 							{#if sending}
 								<LoaderCircle class="size-4 animate-spin" />

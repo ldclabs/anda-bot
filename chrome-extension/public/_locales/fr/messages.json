@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Anda Bot"
+  },
+  "extDescription": {
+    "message": "Discutez avec Anda Bot depuis Chrome et laissez l'agent gérer votre navigateur et votre ordinateur pour vous aider à accomplir vos tâches."
+  },
+  "actionTitle": {
+    "message": "Ouvrir Anda Bot"
+  },
+  "placeholderMessage": {
+    "message": "Message à Anda"
+  },
+  "placeholderSettings": {
+    "message": "Coller le jeton dans les Paramètres"
+  },
+  "settings": {
+    "message": "Paramètres"
+  },
+  "gatewayUrl": {
+    "message": "URL de la passerelle"
+  },
+  "bearerToken": {
+    "message": "Jeton d'accès"
+  },
+  "save": {
+    "message": "Enregistrer"
+  },
+  "test": {
+    "message": "Tester"
+  },
+  "loadHistory": {
+    "message": "Charger l'historique"
+  },
+  "currentSession": {
+    "message": "Session actuelle"
+  },
+  "ready": {
+    "message": "Prêt"
+  },
+  "syncing": {
+    "message": "Synchronisation"
+  },
+  "noActiveTab": {
+    "message": "Aucun onglet actif"
+  },
+  "attachFiles": {
+    "message": "Joindre des fichiers"
+  },
+  "removeAttachment": {
+    "message": "Supprimer la pièce jointe"
+  },
+  "switchToKeyboard": {
+    "message": "Passer au clavier"
+  },
+  "switchToVoice": {
+    "message": "Passer à la voix"
+  },
+  "keyboardInput": {
+    "message": "Entrée clavier"
+  },
+  "voiceInput": {
+    "message": "Entrée vocale"
+  },
+  "enablePlayback": {
+    "message": "Activer la lecture vocale"
+  },
+  "disablePlayback": {
+    "message": "Désactiver la lecture vocale"
+  },
+  "playbackOn": {
+    "message": "lecture vocale activée"
+  },
+  "playbackOff": {
+    "message": "lecture vocale désactivée"
+  },
+  "playbackUnavailable": {
+    "message": "lecture vocale indisponible"
+  },
+  "send": {
+    "message": "Envoyer"
+  },
+  "sendWithCmdEnter": {
+    "message": "Envoyer avec Command Enter"
+  },
+  "sendWithCtrlEnter": {
+    "message": "Envoyer avec Control Enter"
+  },
+  "listening": {
+    "message": "Écoute en cours"
+  },
+  "working": {
+    "message": "Traitement"
+  },
+  "stopRecording": {
+    "message": "Arrêter l'enregistrement"
+  },
+  "startRecording": {
+    "message": "Démarrer l'enregistrement"
+  },
+  "useChromeVoice": {
+    "message": "Utiliser le service vocal intégré de Chrome"
+  },
+  "useAndaVoice": {
+    "message": "Utiliser le service vocal d'Anda"
+  },
+  "chromeVoiceService": {
+    "message": "Service vocal intégré de Chrome"
+  },
+  "andaVoiceService": {
+    "message": "Service vocal d'Anda"
+  },
+  "noVoiceCaptured": {
+    "message": "Aucun son n'a été capturé."
+  },
+  "voiceNotConnected": {
+    "message": "Le mode vocal n'est pas connecté."
+  }
+}

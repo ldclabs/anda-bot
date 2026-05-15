@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Anda Bot",
+  "name": "__MSG_extName__",
   "version": "0.1.0",
-  "description": "Chat with Anda Bot from Chrome and let the agent operate the current webpage.",
+  "description": "__MSG_extDescription__",
+  "default_locale": "en",
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
@@ -27,7 +28,7 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http: https: ws: wss:;"
   },
   "action": {
-    "default_title": "Open Anda Bot"
+    "default_title": "__MSG_actionTitle__"
   },
   "side_panel": {
     "default_path": "index.html"

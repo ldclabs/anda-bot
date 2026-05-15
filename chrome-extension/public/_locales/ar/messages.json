@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Anda Bot"
+  },
+  "extDescription": {
+    "message": "دردشة مع Anda Bot من Chrome واجعل الوكيل يقوم بتشغيل متصفحك وجهاز الكمبيوتر الخاص بك لمساعدتك في إكمال المهام."
+  },
+  "actionTitle": {
+    "message": "افتح Anda Bot"
+  },
+  "placeholderMessage": {
+    "message": "رسالة إلى Anda"
+  },
+  "placeholderSettings": {
+    "message": "الصق الرمز في الإعدادات"
+  },
+  "settings": {
+    "message": "الإعدادات"
+  },
+  "gatewayUrl": {
+    "message": "عنوان URL للبوابة"
+  },
+  "bearerToken": {
+    "message": "رمز Bearer"
+  },
+  "save": {
+    "message": "حفظ"
+  },
+  "test": {
+    "message": "اختبار"
+  },
+  "loadHistory": {
+    "message": "تحميل السجل"
+  },
+  "currentSession": {
+    "message": "الجلسة الحالية"
+  },
+  "ready": {
+    "message": "جاهز"
+  },
+  "syncing": {
+    "message": "مزامنة"
+  },
+  "noActiveTab": {
+    "message": "لا توجد علامة تبويب نشطة"
+  },
+  "attachFiles": {
+    "message": "إرفاق ملفات"
+  },
+  "removeAttachment": {
+    "message": "إزالة المرفق"
+  },
+  "switchToKeyboard": {
+    "message": "التبديل إلى لوحة المفاتيح"
+  },
+  "switchToVoice": {
+    "message": "التبديل إلى الصوت"
+  },
+  "keyboardInput": {
+    "message": "إدخال لوحة المفاتيح"
+  },
+  "voiceInput": {
+    "message": "إدخال صوتي"
+  },
+  "enablePlayback": {
+    "message": "تمكين تشغيل الصوت"
+  },
+  "disablePlayback": {
+    "message": "تعطيل تشغيل الصوت"
+  },
+  "playbackOn": {
+    "message": "تشغيل الصوت يعمل"
+  },
+  "playbackOff": {
+    "message": "تشغيل الصوت متوقف"
+  },
+  "playbackUnavailable": {
+    "message": "تشغيل الصوت غير متوفر"
+  },
+  "send": {
+    "message": "إرسال"
+  },
+  "sendWithCmdEnter": {
+    "message": "إرسال باستخدام Command Enter"
+  },
+  "sendWithCtrlEnter": {
+    "message": "إرسال باستخدام Control Enter"
+  },
+  "listening": {
+    "message": "جارٍ الاستماع"
+  },
+  "working": {
+    "message": "جارٍ المعالجة"
+  },
+  "stopRecording": {
+    "message": "إيقاف التسجيل"
+  },
+  "startRecording": {
+    "message": "بدء التسجيل"
+  },
+  "useChromeVoice": {
+    "message": "استخدام خدمة الصوت المدمجة في Chrome"
+  },
+  "useAndaVoice": {
+    "message": "استخدام خدمة صوت Anda"
+  },
+  "chromeVoiceService": {
+    "message": "خدمة الصوت المدمجة في Chrome"
+  },
+  "andaVoiceService": {
+    "message": "خدمة صوت Anda"
+  },
+  "noVoiceCaptured": {
+    "message": "لم يتم التقاط أي صوت."
+  },
+  "voiceNotConnected": {
+    "message": "وضع الصوت غير متصل."
+  }
+}

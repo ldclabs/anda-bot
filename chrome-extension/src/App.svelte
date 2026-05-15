@@ -334,11 +334,11 @@
 	function groupLabel(group: ConversationGroup): string {
 		const time = group.createdAt || group.updatedAt || group.messages[0]?.timestamp
 		if (!time) {
-			return group.current ? 'Current session' : 'Conversation'
+			return group.current ? chrome.i18n.getMessage('currentSession') : 'Conversation'
 		}
 		const date = new Date(time)
 		if (Number.isNaN(date.getTime())) {
-			return group.current ? 'Current session' : 'Conversation'
+			return group.current ? chrome.i18n.getMessage('currentSession') : 'Conversation'
 		}
 		return date.toLocaleString([], {
 			month: 'short',
@@ -364,7 +364,9 @@
 		</div>
 
 		<div class="min-w-0 text-center">
-			<p class="truncate text-xs font-bold text-stone-800">{tab?.title || 'No active tab'}</p>
+			<p class="truncate text-xs font-bold text-stone-800">
+				{tab?.title || chrome.i18n.getMessage('noActiveTab')}
+			</p>
 			<div
 				class="mt-0.5 flex min-w-0 items-center justify-center gap-1.5 text-[11px] text-stone-500"
 			>
@@ -382,8 +384,8 @@
 		<Button
 			variant="ghost"
 			size="icon"
-			aria-label="Settings"
-			title="Settings"
+			aria-label={chrome.i18n.getMessage('settings')}
+			title={chrome.i18n.getMessage('settings')}
 			onclick={() => (settingsOpen = !settingsOpen)}
 		>
 			<Settings class="size-4" />
@@ -393,10 +395,12 @@
 	{#if settingsOpen}
 		<section
 			class="grid gap-3 border-b border-stone-200 bg-[#fbfcfa] px-3 py-3"
-			aria-label="Settings"
+			aria-label={chrome.i18n.getMessage('settings')}
 		>
 			<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="base-url">
-				<span class="flex items-center gap-1.5"><ExternalLink class="size-3" />Gateway URL</span>
+				<span class="flex items-center gap-1.5"
+					><ExternalLink class="size-3" />{chrome.i18n.getMessage('gatewayUrl')}</span
+				>
 				<Input
 					id="base-url"
 					type="url"
@@ -407,7 +411,9 @@
 			</label>
 
 			<label class="grid gap-1.5 text-[11px] font-bold text-stone-500" for="token">
-				<span class="flex items-center gap-1.5"><KeyRound class="size-3" />Bearer token</span>
+				<span class="flex items-center gap-1.5"
+					><KeyRound class="size-3" />{chrome.i18n.getMessage('bearerToken')}</span
+				>
 				<Textarea
 					id="token"
 					rows={4}
@@ -424,7 +430,7 @@
 					{:else}
 						<Save class="size-3.5" />
 					{/if}
-					Save
+					{chrome.i18n.getMessage('save')}
 				</Button>
 				<Button variant="outline" size="sm" disabled={testingConnection} onclick={testConnection}>
 					{#if testingConnection}
@@ -432,7 +438,7 @@
 					{:else}
 						<PlugZap class="size-3.5" />
 					{/if}
-					Test
+					{chrome.i18n.getMessage('test')}
 				</Button>
 			</div>
 		</section>
@@ -454,7 +460,9 @@
 						<Bot class="size-5 text-emerald-800" />
 					{/if}
 				</div>
-				<div class="text-xs font-semibold text-stone-700">{syncing ? 'Syncing' : 'Ready'}</div>
+				<div class="text-xs font-semibold text-stone-700">
+					{syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
+				</div>
 				<div class="max-w-full truncate text-[11px]">{tab?.url || tab?.title || status}</div>
 			</div>
 		{:else}
@@ -472,7 +480,7 @@
 						{:else}
 							<History class="size-3" />
 						{/if}
-						Load history
+						{chrome.i18n.getMessage('loadHistory')}
 					</Button>
 				</div>
 			{/if}
@@ -504,7 +512,9 @@
 
 	<footer class="border-t border-stone-200 bg-[#f6f8f5]/90 p-2.5 backdrop-blur">
 		<ChatComposer
-			placeholder={settings.token ? 'Message Anda' : 'Paste token in Settings'}
+			placeholder={settings.token
+				? chrome.i18n.getMessage('placeholderMessage')
+				: chrome.i18n.getMessage('placeholderSettings')}
 			disabled={sending}
 			{sending}
 			working={isBusy}

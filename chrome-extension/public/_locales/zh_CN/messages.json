@@ -1,0 +1,167 @@
+{
+  "extName": {
+    "message": "Anda Bot"
+  },
+  "extDescription": {
+    "message": "从 Chrome 与 Anda Bot 聊天，并让智能体操作您的浏览器和电脑，帮您完成任务。"
+  },
+  "actionTitle": {
+    "message": "打开 Anda Bot"
+  },
+  "placeholderMessage": {
+    "message": "给 Anda 发消息"
+  },
+  "placeholderSettings": {
+    "message": "在设置中粘贴 Token"
+  },
+  "settings": {
+    "message": "设置"
+  },
+  "gatewayUrl": {
+    "message": "网关 URL"
+  },
+  "bearerToken": {
+    "message": "Bearer 令牌"
+  },
+  "save": {
+    "message": "保存"
+  },
+  "test": {
+    "message": "测试"
+  },
+  "loadHistory": {
+    "message": "加载历史记录"
+  },
+  "currentSession": {
+    "message": "当前会话"
+  },
+  "ready": {
+    "message": "准备就绪"
+  },
+  "syncing": {
+    "message": "同步中"
+  },
+  "noActiveTab": {
+    "message": "无激活标签页"
+  },
+  "attachFiles": {
+    "message": "附加文件"
+  },
+  "removeAttachment": {
+    "message": "移除附件"
+  },
+  "switchToKeyboard": {
+    "message": "切换到键盘输入"
+  },
+  "switchToVoice": {
+    "message": "切换到语音输入"
+  },
+  "keyboardInput": {
+    "message": "键盘输入"
+  },
+  "voiceInput": {
+    "message": "语音输入"
+  },
+  "enablePlayback": {
+    "message": "开启语音播放"
+  },
+  "disablePlayback": {
+    "message": "关闭语音播放"
+  },
+  "playbackOn": {
+    "message": "语音播放已开启"
+  },
+  "playbackOff": {
+    "message": "语音播放已关闭"
+  },
+  "playbackUnavailable": {
+    "message": "语音播放不可用"
+  },
+  "send": {
+    "message": "发送"
+  },
+  "sendWithCmdEnter": {
+    "message": "使用 Command + Enter 发送"
+  },
+  "sendWithCtrlEnter": {
+    "message": "使用 Control + Enter 发送"
+  },
+  "listening": {
+    "message": "正在倾听"
+  },
+  "working": {
+    "message": "处理中"
+  },
+  "stopRecording": {
+    "message": "停止录音"
+  },
+  "startRecording": {
+    "message": "开始录音"
+  },
+  "useChromeVoice": {
+    "message": "使用 Chrome 内置语音服务"
+  },
+  "useAndaVoice": {
+    "message": "使用 Anda 语音服务"
+  },
+  "chromeVoiceService": {
+    "message": "Chrome 内置语音服务"
+  },
+  "andaVoiceService": {
+    "message": "Anda 语音服务"
+  },
+  "noVoiceCaptured": {
+    "message": "未捕获到语音音频。"
+  },
+  "voiceNotConnected": {
+    "message": "语音模式未连接。"
+  },
+  "settingsSaved": {
+    "message": "设置已保存。"
+  },
+  "connectionTestPassed": {
+    "message": "连接测试通过。"
+  },
+  "voiceTranscriptionNotConfigured": {
+    "message": "Anda 守护进程中未配置语音转录。"
+  },
+  "audioCaptureMissingData": {
+    "message": "语音录制缺少用于 Anda 转录的音频数据。"
+  },
+  "audioFormatNotSupported": {
+    "message": "Anda 转录不支持语音录制格式 '.$1'。接受的格式：$2。"
+  },
+  "audioConversionFailed": {
+    "message": "此浏览器无法将录音转换为 WAV 以供 Anda 转录。"
+  },
+  "wavConversionFailed": {
+    "message": "将录音转换为 WAV 失败：$1"
+  },
+  "audioPlaybackFailed": {
+    "message": "音频播放失败。"
+  },
+  "conversationFailed": {
+    "message": "会话失败：\n\n$1"
+  },
+  "conversationFailedNoReason": {
+    "message": "会话失败，但未返回失败原因。"
+  },
+  "rpcError": {
+    "message": "工具返回了未知的 RPC 响应"
+  },
+  "extensionError": {
+    "message": "扩展服务工作线程返回错误"
+  },
+  "tokenMissing": {
+    "message": "缺少 Bearer 令牌"
+  },
+  "pasteTokenFirst": {
+    "message": "请先粘贴由 `anda chrome token` 生成的 Bearer 令牌。"
+  },
+  "browserSpeechStartFailed": {
+    "message": "浏览器语音识别未启动。"
+  },
+  "andaVoiceStartFailed": {
+    "message": "Anda 录音未启动。"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Anda Bot"
+  },
+  "extDescription": {
+    "message": "Общайтесь с Anda Bot из Chrome и позвольте агенту управлять вашим браузером и компьютером, помогая вам выполнять задачи."
+  },
+  "actionTitle": {
+    "message": "Открыть Anda Bot"
+  },
+  "placeholderMessage": {
+    "message": "Сообщение для Anda"
+  },
+  "placeholderSettings": {
+    "message": "Вставьте токен в настройки"
+  },
+  "settings": {
+    "message": "Настройки"
+  },
+  "gatewayUrl": {
+    "message": "URL шлюза"
+  },
+  "bearerToken": {
+    "message": "Токен доступа"
+  },
+  "save": {
+    "message": "Сохранить"
+  },
+  "test": {
+    "message": "Тестировать"
+  },
+  "loadHistory": {
+    "message": "Загрузить историю"
+  },
+  "currentSession": {
+    "message": "Текущая сессия"
+  },
+  "ready": {
+    "message": "Готово"
+  },
+  "syncing": {
+    "message": "Синхронизация"
+  },
+  "noActiveTab": {
+    "message": "Нет активной вкладки"
+  },
+  "attachFiles": {
+    "message": "Прикрепить файлы"
+  },
+  "removeAttachment": {
+    "message": "Удалить вложение"
+  },
+  "switchToKeyboard": {
+    "message": "Переключиться на клавиатуру"
+  },
+  "switchToVoice": {
+    "message": "Переключиться на голос"
+  },
+  "keyboardInput": {
+    "message": "Клавиатурный ввод"
+  },
+  "voiceInput": {
+    "message": "Голосовой ввод"
+  },
+  "enablePlayback": {
+    "message": "Включить воспроизведение речи"
+  },
+  "disablePlayback": {
+    "message": "Выключить воспроизведение речи"
+  },
+  "playbackOn": {
+    "message": "воспроизведение речи включено"
+  },
+  "playbackOff": {
+    "message": "воспроизведение речи выключено"
+  },
+  "playbackUnavailable": {
+    "message": "воспроизведение речи недоступно"
+  },
+  "send": {
+    "message": "Отправить"
+  },
+  "sendWithCmdEnter": {
+    "message": "Отправить через Command Enter"
+  },
+  "sendWithCtrlEnter": {
+    "message": "Отправить через Control Enter"
+  },
+  "listening": {
+    "message": "Слушаю"
+  },
+  "working": {
+    "message": "Обработка"
+  },
+  "stopRecording": {
+    "message": "Остановить запись"
+  },
+  "startRecording": {
+    "message": "Начать запись"
+  },
+  "useChromeVoice": {
+    "message": "Использовать встроенную службу Chrome"
+  },
+  "useAndaVoice": {
+    "message": "Использовать службу Anda"
+  },
+  "chromeVoiceService": {
+    "message": "Встроенная служба Chrome"
+  },
+  "andaVoiceService": {
+    "message": "Голосовая служба Anda"
+  },
+  "noVoiceCaptured": {
+    "message": "Голос не был захвачен."
+  },
+  "voiceNotConnected": {
+    "message": "Голосовой режим не подключен."
+  }
+}

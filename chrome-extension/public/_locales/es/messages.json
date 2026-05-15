@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Anda Bot"
+  },
+  "extDescription": {
+    "message": "Chatea con Anda Bot desde Chrome y deja que el agente opere tu navegador y computadora para ayudarte a completar tareas."
+  },
+  "actionTitle": {
+    "message": "Abrir Anda Bot"
+  },
+  "placeholderMessage": {
+    "message": "Mensaje para Anda"
+  },
+  "placeholderSettings": {
+    "message": "Pegue el token en Configuración"
+  },
+  "settings": {
+    "message": "Configuración"
+  },
+  "gatewayUrl": {
+    "message": "URL de la pasarela"
+  },
+  "bearerToken": {
+    "message": "Token de portador"
+  },
+  "save": {
+    "message": "Guardar"
+  },
+  "test": {
+    "message": "Probar"
+  },
+  "loadHistory": {
+    "message": "Cargar historial"
+  },
+  "currentSession": {
+    "message": "Sesión actual"
+  },
+  "ready": {
+    "message": "Listo"
+  },
+  "syncing": {
+    "message": "Sincronizando"
+  },
+  "noActiveTab": {
+    "message": "Sin pestaña activa"
+  },
+  "attachFiles": {
+    "message": "Adjuntar archivos"
+  },
+  "removeAttachment": {
+    "message": "Eliminar archivo adjunto"
+  },
+  "switchToKeyboard": {
+    "message": "Cambiar a entrada de teclado"
+  },
+  "switchToVoice": {
+    "message": "Cambiar a entrada de voz"
+  },
+  "keyboardInput": {
+    "message": "Entrada de teclado"
+  },
+  "voiceInput": {
+    "message": "Entrada de voz"
+  },
+  "enablePlayback": {
+    "message": "Activar reproducción de voz"
+  },
+  "disablePlayback": {
+    "message": "Desactivar reproducción de voz"
+  },
+  "playbackOn": {
+    "message": "reproducción de voz activada"
+  },
+  "playbackOff": {
+    "message": "reproducción de voz desactivada"
+  },
+  "playbackUnavailable": {
+    "message": "reproducción de voz no disponible"
+  },
+  "send": {
+    "message": "Enviar"
+  },
+  "sendWithCmdEnter": {
+    "message": "Enviar con Command Enter"
+  },
+  "sendWithCtrlEnter": {
+    "message": "Enviar con Control Enter"
+  },
+  "listening": {
+    "message": "Escuchando"
+  },
+  "working": {
+    "message": "Trabajando"
+  },
+  "stopRecording": {
+    "message": "Detener grabación"
+  },
+  "startRecording": {
+    "message": "Iniciar grabación"
+  },
+  "useChromeVoice": {
+    "message": "Usar servicio de voz integrado de Chrome"
+  },
+  "useAndaVoice": {
+    "message": "Usar servicio de voz de Anda"
+  },
+  "chromeVoiceService": {
+    "message": "Servicio de voz integrado de Chrome"
+  },
+  "andaVoiceService": {
+    "message": "Servicio de voz de Anda"
+  },
+  "noVoiceCaptured": {
+    "message": "No se capturó audio de voz."
+  },
+  "voiceNotConnected": {
+    "message": "El modo de voz no está conectado."
+  }
+}

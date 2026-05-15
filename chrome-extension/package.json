@@ -1,5 +1,5 @@
 {
-  "name": "anda-bot-chrome-extension",
+  "name": "anda-bot",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -22,6 +22,7 @@
     "@types/prismjs": "^1.26.6",
     "autoprefixer": "^10.5.0",
     "bits-ui": "^2.18.1",
+    "chrome-types": "^0.1.427",
     "clsx": "^2.1.1",
     "postcss": "^8.5.14",
     "prettier": "^3.8.3",
