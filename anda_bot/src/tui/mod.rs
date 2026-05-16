@@ -131,6 +131,7 @@ struct App {
     animation_tick: u64,
     static_panel_flushed: bool,
     flushed_message_count: usize,
+    pending_scrollback_purge: bool,
     input_focused: bool,
 }
 
@@ -152,6 +153,7 @@ impl App {
             animation_tick: 0,
             static_panel_flushed: false,
             flushed_message_count: 0,
+            pending_scrollback_purge: false,
             input_focused: true,
         }
     }
@@ -191,6 +193,12 @@ impl App {
     fn reset_message_view(&mut self) {
         self.flushed_message_count = 0;
         self.input_focused = true;
+    }
+
+    fn clear_message_view(&mut self) {
+        self.reset_message_view();
+        self.static_panel_flushed = false;
+        self.pending_scrollback_purge = true;
     }
 
     fn insert_input_text(&mut self, text: &str) {
@@ -233,6 +241,8 @@ impl App {
             return Ok(());
         }
 
+        let resets_display = gateway::is_new_conversation_command(&text);
+
         self.input_buf.clear();
         self.input_cursor = 0;
         self.input_preferred_col = None;
@@ -240,6 +250,9 @@ impl App {
             self.notice = err;
         } else {
             self.notice.clear();
+        }
+        if resets_display {
+            self.clear_message_view();
         }
 
         Ok(())
@@ -539,6 +552,17 @@ async fn run_app(
         let desired = dynamic_viewport_height(app, term_w, term_h);
         let new_height = desired;
         let new_height = new_height.min(term_h).max(1);
+        if app.pending_scrollback_purge {
+            let old_area = terminal.get_frame().area();
+            let mut stdout = io::stdout();
+            stdout.execute(MoveTo(old_area.x, old_area.y))?;
+            stdout.execute(Clear(ClearType::Purge))?;
+            stdout.execute(Clear(ClearType::FromCursorDown))?;
+            *terminal = create_terminal_with_height(new_height)?;
+            current_viewport_height = new_height;
+            app.pending_scrollback_purge = false;
+            needs_render = true;
+        }
         if new_height != current_viewport_height || terminal_resized {
             // Clear the previous viewport area before recreating so that the
             // re-anchored viewport does not leave a ghost copy of the old
@@ -913,7 +937,7 @@ fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "/skill skill-name message  •  /goal message  •  /side message  •  /steer message  •  /stop message",
+                        "/new [message]  •  /skill skill-name message  •  /goal message  •  /side message  •  /steer message  •  /stop message",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),
@@ -2273,6 +2297,21 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect()
+    }
+
+    #[test]
+    fn clear_message_view_requests_terminal_purge() {
+        let mut app = ready_app();
+        app.static_panel_flushed = true;
+        app.flushed_message_count = 7;
+        app.input_focused = false;
+
+        app.clear_message_view();
+
+        assert_eq!(app.flushed_message_count, 0);
+        assert!(app.input_focused);
+        assert!(!app.static_panel_flushed);
+        assert!(app.pending_scrollback_purge);
     }
 
     #[test]

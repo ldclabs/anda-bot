@@ -2,6 +2,35 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.1] — 2026-05-16
+
+### Added
+
+- **`/new` command**: `/new [prompt]` (alias `/clear`) starts a fresh conversation, completing the current one if unfinished. Works across CLI, TUI, channel runtime, and Chrome extension. Trusted channel users can use `/new` in IM; `$external_user` attempts are ignored.
+- **Stale conversation detection in channel output**: when agent output arrives for a route whose current conversation has moved on (e.g., after `/new`), the channel message is prefixed with `[Previous conversation #N]` so recipients know the context has shifted.
+- **TUI scrollback purge on `/new`**: `ClearType::Purge` clears the terminal scrollback buffer when starting a new conversation, giving a truly fresh visual experience. Added `clear_message_view()` and `pending_scrollback_purge` state.
+- **Chrome extension `/new` integration**: command palette entry for `/new`, `parseNewPromptCommand()` in `client.ts`, and `clearConversationDisplay()` for full display reset on new conversation.
+- **System extra content injection**: `system_extra_content()` serializes request context metadata (`ctx.extra`) as structured `ContentPart` prefixed with `[$system: ...]`, replacing ad-hoc string formatting. Applied at both initial prompt and follow-up input boundaries.
+- **`session_creation_lock`**: mutex serializes session creation to prevent races between concurrent requests for the same source.
+- **`get_session_by_source()`**: finds an active session by source key, enabling session reuse across conversation boundaries (e.g., after `/new` without a prompt).
+- **`finish_when_idle` flag**: when `/new` detaches a running session, `finish_when_idle=true` tells the session runner to complete and exit gracefully once idle — no abrupt kill.
+
+### Changed
+
+- **ContentPart migration**: steering and follow-up messages now use `Vec<ContentPart>` internally instead of string concatenation (`format!("{}\n\n{}")`). Resource attachments are converted to `ContentPart` directly via `follow_up_content()`. This aligns with `anda_engine` 0.12.9's upgraded steering API and enables multimodal content passthrough.
+- **Background task hooks carry context**: `on_background_progress` and `on_background_end` now pass `ctx.meta().extra` through `ConversationInput`, so background task outputs correctly include the originating request context.
+- **Session detach returns value**: `detach_session()` returns `Option<Arc<Session>>` instead of just removing, enabling the caller to set `finish_when_idle` before the session exits.
+- **`clear_route_conversation()`**: new channel runtime method removes current route→conversation binding while preserving the old conv→route mapping for stale output detection.
+- **`force_standalone_conversation` flag**: new conversations started via `/new` skip history chaining and ancestor linking, keeping the fresh session truly independent.
+- **Status bar updated**: TUI help text now includes `/new [message]` as the first slash command.
+
+### Dependencies
+
+- `anda_core` 0.12.0 → 0.12.1
+- `anda_engine` 0.12.7 → 0.12.9
+- `anda_hippocampus` 0.5.2 → 0.5.3
+- `ic-agent` / `ic-transport-types` 0.47.2 → 0.47.3
+
 ## [0.7.0] — 2026-05-13
 
 ### Added

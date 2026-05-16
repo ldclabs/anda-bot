@@ -254,6 +254,10 @@ type ExtensionResponse<Result> =
 
 type SnapshotListener = (snapshot: ClientSnapshot) => void
 
+type NewPromptCommand = {
+	prompt: string | null
+}
+
 const defaultSettings: SettingsState = {
 	baseUrl: 'http://127.0.0.1:8042',
 	token: ''
@@ -573,22 +577,43 @@ export class AndaSidePanelClient {
 		await this.refreshActiveTab()
 		const resources = attachments.map((attachment) => attachment.resource)
 		const effectivePrompt = prompt || 'Please review the attached files.'
-		this.appendMessage(
-			{
-				role: 'user',
-				text: effectivePrompt,
-				local: true,
-				attachments: attachments.map(({ resource: _resource, ...attachment }) => attachment)
-			},
-			this.state.conversationId || localConversationId
-		)
-		this.updateStatus('sending')
+		const newCommand = parseNewPromptCommand(prompt)
 
 		try {
 			const meta = await this.requestMeta()
+			if (newCommand) {
+				this.clearConversationDisplay()
+				if (newCommand.prompt) {
+					this.appendMessage(
+						{
+							role: 'user',
+							text: newCommand.prompt,
+							local: true,
+							attachments: attachments.map(({ resource: _resource, ...attachment }) => attachment)
+						},
+						localConversationId
+					)
+				}
+			} else {
+				this.appendMessage(
+					{
+						role: 'user',
+						text: effectivePrompt,
+						local: true,
+						attachments: attachments.map(({ resource: _resource, ...attachment }) => attachment)
+					},
+					this.state.conversationId || localConversationId
+				)
+			}
+			this.updateStatus('sending')
 			const output = await this.agentRun({ name: '', prompt: effectivePrompt, resources, meta })
 			const outputConversationId = normalizeId(output.conversation)
-			if (outputConversationId) {
+			if (newCommand && !newCommand.prompt) {
+				this.state.conversationId = null
+				this.state.messageOffset = 0
+				this.state.artifactOffset = 0
+				this.updateStatus('ready')
+			} else if (outputConversationId) {
 				this.promoteLocalConversation(outputConversationId)
 				if (this.state.conversationId !== outputConversationId) {
 					this.state.messageOffset = 0
@@ -1088,6 +1113,16 @@ export class AndaSidePanelClient {
 		this.state.messageOffset =
 			latestConversation?.messages?.length || latestGroup?.messages.length || 0
 		this.state.artifactOffset = latestConversation?.artifacts?.length || 0
+		this.emit()
+	}
+
+	private clearConversationDisplay(): void {
+		this.state.conversationId = null
+		this.state.conversationGroups = []
+		this.state.messageOffset = 0
+		this.state.artifactOffset = 0
+		this.state.previousCursor = undefined
+		this.conversationParents.clear()
 		this.emit()
 	}
 
@@ -1932,6 +1967,23 @@ function isTtsSentenceBoundary(character: string): boolean {
 
 function sourceStateConversationId(state: SourceState): string | null {
 	return normalizeId(state.c ?? state.conv_id)
+}
+
+function parseNewPromptCommand(prompt: string): NewPromptCommand | null {
+	const trimmed = prompt.trim()
+	if (!trimmed.startsWith('/')) {
+		return null
+	}
+
+	const body = trimmed.slice(1)
+	const commandEnd = body.search(/\s/)
+	const command = (commandEnd === -1 ? body : body.slice(0, commandEnd)).toLowerCase()
+	if (command !== 'new' && command !== 'clear') {
+		return null
+	}
+
+	const rest = commandEnd === -1 ? '' : body.slice(commandEnd).trim()
+	return { prompt: rest || null }
 }
 
 function normalizeId(value: unknown): string | null {

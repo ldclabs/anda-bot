@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anda_core",
  "anda_db",
@@ -206,9 +206,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa1ab2228136fcb725d08ce9f582e760bc1de74b99ebe08a94096098a0054b72"
+checksum = "89801578d017220736375e64cef1c49ff3dcb47c4b85df7992151b455563f3e3"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -221,6 +221,7 @@ dependencies = [
  "ic-oss-types",
  "ic_auth_types",
  "ic_cose_types",
+ "infer2",
  "object_store",
  "reqwest 0.13.3",
  "schemars",
@@ -359,9 +360,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.7"
+version = "0.12.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b30df743e9d0358e58c9539663b23c9b22dc2167a8760f89e5ba8ce9d26de644"
+checksum = "db53c35719403500351ba8a1cbfef87faf09016e0cc3aa87e3f43518bd40146e"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -433,9 +434,9 @@ dependencies = [
 
 [[package]]
 name = "anda_hippocampus"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc0bb647626df8818ddb7ededef6a8d85245068088e32f77ac31597b4eb83d43"
+checksum = "ba7183ee09831e6c2f2d4d5fb2d3f15cc3b73eac7224f90eebb23e3101b0684b"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -2728,9 +2729,9 @@ dependencies = [
 
 [[package]]
 name = "ic-agent"
-version = "0.47.2"
+version = "0.47.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fefe511d29d927aa5a2090c2e26e0b72cd0633ab7007927e19aeceb05c2a42b1"
+checksum = "85dbab284eac1806b77833cff143d66ae97aae74d34b0e60fb4ab4edf3d6fa12"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
@@ -2994,9 +2995,9 @@ dependencies = [
 
 [[package]]
 name = "ic-transport-types"
-version = "0.47.2"
+version = "0.47.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a46a13c1e36d4ac5db68a84e68f2e9edf7773bea131e915e251709b00f5910d9"
+checksum = "a2116182b3ec5a831d579db0a205b6cf9c2ca96616493bef99480532d0b3c2f5"
 dependencies = [
  "candid",
  "hex",

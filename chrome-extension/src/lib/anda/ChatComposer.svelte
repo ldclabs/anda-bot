@@ -90,6 +90,14 @@
 
 	const promptCommandItems: PromptCommandSuggestion[] = [
 		{
+			id: 'command:new',
+			label: '/new',
+			insertText: '/new ',
+			description: 'Start a fresh conversation with an optional first prompt.',
+			detail: 'alias: /clear',
+			kind: 'command'
+		},
+		{
 			id: 'command:goal',
 			label: '/goal',
 			insertText: '/goal ',

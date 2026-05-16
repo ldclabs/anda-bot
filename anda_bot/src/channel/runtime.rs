@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::types::*;
-use crate::engine::{CompletionHook, external_user_prompt};
+use crate::engine::{CompletionHook, PromptCommand, external_user_prompt};
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
 
@@ -229,6 +229,7 @@ impl ChannelRuntime {
                     if let Some(engine) = self.inner.engine.get() {
                         let mut extra = Map::new();
                         let route = ChannelRoute::from_message(&message);
+                        let new_command = channel_new_prompt_command(&message);
                         let key = route.key();
                         let conv_id = {
                             self.inner
@@ -287,14 +288,28 @@ impl ChannelRuntime {
                                         log::error!(name = "channel"; "failed to add message to collection: {err}");
                                     }
                                 }
-                                if let Some(conv_id) = output.conversation
-                                    && let Some(channels_conversation) =
-                                        self.inner.bind_conversation(route, conv_id)
-                                {
-                                    messages.set_extension_from::<ChannelConversationMap>(
-                                        "channels_conversation".to_string(),
-                                        channels_conversation,
-                                    );
+                                match (new_command, output.conversation) {
+                                    (Some(None), _) => {
+                                        if let Some(channels_conversation) =
+                                            self.inner.clear_route_conversation(&route)
+                                        {
+                                            messages.set_extension_from::<ChannelConversationMap>(
+                                                "channels_conversation".to_string(),
+                                                channels_conversation,
+                                            );
+                                        }
+                                    }
+                                    (_, Some(conv_id)) => {
+                                        if let Some(channels_conversation) =
+                                            self.inner.bind_conversation(route, conv_id)
+                                        {
+                                            messages.set_extension_from::<ChannelConversationMap>(
+                                                "channels_conversation".to_string(),
+                                                channels_conversation,
+                                            );
+                                        }
+                                    }
+                                    _ => {}
                                 }
 
                                 let _ = messages.flush(unix_ms()).await;
@@ -343,7 +358,7 @@ impl ChannelRuntimeInner {
         conv_id: u64,
     ) -> Option<ChannelConversationMap> {
         let key = route.key();
-        let (previous, snapshot) = {
+        let (_previous, snapshot) = {
             let mut channels_conversation = self.channels_conversation.write();
             let previous = channels_conversation.insert(key, conv_id);
             if previous == Some(conv_id) {
@@ -353,15 +368,29 @@ impl ChannelRuntimeInner {
         };
 
         let mut conversation_routes = self.conversation_routes.write();
-        if let Some(previous) = previous
-            && previous != conv_id
-            && conversation_routes.get(&previous) == Some(&route)
-        {
-            conversation_routes.remove(&previous);
-        }
         conversation_routes.insert(conv_id, route);
 
         Some(snapshot)
+    }
+
+    fn clear_route_conversation(&self, route: &ChannelRoute) -> Option<ChannelConversationMap> {
+        let key = route.key();
+        let (previous, snapshot) = {
+            let mut channels_conversation = self.channels_conversation.write();
+            let previous = channels_conversation.remove(&key)?;
+            (previous, channels_conversation.clone())
+        };
+
+        self.conversation_routes
+            .write()
+            .entry(previous)
+            .or_insert_with(|| route.clone());
+
+        Some(snapshot)
+    }
+
+    fn current_conversation_for_route(&self, route: &ChannelRoute) -> Option<u64> {
+        self.channels_conversation.read().get(&route.key()).copied()
     }
 
     fn route_for_conversation(&self, conv_id: u64) -> Option<ChannelRoute> {
@@ -433,8 +462,11 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
             return;
         }
 
-        let route = match self.route_for_conversation(conv_id) {
-            Some(route) => route,
+        let (route, stale) = match self.route_for_conversation(conv_id) {
+            Some(route) => {
+                let stale = self.current_conversation_for_route(&route) != Some(conv_id);
+                (route, stale)
+            }
             None => {
                 let Some(route) = self.route_from_meta(ctx.meta()) else {
                     return;
@@ -449,12 +481,12 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
                         log::error!(name = "channel"; "failed to flush channel route binding: {err}");
                     }
                 }
-                route
+                (route, false)
             }
         };
 
         let channel = route.channel.clone();
-        let msg = completion_message(ctx, output, route);
+        let msg = completion_message(ctx, output, route, stale);
 
         tokio::spawn({
             let this = self.clone();
@@ -493,9 +525,21 @@ fn normalize_non_empty(value: &str) -> Option<String> {
     }
 }
 
-fn completion_message(ctx: &AgentCtx, output: &AgentOutput, route: ChannelRoute) -> SendMessage {
+fn completion_message(
+    ctx: &AgentCtx,
+    output: &AgentOutput,
+    route: ChannelRoute,
+    stale: bool,
+) -> SendMessage {
     let mut msg = String::new();
     let meta = ctx.meta();
+    if stale {
+        if let Some(conv_id) = output.conversation {
+            msg.push_str(&format!("[Previous conversation #{conv_id}]\n\n"));
+        } else {
+            msg.push_str("[Previous conversation]\n\n");
+        }
+    }
     if let Some(cron_job) = meta.get_extra_as::<String>("cron_job") {
         let name = meta
             .get_extra_as::<String>("cron_job_name")
@@ -516,6 +560,17 @@ fn agent_prompt_from_message(message: &ChannelMessage) -> String {
         external_user_prompt(&message.channel, &message.sender, &message.content)
     } else {
         message.content.clone()
+    }
+}
+
+fn channel_new_prompt_command(message: &ChannelMessage) -> Option<Option<String>> {
+    if message.external_user.unwrap_or_default() {
+        return None;
+    }
+
+    match PromptCommand::from(message.content.clone()) {
+        PromptCommand::New { prompt } => Some(prompt),
+        _ => None,
     }
 }
 
@@ -799,6 +854,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bind_conversation_keeps_previous_route_for_stale_outputs() {
+        let channel = Arc::new(TestChannel::new("test:stale-route", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let route = ChannelRoute {
+            channel: channel.id(),
+            reply_target: "#anda".to_string(),
+            thread: Some("thread-1".to_string()),
+        };
+
+        runtime.inner.bind_conversation(route.clone(), 42).unwrap();
+        runtime.inner.bind_conversation(route.clone(), 99).unwrap();
+
+        assert_eq!(
+            runtime.inner.current_conversation_for_route(&route),
+            Some(99)
+        );
+        assert_eq!(runtime.inner.route_for_conversation(42), Some(route));
+    }
+
+    #[tokio::test]
+    async fn clear_route_conversation_removes_current_binding_only() {
+        let channel = Arc::new(TestChannel::new("test:clear-route", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let route = ChannelRoute {
+            channel: channel.id(),
+            reply_target: "#anda".to_string(),
+            thread: None,
+        };
+
+        runtime.inner.bind_conversation(route.clone(), 42).unwrap();
+        let snapshot = runtime.inner.clear_route_conversation(&route).unwrap();
+
+        assert!(!snapshot.contains_key(&route.key()));
+        assert_eq!(runtime.inner.current_conversation_for_route(&route), None);
+        assert_eq!(runtime.inner.route_for_conversation(42), Some(route));
+    }
+
+    #[tokio::test]
     async fn route_from_meta_recovers_channel_reply_context() {
         let channel = Arc::new(TestChannel::new("test:meta-route", false));
         let runtime = test_runtime(channel.clone()).await;
@@ -834,12 +927,53 @@ mod tests {
             ..Default::default()
         };
 
-        let message = completion_message(&ctx, &output, route.clone());
+        let message = completion_message(&ctx, &output, route.clone(), false);
 
         assert_eq!(message.content, output.content);
         assert_eq!(message.recipient, route.reply_target);
         assert_eq!(message.thread, route.thread);
         assert!(message.attachments.is_empty());
+    }
+
+    #[test]
+    fn completion_message_marks_stale_conversation() {
+        let ctx = Engine::builder().mock_ctx();
+        let route = ChannelRoute {
+            channel: "test:threaded".to_string(),
+            reply_target: "#anda".to_string(),
+            thread: None,
+        };
+        let output = AgentOutput {
+            content: "late answer".to_string(),
+            conversation: Some(42),
+            ..Default::default()
+        };
+
+        let message = completion_message(&ctx, &output, route, true);
+
+        assert_eq!(
+            message.content,
+            "[Previous conversation #42]\n\nlate answer"
+        );
+    }
+
+    #[test]
+    fn channel_new_prompt_command_ignores_external_users() {
+        let trusted = ChannelMessage {
+            content: "/new fresh".to_string(),
+            ..Default::default()
+        };
+        let external = ChannelMessage {
+            content: "/new fresh".to_string(),
+            external_user: Some(true),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            channel_new_prompt_command(&trusted),
+            Some(Some("fresh".to_string()))
+        );
+        assert_eq!(channel_new_prompt_command(&external), None);
     }
 
     #[test]

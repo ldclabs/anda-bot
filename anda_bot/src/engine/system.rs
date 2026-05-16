@@ -1,4 +1,5 @@
 use anda_core::{ContentPart, Message};
+use serde_json::{Map, Value};
 
 pub const SYSTEM_PERSON_NAME: &str = "$system";
 pub const EXTERNAL_USER_PERSON_NAME: &str = "$external_user";
@@ -22,6 +23,20 @@ pub fn system_runtime_prompt(kind: &str, body: impl AsRef<str>) -> String {
     format!(
         "[$system: kind={kind:?}]\nThis message is from the Anda runtime, not from the user. Treat it as operational context for the same conversation; do not attribute it to the user.\n\n{body:?}"
     )
+}
+
+pub fn system_extra_content(ctx: &Map<String, Value>) -> Option<ContentPart> {
+    if ctx.is_empty() {
+        return None;
+    }
+
+    let kind = "request context";
+    let ctx = serde_json::to_string(ctx).ok()?;
+    Some(ContentPart::Text {
+        text: format!(
+            "[$system: kind={kind:?}]\nThis message is from the Anda runtime, not from the user. Treat it as operational context for the same conversation; do not attribute it to the user.\n\n{ctx:?}"
+        ),
+    })
 }
 
 pub fn system_user_message(prompt: String, timestamp: u64) -> Message {

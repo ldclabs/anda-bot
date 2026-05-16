@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 use super::Client;
-use crate::engine::{ConversationsTool, ConversationsToolArgs, SourceState};
+use crate::engine::{ConversationsTool, ConversationsToolArgs, PromptCommand, SourceState};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(2000);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
@@ -72,6 +72,11 @@ fn current_request_meta(conversation: u64) -> RequestMeta {
 
 type SendResult = Result<AgentOutput, String>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NewPromptCommand {
+    prompt: Option<String>,
+}
+
 fn same_display_message(left: &Message, right: &Message) -> bool {
     left.role == right.role && left.content == right.content
 }
@@ -105,6 +110,7 @@ pub struct ChatSession {
     last_poll: Instant,
     last_msg_offset: usize,
     pending_send: Option<oneshot::Receiver<SendResult>>,
+    pending_new_command: Option<NewPromptCommand>,
 }
 
 impl ChatSession {
@@ -122,6 +128,7 @@ impl ChatSession {
             last_poll: Instant::now(),
             last_msg_offset: 0,
             pending_send: None,
+            pending_new_command: None,
         }
     }
 
@@ -169,6 +176,7 @@ impl ChatSession {
         self.last_msg_offset = 0;
         self.sending = false;
         self.pending_send = None;
+        self.pending_new_command = None;
         self.awaiting_response = false;
         self.errors.clear();
     }
@@ -184,14 +192,22 @@ impl ChatSession {
             return None;
         }
 
-        self.messages.push(user_message(text.clone()));
-
         let conv_id = self.conv_id.unwrap_or_else(|| {
             self.prev_conversation
                 .as_ref()
                 .map(|c| c._id)
                 .unwrap_or_default()
         });
+        let new_command = new_prompt_command(&text);
+
+        if let Some(command) = &new_command {
+            self.clear_display_for_new_command();
+            if let Some(prompt) = &command.prompt {
+                self.messages.push(user_message(prompt.clone()));
+            }
+        } else {
+            self.messages.push(user_message(text.clone()));
+        }
 
         let mut input = AgentInput::new(String::new(), text);
         input.meta = Some(current_request_meta(conv_id));
@@ -208,8 +224,12 @@ impl ChatSession {
         });
 
         self.sending = true;
-        self.awaiting_response = true;
+        self.awaiting_response = new_command
+            .as_ref()
+            .map(|command| command.prompt.is_some())
+            .unwrap_or(true);
         self.pending_send = Some(rx);
+        self.pending_new_command = new_command;
         None
     }
 
@@ -247,6 +267,7 @@ impl ChatSession {
 
     async fn apply_send_result(&mut self, result: SendResult) -> Option<String> {
         self.sending = false;
+        let pending_new_command = self.pending_new_command.take();
 
         match result {
             Ok(mut output) => {
@@ -256,8 +277,17 @@ impl ChatSession {
                     self.awaiting_response = false;
                 }
 
-                // Poll immediately to get the new conversation data.
-                self.poll(output.conversation).await;
+                if pending_new_command
+                    .as_ref()
+                    .map(|command| command.prompt.is_some())
+                    .unwrap_or(true)
+                {
+                    // Poll immediately to get the new conversation data.
+                    self.poll(output.conversation).await;
+                } else {
+                    self.clear_display_for_new_command();
+                    self.awaiting_response = false;
+                }
                 if let Some(reason) = output.failed_reason.take() {
                     self.awaiting_response = false;
                     self.errors.push(reason.clone());
@@ -422,6 +452,15 @@ impl ChatSession {
         true
     }
 
+    fn clear_display_for_new_command(&mut self) {
+        self.conv_id = None;
+        self.conversation = None;
+        self.prev_conversation = None;
+        self.messages.clear();
+        self.last_msg_offset = 0;
+        self.errors.clear();
+    }
+
     async fn fetch_conversation(&self, conv_id: u64) -> Result<Conversation, BoxError> {
         let output = self
             .client
@@ -460,6 +499,17 @@ impl ChatSession {
         }
 
         Ok(conversations)
+    }
+}
+
+pub fn is_new_conversation_command(text: &str) -> bool {
+    new_prompt_command(text).is_some()
+}
+
+fn new_prompt_command(text: &str) -> Option<NewPromptCommand> {
+    match PromptCommand::from(text.to_string()) {
+        PromptCommand::New { prompt } => Some(NewPromptCommand { prompt }),
+        _ => None,
     }
 }
 
@@ -543,6 +593,21 @@ mod tests {
         assert!(!should_restore_conversation_status(
             &ConversationStatus::Cancelled
         ));
+    }
+
+    #[test]
+    fn new_conversation_command_detects_prompt_and_alias() {
+        assert_eq!(
+            new_prompt_command(" /NEW fresh start "),
+            Some(NewPromptCommand {
+                prompt: Some("fresh start".to_string())
+            })
+        );
+        assert_eq!(
+            new_prompt_command("/clear"),
+            Some(NewPromptCommand { prompt: None })
+        );
+        assert_eq!(new_prompt_command("/tmp/workspace"), None);
     }
 
     #[test]

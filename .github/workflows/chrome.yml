@@ -1,0 +1,32 @@
+name: Build Chrome Extension CRX
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pnpm --dir chrome-extension install
+
+      - name: Build extension
+        run: pnpm --dir chrome-extension build
+
+      - name: zip extension
+        id: pack
+        uses: cardinalby/webext-buildtools-pack-extension-dir-action@v1
+        with:
+          extensionDir: chrome-extension/dist
+          zipFilePath: release/anda-bot.zip
+
+      - name: sign CRX
+        uses: cardinalby/webext-buildtools-chrome-crx-action@v2
+        with:
+          zipFilePath: release/anda-bot.zip
+          crxFilePath: release/anda-bot.crx
+          privateKey: ${{ secrets.CHROME_CRX_PRIVATE_KEY }}

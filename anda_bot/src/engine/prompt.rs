@@ -48,6 +48,11 @@ pub enum PromptCommand {
     Stop {
         prompt: Option<String>,
     },
+    // '/new' | '/clear', case-insensitive.
+    // Starts a new conversation, complete the current conversation if it exists, and optionally uses the provided prompt as the first message in the new conversation.
+    New {
+        prompt: Option<String>,
+    },
     Invalid {
         reason: String,
     },
@@ -84,6 +89,9 @@ impl From<String> for PromptCommand {
             "skill" => parse_skill_command(rest, trimmed),
             "stop" | "cancel" => Self::Stop {
                 prompt: (!trimmed.is_empty()).then(|| trimmed.to_string()),
+            },
+            "new" | "clear" => Self::New {
+                prompt: (!rest.is_empty()).then(|| rest.to_string()),
             },
             _ => Self::Plain { prompt },
         }
@@ -166,6 +174,16 @@ mod tests {
             PromptCommand::Stop {
                 prompt: Some("/stop because it is wrong".to_string())
             }
+        );
+        assert_eq!(
+            PromptCommand::from("/new fresh start".to_string()),
+            PromptCommand::New {
+                prompt: Some("fresh start".to_string())
+            }
+        );
+        assert_eq!(
+            PromptCommand::from("/clear".to_string()),
+            PromptCommand::New { prompt: None }
         );
     }
 
