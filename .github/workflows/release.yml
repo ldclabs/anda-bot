@@ -150,52 +150,10 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-  chrome-extension:
-    needs: build-binary
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - run: npm install -g pnpm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build extension
-        run: pnpm --dir chrome-extension build
-
-      - name: zip extension
-        id: pack
-        uses: cardinalby/webext-buildtools-pack-extension-dir-action@v1
-        with:
-          extensionDir: chrome-extension/dist
-          zipFilePath: release/anda-bot-chrome-extension.zip
-
-      - name: sign CRX
-        uses: cardinalby/webext-buildtools-chrome-crx-action@v2
-        with:
-          zipFilePath: release/anda-bot-chrome-extension.zip
-          crxFilePath: release/anda-bot-chrome-extension.crx
-          privateKey: ${{ secrets.CHROME_CRX_PRIVATE_KEY }}
-
-      - name: Upload Chrome extension artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-chrome-extension
-          path: release/*
-          if-no-files-found: error
-
   release:
     needs:
       - build-binary
       - package-skills
-      - chrome-extension
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
