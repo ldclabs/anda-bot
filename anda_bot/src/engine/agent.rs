@@ -45,8 +45,8 @@ use super::{
     prompt::{PromptCommand, skill_subagent},
     side,
     system::{
-        SYSTEM_PERSON_NAME, external_user_name, mark_special_user_messages, system_extra_content,
-        system_runtime_prompt, system_user_message,
+        SYSTEM_PERSON_NAME, external_user_name, mark_special_user_messages,
+        system_extra_user_context, system_runtime_prompt, system_user_message,
     },
 };
 use crate::{brain, cron, transcription::TranscriptionManager, tts::TtsManager};
@@ -692,7 +692,7 @@ impl AndaBot {
         ctx.base.set_state(shell_hook);
 
         self.insert_session(session.clone());
-        self.spawn_session_runner(ctx, base_req, session, conversation, runner, rx);
+        self.spawn_session_runner(ctx, base_req, session, conversation, runner, rx, None);
         Ok(())
     }
 
@@ -753,6 +753,7 @@ impl AndaBot {
         conversation: Conversation,
         runner: CompletionRunner,
         mut rx: tokio::sync::mpsc::Receiver<ConversationInput>,
+        extra_user_context: Option<Message>,
     ) {
         let assistant = self.clone();
         tokio::spawn(async move {
@@ -765,6 +766,8 @@ impl AndaBot {
                 conversation,
                 runner,
                 first_round: true,
+                extra_user_context: extra_user_context.clone(),
+                last_extra_user_context: extra_user_context,
             };
 
             loop {
@@ -1299,13 +1302,11 @@ impl Agent<AgentCtx> for AndaBot {
             ..Default::default()
         };
 
-        let mut content: Vec<ContentPart> = resources
+        let content: Vec<ContentPart> = resources
             .into_iter()
             .filter_map(|res| res.try_into().ok())
             .collect();
-        if let Some(extra_content) = system_extra_content(&extra) {
-            content.push(extra_content);
-        }
+
         let mut runner = ctx
             .clone()
             .completion_iter(
@@ -1322,7 +1323,15 @@ impl Agent<AgentCtx> for AndaBot {
             runner = runner.reserve_chat_history(reserve_chat_history);
         }
 
-        assistant.spawn_session_runner(ctx, req, session, conversation, runner, rx);
+        assistant.spawn_session_runner(
+            ctx,
+            req,
+            session,
+            conversation,
+            runner,
+            rx,
+            system_extra_user_context(&extra),
+        );
         Ok(res)
     }
 }
@@ -1335,6 +1344,8 @@ struct SessionRunner {
     conversation: Conversation,
     runner: CompletionRunner,
     first_round: bool,
+    extra_user_context: Option<Message>,
+    last_extra_user_context: Option<Message>,
 }
 
 impl SessionRunner {
@@ -1429,8 +1440,12 @@ impl SessionRunner {
                 .into_iter()
                 .filter_map(|res| res.try_into().ok())
                 .collect();
-            if let Some(extra_content) = system_extra_content(&input.extra) {
-                content.push(extra_content);
+
+            if let Some(msg) = system_extra_user_context(&input.extra)
+                && self.last_extra_user_context.as_ref() != Some(&msg)
+            {
+                self.extra_user_context = Some(msg.clone());
+                self.last_extra_user_context = Some(msg);
             }
 
             match input.command {
@@ -1506,6 +1521,10 @@ impl SessionRunner {
             self.conversation.updated_at = now_ms;
             self.persist_conversation_state().await;
             return Ok(false);
+        }
+
+        if let Some(extra_user_context) = self.extra_user_context.take() {
+            self.runner.implicit_context(extra_user_context);
         }
 
         match self.runner.next().await {

@@ -25,17 +25,22 @@ pub fn system_runtime_prompt(kind: &str, body: impl AsRef<str>) -> String {
     )
 }
 
-pub fn system_extra_content(ctx: &Map<String, Value>) -> Option<ContentPart> {
+pub fn system_extra_user_context(ctx: &Map<String, Value>) -> Option<Message> {
     if ctx.is_empty() {
         return None;
     }
 
     let kind = "request context";
     let ctx = serde_json::to_string(ctx).ok()?;
-    Some(ContentPart::Text {
-        text: format!(
-            "[$system: kind={kind:?}]\nThis message is from the Anda runtime, not from the user. Treat it as operational context for the same conversation; do not attribute it to the user.\n\n{ctx:?}"
-        ),
+    Some(Message {
+        role: "user".to_string(),
+        name: Some(SYSTEM_PERSON_NAME.to_string()),
+        content: vec![ContentPart::Text {
+            text: format!(
+                "[$system: kind={kind:?}]\nThis message is an operational context for the user.\n\n{ctx:?}"
+            ),
+        }],
+        ..Default::default()
     })
 }
 
