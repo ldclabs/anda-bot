@@ -77,6 +77,21 @@
   "bearerToken": {
     "message": "Bearer token"
   },
+  "enterKeyBehavior": {
+    "message": "Enter key behavior"
+  },
+  "enterSendsMessage": {
+    "message": "Enter sends"
+  },
+  "shiftEnterNewLine": {
+    "message": "Shift + Enter new line"
+  },
+  "modifierEnterSendsMessage": {
+    "message": "Ctrl / Cmd + Enter sends"
+  },
+  "enterNewLineModifierSends": {
+    "message": "Enter new line"
+  },
   "save": {
     "message": "Save"
   },
@@ -152,11 +167,14 @@
   "send": {
     "message": "Send"
   },
+  "sendWithEnter": {
+    "message": "Enter to send. Shift + Enter for a new line."
+  },
   "sendWithCmdEnter": {
-    "message": "Send with Command Enter"
+    "message": "Command + Enter to send. Enter for a new line."
   },
   "sendWithCtrlEnter": {
-    "message": "Send with Control Enter"
+    "message": "Control + Enter to send. Enter for a new line."
   },
   "listening": {
     "message": "Listening"

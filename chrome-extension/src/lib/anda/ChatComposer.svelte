@@ -4,6 +4,7 @@
 		PageAudioResult,
 		PromptSkill,
 		ResourceInput,
+		SubmitKeyMode,
 		VoiceCapabilities,
 		VoiceProvider,
 		VoiceRecordingInput
@@ -168,7 +169,8 @@
 		onBrowserAudioStart,
 		onBrowserAudioStop,
 		onBrowserAudioCancel,
-		onLoadSkills
+		onLoadSkills,
+		submitKeyMode = 'enter'
 	}: {
 		disabled?: boolean
 		sending?: boolean
@@ -176,6 +178,7 @@
 		working?: boolean
 		voiceAvailable?: boolean
 		voiceCapabilities?: VoiceCapabilities
+		submitKeyMode?: SubmitKeyMode
 		onSend: (payload: ComposerSubmitPayload) => Promise<void> | void
 		onVoiceSend?: (payload: ComposerVoicePayload) => Promise<void> | void
 		onBrowserSpeechStart?: (language: string) => Promise<void>
@@ -234,9 +237,11 @@
 			!preparingAttachments
 	)
 	const submitTitle = $derived(
-		isMacPlatform()
-			? chrome.i18n.getMessage('sendWithCmdEnter')
-			: chrome.i18n.getMessage('sendWithCtrlEnter')
+		submitKeyMode === 'modifier-enter'
+			? isMacPlatform()
+				? chrome.i18n.getMessage('sendWithCmdEnter')
+				: chrome.i18n.getMessage('sendWithCtrlEnter')
+			: chrome.i18n.getMessage('sendWithEnter')
 	)
 	const canUseBrowserSpeech = $derived(
 		Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable
@@ -378,7 +383,7 @@
 	})
 
 	function isSubmitEvent(event: KeyboardEvent): boolean {
-		if (event.shiftKey || disabled || sending || preparingAttachments || event.isComposing) {
+		if (disabled || sending || preparingAttachments || event.isComposing) {
 			return false
 		}
 		if (event.keyCode === 229) {
@@ -388,7 +393,11 @@
 		if (!isEnter) {
 			return false
 		}
-		return isMacPlatform() ? event.metaKey : event.ctrlKey
+		if (submitKeyMode === 'modifier-enter') {
+			const submitModifierPressed = isMacPlatform() ? event.metaKey : event.ctrlKey
+			return submitModifierPressed && !event.shiftKey && !event.altKey
+		}
+		return !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
 	}
 
 	function readPromptCommandContext(value: string, caret: number): PromptCommandContext {
@@ -656,12 +665,12 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		if (handlePromptCommandKeydown(event)) {
+			return
+		}
 		if (isSubmitEvent(event)) {
 			event.preventDefault()
 			void submitMessage()
-			return
-		}
-		if (handlePromptCommandKeydown(event)) {
 			return
 		}
 	}

@@ -12,6 +12,7 @@
 		type PageAudioResult,
 		type PromptSkill,
 		type SettingsState,
+		type SubmitKeyMode,
 		type VoiceCapabilities
 	} from '$lib/anda/client'
 	import { Button } from '$lib/components/ui/button/index.js'
@@ -28,6 +29,7 @@
 		FileCog,
 		History,
 		KeyRound,
+		Keyboard,
 		LoaderCircle,
 		Play,
 		PlugZap,
@@ -39,8 +41,16 @@
 	import { onMount, tick } from 'svelte'
 
 	let client: AndaSidePanelClient | null = null
-	let settings = $state<SettingsState>({ baseUrl: 'http://127.0.0.1:8042', token: '' })
-	let draftSettings = $state<SettingsState>({ baseUrl: 'http://127.0.0.1:8042', token: '' })
+	let settings = $state<SettingsState>({
+		baseUrl: 'http://127.0.0.1:8042',
+		token: '',
+		submitKeyMode: 'enter'
+	})
+	let draftSettings = $state<SettingsState>({
+		baseUrl: 'http://127.0.0.1:8042',
+		token: '',
+		submitKeyMode: 'enter'
+	})
 	let tab = $state<ChromeTabInfo | null>(null)
 	let conversationGroups = $state<ConversationGroup[]>([])
 	let messages = $state<ChatMessage[]>([])
@@ -73,7 +83,9 @@
 	const tokenCommand = 'anda browser token --days 365'
 
 	const isBusy = $derived(
-		sending || syncing || ['sending', 'submitted', 'working', 'connecting'].includes(status)
+		sending ||
+			syncing ||
+			['sending', 'submitted', 'working', 'connecting', 'reconnecting'].includes(status)
 	)
 	const statusIsWarning = $derived(
 		[
@@ -180,6 +192,21 @@
 
 	function markSettingsDirty() {
 		settingsDirty = true
+	}
+
+	function updateSubmitKeyMode(submitKeyMode: SubmitKeyMode) {
+		if (draftSettings.submitKeyMode === submitKeyMode) {
+			return
+		}
+		draftSettings = { ...draftSettings, submitKeyMode }
+		markSettingsDirty()
+	}
+
+	function submitKeyModeButtonClass(submitKeyMode: SubmitKeyMode): string {
+		const base = 'min-w-0 rounded-md px-2 py-1.5 text-left transition'
+		return draftSettings.submitKeyMode === submitKeyMode
+			? `${base} bg-white text-stone-900 shadow-sm ring-1 ring-emerald-600/20`
+			: `${base} text-stone-500 hover:bg-white/70 hover:text-stone-800`
 	}
 
 	function toggleSettingsPanel() {
@@ -706,9 +733,9 @@
 					<span class="flex items-center gap-1.5"
 						><KeyRound class="size-3" />{chrome.i18n.getMessage('bearerToken')}</span
 					>
-					<Textarea
+					<Input
 						id="token"
-						rows={4}
+						type="text"
 						spellcheck={false}
 						placeholder={message(
 							'tokenPlaceholder',
@@ -718,6 +745,47 @@
 						oninput={markSettingsDirty}
 					/>
 				</label>
+
+				<div class="grid gap-1.5">
+					<div class="flex items-center gap-1.5 text-[11px] font-bold text-stone-500">
+						<Keyboard class="size-3" />
+						<span>{message('enterKeyBehavior', 'Enter key behavior')}</span>
+					</div>
+					<div
+						class="grid grid-cols-2 gap-1 rounded-md border border-stone-200 bg-stone-50 p-1"
+						role="radiogroup"
+						aria-label={message('enterKeyBehavior', 'Enter key behavior')}
+					>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={draftSettings.submitKeyMode === 'enter'}
+							class={submitKeyModeButtonClass('enter')}
+							onclick={() => updateSubmitKeyMode('enter')}
+						>
+							<span class="block truncate text-[11px] font-bold"
+								>{message('enterSendsMessage', 'Enter sends')}</span
+							>
+							<span class="block truncate text-[10px] font-semibold opacity-70"
+								>{message('shiftEnterNewLine', 'Shift + Enter newline')}</span
+							>
+						</button>
+						<button
+							type="button"
+							role="radio"
+							aria-checked={draftSettings.submitKeyMode === 'modifier-enter'}
+							class={submitKeyModeButtonClass('modifier-enter')}
+							onclick={() => updateSubmitKeyMode('modifier-enter')}
+						>
+							<span class="block truncate text-[11px] font-bold"
+								>{message('modifierEnterSendsMessage', 'Ctrl / Cmd + Enter sends')}</span
+							>
+							<span class="block truncate text-[10px] font-semibold opacity-70"
+								>{message('enterNewLineModifierSends', 'Enter newline')}</span
+							>
+						</button>
+					</div>
+				</div>
 
 				<div class="grid grid-cols-2 gap-2">
 					<Button size="sm" class="w-full" disabled={savingSettings} onclick={saveSettings}>
@@ -823,6 +891,7 @@
 			working={isBusy}
 			voiceAvailable={voiceCapabilities.transcription.length > 0}
 			{voiceCapabilities}
+			submitKeyMode={settings.submitKeyMode}
 			onSend={sendPrompt}
 			onVoiceSend={sendVoiceTurn}
 			onBrowserSpeechStart={startBrowserSpeechRecognition}

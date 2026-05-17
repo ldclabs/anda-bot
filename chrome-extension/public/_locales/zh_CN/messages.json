@@ -77,6 +77,21 @@
   "bearerToken": {
     "message": "Bearer 令牌"
   },
+  "enterKeyBehavior": {
+    "message": "Enter 键行为"
+  },
+  "enterSendsMessage": {
+    "message": "Enter 发送"
+  },
+  "shiftEnterNewLine": {
+    "message": "Shift + Enter 换行"
+  },
+  "modifierEnterSendsMessage": {
+    "message": "Ctrl / Cmd + Enter 发送"
+  },
+  "enterNewLineModifierSends": {
+    "message": "Enter 换行"
+  },
   "save": {
     "message": "保存"
   },
@@ -152,11 +167,14 @@
   "send": {
     "message": "发送"
   },
+  "sendWithEnter": {
+    "message": "按 Enter 发送，Shift + Enter 换行"
+  },
   "sendWithCmdEnter": {
-    "message": "使用 Command + Enter 发送"
+    "message": "按 Command + Enter 发送，Enter 换行"
   },
   "sendWithCtrlEnter": {
-    "message": "使用 Control + Enter 发送"
+    "message": "按 Control + Enter 发送，Enter 换行"
   },
   "listening": {
     "message": "正在倾听"

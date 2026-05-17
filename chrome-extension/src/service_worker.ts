@@ -1,7 +1,10 @@
 type SettingsState = {
 	baseUrl: string
 	token: string
+	submitKeyMode: SubmitKeyMode
 }
+
+type SubmitKeyMode = 'enter' | 'modifier-enter'
 
 type StorageState = Partial<SettingsState> & {
 	browserSessionId?: string
@@ -195,7 +198,8 @@ type PageAudioResult = {
 
 const defaultSettings: SettingsState = {
 	baseUrl: 'http://127.0.0.1:8042',
-	token: ''
+	token: '',
+	submitKeyMode: 'enter'
 }
 
 const keepAliveIntervalMs = 20_000
@@ -352,10 +356,11 @@ async function loadSettingsAndConnect(): Promise<void> {
 }
 
 async function loadSettings(): Promise<SettingsState> {
-	const saved = await chromeApi.storage.local.get(['baseUrl', 'token'])
+	const saved = await chromeApi.storage.local.get(['baseUrl', 'token', 'submitKeyMode'])
 	return normalizeSettings({
 		baseUrl: saved.baseUrl || defaultSettings.baseUrl,
-		token: saved.token || ''
+		token: saved.token || '',
+		submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode
 	})
 }
 
@@ -1555,8 +1560,13 @@ function browserSessionScope(): string {
 function normalizeSettings(settings: SettingsState): SettingsState {
 	return {
 		baseUrl: trimTrailingSlash(settings.baseUrl.trim() || defaultSettings.baseUrl),
-		token: settings.token.trim()
+		token: settings.token.trim(),
+		submitKeyMode: normalizeSubmitKeyMode(settings.submitKeyMode)
 	}
+}
+
+function normalizeSubmitKeyMode(value: unknown): SubmitKeyMode {
+	return value === 'modifier-enter' ? 'modifier-enter' : 'enter'
 }
 
 function trimTrailingSlash(value: string): string {

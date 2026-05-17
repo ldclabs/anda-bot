@@ -77,6 +77,21 @@
   "bearerToken": {
     "message": "Jeton d'accès"
   },
+  "enterKeyBehavior": {
+    "message": "Comportement de Entrée"
+  },
+  "enterSendsMessage": {
+    "message": "Entrée envoie"
+  },
+  "shiftEnterNewLine": {
+    "message": "Shift + Entrée nouvelle ligne"
+  },
+  "modifierEnterSendsMessage": {
+    "message": "Ctrl / Cmd + Entrée envoie"
+  },
+  "enterNewLineModifierSends": {
+    "message": "Entrée nouvelle ligne"
+  },
   "save": {
     "message": "Enregistrer"
   },
@@ -152,11 +167,14 @@
   "send": {
     "message": "Envoyer"
   },
+  "sendWithEnter": {
+    "message": "Entrée pour envoyer. Shift + Entrée pour une nouvelle ligne."
+  },
   "sendWithCmdEnter": {
-    "message": "Envoyer avec Command Enter"
+    "message": "Command + Entrée pour envoyer. Entrée pour une nouvelle ligne."
   },
   "sendWithCtrlEnter": {
-    "message": "Envoyer avec Control Enter"
+    "message": "Control + Entrée pour envoyer. Entrée pour une nouvelle ligne."
   },
   "listening": {
     "message": "Écoute en cours"

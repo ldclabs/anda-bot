@@ -2,6 +2,23 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.2] — 2026-05-17
+
+### Added
+
+- **Submit key mode setting**: users can choose between two input modes in Chrome extension settings: "Enter sends" (Shift+Enter for newlines, the new default) or "Ctrl/Cmd+Enter sends" (Enter for newlines). Configurable via a radio button group in the settings panel. Persisted to `chrome.storage.local` alongside `baseUrl` and `token`.
+- **Local message reconciliation**: when a locally drafted message is confirmed by the server, `reconcileLocalMessages()` merges the server-side message with the local draft instead of appending a duplicate. This prevents ghost drafts from appearing after round-trips.
+- **WebSocket transient error recovery**: `isTransientWebSocketError()` detects `WebSocket connection closed/timed out/not connected` errors and transitions the UI status to `reconnecting` instead of surfacing an error to the user.
+- **Locale strings for enter key behavior**: new i18n messages (`enterKeyBehavior`, `enterSendsMessage`, `shiftEnterNewLine`, `modifierEnterSendsMessage`, `enterNewLineModifierSends`, `sendWithEnter`) added for all 6 supported locales (ar, en, es, fr, ru, zh_CN).
+- **Token input upgraded**: Bearer token field in settings changed from `Textarea` (4 rows) to single-line `Input type="text"` for cleaner layout.
+
+### Changed
+
+- **Polling interval increased**: `pollingIntervalMs` raised from 2000ms to 3000ms to reduce unnecessary server load.
+- **Submit tooltip adapts to mode**: send button tooltip now shows "Enter to send. Shift + Enter for a new line." in `enter` mode, and "Command/Control + Enter to send. Enter for a new line." in `modifier-enter` mode.
+- **Manifest permissions simplified**: `"host_permissions": ["*://*/*"]` + `"optional_host_permissions": ["file:///*"]` replaced with `"host_permissions": ["<all_urls>"]`, equivalent behavior.
+- **`updateConversationMessages` guard**: now passes through even when `incoming` is empty if `updatedAt` is set, ensuring timestamps update even without new messages.
+
 ## [0.7.1] — 2026-05-16
 
 ### Added

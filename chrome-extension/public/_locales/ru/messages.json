@@ -77,6 +77,21 @@
   "bearerToken": {
     "message": "Токен доступа"
   },
+  "enterKeyBehavior": {
+    "message": "Поведение Enter"
+  },
+  "enterSendsMessage": {
+    "message": "Enter отправляет"
+  },
+  "shiftEnterNewLine": {
+    "message": "Shift + Enter: новая строка"
+  },
+  "modifierEnterSendsMessage": {
+    "message": "Ctrl / Cmd + Enter отправляет"
+  },
+  "enterNewLineModifierSends": {
+    "message": "Enter: новая строка"
+  },
   "save": {
     "message": "Сохранить"
   },
@@ -152,11 +167,14 @@
   "send": {
     "message": "Отправить"
   },
+  "sendWithEnter": {
+    "message": "Enter: отправить. Shift + Enter: новая строка."
+  },
   "sendWithCmdEnter": {
-    "message": "Отправить через Command Enter"
+    "message": "Command + Enter: отправить. Enter: новая строка."
   },
   "sendWithCtrlEnter": {
-    "message": "Отправить через Control Enter"
+    "message": "Control + Enter: отправить. Enter: новая строка."
   },
   "listening": {
     "message": "Слушаю"

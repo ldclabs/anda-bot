@@ -1,7 +1,7 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.7.1"
+version = "0.7.2"
 description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Hippocampus."
 edition.workspace = true
 

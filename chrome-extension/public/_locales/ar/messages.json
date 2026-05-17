@@ -77,6 +77,21 @@
   "bearerToken": {
     "message": "رمز Bearer"
   },
+  "enterKeyBehavior": {
+    "message": "سلوك مفتاح Enter"
+  },
+  "enterSendsMessage": {
+    "message": "Enter يرسل"
+  },
+  "shiftEnterNewLine": {
+    "message": "Shift + Enter سطر جديد"
+  },
+  "modifierEnterSendsMessage": {
+    "message": "Ctrl / Cmd + Enter يرسل"
+  },
+  "enterNewLineModifierSends": {
+    "message": "Enter سطر جديد"
+  },
   "save": {
     "message": "حفظ"
   },
@@ -152,11 +167,14 @@
   "send": {
     "message": "إرسال"
   },
+  "sendWithEnter": {
+    "message": "Enter للإرسال. Shift + Enter لسطر جديد."
+  },
   "sendWithCmdEnter": {
-    "message": "إرسال باستخدام Command Enter"
+    "message": "Command + Enter للإرسال. Enter لسطر جديد."
   },
   "sendWithCtrlEnter": {
-    "message": "إرسال باستخدام Control Enter"
+    "message": "Control + Enter للإرسال. Enter لسطر جديد."
   },
   "listening": {
     "message": "جارٍ الاستماع"

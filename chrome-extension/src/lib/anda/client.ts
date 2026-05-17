@@ -3,7 +3,10 @@ import { getPlainText } from '$lib/utils/markdown'
 export interface SettingsState {
 	baseUrl: string
 	token: string
+	submitKeyMode: SubmitKeyMode
 }
+
+export type SubmitKeyMode = 'enter' | 'modifier-enter'
 
 interface StorageState extends Partial<SettingsState> {
 	browserSessionId?: string
@@ -260,11 +263,12 @@ type NewPromptCommand = {
 
 const defaultSettings: SettingsState = {
 	baseUrl: 'http://127.0.0.1:8042',
-	token: ''
+	token: '',
+	submitKeyMode: 'enter'
 }
 
 const browserSessionStorageKey = 'browserSessionId'
-const pollingIntervalMs = 2000
+const pollingIntervalMs = 3000
 const previousConversationPageSize = 8
 const localConversationId = 'local-draft'
 const voiceResponseTimeoutMs = 120_000
@@ -747,10 +751,11 @@ export class AndaSidePanelClient {
 
 	private async loadSettings(): Promise<void> {
 		const chrome = this.requireChrome()
-		const saved = await chrome.storage.local.get(['baseUrl', 'token'])
+		const saved = await chrome.storage.local.get(['baseUrl', 'token', 'submitKeyMode'])
 		this.state.settings = normalizeSettings({
 			baseUrl: saved.baseUrl || defaultSettings.baseUrl,
-			token: saved.token || ''
+			token: saved.token || '',
+			submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode
 		})
 		this.emit()
 	}
@@ -1016,6 +1021,10 @@ export class AndaSidePanelClient {
 			this.updateStatus(delta.status || 'idle')
 			return ['submitted', 'working', 'idle'].includes(delta.status || '')
 		} catch (error) {
+			if (isTransientWebSocketError(error)) {
+				this.updateStatus('reconnecting')
+				return true
+			}
 			this.appendSystemMessage(errorToMessage(error))
 			this.updateStatus('poll failed')
 			return false
@@ -1147,7 +1156,7 @@ export class AndaSidePanelClient {
 		status?: string,
 		updatedAt?: number | null
 	): void {
-		if (!incoming.length && !status) {
+		if (!incoming.length && !status && !updatedAt) {
 			return
 		}
 		const existing = this.state.conversationGroups.find((group) => group.id === conversationId)
@@ -1164,11 +1173,34 @@ export class AndaSidePanelClient {
 		if (updatedAt) {
 			group.updatedAt = updatedAt
 		}
-		const overlap = displayedSuffixPrefixOverlap(group.messages, incomingMessages)
-		for (const message of incomingMessages.slice(overlap)) {
+		const unreconciledMessages = this.reconcileLocalMessages(group, incomingMessages)
+		const overlap = displayedSuffixPrefixOverlap(group.messages, unreconciledMessages)
+		for (const message of unreconciledMessages.slice(overlap)) {
 			group.messages = [...group.messages, message]
 		}
 		this.emit()
+	}
+
+	private reconcileLocalMessages(group: ConversationGroup, incoming: ChatMessage[]): ChatMessage[] {
+		if (!incoming.length || !group.messages.some((message) => message.local)) {
+			return incoming
+		}
+
+		let messages = group.messages
+		const unreconciled: ChatMessage[] = []
+		for (const message of incoming) {
+			const localIndex = messages.findIndex(
+				(existing) => existing.local && sameDisplayMessage(existing, message)
+			)
+			if (localIndex === -1) {
+				unreconciled.push(message)
+				continue
+			}
+
+			messages = messages.map((existing, index) => (index === localIndex ? message : existing))
+		}
+		group.messages = messages
+		return unreconciled
 	}
 
 	private withoutParentDuplicatePrompt(
@@ -2030,8 +2062,13 @@ function browserSessionScope(chrome: ChromeApi): string {
 function normalizeSettings(settings: SettingsState): SettingsState {
 	return {
 		baseUrl: trimTrailingSlash(settings.baseUrl.trim() || defaultSettings.baseUrl),
-		token: settings.token.trim()
+		token: settings.token.trim(),
+		submitKeyMode: normalizeSubmitKeyMode(settings.submitKeyMode)
 	}
+}
+
+function normalizeSubmitKeyMode(value: unknown): SubmitKeyMode {
+	return value === 'modifier-enter' ? 'modifier-enter' : 'enter'
 }
 
 function trimTrailingSlash(value: string): string {
@@ -2044,4 +2081,13 @@ function delay(ms: number): Promise<void> {
 
 function errorToMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error)
+}
+
+function isTransientWebSocketError(error: unknown): boolean {
+	const message = errorToMessage(error).toLowerCase()
+	return (
+		message.includes('websocket connection closed') ||
+		message.includes('websocket connection timed out') ||
+		message.includes('websocket is not connected')
+	)
 }
