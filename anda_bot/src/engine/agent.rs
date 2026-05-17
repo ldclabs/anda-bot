@@ -40,7 +40,7 @@ use std::{
 use super::{
     CompletionHook,
     browser::ChromeBrowserTool,
-    conversation::{ConversationsTool, RequestState, SourceState},
+    conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
     prompt::{PromptCommand, skill_subagent},
     side,
@@ -728,7 +728,14 @@ impl AndaBot {
         if let Err(err) = self
             .inner
             .conversations
-            .update_source_state(STARTUP_SELF_SOURCE.to_string(), SourceState { conv_id })
+            .update_source_state(
+                STARTUP_SELF_SOURCE.to_string(),
+                SourceState {
+                    conv_id,
+                    status: conversation.status.clone(),
+                    timestamp: now_ms,
+                },
+            )
             .await
         {
             log::warn!(conversation = conv_id; "failed to persist startup self source state: {err}");
@@ -931,6 +938,10 @@ impl Agent<AgentCtx> for AndaBot {
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let available_tools = available_tool_names(&ctx).await;
 
+        ctx.base.set_state(AgentInfo {
+            name: Self::NAME.to_string(),
+        });
+
         if let PromptCommand::Side { prompt } = &command {
             let RequestState {
                 workspace,
@@ -1077,7 +1088,14 @@ impl Agent<AgentCtx> for AndaBot {
                         && let Err(err) = self
                             .inner
                             .conversations
-                            .update_source_state(source_key.clone(), SourceState { conv_id: 0 })
+                            .update_source_state(
+                                source_key.clone(),
+                                SourceState {
+                                    conv_id: 0,
+                                    status: ConversationStatus::Cancelled,
+                                    timestamp: now_ms,
+                                },
+                            )
                             .await
                     {
                         log::error!("Failed to update_source_state: {:?}", err);
@@ -1216,6 +1234,8 @@ impl Agent<AgentCtx> for AndaBot {
                     source_key.clone(),
                     SourceState {
                         conv_id: conversation._id,
+                        status: conversation.status.clone(),
+                        timestamp: now_ms,
                     },
                 )
                 .await
@@ -1675,6 +1695,8 @@ impl SessionRunner {
                                         self.session.source_key.clone(),
                                         SourceState {
                                             conv_id: self.conversation._id,
+                                            status: self.conversation.status.clone(),
+                                            timestamp: now_ms,
                                         },
                                     )
                                     .await

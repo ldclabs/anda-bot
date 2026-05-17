@@ -1,8 +1,13 @@
 use anda_core::{
-    BoxError, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput, Usage,
+    BoxError, Document, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
+    Usage,
 };
 use anda_db::schema::Fv;
-use anda_engine::{context::BaseCtx, memory::Conversations};
+use anda_engine::{
+    context::BaseCtx,
+    memory::{ConversationStatus, Conversations},
+    rfc3339_datetime,
+};
 use anda_kip::Response;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -15,6 +20,8 @@ use std::collections::HashMap;
 pub enum ConversationsToolArgs {
     /// Get the source-bound conversation state from request metadata
     GetSourceState {},
+    /// List the state of all conversations associated with sources.
+    ListSourceState {},
     /// Get a conversation by ID
     GetConversation {
         /// The ID of the conversation to get
@@ -48,8 +55,29 @@ pub enum ConversationsToolArgs {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SourceState {
-    #[serde(rename = "c")]
+    #[serde(rename = "c", alias = "conv_id")]
     pub conv_id: u64,
+    #[serde(default, rename = "s", alias = "status")]
+    pub status: ConversationStatus,
+    #[serde(default, rename = "t", alias = "timestamp")]
+    pub timestamp: u64,
+}
+
+#[derive(Serialize)]
+pub struct SourceStateDisplay {
+    pub conv_id: u64,
+    pub status: ConversationStatus,
+    pub timestamp: String,
+}
+
+impl From<SourceState> for SourceStateDisplay {
+    fn from(state: SourceState) -> Self {
+        Self {
+            conv_id: state.conv_id,
+            status: state.status,
+            timestamp: rfc3339_datetime(state.timestamp).unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +91,12 @@ pub struct RequestState {
     pub reply_target: Option<String>,
     #[allow(unused)]
     pub thread: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentInfo {
+    #[allow(unused)]
+    pub name: String,
 }
 
 /// A tool for conversation API
@@ -184,7 +218,12 @@ impl Tool<BaseCtx> for ConversationsTool {
     }
 
     fn description(&self) -> String {
-        "A unified API for managing conversations. Supports retrieving conversation details, listing previous conversations with pagination, searching conversation history by keyword.".to_string()
+        concat!(
+            "Read the caller's conversation state and conversation history. ",
+            "Use ListSourceState to inspect all tracked conversation sources and discover each source's current conversation _id. ",
+            "Use GetConversation to load the full contents of one conversation when you already have its _id. ",
+            "Use SearchConversations to find earlier conversations by keyword, topic, or phrase when the _id is unknown. "
+        ).to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -192,45 +231,50 @@ impl Tool<BaseCtx> for ConversationsTool {
             name: self.name(),
             description: self.description(),
             parameters: json!({
-              "type": "object",
-              "properties": {
-                "type": {
-                    "type": "string",
-                    "enum": [
-                        "GetSourceState",
-                        "GetConversation",
-                        "GetConversationDelta",
-                        "ListPrevConversations",
-                        "SearchConversations"
-                    ],
-                    "description": "The type of conversation operation to perform. GetSourceState uses request metadata to return the conversation associated with the current source."
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "GetSourceState",
+                            "ListSourceState",
+                            "GetConversation",
+                            "GetConversationDelta",
+                            "ListPrevConversations",
+                            "SearchConversations"
+                        ],
+                        "description": "Conversation operation to perform. Prefer ListSourceState to inspect all source-bound conversation states and discover conv_id values, GetConversation to load a full conversation by _id, and SearchConversations to locate history by keyword when the _id is unknown."
+                    },
+                    "_id": {
+                        "type": "integer",
+                        "description": "Conversation ID to load. Use the conv_id returned by GetSourceState or ListSourceState. For GetConversation, _id = 0 resolves to the caller's latest conversation."
+                    },
+                    "messages_offset": {
+                        "type": ["integer", "null"],
+                        "description": "Only for GetConversationDelta. Number of messages already known to the caller; omit or use 0 to return from the beginning.",
+                        "default": 0
+                    },
+                    "artifacts_offset": {
+                        "type": ["integer", "null"],
+                        "description": "Only for GetConversationDelta. Number of artifacts already known to the caller; omit or use 0 to return from the beginning.",
+                        "default": 0
+                    },
+                    "cursor": {
+                        "type": ["string", "null"],
+                        "description": "Pagination cursor from a previous ListPrevConversations response. Omit for the first page."
+                    },
+                    "limit": {
+                        "type": ["integer", "null"],
+                        "description": "Optional maximum number of conversations to return for ListPrevConversations or SearchConversations. Defaults to 10.",
+                        "default": 10
+                    },
+                    "query": {
+                        "type": ["string", "null"],
+                        "description": "Keyword, phrase, participant, or topic to search in historical conversations. Required for SearchConversations when the conversation _id is unknown."
+                    }
                 },
-                "_id": {
-                    "type": "integer",
-                    "description": "The ID of the conversation to retrieve. Required for GetConversation and GetConversationDelta."
-                },
-                "messages_offset": {
-                    "type": ["integer", "null"],
-                    "description": "The messages offset for the conversation delta. Required for GetConversationDelta."
-                },
-                "artifacts_offset": {
-                    "type": ["integer", "null"],
-                    "description": "The artifacts offset for the conversation delta. Required for GetConversationDelta."
-                },
-                "cursor": {
-                    "type": ["string", "null"],
-                    "description": "The cursor for pagination. Optional for ListPrevConversations."
-                },
-                "limit": {
-                    "type": ["integer", "null"],
-                    "description": "The maximum number of conversations to return. Optional for ListPrevConversations and SearchConversations, defaults to 10."
-                },
-                "query": {
-                    "type": ["string", "null"],
-                    "description": "The query string to search conversations. Required for SearchConversations."
-                }
-              },
-              "required": ["type"]
+                "required": ["type"],
+                "additionalProperties": false
             }),
             strict: Some(true),
         }
@@ -265,11 +309,36 @@ impl Tool<BaseCtx> for ConversationsTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let is_agent = ctx.get_state::<AgentInfo>().is_some();
         match args {
             ConversationsToolArgs::GetSourceState {} => {
                 let state = self.state_from_meta(ctx.meta());
+                let result = if is_agent {
+                    json!(SourceStateDisplay::from(state.source_state))
+                } else {
+                    json!(state.source_state)
+                };
+
                 Ok(ToolOutput::new(Response::Ok {
-                    result: json!(state.source_state),
+                    result,
+                    next_cursor: None,
+                }))
+            }
+            ConversationsToolArgs::ListSourceState {} => {
+                let states = self.source_conversations();
+                let result = if is_agent {
+                    json!(
+                        states
+                            .into_iter()
+                            .map(|(source, state)| (source, SourceStateDisplay::from(state)))
+                            .collect::<HashMap<_, _>>()
+                    )
+                } else {
+                    json!(states)
+                };
+
+                Ok(ToolOutput::new(Response::Ok {
+                    result,
                     next_cursor: None,
                 }))
             }
@@ -287,8 +356,15 @@ impl Tool<BaseCtx> for ConversationsTool {
                     return Err("permission denied".into());
                 }
 
+                let result = if is_agent {
+                    let doc = Document::from(conversation);
+                    json!(doc)
+                } else {
+                    json!(conversation)
+                };
+
                 Ok(ToolOutput::new(Response::Ok {
-                    result: json!(conversation),
+                    result,
                     next_cursor: None,
                 }))
             }
@@ -310,22 +386,42 @@ impl Tool<BaseCtx> for ConversationsTool {
             ConversationsToolArgs::ListPrevConversations { cursor, limit } => {
                 let (conversations, next_cursor) = self
                     .conversations
-                    .list_conversations_by_user(ctx.caller(), cursor, limit)
+                    .list_conversations_by_user(ctx.caller(), cursor, Some(limit.unwrap_or(10)))
                     .await?;
 
+                let result = if is_agent {
+                    let docs = conversations
+                        .into_iter()
+                        .map(Document::from)
+                        .collect::<Vec<_>>();
+                    json!(docs)
+                } else {
+                    json!(conversations)
+                };
+
                 Ok(ToolOutput::new(Response::Ok {
-                    result: json!(conversations),
+                    result,
                     next_cursor,
                 }))
             }
             ConversationsToolArgs::SearchConversations { query, limit } => {
                 let conversations = self
                     .conversations
-                    .search_conversations(ctx.caller(), query, limit)
+                    .search_conversations(ctx.caller(), query, Some(limit.unwrap_or(10)))
                     .await?;
 
+                let result = if is_agent {
+                    let docs = conversations
+                        .into_iter()
+                        .map(Document::from)
+                        .collect::<Vec<_>>();
+                    json!(docs)
+                } else {
+                    json!(conversations)
+                };
+
                 Ok(ToolOutput::new(Response::Ok {
-                    result: json!(conversations),
+                    result,
                     next_cursor: None,
                 }))
             }
