@@ -189,7 +189,7 @@ export class AndaSidePanelClient extends EventTarget {
 			for await (const message of poller) {
 				let responseText = normalTextForSpeech(message?.text)
 				if (!responseText?.trim()) {
-					return
+					continue
 				}
 
 				this.updateStatus('speaking', null)
@@ -315,13 +315,12 @@ export class AndaSidePanelClient extends EventTarget {
 			this.refreshActiveTab().catch(() => undefined)
 		}
 		this.#tabUpdatedListener = (tabId, changeInfo, tab) => {
-			if (
-				!this.tab ||
-				(this.tab && tabId === this.tab.id && (changeInfo.title || changeInfo.url))
-			) {
-				this.tab = { ...this.tab, ...tab }
-				this.registerBrowserSession().catch(() => undefined)
+			if (!this.tab || tabId !== this.tab.id || (!changeInfo.title && !changeInfo.url)) {
+				return
 			}
+
+			this.tab = { ...this.tab, ...tab }
+			this.registerBrowserSession().catch(() => undefined)
 		}
 		this.chrome.tabs.onActivated.addListener(this.#tabActivatedListener)
 		this.chrome.tabs.onUpdated.addListener(this.#tabUpdatedListener)

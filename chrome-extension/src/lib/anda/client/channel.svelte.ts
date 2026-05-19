@@ -6,6 +6,7 @@ import {
 import { delay } from '$lib/utils/helper'
 import { parseNewPromptCommand } from './commands'
 import { conversationToGroup, normalizeMessage, splitLegacyThoughtText } from './conversations'
+import { PollConversation } from './poll-conversation'
 import type {
 	AgentInput,
 	AgentOutput,
@@ -23,6 +24,10 @@ import type {
 import { SideMessageConversationId, SubmitMessageConversationId } from './types'
 
 const pollingIntervalMs = 3000
+
+function isPersistedConversationId(conversationId: number): boolean {
+	return conversationId > SideMessageConversationId && conversationId < SubmitMessageConversationId
+}
 
 export interface API {
 	requestExtra(): Promise<Record<string, unknown>>
@@ -164,11 +169,12 @@ export class Channel extends EventTarget {
 				this.pollConversationLoop(poller)
 			} else if (output.failed_reason) {
 				this.appendSystemMessage(output.failed_reason)
-				poller.done = true
+				this.#api.updateStatus('failed', null)
+				poller.finish()
 			} else if (output.content && output.content.trim()) {
 				const content = splitLegacyThoughtText(output.content)
 
-				let timestamp = Date.now()
+				const timestamp = Date.now()
 				this.appendLocalMessage({
 					role: 'assistant',
 					text: content.text,
@@ -176,7 +182,7 @@ export class Channel extends EventTarget {
 					conversation: SideMessageConversationId
 				})
 
-				poller.messages.push({
+				poller.push({
 					id: `m-0-${timestamp}`,
 					conversation: SideMessageConversationId,
 					role: 'assistant',
@@ -184,6 +190,11 @@ export class Channel extends EventTarget {
 					thinkingText: content.thinkingText,
 					timestamp
 				})
+				this.#api.updateStatus('completed', null)
+				poller.finish()
+			} else {
+				this.#api.updateStatus('idle', null)
+				poller.finish()
 			}
 
 			return poller
@@ -198,7 +209,7 @@ export class Channel extends EventTarget {
 	private async pollConversationLoop(poller: PollConversation): Promise<void> {
 		const conversation = this.#conversation ? { ...this.#conversation } : null
 		if (!conversation || this.#pollingConversation === conversation._id) {
-			poller.done = true
+			poller.finish()
 			return
 		}
 
@@ -211,8 +222,7 @@ export class Channel extends EventTarget {
 			await delay(pollingIntervalMs)
 		}
 
-		poller.done = true
-		poller.drain()
+		poller.finish()
 	}
 
 	private async pollConversationOnce(
@@ -243,7 +253,7 @@ export class Channel extends EventTarget {
 			this.updateLatestConversation({ ...conversation })
 			if (result.messages.length > 0) {
 				const start = conversation.messages!.length - result.messages.length || 0
-				poller.messages.push(
+				poller.push(
 					...result.messages
 						.map((message, index) =>
 							normalizeMessage(message, {
@@ -312,9 +322,9 @@ export class Channel extends EventTarget {
 		return conversations
 	}
 
-	async loadPreviousConversations(): Promise<void> {
+	async loadPreviousConversations(): Promise<boolean> {
 		if (this.#loadingPrevious || this.#conversationAncestors.length === 0) {
-			return
+			return false
 		}
 
 		this.#loadingPrevious = true
@@ -329,8 +339,10 @@ export class Channel extends EventTarget {
 				}
 			})
 			this.updateConversationChain(result)
+			return result.length > 0
 		} catch (error) {
 			this.#api.updateStatus('history failed', { kind: 'error', text: errorToMessage(error) })
+			return false
 		} finally {
 			this.#loadingPrevious = false
 		}
@@ -355,6 +367,7 @@ export class Channel extends EventTarget {
 
 	private updateLatestConversation(conversation: Conversation): void {
 		this.#conversation = conversation
+		this.#conversationAncestors = conversation.ancestors || []
 		this.#api.updateStatus(conversation.status, null)
 		const group = conversationToGroup(conversation)
 
@@ -413,8 +426,10 @@ export class Channel extends EventTarget {
 		}
 
 		this.#messageGroups = merged
-		const first = merged[0].conversation
-		this.#conversationAncestors = first.ancestors || []
+		const firstPersistedConversation = merged.find((group) =>
+			isPersistedConversationId(group.conversation._id)
+		)?.conversation
+		this.#conversationAncestors = firstPersistedConversation?.ancestors || []
 	}
 
 	private clearConversationDisplay(): void {
@@ -477,51 +492,5 @@ export class Channel extends EventTarget {
 		}
 		this.#messageGroups = [...this.#messageGroups, group]
 		return group
-	}
-}
-
-type PollConversationItem = {
-	value: ChatMessage | null
-	done: boolean
-}
-
-export class PollConversation {
-	done: boolean = false
-	messages: ChatMessage[] = []
-	#que: ((item: PollConversationItem) => void)[] = []
-
-	drain() {
-		while (this.#drainOne()) {}
-	}
-
-	#drainOne(): boolean {
-		if (this.#que.length === 0) {
-			return false
-		}
-
-		const value = this.messages.shift() || null
-		if (!this.done && !value) {
-			return false
-		}
-		const p = this.#que.shift()!
-		p({ value, done: this.done })
-		return true
-	}
-
-	[Symbol.asyncIterator]() {
-		const self = this
-		return {
-			next() {
-				const promise = new Promise<PollConversationItem>((res) => {
-					self.#que.push(res)
-					self.drain()
-				})
-				return promise
-			},
-
-			return() {
-				return { value: null, done: true }
-			}
-		}
 	}
 }

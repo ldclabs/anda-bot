@@ -26,6 +26,9 @@ export async function normalizeVoiceRecordingAudio(
 ): Promise<NormalizedVoiceRecording> {
 	const audioBase64 = recording.audioBase64 || ''
 	const fileName = recording.fileName || 'chrome_voice.webm'
+	if (!audioBase64.trim()) {
+		throw new Error(chrome.i18n.getMessage('audioCaptureMissingData'))
+	}
 	const accepted = normalizeAudioFormats(acceptedFormats)
 	const sourceFormat = recordingAudioFormat(fileName, recording.mimeType)
 	if (!sourceFormat || accepted.includes(sourceFormat)) {
@@ -210,9 +213,11 @@ function fileStem(fileName: string): string {
 }
 
 export function isAudioResource(resource: Resource): boolean {
+	const tags = Array.isArray(resource.tags) ? resource.tags : []
 	return (
-		resource.tags.some((tag) => tag.toLowerCase() === 'audio') ||
-		Boolean(resource.mime_type?.toLowerCase().startsWith('audio/'))
+		tags.some((tag) => tag.toLowerCase() === 'audio') ||
+		Boolean(resource.mime_type?.toLowerCase().startsWith('audio/')) ||
+		Boolean(audioMimeFromName(resource.name))
 	)
 }
 
@@ -310,9 +315,6 @@ function normalizeVoiceTtsCharacter(character: string): string | null {
 		(codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
 		(codePoint >= 0xe0020 && codePoint <= 0xe007f)
 	) {
-		return null
-	}
-	if (character === '`' || character === '*' || character === '_' || character === '#') {
 		return null
 	}
 	if (character === '\r' || character === '\u00a0') {
