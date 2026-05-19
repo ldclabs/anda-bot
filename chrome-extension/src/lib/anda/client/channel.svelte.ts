@@ -280,7 +280,7 @@ export class Channel extends EventTarget {
 	private async requestMeta(): Promise<RequestMeta> {
 		const extra = await this.#api.requestExtra()
 		extra.source = this.source
-		extra.conversation = this.#conversation
+		extra.conversation = this.#conversation?._id || 0
 		return { extra } as RequestMeta
 	}
 

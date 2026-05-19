@@ -128,6 +128,10 @@ impl Engines {
         ));
         let browser_bridge = Arc::new(BrowserBridge::new());
         let chrome_browser_tool = Arc::new(ChromeBrowserTool::new(browser_bridge.clone()));
+        let chrome_tabs_tool = Arc::new(ChromeBrowserTool::tabs(browser_bridge.clone()));
+        let chrome_page_tool = Arc::new(ChromeBrowserTool::page(browser_bridge.clone()));
+        let chrome_input_tool = Arc::new(ChromeBrowserTool::input(browser_bridge.clone()));
+        let chrome_script_tool = Arc::new(ChromeBrowserTool::script(browser_bridge.clone()));
         let tts_manager = {
             let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
             manager.is_enabled().then_some(manager)
@@ -231,6 +235,10 @@ impl Engines {
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
             .register_tool(chrome_browser_tool)?
+            .register_tool(chrome_tabs_tool)?
+            .register_tool(chrome_page_tool)?
+            .register_tool(chrome_input_tool)?
+            .register_tool(chrome_script_tool)?
             .register_tool(skills_tool.clone())?
             .register_tool(conversations_tool.clone())?
             .register_tool(bot.clone())?;

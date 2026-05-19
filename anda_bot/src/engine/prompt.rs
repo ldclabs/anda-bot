@@ -88,10 +88,10 @@ impl From<String> for PromptCommand {
             }),
             "skill" => parse_skill_command(rest, trimmed),
             "stop" | "cancel" => Self::Stop {
-                prompt: (!trimmed.is_empty()).then(|| trimmed.to_string()),
+                prompt: (!trimmed.is_empty()).then(|| prompt.to_string()),
             },
             "new" | "clear" => Self::New {
-                prompt: (!rest.is_empty()).then(|| rest.to_string()),
+                prompt: (!rest.is_empty()).then(|| prompt.to_string()),
             },
             _ => Self::Plain { prompt },
         }

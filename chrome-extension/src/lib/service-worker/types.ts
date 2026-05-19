@@ -27,14 +27,29 @@ export type BrowserActionArgs = {
 	url?: string
 	selector?: string
 	text?: string
+	value?: string
+	code?: string
+	query?: string
 	key?: string
 	amount?: number
+	x?: number
+	y?: number
+	to_x?: number
+	to_y?: number
+	from_selector?: string
+	to_selector?: string
 	tab_id?: number
 	window_id?: number
+	frame_id?: number
 	active?: boolean
 	include_links?: boolean
 	include_forms?: boolean
 	include_data_url?: boolean
+	highlight?: boolean
+	bypass_cache?: boolean
+	behavior?: ScrollBehavior
+	max_chars?: number
+	timeout_ms?: number
 }
 
 export type BrowserCommand = {
@@ -147,6 +162,7 @@ export interface ChromeApi {
 			tabId: number,
 			updateProperties: { url?: string; active?: boolean }
 		): Promise<ChromeTabInfo>
+		reload(tabId?: number, reloadProperties?: { bypassCache?: boolean }): Promise<void>
 		captureVisibleTab(windowId: number | undefined, options: { format: 'png' }): Promise<string>
 		onActivated: ChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>
 		onUpdated: ChromeEvent<
@@ -158,7 +174,7 @@ export interface ChromeApi {
 	}
 	scripting: {
 		executeScript<Result, Args>(details: {
-			target: { tabId: number }
+			target: { tabId: number; frameIds?: number[] }
 			world?: 'ISOLATED' | 'MAIN'
 			func: (args: Args) => Result | Promise<Result>
 			args: [Args]

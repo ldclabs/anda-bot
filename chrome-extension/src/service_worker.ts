@@ -37,6 +37,7 @@ let keepAliveTimer: ReturnType<typeof setInterval> | null = null
 let nextMessageId = 1
 let status = 'starting'
 const pending = new Map<number, PendingRpc>()
+let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
 chromeApi.runtime.onInstalled.addListener((reason: string) => {
 	if (chromeApi.sidePanel?.setPanelBehavior) {
@@ -58,9 +59,15 @@ chromeApi.action.onClicked.addListener((tab) => {
 	openSidePanel(tab)
 })
 
-chromeApi.tabs.onActivated.addListener(() => {})
+chromeApi.tabs.onActivated.addListener(() => {
+	scheduleBrowserSessionRefresh()
+})
 
-chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo) => {})
+chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+	if (tab.active || changeInfo.title || changeInfo.url) {
+		scheduleBrowserSessionRefresh()
+	}
+})
 
 chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	handleExtensionMessage(message)
@@ -431,6 +438,19 @@ async function registerBrowserSession(settings: SettingsState = currentSettings)
 	)
 
 	return session
+}
+
+function scheduleBrowserSessionRefresh(): void {
+	if (!currentSettings.token) {
+		return
+	}
+	if (sessionRefreshTimer) {
+		clearTimeout(sessionRefreshTimer)
+	}
+	sessionRefreshTimer = setTimeout(() => {
+		sessionRefreshTimer = null
+		registerBrowserSession(currentSettings).catch(() => undefined)
+	}, 200)
 }
 
 export {}

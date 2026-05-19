@@ -185,7 +185,7 @@ pub struct SessionState {
 }
 
 fn base_tool_dependencies() -> Vec<String> {
-    vec![
+    let mut tools = vec![
         brain::Client::NAME.to_string(),
         NoteTool::NAME.to_string(),
         GoalTool::NAME.to_string(),
@@ -203,8 +203,13 @@ fn base_tool_dependencies() -> Vec<String> {
         cron::ManageCronJobTool::NAME.to_string(),
         cron::ListCronJobsTool::NAME.to_string(),
         cron::ListCronRunsTool::NAME.to_string(),
-        ChromeBrowserTool::NAME.to_string(),
-    ]
+    ];
+    tools.extend(
+        ChromeBrowserTool::dependency_tool_names()
+            .into_iter()
+            .map(str::to_string),
+    );
+    tools
 }
 
 fn base_tools() -> Vec<String> {
@@ -614,7 +619,11 @@ impl AndaBot {
             .await?;
         let mut tools = self.inner.tools.clone();
         if self.inner.browser_manager.is_active() {
-            tools.push(ChromeBrowserTool::NAME.to_string());
+            tools.extend(
+                ChromeBrowserTool::active_tool_names()
+                    .into_iter()
+                    .map(str::to_string),
+            );
         }
         let additional_tools = self
             .inner
@@ -1328,6 +1337,13 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let mut tools = assistant.inner.tools.clone();
+        if assistant.inner.browser_manager.is_active() {
+            tools.extend(
+                ChromeBrowserTool::active_tool_names()
+                    .into_iter()
+                    .map(str::to_string),
+            );
+        }
         tools.extend(additional_tools);
         let additional_tools = assistant
             .inner

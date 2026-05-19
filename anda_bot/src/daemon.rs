@@ -238,7 +238,7 @@ impl Daemon {
         let brain_cfg = brain::HippocampusConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
             model: models
-                .get("hippocampus")
+                .get("memory")
                 .or_else(|| models.get_model())
                 .ok_or("No model found for brain")?,
             https_proxy: self.cfg.https_proxy.clone(),

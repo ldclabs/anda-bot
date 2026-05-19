@@ -162,7 +162,7 @@ anda voice --record-secs 8
 
 ### Chrome 侧边栏
 
-仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过 `chrome_browser` 工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
+仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过拆分后的 Chrome 浏览器工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
 
 为扩展生成本地 bearer token：
 
@@ -181,6 +181,7 @@ anda browser token --days 30
 - Lark / 飞书
 
 Telegram 最小示例：
+
 ```yaml
 channels:
   telegram:
@@ -194,6 +195,7 @@ channels:
 ```
 
 微信最小示例：
+
 ```yaml
 channels:
   wechat:
@@ -207,7 +209,7 @@ channels:
       route_tag:
 ```
 
-  设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
+设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
 
 更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
 

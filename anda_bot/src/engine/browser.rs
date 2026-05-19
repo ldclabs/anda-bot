@@ -62,13 +62,28 @@ struct BrowserConnection {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserAction {
+    GetCurrentTab,
     Snapshot,
     ExtractText,
+    GetFullPageHtml,
+    GetStructuredData,
+    GetElementInfo,
+    GetViewportSize,
+    WaitForElement,
     Click,
     TypeText,
     PressKey,
     Scroll,
+    ScrollTo,
+    Hover,
+    DragAndDrop,
+    SelectDropdown,
+    FindInPage,
+    CopyToClipboard,
     Navigate,
+    GoBack,
+    GoForward,
+    Reload,
     Screenshot,
     ReadSelection,
     ListTabs,
@@ -76,9 +91,10 @@ pub enum BrowserAction {
     OpenTab,
     CloseTab,
     LaunchBrowser,
+    ExecuteJavascript,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ChromeBrowserToolArgs {
     pub action: BrowserAction,
 
@@ -87,6 +103,15 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -98,10 +123,31 @@ pub struct ChromeBrowserToolArgs {
     pub amount: Option<i64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_x: Option<f64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_y: Option<f64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_selector: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_selector: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<i64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_id: Option<i64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<i64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
@@ -114,6 +160,18 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_data_url: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bypass_cache: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behavior: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chars: Option<u64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
@@ -145,6 +203,16 @@ pub struct BrowserActionResult {
 #[derive(Clone)]
 pub struct ChromeBrowserTool {
     bridge: Arc<BrowserBridge>,
+    kind: ChromeBrowserToolKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChromeBrowserToolKind {
+    Legacy,
+    Tabs,
+    Page,
+    Input,
+    Script,
 }
 
 impl BrowserBridge {
@@ -392,13 +460,112 @@ impl BrowserBridge {
 
 impl ChromeBrowserTool {
     pub const NAME: &'static str = "chrome_browser";
+    pub const TABS_NAME: &'static str = "chrome_tabs";
+    pub const PAGE_NAME: &'static str = "chrome_page";
+    pub const INPUT_NAME: &'static str = "chrome_input";
+    pub const SCRIPT_NAME: &'static str = "chrome_script";
 
     pub fn new(bridge: Arc<BrowserBridge>) -> Self {
-        Self { bridge }
+        Self {
+            bridge,
+            kind: ChromeBrowserToolKind::Legacy,
+        }
+    }
+
+    pub fn tabs(bridge: Arc<BrowserBridge>) -> Self {
+        Self {
+            bridge,
+            kind: ChromeBrowserToolKind::Tabs,
+        }
+    }
+
+    pub fn page(bridge: Arc<BrowserBridge>) -> Self {
+        Self {
+            bridge,
+            kind: ChromeBrowserToolKind::Page,
+        }
+    }
+
+    pub fn input(bridge: Arc<BrowserBridge>) -> Self {
+        Self {
+            bridge,
+            kind: ChromeBrowserToolKind::Input,
+        }
+    }
+
+    pub fn script(bridge: Arc<BrowserBridge>) -> Self {
+        Self {
+            bridge,
+            kind: ChromeBrowserToolKind::Script,
+        }
     }
 
     pub fn is_active(&self) -> bool {
         !self.bridge.sessions.read().is_empty()
+    }
+
+    pub fn dependency_tool_names() -> [&'static str; 5] {
+        [
+            Self::TABS_NAME,
+            Self::PAGE_NAME,
+            Self::INPUT_NAME,
+            Self::SCRIPT_NAME,
+            Self::NAME,
+        ]
+    }
+
+    pub fn active_tool_names() -> [&'static str; 4] {
+        [
+            Self::TABS_NAME,
+            Self::PAGE_NAME,
+            Self::INPUT_NAME,
+            Self::SCRIPT_NAME,
+        ]
+    }
+}
+
+impl ChromeBrowserToolKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Legacy => ChromeBrowserTool::NAME,
+            Self::Tabs => ChromeBrowserTool::TABS_NAME,
+            Self::Page => ChromeBrowserTool::PAGE_NAME,
+            Self::Input => ChromeBrowserTool::INPUT_NAME,
+            Self::Script => ChromeBrowserTool::SCRIPT_NAME,
+        }
+    }
+
+    fn description(self, sessions: Vec<BrowserSession>) -> String {
+        let active_hint = format!("\n\nActive sessions: {sessions:?}");
+        let body = match self {
+            Self::Legacy => concat!(
+                "Legacy browser control tool. Prefer chrome_tabs, chrome_page, chrome_input, ",
+                "and chrome_script because their schemas are smaller and page actions target the ",
+                "active tab by default. Use this only for compatibility with older prompts."
+            ),
+            Self::Tabs => concat!(
+                "Manage Chrome tabs and navigation through the Anda browser extension. ",
+                "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
+                "and open_tab, close_tab, navigate, go_back, go_forward, reload, or launch_browser as needed."
+            ),
+            Self::Page => concat!(
+                "Inspect the active Chrome tab through the Anda browser extension. ",
+                "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first if another tab is needed. ",
+                "Use snapshot, extract_text, screenshot, read_selection, get_full_page_html, get_structured_data, ",
+                "get_element_info, get_viewport_size, find_in_page, or wait_for_element."
+            ),
+            Self::Input => concat!(
+                "Interact with the active Chrome tab through the Anda browser extension. ",
+                "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first if another tab is needed. ",
+                "Use click, type_text, press_key, scroll, scroll_to, hover, drag_and_drop, select_dropdown, or copy_to_clipboard."
+            ),
+            Self::Script => concat!(
+                "Run JavaScript in the active Chrome tab through the Anda browser extension. ",
+                "Use this only when the smaller page/input tools cannot express the operation, and keep returned data structured and compact. ",
+                "Use chrome_tabs.switch_tab first if another tab is needed."
+            ),
+        };
+        format!("{body}{active_hint}")
     }
 }
 
@@ -407,89 +574,18 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     type Output = Response;
 
     fn name(&self) -> String {
-        Self::NAME.to_string()
+        self.kind.name().to_string()
     }
 
     fn description(&self) -> String {
-        format!(
-            "{}\n\nActive sessions: {:?}",
-            concat!(
-                "Controls the user's browser tabs through the Anda browser extension. ",
-                "Use this when the user asks about or wants action on browser pages. ",
-                "Start with list_tabs, snapshot, or extract_text to inspect the browser, then use click, type_text, press_key, scroll, navigate, screenshot, read_selection, switch_tab, open_tab, or close_tab as needed, only on active tab. ",
-            ),
-            self.bridge.sessions()
-        )
+        self.kind.description(self.bridge.sessions())
     }
 
     fn definition(&self) -> FunctionDefinition {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["snapshot", "extract_text", "click", "type_text", "press_key", "scroll", "navigate", "screenshot", "read_selection", "list_tabs", "switch_tab", "open_tab", "close_tab", "launch_browser"],
-                        "description": "Browser action to perform through the connected Anda browser extension."
-                    },
-                    "selector": {
-                        "type": ["string", "null"],
-                        "description": "CSS selector for click, type_text, or extract_text. Prefer stable selectors when available."
-                    },
-                    "text": {
-                        "type": ["string", "null"],
-                        "description": "Text to enter for type_text."
-                    },
-                    "url": {
-                        "type": ["string", "null"],
-                        "description": "URL to open for navigate, open_tab, or launch_browser."
-                    },
-                    "key": {
-                        "type": ["string", "null"],
-                        "description": "Keyboard key for press_key, such as Enter, Escape, ArrowDown, or Tab."
-                    },
-                    "amount": {
-                        "type": ["integer", "null"],
-                        "description": "Vertical scroll amount in pixels for scroll. Positive scrolls down, negative scrolls up."
-                    },
-                    "tab_id": {
-                        "type": ["integer", "null"],
-                        "description": "Target Chrome tab id. Use list_tabs to discover tab ids. If omitted, page actions use the current active tab. Required for switch_tab and close_tab."
-                    },
-                    "window_id": {
-                        "type": ["integer", "null"],
-                        "description": "Target Chrome window id for list_tabs filtering or open_tab placement."
-                    },
-                    "active": {
-                        "type": ["boolean", "null"],
-                        "description": "Whether open_tab or navigate should activate the target tab. Defaults to true where applicable."
-                    },
-                    "include_links": {
-                        "type": ["boolean", "null"],
-                        "description": "Whether snapshot should include visible links."
-                    },
-                    "include_forms": {
-                        "type": ["boolean", "null"],
-                        "description": "Whether snapshot should include visible form controls and buttons."
-                    },
-                    "include_data_url": {
-                        "type": ["boolean", "null"],
-                        "description": "Whether screenshot should include the captured PNG data URL. Leave false unless image bytes are needed."
-                    },
-                    "timeout_ms": {
-                        "type": ["integer", "null"],
-                        "description": "Optional action timeout in milliseconds, clamped between 1000 and 120000."
-                    },
-                    "reason": {
-                        "type": ["string", "null"],
-                        "description": "Brief reason for this browser action, useful for audit logs in the extension."
-                    }
-                },
-                "required": ["action"],
-                "additionalProperties": false
-            }),
+            parameters: browser_tool_parameters(self.kind),
             strict: Some(true),
         }
     }
@@ -500,6 +596,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        validate_browser_action_for_tool(self.kind, &args)?;
         let preferred_session = browser_session_from_meta(ctx.meta());
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
 
@@ -543,6 +640,224 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     }
 }
 
+fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
+    match kind {
+        ChromeBrowserToolKind::Legacy => json!({
+            "type": "object",
+            "properties": legacy_browser_properties(),
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        ChromeBrowserToolKind::Tabs => json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "close_tab", "navigate", "go_back", "go_forward", "reload", "launch_browser"],
+                    "description": "Tab/navigation action. Use switch_tab before chrome_page, chrome_input, or chrome_script when another tab is needed."
+                },
+                "url": {
+                    "type": ["string", "null"],
+                    "description": "URL for navigate, open_tab, or launch_browser. navigate targets the active tab unless the legacy chrome_browser tool is used."
+                },
+                "tab_id": {
+                    "type": ["integer", "null"],
+                    "description": "Chrome tab id. Required for switch_tab and close_tab."
+                },
+                "window_id": {
+                    "type": ["integer", "null"],
+                    "description": "Chrome window id for list_tabs filtering or open_tab placement."
+                },
+                "active": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether open_tab or navigate should activate the tab. Defaults to true."
+                },
+                "bypass_cache": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether reload should bypass cache."
+                },
+                "timeout_ms": timeout_schema(),
+                "reason": reason_schema()
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        ChromeBrowserToolKind::Page => json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["snapshot", "extract_text", "screenshot", "read_selection", "get_full_page_html", "get_structured_data", "get_element_info", "get_viewport_size", "find_in_page", "wait_for_element"],
+                    "description": "Inspection action for the active tab. Use chrome_tabs.switch_tab first to inspect another tab."
+                },
+                "selector": {
+                    "type": ["string", "null"],
+                    "description": "CSS selector for extract_text, get_element_info, or wait_for_element. Open shadow roots are searched when possible."
+                },
+                "query": {
+                    "type": ["string", "null"],
+                    "description": "Search query for find_in_page."
+                },
+                "include_links": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether snapshot should include visible links."
+                },
+                "include_forms": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether snapshot should include visible form controls and buttons."
+                },
+                "include_data_url": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether screenshot should include the captured PNG data URL. Leave false unless image bytes are needed."
+                },
+                "highlight": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether find_in_page should visibly highlight matched elements."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "Maximum characters returned for HTML/text-heavy actions."
+                },
+                "timeout_ms": timeout_schema(),
+                "reason": reason_schema()
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        ChromeBrowserToolKind::Input => json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["click", "type_text", "press_key", "scroll", "scroll_to", "hover", "drag_and_drop", "select_dropdown", "copy_to_clipboard"],
+                    "description": "Input action for the active tab. Use chrome_tabs.switch_tab first to act on another tab."
+                },
+                "selector": {
+                    "type": ["string", "null"],
+                    "description": "CSS selector for click, type_text, scroll_to, hover, or select_dropdown. Open shadow roots are searched when possible."
+                },
+                "text": {
+                    "type": ["string", "null"],
+                    "description": "Text for type_text or copy_to_clipboard."
+                },
+                "value": {
+                    "type": ["string", "null"],
+                    "description": "Option value or label for select_dropdown."
+                },
+                "key": {
+                    "type": ["string", "null"],
+                    "description": "Keyboard key for press_key, such as Enter, Escape, ArrowDown, or Tab."
+                },
+                "amount": {
+                    "type": ["integer", "null"],
+                    "description": "Vertical scroll amount in pixels for scroll. Positive scrolls down, negative scrolls up."
+                },
+                "x": coordinate_schema("Viewport x coordinate for click or hover when selector is omitted."),
+                "y": coordinate_schema("Viewport y coordinate for click or hover when selector is omitted."),
+                "from_selector": {
+                    "type": ["string", "null"],
+                    "description": "Source CSS selector for drag_and_drop."
+                },
+                "to_selector": {
+                    "type": ["string", "null"],
+                    "description": "Target CSS selector for drag_and_drop."
+                },
+                "to_x": coordinate_schema("Target viewport x coordinate for drag_and_drop when to_selector is omitted."),
+                "to_y": coordinate_schema("Target viewport y coordinate for drag_and_drop when to_selector is omitted."),
+                "behavior": {
+                    "type": ["string", "null"],
+                    "enum": ["auto", "smooth", "instant", null],
+                    "description": "Scroll behavior for scroll_to."
+                },
+                "timeout_ms": timeout_schema(),
+                "reason": reason_schema()
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        ChromeBrowserToolKind::Script => json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["execute_javascript"],
+                    "description": "Execute JavaScript in the active tab and return structured data."
+                },
+                "code": {
+                    "type": "string",
+                    "description": "JavaScript expression or function body to execute. Bare expressions like document.title return automatically; multi-statement code should use return. Keep returned data compact and serializable."
+                },
+                "frame_id": {
+                    "type": ["integer", "null"],
+                    "description": "Optional frame id. Omit to run in the main frame."
+                },
+                "timeout_ms": timeout_schema(),
+                "reason": reason_schema()
+            },
+            "required": ["action", "code"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn legacy_browser_properties() -> Value {
+    json!({
+        "action": {
+            "type": "string",
+            "enum": ["get_current_tab", "snapshot", "extract_text", "get_full_page_html", "get_structured_data", "get_element_info", "get_viewport_size", "wait_for_element", "click", "type_text", "press_key", "scroll", "scroll_to", "hover", "drag_and_drop", "select_dropdown", "find_in_page", "copy_to_clipboard", "navigate", "go_back", "go_forward", "reload", "screenshot", "read_selection", "list_tabs", "switch_tab", "open_tab", "close_tab", "launch_browser", "execute_javascript"],
+            "description": "Legacy browser action. Prefer the split tools: chrome_tabs, chrome_page, chrome_input, chrome_script."
+        },
+        "selector": { "type": ["string", "null"], "description": "CSS selector for page/input actions." },
+        "text": { "type": ["string", "null"], "description": "Text for type_text or copy_to_clipboard." },
+        "value": { "type": ["string", "null"], "description": "Value for select_dropdown." },
+        "code": { "type": ["string", "null"], "description": "JavaScript expression or function body for execute_javascript." },
+        "query": { "type": ["string", "null"], "description": "Search query for find_in_page." },
+        "url": { "type": ["string", "null"], "description": "URL for navigate, open_tab, or launch_browser." },
+        "key": { "type": ["string", "null"], "description": "Keyboard key for press_key." },
+        "amount": { "type": ["integer", "null"], "description": "Vertical scroll amount in pixels." },
+        "x": coordinate_schema("Viewport x coordinate."),
+        "y": coordinate_schema("Viewport y coordinate."),
+        "to_x": coordinate_schema("Target viewport x coordinate."),
+        "to_y": coordinate_schema("Target viewport y coordinate."),
+        "from_selector": { "type": ["string", "null"], "description": "Source selector for drag_and_drop." },
+        "to_selector": { "type": ["string", "null"], "description": "Target selector for drag_and_drop." },
+        "tab_id": { "type": ["integer", "null"], "description": "Chrome tab id. For page/input actions the extension activates this tab before acting." },
+        "window_id": { "type": ["integer", "null"], "description": "Chrome window id." },
+        "frame_id": { "type": ["integer", "null"], "description": "Optional frame id for execute_javascript." },
+        "active": { "type": ["boolean", "null"], "description": "Whether open_tab or navigate should activate the target tab." },
+        "include_links": { "type": ["boolean", "null"], "description": "Whether snapshot should include visible links." },
+        "include_forms": { "type": ["boolean", "null"], "description": "Whether snapshot should include visible form controls and buttons." },
+        "include_data_url": { "type": ["boolean", "null"], "description": "Whether screenshot should include the captured PNG data URL." },
+        "highlight": { "type": ["boolean", "null"], "description": "Whether find_in_page should highlight matched elements." },
+        "bypass_cache": { "type": ["boolean", "null"], "description": "Whether reload should bypass cache." },
+        "behavior": { "type": ["string", "null"], "enum": ["auto", "smooth", "instant", null], "description": "Scroll behavior for scroll_to." },
+        "max_chars": { "type": ["integer", "null"], "description": "Maximum characters returned for HTML/text-heavy actions." },
+        "timeout_ms": timeout_schema(),
+        "reason": reason_schema()
+    })
+}
+
+fn timeout_schema() -> Value {
+    json!({
+        "type": ["integer", "null"],
+        "description": "Optional action timeout in milliseconds, clamped between 1000 and 120000."
+    })
+}
+
+fn reason_schema() -> Value {
+    json!({
+        "type": ["string", "null"],
+        "description": "Brief reason for this browser action, useful for audit logs in the extension."
+    })
+}
+
+fn coordinate_schema(description: &str) -> Value {
+    json!({
+        "type": ["number", "null"],
+        "description": description
+    })
+}
+
 pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
     meta.get_extra_as::<String>("source")
         .filter(|source| source.starts_with("browser:"))
@@ -567,8 +882,24 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn validate_browser_action(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
+    validate_browser_action_for_tool(ChromeBrowserToolKind::Legacy, args)
+}
+
+fn validate_browser_action_for_tool(
+    kind: ChromeBrowserToolKind,
+    args: &ChromeBrowserToolArgs,
+) -> Result<(), BoxError> {
+    if !tool_supports_action(kind, &args.action) {
+        return Err(format!(
+            "browser action {:?} is not supported by {}",
+            args.action,
+            kind.name()
+        )
+        .into());
+    }
+
     match args.action {
-        BrowserAction::Click => require_field(&args.selector, "selector", "click"),
+        BrowserAction::Click | BrowserAction::Hover => require_selector_or_coordinates(args),
         BrowserAction::TypeText => {
             require_field(&args.selector, "selector", "type_text")?;
             require_field(&args.text, "text", "type_text")
@@ -577,14 +908,96 @@ fn validate_browser_action(args: &ChromeBrowserToolArgs) -> Result<(), BoxError>
         BrowserAction::Navigate => require_field(&args.url, "url", "navigate"),
         BrowserAction::SwitchTab => require_i64(&args.tab_id, "tab_id", "switch_tab"),
         BrowserAction::CloseTab => require_i64(&args.tab_id, "tab_id", "close_tab"),
-        BrowserAction::Snapshot
+        BrowserAction::GetElementInfo => {
+            require_field(&args.selector, "selector", "get_element_info")
+        }
+        BrowserAction::WaitForElement => {
+            require_field(&args.selector, "selector", "wait_for_element")
+        }
+        BrowserAction::ScrollTo => require_field(&args.selector, "selector", "scroll_to"),
+        BrowserAction::DragAndDrop => {
+            require_field(&args.from_selector, "from_selector", "drag_and_drop")?;
+            if args
+                .to_selector
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || (args.to_x.is_some() && args.to_y.is_some())
+            {
+                Ok(())
+            } else {
+                Err(
+                    "chrome_browser action \"drag_and_drop\" requires to_selector or to_x/to_y"
+                        .into(),
+                )
+            }
+        }
+        BrowserAction::SelectDropdown => {
+            require_field(&args.selector, "selector", "select_dropdown")?;
+            require_field(&args.value, "value", "select_dropdown")
+        }
+        BrowserAction::FindInPage => require_field(&args.query, "query", "find_in_page"),
+        BrowserAction::CopyToClipboard => require_field(&args.text, "text", "copy_to_clipboard"),
+        BrowserAction::ExecuteJavascript => require_field(&args.code, "code", "execute_javascript"),
+        BrowserAction::GetCurrentTab
+        | BrowserAction::Snapshot
         | BrowserAction::ExtractText
+        | BrowserAction::GetFullPageHtml
+        | BrowserAction::GetStructuredData
+        | BrowserAction::GetViewportSize
         | BrowserAction::Scroll
         | BrowserAction::Screenshot
         | BrowserAction::ReadSelection
         | BrowserAction::ListTabs
         | BrowserAction::OpenTab
-        | BrowserAction::LaunchBrowser => Ok(()),
+        | BrowserAction::LaunchBrowser
+        | BrowserAction::GoBack
+        | BrowserAction::GoForward
+        | BrowserAction::Reload => Ok(()),
+    }
+}
+
+fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> bool {
+    match kind {
+        ChromeBrowserToolKind::Legacy => true,
+        ChromeBrowserToolKind::Tabs => matches!(
+            action,
+            BrowserAction::GetCurrentTab
+                | BrowserAction::ListTabs
+                | BrowserAction::SwitchTab
+                | BrowserAction::OpenTab
+                | BrowserAction::CloseTab
+                | BrowserAction::Navigate
+                | BrowserAction::GoBack
+                | BrowserAction::GoForward
+                | BrowserAction::Reload
+                | BrowserAction::LaunchBrowser
+        ),
+        ChromeBrowserToolKind::Page => matches!(
+            action,
+            BrowserAction::Snapshot
+                | BrowserAction::ExtractText
+                | BrowserAction::Screenshot
+                | BrowserAction::ReadSelection
+                | BrowserAction::GetFullPageHtml
+                | BrowserAction::GetStructuredData
+                | BrowserAction::GetElementInfo
+                | BrowserAction::GetViewportSize
+                | BrowserAction::FindInPage
+                | BrowserAction::WaitForElement
+        ),
+        ChromeBrowserToolKind::Input => matches!(
+            action,
+            BrowserAction::Click
+                | BrowserAction::TypeText
+                | BrowserAction::PressKey
+                | BrowserAction::Scroll
+                | BrowserAction::ScrollTo
+                | BrowserAction::Hover
+                | BrowserAction::DragAndDrop
+                | BrowserAction::SelectDropdown
+                | BrowserAction::CopyToClipboard
+        ),
+        ChromeBrowserToolKind::Script => matches!(action, BrowserAction::ExecuteJavascript),
     }
 }
 
@@ -601,6 +1014,23 @@ fn require_i64(value: &Option<i64>, field: &str, action: &str) -> Result<(), Box
         Ok(())
     } else {
         Err(format!("chrome_browser action {action:?} requires {field}").into())
+    }
+}
+
+fn require_selector_or_coordinates(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
+    if args
+        .selector
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || (args.x.is_some() && args.y.is_some())
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "chrome_browser action {:?} requires selector or x/y coordinates",
+            args.action
+        )
+        .into())
     }
 }
 
@@ -703,15 +1133,29 @@ mod tests {
             action: BrowserAction::Snapshot,
             selector: None,
             text: None,
+            value: None,
+            code: None,
+            query: None,
             url: None,
             key: None,
             amount: None,
+            x: None,
+            y: None,
+            to_x: None,
+            to_y: None,
+            from_selector: None,
+            to_selector: None,
             tab_id: None,
             window_id: None,
+            frame_id: None,
             active: None,
             include_links: None,
             include_forms: None,
             include_data_url: None,
+            highlight: None,
+            bypass_cache: None,
+            behavior: None,
+            max_chars: None,
             timeout_ms: Some(1_000),
             reason: None,
         }
@@ -740,6 +1184,27 @@ mod tests {
 
         args.selector = Some("button[type=submit]".to_string());
         assert!(validate_browser_action(&args).is_ok());
+    }
+
+    #[test]
+    fn split_page_tool_schema_targets_active_tab() {
+        let tool = ChromeBrowserTool::page(Arc::new(BrowserBridge::new()));
+        let definition = tool.definition();
+        let properties = definition.parameters["properties"].as_object().unwrap();
+
+        assert_eq!(definition.name, ChromeBrowserTool::PAGE_NAME);
+        assert!(properties.get("tab_id").is_none());
+        assert!(properties.get("selector").is_some());
+    }
+
+    #[test]
+    fn split_tool_validation_rejects_cross_category_actions() {
+        let mut args = snapshot_args();
+        args.action = BrowserAction::Click;
+        args.selector = Some("button".to_string());
+
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &args).is_ok());
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Page, &args).is_err());
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 # Anda Bot Chrome Extension
 
-This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a single WebSocket RPC connection per browser profile and exposes browser tabs to the agent through the `chrome_browser` tool.
+This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a single WebSocket RPC connection per browser profile and exposes browser tabs to the agent through the split Chrome browser tools.
 
 ## Setup
 
@@ -30,21 +30,52 @@ Chrome 116 or newer is required because the extension keeps its Manifest V3 serv
 
 ## Browser Actions
 
-When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The agent can call `chrome_browser` to inspect pages and manage tabs. Supported actions include:
+When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The service worker refreshes that metadata as tabs are activated or updated.
 
-- `snapshot`
-- `extract_text`
-- `click`
-- `type_text`
-- `press_key`
-- `scroll`
-- `navigate`
-- `screenshot`
-- `read_selection`
+The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `chrome_tabs.switch_tab` first when another tab is needed. The legacy `chrome_browser` tool remains available for older prompts.
+
+`chrome_tabs` actions:
+
+- `get_current_tab`
 - `list_tabs`
 - `switch_tab`
 - `open_tab`
 - `close_tab`
+- `navigate`
+- `go_back`
+- `go_forward`
+- `reload`
 - `launch_browser`
 
-Most page actions accept `tab_id` to target a specific tab returned by `list_tabs`. Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.
+`chrome_page` actions:
+
+- `snapshot`
+- `extract_text`
+- `get_full_page_html`
+- `get_structured_data`
+- `get_element_info`
+- `get_viewport_size`
+- `wait_for_element`
+- `find_in_page`
+- `screenshot`
+- `read_selection`
+
+`chrome_input` actions:
+
+- `click`
+- `type_text`
+- `press_key`
+- `scroll`
+- `scroll_to`
+- `hover`
+- `drag_and_drop`
+- `select_dropdown`
+- `copy_to_clipboard`
+
+`chrome_script` actions:
+
+- `execute_javascript`
+
+`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`.
+
+Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.

@@ -162,7 +162,7 @@ You can keep me in the terminal, open me from Chrome, or connect me to chat chan
 
 ### Chrome Side Panel
 
-The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through the `chrome_browser` tool while keeping one stable browser session as you switch tabs.
+The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through split Chrome browser tools while keeping one stable browser session as you switch tabs.
 
 Generate a local bearer token for the extension:
 
@@ -181,6 +181,7 @@ Supported channel families:
 - Lark / Feishu
 
 Minimal Telegram example:
+
 ```yaml
 channels:
   telegram:
@@ -194,6 +195,7 @@ channels:
 ```
 
 Minimal Wechat example:
+
 ```yaml
 channels:
   wechat:
@@ -207,7 +209,7 @@ channels:
       route_tag:
 ```
 
-  Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
+Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
 
 See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel, transcription, and TTS examples.
 

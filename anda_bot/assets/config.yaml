@@ -25,7 +25,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 384000
-      labels: ["pro", "hippocampus"]
+      labels: ["memory"]
       disabled: false
 
     - family: anthropic
@@ -43,7 +43,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["pro", "hippocampus"]
+      labels: ["memory"]
       disabled: false
 
     - family: openai
@@ -52,7 +52,7 @@ model:
       api_key: ""
       context_window: 400000
       max_output: 128000
-      labels: ["flash", "hippocampus"]
+      labels: ["flash", "memory"]
       disabled: false
 
     - family: anthropic
@@ -61,7 +61,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["pro", "hippocampus"]
+      labels: ["memory"]
       disabled: false
 
     - family: anthropic
@@ -70,7 +70,7 @@ model:
       api_key: ""
       context_window: 200000
       max_output: 64000
-      labels: ["flash", "hippocampus"]
+      labels: ["flash", "memory"]
       disabled: false
 
     - family: gemini
@@ -79,7 +79,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 64000
-      labels: ["pro", "hippocampus"]
+      labels: ["memory"]
       disabled: false
 
     - family: gemini
@@ -88,7 +88,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 64000
-      labels: ["flash", "hippocampus"]
+      labels: ["flash", "memory"]
       disabled: false
 
     - family: gemini
@@ -106,7 +106,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["pro", "fallback"]
+      labels: ["fallback"]
       disabled: false
       bearer_auth: true
 
@@ -126,7 +126,7 @@ model:
       api_key: ""
       context_window: 256000
       max_output: 32000
-      labels: ["pro"]
+      labels: []
       disabled: false
 
     - family: anthropic
@@ -135,7 +135,7 @@ model:
       api_key: ""
       context_window: 200000
       max_output: 128000
-      labels: ["pro", "hippocampus"]
+      labels: ["memory"]
       disabled: false
 
 tts:
