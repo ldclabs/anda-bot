@@ -86,6 +86,7 @@
 </script>
 
 <article
+	id={message.id}
 	class="group grid w-full gap-1 {isUser
 		? 'justify-items-end'
 		: isTool || !hasMainText

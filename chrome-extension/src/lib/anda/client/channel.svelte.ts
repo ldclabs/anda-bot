@@ -449,48 +449,51 @@ export class Channel extends EventTarget {
 	}
 
 	private appendLocalMessage(message: Omit<ChatMessage, 'id'>): void {
-		const group = this.ensureMessageGroup(
-			message.conversation || this.#conversation?._id || SideMessageConversationId
-		)
-		const timestamp = Date.now()
-		group.messages = [
-			...group.messages,
-			{
-				...message,
-				id: `m-${group.conversation._id}-${timestamp}`,
-				conversation: group.conversation._id,
-				timestamp
+		this.updateMessageGroupWith(
+			message.conversation || this.#conversation?._id || SideMessageConversationId,
+			(group) => {
+				const timestamp = Date.now()
+				group.messages = [
+					...group.messages,
+					{
+						...message,
+						id: `m-${group.conversation._id}-${timestamp}`,
+						conversation: group.conversation._id,
+						timestamp
+					}
+				]
+				return { ...group }
 			}
-		]
+		)
 	}
 
-	private ensureMessageGroup(conversation: number): MessageGroup {
-		const existing = this.#messageGroups.find((group) => group.conversation._id === conversation)
-		if (existing) {
-			return existing
+	private updateMessageGroupWith(conversation: number, fn: (group: MessageGroup) => MessageGroup) {
+		const idx = this.#messageGroups.findIndex((group) => group.conversation._id === conversation)
+		if (idx >= 0) {
+			const updated = fn(this.#messageGroups[idx]!)
+			this.#messageGroups[idx] = updated
+		} else {
+			const nowMs = Date.now()
+			const group = fn({
+				conversation: {
+					_id: conversation,
+					user: '',
+					status: 'submitted',
+					usage: {
+						input_tokens: 0,
+						output_tokens: 0,
+						cached_tokens: 0,
+						requests: 0
+					},
+					created_at: nowMs,
+					updated_at: nowMs
+				} as Conversation,
+				createdAt: nowMs,
+				updatedAt: nowMs,
+				messages: [],
+				current: false
+			})
+			this.#messageGroups = [...this.#messageGroups, group]
 		}
-
-		const nowMs = Date.now()
-		const group: MessageGroup = {
-			conversation: {
-				_id: conversation,
-				user: '',
-				status: 'submitted',
-				usage: {
-					input_tokens: 0,
-					output_tokens: 0,
-					cached_tokens: 0,
-					requests: 0
-				},
-				created_at: nowMs,
-				updated_at: nowMs
-			} as Conversation,
-			createdAt: nowMs,
-			updatedAt: nowMs,
-			messages: [],
-			current: false
-		}
-		this.#messageGroups = [...this.#messageGroups, group]
-		return group
 	}
 }

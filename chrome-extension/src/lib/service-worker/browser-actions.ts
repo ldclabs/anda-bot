@@ -10,6 +10,8 @@ type BrowserActionDependencies = {
 	chromeApi: ChromeApi
 }
 
+const debuggerActionLocks = new Map<number, Promise<void>>()
+
 export async function executeBrowserAction(
 	command: BrowserCommand,
 	deps: BrowserActionDependencies
@@ -214,6 +216,31 @@ async function executeJavaScriptWithDebugger(
 	tabId: number,
 	args: BrowserActionArgs
 ): Promise<Record<string, unknown>> {
+	return runExclusiveDebuggerAction(tabId, () =>
+		executeJavaScriptWithAttachedDebugger(chromeApi, tabId, args)
+	)
+}
+
+function runExclusiveDebuggerAction<T>(tabId: number, task: () => Promise<T>): Promise<T> {
+	const previous = debuggerActionLocks.get(tabId) || Promise.resolve()
+	const run = previous.catch(() => undefined).then(task)
+	const release = run.then(
+		() => undefined,
+		() => undefined
+	)
+	debuggerActionLocks.set(tabId, release)
+	return run.finally(() => {
+		if (debuggerActionLocks.get(tabId) === release) {
+			debuggerActionLocks.delete(tabId)
+		}
+	})
+}
+
+async function executeJavaScriptWithAttachedDebugger(
+	chromeApi: ChromeApi,
+	tabId: number,
+	args: BrowserActionArgs
+): Promise<Record<string, unknown>> {
 	const code = String(args.code || '')
 	if (!code.trim()) {
 		throw new Error('execute_javascript requires code')
@@ -230,6 +257,7 @@ async function executeJavaScriptWithDebugger(
 	const target = { tabId }
 	let attached = false
 	try {
+		await chromeApi.debugger.detach(target).catch(() => undefined)
 		await chromeApi.debugger.attach(target, '1.3')
 		attached = true
 		await chromeApi.debugger.sendCommand(target, 'Runtime.enable').catch(() => undefined)
@@ -248,11 +276,7 @@ async function evaluateDebuggerJavaScript(
 	code: string
 ): Promise<unknown> {
 	const expression = code.trim().replace(/;+$/, '')
-	const expressionResult = await sendDebuggerRuntimeEvaluate(
-		chromeApi,
-		target,
-		`(async () => (${expression}))()`
-	)
+	const expressionResult = await sendDebuggerRuntimeEvaluate(chromeApi, target, `(${expression})`)
 	if (!isSyntaxException(expressionResult.exceptionDetails)) {
 		return debuggerEvaluationValue(expressionResult)
 	}
@@ -260,7 +284,7 @@ async function evaluateDebuggerJavaScript(
 	const bodyResult = await sendDebuggerRuntimeEvaluate(
 		chromeApi,
 		target,
-		`(async () => {\n${code}\n})()`
+		`(function () {\n${code}\n})()`
 	)
 	return debuggerEvaluationValue(bodyResult)
 }

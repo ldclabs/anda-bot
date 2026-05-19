@@ -13,6 +13,7 @@
 		type PromptSkill
 	} from '$lib/anda/client/types'
 	import { Button } from '$lib/components/ui/button/index.js'
+	import { scrollIntoView } from '$lib/utils/document'
 	import { Bot, CircleAlert, History, LoaderCircle, Radio, Settings } from '@lucide/svelte'
 	import { onMount, tick } from 'svelte'
 
@@ -55,26 +56,23 @@
 				console.error('Failed to initialize Anda client', error)
 			})
 
-		andaClient.addEventListener('ChannelInitialized', scrollMessagesToBottom)
 		return () => {
-			andaClient.removeEventListener('ChannelInitialized', scrollMessagesToBottom)
 			andaClient.destroy()
 		}
 	})
 
-	async function scrollMessagesToBottom() {
-		await tick()
-		if (messagesElement) {
-			messagesElement.scrollTop = messagesElement.scrollHeight
+	$effect(() => {
+		const lastGroup = visibleMessageGroups[visibleMessageGroups.length - 1]
+		const lastMessage = lastGroup?.messages[lastGroup.messages.length - 1]
+		if (lastMessage) {
+			scrollIntoView(lastMessage.id, 'smooth', 'start')
 		}
-	}
+	})
 
 	function handleMessagesScroll() {
 		if (!messagesElement) {
 			return
 		}
-		// const distanceFromBottom =
-		// 	messagesElement.scrollHeight - messagesElement.scrollTop - messagesElement.clientHeight
 		if (messagesElement.scrollTop < 32 && hasPreviousConversations && !loadingPrevious) {
 			loadPreviousConversations()
 		}
@@ -112,7 +110,6 @@
 			settingsOpen = true
 		}
 		await andaClient.sendPrompt(payload.text, payload.attachments)
-		scrollMessagesToBottom()
 	}
 
 	async function sendVoiceTurn(payload: ComposerVoicePayload) {
@@ -123,7 +120,6 @@
 			settingsOpen = true
 		}
 		await andaClient.sendVoiceTurn(payload)
-		scrollMessagesToBottom()
 	}
 
 	async function loadPromptSkills(): Promise<PromptSkill[]> {
