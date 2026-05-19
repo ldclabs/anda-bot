@@ -752,6 +752,7 @@ impl AndaBot {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_session_runner(
         &self,
         ctx: AgentCtx,
@@ -807,7 +808,7 @@ impl Tool<BaseCtx> for AndaBot {
     type Output = Response;
 
     fn name(&self) -> String {
-        format!("{}_api", Self::NAME)
+        "anda_bot_api".to_string()
     }
 
     fn description(&self) -> String {
@@ -859,8 +860,8 @@ impl Tool<BaseCtx> for AndaBot {
                     .inner
                     .skills_manager
                     .list()
-                    .into_iter()
-                    .map(|(_, skill)| skill.frontmatter)
+                    .into_values()
+                    .map(|skill| skill.frontmatter)
                     .collect();
                 json!(
                     skills
@@ -978,9 +979,12 @@ impl Agent<AgentCtx> for AndaBot {
             conversation: maybe_conv_id,
             ..
         } = self.inner.conversations.state_from_meta(ctx.meta());
+
         let mut instructions = self
             .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
             .await?;
+
+        let mut ancestors: Option<Vec<u64>> = None;
         let mut current_conversation = if maybe_conv_id > 0 {
             self.latest_conversation_in_chain(maybe_conv_id, Some(*caller))
                 .await
@@ -988,6 +992,15 @@ impl Agent<AgentCtx> for AndaBot {
         } else {
             None
         };
+
+        if let Some(conv) = &current_conversation {
+            let mut ids = conv.ancestors.clone().unwrap_or_default();
+            ids.push(conv._id);
+            if ids.len() > 10 {
+                ids.drain(0..ids.len() - 10);
+            }
+            ancestors = Some(ids);
+        }
 
         let mut input = ConversationInput {
             command,
@@ -1008,15 +1021,28 @@ impl Agent<AgentCtx> for AndaBot {
             .get_session(&sess_id)
             .or_else(|| self.get_session_by_source(&source_key));
         let mut detached_existing_session = false;
-        let mut detached_conversation_id = current_conversation_id;
+        let mut detached_conversation_id = current_conversation_id.unwrap_or_default();
         if let Some(session) = active_session {
             // Join existing conversation session if it's active
             if matches!(input.command, PromptCommand::New { .. }) {
-                detached_conversation_id =
-                    Some(session.conversation_id.load(Ordering::SeqCst)).filter(|id| *id > 0);
+                detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                 if let Some(session) = self.detach_session(&session.id) {
                     session.finish_when_idle.store(true, Ordering::SeqCst);
                     detached_existing_session = true;
+                }
+                if Some(detached_conversation_id) != current_conversation_id {
+                    // fetch the latest ancestors in session for /new command
+                    if let Ok(conv) = self
+                        .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
+                        .await
+                    {
+                        let mut ids = conv.ancestors.clone().unwrap_or_default();
+                        ids.push(conv._id);
+                        if ids.len() > 10 {
+                            ids.drain(0..ids.len() - 10);
+                        }
+                        ancestors = Some(ids);
+                    }
                 }
             } else {
                 let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
@@ -1084,14 +1110,15 @@ impl Agent<AgentCtx> for AndaBot {
                 }
 
                 let Some(prompt) = prompt else {
-                    if source_state.conv_id != 0
+                    if detached_conversation_id > 0
+                        && source_state.conv_id != detached_conversation_id
                         && let Err(err) = self
                             .inner
                             .conversations
                             .update_source_state(
                                 source_key.clone(),
                                 SourceState {
-                                    conv_id: 0,
+                                    conv_id: detached_conversation_id,
                                     status: ConversationStatus::Cancelled,
                                     timestamp: now_ms,
                                 },
@@ -1102,7 +1129,8 @@ impl Agent<AgentCtx> for AndaBot {
                     }
 
                     return Ok(AgentOutput {
-                        conversation: detached_conversation_id,
+                        conversation: (detached_conversation_id > 0)
+                            .then_some(detached_conversation_id),
                         ..Default::default()
                     });
                 };
@@ -1148,7 +1176,6 @@ impl Agent<AgentCtx> for AndaBot {
                 return Err("prompt cannot be empty".into());
             }
 
-            let mut ancestors: Option<Vec<u64>> = None;
             if !force_standalone_conversation {
                 let (mut history_conversations, _) = self
                     .inner
@@ -1157,17 +1184,10 @@ impl Agent<AgentCtx> for AndaBot {
                     .list_conversations_by_user(caller, None, Some(2))
                     .await?;
 
-                if let Some(conv) = &current_conversation {
-                    let mut ids = conv.ancestors.clone().unwrap_or_default();
-                    ids.push(conv._id);
-                    if ids.len() > 10 {
-                        ids.drain(0..ids.len() - 10);
-                    }
-                    ancestors = Some(ids);
-
-                    if !history_conversations.iter().any(|c| c._id == conv._id) {
-                        history_conversations.push(conv.clone());
-                    }
+                if let Some(conv) = &current_conversation
+                    && !history_conversations.iter().any(|c| c._id == conv._id)
+                {
+                    history_conversations.push(conv.clone());
                 }
 
                 if !history_conversations.is_empty() {

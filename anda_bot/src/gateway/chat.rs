@@ -202,8 +202,8 @@ impl ChatSession {
 
         if let Some(command) = &new_command {
             self.clear_display_for_new_command();
-            if let Some(prompt) = &command.prompt {
-                self.messages.push(user_message(prompt.clone()));
+            if command.prompt.is_some() {
+                self.messages.push(user_message(text.clone()));
             }
         } else {
             self.messages.push(user_message(text.clone()));

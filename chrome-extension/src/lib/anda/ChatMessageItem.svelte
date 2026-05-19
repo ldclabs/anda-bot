@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-	import type { ChatMessage } from '$lib/anda/client'
+	import type { ChatMessage } from '$lib/anda/client/types'
 	import { renderMarkdown } from '$lib/utils/markdown'
 	import { Check, Clipboard, Wrench } from '@lucide/svelte'
 	import { onMount, tick } from 'svelte'

@@ -225,7 +225,7 @@ impl BrowserBridge {
         entry.url = normalize_optional_string(url);
         entry.title = normalize_optional_string(title);
         let session = entry.clone();
-        drop(sessions);
+        drop(sessions); // release lock before notifying to avoid waking up waiters only to block on the lock
         self.notify.notify_waiters();
         Ok(session)
     }
@@ -416,7 +416,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
             concat!(
                 "Controls the user's browser tabs through the Anda browser extension. ",
                 "Use this when the user asks about or wants action on browser pages. ",
-                "Start with list_tabs, snapshot, or extract_text to inspect the browser, then use click, type_text, press_key, scroll, navigate, screenshot, read_selection, switch_tab, open_tab, or close_tab as needed."
+                "Start with list_tabs, snapshot, or extract_text to inspect the browser, then use click, type_text, press_key, scroll, navigate, screenshot, read_selection, switch_tab, open_tab, or close_tab as needed, only on active tab. ",
             ),
             self.bridge.sessions()
         )
@@ -640,11 +640,11 @@ fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
                 }
             }
         }
-        return Err(format!(
+        Err(format!(
             "failed to launch a supported browser: {}",
             last_error.unwrap_or_else(|| "unknown error".to_string())
         )
-        .into());
+        .into())
     }
 
     #[cfg(target_os = "windows")]

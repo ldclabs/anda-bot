@@ -37,6 +37,10 @@ pub enum ConversationsToolArgs {
         #[serde(default)]
         artifacts_offset: usize,
     },
+    BatchGetConversations {
+        /// The IDs of the conversations to get
+        ids: Vec<u64>,
+    },
     /// List previous conversations
     ListPrevConversations {
         /// The cursor for pagination
@@ -240,6 +244,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                             "ListSourceState",
                             "GetConversation",
                             "GetConversationDelta",
+                            "BatchGetConversations",
                             "ListPrevConversations",
                             "SearchConversations"
                         ],
@@ -248,6 +253,11 @@ impl Tool<BaseCtx> for ConversationsTool {
                     "_id": {
                         "type": "integer",
                         "description": "Conversation ID to load. Use the conv_id returned by GetSourceState or ListSourceState. For GetConversation, _id = 0 resolves to the caller's latest conversation."
+                    },
+                    "ids": {
+                        "type": "array",
+                        "items": { "type": "integer" },
+                        "description": "The IDs of the conversations to get. Only for BatchGetConversations."
                     },
                     "messages_offset": {
                         "type": ["integer", "null"],
@@ -380,6 +390,17 @@ impl Tool<BaseCtx> for ConversationsTool {
 
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(conversation.into_delta(messages_offset, artifacts_offset)),
+                    next_cursor: None,
+                }))
+            }
+            ConversationsToolArgs::BatchGetConversations { ids } => {
+                let result = self
+                    .conversations
+                    .batch_get_conversations(ctx.caller(), ids)
+                    .await?;
+
+                Ok(ToolOutput::new(Response::Ok {
+                    result: json!(result),
                     next_cursor: None,
                 }))
             }

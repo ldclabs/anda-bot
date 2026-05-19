@@ -3,12 +3,11 @@
 		ChatAttachment,
 		PageAudioResult,
 		PromptSkill,
-		ResourceInput,
 		SubmitKeyMode,
 		VoiceCapabilities,
 		VoiceProvider,
 		VoiceRecordingInput
-	} from '$lib/anda/client'
+	} from '$lib/anda/client/types'
 
 	export interface ComposerSubmitPayload {
 		text: string
@@ -19,140 +18,43 @@
 </script>
 
 <script lang="ts">
+	import AttachmentList from '$lib/anda/composer/AttachmentList.svelte'
+	import { fileToAttachment } from '$lib/anda/composer/attachments'
+	import {
+		buildPromptCommandSuggestions,
+		firstEnabledPromptCommandIndex,
+		promptSkillsCacheMs,
+		readPromptCommandContext,
+		type PromptCommandSuggestion
+	} from '$lib/anda/composer/prompt-commands'
+	import PromptCommandPanel from '$lib/anda/composer/PromptCommandPanel.svelte'
+	import {
+		audioCaptureErrorMessage,
+		audioExtensionForMime,
+		blobToBase64,
+		chromeSpeechErrorMessage,
+		isMacPlatform,
+		isPermissionError,
+		preferredRecordingMimeType,
+		speechRecognitionConstructor,
+		speechRecognitionErrorMessage,
+		speechRecognitionSupported,
+		type BrowserSpeechRecognition,
+		type BrowserSpeechRecognitionError,
+		type BrowserSpeechRecognitionEvent
+	} from '$lib/anda/composer/voice'
+	import VoicePanel from '$lib/anda/composer/VoicePanel.svelte'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import {
-		FileText,
 		Keyboard,
 		LoaderCircle,
 		Mic,
 		Paperclip,
 		SendHorizontal,
-		Square,
 		Volume2,
-		VolumeX,
-		X
+		VolumeX
 	} from '@lucide/svelte'
 	import { onDestroy, onMount, tick } from 'svelte'
-
-	type BrowserSpeechRecognitionEvent = {
-		resultIndex: number
-		results: ArrayLike<{
-			isFinal: boolean
-			[index: number]: { transcript: string }
-		}>
-	}
-
-	type BrowserSpeechRecognitionError = {
-		error?: string
-		message?: string
-	}
-
-	type BrowserSpeechRecognition = {
-		lang: string
-		continuous: boolean
-		interimResults: boolean
-		onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null
-		onerror: ((event: BrowserSpeechRecognitionError) => void) | null
-		onend: (() => void) | null
-		start(): void
-		stop(): void
-		abort?: () => void
-	}
-
-	type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
-
-	type PromptCommandContext = {
-		open: boolean
-		mode: 'command' | 'skill'
-		query: string
-		replaceStart: number
-		replaceEnd: number
-		key: string
-	}
-
-	type PromptCommandSuggestion = {
-		id: string
-		label: string
-		insertText: string
-		description: string
-		detail?: string
-		disabled?: boolean
-		kind: 'command' | 'skill' | 'status'
-	}
-
-	const emptyPromptCommandContext: PromptCommandContext = {
-		open: false,
-		mode: 'command',
-		query: '',
-		replaceStart: 0,
-		replaceEnd: 0,
-		key: 'closed'
-	}
-
-	const promptCommandItems: PromptCommandSuggestion[] = [
-		{
-			id: 'command:new',
-			label: '/new',
-			insertText: '/new ',
-			description: 'Start a fresh conversation with an optional first prompt.',
-			detail: 'alias: /clear',
-			kind: 'command'
-		},
-		{
-			id: 'command:goal',
-			label: '/goal',
-			insertText: '/goal ',
-			description: 'Start a supervised long-running task.',
-			detail: 'alias: /loop',
-			kind: 'command'
-		},
-		{
-			id: 'command:side',
-			label: '/side',
-			insertText: '/side ',
-			description: 'Run a temporary side request in a subagent.',
-			detail: 'alias: /btw',
-			kind: 'command'
-		},
-		{
-			id: 'command:steer',
-			label: '/steer',
-			insertText: '/steer ',
-			description: 'Redirect the next model step with a new instruction.',
-			kind: 'command'
-		},
-		{
-			id: 'command:skill',
-			label: '/skill',
-			insertText: '/skill ',
-			description: 'Route the prompt to a named skill subagent.',
-			kind: 'command'
-		},
-		{
-			id: 'command:stop',
-			label: '/stop',
-			insertText: '/stop ',
-			description: 'Cancel the current task with an optional reason.',
-			detail: 'alias: /cancel',
-			kind: 'command'
-		},
-		{
-			id: 'command:cancel',
-			label: '/cancel',
-			insertText: '/cancel ',
-			description: 'Cancel the current task with an optional reason.',
-			detail: 'alias: /stop',
-			kind: 'command'
-		},
-		{
-			id: 'command:ping',
-			label: '/ping',
-			insertText: '/ping ',
-			description: 'Send a lightweight ping.',
-			kind: 'command'
-		}
-	]
-	const promptSkillsCacheMs = 60_000
 
 	let {
 		disabled = false,
@@ -210,7 +112,6 @@
 	let activePromptCommandIndex = $state(0)
 	let promptCommandDismissedKey = $state('')
 	let promptCommandSelectionKey = $state('')
-	let promptCommandListElement: HTMLDivElement | null = $state(null)
 	let promptSkills = $state<PromptSkill[]>([])
 	let promptSkillsLoading = $state(false)
 	let promptSkillsLoadedAt = $state(0)
@@ -349,15 +250,6 @@
 	})
 
 	$effect(() => {
-		if (!promptCommandPanelOpen) {
-			return
-		}
-		activePromptCommandIndex
-		promptCommandSelectionKey
-		void tick().then(scrollActivePromptCommandIntoView)
-	})
-
-	$effect(() => {
 		if (voiceStage === 'idle') {
 			if (!voiceProviderSelected && canUseAndaVoice && voiceProvider !== 'anda') {
 				voiceProvider = 'anda'
@@ -400,131 +292,6 @@
 		return !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
 	}
 
-	function readPromptCommandContext(value: string, caret: number): PromptCommandContext {
-		const safeCaret = Math.max(0, Math.min(caret, value.length))
-		const firstLineBreak = value.indexOf('\n')
-		const commandLineEnd = firstLineBreak === -1 ? value.length : firstLineBreak
-		if (safeCaret > commandLineEnd) {
-			return emptyPromptCommandContext
-		}
-
-		const commandLine = value.slice(0, commandLineEnd)
-		const leadingWhitespace = commandLine.match(/^\s*/)?.[0] || ''
-		const slashIndex = leadingWhitespace.length
-		if (commandLine[slashIndex] !== '/' || safeCaret < slashIndex + 1) {
-			return emptyPromptCommandContext
-		}
-
-		const commandBody = commandLine.slice(slashIndex + 1)
-		const commandToken = commandBody.match(/^\S*/)?.[0] || ''
-		const commandTokenEnd = slashIndex + 1 + commandToken.length
-		const commandName = commandToken.toLowerCase()
-
-		if (commandName === 'skill' && safeCaret >= commandTokenEnd) {
-			const afterCommand = commandLine.slice(commandTokenEnd)
-			const spacesAfterCommand = afterCommand.match(/^\s+/)?.[0] || ''
-			if (spacesAfterCommand.length > 0) {
-				const skillStart = commandTokenEnd + spacesAfterCommand.length
-				const skillToken = commandLine.slice(skillStart).match(/^\S*/)?.[0] || ''
-				const skillEnd = skillStart + skillToken.length
-				if (safeCaret >= skillStart && safeCaret <= skillEnd) {
-					const query = commandLine.slice(skillStart, safeCaret)
-					return {
-						open: true,
-						mode: 'skill',
-						query,
-						replaceStart: skillStart,
-						replaceEnd: skillEnd,
-						key: `skill:${query}:${skillStart}:${skillEnd}`
-					}
-				}
-				return emptyPromptCommandContext
-			}
-		}
-
-		if (safeCaret > commandTokenEnd) {
-			return emptyPromptCommandContext
-		}
-
-		let replaceEnd = commandTokenEnd
-		while (replaceEnd < commandLineEnd && /[ \t]/.test(value[replaceEnd])) {
-			replaceEnd += 1
-		}
-		const query = commandLine.slice(slashIndex + 1, Math.min(safeCaret, commandTokenEnd))
-		return {
-			open: true,
-			mode: 'command',
-			query,
-			replaceStart: slashIndex,
-			replaceEnd,
-			key: `command:${query}:${slashIndex}:${replaceEnd}`
-		}
-	}
-
-	function buildPromptCommandSuggestions(
-		context: PromptCommandContext,
-		skills: PromptSkill[],
-		skillsLoading: boolean,
-		skillsError: string
-	): PromptCommandSuggestion[] {
-		if (!context.open) {
-			return []
-		}
-
-		const query = context.query.trim().toLowerCase()
-		if (context.mode === 'command') {
-			const matches = promptCommandItems.filter((item) => {
-				const label = item.label.slice(1).toLowerCase()
-				const detail = item.detail?.toLowerCase() || ''
-				return !query || label.startsWith(query) || detail.includes(`/${query}`)
-			})
-			return matches.length
-				? matches
-				: [promptCommandStatus('commands-empty', chrome.i18n.getMessage('promptCommandsEmpty'))]
-		}
-
-		if (skillsLoading && skills.length === 0) {
-			return [promptCommandStatus('skills-loading', chrome.i18n.getMessage('promptSkillsLoading'))]
-		}
-		if (skillsError) {
-			return [promptCommandStatus('skills-error', skillsError)]
-		}
-
-		const matches = skills
-			.filter((skill) => {
-				const name = skill.name.toLowerCase()
-				const description = skill.description?.toLowerCase() || ''
-				return !query || name.includes(query) || description.includes(query)
-			})
-			.slice(0, 20)
-		return matches.length
-			? matches.map((skill) => ({
-					id: `skill:${skill.name}`,
-					label: skill.name,
-					insertText: `${skill.name} `,
-					description: skill.description || chrome.i18n.getMessage('promptSkillDescription'),
-					detail: '/skill',
-					kind: 'skill'
-				}))
-			: [promptCommandStatus('skills-empty', chrome.i18n.getMessage('promptSkillsEmpty'))]
-	}
-
-	function promptCommandStatus(id: string, description: string): PromptCommandSuggestion {
-		return {
-			id,
-			label: '',
-			insertText: '',
-			description,
-			kind: 'status',
-			disabled: true
-		}
-	}
-
-	function firstEnabledPromptCommandIndex(suggestions: PromptCommandSuggestion[]): number {
-		const index = suggestions.findIndex((suggestion) => !suggestion.disabled)
-		return index === -1 ? 0 : index
-	}
-
 	function movePromptCommandSelection(delta: number) {
 		if (promptCommandSuggestions.length === 0) {
 			return
@@ -538,13 +305,6 @@
 				return
 			}
 		}
-	}
-
-	function scrollActivePromptCommandIntoView() {
-		const activeOption = promptCommandListElement?.querySelector<HTMLElement>(
-			`[data-prompt-command-index="${activePromptCommandIndex}"]`
-		)
-		activeOption?.scrollIntoView({ block: 'nearest' })
 	}
 
 	async function ensurePromptSkillsLoaded() {
@@ -899,23 +659,6 @@
 		voiceError = ''
 	}
 
-	function chromeSpeechErrorMessage(error: string): string {
-		const normalized = error.toLowerCase()
-		if (normalized.includes('permission dismissed')) {
-			return 'Chrome speech permission was dismissed.'
-		}
-		if (normalized.includes('permission was not accepted')) {
-			return 'Chrome speech permission was not accepted.'
-		}
-		if (
-			normalized.includes('microphone access was blocked') ||
-			normalized.includes('not-allowed')
-		) {
-			return 'Chrome speech microphone access was blocked.'
-		}
-		return error || 'Chrome speech recognition did not start.'
-	}
-
 	async function startPageAudioRecording(): Promise<boolean> {
 		voiceError = ''
 		voiceTranscript = ''
@@ -934,31 +677,6 @@
 			voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
 			return false
 		}
-	}
-
-	function audioCaptureErrorMessage(error: string): string {
-		const normalized = error.toLowerCase()
-		if (normalized.includes('permission dismissed')) {
-			return 'Microphone permission was dismissed for the current page.'
-		}
-		if (
-			normalized.includes('microphone access was blocked') ||
-			normalized.includes('notallowed') ||
-			normalized.includes('not-allowed')
-		) {
-			return 'Microphone access was blocked for the current page.'
-		}
-		return error || 'Anda voice recording did not start.'
-	}
-
-	function isPermissionError(error: string): boolean {
-		const normalized = error.toLowerCase()
-		return (
-			normalized.includes('permission') ||
-			normalized.includes('microphone access was blocked') ||
-			normalized.includes('notallowed') ||
-			normalized.includes('not-allowed')
-		)
 	}
 
 	async function startAudioRecording() {
@@ -1099,20 +817,6 @@
 			}
 		}
 		await finishSpeechRecognition()
-	}
-
-	function speechRecognitionErrorMessage(error: string): string {
-		switch (error) {
-			case 'not-allowed':
-			case 'service-not-allowed':
-				return 'Microphone access was blocked.'
-			case 'audio-capture':
-				return 'No microphone was found.'
-			case 'network':
-				return 'Browser speech recognition is offline.'
-			default:
-				return error || 'Browser speech recognition failed.'
-		}
 	}
 
 	async function finishPageSpeechRecognition() {
@@ -1308,137 +1012,6 @@
 		}
 		updateLevel()
 	}
-
-	function preferredRecordingMimeType(acceptedFormats: string[] = []): string {
-		if (typeof MediaRecorder === 'undefined') {
-			return ''
-		}
-		const accepted = new Set(acceptedFormats.map((format) => format.toLowerCase()))
-		const directTypes = [
-			{ format: 'webm', mimeType: 'audio/webm;codecs=opus' },
-			{ format: 'webm', mimeType: 'audio/webm' },
-			{ format: 'ogg', mimeType: 'audio/ogg;codecs=opus' },
-			{ format: 'mp4', mimeType: 'audio/mp4' },
-			{ format: 'm4a', mimeType: 'audio/mp4' }
-		]
-		const direct = directTypes.find(
-			({ format, mimeType }) => accepted.has(format) && MediaRecorder.isTypeSupported(mimeType)
-		)
-		if (direct) {
-			return direct.mimeType
-		}
-		const fallbackTypes = [
-			'audio/webm;codecs=opus',
-			'audio/webm',
-			'audio/ogg;codecs=opus',
-			'audio/mp4'
-		]
-		return fallbackTypes.find((type) => MediaRecorder.isTypeSupported(type)) || ''
-	}
-
-	function audioExtensionForMime(mimeType: string): string {
-		const normalized = mimeType.toLowerCase()
-		if (normalized.includes('ogg')) {
-			return 'ogg'
-		}
-		if (normalized.includes('mp4')) {
-			return 'm4a'
-		}
-		if (normalized.includes('wav')) {
-			return 'wav'
-		}
-		return 'webm'
-	}
-
-	async function blobToBase64(blob: Blob): Promise<string> {
-		const dataUrl = await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader()
-			reader.onload = () => resolve(String(reader.result || ''))
-			reader.onerror = () => reject(reader.error || new Error('Failed to read voice audio.'))
-			reader.readAsDataURL(blob)
-		})
-		return dataUrl.split(',', 2)[1] || ''
-	}
-
-	function isMacPlatform(): boolean {
-		if (typeof navigator === 'undefined') {
-			return false
-		}
-		return /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent)
-	}
-
-	function fileSizeLabel(size: number): string {
-		if (size < 1024) {
-			return `${size} B`
-		}
-		if (size < 1024 * 1024) {
-			return `${(size / 1024).toFixed(1)} KB`
-		}
-		return `${(size / 1024 / 1024).toFixed(1)} MB`
-	}
-
-	async function fileToAttachment(file: File): Promise<ChatAttachment> {
-		const blob = arrayBufferToBase64(await file.arrayBuffer())
-		const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : ''
-		const primaryType = file.type.includes('/') ? file.type.split('/')[0] : ''
-		const tags = Array.from(
-			new Set(
-				[primaryType, extension, isTextLike(file.type, extension) ? 'text' : 'file'].filter(
-					Boolean
-				) as string[]
-			)
-		)
-		const resource: ResourceInput = {
-			_id: 0,
-			tags,
-			name: file.name,
-			mime_type: file.type || undefined,
-			blob,
-			size: file.size,
-			metadata: {
-				source: file.webkitRelativePath || 'chrome_extension',
-				last_modified: file.lastModified
-			}
-		}
-		return {
-			id: `${file.name}-${file.size}-${file.lastModified}`,
-			name: file.name,
-			type: file.type || extension || undefined,
-			size: file.size,
-			resource
-		}
-	}
-
-	function isTextLike(mimeType: string, extension: string | undefined): boolean {
-		return (
-			mimeType.startsWith('text/') ||
-			['md', 'markdown', 'txt', 'json', 'csv', 'ts', 'js', 'rs', 'py', 'html', 'css'].includes(
-				extension || ''
-			)
-		)
-	}
-
-	function arrayBufferToBase64(buffer: ArrayBuffer): string {
-		const bytes = new Uint8Array(buffer)
-		const chunkSize = 0x8000
-		let binary = ''
-		for (let index = 0; index < bytes.length; index += chunkSize) {
-			binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-		}
-		return btoa(binary)
-	}
-
-	function speechRecognitionSupported(): boolean {
-		return Boolean(speechRecognitionConstructor())
-	}
-
-	function speechRecognitionConstructor(): BrowserSpeechRecognitionConstructor | null {
-		const scope = globalThis as typeof globalThis & {
-			SpeechRecognition?: BrowserSpeechRecognitionConstructor
-			webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor
-		}
-		return scope.SpeechRecognition || scope.webkitSpeechRecognition || null
-	}
 </script>
 
 <form
@@ -1461,49 +1034,7 @@
 		onchange={handleFileInput}
 	/>
 
-	{#if attachments.length}
-		<div class="mb-2 flex flex-wrap gap-1.5 px-1">
-			{#each attachments as attachment (attachment.id)}
-				{#if attachment.type?.startsWith('image/')}
-					<div
-						class="group relative size-8 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-50 shadow-sm transition-all hover:border-emerald-500/50"
-					>
-						<img
-							src={`data:${attachment.type};base64,${attachment.resource.blob}`}
-							alt={attachment.name}
-							class="size-full object-cover"
-						/>
-						<button
-							type="button"
-							class="absolute top-0 right-0 grid size-3.5 place-items-center rounded-bl-md bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
-							aria-label={chrome.i18n.getMessage('removeAttachment')}
-							onclick={() => removeAttachment(attachment.id)}
-						>
-							<X class="size-2" />
-						</button>
-					</div>
-				{:else}
-					<span
-						class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-stone-200 bg-stone-50 px-2 py-1 text-[11px] text-stone-600"
-						title={attachment.name}
-					>
-						<FileText class="size-3 shrink-0 text-emerald-700" />
-						<span class="max-w-30 truncate">{attachment.name}</span>
-						<span class="shrink-0 text-stone-400">{fileSizeLabel(attachment.size || 0)}</span>
-						<button
-							type="button"
-							class="grid size-4 shrink-0 place-items-center rounded-sm text-stone-400 hover:bg-stone-200 hover:text-stone-700"
-							aria-label={chrome.i18n.getMessage('removeAttachment')}
-							title={chrome.i18n.getMessage('removeAttachment')}
-							onclick={() => removeAttachment(attachment.id)}
-						>
-							<X class="size-3" />
-						</button>
-					</span>
-				{/if}
-			{/each}
-		</div>
-	{/if}
+	<AttachmentList {attachments} onRemove={removeAttachment} />
 
 	{#if attachmentError}
 		<div
@@ -1515,109 +1046,28 @@
 
 	<div class="grid gap-2">
 		{#if inputMode === 'voice'}
-			<div
-				class="voice-panel relative grid min-h-32 place-items-center overflow-hidden rounded-md border border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white"
-				class:active={voiceStage === 'recording' || voiceStage === 'processing' || sending}
-			>
-				<div class="voice-field"></div>
-				<button
-					type="button"
-					class="voice-orb relative grid place-items-center"
-					class:recording={voiceStage === 'recording'}
-					class:processing={voiceStage === 'processing' || sending}
-					style={voiceOrbStyle}
-					disabled={!canRecordVoice}
-					aria-label={voiceStage === 'recording'
-						? chrome.i18n.getMessage('stopRecording')
-						: chrome.i18n.getMessage('startRecording')}
-					title={voiceStage === 'recording'
-						? chrome.i18n.getMessage('stopRecording')
-						: chrome.i18n.getMessage('startRecording')}
-					onclick={toggleRecording}
-				>
-					<span class="voice-orb-core"></span>
-					<span class="voice-orb-icon">
-						{#if voiceStage === 'processing' || sending}
-							<LoaderCircle class="size-5 animate-spin" />
-						{:else if voiceStage === 'recording'}
-							<Square class="size-4 fill-current" />
-						{:else}
-							<Mic class="size-5" />
-						{/if}
-					</span>
-				</button>
-
-				<div class="relative z-10 mt-3 flex items-center gap-2 text-[11px] font-semibold">
-					<span class="voice-status-dot" class:recording={voiceStage === 'recording'}></span>
-					<span>{voiceStatus}</span>
-				</div>
-				<div class="voice-service relative z-10 mt-2 flex items-center gap-1 text-[11px]">
-					<div class="voice-service-switch" aria-label="Voice service">
-						<button
-							type="button"
-							class:active={voiceProvider === 'chrome'}
-							disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
-							title={chrome.i18n.getMessage('useChromeVoice')}
-							onclick={() => selectVoiceProvider('chrome')}
-						>
-							Chrome
-						</button>
-						<button
-							type="button"
-							class:active={voiceProvider === 'anda'}
-							disabled={!canUseAndaVoice || voiceStage !== 'idle'}
-							title={chrome.i18n.getMessage('useAndaVoice')}
-							onclick={() => selectVoiceProvider('anda')}
-						>
-							Anda
-						</button>
-					</div>
-					<span class="voice-service-label"
-						>{voiceProvider === 'chrome'
-							? chrome.i18n.getMessage('chromeVoiceService')
-							: chrome.i18n.getMessage('andaVoiceService')}</span
-					>
-				</div>
-				{#if voiceTranscript}
-					<div
-						class="voice-transcript relative z-10 mt-2 max-w-full truncate px-3 text-center text-[11px] text-emerald-50/90"
-					>
-						{voiceTranscript}
-					</div>
-				{/if}
-			</div>
+			<VoicePanel
+				{voiceStage}
+				{sending}
+				{canRecordVoice}
+				{voiceOrbStyle}
+				{voiceStatus}
+				{voiceProvider}
+				{canUseBrowserSpeech}
+				{canUseAndaVoice}
+				{voiceTranscript}
+				onToggleRecording={toggleRecording}
+				onSelectVoiceProvider={selectVoiceProvider}
+			/>
 		{:else}
 			<div class="prompt-input-wrap">
 				{#if promptCommandPanelOpen}
-					<div class="prompt-command-panel" role="listbox" aria-label={promptCommandPanelTitle}>
-						<div class="prompt-command-title">{promptCommandPanelTitle}</div>
-						<div class="prompt-command-list" bind:this={promptCommandListElement}>
-							{#each promptCommandSuggestions as suggestion, index (suggestion.id)}
-								{#if suggestion.disabled}
-									<div class="prompt-command-status">{suggestion.description}</div>
-								{:else}
-									<button
-										type="button"
-										class="prompt-command-option"
-										class:active={index === activePromptCommandIndex}
-										data-prompt-command-index={index}
-										role="option"
-										aria-selected={index === activePromptCommandIndex}
-										onmousedown={(event) => event.preventDefault()}
-										onclick={() => void applyPromptCommandSuggestion(suggestion)}
-									>
-										<span class="prompt-command-main">
-											<span class="prompt-command-label">{suggestion.label}</span>
-											{#if suggestion.detail}
-												<span class="prompt-command-detail">{suggestion.detail}</span>
-											{/if}
-										</span>
-										<span class="prompt-command-description">{suggestion.description}</span>
-									</button>
-								{/if}
-							{/each}
-						</div>
-					</div>
+					<PromptCommandPanel
+						title={promptCommandPanelTitle}
+						suggestions={promptCommandSuggestions}
+						activeIndex={activePromptCommandIndex}
+						onApply={applyPromptCommandSuggestion}
+					/>
 				{/if}
 				<textarea
 					bind:this={textareaElement}
@@ -1814,342 +1264,6 @@
 	.prompt-input-wrap {
 		position: relative;
 		min-width: 0;
-	}
-
-	.prompt-command-panel {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: calc(100% + 8px);
-		z-index: 30;
-		max-height: min(260px, 45vh);
-		overflow: hidden;
-		border: 1px solid rgba(120, 113, 108, 0.18);
-		border-radius: 8px;
-		background: rgba(255, 255, 255, 0.98);
-		box-shadow:
-			0 18px 48px rgba(36, 45, 39, 0.16),
-			0 0 0 1px rgba(255, 255, 255, 0.7) inset;
-		backdrop-filter: blur(14px);
-	}
-
-	.prompt-command-title {
-		padding: 7px 9px 5px;
-		border-bottom: 1px solid rgba(231, 229, 228, 0.9);
-		font-size: 10px;
-		font-weight: 700;
-		letter-spacing: 0;
-		text-transform: uppercase;
-		color: #78716c;
-	}
-
-	.prompt-command-list {
-		max-height: 218px;
-		overflow-y: auto;
-		padding: 4px;
-	}
-
-	.prompt-command-option {
-		width: 100%;
-		min-width: 0;
-		border: 0;
-		border-radius: 6px;
-		background: transparent;
-		padding: 7px 8px;
-		text-align: left;
-		transition:
-			background 140ms ease-out,
-			box-shadow 140ms ease-out;
-	}
-
-	.prompt-command-option:hover,
-	.prompt-command-option.active {
-		background: #ecfdf5;
-		box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.16);
-	}
-
-	.prompt-command-main {
-		display: flex;
-		min-width: 0;
-		align-items: center;
-		gap: 6px;
-	}
-
-	.prompt-command-label {
-		flex: 0 0 auto;
-		font-family:
-			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-		font-size: 12px;
-		font-weight: 750;
-		color: #065f46;
-	}
-
-	.prompt-command-detail,
-	.prompt-command-description {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.prompt-command-detail {
-		font-size: 10px;
-		font-weight: 600;
-		color: #a16207;
-	}
-
-	.prompt-command-description {
-		display: block;
-		margin-top: 2px;
-		font-size: 11px;
-		color: #57534e;
-	}
-
-	.prompt-command-status {
-		padding: 9px 8px;
-		font-size: 11px;
-		color: #78716c;
-	}
-
-	.voice-panel {
-		isolation: isolate;
-	}
-
-	.voice-panel::before {
-		position: absolute;
-		inset: -50% -50%;
-		content: '';
-		background: conic-gradient(
-			from 0deg,
-			transparent,
-			rgba(16, 185, 129, 0.3),
-			rgba(59, 130, 246, 0.3),
-			rgba(245, 158, 11, 0.3),
-			transparent
-		);
-		filter: blur(40px);
-		opacity: 0;
-		transition: opacity 500ms ease-in-out;
-		z-index: -2;
-	}
-
-	.voice-panel.active::before {
-		opacity: 1;
-		animation: voice-panel-rotate 10s linear infinite;
-	}
-
-	.voice-panel::after {
-		position: absolute;
-		inset: 0;
-		content: '';
-		background-image: radial-gradient(
-			circle at 2px 2px,
-			rgba(255, 255, 255, 0.05) 1px,
-			transparent 0
-		);
-		background-size: 24px 24px;
-		mask-image: radial-gradient(circle, black 30%, transparent 80%);
-		opacity: 0.4;
-		z-index: -1;
-	}
-
-	.voice-field {
-		position: absolute;
-		inset: 0;
-		border-radius: inherit;
-		background: radial-gradient(circle at center, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
-		transform: scale(calc(0.5 + var(--voice-level, 0) * 1.2));
-		opacity: calc(0.1 + var(--voice-level, 0) * 0.5);
-		transition: transform 150ms cubic-bezier(0.2, 0, 0.3, 1);
-	}
-
-	.voice-orb {
-		width: 100px;
-		height: 100px;
-		border: 0;
-		border-radius: 999px;
-		color: white;
-		background: #06120f;
-		position: relative;
-		display: grid;
-		place-items: center;
-		transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-	}
-
-	.voice-orb:hover:not(:disabled) {
-		transform: scale(1.05);
-	}
-
-	.voice-orb::before {
-		content: '';
-		position: absolute;
-		inset: -2px;
-		border-radius: inherit;
-		background: linear-gradient(135deg, #10b981, #3b82f6, #f59e0b);
-		padding: 2px;
-		mask:
-			linear-gradient(#fff 0 0) content-box,
-			linear-gradient(#fff 0 0);
-		mask-composite: exclude;
-		animation: voice-orb-border-rotate 4s linear infinite;
-	}
-
-	.voice-orb.recording::after {
-		content: '';
-		position: absolute;
-		inset: -8px;
-		border-radius: inherit;
-		border: 2px solid rgba(16, 185, 129, 0.4);
-		animation: voice-orb-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-	}
-
-	.voice-orb.recording {
-		transform: scale(calc(1 + var(--voice-level, 0) * 0.2));
-	}
-
-	.voice-orb.processing {
-		animation: voice-orb-breathing 2s ease-in-out infinite;
-	}
-
-	.voice-orb-core {
-		position: absolute;
-		inset: 6px;
-		border-radius: inherit;
-		background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.1), transparent);
-		box-shadow:
-			inset 0 0 20px rgba(16, 185, 129, 0.2),
-			0 0 30px rgba(16, 185, 129, 0.1);
-	}
-
-	.voice-orb-icon {
-		position: relative;
-		z-index: 2;
-		display: grid;
-		place-items: center;
-		width: 44px;
-		height: 44px;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.05);
-		backdrop-filter: blur(4px);
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-		transition: all 0.3s ease;
-	}
-
-	.voice-orb.recording .voice-orb-icon {
-		background: rgba(16, 185, 129, 0.2);
-		box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
-	}
-
-	.voice-status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 999px;
-		background: #10b981;
-		box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
-		transition: all 0.3s ease;
-	}
-
-	.voice-status-dot.recording {
-		background: #f59e0b;
-		box-shadow: 0 0 15px rgba(245, 158, 11, 0.9);
-		animation: status-dot-blink 1s ease-in-out infinite;
-	}
-
-	@keyframes status-dot-blink {
-		50% {
-			opacity: 0.5;
-			transform: scale(0.8);
-		}
-	}
-
-	@keyframes voice-orb-pulse {
-		0% {
-			transform: scale(1);
-			opacity: 0.8;
-		}
-		100% {
-			transform: scale(1.5);
-			opacity: 0;
-		}
-	}
-
-	@keyframes voice-orb-breathing {
-		0%,
-		100% {
-			transform: scale(1);
-			opacity: 0.9;
-		}
-		50% {
-			transform: scale(1.05);
-			opacity: 1;
-		}
-	}
-
-	@keyframes voice-orb-border-rotate {
-		from {
-			rotate: 0deg;
-		}
-		to {
-			rotate: 360deg;
-		}
-	}
-
-	@keyframes voice-panel-rotate {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	.voice-service {
-		max-width: 100%;
-	}
-
-	.voice-service-label {
-		max-width: 136px;
-		overflow: hidden;
-		color: rgba(236, 253, 245, 0.78);
-		font-weight: 650;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.voice-service-switch {
-		display: inline-flex;
-		padding: 2px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 8px;
-		background: rgba(6, 18, 15, 0.42);
-		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-	}
-
-	.voice-service-switch button {
-		min-width: 48px;
-		border: 0;
-		border-radius: 6px;
-		padding: 3px 8px;
-		color: rgba(236, 253, 245, 0.68);
-		font-weight: 700;
-		line-height: 1.2;
-		transition:
-			background 140ms ease-out,
-			color 140ms ease-out,
-			opacity 140ms ease-out;
-	}
-
-	.voice-service-switch button.active {
-		background: rgba(236, 253, 245, 0.92);
-		color: #064e3b;
-	}
-
-	.voice-service-switch button:disabled {
-		cursor: not-allowed;
-	}
-
-	.voice-service-switch button:disabled:not(.active) {
-		opacity: 0.42;
 	}
 
 	@keyframes composer-border-flow {
