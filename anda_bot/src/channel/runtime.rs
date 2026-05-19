@@ -971,7 +971,7 @@ mod tests {
 
         assert_eq!(
             channel_new_prompt_command(&trusted),
-            Some(Some("fresh".to_string()))
+            Some(Some("/new fresh".to_string()))
         );
         assert_eq!(channel_new_prompt_command(&external), None);
     }

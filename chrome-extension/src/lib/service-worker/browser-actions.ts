@@ -101,12 +101,16 @@ export async function executeBrowserAction(
 		}
 	}
 
+	if (args.action === 'execute_javascript' && scriptExecutionMode(args) === 'debugger') {
+		return executeJavaScriptWithDebugger(chromeApi, tabId, args)
+	}
+
 	const [execution] = await chromeApi.scripting.executeScript<
 		BrowserActionResult,
 		BrowserActionArgs
 	>({
 		target: scriptTarget(tabId, args),
-		world: args.action === 'execute_javascript' ? 'MAIN' : 'ISOLATED',
+		world: args.action === 'execute_javascript' ? scriptExecutionWorld(args) : 'ISOLATED',
 		func: pageActionDispatcher,
 		args: [args]
 	})
@@ -157,6 +161,151 @@ function scriptTarget(
 ): { tabId: number; frameIds?: number[] } {
 	const frameId = positiveInteger(args.frame_id)
 	return frameId ? { tabId, frameIds: [frameId] } : { tabId }
+}
+
+type ScriptExecutionMode = 'debugger' | 'scripting'
+type ScriptExecutionWorld = 'ISOLATED' | 'MAIN'
+type RequestedScriptWorld = ScriptExecutionWorld | 'DEBUGGER'
+
+function scriptExecutionMode(args: BrowserActionArgs): ScriptExecutionMode {
+	const world = requestedScriptWorld(args.world)
+	if (world === 'DEBUGGER') {
+		return 'debugger'
+	}
+	return args.use_bridge === false ? 'scripting' : 'debugger'
+}
+
+function scriptExecutionWorld(args: BrowserActionArgs): ScriptExecutionWorld {
+	return requestedScriptWorld(args.world) === 'MAIN' ? 'MAIN' : 'ISOLATED'
+}
+
+function requestedScriptWorld(value: unknown): RequestedScriptWorld {
+	const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+	if (normalized === 'main') {
+		return 'MAIN'
+	}
+	if (normalized === 'debugger' || normalized === 'bridge') {
+		return 'DEBUGGER'
+	}
+	return 'ISOLATED'
+}
+
+type DebuggerTarget = { tabId: number }
+type RuntimeRemoteObject = {
+	type?: string
+	subtype?: string
+	value?: unknown
+	unserializableValue?: string
+	description?: string
+}
+type RuntimeExceptionDetails = {
+	text?: string
+	exception?: RuntimeRemoteObject
+	lineNumber?: number
+	columnNumber?: number
+}
+type RuntimeEvaluateResult = {
+	result?: RuntimeRemoteObject
+	exceptionDetails?: RuntimeExceptionDetails
+}
+
+async function executeJavaScriptWithDebugger(
+	chromeApi: ChromeApi,
+	tabId: number,
+	args: BrowserActionArgs
+): Promise<Record<string, unknown>> {
+	const code = String(args.code || '')
+	if (!code.trim()) {
+		throw new Error('execute_javascript requires code')
+	}
+	if (args.frame_id !== undefined && args.frame_id !== null) {
+		throw new Error(
+			'execute_javascript frame_id is only supported when use_bridge is false and world is isolated or main'
+		)
+	}
+	if (!chromeApi.debugger) {
+		throw new Error('Chrome debugger API is unavailable; enable the debugger permission')
+	}
+
+	const target = { tabId }
+	let attached = false
+	try {
+		await chromeApi.debugger.attach(target, '1.3')
+		attached = true
+		await chromeApi.debugger.sendCommand(target, 'Runtime.enable').catch(() => undefined)
+		const result = await evaluateDebuggerJavaScript(chromeApi, target, code)
+		return { executed: true, world: 'debugger', result }
+	} finally {
+		if (attached) {
+			await chromeApi.debugger.detach(target).catch(() => undefined)
+		}
+	}
+}
+
+async function evaluateDebuggerJavaScript(
+	chromeApi: ChromeApi,
+	target: DebuggerTarget,
+	code: string
+): Promise<unknown> {
+	const expression = code.trim().replace(/;+$/, '')
+	const expressionResult = await sendDebuggerRuntimeEvaluate(
+		chromeApi,
+		target,
+		`(async () => (${expression}))()`
+	)
+	if (!isSyntaxException(expressionResult.exceptionDetails)) {
+		return debuggerEvaluationValue(expressionResult)
+	}
+
+	const bodyResult = await sendDebuggerRuntimeEvaluate(
+		chromeApi,
+		target,
+		`(async () => {\n${code}\n})()`
+	)
+	return debuggerEvaluationValue(bodyResult)
+}
+
+function sendDebuggerRuntimeEvaluate(
+	chromeApi: ChromeApi,
+	target: DebuggerTarget,
+	expression: string
+): Promise<RuntimeEvaluateResult> {
+	return chromeApi.debugger!.sendCommand<RuntimeEvaluateResult>(target, 'Runtime.evaluate', {
+		expression,
+		awaitPromise: true,
+		returnByValue: true,
+		userGesture: true,
+		replMode: true
+	})
+}
+
+function isSyntaxException(details?: RuntimeExceptionDetails): boolean {
+	return debuggerExceptionText(details).includes('SyntaxError')
+}
+
+function debuggerEvaluationValue(evaluation: RuntimeEvaluateResult): unknown {
+	if (evaluation.exceptionDetails) {
+		throw new Error(
+			`execute_javascript failed: ${debuggerExceptionText(evaluation.exceptionDetails)}`
+		)
+	}
+	const result = evaluation.result
+	if (!result || result.type === 'undefined') {
+		return null
+	}
+	if ('value' in result) {
+		return result.value
+	}
+	return result.unserializableValue || result.description || null
+}
+
+function debuggerExceptionText(details?: RuntimeExceptionDetails): string {
+	return (
+		details?.exception?.description ||
+		details?.exception?.value ||
+		details?.text ||
+		'Unknown JavaScript exception'
+	).toString()
 }
 
 export async function activeTab(chromeApi: ChromeApi): Promise<ChromeTabInfo | null> {

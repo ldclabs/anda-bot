@@ -29,6 +29,8 @@ export type BrowserActionArgs = {
 	text?: string
 	value?: string
 	code?: string
+	world?: string
+	use_bridge?: boolean
 	query?: string
 	key?: string
 	amount?: number
@@ -171,6 +173,15 @@ export interface ChromeApi {
 	}
 	windows?: {
 		update(windowId: number, updateInfo: { focused?: boolean }): Promise<unknown>
+	}
+	debugger?: {
+		attach(target: { tabId: number }, requiredVersion: string): Promise<void>
+		detach(target: { tabId: number }): Promise<void>
+		sendCommand<Result = unknown>(
+			target: { tabId: number },
+			method: string,
+			commandParams?: Record<string, unknown>
+		): Promise<Result>
 	}
 	scripting: {
 		executeScript<Result, Args>(details: {

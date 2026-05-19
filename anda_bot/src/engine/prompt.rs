@@ -75,25 +75,27 @@ impl From<String> for PromptCommand {
         match command.to_ascii_lowercase().as_str() {
             "goal" | "loop" => {
                 required_prompt_command(command, rest, trimmed, |prompt| Self::Goal {
-                    prompt: prompt.to_string(),
+                    prompt: prompt.trim().to_string(),
                 })
             }
             "side" | "btw" => {
                 required_prompt_command(command, rest, trimmed, |prompt| Self::Side {
-                    prompt: prompt.to_string(),
+                    prompt: prompt.trim().to_string(),
                 })
             }
             "steer" => required_prompt_command(command, rest, trimmed, |prompt| Self::Steer {
-                prompt: prompt.to_string(),
+                prompt: prompt.trim().to_string(),
             }),
             "skill" => parse_skill_command(rest, trimmed),
             "stop" | "cancel" => Self::Stop {
-                prompt: (!trimmed.is_empty()).then(|| prompt.to_string()),
+                prompt: (!trimmed.is_empty()).then(|| prompt.trim().to_string()),
             },
             "new" | "clear" => Self::New {
-                prompt: (!rest.is_empty()).then(|| prompt.to_string()),
+                prompt: (!rest.is_empty()).then(|| prompt.trim().to_string()),
             },
-            _ => Self::Plain { prompt },
+            _ => Self::Plain {
+                prompt: prompt.trim().to_string(),
+            },
         }
     }
 }
@@ -139,7 +141,7 @@ fn parse_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
 
     PromptCommand::Skill {
         skill: skill.to_string(),
-        prompt: full_prompt.to_string(),
+        prompt: full_prompt.trim().to_string(),
     }
 }
 
@@ -178,7 +180,7 @@ mod tests {
         assert_eq!(
             PromptCommand::from("/new fresh start".to_string()),
             PromptCommand::New {
-                prompt: Some("fresh start".to_string())
+                prompt: Some("/new fresh start".to_string())
             }
         );
         assert_eq!(

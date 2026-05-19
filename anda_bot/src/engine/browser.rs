@@ -111,6 +111,12 @@ pub struct ChromeBrowserToolArgs {
     pub code: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_bridge: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -787,9 +793,18 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                     "type": "string",
                     "description": "JavaScript expression or function body to execute. Bare expressions like document.title return automatically; multi-statement code should use return. Keep returned data compact and serializable."
                 },
+                "world": {
+                    "type": ["string", "null"],
+                    "enum": ["debugger", "isolated", "main", null],
+                    "description": "Execution mode. debugger uses Chrome DevTools Runtime.evaluate and is the default CSP-resistant page-context bridge. isolated or main use chrome.scripting.executeScript when use_bridge is false."
+                },
+                "use_bridge": {
+                    "type": ["boolean", "null"],
+                    "description": "Whether to use the CSP-resistant debugger bridge. Defaults to true. Set false to force chrome.scripting.executeScript with world isolated or main."
+                },
                 "frame_id": {
                     "type": ["integer", "null"],
-                    "description": "Optional frame id. Omit to run in the main frame."
+                    "description": "Optional frame id for non-bridge chrome.scripting.executeScript mode. Omit when using the default debugger bridge."
                 },
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
@@ -811,6 +826,8 @@ fn legacy_browser_properties() -> Value {
         "text": { "type": ["string", "null"], "description": "Text for type_text or copy_to_clipboard." },
         "value": { "type": ["string", "null"], "description": "Value for select_dropdown." },
         "code": { "type": ["string", "null"], "description": "JavaScript expression or function body for execute_javascript." },
+        "world": { "type": ["string", "null"], "enum": ["debugger", "isolated", "main", null], "description": "Execution mode for execute_javascript. debugger is the default CSP-resistant page-context bridge; isolated/main use chrome.scripting.executeScript when use_bridge is false." },
+        "use_bridge": { "type": ["boolean", "null"], "description": "Whether execute_javascript should use the CSP-resistant debugger bridge. Defaults to true." },
         "query": { "type": ["string", "null"], "description": "Search query for find_in_page." },
         "url": { "type": ["string", "null"], "description": "URL for navigate, open_tab, or launch_browser." },
         "key": { "type": ["string", "null"], "description": "Keyboard key for press_key." },
@@ -937,7 +954,10 @@ fn validate_browser_action_for_tool(
         }
         BrowserAction::FindInPage => require_field(&args.query, "query", "find_in_page"),
         BrowserAction::CopyToClipboard => require_field(&args.text, "text", "copy_to_clipboard"),
-        BrowserAction::ExecuteJavascript => require_field(&args.code, "code", "execute_javascript"),
+        BrowserAction::ExecuteJavascript => {
+            require_field(&args.code, "code", "execute_javascript")?;
+            validate_script_world(&args.world)
+        }
         BrowserAction::GetCurrentTab
         | BrowserAction::Snapshot
         | BrowserAction::ExtractText
@@ -1031,6 +1051,19 @@ fn require_selector_or_coordinates(args: &ChromeBrowserToolArgs) -> Result<(), B
             args.action
         )
         .into())
+    }
+}
+
+fn validate_script_world(value: &Option<String>) -> Result<(), BoxError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "debugger" | "isolated" | "main" => Ok(()),
+        world => Err(format!(
+            "chrome_browser action \"execute_javascript\" has unsupported world {world:?}"
+        )
+        .into()),
     }
 }
 
@@ -1135,6 +1168,8 @@ mod tests {
             text: None,
             value: None,
             code: None,
+            world: None,
+            use_bridge: None,
             query: None,
             url: None,
             key: None,
@@ -1184,6 +1219,22 @@ mod tests {
 
         args.selector = Some("button[type=submit]".to_string());
         assert!(validate_browser_action(&args).is_ok());
+    }
+
+    #[test]
+    fn browser_action_validation_rejects_unknown_script_world() {
+        let mut args = snapshot_args();
+        args.action = BrowserAction::ExecuteJavascript;
+        args.code = Some("document.title".to_string());
+
+        args.world = Some("debugger".to_string());
+        assert!(validate_browser_action(&args).is_ok());
+
+        args.world = Some("main".to_string());
+        assert!(validate_browser_action(&args).is_ok());
+
+        args.world = Some("page".to_string());
+        assert!(validate_browser_action(&args).is_err());
     }
 
     #[test]

@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(
             new_prompt_command(" /NEW fresh start "),
             Some(NewPromptCommand {
-                prompt: Some("fresh start".to_string())
+                prompt: Some("/NEW fresh start".to_string())
             })
         );
         assert_eq!(

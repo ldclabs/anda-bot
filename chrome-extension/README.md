@@ -76,6 +76,6 @@ The agent can use the split browser tools below. Page, input, and script tools i
 
 - `execute_javascript`
 
-`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`.
+`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. By default it uses a CSP-resistant debugger bridge (`use_bridge: true`) so it can evaluate in the page context even on sites with strict CSP. Set `use_bridge: false` with `world: "isolated"` or `world: "main"` to force `chrome.scripting.executeScript` injection.
 
 Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.
