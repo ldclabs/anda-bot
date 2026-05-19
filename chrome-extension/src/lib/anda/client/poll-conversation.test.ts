@@ -138,7 +138,11 @@ describe('Channel.sendPrompt', () => {
 	it('finishes a one-shot poller when agent_run returns direct content', async () => {
 		const api = createApi({
 			defaultAgentOutput: {
-				content: 'assistant reply',
+				content: '',
+				chat_history: [
+					{ role: 'user', content: [{ type: 'Text', text: 'hello' }] },
+					{ role: 'assistant', content: [{ type: 'Text', text: 'assistant reply' }] }
+				],
 				usage: usage()
 			}
 		})
@@ -280,6 +284,6 @@ describe('Channel.sendPrompt', () => {
 		}
 
 		await expect(channel.loadPreviousConversations()).resolves.toBe(true)
-		expect(channel.messageGroups.map((group) => group.conversation._id)).toContain(1)
+		expect(channel.messageGroups.map((group) => group._id)).toContain(1)
 	})
 })

@@ -107,6 +107,15 @@
   "ready": {
     "message": "جاهز"
   },
+  "sideTasksLabel": {
+    "message": "المهام الجانبية"
+  },
+  "expandSideTasks": {
+    "message": "توسيع المهام الجانبية"
+  },
+  "collapseSideTasks": {
+    "message": "طي المهام الجانبية"
+  },
   "promptCommandsLabel": {
     "message": "أوامر المطالبة"
   },

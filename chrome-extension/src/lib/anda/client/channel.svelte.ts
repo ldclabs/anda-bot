@@ -4,8 +4,8 @@ import {
 	isTransientWebSocketError
 } from '$lib/service-worker/settings'
 import { delay } from '$lib/utils/helper'
-import { parseNewPromptCommand } from './commands'
-import { conversationToGroup, normalizeMessage, splitLegacyThoughtText } from './conversations'
+import { parsePromptCommand } from './commands'
+import { conversationToGroup, normalizeMessage } from './conversations'
 import { PollConversation } from './poll-conversation'
 import type {
 	AgentInput,
@@ -21,13 +21,9 @@ import type {
 	ToolInput,
 	ToolOutput
 } from './types'
-import { SideMessageConversationId, SubmitMessageConversationId } from './types'
+import { SubmitMessageConversationId } from './types'
 
 const pollingIntervalMs = 3000
-
-function isPersistedConversationId(conversationId: number): boolean {
-	return conversationId > SideMessageConversationId && conversationId < SubmitMessageConversationId
-}
 
 export interface API {
 	requestExtra(): Promise<Record<string, unknown>>
@@ -41,6 +37,7 @@ export class Channel extends EventTarget {
 	#session: string = $state('')
 	#conversation: Conversation | null = $state(null)
 	#messageGroups: MessageGroup[] = $state([])
+	#sideMessages: ChatMessage[] = $state([])
 	#sending: boolean = $state(false)
 	#loadingPrevious: boolean = $state(false)
 	#pollingConversation: number = $state(0)
@@ -73,7 +70,11 @@ export class Channel extends EventTarget {
 	}
 
 	get messageGroups(): MessageGroup[] {
-		return this.#messageGroups
+		return [...this.#messageGroups]
+	}
+
+	get sideMessages(): ChatMessage[] {
+		return this.#sideMessages
 	}
 
 	destroy(): void {
@@ -136,20 +137,36 @@ export class Channel extends EventTarget {
 
 		this.#sending = true
 		const resources = attachments.map((attachment) => attachment.resource)
-		const newCommand = parseNewPromptCommand(prompt)
+		const command = parsePromptCommand(prompt)
 
 		try {
 			const meta = await this.requestMeta()
 			const poller = new PollConversation()
-			if (newCommand) {
+			if (command && command.kind === 'new') {
 				this.clearConversationDisplay()
-				if (newCommand.prompt) {
+				if (command.prompt) {
 					this.appendLocalMessage({
 						role: 'user',
-						text: prompt,
+						text: command.prompt,
 						conversation: SubmitMessageConversationId
 					})
 				}
+			} else if (command && command.kind === 'side') {
+				if (!command.prompt) {
+					return null
+				}
+
+				const timestamp = Date.now()
+				this.#sideMessages = [
+					...this.#sideMessages,
+					{
+						id: `m-side-${timestamp}`,
+						role: 'user',
+						text: command.prompt,
+						conversation: SubmitMessageConversationId,
+						timestamp
+					}
+				]
 			} else {
 				this.appendLocalMessage({
 					role: 'user',
@@ -167,29 +184,36 @@ export class Channel extends EventTarget {
 				this.updateLatestConversation(conversation)
 
 				this.pollConversationLoop(poller)
-			} else if (output.failed_reason) {
+			}
+
+			if (output.failed_reason) {
 				this.appendSystemMessage(output.failed_reason)
 				this.#api.updateStatus('failed', null)
 				poller.finish()
-			} else if (output.content && output.content.trim()) {
-				const content = splitLegacyThoughtText(output.content)
-
+			} else if (output.chat_history && output.chat_history.length > 0) {
+				// side messages
 				const timestamp = Date.now()
-				this.appendLocalMessage({
-					role: 'assistant',
-					text: content.text,
-					thinkingText: content.thinkingText,
-					conversation: SideMessageConversationId
-				})
+				const messages = output.chat_history
+					.map((message, index) =>
+						normalizeMessage(message, {
+							conversation: 0,
+							index,
+							fallbackTimestamp: timestamp
+						})
+					)
+					.filter((message) => !!message)
 
-				poller.push({
-					id: `m-0-${timestamp}`,
-					conversation: SideMessageConversationId,
-					role: 'assistant',
-					text: content.text,
-					thinkingText: content.thinkingText,
-					timestamp
-				})
+				const sideMessages = []
+				for (const msg of this.#sideMessages) {
+					if (
+						msg.id.startsWith('m-side-') &&
+						messages.some((m) => m.text.trim() === msg.text.trim() && m.role === msg.role)
+					) {
+						continue
+					}
+					sideMessages.push(msg)
+				}
+				this.#sideMessages = [...sideMessages, ...messages]
 				this.#api.updateStatus('completed', null)
 				poller.finish()
 			} else {
@@ -370,24 +394,23 @@ export class Channel extends EventTarget {
 		this.#conversationAncestors = conversation.ancestors || []
 		this.#api.updateStatus(conversation.status, null)
 		const group = conversationToGroup(conversation)
-
-		const existingIndex = this.#messageGroups.findIndex(
-			(existing) => existing.conversation._id >= conversation._id
+		const submitGroup = this.#messageGroups.find(
+			(existing) => existing._id === SubmitMessageConversationId
 		)
 
-		if (existingIndex >= 0) {
-			const existingSideMessages = this.#messageGroups[existingIndex].messages.filter(
-				(message) => message.conversation === SideMessageConversationId
-			)
-			if (existingSideMessages.length > 0) {
-				group.messages = [...existingSideMessages, ...group.messages]
-				group.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-			}
-			this.#messageGroups.length = existingIndex
+		const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
+		if (idx >= 0) {
+			this.#messageGroups.length = idx
 		}
 
 		group.current = true
-		this.#messageGroups = [...this.#messageGroups, group]
+		this.#messageGroups.push(group)
+		if (submitGroup) {
+			this.#messageGroups.push(submitGroup)
+			this.removeSubmittedMessage((msg) =>
+				group.messages.some((m) => m.text.trim() === msg.text.trim() && m.role === msg.role)
+			)
+		}
 	}
 
 	private updateConversationChain(conversations: Conversation[]): void {
@@ -405,12 +428,12 @@ export class Channel extends EventTarget {
 			const a = existing[i]!
 			const b = incoming[j]!
 
-			if (a.conversation._id === b.conversation._id) {
+			if (a._id === b._id) {
 				// Replace existing with incoming when IDs match
 				merged.push(b)
 				i++
 				j++
-			} else if (a.conversation._id < b.conversation._id) {
+			} else if (a._id < b._id) {
 				merged.push(a)
 				i++
 			} else {
@@ -425,11 +448,8 @@ export class Channel extends EventTarget {
 			merged.push(conv)
 		}
 
+		this.#conversationAncestors = merged[0]?.ancestors || []
 		this.#messageGroups = merged
-		const firstPersistedConversation = merged.find((group) =>
-			isPersistedConversationId(group.conversation._id)
-		)?.conversation
-		this.#conversationAncestors = firstPersistedConversation?.ancestors || []
 	}
 
 	private clearConversationDisplay(): void {
@@ -445,20 +465,24 @@ export class Channel extends EventTarget {
 	}
 
 	private appendSystemMessage(text: string): void {
-		this.appendLocalMessage({ role: 'system', text, conversation: SideMessageConversationId })
+		this.appendLocalMessage({
+			role: 'system',
+			text,
+			conversation: this.#conversation?._id || SubmitMessageConversationId
+		})
 	}
 
 	private appendLocalMessage(message: Omit<ChatMessage, 'id'>): void {
 		this.updateMessageGroupWith(
-			message.conversation || this.#conversation?._id || SideMessageConversationId,
+			message.conversation || this.#conversation?._id || SubmitMessageConversationId,
 			(group) => {
 				const timestamp = Date.now()
 				group.messages = [
 					...group.messages,
 					{
 						...message,
-						id: `m-${group.conversation._id}-${timestamp}`,
-						conversation: group.conversation._id,
+						id: `m-${group._id}-${timestamp}`,
+						conversation: group._id,
 						timestamp
 					}
 				]
@@ -467,27 +491,24 @@ export class Channel extends EventTarget {
 		)
 	}
 
-	private updateMessageGroupWith(conversation: number, fn: (group: MessageGroup) => MessageGroup) {
-		const idx = this.#messageGroups.findIndex((group) => group.conversation._id === conversation)
+	private removeSubmittedMessage(isSubmitted: (msg: ChatMessage) => boolean): void {
+		this.updateMessageGroupWith(SubmitMessageConversationId, (group) => {
+			group.messages = group.messages.filter((message) => !isSubmitted(message))
+			return { ...group }
+		})
+	}
+
+	private updateMessageGroupWith(_id: number, fn: (group: MessageGroup) => MessageGroup) {
+		const idx = this.#messageGroups.findIndex((group) => group._id === _id)
 		if (idx >= 0) {
 			const updated = fn(this.#messageGroups[idx]!)
 			this.#messageGroups[idx] = updated
 		} else {
 			const nowMs = Date.now()
 			const group = fn({
-				conversation: {
-					_id: conversation,
-					user: '',
-					status: 'submitted',
-					usage: {
-						input_tokens: 0,
-						output_tokens: 0,
-						cached_tokens: 0,
-						requests: 0
-					},
-					created_at: nowMs,
-					updated_at: nowMs
-				} as Conversation,
+				_id: SubmitMessageConversationId,
+				status: 'submitted',
+				ancestors: [],
 				createdAt: nowMs,
 				updatedAt: nowMs,
 				messages: [],

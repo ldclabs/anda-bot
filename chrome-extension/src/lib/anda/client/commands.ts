@@ -1,8 +1,9 @@
-export type NewPromptCommand = {
-	prompt: string | null
+export type PromptCommand = {
+	kind: 'new' | 'side'
+	prompt: string
 }
 
-export function parseNewPromptCommand(prompt: string): NewPromptCommand | null {
+export function parsePromptCommand(prompt: string): PromptCommand | null {
 	const trimmed = prompt.trim()
 	if (!trimmed.startsWith('/')) {
 		return null
@@ -11,10 +12,16 @@ export function parseNewPromptCommand(prompt: string): NewPromptCommand | null {
 	const body = trimmed.slice(1)
 	const commandEnd = body.search(/\s/)
 	const command = (commandEnd === -1 ? body : body.slice(0, commandEnd)).toLowerCase()
-	if (command !== 'new' && command !== 'clear') {
-		return null
-	}
 
 	const rest = commandEnd === -1 ? '' : body.slice(commandEnd).trim()
-	return { prompt: rest || null }
+	switch (command) {
+		case 'new':
+		case 'clear':
+			return { kind: 'new', prompt: rest ? trimmed : '' }
+		case 'side':
+		case 'btw':
+			return { kind: 'side', prompt: rest ? trimmed : '' }
+		default:
+			return null
+	}
 }

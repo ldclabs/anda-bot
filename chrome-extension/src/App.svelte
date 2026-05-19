@@ -14,12 +14,24 @@
 	} from '$lib/anda/client/types'
 	import { Button } from '$lib/components/ui/button/index.js'
 	import { scrollIntoView } from '$lib/utils/document'
-	import { Bot, CircleAlert, History, LoaderCircle, Radio, Settings } from '@lucide/svelte'
+	import {
+		Bot,
+		ChevronDown,
+		ChevronUp,
+		CircleAlert,
+		History,
+		LoaderCircle,
+		Radio,
+		Settings
+	} from '@lucide/svelte'
 	import { onMount, tick } from 'svelte'
 
 	let settingsOpen = $state(false)
 	let setupGuideOpen = $state(false)
+	let sideMessagesOpen = $state(false)
 	let messagesElement: HTMLElement | null = null
+	let sideMessagesElement: HTMLElement | null = $state(null)
+	let observedSideMessageCount = 0
 
 	const status = $derived(andaClient.status)
 	const syncing = $derived(andaClient.activeChannel?.syncing || false)
@@ -39,6 +51,9 @@
 	const visibleMessageGroups = $derived.by<MessageGroup[]>(() =>
 		displayMessageGroups(andaClient.activeChannel?.messageGroups || [])
 	)
+	const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
+	const sideMessageCount = $derived(sideMessages.length)
+	const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
 
 	onMount(() => {
 		andaClient
@@ -69,14 +84,13 @@
 		}
 	})
 
-	function handleMessagesScroll() {
-		if (!messagesElement) {
-			return
+	$effect(() => {
+		if (sideMessageCount > observedSideMessageCount) {
+			sideMessagesOpen = true
+			tick().then(scrollSideMessagesToEnd)
 		}
-		if (messagesElement.scrollTop < 32 && hasPreviousConversations && !loadingPrevious) {
-			loadPreviousConversations()
-		}
-	}
+		observedSideMessageCount = sideMessageCount
+	})
 
 	async function loadPreviousConversations() {
 		if (loadingPrevious || !hasPreviousConversations) {
@@ -99,6 +113,19 @@
 		settingsOpen = !settingsOpen
 		if (settingsOpen) {
 			setupGuideOpen = !andaClient.settings.token.trim()
+		}
+	}
+
+	function toggleSideMessagesPanel() {
+		sideMessagesOpen = !sideMessagesOpen
+		if (sideMessagesOpen) {
+			tick().then(scrollSideMessagesToEnd)
+		}
+	}
+
+	function scrollSideMessagesToEnd() {
+		if (sideMessagesElement) {
+			sideMessagesElement.scrollTop = sideMessagesElement.scrollHeight
 		}
 	}
 
@@ -204,6 +231,15 @@
 			.filter((group) => group.messages.length)
 	}
 
+	function displaySideMessages(sourceMessages: ChatMessage[]): ChatMessage[] {
+		return displayMessages(
+			sourceMessages.map((message, index) => ({
+				...message,
+				id: `side-${index}-${message.id}`
+			}))
+		)
+	}
+
 	function detailRunId(message: ChatMessage): string {
 		return `${message.id}-detail-run`
 	}
@@ -297,7 +333,6 @@
 	<main
 		bind:this={messagesElement}
 		class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
-		onscroll={handleMessagesScroll}
 	>
 		{#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
 			<div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
@@ -334,7 +369,7 @@
 				</div>
 			{/if}
 
-			{#each visibleMessageGroups as group (group.conversation._id)}
+			{#each visibleMessageGroups as group (group._id)}
 				<section class="grid w-full gap-2">
 					{#if visibleMessageGroups.length > 1}
 						<div
@@ -343,7 +378,7 @@
 							<span class="h-px flex-1 bg-stone-200"></span>
 							<span class="max-w-[70%] truncate">{groupLabel(group)}</span>
 							<span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-stone-500">
-								{group.conversation.status}
+								{group.status}
 							</span>
 							<span class="h-px flex-1 bg-stone-200"></span>
 						</div>
@@ -356,6 +391,53 @@
 			{/each}
 		{/if}
 	</main>
+
+	{#if sideMessageCount > 0}
+		<section class="border-t border-emerald-900/10 bg-emerald-50/80 backdrop-blur">
+			<button
+				type="button"
+				class="flex h-10 w-full items-center gap-2 px-3 text-left transition hover:bg-white/55"
+				aria-expanded={sideMessagesOpen}
+				aria-label={chrome.i18n.getMessage(
+					sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
+				)}
+				title={chrome.i18n.getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
+				onclick={toggleSideMessagesPanel}
+			>
+				<span
+					class="grid size-6 shrink-0 place-items-center rounded-md border border-emerald-900/10 bg-white/85 text-emerald-800 shadow-sm"
+				>
+					<Bot class="size-3.5" />
+				</span>
+				<span class="min-w-0 flex-1 truncate text-xs font-bold text-stone-700">
+					{chrome.i18n.getMessage('sideTasksLabel')}
+				</span>
+				<span
+					class="shrink-0 rounded-full border border-emerald-900/10 bg-white/80 px-1.5 py-0.5 text-[10px] leading-none font-bold text-emerald-800"
+				>
+					{sideMessageCount}
+				</span>
+				{#if sideMessagesOpen}
+					<ChevronDown class="size-4 shrink-0 text-stone-500" />
+				{:else}
+					<ChevronUp class="size-4 shrink-0 text-stone-500" />
+				{/if}
+			</button>
+
+			{#if sideMessagesOpen}
+				<div
+					bind:this={sideMessagesElement}
+					class="scrollbar-slim max-h-3/4 overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
+				>
+					<div class="grid gap-2">
+						{#each visibleSideMessages as message (message.id)}
+							<ChatMessageItem {message} />
+						{/each}
+					</div>
+				</div>
+			{/if}
+		</section>
+	{/if}
 
 	<footer class="border-t border-stone-200 bg-[#f6f8f5]/90 p-2.5 backdrop-blur">
 		<ChatComposer

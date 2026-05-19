@@ -107,6 +107,15 @@
   "ready": {
     "message": "Ready"
   },
+  "sideTasksLabel": {
+    "message": "Side tasks"
+  },
+  "expandSideTasks": {
+    "message": "Expand side tasks"
+  },
+  "collapseSideTasks": {
+    "message": "Collapse side tasks"
+  },
   "promptCommandsLabel": {
     "message": "Prompt commands"
   },

@@ -76,7 +76,6 @@ export interface VoiceRecordingInput {
 	ttsEnabled: boolean
 }
 
-export const SideMessageConversationId = 0
 export const SubmitMessageConversationId = Number.MAX_SAFE_INTEGER
 
 export interface ChatMessage {
@@ -90,7 +89,9 @@ export interface ChatMessage {
 }
 
 export interface MessageGroup {
-	conversation: Conversation
+	_id: number
+	status: ConversationStatus
+	ancestors: number[]
 	messages: ChatMessage[]
 	createdAt: number
 	updatedAt: number

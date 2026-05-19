@@ -23,7 +23,9 @@ export function conversationToGroup(conversation: Conversation): MessageGroup {
 	}
 
 	return {
-		conversation: conversation,
+		_id: conversation._id,
+		status: conversation.status,
+		ancestors: conversation.ancestors || [],
 		createdAt: conversation.created_at,
 		updatedAt: conversation.updated_at,
 		messages,
@@ -49,13 +51,14 @@ export function normalizeMessage(
 	if (!content.text && !content.thinkingText) {
 		return null
 	}
+	const timestamp = raw.timestamp || context.fallbackTimestamp || Date.now()
 	return {
-		id: `m-${context.conversation}-${context.index}`,
+		id: `m-${context.conversation}-${context.index}-${timestamp}`,
 		conversation: context.conversation,
 		role: raw.role,
 		text: content.text,
 		thinkingText: content.thinkingText,
-		timestamp: raw.timestamp || context.fallbackTimestamp
+		timestamp
 	}
 }
 

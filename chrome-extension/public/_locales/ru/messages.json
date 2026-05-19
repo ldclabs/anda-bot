@@ -107,6 +107,15 @@
   "ready": {
     "message": "Готово"
   },
+  "sideTasksLabel": {
+    "message": "Побочные задачи"
+  },
+  "expandSideTasks": {
+    "message": "Развернуть побочные задачи"
+  },
+  "collapseSideTasks": {
+    "message": "Свернуть побочные задачи"
+  },
   "promptCommandsLabel": {
     "message": "Системные команды"
   },

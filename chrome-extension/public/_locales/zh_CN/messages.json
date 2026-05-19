@@ -107,6 +107,15 @@
   "ready": {
     "message": "准备就绪"
   },
+  "sideTasksLabel": {
+    "message": "Side 任务"
+  },
+  "expandSideTasks": {
+    "message": "展开 Side 任务"
+  },
+  "collapseSideTasks": {
+    "message": "收起 Side 任务"
+  },
   "promptCommandsLabel": {
     "message": "提示命令"
   },

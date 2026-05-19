@@ -107,6 +107,15 @@
   "ready": {
     "message": "Listo"
   },
+  "sideTasksLabel": {
+    "message": "Tareas laterales"
+  },
+  "expandSideTasks": {
+    "message": "Expandir tareas laterales"
+  },
+  "collapseSideTasks": {
+    "message": "Contraer tareas laterales"
+  },
   "promptCommandsLabel": {
     "message": "Comandos de sistema"
   },

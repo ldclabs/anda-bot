@@ -107,6 +107,15 @@
   "ready": {
     "message": "Prêt"
   },
+  "sideTasksLabel": {
+    "message": "Tâches latérales"
+  },
+  "expandSideTasks": {
+    "message": "Développer les tâches latérales"
+  },
+  "collapseSideTasks": {
+    "message": "Réduire les tâches latérales"
+  },
   "promptCommandsLabel": {
     "message": "Commandes système"
   },
