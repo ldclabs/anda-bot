@@ -24,6 +24,11 @@ pub enum ConversationsToolArgs {
     GetSourceState {},
     /// List the state of all conversations associated with sources.
     ListSourceState {},
+    /// Delete the state of a source-bound conversation without deleting conversation records.
+    DeleteSourceState {
+        /// The source key to delete
+        source: String,
+    },
     /// Get a conversation by ID
     GetConversation {
         /// The ID of the conversation to get
@@ -176,6 +181,22 @@ impl ConversationsTool {
         Ok(())
     }
 
+    pub async fn delete_source_state(&self, source: &str) -> Result<Option<SourceState>, BoxError> {
+        let (removed, fv) = {
+            let mut map = self.source_conversation.write();
+            let removed = map.remove(source);
+            if removed.is_none() {
+                return Ok(None);
+            }
+            (removed, Fv::serialized(&*map, None)?)
+        };
+        self.conversations
+            .conversations
+            .save_extension("source_conversation".to_string(), fv)
+            .await?;
+        Ok(removed)
+    }
+
     #[allow(unused)]
     pub fn tools_usage(&self) -> HashMap<String, Usage> {
         self.tools_usage.read().clone()
@@ -225,6 +246,7 @@ impl Tool<BaseCtx> for ConversationsTool {
             "Read the caller's conversation state and conversation history. ",
             "Use ListSourceState to inspect all tracked conversation sources and discover each source's current conversation _id. ",
             "Use GetConversation to load the full contents of one conversation when you already have its _id. ",
+            "Use DeleteSourceState to remove a source binding without deleting conversation records. ",
             "Use SearchConversations to find earlier conversations by keyword, topic, or phrase when the _id is unknown. "
         ).to_string()
     }
@@ -241,13 +263,18 @@ impl Tool<BaseCtx> for ConversationsTool {
                         "enum": [
                             "GetSourceState",
                             "ListSourceState",
+                            "DeleteSourceState",
                             "GetConversation",
                             "GetConversationDelta",
                             "BatchGetConversations",
                             "ListPrevConversations",
                             "SearchConversations"
                         ],
-                        "description": "Conversation operation to perform. Prefer ListSourceState to inspect all source-bound conversation states and discover conv_id values, GetConversation to load a full conversation by _id, and SearchConversations to locate history by keyword when the _id is unknown."
+                        "description": "Conversation operation to perform. Prefer ListSourceState to inspect all source-bound conversation states and discover conv_id values, DeleteSourceState to remove a source binding without deleting conversations, GetConversation to load a full conversation by _id, and SearchConversations to locate history by keyword when the _id is unknown."
+                    },
+                    "source": {
+                        "type": ["string", "null"],
+                        "description": "Source key to delete. Only for DeleteSourceState; use a key returned by ListSourceState."
                     },
                     "_id": {
                         "type": "integer",
@@ -344,6 +371,33 @@ impl Tool<BaseCtx> for ConversationsTool {
                     )
                 } else {
                     json!(states)
+                };
+
+                Ok(ToolOutput::new(Response::Ok {
+                    result,
+                    next_cursor: None,
+                }))
+            }
+            ConversationsToolArgs::DeleteSourceState { source } => {
+                let source = source.trim();
+                if source.is_empty() {
+                    return Err("source is required".into());
+                }
+
+                let removed = self.delete_source_state(source).await?;
+                let deleted = removed.is_some();
+                let result = if is_agent {
+                    json!({
+                        "source": source,
+                        "deleted": deleted,
+                        "state": removed.map(SourceStateDisplay::from),
+                    })
+                } else {
+                    json!({
+                        "source": source,
+                        "deleted": deleted,
+                        "state": removed,
+                    })
                 };
 
                 Ok(ToolOutput::new(Response::Ok {
@@ -477,6 +531,19 @@ mod tests {
         assert_eq!(args, ConversationsToolArgs::GetSourceState {});
 
         let args: ConversationsToolArgs = serde_json::from_value(json!({
+            "type": "DeleteSourceState",
+            "source": "browser:chrome:123",
+        }))
+        .expect("delete source state variant should parse");
+
+        assert_eq!(
+            args,
+            ConversationsToolArgs::DeleteSourceState {
+                source: "browser:chrome:123".to_string(),
+            }
+        );
+
+        let args: ConversationsToolArgs = serde_json::from_value(json!({
             "type": "GetConversationDelta",
             "_id": 42,
             "messages_offset": 3,
@@ -518,6 +585,13 @@ mod tests {
         .expect_err("search query is required");
 
         assert!(err.to_string().contains("query"));
+
+        let err = serde_json::from_value::<ConversationsToolArgs>(json!({
+            "type": "DeleteSourceState",
+        }))
+        .expect_err("delete source state requires a source key");
+
+        assert!(err.to_string().contains("source"));
     }
 
     #[test]

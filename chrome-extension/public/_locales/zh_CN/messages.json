@@ -95,6 +95,9 @@
   "save": {
     "message": "保存"
   },
+  "cancel": {
+    "message": "取消"
+  },
   "test": {
     "message": "测试"
   },
@@ -265,6 +268,15 @@
   },
   "collapseChannels": {
     "message": "收起频道"
+  },
+  "deleteChannel": {
+    "message": "删除频道"
+  },
+  "deleteChannelConfirm": {
+    "message": "从频道列表删除 $1？对话记录仍会保留在历史中。"
+  },
+  "channelDeleted": {
+    "message": "频道已删除。"
   },
   "browserSpeechStartFailed": {
     "message": "浏览器语音识别未启动。"

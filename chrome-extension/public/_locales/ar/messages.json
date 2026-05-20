@@ -95,6 +95,9 @@
   "save": {
     "message": "حفظ"
   },
+  "cancel": {
+    "message": "إلغاء"
+  },
   "test": {
     "message": "اختبار"
   },
@@ -265,6 +268,15 @@
   },
   "collapseChannels": {
     "message": "طي القنوات"
+  },
+  "deleteChannel": {
+    "message": "حذف القناة"
+  },
+  "deleteChannelConfirm": {
+    "message": "حذف $1 من القنوات؟ ستبقى سجلات المحادثة في السجل."
+  },
+  "channelDeleted": {
+    "message": "تم حذف القناة."
   },
   "browserSpeechStartFailed": {
     "message": "لم يبدأ التعرف على الكلام في المتصفح."

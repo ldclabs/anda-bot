@@ -15,9 +15,7 @@
     "tts",
     "windows"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"

@@ -95,6 +95,9 @@
   "save": {
     "message": "Сохранить"
   },
+  "cancel": {
+    "message": "Отмена"
+  },
   "test": {
     "message": "Тестировать"
   },
@@ -265,6 +268,15 @@
   },
   "collapseChannels": {
     "message": "Свернуть каналы"
+  },
+  "deleteChannel": {
+    "message": "Удалить канал"
+  },
+  "deleteChannelConfirm": {
+    "message": "Удалить $1 из каналов? Записи разговоров останутся в истории."
+  },
+  "channelDeleted": {
+    "message": "Канал удален."
   },
   "browserSpeechStartFailed": {
     "message": "Распознавание речи в браузере не запустилось."

@@ -95,6 +95,9 @@
   "save": {
     "message": "Guardar"
   },
+  "cancel": {
+    "message": "Cancelar"
+  },
   "test": {
     "message": "Probar"
   },
@@ -265,6 +268,15 @@
   },
   "collapseChannels": {
     "message": "Contraer canales"
+  },
+  "deleteChannel": {
+    "message": "Eliminar canal"
+  },
+  "deleteChannelConfirm": {
+    "message": "¿Eliminar $1 de los canales? Los registros de conversación permanecerán en el historial."
+  },
+  "channelDeleted": {
+    "message": "Canal eliminado."
   },
   "browserSpeechStartFailed": {
     "message": "El reconocimiento de voz del navegador no se inició."

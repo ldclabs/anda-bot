@@ -95,6 +95,9 @@
   "save": {
     "message": "Save"
   },
+  "cancel": {
+    "message": "Cancel"
+  },
   "test": {
     "message": "Test"
   },
@@ -265,6 +268,15 @@
   },
   "collapseChannels": {
     "message": "Collapse channels"
+  },
+  "deleteChannel": {
+    "message": "Delete channel"
+  },
+  "deleteChannelConfirm": {
+    "message": "Delete $1 from channels? Conversation records will remain in history."
+  },
+  "channelDeleted": {
+    "message": "Channel deleted."
   },
   "browserSpeechStartFailed": {
     "message": "Browser speech recognition did not start."

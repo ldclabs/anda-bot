@@ -15,6 +15,7 @@
     "checkJs": true,
     "isolatedModules": true,
     "moduleDetection": "force",
+    "allowArbitraryExtensions": true,
     "paths": {
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"]
