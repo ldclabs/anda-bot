@@ -129,12 +129,12 @@ impl WechatChannel {
     async fn qr_login_and_save(&self, workspace: &Path) -> Result<String, BoxError> {
         let config = self.build_weixin_config("")?;
         let qr = StandaloneQrLogin::new(&config);
-        let mut session = qr.start(None).await?;
+        let mut session = qr.start(None, &[]).await?;
         print_qr_hint(&session.qrcode_img_content);
 
         let mut refresh_count = 0_u32;
         loop {
-            match qr.poll_status(&session).await? {
+            match qr.poll_status(&session, None).await? {
                 LoginStatus::Confirmed {
                     bot_token,
                     ilink_bot_id,
@@ -153,6 +153,17 @@ impl WechatChannel {
                 LoginStatus::Scanned => {
                     log::info!("WeChat QR code scanned; waiting for confirmation");
                 }
+                LoginStatus::NeedVerifyCode => {
+                    log::info!(
+                        "Server requires a verification code (pair-code displayed on phone)."
+                    );
+                }
+                LoginStatus::VerifyCodeBlocked => {
+                    log::warn!("Too many wrong verification codes; QR code must be refreshed.");
+                }
+                LoginStatus::BindedRedirect => {
+                    log::info!("Bot is already bound to this instance; no new credentials issued.");
+                }
                 LoginStatus::Expired => {
                     refresh_count += 1;
                     if refresh_count >= WECHAT_MAX_QR_REFRESH_COUNT {
@@ -161,10 +172,10 @@ impl WechatChannel {
                     log::warn!(
                         "WeChat QR code expired; refreshing ({refresh_count}/{WECHAT_MAX_QR_REFRESH_COUNT})"
                     );
-                    session = qr.start(None).await?;
+                    session = qr.start(None, &[]).await?;
                     print_qr_hint(&session.qrcode_img_content);
                 }
-                LoginStatus::Wait | LoginStatus::ScannedButRedirect { .. } => {}
+                _ => {}
             }
 
             tokio::time::sleep(WECHAT_QR_POLL_DELAY).await;

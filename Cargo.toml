@@ -93,7 +93,7 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 tokio-rustls = "0.26"
 webpki-roots = "1"
-weixin-agent = "0.1"
+weixin-agent = "0.2"
 zip = { version = "2", default-features = false, features = [
   "deflate-flate2",
   "flate2",
@@ -101,7 +101,6 @@ zip = { version = "2", default-features = false, features = [
 
 [patch.crates-io]
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }
-weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "13f8c28b4a91962a9431e82f29fd89292e557ff1" }
 
 [profile.release]
 debug = false

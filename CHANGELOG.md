@@ -2,6 +2,41 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.3] — 2026-05-20
+
+### Added
+
+- **Multimodal media understanding**: the engine now supports image, video, and audio understanding via model-label routing. A new `multimodal.rs` module (894 lines) handles media resource extraction, model dispatch, and content injection into the system prompt. Models with `image_understanding`, `video_understanding`, or `audio_understanding` labels are automatically selected for the corresponding media types.
+- **Screenshot materialization**: browser screenshots taken via the Chrome extension now have their `data_url` automatically decoded and saved to disk under `browser-screenshots/`. The saved file path is injected back into the action result, making screenshots immediately consumable by downstream tools like `image_understanding` without a separate download step.
+- **CSP-resistant JavaScript execution**: introduced `chrome_script` with a Chrome Debugger API bridge (`debugger` world) that bypasses Content Security Policy restrictions, replacing the previous `chrome.scripting.executeScript` approach that failed on CSP-strict pages (e.g., GitHub, X).
+- **Browser tool split**: the monolithic `chrome_browser` tool was split into four focused, single-responsibility tools — `chrome_tabs` (navigation/tab management), `chrome_page` (inspection/screenshot/extraction), `chrome_input` (click/type/scroll/interaction), and `chrome_script` (JavaScript execution). Each tool has a minimal schema, clearer error messages, and independent timeout handling. The legacy tool and `ChromeBrowserToolKind::Legacy` variant have been fully removed.
+- **Alert dialog component**: a full `AlertDialog` shadcn-svelte component family (overlay, content, header, title, description, footer, cancel, action) added to the Chrome extension UI library, enabling confirmation dialogs for destructive actions.
+- **Channel deletion with confirmation**: users can now delete channels via the UI with an alert dialog confirmation step, preventing accidental data loss.
+- **Side tasks panel**: the Chrome extension sidebar was restructured into a `SidePanel` component with a tab-based layout separating chat channels from side tasks, improving navigation and extensibility.
+- **I18n audit tool**: a new `scripts/check-i18n.mjs` (558 lines) validates i18n coverage across all 6 supported locales, detecting missing keys, untranslated messages, and stale entries.
+- **Vitest infrastructure**: Chrome extension client logic now has a proper test framework with `vitest.config.ts`, initial test suites for `poll-conversation`, `side-panel`, and `voice` modules, and extracted pure functions for testability.
+- **WeChat login status handling**: three new `LoginStatus` variants are now handled — `NeedVerifyCode` (pair-code verification required on phone), `VerifyCodeBlocked` (too many wrong verification codes), and `BindedRedirect` (bot already bound to this instance, no new credentials issued).
+
+### Changed
+
+- **weixin-agent promoted to crates.io**: `weixin-agent` 0.1.0 → 0.2.0, moved from a git dependency (`[patch.crates-io]`) to the public crates.io registry. The `[patch]` entry has been removed from the workspace `Cargo.toml`.
+- **Agent system instructions**: `render_system_instructions()` now uses named format parameters (`{ins}`, `{knowledge}`, `{notes}`, etc.) instead of positional `{}` placeholders, improving readability and reducing argument ordering bugs.
+- **Chrome extension decomposed**: `client.ts` (2,099 lines) split into focused modules — `channel.svelte.ts` (561 lines), `side-panel.svelte.ts` (653 lines), `conversations.ts`, `poll-conversation.ts`, `voice.ts`, `types.ts`, `commands.ts`, `chrome.ts`. `service_worker.ts` (1,884 lines) similarly decomposed into `browser-actions.ts` (1,046 lines), `page-speech.ts`, `page-voice.ts`, `page-audio.ts`, `tts.ts`, `settings.ts`, and `types.ts`.
+- **Legacy `chrome_browser` tool removed**: the original monolithic browser tool has been fully removed from both `browser.rs` and `engine.rs`, leaving only the four split tools (`chrome_tabs`, `chrome_page`, `chrome_input`, `chrome_script`).
+
+### Fixed
+
+- **CSP bypass result extraction**: the Debugger bridge's `Runtime.evaluate` results were not properly unwrapped when the evaluated expression returned an object handle rather than a value, causing `chrome_script` output to be empty on certain pages. Now correctly inspects and extracts object properties via the RemoteObject protocol.
+- **Debugger concurrency**: multiple overlapping `chrome_script` calls could collide on the single DevTools debugger session. Fixed by serializing bridge calls through a per-tab mutex.
+- **Agent session/ancestor handling**: `spawn_session_runner` now correctly owns the media understanding step (previously duplicated at 3 call sites), and the session runner content filter excludes stale inline data from follow-up messages.
+- **Windows PowerShell key**: corrected a `ctrl+shift+p` → `ctrl+shift+P` casing issue that prevented the command palette shortcut from working on Windows.
+
+### Dependencies
+
+- `crypto-common` 0.2.1 → 0.2.2
+- `typetag` 0.2.21 → 0.2.22
+- `weixin-agent` 0.1.0 → 0.2.0 (git → crates.io)
+
 ## [0.7.2] — 2026-05-17
 
 ### Added

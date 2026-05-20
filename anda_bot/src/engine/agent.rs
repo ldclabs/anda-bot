@@ -80,15 +80,15 @@ struct SystemInstructionSections<'a> {
 
 fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
-        "{}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{}\n\n## Notes\n{}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{}\n\n## Environment\n- home: {}\n- current workspace (authoritative): {}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{}\n\n## Current Datetime: {}",
-        SELF_INSTRUCTIONS.trim(),
-        sections.self_knowledge,
-        sections.notes,
-        format_available_tools(sections.available_tools),
-        sections.home_dir,
-        sections.workspace,
-        sections.user_profile,
-        sections.local_date,
+        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Notes\n{notes}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
+        ins = SELF_INSTRUCTIONS.trim(),
+        knowledge = sections.self_knowledge,
+        notes = sections.notes,
+        tools = format_available_tools(sections.available_tools),
+        home = sections.home_dir,
+        workspace = sections.workspace,
+        user_profile = sections.user_profile,
+        local_date = sections.local_date,
     )
 }
 
