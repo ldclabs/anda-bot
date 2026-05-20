@@ -6,7 +6,7 @@ import {
 	normalizeSettings
 } from '$lib/service-worker/settings'
 import { SvelteMap } from 'svelte/reactivity'
-import { Channel } from './channel.svelte'
+import { Channel, type API } from './channel.svelte'
 import { getChromeApi } from './chrome'
 import { normalizePromptSkills } from './helper'
 import type {
@@ -23,6 +23,7 @@ import type {
 	Resource,
 	RpcOutput,
 	SettingsState,
+	SourceStateMap,
 	ToolOutput,
 	TranscriptionToolOutput,
 	TtsToolOutput,
@@ -48,7 +49,7 @@ export class AndaSidePanelClient extends EventTarget {
 	tab: ChromeTabInfo | null = $state<ChromeTabInfo | null>(null)
 	sending = $state(false)
 	activeChannel = $state<Channel | null>(null)
-	channels = new SvelteMap()
+	channels = new SvelteMap<string, Channel>()
 	status = $state('starting')
 	systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
 	voiceCapabilities = $state<VoiceCapabilities>({
@@ -58,6 +59,7 @@ export class AndaSidePanelClient extends EventTarget {
 	})
 
 	#initPromise: Promise<void> | null = null
+	#localChannelSource = ''
 	#tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
 	#tabUpdatedListener?: (tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
 
@@ -77,16 +79,9 @@ export class AndaSidePanelClient extends EventTarget {
 	async #init(): Promise<void> {
 		await this.loadSettings()
 		const localChannel = await browserSession(this.chrome)
-		const channel = new Channel(localChannel, this)
+		this.#localChannelSource = localChannel
+		const channel = this.ensureChannel(localChannel)
 		this.activeChannel = channel
-		this.channels.set(localChannel, channel)
-
-		channel.addEventListener('ChannelInitialized', (event) => {
-			const detail = (event as CustomEvent<{ source: string }>).detail
-			if (detail.source === this.activeChannel?.source) {
-				this.dispatchEvent(new CustomEvent('ChannelInitialized', { detail }))
-			}
-		})
 
 		this.bindChromeEvents()
 		await this.refreshActiveTab()
@@ -95,8 +90,19 @@ export class AndaSidePanelClient extends EventTarget {
 
 		if (this.settings.token) {
 			await this.refreshVoiceCapabilities().catch(() => undefined)
+			await this.refreshChannels().catch(() => undefined)
 			await channel.init().catch(() => undefined)
 		}
+	}
+
+	get channelList(): Channel[] {
+		return Array.from(this.channels.values()).sort((a, b) => {
+			return b.latestActivityAt - a.latestActivityAt || a.source.localeCompare(b.source)
+		})
+	}
+
+	get activeSource(): string | null {
+		return this.activeChannel?.source || null
 	}
 
 	destroy(): void {
@@ -106,7 +112,52 @@ export class AndaSidePanelClient extends EventTarget {
 		if (this.chrome && this.#tabUpdatedListener) {
 			this.chrome.tabs.onUpdated.removeListener(this.#tabUpdatedListener)
 		}
+		for (const channel of this.channels.values()) {
+			channel.destroy()
+		}
 		console.warn('AndaSidePanelClient destroyed')
+	}
+
+	async refreshChannels(): Promise<void> {
+		if (!this.settings.token) {
+			return
+		}
+
+		const {
+			output: { result: states }
+		} = await this.toolCall<RpcOutput<SourceStateMap>>('conversations_api', {
+			type: 'ListSourceState'
+		})
+		const sources = new Set<string>()
+		if (this.#localChannelSource) {
+			sources.add(this.#localChannelSource)
+		}
+		for (const source of Object.keys(states || {})) {
+			if (source.trim()) {
+				sources.add(source)
+			}
+		}
+
+		const initTasks = Array.from(sources).map((source) =>
+			this.ensureChannel(source)
+				.init()
+				.catch(() => undefined)
+		)
+		await Promise.all(initTasks)
+	}
+
+	async switchChannel(source: string): Promise<void> {
+		const nextSource = source.trim()
+		if (!nextSource) {
+			return
+		}
+
+		const channel = this.ensureChannel(nextSource)
+		this.activeChannel = channel
+		this.updateStatus(channel.status, null)
+		if (this.settings.token) {
+			await channel.init().catch(() => undefined)
+		}
 	}
 
 	async saveSettings(settings: SettingsState, options: { quiet?: boolean } = {}): Promise<void> {
@@ -117,7 +168,7 @@ export class AndaSidePanelClient extends EventTarget {
 		}
 		await this.syncServiceWorker().catch(() => undefined)
 		if (this.settings.token) {
-			this.activeChannel?.init().catch(() => undefined)
+			this.refreshChannels().catch(() => undefined)
 		}
 		await this.refreshVoiceCapabilities().catch(() => undefined)
 	}
@@ -324,6 +375,27 @@ export class AndaSidePanelClient extends EventTarget {
 		}
 		this.chrome.tabs.onActivated.addListener(this.#tabActivatedListener)
 		this.chrome.tabs.onUpdated.addListener(this.#tabUpdatedListener)
+	}
+
+	private ensureChannel(source: string): Channel {
+		let channel = this.channels.get(source)
+		if (!channel) {
+			channel = new Channel(source, this.channelApi(source))
+			this.channels.set(source, channel)
+		}
+		return channel
+	}
+
+	private channelApi(source: string): API {
+		return {
+			requestExtra: () => this.requestExtra(),
+			rpc: <Result>(method: string, tupleArgs: unknown[]) => this.rpc<Result>(method, tupleArgs),
+			updateStatus: (status, message) => {
+				if (this.activeChannel?.source === source) {
+					this.updateStatus(status, message)
+				}
+			}
+		}
 	}
 
 	private async loadSettings(): Promise<void> {

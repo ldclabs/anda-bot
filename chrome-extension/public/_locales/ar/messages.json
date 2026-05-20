@@ -257,6 +257,15 @@
   "pasteTokenFirst": {
     "message": "أكمل الإعداد والصق أولاً Bearer token تم إنشاؤه بواسطة `anda browser token`."
   },
+  "channelsLabel": {
+    "message": "القنوات"
+  },
+  "expandChannels": {
+    "message": "توسيع القنوات"
+  },
+  "collapseChannels": {
+    "message": "طي القنوات"
+  },
   "browserSpeechStartFailed": {
     "message": "لم يبدأ التعرف على الكلام في المتصفح."
   },

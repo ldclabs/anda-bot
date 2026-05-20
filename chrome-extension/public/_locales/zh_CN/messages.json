@@ -257,6 +257,15 @@
   "pasteTokenFirst": {
     "message": "请先完成设置，并粘贴由 `anda browser token` 生成的 Bearer 令牌。"
   },
+  "channelsLabel": {
+    "message": "频道"
+  },
+  "expandChannels": {
+    "message": "展开频道"
+  },
+  "collapseChannels": {
+    "message": "收起频道"
+  },
   "browserSpeechStartFailed": {
     "message": "浏览器语音识别未启动。"
   },

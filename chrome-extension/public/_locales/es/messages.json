@@ -257,6 +257,15 @@
   "pasteTokenFirst": {
     "message": "Completa la configuración y pega primero un Bearer token generado por `anda browser token`."
   },
+  "channelsLabel": {
+    "message": "Canales"
+  },
+  "expandChannels": {
+    "message": "Expandir canales"
+  },
+  "collapseChannels": {
+    "message": "Contraer canales"
+  },
   "browserSpeechStartFailed": {
     "message": "El reconocimiento de voz del navegador no se inició."
   },

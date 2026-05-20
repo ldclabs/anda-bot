@@ -257,6 +257,15 @@
   "pasteTokenFirst": {
     "message": "Terminez la configuration et collez d'abord un Bearer token généré par `anda browser token`."
   },
+  "channelsLabel": {
+    "message": "Canaux"
+  },
+  "expandChannels": {
+    "message": "Développer les canaux"
+  },
+  "collapseChannels": {
+    "message": "Réduire les canaux"
+  },
   "browserSpeechStartFailed": {
     "message": "La reconnaissance vocale du navigateur n'a pas démarré."
   },

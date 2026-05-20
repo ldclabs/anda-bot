@@ -69,6 +69,38 @@ export class Channel extends EventTarget {
 		return this.#sending
 	}
 
+	get status(): string {
+		if (this.#sending) {
+			return 'sending'
+		}
+		if (this.#syncing) {
+			return 'syncing'
+		}
+
+		const currentGroup = this.#messageGroups.find((group) => group.current)
+		const lastGroup = this.#messageGroups[this.#messageGroups.length - 1]
+		return this.#conversation?.status || currentGroup?.status || lastGroup?.status || 'ready'
+	}
+
+	get conversationId(): number {
+		return this.#conversation?._id || 0
+	}
+
+	get latestActivityAt(): number {
+		let latest = this.#conversation?.updated_at || 0
+		for (const group of this.#messageGroups) {
+			latest = Math.max(latest, group.updatedAt || group.createdAt || 0)
+		}
+		for (const message of this.#sideMessages) {
+			latest = Math.max(latest, message.timestamp || 0)
+		}
+		return latest
+	}
+
+	get messageCount(): number {
+		return this.#messageGroups.reduce((count, group) => count + group.messages.length, 0)
+	}
+
 	get messageGroups(): MessageGroup[] {
 		return [...this.#messageGroups]
 	}
@@ -214,6 +246,7 @@ export class Channel extends EventTarget {
 					sideMessages.push(msg)
 				}
 				this.#sideMessages = [...sideMessages, ...messages]
+				poller.push(...messages.filter((message) => message.role === 'assistant'))
 				this.#api.updateStatus('completed', null)
 				poller.finish()
 			} else {
@@ -315,7 +348,7 @@ export class Channel extends EventTarget {
 		const extra = await this.#api.requestExtra()
 		extra.source = this.source
 		extra.conversation = this.#conversation?._id || 0
-		return { extra } as RequestMeta
+		return extra as RequestMeta
 	}
 
 	private async fetchConversation(conversationId: number): Promise<Conversation> {

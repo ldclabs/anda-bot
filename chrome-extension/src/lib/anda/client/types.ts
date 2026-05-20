@@ -271,7 +271,13 @@ export interface ConversationDelta {
 export interface SourceState {
 	c?: number
 	conv_id?: number
+	s?: ConversationStatus
+	status?: ConversationStatus
+	t?: number
+	timestamp?: number
 }
+
+export type SourceStateMap = Record<string, SourceState>
 
 export interface RpcOutput<Result> {
 	result: Result
@@ -319,7 +325,8 @@ export interface PageAudioResult {
 export interface RequestMeta {
 	engine?: Principal
 	thread?: Xid
-	extra: Record<string, Json>
+	user?: string
+	[key: string]: Json | undefined
 }
 
 export interface ExtensionMessage {

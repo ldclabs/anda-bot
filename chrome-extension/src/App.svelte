@@ -3,6 +3,7 @@
 		type ComposerSubmitPayload,
 		type ComposerVoicePayload
 	} from '$lib/anda/ChatComposer.svelte'
+	import ChatChannelsSidebar from '$lib/anda/ChatChannelsSidebar.svelte'
 	import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
 	import ChatSettings from '$lib/anda/ChatSettings.svelte'
 	import { andaClient } from '$lib/anda/client/side-panel.svelte'
@@ -35,7 +36,7 @@
 
 	const status = $derived(andaClient.status)
 	const syncing = $derived(andaClient.activeChannel?.syncing || false)
-	const sending = $derived(andaClient.activeChannel?.sending || false)
+	const sending = $derived(andaClient.sending || andaClient.activeChannel?.sending || false)
 	const isBusy = $derived(
 		sending ||
 			syncing ||
@@ -54,6 +55,8 @@
 	const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
 	const sideMessageCount = $derived(sideMessages.length)
 	const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
+	const channels = $derived(andaClient.channelList)
+	const activeSource = $derived(andaClient.activeSource)
 
 	onMount(() => {
 		andaClient
@@ -127,6 +130,10 @@
 		if (sideMessagesElement) {
 			sideMessagesElement.scrollTop = sideMessagesElement.scrollHeight
 		}
+	}
+
+	async function switchChannel(source: string) {
+		await andaClient.switchChannel(source)
 	}
 
 	async function sendPrompt(payload: ComposerSubmitPayload) {
@@ -285,180 +292,178 @@
 	<title>Anda Bot</title>
 </svelte:head>
 
-<div class="flex h-screen min-w-80 flex-col overflow-hidden bg-[#f6f8f5] text-stone-950">
-	<header
-		class="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-emerald-900/10 bg-emerald-50/75 px-3 py-2"
-	>
-		<div
-			class="grid size-8 place-items-center rounded-md border border-emerald-900/10 bg-white/80 shadow-sm"
+<div class="flex h-screen min-w-80 overflow-hidden bg-[#f6f8f5] text-stone-950">
+	<ChatChannelsSidebar {channels} {activeSource} {sending} onSelect={switchChannel} />
+
+	<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+		<header
+			class="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-emerald-900/10 bg-emerald-50/75 px-3 h-12"
 		>
-			<Bot class="size-4 text-emerald-800" />
-		</div>
-
-		<div class="min-w-0 text-center">
-			<div
-				class="mt-0.5 flex min-w-0 items-center justify-center gap-1.5 text-[11px] text-stone-500"
-			>
-				{#if isBusy}
-					<LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
-				{:else if statusIsWarning}
-					<CircleAlert class={`size-3 shrink-0 ${statusIconClass()}`} />
-				{:else}
-					<Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
-				{/if}
-				<span class="truncate">{status}</span>
-			</div>
-			{#if andaClient.systemMessage}
-				<p class="truncate text-xs font-bold text-stone-800">
-					{andaClient.systemMessage.text}
-				</p>
-			{/if}
-		</div>
-
-		<Button
-			variant="ghost"
-			size="icon"
-			aria-label={chrome.i18n.getMessage('settings')}
-			title={chrome.i18n.getMessage('settings')}
-			onclick={toggleSettingsPanel}
-		>
-			<Settings class="size-4" />
-		</Button>
-	</header>
-
-	{#if settingsOpen}
-		<ChatSettings {setupGuideOpen} />
-	{/if}
-
-	<main
-		bind:this={messagesElement}
-		class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
-	>
-		{#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
-			<div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
+			<div class="min-w-0 text-center">
 				<div
-					class="grid size-11 place-items-center rounded-md border border-stone-200 bg-white shadow-sm"
+					class="flex min-w-0 items-center justify-center gap-1.5 text-[11px] text-stone-500"
 				>
-					{#if syncing}
-						<LoaderCircle class="size-5 animate-spin text-emerald-800" />
+					{#if isBusy}
+						<LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
+					{:else if statusIsWarning}
+						<CircleAlert class={`size-3 shrink-0 ${statusIconClass()}`} />
 					{:else}
-						<Bot class="size-5 text-emerald-800" />
+						<Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
 					{/if}
+					<span class="truncate">{status}</span>
 				</div>
-				<div class="text-xs font-semibold text-stone-700">
-					{syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
-				</div>
-			</div>
-		{:else}
-			{#if hasPreviousConversations}
-				<div class="flex justify-center">
-					<Button
-						variant="outline"
-						size="xs"
-						class="bg-white/80 text-stone-600 shadow-sm"
-						disabled={loadingPrevious}
-						onclick={loadPreviousConversations}
-					>
-						{#if loadingPrevious}
-							<LoaderCircle class="size-3 animate-spin" />
-						{:else}
-							<History class="size-3" />
-						{/if}
-						{chrome.i18n.getMessage('loadHistory')}
-					</Button>
-				</div>
-			{/if}
-
-			{#each visibleMessageGroups as group (group._id)}
-				<section class="grid w-full gap-2">
-					{#if visibleMessageGroups.length > 1}
-						<div
-							class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
-						>
-							<span class="h-px flex-1 bg-stone-200"></span>
-							<span class="max-w-[70%] truncate">{groupLabel(group)}</span>
-							<span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-stone-500">
-								{group.status}
-							</span>
-							<span class="h-px flex-1 bg-stone-200"></span>
-						</div>
-					{/if}
-
-					{#each group.messages as message (message.id)}
-						<ChatMessageItem {message} />
-					{/each}
-				</section>
-			{/each}
-		{/if}
-	</main>
-
-	{#if sideMessageCount > 0}
-		<section class="border-t border-emerald-900/10 bg-emerald-50/80 backdrop-blur">
-			<button
-				type="button"
-				class="flex h-10 w-full items-center gap-2 px-3 text-left transition hover:bg-white/55"
-				aria-expanded={sideMessagesOpen}
-				aria-label={chrome.i18n.getMessage(
-					sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
-				)}
-				title={chrome.i18n.getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
-				onclick={toggleSideMessagesPanel}
-			>
-				<span
-					class="grid size-6 shrink-0 place-items-center rounded-md border border-emerald-900/10 bg-white/85 text-emerald-800 shadow-sm"
-				>
-					<Bot class="size-3.5" />
-				</span>
-				<span class="min-w-0 flex-1 truncate text-xs font-bold text-stone-700">
-					{chrome.i18n.getMessage('sideTasksLabel')}
-				</span>
-				<span
-					class="shrink-0 rounded-full border border-emerald-900/10 bg-white/80 px-1.5 py-0.5 text-[10px] leading-none font-bold text-emerald-800"
-				>
-					{sideMessageCount}
-				</span>
-				{#if sideMessagesOpen}
-					<ChevronDown class="size-4 shrink-0 text-stone-500" />
-				{:else}
-					<ChevronUp class="size-4 shrink-0 text-stone-500" />
+				{#if andaClient.systemMessage ||  activeSource}
+					<p class="truncate text-xs font-bold text-stone-800">
+						{andaClient.systemMessage?.text || activeSource}
+					</p>
 				{/if}
-			</button>
+			</div>
 
-			{#if sideMessagesOpen}
-				<div
-					bind:this={sideMessagesElement}
-					class="scrollbar-slim max-h-3/4 overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
-				>
-					<div class="grid gap-2">
-						{#each visibleSideMessages as message (message.id)}
-							<ChatMessageItem {message} />
-						{/each}
+			<Button
+				variant="ghost"
+				size="icon"
+				aria-label={chrome.i18n.getMessage('settings')}
+				title={chrome.i18n.getMessage('settings')}
+				onclick={toggleSettingsPanel}
+			>
+				<Settings class="size-4" />
+			</Button>
+		</header>
+
+		{#if settingsOpen}
+			<ChatSettings {setupGuideOpen} />
+		{/if}
+
+		<main
+			bind:this={messagesElement}
+			class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
+		>
+			{#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
+				<div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
+					<div
+						class="grid size-11 place-items-center rounded-md border border-stone-200 bg-white shadow-sm"
+					>
+						{#if syncing}
+							<LoaderCircle class="size-5 animate-spin text-emerald-800" />
+						{:else}
+							<Bot class="size-5 text-emerald-800" />
+						{/if}
+					</div>
+					<div class="text-xs font-semibold text-stone-700">
+						{syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
 					</div>
 				</div>
-			{/if}
-		</section>
-	{/if}
+			{:else}
+				{#if hasPreviousConversations}
+					<div class="flex justify-center">
+						<Button
+							variant="outline"
+							size="xs"
+							class="bg-white/80 text-stone-600 shadow-sm"
+							disabled={loadingPrevious}
+							onclick={loadPreviousConversations}
+						>
+							{#if loadingPrevious}
+								<LoaderCircle class="size-3 animate-spin" />
+							{:else}
+								<History class="size-3" />
+							{/if}
+							{chrome.i18n.getMessage('loadHistory')}
+						</Button>
+					</div>
+				{/if}
 
-	<footer class="border-t border-stone-200 bg-[#f6f8f5]/90 p-2.5 backdrop-blur">
-		<ChatComposer
-			placeholder={andaClient.settings.token
-				? chrome.i18n.getMessage('placeholderMessage')
-				: chrome.i18n.getMessage('placeholderSettings')}
-			disabled={sending}
-			{sending}
-			working={isBusy}
-			voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
-			voiceCapabilities={andaClient.voiceCapabilities}
-			submitKeyMode={andaClient.settings.submitKeyMode}
-			onSend={sendPrompt}
-			onVoiceSend={sendVoiceTurn}
-			onBrowserSpeechStart={startBrowserSpeechRecognition}
-			onBrowserSpeechStop={stopBrowserSpeechRecognition}
-			onBrowserSpeechCancel={cancelBrowserSpeechRecognition}
-			onBrowserAudioStart={startBrowserAudioCapture}
-			onBrowserAudioStop={stopBrowserAudioCapture}
-			onBrowserAudioCancel={cancelBrowserAudioCapture}
-			onLoadSkills={loadPromptSkills}
-		/>
-	</footer>
+				{#each visibleMessageGroups as group (group._id)}
+					<section class="grid w-full gap-2">
+						{#if visibleMessageGroups.length > 1}
+							<div
+								class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
+							>
+								<span class="h-px flex-1 bg-stone-200"></span>
+								<span class="max-w-[70%] truncate">{groupLabel(group)}</span>
+								<span class="rounded-full bg-stone-100 px-1.5 py-0.5 text-stone-500">
+									{group.status}
+								</span>
+								<span class="h-px flex-1 bg-stone-200"></span>
+							</div>
+						{/if}
+
+						{#each group.messages as message (message.id)}
+							<ChatMessageItem {message} />
+						{/each}
+					</section>
+				{/each}
+			{/if}
+		</main>
+
+		{#if sideMessageCount > 0}
+			<section class="max-h-3/4 border-t border-emerald-900/10 bg-emerald-50/80 backdrop-blur">
+				<button
+					type="button"
+					class="flex h-10 w-full items-center gap-2 px-3 text-left transition hover:bg-white/55"
+					aria-expanded={sideMessagesOpen}
+					aria-label={chrome.i18n.getMessage(
+						sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
+					)}
+					title={chrome.i18n.getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
+					onclick={toggleSideMessagesPanel}
+				>
+					<span
+						class="grid size-6 shrink-0 place-items-center rounded-md border border-emerald-900/10 bg-white/85 text-emerald-800 shadow-sm"
+					>
+						<Bot class="size-3.5" />
+					</span>
+					<span class="min-w-0 flex-1 truncate text-xs font-bold text-stone-700">
+						{chrome.i18n.getMessage('sideTasksLabel')}
+					</span>
+					<span
+						class="shrink-0 rounded-full border border-emerald-900/10 bg-white/80 px-1.5 py-0.5 text-[10px] leading-none font-bold text-emerald-800"
+					>
+						{sideMessageCount}
+					</span>
+					{#if sideMessagesOpen}
+						<ChevronDown class="size-4 shrink-0 text-stone-500" />
+					{:else}
+						<ChevronUp class="size-4 shrink-0 text-stone-500" />
+					{/if}
+				</button>
+
+				{#if sideMessagesOpen}
+					<div
+						bind:this={sideMessagesElement}
+						class="scrollbar-slim overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
+					>
+						<div class="grid gap-2">
+							{#each visibleSideMessages as message (message.id)}
+								<ChatMessageItem {message} />
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</section>
+		{/if}
+
+		<footer class="border-t border-stone-200 bg-[#f6f8f5]/90 p-2.5 backdrop-blur">
+			<ChatComposer
+				placeholder={andaClient.settings.token
+					? chrome.i18n.getMessage('placeholderMessage')
+					: chrome.i18n.getMessage('placeholderSettings')}
+				disabled={sending}
+				{sending}
+				working={isBusy}
+				voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
+				voiceCapabilities={andaClient.voiceCapabilities}
+				submitKeyMode={andaClient.settings.submitKeyMode}
+				onSend={sendPrompt}
+				onVoiceSend={sendVoiceTurn}
+				onBrowserSpeechStart={startBrowserSpeechRecognition}
+				onBrowserSpeechStop={stopBrowserSpeechRecognition}
+				onBrowserSpeechCancel={cancelBrowserSpeechRecognition}
+				onBrowserAudioStart={startBrowserAudioCapture}
+				onBrowserAudioStop={stopBrowserAudioCapture}
+				onBrowserAudioCancel={cancelBrowserAudioCapture}
+				onLoadSkills={loadPromptSkills}
+			/>
+		</footer>
+	</div>
 </div>

@@ -257,6 +257,15 @@
   "pasteTokenFirst": {
     "message": "Сначала завершите настройку и вставьте Bearer token, созданный `anda browser token`."
   },
+  "channelsLabel": {
+    "message": "Каналы"
+  },
+  "expandChannels": {
+    "message": "Развернуть каналы"
+  },
+  "collapseChannels": {
+    "message": "Свернуть каналы"
+  },
   "browserSpeechStartFailed": {
     "message": "Распознавание речи в браузере не запустилось."
   },

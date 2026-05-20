@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::types::*;
 use crate::engine::{CompletionHook, PromptCommand, external_user_prompt};
+use crate::util::request_meta::request_meta_extra_as;
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
 
@@ -398,18 +399,15 @@ impl ChannelRuntimeInner {
     }
 
     fn route_from_meta(&self, meta: &RequestMeta) -> Option<ChannelRoute> {
-        let channel = meta
-            .get_extra_as::<String>("source")
+        let channel = request_meta_extra_as::<String>(meta, "source")
             .and_then(|value| normalize_non_empty(value.as_str()))?;
         if !self.channels.contains_key(&channel) {
             return None;
         }
 
-        let reply_target = meta
-            .get_extra_as::<String>("reply_target")
+        let reply_target = request_meta_extra_as::<String>(meta, "reply_target")
             .and_then(|value| normalize_non_empty(value.as_str()))?;
-        let thread = meta
-            .get_extra_as::<String>("thread")
+        let thread = request_meta_extra_as::<String>(meta, "thread")
             .and_then(|value| normalize_non_empty(value.as_str()));
 
         Some(ChannelRoute {
@@ -540,13 +538,9 @@ fn completion_message(
             msg.push_str("[Previous conversation]\n\n");
         }
     }
-    if let Some(cron_job) = meta.get_extra_as::<String>("cron_job") {
-        let name = meta
-            .get_extra_as::<String>("cron_job_name")
-            .unwrap_or_default();
-        let kind = meta
-            .get_extra_as::<String>("cron_job_kind")
-            .unwrap_or_default();
+    if let Some(cron_job) = request_meta_extra_as::<String>(meta, "cron_job") {
+        let name = request_meta_extra_as::<String>(meta, "cron_job_name").unwrap_or_default();
+        let kind = request_meta_extra_as::<String>(meta, "cron_job_kind").unwrap_or_default();
         msg.push_str(&format!("Cron Job ({kind}): {name}\n{cron_job}\n\n"));
     }
     msg.push_str(&output.content);

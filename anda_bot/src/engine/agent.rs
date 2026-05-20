@@ -49,7 +49,10 @@ use super::{
         system_extra_user_context, system_runtime_prompt, system_user_message,
     },
 };
-use crate::{brain, cron, transcription::TranscriptionManager, tts::TtsManager};
+use crate::{
+    brain, cron, transcription::TranscriptionManager, tts::TtsManager,
+    util::request_meta::request_meta_extra_as,
+};
 
 const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
@@ -657,7 +660,7 @@ impl AndaBot {
         self.persist_conversation_state(&conversation).await;
 
         let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
-        let external_user = meta.get_extra_as::<bool>("external_user").unwrap_or(false);
+        let external_user = request_meta_extra_as::<bool>(&meta, "external_user").unwrap_or(false);
         let formation_counterparty = if external_user {
             meta.user
                 .as_ref()
@@ -1281,10 +1284,8 @@ impl Agent<AgentCtx> for AndaBot {
         let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
         let session_request_meta =
             SessionRequestMeta::new(request_meta_for_conversation(ctx.meta(), conversation._id));
-        let external_user = ctx
-            .meta()
-            .get_extra_as::<bool>("external_user")
-            .unwrap_or(false);
+        let external_user =
+            request_meta_extra_as::<bool>(ctx.meta(), "external_user").unwrap_or(false);
         let formation_counterparty = if external_user {
             ctx.meta()
                 .user

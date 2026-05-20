@@ -9,6 +9,8 @@ type RuntimeEvaluateParams = {
 	expression?: string
 }
 
+type DebuggerSendCommand = NonNullable<ChromeApi['debugger']>['sendCommand']
+
 function createChromeApi(
 	debuggerApi: ChromeApi['debugger'],
 	tab: { id: number; windowId: number; active: boolean } = { id: 123, windowId: 1, active: true }
@@ -53,7 +55,7 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
 		const chromeApi = createChromeApi({
 			attach: vi.fn(async () => undefined),
 			detach: vi.fn(async () => undefined),
-			sendCommand
+			sendCommand: sendCommand as DebuggerSendCommand
 		})
 
 		const result = (await executeBrowserAction(
@@ -84,7 +86,7 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
 		const chromeApi = createChromeApi({
 			attach: vi.fn(async () => undefined),
 			detach: vi.fn(async () => undefined),
-			sendCommand
+			sendCommand: sendCommand as DebuggerSendCommand
 		})
 
 		const result = (await executeBrowserAction(
@@ -126,7 +128,11 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
 				return {}
 			}
 		)
-		const chromeApi = createChromeApi({ attach, detach, sendCommand })
+		const chromeApi = createChromeApi({
+			attach,
+			detach,
+			sendCommand: sendCommand as DebuggerSendCommand
+		})
 
 		const [first, second] = await Promise.all([
 			executeBrowserAction(

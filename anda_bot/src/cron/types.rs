@@ -7,6 +7,8 @@ use cron::Schedule as CronExprSchedule;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, time::Duration};
 
+use crate::util::request_meta::request_meta_extra_as;
+
 // Number.MAX_SAFE_INTEGER in JavaScript, used to represent "never" for disabled jobs
 pub const DISABLED_JOB_NEXT_RUN: u64 = (1 << 53) - 1;
 
@@ -106,26 +108,21 @@ impl CronJobOrigin {
         let origin = Self {
             caller: caller.map(Principal::to_text),
             user: meta.user.as_deref().and_then(normalize_optional_name),
-            source: meta
-                .get_extra_as::<String>("source")
+            source: request_meta_extra_as::<String>(meta, "source")
                 .as_deref()
                 .and_then(normalize_optional_name),
-            reply_target: meta
-                .get_extra_as::<String>("reply_target")
+            reply_target: request_meta_extra_as::<String>(meta, "reply_target")
                 .as_deref()
                 .and_then(normalize_optional_name),
-            thread: meta
-                .get_extra_as::<String>("thread")
+            thread: request_meta_extra_as::<String>(meta, "thread")
                 .as_deref()
                 .and_then(normalize_optional_name),
-            workspace: meta
-                .get_extra_as::<String>("workspace")
+            workspace: request_meta_extra_as::<String>(meta, "workspace")
                 .as_deref()
                 .and_then(normalize_optional_name),
-            conversation_id: meta
-                .get_extra_as::<u64>("conversation")
+            conversation_id: request_meta_extra_as::<u64>(meta, "conversation")
                 .filter(|conversation_id| *conversation_id > 0),
-            external_user: meta.get_extra_as::<bool>("external_user"),
+            external_user: request_meta_extra_as::<bool>(meta, "external_user"),
         };
 
         (!origin.is_empty()).then_some(origin)

@@ -20,6 +20,8 @@ use tokio::{
     time::Instant,
 };
 
+use crate::util::request_meta::request_meta_extra_as;
+
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
@@ -876,7 +878,7 @@ fn coordinate_schema(description: &str) -> Value {
 }
 
 pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
-    meta.get_extra_as::<String>("source")
+    request_meta_extra_as::<String>(meta, "source")
         .filter(|source| source.starts_with("browser:"))
         .and_then(|source| normalize_session(source).ok())
 }
