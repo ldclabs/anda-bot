@@ -470,14 +470,14 @@ pub async fn understand_media_resources(
                     let content = agent_output.content.trim();
                     let text = if content.is_empty() {
                         format!(
-                            "[$system: kind={:?}]\n## {} understanding: {}\n\nNo description was returned.",
+                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nNo description was returned.",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label
                         )
                     } else {
                         format!(
-                            "[$system: kind={:?}]\n## {} understanding: {}\n\n{}",
+                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\n{:?}",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label,
@@ -489,7 +489,7 @@ pub async fn understand_media_resources(
                 }
                 Err(err) => (
                     format!(
-                        "[$system: kind={:?}]\n## {} understanding: {}\n\nFailed to understand this {} resource: {}",
+                        "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nFailed to understand this {} from attachments: {}",
                         kind.agent_name(),
                         title_case(kind.noun()),
                         label,

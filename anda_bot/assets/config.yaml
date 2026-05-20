@@ -112,9 +112,9 @@ model:
       disabled: false
       bearer_auth: true
 
-    - family: anthropic
+    - family: openai
       model: "mimo-v2.5"
-      api_base: "https://api.xiaomimimo.com/anthropic/v1"
+      api_base: "https://api.xiaomimimo.com/v1"
       api_key: ""
       context_window: 1000000
       max_output: 128000

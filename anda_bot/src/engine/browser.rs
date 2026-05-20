@@ -3,11 +3,15 @@ use anda_core::{
 };
 use anda_engine::{context::BaseCtx, unix_ms};
 use anda_kip::Response;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use ic_auth_types::Xid;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc,
@@ -25,6 +29,7 @@ use crate::util::request_meta::request_meta_extra_as;
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
+const BROWSER_SCREENSHOT_TMP_DIR: &str = "browser-screenshots";
 
 #[derive(Debug, Default)]
 pub struct BrowserBridge {
@@ -212,11 +217,11 @@ pub struct BrowserActionResult {
 pub struct ChromeBrowserTool {
     bridge: Arc<BrowserBridge>,
     kind: ChromeBrowserToolKind,
+    screenshot_workspace: Option<Arc<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChromeBrowserToolKind {
-    Legacy,
     Tabs,
     Page,
     Input,
@@ -361,7 +366,6 @@ impl BrowserBridge {
         session: String,
         args: ChromeBrowserToolArgs,
     ) -> Result<BrowserActionResult, BoxError> {
-        validate_browser_action(&args)?;
         let session = normalize_session(session)?;
         if self.session(&session).is_none() {
             return Err(format!(
@@ -467,58 +471,50 @@ impl BrowserBridge {
 }
 
 impl ChromeBrowserTool {
-    pub const NAME: &'static str = "chrome_browser";
     pub const TABS_NAME: &'static str = "chrome_tabs";
     pub const PAGE_NAME: &'static str = "chrome_page";
     pub const INPUT_NAME: &'static str = "chrome_input";
     pub const SCRIPT_NAME: &'static str = "chrome_script";
 
-    pub fn new(bridge: Arc<BrowserBridge>) -> Self {
-        Self {
-            bridge,
-            kind: ChromeBrowserToolKind::Legacy,
-        }
-    }
-
     pub fn tabs(bridge: Arc<BrowserBridge>) -> Self {
-        Self {
-            bridge,
-            kind: ChromeBrowserToolKind::Tabs,
-        }
+        Self::for_kind(bridge, ChromeBrowserToolKind::Tabs)
     }
 
     pub fn page(bridge: Arc<BrowserBridge>) -> Self {
-        Self {
-            bridge,
-            kind: ChromeBrowserToolKind::Page,
-        }
+        Self::for_kind(bridge, ChromeBrowserToolKind::Page)
     }
 
     pub fn input(bridge: Arc<BrowserBridge>) -> Self {
-        Self {
-            bridge,
-            kind: ChromeBrowserToolKind::Input,
-        }
+        Self::for_kind(bridge, ChromeBrowserToolKind::Input)
     }
 
     pub fn script(bridge: Arc<BrowserBridge>) -> Self {
+        Self::for_kind(bridge, ChromeBrowserToolKind::Script)
+    }
+
+    fn for_kind(bridge: Arc<BrowserBridge>, kind: ChromeBrowserToolKind) -> Self {
         Self {
             bridge,
-            kind: ChromeBrowserToolKind::Script,
+            kind,
+            screenshot_workspace: None,
         }
+    }
+
+    pub fn with_screenshot_workspace(mut self, workspace: PathBuf) -> Self {
+        self.screenshot_workspace = Some(Arc::new(workspace));
+        self
     }
 
     pub fn is_active(&self) -> bool {
         !self.bridge.sessions.read().is_empty()
     }
 
-    pub fn dependency_tool_names() -> [&'static str; 5] {
+    pub fn dependency_tool_names() -> [&'static str; 4] {
         [
             Self::TABS_NAME,
             Self::PAGE_NAME,
             Self::INPUT_NAME,
             Self::SCRIPT_NAME,
-            Self::NAME,
         ]
     }
 
@@ -530,12 +526,22 @@ impl ChromeBrowserTool {
             Self::SCRIPT_NAME,
         ]
     }
+
+    fn screenshot_tmp_dir(&self) -> PathBuf {
+        self.screenshot_workspace
+            .as_ref()
+            .map(|workspace| workspace.join(BROWSER_SCREENSHOT_TMP_DIR))
+            .unwrap_or_else(|| {
+                std::env::temp_dir()
+                    .join("anda_bot")
+                    .join("browser-screenshots")
+            })
+    }
 }
 
 impl ChromeBrowserToolKind {
     fn name(self) -> &'static str {
         match self {
-            Self::Legacy => ChromeBrowserTool::NAME,
             Self::Tabs => ChromeBrowserTool::TABS_NAME,
             Self::Page => ChromeBrowserTool::PAGE_NAME,
             Self::Input => ChromeBrowserTool::INPUT_NAME,
@@ -546,11 +552,6 @@ impl ChromeBrowserToolKind {
     fn description(self, sessions: Vec<BrowserSession>) -> String {
         let active_hint = format!("\n\nActive sessions: {sessions:?}");
         let body = match self {
-            Self::Legacy => concat!(
-                "Legacy browser control tool. Prefer chrome_tabs, chrome_page, chrome_input, ",
-                "and chrome_script because their schemas are smaller and page actions target the ",
-                "active tab by default. Use this only for compatibility with older prompts."
-            ),
             Self::Tabs => concat!(
                 "Manage Chrome tabs and navigation through the Anda browser extension. ",
                 "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
@@ -601,7 +602,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     async fn call(
         &self,
         ctx: BaseCtx,
-        args: Self::Args,
+        mut args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         validate_browser_action_for_tool(self.kind, &args)?;
@@ -630,6 +631,10 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
             }));
         }
 
+        if args.action == BrowserAction::Screenshot {
+            args.include_data_url = Some(true);
+        }
+
         let session = match self.bridge.connected_session(preferred_session.as_deref()) {
             Some(session) => session,
             None => {
@@ -640,7 +645,8 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                     .ok_or("No connected Anda browser extension session. Install and configure the extension, then open the browser.")?
             }
         };
-        let result = self.bridge.run_action(session, args).await?;
+        let mut result = self.bridge.run_action(session, args).await?;
+        materialize_screenshot_data_url(&mut result, &self.screenshot_tmp_dir())?;
         Ok(ToolOutput::new(Response::Ok {
             result: json!(result),
             next_cursor: None,
@@ -650,12 +656,6 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
 
 fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
     match kind {
-        ChromeBrowserToolKind::Legacy => json!({
-            "type": "object",
-            "properties": legacy_browser_properties(),
-            "required": ["action"],
-            "additionalProperties": false
-        }),
         ChromeBrowserToolKind::Tabs => json!({
             "type": "object",
             "properties": {
@@ -713,10 +713,6 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "include_forms": {
                     "type": ["boolean", "null"],
                     "description": "Whether snapshot should include visible form controls and buttons."
-                },
-                "include_data_url": {
-                    "type": ["boolean", "null"],
-                    "description": "Whether screenshot should include the captured PNG data URL. Leave false unless image bytes are needed."
                 },
                 "highlight": {
                     "type": ["boolean", "null"],
@@ -817,45 +813,6 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
     }
 }
 
-fn legacy_browser_properties() -> Value {
-    json!({
-        "action": {
-            "type": "string",
-            "enum": ["get_current_tab", "snapshot", "extract_text", "get_full_page_html", "get_structured_data", "get_element_info", "get_viewport_size", "wait_for_element", "click", "type_text", "press_key", "scroll", "scroll_to", "hover", "drag_and_drop", "select_dropdown", "find_in_page", "copy_to_clipboard", "navigate", "go_back", "go_forward", "reload", "screenshot", "read_selection", "list_tabs", "switch_tab", "open_tab", "close_tab", "launch_browser", "execute_javascript"],
-            "description": "Legacy browser action. Prefer the split tools: chrome_tabs, chrome_page, chrome_input, chrome_script."
-        },
-        "selector": { "type": ["string", "null"], "description": "CSS selector for page/input actions." },
-        "text": { "type": ["string", "null"], "description": "Text for type_text or copy_to_clipboard." },
-        "value": { "type": ["string", "null"], "description": "Value for select_dropdown." },
-        "code": { "type": ["string", "null"], "description": "JavaScript expression or function body for execute_javascript." },
-        "world": { "type": ["string", "null"], "enum": ["debugger", "isolated", "main", null], "description": "Execution mode for execute_javascript. debugger is the default CSP-resistant page-context bridge; isolated/main use chrome.scripting.executeScript when use_bridge is false." },
-        "use_bridge": { "type": ["boolean", "null"], "description": "Whether execute_javascript should use the CSP-resistant debugger bridge. Defaults to true." },
-        "query": { "type": ["string", "null"], "description": "Search query for find_in_page." },
-        "url": { "type": ["string", "null"], "description": "URL for navigate, open_tab, or launch_browser." },
-        "key": { "type": ["string", "null"], "description": "Keyboard key for press_key." },
-        "amount": { "type": ["integer", "null"], "description": "Vertical scroll amount in pixels." },
-        "x": coordinate_schema("Viewport x coordinate."),
-        "y": coordinate_schema("Viewport y coordinate."),
-        "to_x": coordinate_schema("Target viewport x coordinate."),
-        "to_y": coordinate_schema("Target viewport y coordinate."),
-        "from_selector": { "type": ["string", "null"], "description": "Source selector for drag_and_drop." },
-        "to_selector": { "type": ["string", "null"], "description": "Target selector for drag_and_drop." },
-        "tab_id": { "type": ["integer", "null"], "description": "Chrome tab id. For page/input actions the extension activates this tab before acting." },
-        "window_id": { "type": ["integer", "null"], "description": "Chrome window id." },
-        "frame_id": { "type": ["integer", "null"], "description": "Optional frame id for execute_javascript." },
-        "active": { "type": ["boolean", "null"], "description": "Whether open_tab or navigate should activate the target tab." },
-        "include_links": { "type": ["boolean", "null"], "description": "Whether snapshot should include visible links." },
-        "include_forms": { "type": ["boolean", "null"], "description": "Whether snapshot should include visible form controls and buttons." },
-        "include_data_url": { "type": ["boolean", "null"], "description": "Whether screenshot should include the captured PNG data URL." },
-        "highlight": { "type": ["boolean", "null"], "description": "Whether find_in_page should highlight matched elements." },
-        "bypass_cache": { "type": ["boolean", "null"], "description": "Whether reload should bypass cache." },
-        "behavior": { "type": ["string", "null"], "enum": ["auto", "smooth", "instant", null], "description": "Scroll behavior for scroll_to." },
-        "max_chars": { "type": ["integer", "null"], "description": "Maximum characters returned for HTML/text-heavy actions." },
-        "timeout_ms": timeout_schema(),
-        "reason": reason_schema()
-    })
-}
-
 fn timeout_schema() -> Value {
     json!({
         "type": ["integer", "null"],
@@ -898,10 +855,6 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn validate_browser_action(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
-    validate_browser_action_for_tool(ChromeBrowserToolKind::Legacy, args)
 }
 
 fn validate_browser_action_for_tool(
@@ -980,7 +933,6 @@ fn validate_browser_action_for_tool(
 
 fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> bool {
     match kind {
-        ChromeBrowserToolKind::Legacy => true,
         ChromeBrowserToolKind::Tabs => matches!(
             action,
             BrowserAction::GetCurrentTab
@@ -1073,6 +1025,87 @@ fn normalized_action_timeout(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
         .clamp(MIN_BROWSER_ACTION_TIMEOUT_MS, MAX_BROWSER_ACTION_TIMEOUT_MS)
+}
+
+fn materialize_screenshot_data_url(
+    result: &mut BrowserActionResult,
+    screenshot_dir: &Path,
+) -> Result<(), BoxError> {
+    if !result.ok {
+        return Ok(());
+    }
+
+    let Some(value) = result.value.as_object_mut() else {
+        return Ok(());
+    };
+
+    let Some(data_url) = value
+        .get("data_url")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+
+    let (mime_type, encoded) = parse_screenshot_data_url(&data_url)?;
+    let bytes = STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| "invalid screenshot data_url base64 payload")?;
+    fs::create_dir_all(screenshot_dir)?;
+
+    let path = screenshot_dir.join(format!(
+        "chrome-screenshot-{}.{}",
+        Xid::new(),
+        screenshot_extension_for_mime(&mime_type)
+    ));
+    fs::write(&path, &bytes)?;
+
+    let path = path.to_string_lossy().to_string();
+    value.remove("data_url");
+    value.insert("path".to_string(), json!(path));
+    value.insert("file_path".to_string(), json!(path));
+    value.insert("file_uri".to_string(), json!(format!("file://{path}")));
+    value.insert("mime_type".to_string(), json!(mime_type));
+    value.insert("size".to_string(), json!(bytes.len()));
+    value.insert("data_url_saved".to_string(), json!(true));
+    Ok(())
+}
+
+fn parse_screenshot_data_url(data_url: &str) -> Result<(String, &str), BoxError> {
+    let Some(payload) = data_url.trim().strip_prefix("data:") else {
+        return Err("screenshot data_url must start with data:".into());
+    };
+    let Some((metadata, encoded)) = payload.split_once(',') else {
+        return Err("screenshot data_url is missing a comma separator".into());
+    };
+
+    let mut parts = metadata.split(';');
+    let mime_type = parts
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("image/png")
+        .trim()
+        .to_ascii_lowercase();
+    if !mime_type.starts_with("image/") {
+        return Err(format!("screenshot data_url has non-image MIME type {mime_type:?}").into());
+    }
+    if !metadata
+        .split(';')
+        .any(|part| part.trim().eq_ignore_ascii_case("base64"))
+    {
+        return Err("screenshot data_url must be base64 encoded".into());
+    }
+
+    Ok((mime_type, encoded))
+}
+
+fn screenshot_extension_for_mime(mime_type: &str) -> &'static str {
+    match mime_type.trim().to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        _ => "png",
+    }
 }
 
 fn json_null() -> Value {
@@ -1213,33 +1246,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_action_validation_requires_action_fields() {
-        let mut args = snapshot_args();
-        args.action = BrowserAction::Click;
-
-        assert!(validate_browser_action(&args).is_err());
-
-        args.selector = Some("button[type=submit]".to_string());
-        assert!(validate_browser_action(&args).is_ok());
-    }
-
-    #[test]
-    fn browser_action_validation_rejects_unknown_script_world() {
-        let mut args = snapshot_args();
-        args.action = BrowserAction::ExecuteJavascript;
-        args.code = Some("document.title".to_string());
-
-        args.world = Some("debugger".to_string());
-        assert!(validate_browser_action(&args).is_ok());
-
-        args.world = Some("main".to_string());
-        assert!(validate_browser_action(&args).is_ok());
-
-        args.world = Some("page".to_string());
-        assert!(validate_browser_action(&args).is_err());
-    }
-
-    #[test]
     fn split_page_tool_schema_targets_active_tab() {
         let tool = ChromeBrowserTool::page(Arc::new(BrowserBridge::new()));
         let definition = tool.definition();
@@ -1258,6 +1264,35 @@ mod tests {
 
         assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &args).is_ok());
         assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Page, &args).is_err());
+    }
+
+    #[test]
+    fn screenshot_data_url_is_saved_to_tmp_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut result = BrowserActionResult {
+            ok: true,
+            value: json!({
+                "captured": true,
+                "mime_type": "image/png",
+                "size": 42,
+                "data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="
+            }),
+            error: None,
+        };
+
+        materialize_screenshot_data_url(&mut result, temp_dir.path()).unwrap();
+
+        let value = result.value.as_object().unwrap();
+        assert!(value.get("data_url").is_none());
+        assert_eq!(value["data_url_saved"], true);
+        assert_eq!(value["mime_type"], "image/png");
+        assert_eq!(value["size"], 11);
+
+        let path = value["path"].as_str().unwrap();
+        assert_eq!(value["file_path"], path);
+        assert_eq!(value["file_uri"], format!("file://{path}"));
+        assert!(Path::new(path).starts_with(temp_dir.path()));
+        assert_eq!(fs::read(path).unwrap(), b"image-bytes");
     }
 
     #[tokio::test]

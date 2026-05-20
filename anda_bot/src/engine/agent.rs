@@ -637,26 +637,18 @@ impl AndaBot {
             .conversations
             .tool_usage_with(|usage| select_most_used_tools(&available_tools, &tools, usage, 5));
         tools.extend(additional_tools);
-        let base_req = CompletionRequest {
+        let initial_req = CompletionRequest {
             instructions,
+            prompt,
+            chat_history: chat_history.clone(),
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
             max_output_tokens: Some(ctx.model.max_output.max(32000)),
             ..Default::default()
         };
 
-        let initial_req = CompletionRequest {
-            prompt,
-            chat_history: chat_history.clone(),
-            ..base_req.clone()
-        };
         let session_request_meta = SessionRequestMeta::new(meta.clone());
         let sess_id = conversation.thread.clone().unwrap_or_default();
-        let runner = ctx
-            .clone()
-            .completion_iter(initial_req, Vec::new())
-            .reserve_chat_history(chat_history)
-            .unbound();
 
         conversation.thread = Some(sess_id.clone());
         conversation.status = ConversationStatus::Working;
@@ -706,9 +698,18 @@ impl AndaBot {
 
         let shell_hook = ShellToolHook::new(session.clone());
         ctx.base.set_state(shell_hook);
-
         self.insert_session(session.clone());
-        self.spawn_session_runner(ctx, base_req, session, conversation, runner, rx, None);
+
+        self.spawn_session_runner(
+            ctx,
+            initial_req,
+            vec![],
+            chat_history,
+            session,
+            conversation,
+            rx,
+            None,
+        );
         Ok(())
     }
 
@@ -772,17 +773,43 @@ impl AndaBot {
     fn spawn_session_runner(
         &self,
         ctx: AgentCtx,
-        req: CompletionRequest,
+        mut req: CompletionRequest,
+        resources: Vec<Resource>,
+        reserve_chat_history: Vec<Message>,
         session: Arc<Session>,
         conversation: Conversation,
-        runner: CompletionRunner,
         mut rx: tokio::sync::mpsc::Receiver<ConversationInput>,
         extra_user_context: Option<Message>,
     ) {
         let assistant = self.clone();
         tokio::spawn(async move {
+            let (resources, media_usage) =
+                multimodal::understand_media_resources(&ctx, resources).await;
+            let content: Vec<ContentPart> = resources
+                .into_iter()
+                .filter_map(|res| res.try_into().ok())
+                .filter(|c| matches!(c, ContentPart::Text { .. }))
+                .collect();
+            let mut runner = ctx
+                .clone()
+                .completion_iter(
+                    CompletionRequest {
+                        content,
+                        ..req.clone()
+                    },
+                    vec![],
+                )
+                .unbound();
+            runner.accumulate(&media_usage);
+            if !reserve_chat_history.is_empty() {
+                runner = runner.reserve_chat_history(reserve_chat_history);
+            }
+
+            // Clear the prompt and raw_history to be used for the session.
+            req.prompt.clear();
+            req.raw_history.clear();
             let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
-            let mut runner = SessionRunner {
+            let mut sess_runner = SessionRunner {
                 ctx,
                 req,
                 assistant: assistant.clone(),
@@ -801,7 +828,7 @@ impl AndaBot {
                     inputs.push(input);
                 }
 
-                match runner.run(inputs, &mut tools_usage_snapshot).await {
+                match sess_runner.run(inputs, &mut tools_usage_snapshot).await {
                     Ok(continue_active) => {
                         if !continue_active {
                             break;
@@ -1358,42 +1385,21 @@ impl Agent<AgentCtx> for AndaBot {
         tools.extend(additional_tools);
         let req = CompletionRequest {
             instructions,
+            prompt,
+            chat_history,
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
             max_output_tokens: Some(ctx.model.max_output.max(32000)),
             ..Default::default()
         };
 
-        let (resources, media_usage) =
-            multimodal::understand_media_resources(&ctx, resources).await;
-        let content: Vec<ContentPart> = resources
-            .into_iter()
-            .filter_map(|res| res.try_into().ok())
-            .collect();
-
-        let mut runner = ctx
-            .clone()
-            .completion_iter(
-                CompletionRequest {
-                    prompt,
-                    chat_history,
-                    content,
-                    ..req.clone()
-                },
-                vec![],
-            )
-            .unbound();
-        runner.accumulate(&media_usage);
-        if !reserve_chat_history.is_empty() {
-            runner = runner.reserve_chat_history(reserve_chat_history);
-        }
-
         assistant.spawn_session_runner(
             ctx,
             req,
+            resources,
+            reserve_chat_history,
             session,
             conversation,
-            runner,
             rx,
             system_extra_user_context(&extra),
         );
@@ -1507,6 +1513,7 @@ impl SessionRunner {
             let mut content: Vec<ContentPart> = resources
                 .into_iter()
                 .filter_map(|res| res.try_into().ok())
+                .filter(|c| matches!(c, ContentPart::Text { .. }))
                 .collect();
 
             if let Some(msg) = system_extra_user_context(&input.extra)

@@ -150,9 +150,10 @@ export class Channel extends EventTarget {
       this.updateConversationChain(conversations)
       this.updateLatestConversation(latest)
       if (
-        latest.status === 'working' ||
-        latest.status === 'submitted' ||
-        latest.status === 'idle'
+        (latest.status === 'working' ||
+          latest.status === 'submitted' ||
+          latest.status === 'idle') &&
+        latest.updated_at > Date.now() - 7 * 24 * 3600 * 1000
       ) {
         this.pollConversationLoop(new PollConversation())
       }
