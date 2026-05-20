@@ -5,6 +5,8 @@
 # Choose the active provider with `model.active`, then fill in that provider entry
 # or export a matching API key environment variable.
 # To switch models later, point `model.active` at a different provider key.
+# The built-in image_understanding, audio_understanding, and video_understanding
+# agents route to providers labeled image, audio, and video respectively.
 # Supported model API key env vars include DEEPSEEK_API_KEY, MINIMAX_API_KEY,
 # OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY,
 # MIMO_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, BIGMODEL_API_KEY, and GLM_API_KEY.
@@ -43,7 +45,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["memory"]
+      labels: ["memory", "image", "audio", "video"]
       disabled: false
 
     - family: openai
@@ -52,7 +54,7 @@ model:
       api_key: ""
       context_window: 400000
       max_output: 128000
-      labels: ["flash", "memory"]
+      labels: ["flash", "memory", "image", "audio", "video"]
       disabled: false
 
     - family: anthropic
@@ -61,7 +63,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["memory"]
+      labels: ["memory", "image", "audio", "video"]
       disabled: false
 
     - family: anthropic
@@ -79,7 +81,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 64000
-      labels: ["memory"]
+      labels: ["memory", "image", "audio", "video"]
       disabled: false
 
     - family: gemini
@@ -88,7 +90,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 64000
-      labels: ["flash", "memory"]
+      labels: ["flash", "memory", "image", "audio", "video"]
       disabled: false
 
     - family: gemini
@@ -116,7 +118,7 @@ model:
       api_key: ""
       context_window: 1000000
       max_output: 128000
-      labels: ["flash", "fallback"]
+      labels: ["flash", "image", "audio", "video"]
       disabled: false
       bearer_auth: true
 

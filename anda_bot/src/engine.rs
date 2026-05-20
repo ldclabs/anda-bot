@@ -27,6 +27,7 @@ mod browser;
 mod browser_ws;
 mod conversation;
 mod goal;
+mod multimodal;
 mod prompt;
 mod side;
 mod system;
@@ -42,6 +43,7 @@ pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, Sess
 pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
+pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
@@ -198,6 +200,12 @@ impl Engines {
             transcription_manager.clone(),
             active_im_channels,
         ));
+        let image_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::image(cfg.workspaces.clone()));
+        let audio_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::audio(cfg.workspaces.clone()));
+        let video_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::video(cfg.workspaces.clone()));
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager
                 .as_ref()
@@ -251,6 +259,18 @@ impl Engines {
         }
 
         let engine = engine_builder
+            .register_agent(
+                image_understanding_agent.clone(),
+                Some(image_understanding_agent.model_label().to_string()),
+            )?
+            .register_agent(
+                audio_understanding_agent.clone(),
+                Some(audio_understanding_agent.model_label().to_string()),
+            )?
+            .register_agent(
+                video_understanding_agent.clone(),
+                Some(video_understanding_agent.model_label().to_string()),
+            )?
             .register_agent(bot.clone(), None)?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),

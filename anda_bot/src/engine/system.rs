@@ -3,9 +3,8 @@ use serde_json::{Map, Value};
 
 pub const SYSTEM_PERSON_NAME: &str = "$system";
 pub const EXTERNAL_USER_PERSON_NAME: &str = "$external_user";
-
-const SYSTEM_RUNTIME_MESSAGE_PREFIX: &str = "[$system:";
-const EXTERNAL_USER_MESSAGE_PREFIX: &str = "[$external_user:";
+pub const SYSTEM_RUNTIME_MESSAGE_PREFIX: &str = "[$system:";
+pub const EXTERNAL_USER_MESSAGE_PREFIX: &str = "[$external_user:";
 
 pub fn external_user_name(name: &str) -> String {
     if name.trim().is_empty() {

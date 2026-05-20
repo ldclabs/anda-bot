@@ -42,6 +42,7 @@ use super::{
     browser::ChromeBrowserTool,
     conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
+    multimodal,
     prompt::{PromptCommand, skill_subagent},
     side,
     system::{
@@ -212,6 +213,7 @@ fn base_tool_dependencies() -> Vec<String> {
             .into_iter()
             .map(str::to_string),
     );
+    tools.extend(multimodal::media_agent_names());
     tools
 }
 
@@ -437,6 +439,7 @@ impl AndaBot {
         conversation: Option<u64>,
     ) -> Result<AgentOutput, BoxError> {
         let subagent = side::side_agent(instructions);
+        let (resources, media_usage) = multimodal::understand_media_resources(ctx, resources).await;
         let mut output = subagent
             .run(
                 ctx.child(&subagent.name, &subagent.name)?,
@@ -445,6 +448,7 @@ impl AndaBot {
             )
             .await?;
 
+        output.usage.accumulate(&media_usage);
         output.conversation = conversation;
         self.dispatch_direct_output(ctx, &output).await;
         Ok(output)
@@ -913,6 +917,7 @@ impl Agent<AgentCtx> for AndaBot {
 
     fn supported_resource_tags(&self) -> Vec<String> {
         let mut tags = vec!["text".to_string(), "md".to_string()];
+        tags.extend(multimodal::supported_media_resource_tags());
         if self.inner.transcription_manager.is_some() {
             tags.extend(crate::transcription::supported_audio_resource_tags());
         }
@@ -1359,6 +1364,8 @@ impl Agent<AgentCtx> for AndaBot {
             ..Default::default()
         };
 
+        let (resources, media_usage) =
+            multimodal::understand_media_resources(&ctx, resources).await;
         let content: Vec<ContentPart> = resources
             .into_iter()
             .filter_map(|res| res.try_into().ok())
@@ -1376,6 +1383,7 @@ impl Agent<AgentCtx> for AndaBot {
                 vec![],
             )
             .unbound();
+        runner.accumulate(&media_usage);
         if !reserve_chat_history.is_empty() {
             runner = runner.reserve_chat_history(reserve_chat_history);
         }
@@ -1492,8 +1500,11 @@ impl SessionRunner {
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&input.usage);
 
-            let mut content: Vec<ContentPart> = input
-                .resources
+            let (resources, media_usage) =
+                multimodal::understand_media_resources(&self.ctx, input.resources).await;
+            self.runner.accumulate(&media_usage);
+
+            let mut content: Vec<ContentPart> = resources
                 .into_iter()
                 .filter_map(|res| res.try_into().ok())
                 .collect();
