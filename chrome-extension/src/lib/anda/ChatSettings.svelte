@@ -213,9 +213,7 @@
 
 						<div class="grid gap-1.5">
 							<div class="flex items-center justify-between gap-2">
-								<span class="text-[10px] font-semibold text-stone-500"
-									>{chrome.i18n.getMessage('windowsPowerShell')}</span
-								>
+								<span class="text-[10px] font-semibold text-stone-500">Windows PowerShell</span>
 								<Button
 									variant="ghost"
 									size="icon-xs"
