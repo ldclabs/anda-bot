@@ -41,7 +41,7 @@ model:
 
     - family: openai
       model: "gpt-5.5"
-      api_base: "https://api.openai.com/v1"
+      api_base: "https://chatgpt.com/backend-api/codex"
       api_key: ""
       context_window: 1000000
       max_output: 128000

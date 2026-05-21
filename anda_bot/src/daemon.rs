@@ -219,6 +219,7 @@ impl Daemon {
         user_pubkey: util::key::Ed25519PubKey,
     ) -> Result<(), BoxError> {
         let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
+
         let setup_issues = self.cfg.setup_issues();
         if !setup_issues.is_empty() {
             return Err(format!(

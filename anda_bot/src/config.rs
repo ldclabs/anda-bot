@@ -232,7 +232,6 @@ impl Config {
     pub fn models(&self, http_client: reqwest::Client) -> Models {
         let providers = self.model.providers_with_env_api_keys();
         let models = Models::from_configs(&providers, http_client.clone());
-
         let active = self.model.active.trim();
         if let Some(model) = models.get(active) {
             models.set_model(model);

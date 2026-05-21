@@ -1,5 +1,6 @@
 use anda_engine::model::ModelConfig;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use super::normalize_string;
 
@@ -13,12 +14,55 @@ pub struct ModelSettings {
 }
 
 impl ModelSettings {
+    pub fn try_load_codex_token(&mut self, home: &Path) {
+        for provider in &mut self.providers {
+            if provider.api_key.trim().is_empty()
+                && provider.api_base == "https://chatgpt.com/backend-api/codex"
+            {
+                let token_path = home.join(".codex/auth.json");
+                if let Ok(token_str) = std::fs::read_to_string(token_path) {
+                    if let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
+                        && !token.tokens.access_token.is_empty()
+                    {
+                        provider.api_key = token.tokens.access_token;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn providers_with_env_api_keys(&self) -> Vec<ModelConfig> {
         self.providers
             .iter()
             .map(provider_with_env_api_key)
             .collect()
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CodexAuth {
+    #[allow(unused)]
+    #[serde(default)]
+    pub auth_mode: String,
+
+    #[serde(default)]
+    pub tokens: OAuthToken,
+
+    #[allow(unused)]
+    #[serde(default)]
+    pub last_refresh: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct OAuthToken {
+    #[serde(default)]
+    pub id_token: String,
+    #[serde(default)]
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: String,
+    #[serde(default)]
+    pub account_id: String,
 }
 
 fn provider_with_env_api_key(provider: &ModelConfig) -> ModelConfig {
@@ -28,6 +72,7 @@ fn provider_with_env_api_key(provider: &ModelConfig) -> ModelConfig {
     {
         provider.api_key = api_key;
     }
+
     provider
 }
 

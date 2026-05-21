@@ -13,6 +13,10 @@ All notable changes to Anda Bot.
 - **Session Working status auto-repair**: when a conversation status is not `Working` but the runner has pending tasks (`!is_idle()`), the status is now persisted as `Working` with `failed_reason` cleared — recovering from stale status states without manual intervention.
 - **Sidebar channel toggle via Button**: the collapsed/expanded chevron icon in the channel sidebar is now wrapped in a shadcn-svelte `Button` with `aria-label` and `title`, replacing an unlabeled clickable div.
 
+
+### Added
+
+- **Codex OAuth token auto-loading**: when a model provider is configured with `api_base: "https://chatgpt.com/backend-api/codex"`, the daemon now automatically reads `~/.codex/auth.json` and injects the `access_token` as `api_key`. This enables seamless Codex backend usage without hardcoding tokens in config — just log in once and the daemon picks up the token on restart.
 ### Fixed
 
 - **Duplicate `scrollIntoView` calls**: the App.svelte `$effect` now tracks `prevLastMessageId` to only trigger `scrollIntoView` when the last message ID actually changes, preventing redundant scroll animations on unrelated reactivity triggers.
@@ -39,6 +43,10 @@ All notable changes to Anda Bot.
 - **Chrome extension decomposed**: `client.ts` (2,099 lines) split into focused modules — `channel.svelte.ts` (561 lines), `side-panel.svelte.ts` (653 lines), `conversations.ts`, `poll-conversation.ts`, `voice.ts`, `types.ts`, `commands.ts`, `chrome.ts`. `service_worker.ts` (1,884 lines) similarly decomposed into `browser-actions.ts` (1,046 lines), `page-speech.ts`, `page-voice.ts`, `page-audio.ts`, `tts.ts`, `settings.ts`, and `types.ts`.
 - **Legacy `chrome_browser` tool removed**: the original monolithic browser tool has been fully removed from both `browser.rs` and `engine.rs`, leaving only the four split tools (`chrome_tabs`, `chrome_page`, `chrome_input`, `chrome_script`).
 
+
+### Added
+
+- **Codex OAuth token auto-loading**: when a model provider is configured with `api_base: "https://chatgpt.com/backend-api/codex"`, the daemon now automatically reads `~/.codex/auth.json` and injects the `access_token` as `api_key`. This enables seamless Codex backend usage without hardcoding tokens in config — just log in once and the daemon picks up the token on restart.
 ### Fixed
 
 - **CSP bypass result extraction**: the Debugger bridge's `Runtime.evaluate` results were not properly unwrapped when the evaluated expression returned an object handle rather than a value, causing `chrome_script` output to be empty on certain pages. Now correctly inspects and extracts object properties via the RemoteObject protocol.
@@ -156,6 +164,10 @@ All notable changes to Anda Bot.
 
 ## [0.6.4] — 2026-05-11
 
+
+### Added
+
+- **Codex OAuth token auto-loading**: when a model provider is configured with `api_base: "https://chatgpt.com/backend-api/codex"`, the daemon now automatically reads `~/.codex/auth.json` and injects the `access_token` as `api_key`. This enables seamless Codex backend usage without hardcoding tokens in config — just log in once and the daemon picks up the token on restart.
 ### Fixed
 
 - **IME composition jitter in TUI input** ([#1](https://github.com/ldclabs/anda-bot/issues/1)): the main render loop now only redraws the terminal when observable state has actually changed, using `ChatRenderSnapshot` / `StatusRenderSnapshot` comparison plus a `needs_render` flag. Previously the terminal was redrawn on every loop iteration (~6–7 fps), causing IME composition candidate windows to flicker and shift on systems like Fedora 42. Render-on-demand triggers include: chat message changes, new streaming tokens, terminal resize, key input, paste, thinking state transitions, and daemon status changes.
@@ -263,6 +275,10 @@ All notable changes to Anda Bot.
 - **Background subagent progress reporting**: new `on_background_progress` hook surfaces intermediate subagent output to the user in real-time via chat messages.
 - **Side agent shell access**: `ShellTool` added to side agent's allowed tools for read-only filesystem inspection.
 
+
+### Added
+
+- **Codex OAuth token auto-loading**: when a model provider is configured with `api_base: "https://chatgpt.com/backend-api/codex"`, the daemon now automatically reads `~/.codex/auth.json` and injects the `access_token` as `api_key`. This enables seamless Codex backend usage without hardcoding tokens in config — just log in once and the daemon picks up the token on restart.
 ### Fixed
 
 - **recall_memory discipline**: tool description updated to explicitly discourage calls for facts already present in the active conversation.
