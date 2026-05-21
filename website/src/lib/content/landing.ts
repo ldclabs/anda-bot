@@ -110,7 +110,7 @@ export type LandingCopy = {
 		bodyPrefix: string;
 		bodySuffix: string;
 		quickStart: string;
-		meetHippocampus: string;
+		meetBrain: string;
 		terminalLabel: string;
 		sourceComment: string;
 		goalComment: string;
@@ -144,7 +144,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Install Anda Bot, an open-source Rust agent with graph long-term memory, long-horizon reasoning, external tools, subagents, and IM integrations.',
 			ogTitle: 'Install Anda Bot - Graph-memory Rust agent',
 			ogDescription:
-				'Run Anda locally with Anda Hippocampus memory, long-running goals, Claude Code and Codex tool use, subagents, and terminal or IM workflows.'
+				'Run Anda locally with Anda Brain memory, long-running goals, Claude Code and Codex tool use, subagents, and terminal or IM workflows.'
 		},
 		nav: {
 			install: 'Install',
@@ -158,7 +158,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Open-source Rust terminal agent',
 			eyebrow: 'graph memory · subagents · external tools',
 			title: 'Install Anda. Give it work that needs memory, tools, and time.',
-			body: 'I am the local agent that keeps learning while we work. Hippocampus turns experience into graph memory, long-horizon goals keep moving across context boundaries, and subagents can coordinate external tools such as Claude Code and Codex.',
+			body: 'I am the local agent that keeps learning while we work. Anda Brain turns experience into graph memory, long-horizon goals keep moving across context boundaries, and subagents can coordinate external tools such as Claude Code and Codex.',
 			installFor: 'Install for {os}',
 			seeReasoning: 'See core loop',
 			proofOs: 'Rust',
@@ -242,9 +242,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: 'Memory is a graph that keeps learning the useful parts.',
-			body: 'Hippocampus turns useful conversations into a living Cognitive Nexus: people, projects, decisions, preferences, events, timelines, and the relationships between them.',
+			body: 'Anda Brain turns useful conversations into a living Cognitive Nexus: people, projects, decisions, preferences, events, timelines, and the relationships between them.',
 			formationTitle: 'Formation',
 			formationBody:
 				'I distill successful turns, files, channel context, and tool results into memories with source, time, and meaning.',
@@ -310,7 +310,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			bodyPrefix: 'Use an environment key for the first run, or save provider keys in',
 			bodySuffix: 'for future sessions.',
 			quickStart: 'Quick start',
-			meetHippocampus: 'Meet Hippocampus',
+			meetBrain: 'Meet Anda Brain',
 			terminalLabel: 'run command',
 			sourceComment: 'Start now with an environment key:',
 			goalComment: 'Or save api_key in config.yaml, then run:',
@@ -326,7 +326,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'安装 Anda Bot，一个具备知识图谱长期记忆、长程推理、外部工具调用、子智能体 和 IM 接入能力的开源 Rust Agent。',
 			ogTitle: '安装 Anda Bot - 知识图谱记忆智能体',
 			ogDescription:
-				'在本地运行 Anda：让 Hippocampus 记住上下文，让长程目标、Claude Code、Codex、子智能体 和 IM 工作流持续推进。'
+				'在本地运行 Anda：让 Anda Brain 记住上下文，让长程目标、Claude Code、Codex、子智能体 和 IM 工作流持续推进。'
 		},
 		nav: { install: '安装', reasoning: '推理', memory: '记忆', surfaces: '场景', docs: '文档' },
 		language: { label: '语言' },
@@ -334,7 +334,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: '开源 Rust 终端 Agent',
 			eyebrow: '知识图谱记忆 · 子智能体 · 外部工具',
 			title: '安装 Anda。把需要记忆、工具和时间的工作交给它。',
-			body: '我是会在工作中持续学习的本地 Agent。Hippocampus 会把经验沉淀成知识图谱记忆，长程目标可以跨越上下文边界继续推进，子智能体还能协同 Claude Code、Codex 等外部 skills 工具。',
+			body: '我是会在工作中持续学习的本地 Agent。Anda Brain 会把经验沉淀成知识图谱记忆，长程目标可以跨越上下文边界继续推进，子智能体还能协同 Claude Code、Codex 等外部 skills 工具。',
 			installFor: '安装 {os} 版本',
 			seeReasoning: '查看核心循环',
 			proofOs: 'Rust',
@@ -418,9 +418,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: '记忆是一张会持续学习精华的知识图谱。',
-			body: 'Hippocampus 会把有用的对话转化为活的 Cognitive Nexus：人物、项目、决策、偏好、事件、时间线，以及它们之间的关系。',
+			body: 'Anda Brain 会把有用的对话转化为活的 Cognitive Nexus：人物、项目、决策、偏好、事件、时间线，以及它们之间的关系。',
 			formationTitle: '形成',
 			formationBody:
 				'我会把成功的对话轮次、文件、频道上下文和工具结果提炼成带来源、时间和意义的记忆。',
@@ -467,7 +467,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			bodyPrefix: '第一次运行可以临时使用环境变量，也可以把 provider 密钥保存到',
 			bodySuffix: '供后续会话使用。',
 			quickStart: '快速开始',
-			meetHippocampus: '了解 Hippocampus',
+			meetBrain: '了解 Anda Brain',
 			terminalLabel: '运行命令',
 			sourceComment: '用环境变量立即启动：',
 			goalComment: '或把 api_key 保存到 config.yaml 后运行：',
@@ -483,7 +483,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Instala Anda Bot, un agente Rust open source con memoria larga en grafo, razonamiento prolongado, herramientas externas, subagents e integraciones IM.',
 			ogTitle: 'Instala Anda Bot - Agente Rust con memoria en grafo',
 			ogDescription:
-				'Ejecuta Anda localmente con memoria Hippocampus, objetivos largos, Claude Code, Codex, subagents y flujos de terminal o IM.'
+				'Ejecuta Anda localmente con memoria brain, objetivos largos, Claude Code, Codex, subagents y flujos de terminal o IM.'
 		},
 		nav: {
 			install: 'Instalar',
@@ -497,7 +497,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Agente Rust de terminal open source',
 			eyebrow: 'memoria en grafo · subagents · herramientas externas',
 			title: 'Instala Anda. Dale trabajo que necesita memoria, herramientas y tiempo.',
-			body: 'Soy el agente local que sigue aprendiendo mientras trabajamos. Hippocampus convierte experiencia en memoria en grafo, los objetivos largos cruzan límites de contexto y los subagents coordinan herramientas como Claude Code y Codex.',
+			body: 'Soy el agente local que sigue aprendiendo mientras trabajamos. Anda Brain convierte experiencia en memoria en grafo, los objetivos largos cruzan límites de contexto y los subagents coordinan herramientas como Claude Code y Codex.',
 			installFor: 'Instalar para {os}',
 			seeReasoning: 'Ver ciclo central',
 			proofOs: 'Rust',
@@ -586,9 +586,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: 'La memoria es un grafo que aprende lo útil.',
-			body: 'Hippocampus convierte conversaciones útiles en un Cognitive Nexus vivo: personas, proyectos, decisiones, preferencias, eventos, líneas de tiempo y relaciones.',
+			body: 'Brain convierte conversaciones útiles en un Cognitive Nexus vivo: personas, proyectos, decisiones, preferencias, eventos, líneas de tiempo y relaciones.',
 			formationTitle: 'Formación',
 			formationBody:
 				'Destilo turnos exitosos, archivos, contexto de canales y resultados de herramientas en recuerdos con fuente, tiempo y significado.',
@@ -653,7 +653,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			bodyPrefix: 'Usa una clave de entorno en el primer arranque, o guarda claves en',
 			bodySuffix: 'para sesiones futuras.',
 			quickStart: 'Inicio rápido',
-			meetHippocampus: 'Conocer Hippocampus',
+			meetBrain: 'Conocer Anda Brain',
 			terminalLabel: 'comando de ejecución',
 			sourceComment: 'Inicia ahora con una clave de entorno:',
 			goalComment: 'O guarda api_key en config.yaml y ejecuta:',
@@ -669,7 +669,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Installez Anda Bot, un agent Rust open source avec mémoire longue en graphe, raisonnement prolongé, outils externes, subagents et intégrations IM.',
 			ogTitle: 'Installer Anda Bot - Agent Rust à mémoire graphe',
 			ogDescription:
-				'Exécutez Anda localement avec mémoire Hippocampus, objectifs longs, Claude Code, Codex, subagents et workflows terminal ou IM.'
+				'Exécutez Anda localement avec mémoire brain, objectifs longs, Claude Code, Codex, subagents et workflows terminal ou IM.'
 		},
 		nav: {
 			install: 'Installer',
@@ -683,7 +683,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Agent terminal Rust open source',
 			eyebrow: 'mémoire graphe · subagents · outils externes',
 			title: 'Installez Anda. Confiez-lui le travail qui demande mémoire, outils et temps.',
-			body: 'Je suis l’agent local qui continue d’apprendre pendant que nous travaillons. Hippocampus transforme l’expérience en mémoire graphe, les objectifs longs traversent les limites de contexte, et les subagents coordonnent Claude Code, Codex et d’autres outils.',
+			body: 'Je suis l’agent local qui continue d’apprendre pendant que nous travaillons. Anda Brain transforme l’expérience en mémoire graphe, les objectifs longs traversent les limites de contexte, et les subagents coordonnent Claude Code, Codex et d’autres outils.',
 			installFor: 'Installer pour {os}',
 			seeReasoning: 'Voir la boucle',
 			proofOs: 'Rust',
@@ -768,9 +768,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: 'La mémoire est un graphe qui apprend l’essentiel.',
-			body: 'Hippocampus transforme les conversations utiles en Cognitive Nexus vivant : personnes, projets, décisions, préférences, événements, chronologies et relations.',
+			body: 'Brain transforme les conversations utiles en Cognitive Nexus vivant : personnes, projets, décisions, préférences, événements, chronologies et relations.',
 			formationTitle: 'Formation',
 			formationBody:
 				'Je distille les tours réussis, fichiers, contextes de canaux et résultats d’outils en souvenirs avec source, temps et sens.',
@@ -835,7 +835,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Utilisez une clé en variable d’environnement au premier lancement, ou gardez les clés dans',
 			bodySuffix: 'pour les sessions suivantes.',
 			quickStart: 'Démarrage rapide',
-			meetHippocampus: 'Découvrir Hippocampus',
+			meetBrain: 'Découvrir Anda Brain',
 			terminalLabel: 'commande',
 			sourceComment: 'Démarrer avec une clé d’environnement :',
 			goalComment: 'Ou enregistrer api_key dans config.yaml, puis lancer :',
@@ -851,15 +851,21 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Установите Anda Bot: open-source Rust-агент с долгой графовой памятью, длительным рассуждением, внешними инструментами, subagents и IM-интеграциями.',
 			ogTitle: 'Установите Anda Bot - Rust-агент с графовой памятью',
 			ogDescription:
-				'Запускайте Anda локально с памятью Hippocampus, долгими целями, Claude Code, Codex, subagents и workflow в терминале или IM.'
+				'Запускайте Anda локально с памятью Brain, долгими целями, Claude Code, Codex, subagents и workflow в терминале или IM.'
 		},
-		nav: { install: 'Установка', reasoning: 'Рассуждение', memory: 'Память', surfaces: 'Среды', docs: 'Документация' },
+		nav: {
+			install: 'Установка',
+			reasoning: 'Рассуждение',
+			memory: 'Память',
+			surfaces: 'Среды',
+			docs: 'Документация'
+		},
 		language: { label: 'Язык' },
 		hero: {
 			badge: 'Open-source Rust-агент для терминала',
 			eyebrow: 'графовая память · subagents · внешние инструменты',
 			title: 'Установите Anda. Дайте работу, где нужны память, инструменты и время.',
-			body: 'Я локальный агент, который продолжает учиться во время работы. Hippocampus превращает опыт в графовую память, долгие цели проходят границы контекста, а subagents координируют Claude Code, Codex и другие инструменты.',
+			body: 'Я локальный агент, который продолжает учиться во время работы. Brain превращает опыт в графовую память, долгие цели проходят границы контекста, а subagents координируют Claude Code, Codex и другие инструменты.',
 			installFor: 'Установить для {os}',
 			seeReasoning: 'Смотреть цикл',
 			proofOs: 'Rust',
@@ -944,9 +950,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: 'Память - это граф, который учит полезное.',
-			body: 'Hippocampus превращает полезные разговоры в живой Cognitive Nexus: людей, проекты, решения, предпочтения, события, линии времени и отношения.',
+			body: 'Brain превращает полезные разговоры в живой Cognitive Nexus: людей, проекты, решения, предпочтения, события, линии времени и отношения.',
 			formationTitle: 'Формирование',
 			formationBody:
 				'Я выделяю успешные ходы, файлы, контекст каналов и результаты инструментов в воспоминания с источником, временем и смыслом.',
@@ -1009,7 +1015,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'Для первого запуска используйте ключ в переменной окружения или сохраните ключи в',
 			bodySuffix: 'для следующих сессий.',
 			quickStart: 'Быстрый старт',
-			meetHippocampus: 'Познакомиться с Hippocampus',
+			meetBrain: 'Познакомиться с Anda Brain',
 			terminalLabel: 'команда запуска',
 			sourceComment: 'Запустить сразу с ключом окружения:',
 			goalComment: 'Или сохраните api_key в config.yaml и запустите:',
@@ -1025,15 +1031,21 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				'ثبّت Anda Bot، وكيل Rust مفتوح المصدر بذاكرة طويلة رسومية، واستدلال ممتد، وأدوات خارجية، و subagents، وتكاملات IM.',
 			ogTitle: 'ثبّت Anda Bot - وكيل Rust بذاكرة رسومية',
 			ogDescription:
-				'شغّل Anda محليًا مع ذاكرة Hippocampus، وأهداف طويلة، و Claude Code، و Codex، و subagents، وسير عمل في الطرفية أو IM.'
+				'شغّل Anda محليًا مع ذاكرة Brain، وأهداف طويلة، و Claude Code، و Codex، و subagents، وسير عمل في الطرفية أو IM.'
 		},
-		nav: { install: 'التثبيت', reasoning: 'الاستدلال', memory: 'الذاكرة', surfaces: 'بيئات العمل', docs: 'الوثائق' },
+		nav: {
+			install: 'التثبيت',
+			reasoning: 'الاستدلال',
+			memory: 'الذاكرة',
+			surfaces: 'بيئات العمل',
+			docs: 'الوثائق'
+		},
 		language: { label: 'اللغة' },
 		hero: {
 			badge: 'وكيل طرفية Rust مفتوح المصدر',
 			eyebrow: 'ذاكرة رسومية · subagents · أدوات خارجية',
 			title: 'ثبّت Anda. أعطه عملًا يحتاج ذاكرة وأدوات ووقتًا.',
-			body: 'أنا الوكيل المحلي الذي يواصل التعلّم أثناء العمل. يحوّل Hippocampus الخبرة إلى ذاكرة رسومية، وتستمر الأهداف الطويلة عبر حدود السياق، وتنسّق subagents أدوات مثل Claude Code و Codex.',
+			body: 'أنا الوكيل المحلي الذي يواصل التعلّم أثناء العمل. يحوّل Anda Brain الخبرة إلى ذاكرة رسومية، وتستمر الأهداف الطويلة عبر حدود السياق، وتنسّق subagents أدوات مثل Claude Code و Codex.',
 			installFor: 'ثبّت لـ {os}',
 			seeReasoning: 'اعرض الحلقة',
 			proofOs: 'Rust',
@@ -1117,9 +1129,9 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			]
 		},
 		memory: {
-			badge: 'Anda Hippocampus',
+			badge: 'Anda Brain',
 			title: 'الذاكرة رسم بياني يتعلم الخلاصة المفيدة.',
-			body: 'يحوّل Hippocampus المحادثات المفيدة إلى Cognitive Nexus حي: أشخاص، ومشاريع، وقرارات، وتفضيلات، وأحداث، وجداول زمنية، وعلاقات.',
+			body: 'يحوّل Brain المحادثات المفيدة إلى Cognitive Nexus حي: أشخاص، ومشاريع، وقرارات، وتفضيلات، وأحداث، وجداول زمنية، وعلاقات.',
 			formationTitle: 'التكوين',
 			formationBody:
 				'أستخلص الجولات الناجحة والملفات وسياق القنوات ونتائج الأدوات إلى ذكريات لها مصدر ووقت ومعنى.',
@@ -1179,7 +1191,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			bodyPrefix: 'استخدم مفتاحًا في متغير بيئة عند التشغيل الأول، أو احفظ مفاتيح المزوّد في',
 			bodySuffix: 'للجلسات التالية.',
 			quickStart: 'البدء السريع',
-			meetHippocampus: 'تعرّف على Hippocampus',
+			meetBrain: 'تعرّف على Anda Brain',
 			terminalLabel: 'أمر التشغيل',
 			sourceComment: 'ابدأ الآن بمفتاح بيئة:',
 			goalComment: 'أو احفظ api_key في config.yaml ثم شغّل:',

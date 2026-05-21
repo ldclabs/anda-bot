@@ -12,22 +12,22 @@ use crate::{
     config,
     util::{http_client::build_http_client, key::Ed25519PubKey},
 };
-use anda_hippocampus::{agents::SELF_USER_ID, handler::*, space::AppState};
+use anda_brain::{agents::SELF_USER_ID, handler::*, space::AppState};
 
-pub struct HippocampusConfig {
+pub struct BrainConfig {
     pub managers: Vec<Ed25519PubKey>,
     pub https_proxy: Option<String>,
     pub model: Model,
 }
 
-pub struct Hippocampus {
+pub struct Brain {
     pub state: AppState,
 }
 
-impl Hippocampus {
+impl Brain {
     pub async fn new(
         object_store: Arc<dyn ObjectStore>,
-        cfg: HippocampusConfig,
+        cfg: BrainConfig,
     ) -> Result<Self, BoxError> {
         let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
         let management = Arc::new(BaseManagement {
@@ -42,7 +42,7 @@ impl Hippocampus {
 
         let db_config = DBConfig {
             name: "brain_db".to_string(),
-            description: "Anda Hippocampus database".to_string(),
+            description: "Anda Brain database".to_string(),
             storage: StorageConfig {
                 cache_max_capacity: 100000,
                 compress_level: 3,
@@ -75,7 +75,7 @@ impl Hippocampus {
             Err(e) => {
                 if e.to_string().contains("not found") {
                     log::warn!(
-                        target: "hippocampus",
+                        target: "brain",
                         name = "brain";
                         "Space '{}' not found, creating a new one",
                         config::ANDA_BOT_SPACE_ID
@@ -91,7 +91,7 @@ impl Hippocampus {
                         )
                         .await?;
                     log::warn!(
-                        target: "hippocampus",
+                        target: "brain",
                         name = "brain";
                         "Space '{}' created successfully",
                         config::ANDA_BOT_SPACE_ID

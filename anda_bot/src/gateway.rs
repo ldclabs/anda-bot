@@ -19,15 +19,15 @@ pub async fn serve(
     cancel_token: CancellationToken,
     db: Arc<AndaDB>,
     addr: String,
-    brain_cfg: brain::HippocampusConfig,
+    brain_cfg: brain::BrainConfig,
     engine_cfg: engine::EngineConfig,
     engine_ref: Arc<EngineRef>,
     cron: Arc<cron::CronRuntime>,
     completion_hooks: Vec<Arc<dyn engine::CompletionHook>>,
     active_im_channels: Vec<String>,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
-    let hippocampus = brain::Hippocampus::new(db.object_store(), brain_cfg).await?;
-    let hippocampus_state = hippocampus.state.clone();
+    let brain = brain::Brain::new(db.object_store(), brain_cfg).await?;
+    let brain_state = brain.state.clone();
     let engines = engine::Engines::new(
         engine_cfg,
         db,
@@ -45,7 +45,7 @@ pub async fn serve(
     let background_cancel_token = cancel_token.clone();
     let app = Router::new()
         .merge(engines.into_router())
-        .merge(hippocampus.into_router())
+        .merge(brain.into_router())
         .layer(CompressionLayer::new());
 
     log::warn!(
@@ -70,7 +70,7 @@ pub async fn serve(
         );
 
         let background_tasks_handle = tokio::spawn(async move {
-            hippocampus_state
+            brain_state
                 .start_background_tasks(background_cancel_token)
                 .await;
         });

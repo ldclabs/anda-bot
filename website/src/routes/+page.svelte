@@ -703,7 +703,7 @@
 						{copy.start.quickStart}
 					</Button>
 					<Button
-						href="https://github.com/ldclabs/anda-hippocampus"
+						href="https://github.com/ldclabs/anda-brain"
 						target="_blank"
 						rel="noreferrer"
 						variant="secondary"
@@ -711,7 +711,7 @@
 						size="lg"
 					>
 						<Brain class="size-4" />
-						{copy.start.meetHippocampus}
+						{copy.start.meetBrain}
 					</Button>
 				</div>
 			</div>

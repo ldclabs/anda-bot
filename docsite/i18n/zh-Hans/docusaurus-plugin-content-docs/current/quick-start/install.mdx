@@ -69,11 +69,11 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY" # 设置 DEEPSEEK_API_KEY 时可留空
-      labels: ["pro", "hippocampus"]
+      labels: ["pro", "brain"]
       disabled: false
 ```
 
-`hippocampus` 标签会让记忆大脑优先使用这个 provider。没有 provider 带这个标签时，记忆任务会使用当前 active model。
+`brain` 标签会让记忆大脑优先使用这个 provider。没有 provider 带这个标签时，记忆任务会使用当前 active model。
 
 ## 从源码运行
 

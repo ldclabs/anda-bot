@@ -3,7 +3,7 @@ use anda_engine::context::BaseCtx;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
 
-pub use anda_hippocampus::{
+pub use anda_brain::{
     payload::RpcResponse,
     types::{FormationInputRef, GetOrInitUserInput, RecallInput, RecallInputRef},
 };
@@ -11,7 +11,7 @@ pub use anda_hippocampus::{
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
-    // Base URL of the Hippocampus space, e.g., "http://localhost:8042/v1/{space_id}"
+    // Base URL of the Brain space, e.g., "http://localhost:8042/v1/{space_id}"
     base_url: String,
     auth_token: Option<String>,
 }
@@ -40,9 +40,7 @@ impl Client {
             Ok(result)
         } else {
             Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[HippocampusClient] formation failed with unknown error".to_string()
-                })
+                .unwrap_or_else(|_| "[BrainClient] formation failed with unknown error".to_string())
                 .into())
         }
     }
@@ -53,9 +51,7 @@ impl Client {
             Ok(result)
         } else {
             Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[HippocampusClient] recall failed with unknown error".to_string()
-                })
+                .unwrap_or_else(|_| "[BrainClient] recall failed with unknown error".to_string())
                 .into())
         }
     }
@@ -74,7 +70,7 @@ impl Client {
             KipResponse::Ok { result, .. } => Ok(result),
             KipResponse::Err { .. } => Err(serde_json::to_string(&rt)
                 .unwrap_or_else(|_| {
-                    "[HippocampusClient] describe_primer failed with unknown error".to_string()
+                    "[BrainClient] describe_primer failed with unknown error".to_string()
                 })
                 .into()),
         }
@@ -123,7 +119,7 @@ impl Client {
             match serde_json::from_str::<O>(&text) {
                 Ok(res) => Ok(res),
                 Err(err) => Err(format!(
-                    "[HippocampusClient] Invalid response for {} {}, error: {}, body: {}",
+                    "[BrainClient] Invalid response for {} {}, error: {}, body: {}",
                     method, path, err, text
                 )
                 .into()),
@@ -132,12 +128,12 @@ impl Client {
             let status = response.status();
             let msg = response.text().await?;
             log::error!(
-                "[HippocampusClient] request failed for {} {}: {status}, body: {msg}",
+                "[BrainClient] request failed for {} {}: {status}, body: {msg}",
                 method,
                 path
             );
             Err(format!(
-                "[HippocampusClient] request failed for {} {}: {status}, body: {msg}",
+                "[BrainClient] request failed for {} {}: {status}, body: {msg}",
                 method, path
             )
             .into())

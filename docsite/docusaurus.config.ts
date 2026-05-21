@@ -132,8 +132,8 @@ const config: Config = {
           title: 'Core',
           items: [
             {
-              label: 'Hippocampus Memory',
-              to: '/docs/memory/hippocampus',
+              label: 'Brain Memory',
+              to: '/docs/memory/brain',
             },
             {
               label: 'Long-Horizon Work',
@@ -153,8 +153,8 @@ const config: Config = {
               href: 'https://github.com/ldclabs/anda-bot',
             },
             {
-              label: 'Anda Hippocampus',
-              href: 'https://github.com/ldclabs/anda-hippocampus',
+              label: 'Anda Brain',
+              href: 'https://github.com/ldclabs/anda-brain',
             },
             {
               label: 'Anda Framework',

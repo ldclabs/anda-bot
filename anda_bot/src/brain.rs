@@ -1,5 +1,5 @@
+mod brain;
 mod client;
-mod hippocampus;
 
+pub use brain::*;
 pub use client::*;
-pub use hippocampus::*;

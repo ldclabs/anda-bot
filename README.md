@@ -6,7 +6,7 @@
 
 I am Anda Bot: an open-source Rust AI agent that runs in your terminal, remembers across sessions, and can keep working on long-horizon goals. I am built to remember, reason, use tools on your computer, coordinate subagents, and keep improving as we work together.
 
-My most important difference is [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus), the memory engine behind me. Hippocampus turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can autonomously distill useful knowledge, build context, notice relationships, and carry useful history into future conversations.
+My most important difference is [Anda Brain](https://github.com/ldclabs/anda-brain), the memory engine behind me. Brain turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can autonomously distill useful knowledge, build context, notice relationships, and carry useful history into future conversations.
 
 ## Why Use Me
 
@@ -24,15 +24,15 @@ My most important difference is [Anda Hippocampus](https://github.com/ldclabs/an
 
 Anda Bot is designed for tasks that need continuity, not just a single answer. A goal can stay active while I inspect progress, compact context, open the next linked conversation, call tools, and continue until there is evidence that the objective is done. Subagents let specialized workers take on focused roles such as implementation, review, research, or supervision, while the main agent keeps the larger plan and memory thread intact.
 
-External coding tools are part of that loop. When a task calls for it, I can work alongside tools such as Claude Code and Codex, use local shell and file tools, load runtime skills, and preserve the important outcomes in Hippocampus for future recall.
+External coding tools are part of that loop. When a task calls for it, I can work alongside tools such as Claude Code and Codex, use local shell and file tools, load runtime skills, and preserve the important outcomes in Brain for future recall.
 
 ## My Memory Brain
 
-Anda Hippocampus is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
+Anda Brain is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
 
 - **Formation:** conversations are encoded into structured memories: entities, relationships, events, preferences, and patterns.
 - **Recall:** I can ask the memory graph natural-language questions and receive context-rich answers instead of raw search hits.
-- **Maintenance:** Hippocampus can consolidate fragments, merge duplicates, decay stale knowledge, and preserve timelines when facts change.
+- **Maintenance:** Brain can consolidate fragments, merge duplicates, decay stale knowledge, and preserve timelines when facts change.
 
 For you, this means a simple habit works well: tell me the things that should remain true across sessions, correct me when something changes, and ask me what I remember when you want continuity. If you once preferred one workflow and now prefer another, I should learn the evolution instead of blindly overwriting the past.
 
@@ -82,13 +82,13 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY" # optional when DEEPSEEK_API_KEY is set
-      labels: ["pro", "hippocampus"]
+      labels: ["pro", "brain"]
       disabled: false
 ```
 
 Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
 
-The `hippocampus` label lets the memory brain prefer that provider for memory work. If no provider has that label, I use the active model.
+The `brain` label lets the memory brain prefer that provider for memory work. If no provider has that label, I use the active model.
 
 Use a separate home directory when you want an isolated profile:
 
@@ -110,7 +110,7 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
-Successful conversation turns are submitted to Hippocampus for memory formation in the background. You do not need to manage memory files by hand.
+Successful conversation turns are submitted to Brain for memory formation in the background. You do not need to manage memory files by hand.
 
 Good prompts for long-term memory:
 
@@ -240,8 +240,8 @@ The memory graph, conversations, channel state, cron jobs, keys, logs, and works
 ## Learn More
 
 - [Anda Bot package guide](anda_bot/README.md)
-- [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)
-- [Anda Hippocampus product site](https://brain.anda.ai/)
+- [Anda Brain](https://github.com/ldclabs/anda-brain)
+- [Anda Brain product site](https://brain.anda.ai/)
 
 ## License
 

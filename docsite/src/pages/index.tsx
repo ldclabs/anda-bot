@@ -26,7 +26,7 @@ const copies: Record<string, HomeCopy> = {
     hero: {
       badge: 'docs.anda.bot',
       title: 'Anda Bot Docs',
-      body: 'I am the local Rust agent that keeps learning while we work. These docs show how to install me, configure models, connect channels, use Hippocampus graph memory, and hand long-horizon goals to subagents and local tools.',
+      body: 'I am the local Rust agent that keeps learning while we work. These docs show how to install me, configure models, connect channels, use Brain graph memory, and hand long-horizon goals to subagents and local tools.',
       primary: 'Start installing',
       secondary: 'Meet the memory brain',
     },
@@ -45,8 +45,8 @@ const copies: Record<string, HomeCopy> = {
       {
         index: '02',
         title: 'Long-term memory',
-        body: 'Learn how Hippocampus forms, recalls, and maintains a knowledge graph instead of stretching one chat log forever.',
-        to: '/docs/memory/hippocampus',
+        body: 'Learn how Brain forms, recalls, and maintains a knowledge graph instead of stretching one chat log forever.',
+        to: '/docs/memory/brain',
       },
       {
         index: '03',
@@ -57,7 +57,7 @@ const copies: Record<string, HomeCopy> = {
     ],
     signals: [
       ['goal://active', 'long-horizon goal stays active'],
-      ['anda://memory', 'Hippocampus forms and recalls'],
+      ['anda://memory', 'Brain forms and recalls'],
       ['tools://local', 'shell, files, skills, subagents'],
     ],
     docs: {
@@ -84,7 +84,7 @@ const copies: Record<string, HomeCopy> = {
     hero: {
       badge: 'docs.anda.bot',
       title: 'Anda Bot 文档',
-      body: '我是会记忆的本地 Rust Agent。这里记录如何安装我、配置模型、连接频道、使用 Hippocampus 长期记忆，并把长程目标交给 Subagents 和本地工具持续推进。',
+      body: '我是会记忆的本地 Rust Agent。这里记录如何安装我、配置模型、连接频道、使用 Brain 长期记忆，并把长程目标交给 Subagents 和本地工具持续推进。',
       primary: '开始安装',
       secondary: '了解记忆大脑',
     },
@@ -103,8 +103,8 @@ const copies: Record<string, HomeCopy> = {
       {
         index: '02',
         title: '长期记忆',
-        body: '理解 Hippocampus 如何形成、召回、维护知识图谱，而不是堆一份越来越长的聊天记录。',
-        to: '/docs/memory/hippocampus',
+        body: '理解 Brain 如何形成、召回、维护知识图谱，而不是堆一份越来越长的聊天记录。',
+        to: '/docs/memory/brain',
       },
       {
         index: '03',
@@ -115,7 +115,7 @@ const copies: Record<string, HomeCopy> = {
     ],
     signals: [
       ['goal://active', '长程目标保持活跃'],
-      ['anda://memory', 'Hippocampus 形成和召回'],
+      ['anda://memory', 'Brain 形成和召回'],
       ['tools://local', 'shell、文件、Skills、Subagents'],
     ],
     docs: {
@@ -136,37 +136,37 @@ const copies: Record<string, HomeCopy> = {
   },
   es: {
     meta: {title: 'Documentación de Anda Bot', description: 'Documentación oficial de Anda Bot para instalar, configurar memoria gráfica y conectar herramientas, subagentes y canales.'},
-    hero: {badge: 'docs.anda.bot', title: 'Documentación de Anda Bot', body: 'Soy el agente local en Rust que aprende mientras trabajamos. Esta documentación cubre instalación, modelos, canales, memoria Hippocampus y objetivos largos con subagentes y herramientas locales.', primary: 'Instalar', secondary: 'Ver la memoria'},
+    hero: {badge: 'docs.anda.bot', title: 'Documentación de Anda Bot', body: 'Soy el agente local en Rust que aprende mientras trabajamos. Esta documentación cubre instalación, modelos, canales, memoria Brain y objetivos largos con subagentes y herramientas locales.', primary: 'Instalar', secondary: 'Ver la memoria'},
     proofs: [{label: 'Rust', detail: 'runtime terminal abierto'}, {label: 'Graph', detail: 'memoria a largo plazo'}, {label: 'Goal', detail: 'bucles de objetivos'}],
-    phases: [{index: '01', title: 'Instalar y configurar', body: 'Inicia Anda desde una versión publicada o desde el código fuente y conecta el daemon local con la UI terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Memoria duradera', body: 'Aprende cómo Hippocampus forma, recupera y mantiene un grafo de conocimiento.', to: '/docs/memory/hippocampus'}, {index: '03', title: 'Trabajo de largo alcance', body: 'Usa /goal, subagentes, skills, shell y herramientas externas para lograr progreso verificable.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'el objetivo sigue activo'], ['anda://memory', 'Hippocampus forma y recupera'], ['tools://local', 'shell, archivos, skills, subagentes']],
+    phases: [{index: '01', title: 'Instalar y configurar', body: 'Inicia Anda desde una versión publicada o desde el código fuente y conecta el daemon local con la UI terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Memoria duradera', body: 'Aprende cómo Brain forma, recupera y mantiene un grafo de conocimiento.', to: '/docs/memory/brain'}, {index: '03', title: 'Trabajo de largo alcance', body: 'Usa /goal, subagentes, skills, shell y herramientas externas para lograr progreso verificable.', to: '/docs/workflows/long-horizon'}],
+    signals: [['goal://active', 'el objetivo sigue activo'], ['anda://memory', 'Brain forma y recupera'], ['tools://local', 'shell, archivos, skills, subagentes']],
     docs: {badge: 'Mapa de documentación', title: 'Convierte una ejecución local en un agente que sigue trabajando.', body: 'Empieza con la instalación y continúa con terminal, modelos, memoria, subagentes, canales y límites de datos locales.'},
     routes: {badge: 'Donde nace el contexto', title: 'Terminal, herramientas, archivos, canales y voz pueden entrar en el mismo hilo de memoria.', items: [['terminal', 'comandos, archivos, registros y workspaces'], ['memory', 'proyectos, preferencias, decisiones y líneas de tiempo'], ['channels', 'IRC, Telegram, WeChat, Discord y Feishu'], ['voice', 'transcripción, TTS y entrada hablada']]},
   },
   fr: {
     meta: {title: 'Documentation Anda Bot', description: 'Documentation officielle d\'Anda Bot pour installer, configurer la mémoire graphe et connecter outils, sous-agents et canaux.'},
-    hero: {badge: 'docs.anda.bot', title: 'Documentation Anda Bot', body: 'Je suis l\'agent Rust local qui apprend pendant le travail. Ces documents couvrent l\'installation, les modèles, les canaux, la mémoire Hippocampus et les objectifs longs avec sous-agents et outils locaux.', primary: 'Installer', secondary: 'Voir la mémoire'},
+    hero: {badge: 'docs.anda.bot', title: 'Documentation Anda Bot', body: 'Je suis l\'agent Rust local qui apprend pendant le travail. Ces documents couvrent l\'installation, les modèles, les canaux, la mémoire Brain et les objectifs longs avec sous-agents et outils locaux.', primary: 'Installer', secondary: 'Voir la mémoire'},
     proofs: [{label: 'Rust', detail: 'runtime terminal open source'}, {label: 'Graph', detail: 'mémoire long terme'}, {label: 'Goal', detail: 'boucles d\'objectifs'}],
-    phases: [{index: '01', title: 'Installer et configurer', body: 'Démarre Anda depuis une version publiée ou le code source, puis connecte le daemon local à l\'interface terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Mémoire durable', body: 'Comprends comment Hippocampus forme, rappelle et maintient un graphe de connaissances.', to: '/docs/memory/hippocampus'}, {index: '03', title: 'Travail longue durée', body: 'Utilise /goal, les sous-agents, skills, shell et outils externes pour obtenir un progrès vérifié.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'l\'objectif reste actif'], ['anda://memory', 'Hippocampus forme et rappelle'], ['tools://local', 'shell, fichiers, skills, sous-agents']],
+    phases: [{index: '01', title: 'Installer et configurer', body: 'Démarre Anda depuis une version publiée ou le code source, puis connecte le daemon local à l\'interface terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Mémoire durable', body: 'Comprends comment Brain forme, rappelle et maintient un graphe de connaissances.', to: '/docs/memory/brain'}, {index: '03', title: 'Travail longue durée', body: 'Utilise /goal, les sous-agents, skills, shell et outils externes pour obtenir un progrès vérifié.', to: '/docs/workflows/long-horizon'}],
+    signals: [['goal://active', 'l\'objectif reste actif'], ['anda://memory', 'Brain forme et rappelle'], ['tools://local', 'shell, fichiers, skills, sous-agents']],
     docs: {badge: 'Carte documentaire', title: 'Transforme un lancement local en agent capable de continuer le travail.', body: 'Commence par l\'installation, puis explore terminal, modèles, mémoire, sous-agents, canaux et limites des données locales.'},
     routes: {badge: 'Où naît le contexte', title: 'Terminal, outils, fichiers, canaux et voix peuvent entrer dans le même fil de mémoire.', items: [['terminal', 'commandes, fichiers, journaux et espaces locaux'], ['memory', 'projets, préférences, décisions et chronologies'], ['channels', 'IRC, Telegram, WeChat, Discord et Feishu'], ['voice', 'transcription, TTS et entrée vocale']]},
   },
   ru: {
     meta: {title: 'Документация Anda Bot', description: 'Официальная документация Anda Bot: установка, графовая память, инструменты, сабагенты и каналы команды.'},
-    hero: {badge: 'docs.anda.bot', title: 'Документация Anda Bot', body: 'Я локальный Rust-агент, который учится во время работы. Здесь описаны установка, модели, каналы, память Hippocampus и долгие цели с сабагентами и локальными инструментами.', primary: 'Установить', secondary: 'Открыть память'},
+    hero: {badge: 'docs.anda.bot', title: 'Документация Anda Bot', body: 'Я локальный Rust-агент, который учится во время работы. Здесь описаны установка, модели, каналы, память Brain и долгие цели с сабагентами и локальными инструментами.', primary: 'Установить', secondary: 'Открыть память'},
     proofs: [{label: 'Rust', detail: 'открытый терминальный runtime'}, {label: 'Graph', detail: 'долговременная память'}, {label: 'Goal', detail: 'циклы долгих целей'}],
-    phases: [{index: '01', title: 'Установка и настройка', body: 'Запустите Anda из релиза или исходников и подключите локальный daemon к терминальному UI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Долгая память', body: 'Узнайте, как Hippocampus формирует, извлекает и поддерживает граф знаний.', to: '/docs/memory/hippocampus'}, {index: '03', title: 'Длинные задачи', body: 'Используйте /goal, сабагентов, skills, shell и внешние инструменты для проверяемого прогресса.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'цель остается активной'], ['anda://memory', 'Hippocampus формирует и вспоминает'], ['tools://local', 'shell, файлы, skills, сабагенты']],
+    phases: [{index: '01', title: 'Установка и настройка', body: 'Запустите Anda из релиза или исходников и подключите локальный daemon к терминальному UI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Долгая память', body: 'Узнайте, как Brain формирует, извлекает и поддерживает граф знаний.', to: '/docs/memory/brain'}, {index: '03', title: 'Длинные задачи', body: 'Используйте /goal, сабагентов, skills, shell и внешние инструменты для проверяемого прогресса.', to: '/docs/workflows/long-horizon'}],
+    signals: [['goal://active', 'цель остается активной'], ['anda://memory', 'Brain формирует и вспоминает'], ['tools://local', 'shell, файлы, skills, сабагенты']],
     docs: {badge: 'Карта документации', title: 'Превратите один запуск в локального агента, который продолжает работу.', body: 'Начните с установки, затем изучите терминал, модели, память, сабагентов, каналы и локальные границы данных.'},
     routes: {badge: 'Где рождается контекст', title: 'Терминал, инструменты, файлы, каналы и голос могут войти в одну линию памяти.', items: [['terminal', 'команды, файлы, логи и локальные рабочие области'], ['memory', 'проекты, предпочтения, решения и временные линии'], ['channels', 'IRC, Telegram, WeChat, Discord и Feishu'], ['voice', 'транскрипция, TTS и голосовой ввод']]},
   },
   ar: {
     meta: {title: 'وثائق Anda Bot', description: 'وثائق Anda Bot الرسمية للتثبيت، وذاكرة الرسم البياني، والأدوات، والوكلاء الفرعيين، وقنوات الفريق.'},
-    hero: {badge: 'docs.anda.bot', title: 'وثائق Anda Bot', body: 'أنا وكيل Rust محلي يتعلم أثناء العمل. تشرح هذه الوثائق التثبيت، والنماذج، والقنوات، وذاكرة Hippocampus، والأهداف طويلة المدى مع الوكلاء الفرعيين والأدوات المحلية.', primary: 'ابدأ التثبيت', secondary: 'تعرّف على الذاكرة'},
+    hero: {badge: 'docs.anda.bot', title: 'وثائق Anda Bot', body: 'أنا وكيل Rust محلي يتعلم أثناء العمل. تشرح هذه الوثائق التثبيت، والنماذج، والقنوات، وذاكرة Brain، والأهداف طويلة المدى مع الوكلاء الفرعيين والأدوات المحلية.', primary: 'ابدأ التثبيت', secondary: 'تعرّف على الذاكرة'},
     proofs: [{label: 'Rust', detail: 'تشغيل طرفية مفتوح المصدر'}, {label: 'Graph', detail: 'ذاكرة طويلة المدى'}, {label: 'Goal', detail: 'حلقات أهداف طويلة'}],
-    phases: [{index: '01', title: 'التثبيت والإعداد', body: 'شغّل Anda من إصدار جاهز أو من المصدر، ثم صِل daemon المحلي بواجهة الطرفية.', to: '/docs/quick-start/install'}, {index: '02', title: 'ذاكرة طويلة المدى', body: 'تعرّف على كيفية تكوين Hippocampus واسترجاعه وصيانته لرسم معرفي.', to: '/docs/memory/hippocampus'}, {index: '03', title: 'عمل طويل المدى', body: 'استخدم /goal والوكلاء الفرعيين والمهارات و shell والأدوات الخارجية للوصول إلى تقدم قابل للتحقق.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'يبقى الهدف نشطًا'], ['anda://memory', 'Hippocampus يكوّن ويسترجع'], ['tools://local', 'shell وملفات ومهارات ووكلاء فرعيون']],
+    phases: [{index: '01', title: 'التثبيت والإعداد', body: 'شغّل Anda من إصدار جاهز أو من المصدر، ثم صِل daemon المحلي بواجهة الطرفية.', to: '/docs/quick-start/install'}, {index: '02', title: 'ذاكرة طويلة المدى', body: 'تعرّف على كيفية تكوين Brain واسترجاعه وصيانته لرسم معرفي.', to: '/docs/memory/brain'}, {index: '03', title: 'عمل طويل المدى', body: 'استخدم /goal والوكلاء الفرعيين والمهارات و shell والأدوات الخارجية للوصول إلى تقدم قابل للتحقق.', to: '/docs/workflows/long-horizon'}],
+    signals: [['goal://active', 'يبقى الهدف نشطًا'], ['anda://memory', 'Brain يكوّن ويسترجع'], ['tools://local', 'shell وملفات ومهارات ووكلاء فرعيون']],
     docs: {badge: 'خريطة الوثائق', title: 'حوّل تشغيلًا واحدًا إلى وكيل محلي يواصل العمل.', body: 'ابدأ بالتثبيت، ثم انتقل إلى الطرفية، والنماذج، والذاكرة، والوكلاء الفرعيين، والقنوات، وحدود البيانات المحلية.'},
     routes: {badge: 'حيث يولد السياق', title: 'يمكن للطرفية والأدوات والملفات والقنوات والصوت أن تدخل خيط الذاكرة نفسه.', items: [['terminal', 'أوامر وملفات وسجلات ومساحات عمل محلية'], ['memory', 'مشاريع وتفضيلات وقرارات وجداول زمنية'], ['channels', 'IRC وTelegram وWeChat وDiscord وFeishu'], ['voice', 'تفريغ صوتي وTTS وإدخال منطوق']]},
   },
@@ -194,7 +194,7 @@ export default function Home(): ReactNode {
                 <Link className={`${styles.cta} ${styles.ctaPrimary}`} to="/docs/quick-start/install">
                   {copy.hero.primary}
                 </Link>
-                <Link className={`${styles.cta} ${styles.ctaSecondary}`} to="/docs/memory/hippocampus">
+                <Link className={`${styles.cta} ${styles.ctaSecondary}`} to="/docs/memory/brain">
                   {copy.hero.secondary}
                 </Link>
               </div>
@@ -214,7 +214,7 @@ export default function Home(): ReactNode {
               </div>
               <div className={styles.signalPanel}>
                 <div className={styles.signalHeader}>
-                  <span>hippocampus.live</span>
+                  <span>brain.live</span>
                   <span>goal://active</span>
                 </div>
                 {copy.signals.map(([label, detail]) => (

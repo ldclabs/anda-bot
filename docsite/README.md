@@ -43,5 +43,5 @@ The site is configured for the custom domain `docs.anda.bot` in `docusaurus.conf
 
 - Keep install commands aligned with the repository README and release scripts.
 - Keep the visual language aligned with the main `website/`: memory observatory, dark forest ink, amber and teal signal colors.
-- Explain Hippocampus through formation, recall, and maintenance.
+- Explain Brain through formation, recall, and maintenance.
 - Avoid reintroducing generic Docusaurus tutorial or blog template content.

@@ -23,9 +23,9 @@
     "message": "Terminal",
     "description": "The label of footer link with label=Terminal linking to /docs/quick-start/terminal"
   },
-  "link.item.label.Hippocampus Memory": {
-    "message": "Mémoire Hippocampus",
-    "description": "The label of footer link with label=Hippocampus Memory linking to /docs/memory/hippocampus"
+  "link.item.label.Brain Memory": {
+    "message": "Mémoire Brain",
+    "description": "The label of footer link with label=Brain Memory linking to /docs/memory/brain"
   },
   "link.item.label.Long-Horizon Work": {
     "message": "Travail longue durée",
@@ -39,9 +39,9 @@
     "message": "Anda Bot",
     "description": "The label of footer link with label=Anda Bot linking to https://github.com/ldclabs/anda-bot"
   },
-  "link.item.label.Anda Hippocampus": {
-    "message": "Anda Hippocampus",
-    "description": "The label of footer link with label=Anda Hippocampus linking to https://github.com/ldclabs/anda-hippocampus"
+  "link.item.label.Anda Brain": {
+    "message": "Anda Brain",
+    "description": "The label of footer link with label=Anda Brain linking to https://github.com/ldclabs/anda-brain"
   },
   "link.item.label.Product Site": {
     "message": "Site produit",

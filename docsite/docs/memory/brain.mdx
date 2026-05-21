@@ -1,14 +1,14 @@
 ---
 sidebar_position: 1
-title: Hippocampus Memory Brain
-description: The Formation, Recall, and Maintenance loop behind Anda Hippocampus long-term memory.
+title: Brain Memory Brain
+description: The Formation, Recall, and Maintenance loop behind Anda Brain long-term memory.
 ---
 
-# Hippocampus Memory Brain
+# Brain Memory Brain
 
-Anda Hippocampus is the long-term memory system behind Anda Bot. It is not a plain vector database or an ever-growing Markdown file; it is a memory brain designed for agents.
+Anda Brain is the long-term memory system behind Anda Bot. It is not a plain vector database or an ever-growing Markdown file; it is a memory brain designed for agents.
 
-Hippocampus turns conversations, files, tool results, and channel context into a growing Cognitive Nexus: people, projects, preferences, events, decisions, timelines, and the relationships between them.
+Brain turns conversations, files, tool results, and channel context into a growing Cognitive Nexus: people, projects, preferences, events, decisions, timelines, and the relationships between them.
 
 ## Three-Phase Loop
 
@@ -46,7 +46,7 @@ Do you remember the background of the payments migration project?
 
 Memory graph data is stored locally in `~/.anda/db` by default. Model providers may still participate in memory formation, recall support, and summarization, so choose providers and endpoints according to your privacy needs.
 
-To make a provider preferred for memory-related tasks, add the `hippocampus` label:
+To make a provider preferred for memory-related tasks, add the `brain` label:
 
 ```yaml
 model:
@@ -55,5 +55,5 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY"
-      labels: ["pro", "hippocampus"]
+      labels: ["primary", "brain"]
 ```

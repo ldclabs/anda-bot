@@ -36,13 +36,13 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY" # optional when DEEPSEEK_API_KEY is set
-      labels: ["pro", "hippocampus"]
+      labels: ["pro", "brain"]
       disabled: false
 ```
 
 Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
 
-Provider labels help me choose models for different jobs. A provider labeled `hippocampus` is preferred for memory formation and recall support. If no provider has that label, I use the active model.
+Provider labels help me choose models for different jobs. A provider labeled `brain` is preferred for memory formation and recall support. If no provider has that label, I use the active model.
 
 Useful top-level settings:
 
@@ -69,11 +69,11 @@ Useful top-level settings:
 - Esc shows status.
 - Ctrl+C quits.
 
-When a response succeeds, conversation turns are sent to Anda Hippocampus for memory formation. I keep conversation state locally, so later prompts in the same workspace can continue with the right context.
+When a response succeeds, conversation turns are sent to Anda Brain for memory formation. I keep conversation state locally, so later prompts in the same workspace can continue with the right context.
 
 ## Teach My Memory
 
-Hippocampus works best when important facts are stated clearly. You can speak naturally:
+Brain works best when important facts are stated clearly. You can speak naturally:
 
 ```text
 Remember that this project uses release branches, not trunk-based releases.

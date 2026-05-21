@@ -2,6 +2,12 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.5] — 2026-05-21
+
+### Changed
+
+- **Hippocampus renamed to Brain**: all internal module names, file paths, docsite pages, i18n translations, and documentation references renamed from `hippocampus` to `brain` — aligning with the standalone `anda-brain` rename.
+
 
 ## [0.7.4] — 2026-05-21
 

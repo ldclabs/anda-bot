@@ -236,10 +236,11 @@ impl Daemon {
         let models = self.cfg.models(outer_http_client.clone());
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_id = user_pubkey.id();
-        let brain_cfg = brain::HippocampusConfig {
+        let brain_cfg = brain::BrainConfig {
             managers: vec![id_key.pubkey(), user_pubkey.clone()],
             model: models
-                .get("memory")
+                .get("brain")
+                .or_else(|| models.get("memory"))
                 .or_else(|| models.get_model())
                 .ok_or("No model found for brain")?,
             https_proxy: self.cfg.https_proxy.clone(),
@@ -265,7 +266,7 @@ impl Daemon {
 
         let db_config = DBConfig {
             name: "bot_db".to_string(),
-            description: "Anda Hippocampus database".to_string(),
+            description: "Anda Brain database".to_string(),
             storage: StorageConfig {
                 cache_max_capacity: 100000,
                 compress_level: 3,

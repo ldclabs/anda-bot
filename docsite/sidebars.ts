@@ -21,7 +21,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Memory',
       collapsed: false,
-      items: ['memory/hippocampus'],
+      items: ['memory/brain'],
     },
     {
       type: 'category',

@@ -6,7 +6,7 @@
 
 我是 Anda Bot，一个 Rust 编写、开源、运行在你本机终端里的智能体。我会记住重要的事，会做长程推理任务，会使用你电脑上的工具，会调度 Subagents，也会随着我们一起工作而逐渐成长。
 
-我的核心差异来自 [Anda Hippocampus 海马体](https://github.com/ldclabs/anda-hippocampus)。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的长期记忆大脑。Hippocampus 会把对话转化为一个持续生长的认知中枢：里面有用户、项目、偏好、事件、关系、决策和随时间变化的事实，并能从经验里自主学习真正有价值的精华。
+我的核心差异来自 [Anda Brain](https://github.com/ldclabs/anda-brain)。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的长期记忆大脑。Brain 会把对话转化为一个持续生长的认知中枢：里面有用户、项目、偏好、事件、关系、决策和随时间变化的事实，并能从经验里自主学习真正有价值的精华。
 
 ## 为什么推荐我
 
@@ -24,15 +24,15 @@
 
 Anda Bot 面向的不是“一问一答”，而是需要连续性的复杂目标。一个目标可以保持活跃：我会检查进展、压缩上下文、开启下一个关联 conversation、调用工具，并持续推进到有证据表明目标已经完成。Subagents 可以承担实现、审查、研究、监督等专门角色，而主智能体继续保留整体计划和记忆线索。
 
-外部编码工具也是这个循环的一部分。当任务需要时，我可以配合 Claude Code、Codex 等工具工作，调用本地 shell 和文件工具，加载运行时 Skills，并把重要结果沉淀到 Hippocampus，供之后继续召回。
+外部编码工具也是这个循环的一部分。当任务需要时，我可以配合 Claude Code、Codex 等工具工作，调用本地 shell 和文件工具，加载运行时 Skills，并把重要结果沉淀到 Brain，供之后继续召回。
 
 ## 我的长期记忆大脑
 
-Anda Hippocampus 的设计重点不是“记得更多”，而是“记住之后还能消化”。它的核心循环分成三步：
+Anda Brain 的设计重点不是“记得更多”，而是“记住之后还能消化”。它的核心循环分成三步：
 
 - **Formation 生成记忆：** 我们的对话会被编码为结构化知识，包括实体、关系、事件、偏好和行为模式。
 - **Recall 召回记忆：** 我可以用自然语言向记忆图谱提问，拿到有上下文的答案，而不是一堆原始搜索片段。
-- **Maintenance 维护记忆：** Hippocampus 可以在后台巩固碎片、合并重复信息、降低陈旧知识的置信度，并在事实变化时保留演化时间线。
+- **Maintenance 维护记忆：** Brain 可以在后台巩固碎片、合并重复信息、降低陈旧知识的置信度，并在事实变化时保留演化时间线。
 
 这对你意味着：你可以像培养一个长期搭档一样培养我。告诉我稳定的偏好、项目背景、团队关系和决策原因；当事实变化时纠正我；需要连续性时直接问“你还记得什么”。如果你过去喜欢一种工作流，现在改成另一种，我应该学会这段变化，而不是粗暴覆盖或同时给出矛盾答案。
 
@@ -82,13 +82,13 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: "YOUR_API_KEY" # 设置 DEEPSEEK_API_KEY 时可留空
-      labels: ["pro", "hippocampus"]
+      labels: ["pro", "brain"]
       disabled: false
 ```
 
 支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。
 
-`hippocampus` 标签表示这一路模型可优先用于记忆大脑。如果没有 provider 带这个标签，我会使用当前激活模型。
+`brain` 标签表示这一路模型可优先用于记忆大脑。如果没有 provider 带这个标签，我会使用当前激活模型。
 
 如果你想为不同身份或项目准备独立记忆，可以换一个 home 目录：
 
@@ -110,7 +110,7 @@ anda --home /path/to/.anda
 - 输入 `/steer ...` 可以给正在生成的回复追加引导。
 - Esc 查看状态，Ctrl+C 退出。
 
-成功完成的对话会在后台提交给 Hippocampus 形成长期记忆。你不需要手动维护记忆文件。
+成功完成的对话会在后台提交给 Brain 形成长期记忆。你不需要手动维护记忆文件。
 
 适合长期记忆的说法：
 
@@ -240,8 +240,8 @@ channels:
 ## 继续了解
 
 - [Anda Bot 二进制使用指南](anda_bot/README.md)
-- [Anda Hippocampus](https://github.com/ldclabs/anda-hippocampus)
-- [Anda Hippocampus 产品站](https://brain.anda.ai/)
+- [Anda Brain](https://github.com/ldclabs/anda-brain)
+- [Anda Brain 产品站](https://brain.anda.ai/)
 
 ## 许可证
 

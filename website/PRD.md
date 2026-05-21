@@ -10,7 +10,7 @@ This document is the product, design, and implementation reference for the Anda 
 
 ## 1. Product Context
 
-Anda Bot is an open-source agent with a long-term memory brain powered by Anda Hippocampus. The website should introduce Anda Bot from the bot's own point of view and help visitors understand why persistent memory matters.
+Anda Bot is an open-source agent with a long-term memory brain powered by Anda Brain. The website should introduce Anda Bot from the bot's own point of view and help visitors understand why persistent memory matters.
 
 The site is not a developer API reference. It is a product-facing first impression for people asking:
 
@@ -28,7 +28,7 @@ Core promise:
 
 Primary differentiator:
 
-- Anda Bot is centered on Anda Hippocampus, a living long-term memory system with formation, recall, and maintenance, rather than a thin chat wrapper with temporary context.
+- Anda Bot is centered on Anda Brain, a living long-term memory system with formation, recall, and maintenance, rather than a thin chat wrapper with temporary context.
 
 Supporting differentiators:
 
@@ -61,9 +61,9 @@ Reader assumptions:
 The current site should accomplish these outcomes:
 
 - Make "Anda Bot" and "long-term memory" obvious in the first viewport.
-- Explain Anda Hippocampus as the heart of the product without making visitors read a technical paper.
+- Explain Anda Brain as the heart of the product without making visitors read a technical paper.
 - Create a distinctive visual impression that feels cognitive, alive, and practical.
-- Convert interested users toward GitHub, quick start, or the Anda Hippocampus repository.
+- Convert interested users toward GitHub, quick start, or the Anda Brain repository.
 - Establish a design language that can support future pages, docs, examples, and product surfaces.
 
 Non-goals for the current version:
@@ -92,8 +92,8 @@ Current content:
 - Core line: `I am the agent that remembers...`
 - CTAs: `Run me locally`, `Meet my memory`, `GitHub`
 - Proof points: `3 phases`, `local workspace`, `open source`
-- Full-bleed hippocampus-style `NexusCanvas` memory field with animated streams, pulse paths, labels, and pointer response
-- Desktop memory observatory panel: `hippocampus.live`, phase wheel, recall signal meters, and live memory event log
+- Full-bleed brain-style `NexusCanvas` memory field with animated streams, pulse paths, labels, and pointer response
+- Desktop memory observatory panel: `brain.live`, phase wheel, recall signal meters, and live memory event log
 
 Requirements:
 
@@ -106,12 +106,12 @@ Requirements:
 
 Purpose:
 
-- Explain the Anda Hippocampus mental model.
+- Explain the Anda Brain mental model.
 - Turn "memory" from a vague claim into a product mechanism.
 
 Current content:
 
-- Section badge: `Anda Hippocampus`
+- Section badge: `Anda Brain`
 - Headline: `My memory is not a note pile. It is a living loop.`
 - Three phase cards: `Formation`, `Recall`, `Maintenance`, connected by a subtle loop trace on desktop
 
@@ -119,7 +119,7 @@ Requirements:
 
 - Keep the three-phase model visible and easy to scan.
 - Avoid overloading this section with implementation details.
-- Link or route deeper later when dedicated Hippocampus content exists.
+- Link or route deeper later when dedicated Brain content exists.
 
 ### 5.3 Workflows Section
 
@@ -183,7 +183,7 @@ Voice qualities:
 Preferred phrasing:
 
 - `I remember...`
-- `My Hippocampus brain...`
+- `My Anda brain...`
 - `I keep the thread of your work alive...`
 - `Bring me to the places your context is born...`
 
@@ -229,7 +229,7 @@ Shape language:
 Texture and motion:
 
 - `NexusCanvas` supplies the hero visual asset and interactive memory field.
-- The canvas renders a hippocampus-like seeded topology with animated streams, recall pulses, labels, and pointer response.
+- The canvas renders a brain-like seeded topology with animated streams, recall pulses, labels, and pointer response.
 - `.memory-strata`, `.hero-scan`, `.signal-panel`, and `.phase-wheel` add observatory texture and interface motion.
 - Motion must respect `prefers-reduced-motion`.
 
@@ -283,12 +283,12 @@ Navigation:
 - Header brand links to `/`.
 - Desktop nav links to `#memory`, `#work`, and `#start`.
 - GitHub CTA links to `https://github.com/ldclabs/anda-bot`.
-- Hippocampus CTA links to `https://github.com/ldclabs/anda-hippocampus`.
+- Brain CTA links to `https://github.com/ldclabs/anda-brain`.
 
 SEO and metadata:
 
 - Page title must include `Anda Bot`.
-- Meta description must mention long-term memory and Anda Hippocampus.
+- Meta description must mention long-term memory and Anda Brain.
 - Open Graph title and description must be present.
 - Future iteration should add a designed OG image.
 
@@ -367,7 +367,7 @@ Browser validation checklist:
 High priority:
 
 - Add a real OG image for social sharing.
-- Add a dedicated Hippocampus explainer route or section with diagrams.
+- Add a dedicated Brain explainer route or section with diagrams.
 - Add installation variants once release packaging is finalized.
 - Add concise Chinese copy or a localized route if the site needs bilingual entry points.
 
@@ -376,7 +376,7 @@ Medium priority:
 - Add use-case modules for personal memory, project memory, team channels, and autonomous routines.
 - Add a comparison section that explains why long-term memory is different from context windows or simple vector search.
 - Add screenshots or short motion captures of the TUI, chat channels, and voice flow.
-- Add footer links for README, GitHub, Hippocampus, issues, license, and community.
+- Add footer links for README, GitHub, Brain, issues, license, and community.
 
 Low priority:
 
@@ -415,5 +415,5 @@ A website change is ready when:
 ### 2026-05-01
 
 - Redesigned the landing page as a memory observatory with a stronger first-viewport visual system.
-- Rebuilt `NexusCanvas` as an animated hippocampus-style memory field with streams, pulses, labels, and pointer response.
+- Rebuilt `NexusCanvas` as an animated brain-style memory field with streams, pulses, labels, and pointer response.
 - Updated the hero, memory, workflows, and start sections to match the new cognitive instrument panel direction.

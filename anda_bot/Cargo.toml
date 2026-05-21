@@ -1,8 +1,8 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.7.4"
-description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Hippocampus."
+version = "0.7.5"
+description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Brain."
 edition.workspace = true
 
 [[bin]]
@@ -10,7 +10,7 @@ name = "anda"
 path = "src/main.rs"
 
 [dependencies]
-anda_hippocampus = { workspace = true }
+anda_brain = { workspace = true }
 async-trait = { workspace = true }
 anda_core = { workspace = true }
 anda_engine = { workspace = true }

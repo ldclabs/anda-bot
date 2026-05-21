@@ -1,3 +1,4 @@
+use anda_brain::types::{FormationInputRef, InputContext};
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, ContentPart, Document,
     Documents, FunctionDefinition, Message, Principal, RequestMeta, Resource, StateFeatures, Tool,
@@ -19,7 +20,6 @@ use anda_engine::{
     subagent::SubAgentManager,
     unix_ms,
 };
-use anda_hippocampus::types::{FormationInputRef, InputContext};
 use anda_kip::Response;
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
