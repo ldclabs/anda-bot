@@ -81,7 +81,11 @@ impl Config {
             Err(err) => return Err(err.into()),
         };
 
-        Self::from_contents(&content)
+        let mut config = Self::from_contents(&content)?;
+        if let Some(home) = std::env::home_dir() {
+            config.model.try_load_codex_token(&home);
+        }
+        Ok(config)
     }
 
     pub fn from_contents(content: &str) -> Result<Self, BoxError> {

@@ -20,13 +20,12 @@ impl ModelSettings {
                 && provider.api_base == "https://chatgpt.com/backend-api/codex"
             {
                 let token_path = home.join(".codex/auth.json");
-                if let Ok(token_str) = std::fs::read_to_string(token_path) {
-                    if let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
+                if let Ok(token_str) = std::fs::read_to_string(token_path)
+                    && let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
                         && !token.tokens.access_token.is_empty()
                     {
                         provider.api_key = token.tokens.access_token;
                     }
-                }
             }
         }
     }

@@ -279,8 +279,7 @@ impl Tool<BaseCtx> for TtsManager {
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "Text to synthesize into speech.",
-                        "minLength": 1
+                        "description": "Text to synthesize into speech."
                     },
                     "provider": {
                         "type": ["string", "null"],
@@ -291,7 +290,7 @@ impl Tool<BaseCtx> for TtsManager {
                         "description": "Optional output artifact file name. The configured audio extension is appended when missing."
                     }
                 },
-                "required": ["text"],
+                "required": ["text", "provider", "artifact_name"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -364,6 +363,7 @@ fn normalize_artifact_name(name: Option<String>, format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
 
     struct StaticTtsProvider {
         name: &'static str,
@@ -395,6 +395,21 @@ mod tests {
             default_format: default_format.to_string(),
             max_text_length: DEFAULT_MAX_TEXT_LENGTH,
         }
+    }
+
+    #[test]
+    fn tts_tool_schema_is_openai_strict() {
+        let manager = manager_with_provider(
+            StaticTtsProvider {
+                name: "edge",
+                format: "mp3",
+            },
+            "mp3",
+        );
+        let definition = manager.definition();
+
+        assert_eq!(definition.strict, Some(true));
+        assert_openai_strict_parameters(&definition.parameters);
     }
 
     #[test]

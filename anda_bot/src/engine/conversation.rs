@@ -11,7 +11,7 @@ use anda_engine::{
 use anda_kip::Response;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use crate::util::request_meta::request_meta_extra_as;
@@ -233,6 +233,63 @@ impl ConversationsTool {
     }
 }
 
+fn conversations_tool_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "type": {
+                "type": "string",
+                "enum": [
+                    "GetSourceState",
+                    "ListSourceState",
+                    "DeleteSourceState",
+                    "GetConversation",
+                    "GetConversationDelta",
+                    "BatchGetConversations",
+                    "ListPrevConversations",
+                    "SearchConversations"
+                ],
+                "description": "Conversation operation to perform. Prefer ListSourceState to inspect all source-bound conversation states and discover conv_id values, DeleteSourceState to remove a source binding without deleting conversations, GetConversation to load a full conversation by _id, and SearchConversations to locate history by keyword when the _id is unknown."
+            },
+            "source": {
+                "type": ["string", "null"],
+                "description": "Source key to delete. Only for DeleteSourceState; use a key returned by ListSourceState."
+            },
+            "_id": {
+                "type": ["integer", "null"],
+                "description": "Conversation ID to load. Use the conv_id returned by GetSourceState or ListSourceState. For GetConversation, _id = 0 resolves to the caller's latest conversation."
+            },
+            "ids": {
+                "type": ["array", "null"],
+                "items": { "type": "integer" },
+                "description": "The IDs of the conversations to get. Only for BatchGetConversations."
+            },
+            "messages_offset": {
+                "type": ["integer", "null"],
+                "description": "Only for GetConversationDelta. Number of messages already known to the caller; use 0 to return from the beginning."
+            },
+            "artifacts_offset": {
+                "type": ["integer", "null"],
+                "description": "Only for GetConversationDelta. Number of artifacts already known to the caller; use 0 to return from the beginning."
+            },
+            "cursor": {
+                "type": ["string", "null"],
+                "description": "Pagination cursor from a previous ListPrevConversations response. Omit for the first page."
+            },
+            "limit": {
+                "type": ["integer", "null"],
+                "description": "Optional maximum number of conversations to return for ListPrevConversations or SearchConversations. Defaults to 10."
+            },
+            "query": {
+                "type": ["string", "null"],
+                "description": "Keyword, phrase, participant, or topic to search in historical conversations. Required for SearchConversations when the conversation _id is unknown."
+            }
+        },
+        "required": ["type", "source", "_id", "ids", "messages_offset", "artifacts_offset", "cursor", "limit", "query"],
+        "additionalProperties": false
+    })
+}
+
 impl Tool<BaseCtx> for ConversationsTool {
     type Args = ConversationsToolArgs;
     type Output = Response;
@@ -255,63 +312,7 @@ impl Tool<BaseCtx> for ConversationsTool {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "enum": [
-                            "GetSourceState",
-                            "ListSourceState",
-                            "DeleteSourceState",
-                            "GetConversation",
-                            "GetConversationDelta",
-                            "BatchGetConversations",
-                            "ListPrevConversations",
-                            "SearchConversations"
-                        ],
-                        "description": "Conversation operation to perform. Prefer ListSourceState to inspect all source-bound conversation states and discover conv_id values, DeleteSourceState to remove a source binding without deleting conversations, GetConversation to load a full conversation by _id, and SearchConversations to locate history by keyword when the _id is unknown."
-                    },
-                    "source": {
-                        "type": ["string", "null"],
-                        "description": "Source key to delete. Only for DeleteSourceState; use a key returned by ListSourceState."
-                    },
-                    "_id": {
-                        "type": "integer",
-                        "description": "Conversation ID to load. Use the conv_id returned by GetSourceState or ListSourceState. For GetConversation, _id = 0 resolves to the caller's latest conversation."
-                    },
-                    "ids": {
-                        "type": "array",
-                        "items": { "type": "integer" },
-                        "description": "The IDs of the conversations to get. Only for BatchGetConversations."
-                    },
-                    "messages_offset": {
-                        "type": ["integer", "null"],
-                        "description": "Only for GetConversationDelta. Number of messages already known to the caller; omit or use 0 to return from the beginning.",
-                        "default": 0
-                    },
-                    "artifacts_offset": {
-                        "type": ["integer", "null"],
-                        "description": "Only for GetConversationDelta. Number of artifacts already known to the caller; omit or use 0 to return from the beginning.",
-                        "default": 0
-                    },
-                    "cursor": {
-                        "type": ["string", "null"],
-                        "description": "Pagination cursor from a previous ListPrevConversations response. Omit for the first page."
-                    },
-                    "limit": {
-                        "type": ["integer", "null"],
-                        "description": "Optional maximum number of conversations to return for ListPrevConversations or SearchConversations. Defaults to 10.",
-                        "default": 10
-                    },
-                    "query": {
-                        "type": ["string", "null"],
-                        "description": "Keyword, phrase, participant, or topic to search in historical conversations. Required for SearchConversations when the conversation _id is unknown."
-                    }
-                },
-                "required": ["type"],
-                "additionalProperties": false
-            }),
+            parameters: conversations_tool_parameters(),
             strict: Some(true),
         }
     }
@@ -520,11 +521,25 @@ pub fn source_conversation_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
+
+    #[test]
+    fn conversations_api_schema_is_openai_strict() {
+        assert_openai_strict_parameters(&conversations_tool_parameters());
+    }
 
     #[test]
     fn conversation_tool_args_parse_tagged_variants() {
         let args: ConversationsToolArgs = serde_json::from_value(json!({
             "type": "GetSourceState",
+            "source": null,
+            "_id": null,
+            "ids": null,
+            "messages_offset": null,
+            "artifacts_offset": null,
+            "cursor": null,
+            "limit": null,
+            "query": null,
         }))
         .expect("source state variant should parse");
 

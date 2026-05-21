@@ -2,6 +2,20 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.6] — 2026-05-21
+
+### Changed
+
+- **OpenAI strict mode compliance for all tool schemas**: every tool function now passes OpenAI strict validation — all properties listed in `required` (optional fields use `["type","null"]`), `additionalProperties: false` on all objects, no unsupported schema keywords. Added `json_schema.rs` test utility with `assert_openai_strict_parameters` and schema-validation tests covering brain client, cron tools, browser tools, conversation API, goal tool, multimodal agents, transcription, and TTS.
+- **Dependency bumps**: `anda_brain` 0.6.0→0.6.1, `anda_core` 0.12.2→0.12.3, `anda_engine` 0.12.16→0.12.19.
+- **Config context windows reduced**: memory-capable model context windows lowered from 1,000,000 to 400,000 to align with actual provider limits.
+- **Model rename**: `gpt-5.4-mini` → `gpt-5.4`.
+- **Codex token loading moved into `Config::from_file`**: previously handled in `main.rs`, now applied consistently at config load time so all callers benefit.
+- **Compaction threshold simplified**: switched from half-window-with-clamps to 80% of context_window with 100K token minimum, providing more predictable compaction behavior.
+- **Removed `max_output_tokens` overrides** from agent completion configs — now relying on provider/model defaults.
+- **Removed `minLength: 1`** from TTS text parameter schema (not allowed under OpenAI strict mode).
+
+
 ## [0.7.5] — 2026-05-21
 
 ### Changed

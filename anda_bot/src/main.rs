@@ -351,10 +351,7 @@ fn default_home() -> PathBuf {
 
 async fn load_daemon(home: PathBuf) -> Result<daemon::Daemon, BoxError> {
     let config_path = config::Config::file_path(&home);
-    let mut config = config::Config::from_file(&config_path).await?;
-    config
-        .model
-        .try_load_codex_token(&std::env::home_dir().unwrap_or_default());
+    let config = config::Config::from_file(&config_path).await?;
     Ok(daemon::Daemon::new(home, config))
 }
 

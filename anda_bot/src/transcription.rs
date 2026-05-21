@@ -393,6 +393,7 @@ impl Tool<BaseCtx> for TranscriptionManager {
                         "description": "Optional base64-encoded audio data. Prefer passing audio resources when available."
                     }
                 },
+                "required": ["provider", "file_name", "audio_base64"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -525,6 +526,20 @@ pub async fn transcribe_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
+    use std::collections::HashMap;
+
+    #[test]
+    fn transcription_tool_schema_is_openai_strict() {
+        let manager = TranscriptionManager {
+            providers: HashMap::new(),
+            default_provider: "openai".to_string(),
+        };
+        let definition = manager.definition();
+
+        assert_eq!(definition.strict, Some(true));
+        assert_openai_strict_parameters(&definition.parameters);
+    }
 
     #[test]
     fn normalize_oga_filename_for_whisper_compatibility() {

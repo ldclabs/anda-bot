@@ -363,6 +363,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
                         "description": "Optional question or focus for the media understanding task."
                     }
                 },
+                "required": ["path", "question"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -410,7 +411,6 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
                 instructions: self.kind.instructions(),
                 prompt: self.completion_prompt(&args, resources_len),
                 content,
-                max_output_tokens: Some(ctx.model.max_output.clamp(1024, 8192)),
                 ..Default::default()
             },
             Vec::new(),
@@ -666,11 +666,25 @@ fn title_case(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
 
     const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+    #[test]
+    fn media_understanding_schema_is_openai_strict() {
+        for agent in [
+            MediaUnderstandingAgent::image(Vec::new()),
+            MediaUnderstandingAgent::audio(Vec::new()),
+            MediaUnderstandingAgent::video(Vec::new()),
+        ] {
+            let definition = agent.definition();
+            assert_eq!(definition.strict, Some(true));
+            assert_openai_strict_parameters(&definition.parameters);
+        }
+    }
 
     #[test]
     fn parses_json_args_with_path_and_question() {

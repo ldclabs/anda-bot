@@ -131,7 +131,7 @@ impl Tool<BaseCtx> for GoalTool {
                         "description": "Brief reason goal mode is needed for this request."
                     }
                 },
-                "required": ["objective"],
+                "required": ["objective", "reason"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -345,6 +345,7 @@ fn parse_goal_evaluation(content: &str) -> Result<GoalEvaluation, BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
     use std::sync::atomic::AtomicU64;
 
     #[test]
@@ -404,6 +405,7 @@ mod tests {
         assert_eq!(definition.name, GoalTool::NAME);
         assert!(definition.description.contains("autonomous goal mode"));
         assert_eq!(definition.strict, Some(true));
+        assert_openai_strict_parameters(&definition.parameters);
         assert!(definition.parameters.to_string().contains("objective"));
     }
 

@@ -179,6 +179,25 @@ impl From<&InputContext> for SessionFormationContext {
     }
 }
 
+fn anda_bot_tool_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "type": {
+                "type": "string",
+                "enum": ["ListSessions", "GetSession", "ListSkills"],
+                "description": "The API operation to perform. Use ListSessions to list active sessions, GetSession to inspect one session, or ListSkills to list available skills."
+            },
+            "session_id": {
+                "type": ["string", "null"],
+                "description": "The active session id to inspect. Required for GetSession."
+            }
+        },
+        "required": ["type", "session_id"],
+        "additionalProperties": false
+    })
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionState {
     pub summary: SessionSummary,
@@ -643,7 +662,6 @@ impl AndaBot {
             chat_history: chat_history.clone(),
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
-            max_output_tokens: Some(ctx.model.max_output.max(32000)),
             ..Default::default()
         };
 
@@ -863,22 +881,7 @@ impl Tool<BaseCtx> for AndaBot {
         FunctionDefinition {
             name: Tool::name(self),
             description: Tool::description(self),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "type": "string",
-                        "enum": ["ListSessions", "GetSession", "ListSkills"],
-                        "description": "The API operation to perform. Use ListSessions to list active sessions, GetSession to inspect one session, or ListSkills to list available skills."
-                    },
-                    "session_id": {
-                        "type": ["string", "null"],
-                        "description": "The active session id to inspect. Required for GetSession."
-                    }
-                },
-                "required": ["type"],
-                "additionalProperties": false
-            }),
+            parameters: anda_bot_tool_parameters(),
             strict: Some(true),
         }
     }
@@ -1389,7 +1392,6 @@ impl Agent<AgentCtx> for AndaBot {
             chat_history,
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
-            max_output_tokens: Some(ctx.model.max_output.max(32000)),
             ..Default::default()
         };
 
@@ -2308,19 +2310,14 @@ fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
 
 fn needs_compaction(runner: &CompletionRunner) -> bool {
     let current_usage = runner.current_usage();
-    let threshold = compaction_token_threshold(runner.model().context_window);
+    let threshold = runner
+        .model()
+        .context_window
+        .saturating_mul(8)
+        .saturating_div(10)
+        .max(100_000) as u64;
 
     current_usage.input_tokens >= threshold || runner.turns() >= MAX_TURNS_TO_COMPACT
-}
-
-fn compaction_token_threshold(context_window: usize) -> u64 {
-    if context_window == 0 {
-        return 100_000;
-    }
-
-    (context_window as u64)
-        .saturating_div(2)
-        .clamp(50_000, 500_000)
 }
 
 fn compute_tools_usage_delta(
@@ -2405,13 +2402,20 @@ fn format_local_date(now_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
     use anda_core::Usage;
     use std::collections::HashMap;
+
+    #[test]
+    fn anda_bot_api_schema_is_openai_strict() {
+        assert_openai_strict_parameters(&anda_bot_tool_parameters());
+    }
 
     #[test]
     fn anda_bot_tool_args_parse_tagged_variants() {
         let args: AndaBotToolArgs = serde_json::from_value(serde_json::json!({
             "type": "ListSessions",
+            "session_id": null,
         }))
         .expect("list sessions variant should parse");
 
@@ -2678,13 +2682,6 @@ mod tests {
         let selected = select_most_used_tools(&available_tools, &base_tools, &tools_usage, 2);
 
         assert_eq!(selected, vec!["read_file".to_string(), "todo".to_string()]);
-    }
-
-    #[test]
-    fn compaction_token_threshold_uses_half_window_with_cap() {
-        assert_eq!(compaction_token_threshold(0), 100_000);
-        assert_eq!(compaction_token_threshold(140_000), 70_000);
-        assert_eq!(compaction_token_threshold(3_000_000), 500_000);
     }
 
     #[test]

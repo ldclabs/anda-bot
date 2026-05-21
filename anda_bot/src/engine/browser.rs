@@ -687,7 +687,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action"],
+            "required": ["action", "url", "tab_id", "window_id", "active", "bypass_cache", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Page => json!({
@@ -725,7 +725,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action"],
+            "required": ["action", "selector", "query", "include_links", "include_forms", "highlight", "max_chars", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Input => json!({
@@ -776,7 +776,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action"],
+            "required": ["action", "selector", "text", "value", "key", "amount", "x", "y", "from_selector", "to_selector", "to_x", "to_y", "behavior", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Script => json!({
@@ -807,7 +807,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action", "code"],
+            "required": ["action", "code", "world", "use_bridge", "frame_id", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
     }
@@ -1195,6 +1195,7 @@ fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
 
     fn snapshot_args() -> ChromeBrowserToolArgs {
         ChromeBrowserToolArgs {
@@ -1254,6 +1255,23 @@ mod tests {
         assert_eq!(definition.name, ChromeBrowserTool::PAGE_NAME);
         assert!(properties.get("tab_id").is_none());
         assert!(properties.get("selector").is_some());
+    }
+
+    #[test]
+    fn browser_tool_schemas_are_openai_strict() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let tools = [
+            ChromeBrowserTool::tabs(bridge.clone()),
+            ChromeBrowserTool::page(bridge.clone()),
+            ChromeBrowserTool::input(bridge.clone()),
+            ChromeBrowserTool::script(bridge),
+        ];
+
+        for tool in tools {
+            let definition = tool.definition();
+            assert_eq!(definition.strict, Some(true));
+            assert_openai_strict_parameters(&definition.parameters);
+        }
     }
 
     #[test]

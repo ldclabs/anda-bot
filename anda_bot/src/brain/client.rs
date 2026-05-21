@@ -165,33 +165,57 @@ impl Tool<BaseCtx> for Client {
                   "description": "A natural language question about older or out-of-context memory. Be specific and include the subject, timeframe, and topic when known. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?'"
                 },
                 "context": {
-                  "type": "object",
+                  "type": [
+                    "object",
+                    "null"
+                  ],
                   "description": "Optional current conversational context used only to disambiguate the query within $self's memory. Pass an object, not a JSON string. It does not change the memory owner.",
                   "properties": {
                     "counterparty": {
-                      "type": "string",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
                       "description": "Preferred. Durable identifier of the current external person or organization interacting with the business agent. Useful for resolving implicit references such as 'the current user', 'they', or omitted subjects."
                     },
                     "agent": {
-                      "type": "string",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
                       "description": "The identifier of the calling business agent, if applicable. Useful for provenance or caller-specific queries, but it does not change whose memory is searched."
                     },
                     "source": {
-                      "type": "string",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
                       "description": "Identifier of the current source, thread, channel, or app context. Useful when the query refers to a previous discussion in the same place."
                     },
                     "topic": {
-                      "type": "string",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
                       "description": "The topic of the current conversation, to help disambiguate the query."
                     }
-                  }
+                  },
+                  "required": [
+                    "counterparty",
+                    "agent",
+                    "source",
+                    "topic"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
-                "query"
-              ]
+                "query",
+                "context"
+              ],
+              "additionalProperties": false
             }),
-            strict: None,
+            strict: Some(true),
         }
     }
 
@@ -203,5 +227,30 @@ impl Tool<BaseCtx> for Client {
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let rt = self.recall((&request).into()).await?;
         Ok(ToolOutput::new(rt.content))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
+
+    #[test]
+    fn recall_memory_schema_is_openai_strict() {
+        let client = Client::new("http://localhost:8042/v1/test".to_string(), None);
+        let definition = client.definition();
+
+        assert_eq!(definition.strict, Some(true));
+        assert_openai_strict_parameters(&definition.parameters);
+    }
+
+    #[test]
+    fn recall_memory_args_accept_null_context() {
+        let request = serde_json::from_value::<RecallInput>(serde_json::json!({
+            "query": "What did we discuss about the release?",
+            "context": null,
+        }));
+
+        assert!(request.is_ok());
     }
 }

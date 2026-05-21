@@ -2,7 +2,7 @@ use anda_core::{BoxError, FunctionDefinition, Resource, StateFeatures, Tool, Too
 use anda_engine::context::BaseCtx;
 use anda_kip::Response;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::{runtime::CronRuntime, types::CreateCronJobArgs, types::CronJobOrigin};
@@ -43,39 +43,7 @@ impl Tool<BaseCtx> for CreateCronTool {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "job_kind": {
-                        "type": "string",
-                        "enum": ["shell", "agent"],
-                        "description": "Use 'shell' to execute a shell command, or 'agent' to submit a prompt to the agent runtime."
-                    },
-                    "job": {
-                        "type": "string",
-                        "description": "The shell command or agent prompt to execute."
-                    },
-                    "schedule_kind": {
-                        "type": "string",
-                        "enum": ["cron", "at", "every", "once"],
-                        "description": "How to interpret schedule."
-                    },
-                    "schedule": {
-                        "type": "string",
-                        "description": "The schedule value. For 'cron', provide a cron expression. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
-                    },
-                    "name": {
-                        "type": ["string", "null"],
-                        "description": "Optional human-readable name for the cron job."
-                    },
-                    "tz": {
-                        "type": ["string", "null"],
-                        "description": "Optional IANA timezone name, only used when schedule_kind is 'cron'."
-                    }
-                },
-                "required": ["job_kind", "job", "schedule_kind", "schedule"],
-                "additionalProperties": false
-            }),
+            parameters: create_cron_job_parameters(),
             strict: Some(true),
         }
     }
@@ -121,6 +89,101 @@ pub struct ListCronArgs {
     pub limit: Option<usize>,
 }
 
+fn create_cron_job_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "job_kind": {
+                "type": "string",
+                "enum": ["shell", "agent"],
+                "description": "Use 'shell' to execute a shell command, or 'agent' to submit a prompt to the agent runtime."
+            },
+            "job": {
+                "type": "string",
+                "description": "The shell command or agent prompt to execute."
+            },
+            "schedule_kind": {
+                "type": "string",
+                "enum": ["cron", "at", "every", "once"],
+                "description": "How to interpret schedule."
+            },
+            "schedule": {
+                "type": "string",
+                "description": "The schedule value. For 'cron', provide a cron expression. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
+            },
+            "name": {
+                "type": ["string", "null"],
+                "description": "Optional human-readable name for the cron job."
+            },
+            "tz": {
+                "type": ["string", "null"],
+                "description": "Optional IANA timezone name, only used when schedule_kind is 'cron'."
+            }
+        },
+        "required": ["job_kind", "job", "schedule_kind", "schedule", "name", "tz"],
+        "additionalProperties": false
+    })
+}
+
+fn manage_cron_job_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["get", "pause", "resume", "remove"],
+                "description": "The management action to perform on the cron job."
+            },
+            "id": {
+                "type": "integer",
+                "description": "The cron job id to manage."
+            }
+        },
+        "required": ["action", "id"],
+        "additionalProperties": false
+    })
+}
+
+fn list_cron_jobs_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "cursor": {
+                "type": ["string", "null"],
+                "description": "Pagination cursor returned by a previous list_cron_jobs call."
+            },
+            "limit": {
+                "type": ["integer", "null"],
+                "description": "Maximum number of jobs to return. Defaults to 10 and is capped at 100."
+            }
+        },
+        "required": ["cursor", "limit"],
+        "additionalProperties": false
+    })
+}
+
+fn list_cron_runs_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "job_id": {
+                "type": ["integer", "null"],
+                "description": "Optional cron job id. When present, only runs for that job are returned."
+            },
+            "cursor": {
+                "type": ["string", "null"],
+                "description": "Pagination cursor returned by a previous list_cron_runs call."
+            },
+            "limit": {
+                "type": ["integer", "null"],
+                "description": "Maximum number of runs to return. Defaults to 10 and is capped at 100."
+            }
+        },
+        "required": ["job_id", "cursor", "limit"],
+        "additionalProperties": false
+    })
+}
+
 fn paginated_response<T>(items: T, next_cursor: Option<String>) -> ToolOutput<Response>
 where
     T: Serialize,
@@ -164,22 +227,7 @@ impl Tool<BaseCtx> for ManageCronJobTool {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["get", "pause", "resume", "remove"],
-                        "description": "The management action to perform on the cron job."
-                    },
-                    "id": {
-                        "type": "integer",
-                        "description": "The cron job id to manage."
-                    }
-                },
-                "required": ["action", "id"],
-                "additionalProperties": false
-            }),
+            parameters: manage_cron_job_parameters(),
             strict: Some(true),
         }
     }
@@ -249,20 +297,7 @@ impl Tool<BaseCtx> for ListCronJobsTool {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "cursor": {
-                        "type": ["string", "null"],
-                        "description": "Pagination cursor returned by a previous list_cron_jobs call."
-                    },
-                    "limit": {
-                        "type": ["integer", "null"],
-                        "description": "Maximum number of jobs to return. Defaults to 10 and is capped at 100."
-                    }
-                },
-                "additionalProperties": false
-            }),
+            parameters: list_cron_jobs_parameters(),
             strict: Some(true),
         }
     }
@@ -311,24 +346,7 @@ impl Tool<BaseCtx> for ListCronRunsTool {
         FunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "job_id": {
-                        "type": ["integer", "null"],
-                        "description": "Optional cron job id. When present, only runs for that job are returned."
-                    },
-                    "cursor": {
-                        "type": ["string", "null"],
-                        "description": "Pagination cursor returned by a previous list_cron_runs call."
-                    },
-                    "limit": {
-                        "type": ["integer", "null"],
-                        "description": "Maximum number of runs to return. Defaults to 10 and is capped at 100."
-                    }
-                },
-                "additionalProperties": false
-            }),
+            parameters: list_cron_runs_parameters(),
             strict: Some(true),
         }
     }
@@ -345,5 +363,23 @@ impl Tool<BaseCtx> for ListCronRunsTool {
             .list_runs(args.cursor, args.limit, args.job_id)
             .await?;
         Ok(paginated_response(runs, next_cursor))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::json_schema::assert_openai_strict_parameters;
+
+    #[test]
+    fn cron_tool_schemas_are_openai_strict() {
+        for parameters in [
+            create_cron_job_parameters(),
+            manage_cron_job_parameters(),
+            list_cron_jobs_parameters(),
+            list_cron_runs_parameters(),
+        ] {
+            assert_openai_strict_parameters(&parameters);
+        }
     }
 }
