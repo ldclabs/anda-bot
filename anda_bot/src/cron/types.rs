@@ -215,6 +215,8 @@ impl CronJob {
             return None;
         }
         let mut meta = origin.to_request_meta(conversation_id);
+        meta.extra
+            .insert("cron_job_id".to_string(), self._id.into());
         meta.extra.insert(
             "cron_job_name".to_string(),
             self.name.clone().unwrap_or_default().into(),
@@ -223,8 +225,6 @@ impl CronJob {
             "cron_job_kind".to_string(),
             self.job_kind.to_string().into(),
         );
-        meta.extra
-            .insert("cron_job".to_string(), self.job.clone().into());
 
         Some(meta)
     }

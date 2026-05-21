@@ -538,10 +538,13 @@ fn completion_message(
             msg.push_str("[Previous conversation]\n\n");
         }
     }
-    if let Some(cron_job) = request_meta_extra_as::<String>(meta, "cron_job") {
-        let name = request_meta_extra_as::<String>(meta, "cron_job_name").unwrap_or_default();
+    if let Some(cron_job_id) = request_meta_extra_as::<u64>(meta, "cron_job_id") {
+        let mut name = request_meta_extra_as::<String>(meta, "cron_job_name").unwrap_or_default();
+        if name.is_empty() {
+            name = cron_job_id.to_string();
+        }
         let kind = request_meta_extra_as::<String>(meta, "cron_job_kind").unwrap_or_default();
-        msg.push_str(&format!("Cron Job ({kind}): {name}\n{cron_job}\n\n"));
+        msg.push_str(&format!("Cron Job ({kind}): {name}\n\n"));
     }
     msg.push_str(&output.content);
     SendMessage::new(msg, route.reply_target)

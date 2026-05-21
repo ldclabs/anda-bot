@@ -79,11 +79,16 @@
     }
   })
 
-  $effect(() => {
+  let prevLastMessageId = $state('')
+  const lastMessageId = $derived.by(() => {
     const lastGroup = visibleMessageGroups[visibleMessageGroups.length - 1]
     const lastMessage = lastGroup?.messages[lastGroup.messages.length - 1]
-    if (lastMessage) {
-      scrollIntoView(lastMessage.id, 'smooth', 'start')
+    return lastMessage?.id || ''
+  })
+  $effect(() => {
+    if (lastMessageId && prevLastMessageId !== lastMessageId) {
+      prevLastMessageId = lastMessageId
+      scrollIntoView(lastMessageId, 'smooth', 'start')
     }
   })
 

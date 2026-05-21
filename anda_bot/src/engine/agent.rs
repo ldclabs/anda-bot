@@ -1531,7 +1531,18 @@ impl SessionRunner {
                         self.session.id,
                         self.conversation._id
                     );
-                    continue;
+                }
+                PromptCommand::Stop { prompt } => {
+                    cancellation_requested =
+                        Some(prompt.unwrap_or_else(|| "Cancelled by user".to_string()));
+                    break;
+                }
+                PromptCommand::New { .. } => {
+                    log::warn!(
+                        "Received unexpected /new command in session {}, conversation {}. The /new command should be handled in the agent run() method and should not reach the session runner. Ignoring.",
+                        self.session.id,
+                        self.conversation._id
+                    );
                 }
                 PromptCommand::Plain { prompt } => {
                     content.push(prompt.into());
@@ -1567,20 +1578,6 @@ impl SessionRunner {
                     );
                     self.runner.follow_up_content(content);
                 }
-                PromptCommand::Stop { prompt } => {
-                    cancellation_requested =
-                        Some(prompt.unwrap_or_else(|| "Cancelled by user".to_string()));
-                    break;
-                }
-                PromptCommand::New { prompt } => {
-                    if let Some(prompt) = prompt {
-                        content.push(prompt.into());
-                    }
-                    if !content.is_empty() {
-                        self.runner.follow_up_content(content);
-                    }
-                    break;
-                }
             }
         }
 
@@ -1598,7 +1595,20 @@ impl SessionRunner {
             return Ok(false);
         }
 
-        if let Some(extra_user_context) = self.extra_user_context.take() {
+        if self.conversation.status != ConversationStatus::Working && !self.runner.is_idle() {
+            self.conversation.status = ConversationStatus::Working;
+            self.conversation.failed_reason = None;
+            self.conversation.updated_at = now_ms;
+            self.persist_conversation_state().await;
+        }
+
+        if let Some(mut extra_user_context) = self.extra_user_context.take() {
+            if let Some(datetime) = rfc3339_datetime(now_ms) {
+                extra_user_context.content.push(ContentPart::Text {
+                    text: format!("Current datetime: {}", datetime),
+                });
+            }
+
             self.runner.implicit_context(extra_user_context);
         }
 

@@ -2,6 +2,21 @@
 
 All notable changes to Anda Bot.
 
+
+## [0.7.4] — 2026-05-21
+
+### Changed
+
+- **Current datetime injected into engine context**: the `extra_user_context` now includes an RFC 3339-formatted `Current datetime` field at the top of the implicit context, giving agents accurate temporal awareness without relying on training-cutoff heuristics.
+- **Cron job metadata refactored**: `cron_job` (full job content as a string) replaced with `cron_job_id` (u64) in request metadata, reducing serialized payload size. The job name now falls back to the numeric ID when `cron_job_name` is empty. Cron job content is no longer echoed in completion messages.
+- **Stop/New command handling reordered**: `PromptCommand::Stop` now breaks the prompt loop immediately without processing any remaining commands. `PromptCommand::New` is logged as unexpected (it should be handled at the agent level in `run()`, not in the session runner) and no longer injects its prompt as follow-up content.
+- **Session Working status auto-repair**: when a conversation status is not `Working` but the runner has pending tasks (`!is_idle()`), the status is now persisted as `Working` with `failed_reason` cleared — recovering from stale status states without manual intervention.
+- **Sidebar channel toggle via Button**: the collapsed/expanded chevron icon in the channel sidebar is now wrapped in a shadcn-svelte `Button` with `aria-label` and `title`, replacing an unlabeled clickable div.
+
+### Fixed
+
+- **Duplicate `scrollIntoView` calls**: the App.svelte `$effect` now tracks `prevLastMessageId` to only trigger `scrollIntoView` when the last message ID actually changes, preventing redundant scroll animations on unrelated reactivity triggers.
+
 ## [0.7.3] — 2026-05-20
 
 ### Added

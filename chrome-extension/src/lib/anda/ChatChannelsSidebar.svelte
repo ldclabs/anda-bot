@@ -159,7 +159,16 @@
             {channels.length}
           </div>
         </div>
-        <ChevronDown class="size-4 shrink-0 rotate-90 text-stone-400" />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          class="grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80"
+          aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+          title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+          onclick={toggleCollapsed}
+        >
+          <ChevronDown class="size-4 shrink-0 rotate-90 text-stone-400" />
+        </Button>
       {/if}
     </div>
 
