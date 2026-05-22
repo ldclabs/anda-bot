@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::{brain, channel, config::Config, cron, engine, gateway, logger, util};
+use crate::{auto_update, brain, channel, config::Config, cron, engine, gateway, logger, util};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
 
@@ -79,6 +79,38 @@ impl Daemon {
 
     pub fn db_dir_path(&self) -> PathBuf {
         self.home.join("db")
+    }
+
+    pub fn bot_db_config() -> DBConfig {
+        DBConfig {
+            name: "bot_db".to_string(),
+            description: "Anda Brain database".to_string(),
+            storage: StorageConfig {
+                cache_max_capacity: 100000,
+                compress_level: 3,
+                object_chunk_size: 256 * 1024,
+                bucket_overload_size: 1024 * 1024,
+                max_small_object_size: 1024 * 1024 * 10,
+            },
+            lock: None,
+        }
+    }
+
+    fn bot_object_store(&self) -> Result<Arc<dyn ObjectStore>, BoxError> {
+        let os = LocalFileSystem::new_with_prefix(self.db_dir_path())?;
+        let os = MetaStoreBuilder::new(os, 100000).build();
+        Ok(Arc::new(os))
+    }
+
+    pub async fn connect_bot_db(&self) -> Result<Arc<AndaDB>, BoxError> {
+        tokio::fs::create_dir_all(self.db_dir_path()).await?;
+        let db = AndaDB::connect(self.bot_object_store()?, Self::bot_db_config()).await?;
+        Ok(Arc::new(db))
+    }
+
+    pub async fn open_bot_db(&self) -> Result<Arc<AndaDB>, BoxError> {
+        let db = AndaDB::open(self.bot_object_store()?, Self::bot_db_config()).await?;
+        Ok(Arc::new(db))
     }
 
     pub fn skills_dir_path(&self) -> PathBuf {
@@ -245,6 +277,12 @@ impl Daemon {
                 .ok_or("No model found for brain")?,
             https_proxy: self.cfg.https_proxy.clone(),
         };
+        let bot_db = self.connect_bot_db().await?;
+        let auto_updater = Arc::new(auto_update::AutoUpdater::new(
+            bot_db.clone(),
+            self.home.clone(),
+            outer_http_client.clone(),
+        ));
         let engine_cfg = engine::EngineConfig {
             id_key,
             managers: vec![user_pubkey],
@@ -256,28 +294,8 @@ impl Daemon {
             tts: self.cfg.tts.clone(),
             transcription: self.cfg.transcription.clone(),
             https_proxy: self.cfg.https_proxy.clone(),
+            auto_updater,
         };
-        let db_path = self.db_dir_path();
-        let object_store: Arc<dyn ObjectStore> = {
-            let os = LocalFileSystem::new_with_prefix(db_path)?;
-            let os = MetaStoreBuilder::new(os, 100000).build();
-            Arc::new(os)
-        };
-
-        let db_config = DBConfig {
-            name: "bot_db".to_string(),
-            description: "Anda Brain database".to_string(),
-            storage: StorageConfig {
-                cache_max_capacity: 100000,
-                compress_level: 3,
-                object_chunk_size: 256 * 1024,
-                bucket_overload_size: 1024 * 1024,
-                max_small_object_size: 1024 * 1024 * 10,
-            },
-            lock: None,
-        };
-        let bot_db = AndaDB::connect(object_store, db_config).await?;
-        let bot_db = Arc::new(bot_db);
 
         let cron_runtime =
             Arc::new(cron::CronRuntime::connect(engine_ref.clone(), bot_db.clone()).await?);

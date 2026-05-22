@@ -10,8 +10,10 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-const REPO: &str = "ldclabs/anda-bot";
-const BINARY_NAME: &str = "anda";
+use crate::{auto_update, daemon::Daemon};
+
+pub(crate) const REPO: &str = "ldclabs/anda-bot";
+pub(crate) const BINARY_NAME: &str = "anda";
 const SKILLS_ARCHIVE_NAME: &str = "anda-skills.zip";
 
 #[derive(Args)]
@@ -25,14 +27,14 @@ pub struct UpdateCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ReleaseTarget {
+pub(crate) struct ReleaseTarget {
     os: &'static str,
     arch: &'static str,
     exe_ext: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UpdateFinish {
+pub(crate) enum UpdateFinish {
     Installed,
     #[cfg(windows)]
     Scheduled,
@@ -87,7 +89,7 @@ impl Drop for StagedDir {
 }
 
 impl ReleaseTarget {
-    fn detect() -> Result<Self, BoxError> {
+    pub(crate) fn detect() -> Result<Self, BoxError> {
         Self::from_parts(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
             let target = normalized_target_name(std::env::consts::OS, std::env::consts::ARCH);
             format!(
@@ -97,7 +99,7 @@ impl ReleaseTarget {
         })
     }
 
-    fn from_parts(os: &str, arch: &str) -> Option<Self> {
+    pub(crate) fn from_parts(os: &str, arch: &str) -> Option<Self> {
         let arch = match arch {
             "x86_64" | "amd64" => "x86_64",
             "aarch64" | "arm64" => "arm64",
@@ -124,27 +126,28 @@ impl ReleaseTarget {
         }
     }
 
-    fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         format!("{}-{}", self.os, self.arch)
     }
 
-    fn asset_name(&self) -> String {
+    pub(crate) fn asset_name(&self) -> String {
         format!("{BINARY_NAME}-{}{}", self.name(), self.exe_ext)
     }
 }
 
 pub async fn run(
     client: &reqwest::Client,
-    home_dir: &Path,
+    daemon: &Daemon,
     cmd: &UpdateCommand,
 ) -> Result<(), BoxError> {
+    let home_dir = &daemon.home;
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
 
     println!("Detecting latest version...");
     let latest_tag = fetch_latest_version(client).await?;
     println!("Latest version: {latest_tag}");
 
-    let base_url = format!("https://github.com/{REPO}/releases/download/{latest_tag}");
+    let base_url = release_download_base_url(&latest_tag);
 
     if cmd.skills {
         install_release_skills(client, &base_url, home_dir).await?;
@@ -174,6 +177,25 @@ pub async fn run(
     #[cfg(not(windows))]
     let staged = StagedFile::new(staged_path);
 
+    if let Some(downloaded_path) =
+        auto_update::downloaded_update_path(daemon, &latest_tag, &asset_name).await
+    {
+        println!("Using previously downloaded {asset_name}...");
+        stage_update(&downloaded_path, staged.path()).await?;
+        prepare_executable(staged.path(), &current_exe).await?;
+        let finish = install_update(staged.path(), &current_exe).await?;
+
+        #[cfg(windows)]
+        if finish == UpdateFinish::Scheduled {
+            staged.keep();
+        }
+
+        install_release_skills(client, &base_url, home_dir).await?;
+        auto_update::mark_installed(daemon, &latest_tag).await;
+        print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
+        return Ok(());
+    }
+
     println!("Downloading {asset_name}...");
     let actual_hash = download_binary(client, &asset_url, download.path()).await?;
 
@@ -192,7 +214,14 @@ pub async fn run(
     }
 
     install_release_skills(client, &base_url, home_dir).await?;
+    auto_update::mark_installed(daemon, &latest_tag).await;
 
+    print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
+
+    Ok(())
+}
+
+fn print_update_finish(current_tag: &str, latest_tag: &str, finish: UpdateFinish) {
     match finish {
         UpdateFinish::Installed => {
             println!("anda updated from {current_tag} to {latest_tag}.");
@@ -207,11 +236,13 @@ pub async fn run(
             println!("If replacement fails, close running anda processes and rerun `anda update`.");
         }
     }
-
-    Ok(())
 }
 
-async fn fetch_latest_version(client: &reqwest::Client) -> Result<String, BoxError> {
+pub(crate) fn release_download_base_url(latest_tag: &str) -> String {
+    format!("https://github.com/{REPO}/releases/download/{latest_tag}")
+}
+
+pub(crate) async fn fetch_latest_version(client: &reqwest::Client) -> Result<String, BoxError> {
     let url = format!("https://github.com/{REPO}/releases/latest");
 
     if let Ok(response) = client.head(&url).send().await
@@ -261,7 +292,7 @@ fn release_version_from_location(location: &str) -> Option<String> {
     }
 }
 
-async fn download_binary(
+pub(crate) async fn download_binary(
     client: &reqwest::Client,
     url: &str,
     destination: &Path,
@@ -415,7 +446,7 @@ fn remove_path_if_exists(path: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-async fn fetch_expected_checksum(
+pub(crate) async fn fetch_expected_checksum(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<Option<String>, BoxError> {
@@ -449,7 +480,7 @@ fn expected_hash_from_checksum(content: &str) -> Result<String, BoxError> {
     Ok(expected_hash)
 }
 
-async fn stage_update(download_path: &Path, staged_path: &Path) -> Result<(), BoxError> {
+pub(crate) async fn stage_update(download_path: &Path, staged_path: &Path) -> Result<(), BoxError> {
     tokio::fs::copy(download_path, staged_path)
         .await
         .map(|_| ())
@@ -469,7 +500,10 @@ fn verify_checksum(
     Ok(())
 }
 
-async fn prepare_executable(staged_path: &Path, current_exe: &Path) -> Result<(), BoxError> {
+pub(crate) async fn prepare_executable(
+    staged_path: &Path,
+    current_exe: &Path,
+) -> Result<(), BoxError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -492,7 +526,10 @@ async fn prepare_executable(staged_path: &Path, current_exe: &Path) -> Result<()
 }
 
 #[cfg(not(windows))]
-async fn install_update(staged_path: &Path, current_exe: &Path) -> Result<UpdateFinish, BoxError> {
+pub(crate) async fn install_update(
+    staged_path: &Path,
+    current_exe: &Path,
+) -> Result<UpdateFinish, BoxError> {
     tokio::fs::rename(staged_path, current_exe)
         .await
         .map_err(|err| format!("Could not replace {}: {err}", current_exe.display()))?;
@@ -500,7 +537,10 @@ async fn install_update(staged_path: &Path, current_exe: &Path) -> Result<Update
 }
 
 #[cfg(windows)]
-async fn install_update(staged_path: &Path, current_exe: &Path) -> Result<UpdateFinish, BoxError> {
+pub(crate) async fn install_update(
+    staged_path: &Path,
+    current_exe: &Path,
+) -> Result<UpdateFinish, BoxError> {
     use std::process::{Command, Stdio};
 
     let source = powershell_single_quoted_path(staged_path);
@@ -542,7 +582,7 @@ fn powershell_single_quoted_path(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
-fn staged_update_path(install_dir: &Path, current_exe: &Path) -> PathBuf {
+pub(crate) fn staged_update_path(install_dir: &Path, current_exe: &Path) -> PathBuf {
     let file_name = current_exe
         .file_name()
         .and_then(|name| name.to_str())
@@ -558,7 +598,7 @@ fn staged_update_path(install_dir: &Path, current_exe: &Path) -> PathBuf {
     ))
 }
 
-fn temporary_download_path(asset_name: &str) -> PathBuf {
+pub(crate) fn temporary_download_path(asset_name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -588,7 +628,7 @@ fn normalized_target_name(os: &str, arch: &str) -> String {
     format!("{os}-{arch}")
 }
 
-fn hex_lower(bytes: &[u8]) -> String {
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
 

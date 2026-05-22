@@ -236,6 +236,24 @@
   "modelUpdated": {
     "message": "Modèle actif mis à jour."
   },
+  "updateReadyTitle": {
+    "message": "Mise à jour Anda prête"
+  },
+  "updateReadyBody": {
+    "message": "$1 a été téléchargée. Installez et redémarrez pour l'utiliser."
+  },
+  "installRestartUpdate": {
+    "message": "Installer et redémarrer"
+  },
+  "updateRestartConfirm": {
+    "message": "Installer $1 et redémarrer Anda maintenant ?"
+  },
+  "updateRestarting": {
+    "message": "Installation de la mise à jour et redémarrage d'Anda..."
+  },
+  "updateRestartRequested": {
+    "message": "Anda redémarre pour utiliser la mise à jour."
+  },
   "voiceTranscriptionNotConfigured": {
     "message": "La transcription vocale n'est pas configurée dans le daemon Anda."
   },

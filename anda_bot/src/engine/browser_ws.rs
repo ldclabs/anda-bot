@@ -23,7 +23,7 @@ use tokio_tungstenite::{
 };
 
 use super::browser::{BrowserActionResult, BrowserBridge, BrowserCommand};
-use crate::{transcription::TranscriptionManager, tts::TtsManager};
+use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
 
 const SEC_WEBSOCKET_ACCEPT: &str = "sec-websocket-accept";
 const SEC_WEBSOCKET_KEY: &str = "sec-websocket-key";
@@ -34,6 +34,7 @@ pub struct BrowserWebSocketState {
     pub app: AppState,
     pub bridge: Arc<BrowserBridge>,
     pub voice_capabilities: BrowserVoiceCapabilities,
+    pub auto_updater: Arc<AutoUpdater>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -262,6 +263,9 @@ async fn handle_browser_ws_request(
         "capabilities" => handle_capabilities(state, engine_id),
         "model_names" => handle_model_names(state, engine_id),
         "set_model" => handle_set_model(incoming.params, state, engine_id),
+        "auto_update_status" => handle_auto_update_status(state),
+        "auto_update_check" => handle_auto_update_check(state).await,
+        "auto_update_install_and_restart" => handle_auto_update_install_and_restart(state).await,
         method => Err(format!("{method} on WebSocket engine RPC not implemented")),
     };
 
@@ -408,6 +412,25 @@ fn handle_set_model(
         .ok_or_else(|| format!("model {model_name:?} not found"))?;
     models.set_model(model);
     Ok(model_info_json(models.as_ref()))
+}
+
+fn handle_auto_update_status(state: &BrowserWebSocketState) -> Result<Value, String> {
+    serde_json::to_value(state.auto_updater.state()).map_err(|err| err.to_string())
+}
+
+async fn handle_auto_update_check(state: &BrowserWebSocketState) -> Result<Value, String> {
+    serde_json::to_value(state.auto_updater.check_if_due().await).map_err(|err| err.to_string())
+}
+
+async fn handle_auto_update_install_and_restart(
+    state: &BrowserWebSocketState,
+) -> Result<Value, String> {
+    let update_state = state
+        .auto_updater
+        .install_and_restart()
+        .await
+        .map_err(|err| err.to_string())?;
+    serde_json::to_value(update_state).map_err(|err| err.to_string())
 }
 
 fn model_info_json(models: &Models) -> Value {

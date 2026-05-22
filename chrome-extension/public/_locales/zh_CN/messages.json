@@ -236,6 +236,24 @@
   "modelUpdated": {
     "message": "当前模型已更新。"
   },
+  "updateReadyTitle": {
+    "message": "Anda 更新已就绪"
+  },
+  "updateReadyBody": {
+    "message": "已下载 $1，安装并重启后生效。"
+  },
+  "installRestartUpdate": {
+    "message": "安装并重启"
+  },
+  "updateRestartConfirm": {
+    "message": "现在安装 $1 并重启 Anda？"
+  },
+  "updateRestarting": {
+    "message": "正在安装更新并重启 Anda..."
+  },
+  "updateRestartRequested": {
+    "message": "Anda 正在重启以启用更新。"
+  },
   "voiceTranscriptionNotConfigured": {
     "message": "Anda 守护进程中未配置语音转录。"
   },

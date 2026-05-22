@@ -20,9 +20,11 @@
     ChevronDown,
     ChevronUp,
     CircleAlert,
+    Download,
     History,
     LoaderCircle,
     Radio,
+    RefreshCw,
     Settings
   } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
@@ -33,6 +35,7 @@
   let messagesElement: HTMLElement | null = null
   let sideMessagesElement: HTMLElement | null = $state(null)
   let observedSideMessageCount = 0
+  let updateRestarting = $state(false)
 
   const status = $derived(andaClient.status)
   const syncing = $derived(andaClient.activeChannel?.syncing || false)
@@ -57,6 +60,10 @@
   const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
   const channels = $derived(andaClient.channelList)
   const activeSource = $derived(andaClient.activeSource)
+  const updateState = $derived(andaClient.updateState)
+  const updateReady = $derived(
+    updateState?.status === 'downloaded' && Boolean(updateState.latest_tag)
+  )
 
   onMount(() => {
     andaClient
@@ -167,6 +174,22 @@
 
   async function loadPromptSkills(): Promise<PromptSkill[]> {
     return andaClient.listPromptSkills()
+  }
+
+  async function installUpdateAndRestart() {
+    if (updateRestarting) {
+      return
+    }
+    const latest = updateState?.latest_tag || ''
+    if (!window.confirm(chrome.i18n.getMessage('updateRestartConfirm', [latest]))) {
+      return
+    }
+    updateRestarting = true
+    try {
+      await andaClient.installUpdateAndRestart()
+    } finally {
+      updateRestarting = false
+    }
   }
 
   async function startBrowserSpeechRecognition(language: string) {
@@ -345,6 +368,40 @@
 
     {#if settingsOpen}
       <ChatSettings {setupGuideOpen} />
+    {/if}
+
+    {#if updateReady}
+      <section class="border-b border-amber-900/15 bg-amber-50 px-3 py-2 text-stone-900">
+        <div class="flex min-w-0 items-center gap-2">
+          <span
+            class="grid size-8 shrink-0 place-items-center rounded-md border border-amber-900/10 bg-white/85 text-amber-800 shadow-sm"
+          >
+            <Download class="size-4" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-xs font-bold text-stone-800">
+              {chrome.i18n.getMessage('updateReadyTitle')}
+            </p>
+            <p class="truncate text-[11px] text-stone-600">
+              {chrome.i18n.getMessage('updateReadyBody', [updateState?.latest_tag || ''])}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="xs"
+            class="max-w-32 shrink-0 bg-white/85 text-stone-700 shadow-sm"
+            disabled={updateRestarting}
+            onclick={installUpdateAndRestart}
+          >
+            {#if updateRestarting}
+              <LoaderCircle class="size-3 animate-spin" />
+            {:else}
+              <RefreshCw class="size-3" />
+            {/if}
+            <span class="truncate">{chrome.i18n.getMessage('installRestartUpdate')}</span>
+          </Button>
+        </div>
+      </section>
     {/if}
 
     <main

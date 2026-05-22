@@ -14,6 +14,7 @@ import type {
   ChromeApi,
   ChromeTabChangeInfo,
   ChromeTabInfo,
+  AutoUpdateState,
   DaemonModelState,
   DaemonVoiceCapabilities,
   ExtensionMessage,
@@ -60,6 +61,7 @@ export class AndaSidePanelClient extends EventTarget {
     chromeTts: false
   })
   modelState = $state<ModelState>(emptyModelState())
+  updateState = $state<AutoUpdateState | null>(null)
 
   #initPromise: Promise<void> | null = null
   #localChannelSource = ''
@@ -96,6 +98,7 @@ export class AndaSidePanelClient extends EventTarget {
       await this.refreshVoiceCapabilities().catch(() => undefined)
       await this.refreshChannels().catch(() => undefined)
       await channel.init().catch(() => undefined)
+      this.refreshUpdateState().catch(() => undefined)
     }
   }
 
@@ -219,8 +222,10 @@ export class AndaSidePanelClient extends EventTarget {
     if (this.settings.token) {
       this.refreshChannels().catch(() => undefined)
       this.refreshModelState().catch(() => undefined)
+      this.refreshUpdateState().catch(() => undefined)
     } else {
       this.modelState = emptyModelState()
+      this.updateState = null
     }
     await this.refreshVoiceCapabilities().catch(() => undefined)
   }
@@ -412,6 +417,41 @@ export class AndaSidePanelClient extends EventTarget {
     const daemonState = await this.rpc<DaemonModelState>('model_names', [])
     this.modelState = normalizeModelState(daemonState)
     return this.modelState
+  }
+
+  async refreshUpdateState(): Promise<AutoUpdateState | null> {
+    if (!this.settings.token) {
+      this.updateState = null
+      return null
+    }
+
+    const state = await this.rpc<AutoUpdateState>('auto_update_check', [])
+    this.updateState = state
+    return state
+  }
+
+  async installUpdateAndRestart(): Promise<AutoUpdateState | null> {
+    if (!this.settings.token) {
+      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      return null
+    }
+
+    try {
+      this.updateStatus('updating', {
+        kind: 'info',
+        text: chrome.i18n.getMessage('updateRestarting')
+      })
+      const state = await this.rpc<AutoUpdateState>('auto_update_install_and_restart', [])
+      this.updateState = state
+      this.updateStatus('restarting', {
+        kind: 'info',
+        text: chrome.i18n.getMessage('updateRestartRequested')
+      })
+      return state
+    } catch (error) {
+      this.updateStatus('update failed', { kind: 'error', text: errorToMessage(error) })
+      throw error
+    }
   }
 
   async setActiveModel(modelName: string): Promise<ModelState> {

@@ -13,7 +13,13 @@ use anda_engine::{
 use anda_engine_server::handler::{AppState, anda_engine};
 use anda_web3_client::client::Client as Web3Client;
 use async_trait::async_trait;
-use axum::{Router, response::IntoResponse, routing};
+use axum::{
+    Json as AxumJson, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing,
+};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
@@ -36,7 +42,10 @@ use crate::util::{
     http_client::{NO_PROXY, build_http_client},
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
-use crate::{brain, config, cron, transcription::TranscriptionManager, tts::TtsManager};
+use crate::{
+    auto_update::AutoUpdater, brain, config, cron, transcription::TranscriptionManager,
+    tts::TtsManager,
+};
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
 pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary};
@@ -51,6 +60,7 @@ pub struct Engines {
     state: AppState,
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
+    auto_updater: Arc<AutoUpdater>,
 }
 
 #[async_trait]
@@ -69,6 +79,13 @@ pub struct EngineConfig {
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
     pub https_proxy: Option<String>,
+    pub auto_updater: Arc<AutoUpdater>,
+}
+
+#[derive(Clone)]
+struct AutoUpdateRouteState {
+    app: AppState,
+    auto_updater: Arc<AutoUpdater>,
 }
 
 impl Engines {
@@ -310,26 +327,87 @@ impl Engines {
             state,
             browser_bridge,
             voice_capabilities,
+            auto_updater: cfg.auto_updater,
         })
     }
 
     pub fn into_router(self) -> Router<()> {
+        let auto_update_route_state = AutoUpdateRouteState {
+            app: self.state.clone(),
+            auto_updater: self.auto_updater.clone(),
+        };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
             bridge: self.browser_bridge,
             voice_capabilities: self.voice_capabilities,
+            auto_updater: self.auto_updater,
         };
         let browser_ws_router = Router::new()
             .route("/ws/engine/{*id}", routing::get(browser_websocket))
             .with_state(browser_ws_state);
+        let auto_update_router = Router::new()
+            .route("/auto_update", routing::get(auto_update_status))
+            .route("/auto_update/check", routing::post(auto_update_check))
+            .route(
+                "/auto_update/install_and_restart",
+                routing::post(auto_update_install_and_restart),
+            )
+            .with_state(auto_update_route_state);
 
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
             .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state)
-            .merge(browser_ws_router);
+            .merge(browser_ws_router)
+            .merge(auto_update_router);
         app
     }
+}
+
+async fn auto_update_status(
+    State(state): State<AutoUpdateRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_update_request(&state.app, &headers) {
+        return *response;
+    }
+    AxumJson(state.auto_updater.state()).into_response()
+}
+
+async fn auto_update_check(
+    State(state): State<AutoUpdateRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_update_request(&state.app, &headers) {
+        return *response;
+    }
+    AxumJson(state.auto_updater.check_if_due().await).into_response()
+}
+
+async fn auto_update_install_and_restart(
+    State(state): State<AutoUpdateRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_update_request(&state.app, &headers) {
+        return *response;
+    }
+    match state.auto_updater.install_and_restart().await {
+        Ok(state) => AxumJson(state).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
+}
+
+fn verify_update_request(
+    app: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), Box<axum::response::Response>> {
+    let caller = app.verify_user(headers, unix_ms(), None, None);
+    if caller == Principal::anonymous() {
+        return Err(Box::new(
+            (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response(),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn get_version() -> impl IntoResponse {

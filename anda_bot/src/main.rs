@@ -7,6 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+mod auto_update;
 mod brain;
 mod channel;
 mod cli;
@@ -149,7 +150,7 @@ async fn run() -> Result<(), BoxError> {
     if let Some(Commands::Update(cmd)) = command.as_ref() {
         let http_client =
             util::http_client::build_http_client(daemon.cfg.https_proxy.clone(), |client| client)?;
-        cli::updater::run(&http_client, &daemon.home, cmd).await?;
+        cli::updater::run(&http_client, &daemon, cmd).await?;
         return Ok(());
     }
 

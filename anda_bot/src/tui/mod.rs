@@ -26,10 +26,12 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+use tokio::sync::oneshot;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
+    auto_update::AutoUpdateState,
     config::{APP_VERSION, Config},
     daemon::{Daemon, LaunchState, process_exists},
     gateway,
@@ -133,6 +135,7 @@ struct App {
     flushed_message_count: usize,
     pending_scrollback_purge: bool,
     input_focused: bool,
+    pending_update_check: Option<oneshot::Receiver<Result<AutoUpdateState, String>>>,
 }
 
 impl App {
@@ -155,6 +158,7 @@ impl App {
             flushed_message_count: 0,
             pending_scrollback_purge: false,
             input_focused: true,
+            pending_update_check: None,
         }
     }
 
@@ -263,6 +267,7 @@ impl App {
         self.pid = None;
         self.daemon_running = false;
         self.setup = SetupState::default();
+        self.pending_update_check = None;
 
         let daemon = self.runtime_daemon();
         let config_created = match daemon.ensure_config_file_exists().await {
@@ -334,6 +339,7 @@ impl App {
         }
 
         if self.chat_enabled() {
+            self.start_auto_update_check();
             match self.chat.restore_source_conversation().await {
                 Ok(true) => self.reset_message_view(),
                 Ok(false) => {}
@@ -345,6 +351,57 @@ impl App {
                 }
             }
         }
+    }
+
+    fn start_auto_update_check(&mut self) {
+        if self.pending_update_check.is_some() {
+            return;
+        }
+        let client = self.client.clone();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = tx.send(
+                client
+                    .auto_update_check()
+                    .await
+                    .map_err(|err| err.to_string()),
+            );
+        });
+        self.pending_update_check = Some(rx);
+    }
+
+    fn finish_pending_update_check(&mut self) -> bool {
+        let Some(rx) = self.pending_update_check.as_mut() else {
+            return false;
+        };
+
+        match rx.try_recv() {
+            Ok(Ok(state)) => {
+                self.pending_update_check = None;
+                self.apply_update_state(state)
+            }
+            Ok(Err(err)) => {
+                self.pending_update_check = None;
+                log::warn!("auto update check failed: {err}");
+                false
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_update_check = None;
+                false
+            }
+        }
+    }
+
+    fn apply_update_state(&mut self, state: AutoUpdateState) -> bool {
+        let Some(notice) = state.cli_notice() else {
+            return false;
+        };
+        if self.notice == notice {
+            return false;
+        }
+        self.notice = notice;
+        true
     }
 
     async fn refresh_status(&mut self) -> Result<(), BoxError> {
@@ -533,6 +590,8 @@ async fn run_app(
             needs_render |=
                 before_send != chat_render_snapshot(app) || notice_before_send != app.notice;
         }
+
+        needs_render |= app.finish_pending_update_check();
 
         // Recreate the terminal when:
         //  - the outer terminal was resized, or

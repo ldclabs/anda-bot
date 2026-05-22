@@ -10,7 +10,10 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-use crate::daemon::{Daemon, LaunchState, process_exists};
+use crate::{
+    auto_update::AutoUpdateState,
+    daemon::{Daemon, LaunchState, process_exists},
+};
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
 
@@ -43,6 +46,16 @@ impl Client {
 
     pub async fn status(&self) -> Result<Json, BoxError> {
         self.get_json("").await
+    }
+
+    pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {
+        self.post_json("/auto_update/check", &()).await
+    }
+
+    #[allow(unused)]
+    pub async fn auto_update_install_and_restart(&self) -> Result<AutoUpdateState, BoxError> {
+        self.post_json("/auto_update/install_and_restart", &())
+            .await
     }
 
     #[allow(unused)]

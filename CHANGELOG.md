@@ -18,6 +18,15 @@ All notable changes to Anda Bot.
 
 - **Model state refreshed on connection lifecycle**: the extension fetches model state after init, settings save, and connection test — clearing model state when the token is removed.
 
+- **Auto-update system**: full self-update mechanism spanning daemon, TUI, Chrome extension, and gateway. The `AutoUpdater` checks the GitHub releases API for new versions, downloads the correct platform asset, verifies SHA256 checksums, and can install the new binary and restart the daemon — all through a persistent state machine stored in `AndaDB`. Backend exposes three REST endpoints (`/auto_update`, `/auto_update/check`, `/auto_update/install_and_restart`) with bearer-token auth, plus equivalent WebSocket RPC methods (`auto_update_status`, `auto_update_check`, `auto_update_install_and_restart`) for the browser extension.
+- **Auto-update CLI updater refactor**: `ReleaseTarget`, `UpdateFinish`, and constants promoted to `pub(crate)` so the auto-updater reuses the same platform detection, asset naming, and download logic as the manual `anda update` CLI command.
+- **Auto-update Chrome extension UI**: an amber notification banner appears in the side panel when an update is downloaded, showing the latest version tag and an "install & restart" button with a confirmation dialog. Update state is refreshed on init and after settings save — cleared when the token is removed.
+- **Auto-update TUI integration**: the TUI fires an async auto-update check on chat init and displays a notice banner in the status area when an update is available, using `oneshot` channels for non-blocking background checks.
+- **Daemon DB helpers**: `bot_db_config()`, `connect_bot_db()`, and `open_bot_db()` extracted as public methods on `Daemon`, enabling the auto-updater and future subsystems to share the same bot database.
+- **Extension client `AutoUpdateState` types**: TypeScript interfaces for `AutoUpdateStatus` and `AutoUpdateState` with all fields (status, current_tag, latest_tag, SHA256, checksum_verified, etc.).
+- **i18n strings for update UI**: `updateReadyTitle`, `updateReadyBody`, `installRestartUpdate`, `updateRestartConfirm` added to all 6 supported locales.
+- **Cli updater takes `&Daemon`**: `cli::updater::run()` now accepts `&Daemon` instead of `home_dir: &Path`, giving the updater access to daemon-level utilities for the shared update logic.
+
 
 ## [0.7.6] — 2026-05-21
 
