@@ -77,6 +77,15 @@
   "bearerToken": {
     "message": "Jeton d'accès"
   },
+  "activeModel": {
+    "message": "Modèle actif"
+  },
+  "refreshModels": {
+    "message": "Actualiser les modèles"
+  },
+  "modelListEmpty": {
+    "message": "Aucun modèle disponible"
+  },
   "enterKeyBehavior": {
     "message": "Comportement de Entrée"
   },
@@ -223,6 +232,9 @@
   },
   "connectionTestPassed": {
     "message": "Test de connexion réussi."
+  },
+  "modelUpdated": {
+    "message": "Modèle actif mis à jour."
   },
   "voiceTranscriptionNotConfigured": {
     "message": "La transcription vocale n'est pas configurée dans le daemon Anda."

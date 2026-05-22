@@ -77,6 +77,15 @@
   "bearerToken": {
     "message": "Bearer 令牌"
   },
+  "activeModel": {
+    "message": "当前模型"
+  },
+  "refreshModels": {
+    "message": "刷新模型"
+  },
+  "modelListEmpty": {
+    "message": "没有可用模型"
+  },
   "enterKeyBehavior": {
     "message": "Enter 键行为"
   },
@@ -223,6 +232,9 @@
   },
   "connectionTestPassed": {
     "message": "连接测试通过。"
+  },
+  "modelUpdated": {
+    "message": "当前模型已更新。"
   },
   "voiceTranscriptionNotConfigured": {
     "message": "Anda 守护进程中未配置语音转录。"

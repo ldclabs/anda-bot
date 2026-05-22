@@ -51,6 +51,16 @@ export interface VoiceCapabilities {
   chromeTts: boolean
 }
 
+export interface ModelState {
+  activeModel: string | null
+  modelNames: string[]
+}
+
+export interface DaemonModelState {
+  active_model?: string | null
+  model_names?: string[]
+}
+
 export interface PromptSkill {
   name: string
   description?: string

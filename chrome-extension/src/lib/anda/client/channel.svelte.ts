@@ -342,7 +342,7 @@ export class Channel extends EventTarget {
     } catch (error) {
       if (isTransientWebSocketError(error)) {
         this.#api.updateStatus('reconnecting', null)
-        return false
+        return true
       }
 
       this.#api.updateStatus('poll failed', { kind: 'error', text: errorToMessage(error) })

@@ -4,6 +4,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
   import {
+    BrainCircuit,
     Check,
     ChevronDown,
     Clipboard,
@@ -15,6 +16,7 @@
     LoaderCircle,
     Play,
     PlugZap,
+    RefreshCw,
     Save,
     Terminal
   } from '@lucide/svelte'
@@ -30,7 +32,15 @@
   let settingsDirty = $state(false)
   let savingSettings = $state(false)
   let testingConnection = $state(false)
+  let loadingModels = $state(false)
+  let switchingModel = $state(false)
   let copiedCommand = $state('')
+
+  const modelNames = $derived(andaClient.modelState.modelNames)
+  const activeModel = $derived(andaClient.modelState.activeModel || '')
+  const canChangeModel = $derived(
+    Boolean(andaClient.settings.token && modelNames.length > 0 && !loadingModels && !switchingModel)
+  )
 
   const installCommand = 'brew install ldclabs/tap/anda'
   const installScriptCommand =
@@ -85,6 +95,9 @@
         setupGuideOpen = false
       }
       draftSettings = { ...andaClient.settings }
+      if (andaClient.settings.token) {
+        await refreshModels()
+      }
     } finally {
       savingSettings = false
     }
@@ -99,14 +112,43 @@
       await andaClient.testConnection(draftSettings)
       settingsDirty = false
       draftSettings = { ...andaClient.settings }
+      await refreshModels()
     } catch (_error) {
     } finally {
       testingConnection = false
     }
   }
 
+  async function refreshModels() {
+    if (loadingModels || !andaClient.settings.token) {
+      return
+    }
+    loadingModels = true
+    try {
+      await andaClient.refreshModelState()
+    } catch (_error) {
+    } finally {
+      loadingModels = false
+    }
+  }
+
+  async function switchActiveModel(event: Event) {
+    const nextModel = (event.currentTarget as HTMLSelectElement | null)?.value || ''
+    if (!nextModel || nextModel === activeModel || switchingModel) {
+      return
+    }
+    switchingModel = true
+    try {
+      await andaClient.setActiveModel(nextModel)
+    } catch (_error) {
+    } finally {
+      switchingModel = false
+    }
+  }
+
   onMount(() => {
     draftSettings = { ...andaClient.settings }
+    refreshModels().catch(() => undefined)
   })
 </script>
 
@@ -368,6 +410,53 @@
         oninput={markSettingsDirty}
       />
     </label>
+
+    <div class="grid gap-1.5">
+      <div class="flex items-center justify-between gap-2">
+        <label
+          class="flex min-w-0 items-center gap-1.5 text-[11px] font-bold text-stone-500"
+          for="active-model"
+        >
+          <BrainCircuit class="size-3" />
+          <span class="truncate">{chrome.i18n.getMessage('activeModel')}</span>
+        </label>
+        <Button
+          variant="outline"
+          size="icon-xs"
+          class="bg-white"
+          disabled={!andaClient.settings.token || loadingModels || switchingModel}
+          aria-label={chrome.i18n.getMessage('refreshModels')}
+          title={chrome.i18n.getMessage('refreshModels')}
+          onclick={refreshModels}
+        >
+          <RefreshCw class={`size-3 ${loadingModels ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      <div class="grid grid-cols-[1fr_auto] items-center gap-2">
+        <select
+          id="active-model"
+          class="h-8 min-w-0 rounded-md border border-stone-200 bg-white px-2 text-xs font-semibold text-stone-800 shadow-xs outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15 disabled:cursor-not-allowed disabled:bg-stone-50 disabled:text-stone-400"
+          value={activeModel}
+          disabled={!canChangeModel}
+          aria-label={chrome.i18n.getMessage('activeModel')}
+          onchange={switchActiveModel}
+        >
+          {#if modelNames.length === 0}
+            <option value="">{chrome.i18n.getMessage('modelListEmpty')}</option>
+          {/if}
+          {#each modelNames as modelName}
+            <option value={modelName}>{modelName}</option>
+          {/each}
+        </select>
+        {#if switchingModel}
+          <LoaderCircle class="size-4 animate-spin text-emerald-800" />
+        {:else if activeModel}
+          <Check class="size-4 text-emerald-700" />
+        {:else}
+          <span class="size-4" aria-hidden="true"></span>
+        {/if}
+      </div>
+    </div>
 
     <div class="grid gap-1.5">
       <div class="flex items-center gap-1.5 text-[11px] font-bold text-stone-500">

@@ -77,6 +77,15 @@
   "bearerToken": {
     "message": "Bearer token"
   },
+  "activeModel": {
+    "message": "Active model"
+  },
+  "refreshModels": {
+    "message": "Refresh models"
+  },
+  "modelListEmpty": {
+    "message": "No available models"
+  },
   "enterKeyBehavior": {
     "message": "Enter key behavior"
   },
@@ -223,6 +232,9 @@
   },
   "connectionTestPassed": {
     "message": "Connection test passed."
+  },
+  "modelUpdated": {
+    "message": "Active model updated."
   },
   "voiceTranscriptionNotConfigured": {
     "message": "Voice transcription is not configured in the Anda daemon."

@@ -14,9 +14,11 @@ import type {
   ChromeApi,
   ChromeTabChangeInfo,
   ChromeTabInfo,
+  DaemonModelState,
   DaemonVoiceCapabilities,
   ExtensionMessage,
   ExtensionResponse,
+  ModelState,
   PageAudioResult,
   PageSpeechResult,
   PromptSkill,
@@ -57,6 +59,7 @@ export class AndaSidePanelClient extends EventTarget {
     daemonTts: [],
     chromeTts: false
   })
+  modelState = $state<ModelState>(emptyModelState())
 
   #initPromise: Promise<void> | null = null
   #localChannelSource = ''
@@ -89,6 +92,7 @@ export class AndaSidePanelClient extends EventTarget {
     this.syncServiceWorker().catch(() => undefined)
 
     if (this.settings.token) {
+      await this.refreshModelState().catch(() => undefined)
       await this.refreshVoiceCapabilities().catch(() => undefined)
       await this.refreshChannels().catch(() => undefined)
       await channel.init().catch(() => undefined)
@@ -214,6 +218,9 @@ export class AndaSidePanelClient extends EventTarget {
     await this.syncServiceWorker().catch(() => undefined)
     if (this.settings.token) {
       this.refreshChannels().catch(() => undefined)
+      this.refreshModelState().catch(() => undefined)
+    } else {
+      this.modelState = emptyModelState()
     }
     await this.refreshVoiceCapabilities().catch(() => undefined)
   }
@@ -222,6 +229,7 @@ export class AndaSidePanelClient extends EventTarget {
     try {
       await this.saveSettings(settings, { quiet: true })
       await this.rpc('information', [])
+      await this.refreshModelState()
       this.updateStatus('connected', {
         kind: 'info',
         text: chrome.i18n.getMessage('connectionTestPassed')
@@ -393,6 +401,39 @@ export class AndaSidePanelClient extends EventTarget {
       type: 'ListSkills'
     })
     return normalizePromptSkills(result)
+  }
+
+  async refreshModelState(): Promise<ModelState> {
+    if (!this.settings.token) {
+      this.modelState = emptyModelState()
+      return this.modelState
+    }
+
+    const daemonState = await this.rpc<DaemonModelState>('model_names', [])
+    this.modelState = normalizeModelState(daemonState)
+    return this.modelState
+  }
+
+  async setActiveModel(modelName: string): Promise<ModelState> {
+    const nextModel = modelName.trim()
+    if (!nextModel) {
+      return this.modelState
+    }
+
+    if (!this.settings.token) {
+      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      return this.modelState
+    }
+
+    try {
+      const daemonState = await this.rpc<DaemonModelState>('set_model', [nextModel])
+      this.modelState = normalizeModelState(daemonState)
+      this.systemMessage = { kind: 'info', text: chrome.i18n.getMessage('modelUpdated') }
+      return this.modelState
+    } catch (error) {
+      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
+      throw error
+    }
   }
 
   private async voiceTurnPrompt(recording: VoiceRecordingInput): Promise<string> {
@@ -647,6 +688,31 @@ export class AndaSidePanelClient extends EventTarget {
   updateStatus(status: string, message: { kind: 'info' | 'error'; text: string } | null): void {
     this.status = status
     this.systemMessage = message
+  }
+}
+
+function emptyModelState(): ModelState {
+  return { activeModel: null, modelNames: [] }
+}
+
+function normalizeModelState(state: DaemonModelState | null | undefined): ModelState {
+  const seen = new Set<string>()
+  const modelNames = (Array.isArray(state?.model_names) ? state.model_names : [])
+    .map((name) => String(name || '').trim())
+    .filter((name) => {
+      if (!name || seen.has(name)) {
+        return false
+      }
+      seen.add(name)
+      return true
+    })
+  const activeModel = typeof state?.active_model === 'string' ? state.active_model.trim() : ''
+  if (activeModel && !seen.has(activeModel)) {
+    modelNames.push(activeModel)
+  }
+  return {
+    activeModel: activeModel || null,
+    modelNames
   }
 }
 

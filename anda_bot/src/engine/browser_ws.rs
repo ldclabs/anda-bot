@@ -1,5 +1,5 @@
 use anda_core::{AgentInput, BoxError, Json, Principal, ToolInput};
-use anda_engine::unix_ms;
+use anda_engine::{model::Models, unix_ms};
 use anda_engine_server::handler::AppState;
 use axum::{
     body::Body,
@@ -260,6 +260,8 @@ async fn handle_browser_ws_request(
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
         "information" => handle_information(state, engine_id),
         "capabilities" => handle_capabilities(state, engine_id),
+        "model_names" => handle_model_names(state, engine_id),
+        "set_model" => handle_set_model(incoming.params, state, engine_id),
         method => Err(format!("{method} on WebSocket engine RPC not implemented")),
     };
 
@@ -370,6 +372,51 @@ fn handle_capabilities(
             Vec::<String>::new()
         },
     }))
+}
+
+fn handle_model_names(
+    state: &BrowserWebSocketState,
+    engine_id: Principal,
+) -> Result<Value, String> {
+    let engine = state
+        .app
+        .engines
+        .get(&engine_id)
+        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
+    Ok(model_info_json(engine.models().as_ref()))
+}
+
+fn handle_set_model(
+    params: Value,
+    state: &BrowserWebSocketState,
+    engine_id: Principal,
+) -> Result<Value, String> {
+    let (model_name,): (String,) = params_from_value(params)?;
+    let model_name = model_name.trim();
+    if model_name.is_empty() {
+        return Err("model name is required".to_string());
+    }
+
+    let engine = state
+        .app
+        .engines
+        .get(&engine_id)
+        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
+    let models = engine.models();
+    let model = models
+        .get(model_name)
+        .ok_or_else(|| format!("model {model_name:?} not found"))?;
+    models.set_model(model);
+    Ok(model_info_json(models.as_ref()))
+}
+
+fn model_info_json(models: &Models) -> Value {
+    let active_model = models.get_model().map(|model| model.model_name());
+    let model_names = models.model_names().into_iter().collect::<Vec<_>>();
+    json!({
+        "active_model": active_model,
+        "model_names": model_names,
+    })
 }
 
 async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &BrowserWebSocketState) {

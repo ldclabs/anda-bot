@@ -2,6 +2,23 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.7] — 2026-05-22
+
+### Added
+
+- **Runtime model switching in Chrome extension**: the Chat Settings panel now shows a model selector dropdown with available models fetched from the daemon, plus a refresh button. Switching the active model happens live without restarting the daemon — backed by new `model_names` and `set_model` WebSocket RPC methods in `browser_ws.rs`.
+- **Model state TypeScript types**: added `ModelState` and `DaemonModelState` interfaces to the extension client, with `normalizeModelState` deduplication.
+- **i18n strings for model UI**: `activeModel`, `refreshModels`, `modelListEmpty`, and `modelUpdated` added to all 6 supported locales.
+
+### Fixed
+
+- **WebSocket poll transient-error handling**: `isTransientWebSocketError` now correctly returns `true` for poll failures (previously `false`), so polling retries rather than bailing on transient disconnects. The detection pattern was also broadened to catch more transient WS error messages (timeout, disconnected, etc.).
+
+### Changed
+
+- **Model state refreshed on connection lifecycle**: the extension fetches model state after init, settings save, and connection test — clearing model state when the token is removed.
+
+
 ## [0.7.6] — 2026-05-21
 
 ### Changed
@@ -14,7 +31,6 @@ All notable changes to Anda Bot.
 - **Compaction threshold simplified**: switched from half-window-with-clamps to 80% of context_window with 100K token minimum, providing more predictable compaction behavior.
 - **Removed `max_output_tokens` overrides** from agent completion configs — now relying on provider/model defaults.
 - **Removed `minLength: 1`** from TTS text parameter schema (not allowed under OpenAI strict mode).
-
 
 ## [0.7.5] — 2026-05-21
 

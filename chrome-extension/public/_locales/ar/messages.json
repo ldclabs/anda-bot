@@ -77,6 +77,15 @@
   "bearerToken": {
     "message": "رمز Bearer"
   },
+  "activeModel": {
+    "message": "النموذج النشط"
+  },
+  "refreshModels": {
+    "message": "تحديث النماذج"
+  },
+  "modelListEmpty": {
+    "message": "لا توجد نماذج متاحة"
+  },
   "enterKeyBehavior": {
     "message": "سلوك مفتاح Enter"
   },
@@ -223,6 +232,9 @@
   },
   "connectionTestPassed": {
     "message": "نجح اختبار الاتصال."
+  },
+  "modelUpdated": {
+    "message": "تم تحديث النموذج النشط."
   },
   "voiceTranscriptionNotConfigured": {
     "message": "لم يتم تكوين نسخ الصوت في daemon Anda."

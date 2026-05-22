@@ -68,8 +68,11 @@ export function errorToError(error: unknown): Error {
 export function isTransientWebSocketError(error: unknown): boolean {
   const message = errorToMessage(error).toLowerCase()
   return (
-    message.includes('websocket connection closed') ||
-    message.includes('websocket connection timed out') ||
-    message.includes('websocket is not connected')
+    message.includes('websocket') &&
+    (message.includes('timed out') ||
+      message.includes('timeout') ||
+      message.includes('closed') ||
+      message.includes('disconnected') ||
+      message.includes('not connected'))
   )
 }

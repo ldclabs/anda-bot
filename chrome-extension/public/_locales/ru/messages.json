@@ -77,6 +77,15 @@
   "bearerToken": {
     "message": "Токен доступа"
   },
+  "activeModel": {
+    "message": "Активная модель"
+  },
+  "refreshModels": {
+    "message": "Обновить модели"
+  },
+  "modelListEmpty": {
+    "message": "Нет доступных моделей"
+  },
   "enterKeyBehavior": {
     "message": "Поведение Enter"
   },
@@ -223,6 +232,9 @@
   },
   "connectionTestPassed": {
     "message": "Тест подключения пройден."
+  },
+  "modelUpdated": {
+    "message": "Активная модель обновлена."
   },
   "voiceTranscriptionNotConfigured": {
     "message": "Голосовая транскрипция не настроена в daemon Anda."
