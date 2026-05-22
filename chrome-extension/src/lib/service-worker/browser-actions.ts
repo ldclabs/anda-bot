@@ -163,9 +163,35 @@ export async function executeBrowserAction(
     const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
     try {
       if (args.action === 'go_back' && chromeApi.tabs.goBack) {
-        await chromeApi.tabs.goBack(tabId)
+        try {
+          await chromeApi.tabs.goBack(tabId)
+        } catch (error) {
+          await chromeApi.scripting
+            .executeScript<BrowserActionResult, BrowserActionArgs>({
+              target: scriptTarget(tabId, args),
+              world: 'ISOLATED',
+              func: pageActionDispatcher,
+              args: [args]
+            })
+            .catch(() => {
+              throw error
+            })
+        }
       } else if (args.action === 'go_forward' && chromeApi.tabs.goForward) {
-        await chromeApi.tabs.goForward(tabId)
+        try {
+          await chromeApi.tabs.goForward(tabId)
+        } catch (error) {
+          await chromeApi.scripting
+            .executeScript<BrowserActionResult, BrowserActionArgs>({
+              target: scriptTarget(tabId, args),
+              world: 'ISOLATED',
+              func: pageActionDispatcher,
+              args: [args]
+            })
+            .catch(() => {
+              throw error
+            })
+        }
       } else {
         await chromeApi.scripting.executeScript<BrowserActionResult, BrowserActionArgs>({
           target: scriptTarget(tabId, args),
@@ -1693,11 +1719,49 @@ async function waitForPageSettleAfterAction(
 }
 
 function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
+  function visible(element: Element): boolean {
+    const style = window.getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    return (
+      style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0
+    )
+  }
+
+  function interactable(element: Element): boolean {
+    if (!visible(element)) {
+      return false
+    }
+    const rect = element.getBoundingClientRect()
+    const hit = element.ownerDocument.elementFromPoint(
+      rect.left + Math.max(1, rect.width) / 2,
+      rect.top + Math.max(1, rect.height) / 2
+    )
+    if (!hit) {
+      return false
+    }
+    if (hit === element || element.contains(hit)) {
+      return true
+    }
+    const label = hit.closest('label')
+    return (
+      label instanceof HTMLLabelElement && (label.control === element || label.contains(element))
+    )
+  }
+
+  function preferredMatch(elements: Element[]): Element | null {
+    return (
+      elements.find((element) => interactable(element)) ||
+      elements.find((element) => visible(element)) ||
+      elements[0] ||
+      null
+    )
+  }
+
   function deepQuerySelector(
     root: Document | ShadowRoot | Element,
     selector: string
   ): Element | null {
-    const direct = root.querySelector(selector)
+    const direct = preferredMatch(Array.from(root.querySelectorAll(selector)))
     if (direct) {
       return direct
     }
@@ -1913,7 +1977,7 @@ export function pageActionDispatcher(
     root: Document | ShadowRoot | Element,
     selector: string
   ): Element | null {
-    const direct = root.querySelector(selector)
+    const direct = preferredMatch(Array.from(root.querySelectorAll(selector)))
     if (direct) {
       return direct
     }
@@ -1946,6 +2010,36 @@ export function pageActionDispatcher(
     } catch (_error) {
       return null
     }
+  }
+
+  function interactable(element: Element): boolean {
+    if (!visible(element)) {
+      return false
+    }
+    const rect = element.getBoundingClientRect()
+    const hit = element.ownerDocument.elementFromPoint(
+      rect.left + Math.max(1, rect.width) / 2,
+      rect.top + Math.max(1, rect.height) / 2
+    )
+    if (!hit) {
+      return false
+    }
+    if (hit === element || element.contains(hit)) {
+      return true
+    }
+    const label = hit.closest('label')
+    return (
+      label instanceof HTMLLabelElement && (label.control === element || label.contains(element))
+    )
+  }
+
+  function preferredMatch(elements: Element[]): Element | null {
+    return (
+      elements.find((element) => interactable(element)) ||
+      elements.find((element) => visible(element)) ||
+      elements[0] ||
+      null
+    )
   }
 
   function queryRequired(selector?: string): Element {

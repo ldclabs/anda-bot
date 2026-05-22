@@ -144,6 +144,54 @@ describe('executeBrowserAction waited browser actions', () => {
     )
   })
 
+  it('falls back to page history when native goBack throws a localized error', async () => {
+    const onUpdated = createChromeEvent<TabUpdatedListener>()
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://news.ycombinator.com'
+    }
+    const loadingTab = { ...startTab, status: 'loading', url: 'https://example.com' }
+    const completeTab = {
+      ...startTab,
+      status: 'complete',
+      title: 'Example',
+      url: 'https://example.com'
+    }
+    let currentTab = startTab
+    const chromeApi = createChromeApi(undefined, startTab)
+    chromeApi.tabs.onUpdated = onUpdated.event
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.tabs.goBack = vi.fn(async () => {
+      throw new Error('无法在历史记录中找到下一页。')
+    })
+    chromeApi.scripting.executeScript = vi.fn(async () => {
+      currentTab = loadingTab
+      queueMicrotask(() => {
+        currentTab = completeTab
+        onUpdated.emit(123, { status: 'complete', url: completeTab.url }, completeTab)
+      })
+      return [{ result: { went_back: true, url: completeTab.url } }]
+    }) as ChromeApi['scripting']['executeScript']
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'go_back' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(chromeApi.tabs.goBack).toHaveBeenCalledWith(123)
+    expect(chromeApi.scripting.executeScript).toHaveBeenCalledOnce()
+    expect(result.went_back).toBe(true)
+    expect(result.tab).toMatchObject({ url: 'https://example.com', status: 'complete' })
+    expect(result.page_ready).toMatchObject({ loaded: true })
+  })
+
   it('treats data URL navigation as ready once the tab reaches the URL', async () => {
     const startTab = {
       id: 123,
