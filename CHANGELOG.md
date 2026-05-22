@@ -2,6 +2,32 @@
 
 All notable changes to Anda Bot.
 
+## [0.7.8] — 2026-05-22
+
+### Added
+
+- **Browser downloads**: `download`, `list_downloads`, `cancel_download`, and `open_download` actions added to `chrome_tabs`, enabling the agent to download files, list active downloads with state filtering, cancel in-progress downloads, and open completed downloads through Chrome. Types: `ChromeDownloadItem` with fields for id, url, filename, state, bytes, and timestamps.
+- **Browser cookies**: `get_cookies`, `set_cookie`, and `delete_cookie` actions for full cookie management through the Chrome extension. Supports domain, path, secure, httpOnly, sameSite, expirationDate, and storeId fields. Types: `ChromeCookieInfo` and `ChromeCookieSameSite`.
+- **Browser cache clearing**: `clear_browser_cache` action via `chrome.tabs` — accepts optional `since_ms` Unix timestamp and `origins` array to selectively clear cache, cacheStorage, indexedDB, localStorage, and service workers through `chrome.browsingData.remove`.
+- **Page PDF printing**: `print_to_pdf` action (`chrome_page`) generates PDFs from the active tab via CDP `Page.printToPDF`. Data URL handling extended to accept `application/pdf` MIME type with `.pdf` file extension.
+- **Accessibility tree**: `get_accessibility_tree` action (`chrome_page`) returns the page's accessibility tree via CDP `Accessibility.getFullAXTree`, configurable node limit (default 500).
+- **Viewport annotations**: `annotate_viewport` and `clear_annotations` actions (`chrome_page`) for visual element highlighting in screenshots via CDP `Overlay` domain.
+- **File upload**: `upload_file` action (`chrome_input`) uploads local files through file input elements via CDP `DOM.setFileInputFiles`. Validates non-empty file paths.
+- **Dialog handling**: `handle_dialog` action (`chrome_page`) accepts or dismisses JavaScript dialogs (alert/confirm/prompt) via CDP `Page.handleJavaScriptDialog`, with optional `prompt_text` for prompt dialogs.
+- **Scroll-to coordinates**: `scroll_to` now accepts viewport x/y coordinates in addition to CSS selectors, matching the `scroll_to` behavior when targeting a specific screen position.
+- **TypeText without selector**: `type_text` now works without a selector — when omitted, types into the currently focused/active element, enabling keyboard-focused workflows.
+- **Full-page screenshot**: `screenshot` action now supports `full_page` parameter to capture the entire scrollable page instead of just the viewport.
+- **New extension permissions**: `browsingData`, `cookies`, `downloads`, and `webNavigation` added to manifest for the new capabilities.
+- **Navigation-ready loading**: `goBack`, `goForward`, and `reload` now wait for the page to finish loading before returning, matching the behavior of `navigate`.
+- **WebNavigation and debugger events**: `chrome.webNavigation.onCommitted`/`onCompleted` and `chrome.debugger.onEvent` typed in `ChromeApi` for reliable page-ready detection after navigation.
+
+### Changed
+
+- **Cargo.toml version**: bumped from 0.7.7 to 0.7.8.
+- **Tool descriptions updated**: `chrome_tabs` description now mentions downloads, cookies, and cache; `chrome_page` mentions accessibility tree, PDF, annotations; `chrome_input` mentions upload_file.
+- **`select_dropdown` extended**: description now notes it can target same-origin iframes containing selects, matching the improved iframe-handling in the service worker.
+- **browser-actions.ts (+2002 lines)**: service worker refactored with page-ready waiting (`waitForPageReady`), CDP-based actions (printToPdf, accessibility tree, annotations, dialog handling, upload file), downloads/cookies/cache management, and ArrowCaster mappings for all new BrowserAction values.
+
 ## [0.7.7] — 2026-05-22
 
 ### Added

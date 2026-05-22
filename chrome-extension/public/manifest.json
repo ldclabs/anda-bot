@@ -7,15 +7,21 @@
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
+    "browsingData",
+    "cookies",
     "debugger",
+    "downloads",
     "scripting",
     "sidePanel",
     "storage",
     "tabs",
     "tts",
+    "webNavigation",
     "windows"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"

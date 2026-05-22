@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { executeBrowserAction } from './browser-actions'
-import type { ChromeApi } from './types'
+import type { ChromeApi, ChromeTabInfo } from './types'
 
 type DebuggerTarget = { tabId: number }
 
@@ -10,11 +10,37 @@ type RuntimeEvaluateParams = {
 }
 
 type DebuggerSendCommand = NonNullable<ChromeApi['debugger']>['sendCommand']
+type TabUpdatedListener = Parameters<ChromeApi['tabs']['onUpdated']['addListener']>[0]
+
+function createChromeEvent<Listener extends (...args: any[]) => void>() {
+  const listeners = new Set<Listener>()
+  return {
+    event: {
+      addListener: vi.fn((listener: Listener) => {
+        listeners.add(listener)
+      }),
+      removeListener: vi.fn((listener: Listener) => {
+        listeners.delete(listener)
+      })
+    },
+    emit: (...args: Parameters<Listener>) => {
+      for (const listener of Array.from(listeners)) {
+        listener(...args)
+      }
+    }
+  }
+}
 
 function createChromeApi(
   debuggerApi: ChromeApi['debugger'],
-  tab: { id: number; windowId: number; active: boolean } = { id: 123, windowId: 1, active: true }
+  tab: ChromeTabInfo & { id: number; windowId: number; active: boolean } = {
+    id: 123,
+    windowId: 1,
+    active: true
+  }
 ): ChromeApi {
+  const onActivated = createChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>()
+  const onUpdated = createChromeEvent<TabUpdatedListener>()
   return {
     runtime: {
       onInstalled: { addListener: vi.fn(), removeListener: vi.fn() },
@@ -27,19 +53,228 @@ function createChromeApi(
     storage: { local: { get: vi.fn(), set: vi.fn() } },
     tabs: {
       query: vi.fn().mockResolvedValue([tab]),
-      get: vi.fn(),
+      get: vi.fn().mockResolvedValue(tab),
       create: vi.fn(),
       remove: vi.fn(),
       update: vi.fn().mockResolvedValue(tab),
       reload: vi.fn(),
       captureVisibleTab: vi.fn(),
-      onActivated: { addListener: vi.fn(), removeListener: vi.fn() },
-      onUpdated: { addListener: vi.fn(), removeListener: vi.fn() }
+      onActivated: onActivated.event,
+      onUpdated: onUpdated.event
     },
     debugger: debuggerApi,
     scripting: { executeScript: vi.fn() }
   } as unknown as ChromeApi
 }
+
+describe('executeBrowserAction waited browser actions', () => {
+  it('waits for open_tab to reach a loaded page before returning', async () => {
+    const onUpdated = createChromeEvent<TabUpdatedListener>()
+    const loadingTab = {
+      id: 234,
+      windowId: 1,
+      active: true,
+      status: 'loading',
+      url: 'https://example.com'
+    }
+    const completeTab = { ...loadingTab, status: 'complete', title: 'Example' }
+    let currentTab = loadingTab
+    const chromeApi = createChromeApi(undefined, loadingTab)
+    chromeApi.tabs.onUpdated = onUpdated.event
+    chromeApi.tabs.create = vi.fn(async () => loadingTab)
+    chromeApi.tabs.get = vi.fn(async () => {
+      if (currentTab.status === 'loading') {
+        queueMicrotask(() => {
+          currentTab = completeTab
+          onUpdated.emit(234, { status: 'complete' }, completeTab)
+        })
+      }
+      return currentTab
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'open_tab', url: 'https://example.com' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.opened).toBe(true)
+    expect(result.tab).toMatchObject({ id: 234, status: 'complete', title: 'Example' })
+    expect(result.page_ready).toMatchObject({ loaded: true })
+    expect(onUpdated.event.addListener).toHaveBeenCalled()
+    expect(onUpdated.event.removeListener).toHaveBeenCalled()
+  })
+
+  it('pre-arms navigation waiting before navigate updates the tab', async () => {
+    const onUpdated = createChromeEvent<TabUpdatedListener>()
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://old.example'
+    }
+    const completeTab = { ...startTab, url: 'https://new.example', status: 'complete' }
+    let currentTab = startTab
+    const chromeApi = createChromeApi(undefined, startTab)
+    chromeApi.tabs.onUpdated = onUpdated.event
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.tabs.update = vi.fn(async () => {
+      currentTab = completeTab
+      onUpdated.emit(123, { url: completeTab.url, status: 'complete' }, completeTab)
+      return completeTab
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'navigate', url: 'https://new.example' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.navigated).toBe(true)
+    expect(result.tab).toMatchObject({ url: 'https://new.example', status: 'complete' })
+    expect(onUpdated.event.addListener.mock.invocationCallOrder[0]).toBeLessThan(
+      (chromeApi.tabs.update as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    )
+  })
+
+  it('treats data URL navigation as ready once the tab reaches the URL', async () => {
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://old.example'
+    }
+    const dataTab = {
+      ...startTab,
+      status: 'loading',
+      url: 'data:text/html,<select><option>One</option></select>'
+    }
+    let currentTab = startTab
+    const chromeApi = createChromeApi(undefined, startTab)
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.tabs.update = vi.fn(async () => {
+      currentTab = dataTab
+      return dataTab
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'navigate', url: dataTab.url }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.navigated).toBe(true)
+    expect(result.tab).toMatchObject({ url: dataTab.url })
+    expect(result.page_ready).toMatchObject({ loaded: true })
+  })
+
+  it('does not mask page action errors with pre-action loading timeouts', async () => {
+    vi.useFakeTimers()
+    const loadingTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'loading',
+      url: 'https://example.com/loading'
+    }
+    const chromeApi = createChromeApi(undefined, loadingTab)
+    chromeApi.tabs.get = vi.fn(async () => loadingTab)
+    chromeApi.scripting.executeScript = vi.fn(async () => {
+      throw new Error('selector is not a select element: #iframeResult')
+    }) as ChromeApi['scripting']['executeScript']
+
+    const pending = executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: {
+          action: 'select_dropdown',
+          selector: '#iframeResult',
+          value: 'saab',
+          timeout_ms: 100
+        }
+      },
+      { chromeApi }
+    )
+    const rejection = expect(pending).rejects.toThrow(
+      'selector is not a select element: #iframeResult'
+    )
+    try {
+      await vi.advanceTimersByTimeAsync(100)
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for downloads to complete before returning', async () => {
+    vi.useFakeTimers()
+    const chromeApi = createChromeApi(undefined)
+    let state = 'in_progress'
+    chromeApi.downloads = {
+      download: vi.fn(async () => 42),
+      search: vi.fn(async () => [
+        {
+          id: 42,
+          url: 'https://example.com/report.csv',
+          filename: 'report.csv',
+          state
+        }
+      ]),
+      cancel: vi.fn(),
+      open: vi.fn()
+    }
+
+    const pending = executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'download', url: 'https://example.com/report.csv' }
+      },
+      { chromeApi }
+    )
+    await Promise.resolve()
+    state = 'complete'
+    await vi.advanceTimersByTimeAsync(250)
+    const result = (await pending) as Record<string, unknown>
+    vi.useRealTimers()
+
+    expect(result.downloaded).toBe(true)
+    expect(result.download).toMatchObject({ id: 42, state: 'complete', filename: 'report.csv' })
+  })
+
+  it('attaches page readiness to input actions that may trigger page changes', async () => {
+    const completeTab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const chromeApi = createChromeApi(undefined, completeTab)
+    chromeApi.tabs.get = vi.fn(async () => completeTab)
+    chromeApi.scripting.executeScript = vi.fn(async () => [
+      { result: { clicked: true } }
+    ]) as ChromeApi['scripting']['executeScript']
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'click', selector: 'button' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.clicked).toBe(true)
+    expect(result.page_ready).toMatchObject({ loaded: true })
+  })
+})
 
 describe('executeBrowserAction execute_javascript debugger bridge', () => {
   it('returns primitive values from direct Runtime.evaluate expressions', async () => {
@@ -99,6 +334,42 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
     )) as Record<string, unknown>
 
     expect(result.result).toBe('MDN Web Docs')
+  })
+
+  it('returns the final expression from multi-statement debugger scripts', async () => {
+    const expressions: string[] = []
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
+        if (method !== 'Runtime.evaluate') {
+          return {}
+        }
+        expressions.push(params?.expression || '')
+        if (expressions.length === 1) {
+          return { exceptionDetails: { text: 'SyntaxError: Unexpected token const' } }
+        }
+        return { result: { type: 'object', value: { exists: true, value: 'opt2' } } }
+      }
+    )
+    const chromeApi = createChromeApi({
+      attach: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      sendCommand: sendCommand as DebuggerSendCommand
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: {
+          action: 'execute_javascript',
+          code: "const sel = document.querySelector('#testselect');\nsel ? { exists: true, value: sel.value } : { exists: false }"
+        }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.result).toEqual({ exists: true, value: 'opt2' })
+    expect(expressions[1]).toContain('return (sel ?')
   })
 
   it('serializes debugger sessions for concurrent calls on the same tab', async () => {

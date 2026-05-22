@@ -22,6 +22,36 @@ export type ChromeTabInfo = {
   url?: string
 }
 
+export type ChromeCookieSameSite = 'no_restriction' | 'lax' | 'strict'
+
+export type ChromeDownloadItem = {
+  id?: number
+  url?: string
+  finalUrl?: string
+  filename?: string
+  state?: string
+  paused?: boolean
+  error?: string
+  bytesReceived?: number
+  totalBytes?: number
+  startTime?: string
+  endTime?: string
+  exists?: boolean
+}
+
+export type ChromeCookieInfo = {
+  name?: string
+  value?: string
+  domain?: string
+  path?: string
+  secure?: boolean
+  httpOnly?: boolean
+  sameSite?: ChromeCookieSameSite
+  expirationDate?: number
+  session?: boolean
+  storeId?: string
+}
+
 export type BrowserActionArgs = {
   action?: string
   url?: string
@@ -47,9 +77,26 @@ export type BrowserActionArgs = {
   include_links?: boolean
   include_forms?: boolean
   include_data_url?: boolean
+  full_page?: boolean
   highlight?: boolean
   bypass_cache?: boolean
   behavior?: ScrollBehavior
+  filename?: string
+  save_as?: boolean
+  download_id?: number
+  files?: string[]
+  origins?: string[]
+  domain?: string
+  name?: string
+  path?: string
+  secure?: boolean
+  http_only?: boolean
+  same_site?: ChromeCookieSameSite
+  expiration_date?: number
+  since_ms?: number
+  store_id?: string
+  accept?: boolean
+  prompt_text?: string
   max_chars?: number
   timeout_ms?: number
 }
@@ -165,18 +212,83 @@ export interface ChromeApi {
       updateProperties: { url?: string; active?: boolean }
     ): Promise<ChromeTabInfo>
     reload(tabId?: number, reloadProperties?: { bypassCache?: boolean }): Promise<void>
+    goBack?(tabId?: number): Promise<void>
+    goForward?(tabId?: number): Promise<void>
     captureVisibleTab(windowId: number | undefined, options: { format: 'png' }): Promise<string>
     onActivated: ChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>
     onUpdated: ChromeEvent<
-      (tabId: number, changeInfo: { title?: string; url?: string }, tab: ChromeTabInfo) => void
+      (
+        tabId: number,
+        changeInfo: { title?: string; url?: string; status?: string },
+        tab: ChromeTabInfo
+      ) => void
     >
   }
   windows?: {
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<unknown>
   }
+  downloads?: {
+    download(options: { url: string; filename?: string; saveAs?: boolean }): Promise<number>
+    search(query: {
+      id?: number
+      limit?: number
+      orderBy?: string[]
+      state?: string
+    }): Promise<ChromeDownloadItem[]>
+    cancel(downloadId: number): Promise<void>
+    open(downloadId: number): void | Promise<void>
+  }
+  cookies?: {
+    getAll(details: {
+      url?: string
+      domain?: string
+      name?: string
+      storeId?: string
+    }): Promise<ChromeCookieInfo[]>
+    set(details: {
+      url: string
+      name: string
+      value: string
+      domain?: string
+      path?: string
+      secure?: boolean
+      httpOnly?: boolean
+      sameSite?: ChromeCookieSameSite
+      expirationDate?: number
+      storeId?: string
+    }): Promise<ChromeCookieInfo | null>
+    remove(details: {
+      url: string
+      name: string
+      storeId?: string
+    }): Promise<{ url?: string; name?: string; storeId?: string } | null>
+  }
+  browsingData?: {
+    remove(
+      options: { since?: number; origins?: string[] },
+      dataToRemove: {
+        cache?: boolean
+        cacheStorage?: boolean
+        indexedDB?: boolean
+        localStorage?: boolean
+        serviceWorkers?: boolean
+      }
+    ): Promise<void>
+  }
+  webNavigation?: {
+    onCommitted?: ChromeEvent<
+      (details: { tabId: number; frameId: number; url: string; timeStamp?: number }) => void
+    >
+    onCompleted?: ChromeEvent<
+      (details: { tabId: number; frameId: number; url: string; timeStamp?: number }) => void
+    >
+  }
   debugger?: {
     attach(target: { tabId: number }, requiredVersion: string): Promise<void>
     detach(target: { tabId: number }): Promise<void>
+    onEvent?: ChromeEvent<
+      (source: { tabId?: number }, method: string, params?: Record<string, unknown>) => void
+    >
     sendCommand<Result = unknown>(
       target: { tabId: number },
       method: string,

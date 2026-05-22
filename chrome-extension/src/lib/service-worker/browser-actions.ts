@@ -3,6 +3,8 @@ import type {
   BrowserActionResult,
   BrowserCommand,
   ChromeApi,
+  ChromeCookieInfo,
+  ChromeDownloadItem,
   ChromeTabInfo
 } from './types'
 
@@ -11,6 +13,11 @@ type BrowserActionDependencies = {
 }
 
 const debuggerActionLocks = new Map<number, Promise<void>>()
+const DEBUGGER_PROTOCOL_VERSION = '1.3'
+const NETWORK_IDLE_QUIET_MS = 500
+const DEFAULT_PAGE_READY_TIMEOUT_MS = 30_000
+const PRE_ACTION_LOADING_TIMEOUT_MS = 1_500
+const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
 
 export async function executeBrowserAction(
   command: BrowserCommand,
@@ -23,6 +30,38 @@ export async function executeBrowserAction(
     return listTabs(chromeApi, args)
   }
 
+  if (args.action === 'download') {
+    return downloadFile(chromeApi, args)
+  }
+
+  if (args.action === 'list_downloads') {
+    return listDownloads(chromeApi, args)
+  }
+
+  if (args.action === 'cancel_download') {
+    return cancelDownload(chromeApi, args)
+  }
+
+  if (args.action === 'open_download') {
+    return openDownload(chromeApi, args)
+  }
+
+  if (args.action === 'get_cookies') {
+    return getCookies(chromeApi, args)
+  }
+
+  if (args.action === 'set_cookie') {
+    return setCookie(chromeApi, args)
+  }
+
+  if (args.action === 'delete_cookie') {
+    return deleteCookie(chromeApi, args)
+  }
+
+  if (args.action === 'clear_browser_cache') {
+    return clearBrowserCache(chromeApi, args)
+  }
+
   if (args.action === 'get_current_tab') {
     return { tab: tabSummary(await activeTab(chromeApi)) }
   }
@@ -33,13 +72,15 @@ export async function executeBrowserAction(
       active: args.active ?? true,
       windowId: positiveInteger(args.window_id) || undefined
     })
-    return { opened: true, tab: tabSummary(tab) }
+    const pageReady = tab.id ? await waitForTabReady(chromeApi, tab.id, args) : null
+    return { opened: true, tab: pageReady?.tab || tabSummary(tab), page_ready: pageReady }
   }
 
   if (args.action === 'switch_tab') {
     const tabId = requirePositiveInteger(args.tab_id, 'switch_tab requires tab_id')
     const tab = await activateTab(chromeApi, tabId)
-    return { switched: true, tab: tabSummary(tab) }
+    const pageReady = await waitForTabReadyIfLoading(chromeApi, tabId, args)
+    return { switched: true, tab: pageReady?.tab || tabSummary(tab), page_ready: pageReady }
   }
 
   if (args.action === 'close_tab') {
@@ -64,13 +105,31 @@ export async function executeBrowserAction(
         active,
         windowId: positiveInteger(args.window_id) || undefined
       })
-      return { navigated: true, url: args.url, tab: tabSummary(created) }
+      const pageReady = created.id ? await waitForTabReady(chromeApi, created.id, args) : null
+      return {
+        navigated: true,
+        url: args.url,
+        tab: pageReady?.tab || tabSummary(created),
+        page_ready: pageReady
+      }
     }
-    const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
-    if (active && updated) {
-      await focusWindow(chromeApi, updated.windowId).catch(() => undefined)
+    const loadWatcher = createTabLoadWatcher(chromeApi, tab.id, actionTimeoutMs(args))
+    try {
+      const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
+      if (active && updated) {
+        await focusWindow(chromeApi, updated.windowId).catch(() => undefined)
+      }
+      const pageReady = await waitForTabReady(chromeApi, tab.id, args, loadWatcher)
+      return {
+        navigated: true,
+        url: args.url,
+        tab: pageReady?.tab || tabSummary(updated),
+        page_ready: pageReady
+      }
+    } catch (error) {
+      loadWatcher.cancel()
+      throw error
     }
-    return { navigated: true, url: args.url, tab: tabSummary(updated) }
   }
 
   if (args.action === 'reload') {
@@ -79,8 +138,52 @@ export async function executeBrowserAction(
     if (!tabId) {
       throw new Error('no target tab')
     }
-    await chromeApi.tabs.reload(tabId, { bypassCache: args.bypass_cache ?? false })
-    return { reloaded: true, bypass_cache: args.bypass_cache ?? false, tab: tabSummary(tab) }
+    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    try {
+      await chromeApi.tabs.reload(tabId, { bypassCache: args.bypass_cache ?? false })
+      const pageReady = await waitForTabReady(chromeApi, tabId, args, loadWatcher)
+      return {
+        reloaded: true,
+        bypass_cache: args.bypass_cache ?? false,
+        tab: pageReady?.tab || tabSummary(tab),
+        page_ready: pageReady
+      }
+    } catch (error) {
+      loadWatcher.cancel()
+      throw error
+    }
+  }
+
+  if (args.action === 'go_back' || args.action === 'go_forward') {
+    const tab = await tabForPageAction(chromeApi, args)
+    const tabId = tab?.id
+    if (!tabId) {
+      throw new Error('no target tab')
+    }
+    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    try {
+      if (args.action === 'go_back' && chromeApi.tabs.goBack) {
+        await chromeApi.tabs.goBack(tabId)
+      } else if (args.action === 'go_forward' && chromeApi.tabs.goForward) {
+        await chromeApi.tabs.goForward(tabId)
+      } else {
+        await chromeApi.scripting.executeScript<BrowserActionResult, BrowserActionArgs>({
+          target: scriptTarget(tabId, args),
+          world: 'ISOLATED',
+          func: pageActionDispatcher,
+          args: [args]
+        })
+      }
+      const pageReady = await waitForTabReady(chromeApi, tabId, args, loadWatcher)
+      return {
+        [args.action === 'go_back' ? 'went_back' : 'went_forward']: true,
+        tab: pageReady?.tab || tabSummary(tab),
+        page_ready: pageReady
+      }
+    } catch (error) {
+      loadWatcher.cancel()
+      throw error
+    }
   }
 
   const tab = await tabForPageAction(chromeApi, args)
@@ -89,7 +192,20 @@ export async function executeBrowserAction(
     throw new Error('no target tab')
   }
 
+  await waitForTabReadyIfLoading(chromeApi, tabId, args, {
+    bestEffort: true,
+    timeoutMs: PRE_ACTION_LOADING_TIMEOUT_MS,
+    noLoadTimeoutMs: ACTION_SETTLE_NO_LOAD_TIMEOUT_MS
+  })
+
+  const postActionLoadWatcher = shouldWaitAfterAction(args.action)
+    ? createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    : null
+
   if (args.action === 'screenshot') {
+    if (args.full_page || args.selector) {
+      return captureScreenshotWithDebugger(chromeApi, tabId, args, tab)
+    }
     const activeTab = await activateTab(chromeApi, tabId).catch(() => tab)
     const dataUrl = await chromeApi.tabs.captureVisibleTab(activeTab?.windowId || tab?.windowId, {
       format: 'png'
@@ -103,23 +219,88 @@ export async function executeBrowserAction(
     }
   }
 
+  if (args.action === 'get_accessibility_tree') {
+    return getAccessibilityTree(chromeApi, tabId, args)
+  }
+
+  if (args.action === 'print_to_pdf') {
+    return printToPdf(chromeApi, tabId, args, tab)
+  }
+
+  if (args.action === 'handle_dialog') {
+    return handleDialog(chromeApi, tabId, args)
+  }
+
+  if (args.action === 'upload_file') {
+    let result: BrowserActionResult
+    try {
+      result = await uploadFile(chromeApi, tabId, args)
+    } catch (error) {
+      postActionLoadWatcher?.cancel()
+      throw error
+    }
+    return withPageReady(
+      result,
+      await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+    )
+  }
+
+  if (
+    (args.action === 'click' || args.action === 'hover') &&
+    !args.frame_id &&
+    chromeApi.debugger
+  ) {
+    let result: BrowserActionResult
+    try {
+      result = await dispatchNativePointerAction(chromeApi, tabId, args)
+    } catch (error) {
+      postActionLoadWatcher?.cancel()
+      throw error
+    }
+    return withPageReady(
+      result,
+      await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+    )
+  }
+
+  if (args.action === 'press_key' && !args.frame_id && chromeApi.debugger) {
+    let result: BrowserActionResult
+    try {
+      result = await dispatchNativeKey(chromeApi, tabId, args)
+    } catch (error) {
+      postActionLoadWatcher?.cancel()
+      throw error
+    }
+    return withPageReady(
+      result,
+      await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+    )
+  }
+
   if (args.action === 'execute_javascript' && scriptExecutionMode(args) === 'debugger') {
     return executeJavaScriptWithDebugger(chromeApi, tabId, args)
   }
 
-  const [execution] = await chromeApi.scripting.executeScript<
-    BrowserActionResult,
-    BrowserActionArgs
-  >({
-    target: scriptTarget(tabId, args),
-    world: args.action === 'execute_javascript' ? scriptExecutionWorld(args) : 'ISOLATED',
-    func: pageActionDispatcher,
-    args: [args]
-  })
+  let execution: { result: Awaited<BrowserActionResult> } | undefined
+  try {
+    ;[execution] = await chromeApi.scripting.executeScript<BrowserActionResult, BrowserActionArgs>({
+      target: scriptTarget(tabId, args),
+      world: args.action === 'execute_javascript' ? scriptExecutionWorld(args) : 'ISOLATED',
+      func: pageActionDispatcher,
+      args: [args]
+    })
+  } catch (error) {
+    postActionLoadWatcher?.cancel()
+    throw error
+  }
   if (args.action === 'execute_javascript' && execution?.result === undefined) {
     throw new Error('execute_javascript did not return a script result')
   }
-  return execution ? execution.result : null
+  const result = execution ? execution.result : null
+  return withPageReady(
+    result,
+    await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+  )
 }
 
 async function listTabs(
@@ -133,6 +314,286 @@ async function listTabs(
     tabs: tabs.map(tabSummary),
     active_tab_id: tabs.find((tab) => tab.active)?.id || null
   }
+}
+
+async function downloadFile(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const downloads = requireDownloads(chromeApi)
+  const url = normalizeOptionalText(args.url)
+  if (!url) {
+    throw new Error('download requires url')
+  }
+  const filename = normalizeOptionalText(args.filename)
+  const downloadId = await downloads.download({
+    url,
+    filename,
+    saveAs: args.save_as ?? false
+  })
+  const download = await waitForDownloadComplete(downloads, downloadId, actionTimeoutMs(args))
+  return {
+    downloaded: true,
+    download_id: downloadId,
+    url,
+    filename: filename || null,
+    download: downloadSummary(download)
+  }
+}
+
+async function listDownloads(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const downloads = requireDownloads(chromeApi)
+  const downloadId = positiveInteger(args.download_id)
+  const limit = Math.max(1, Math.min(100, positiveInteger(args.amount) || 50))
+  const query: { id?: number; limit?: number; orderBy?: string[]; state?: string } = {
+    limit,
+    orderBy: ['-startTime']
+  }
+  if (downloadId) {
+    query.id = downloadId
+  }
+  const state = normalizeOptionalText(args.value)
+  if (state) {
+    query.state = state
+  }
+  const downloadsFound = await downloads.search(query)
+  return {
+    downloads: downloadsFound.map(downloadSummary),
+    count: downloadsFound.length
+  }
+}
+
+async function cancelDownload(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const downloads = requireDownloads(chromeApi)
+  const downloadId = requirePositiveInteger(
+    args.download_id,
+    'cancel_download requires download_id'
+  )
+  await downloads.cancel(downloadId)
+  return { canceled: true, download_id: downloadId }
+}
+
+async function openDownload(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const downloads = requireDownloads(chromeApi)
+  const downloadId = requirePositiveInteger(args.download_id, 'open_download requires download_id')
+  await downloads.open(downloadId)
+  return { opened: true, download_id: downloadId }
+}
+
+async function getCookies(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const cookies = requireCookies(chromeApi)
+  const domain = normalizeOptionalText(args.domain)
+  const name = normalizeOptionalText(args.name)
+  const storeId = normalizeOptionalText(args.store_id)
+  const details: { url?: string; domain?: string; name?: string; storeId?: string } = {}
+  if (domain) {
+    details.domain = domain
+  } else {
+    details.url = await cookieUrl(chromeApi, args)
+  }
+  if (name) {
+    details.name = name
+  }
+  if (storeId) {
+    details.storeId = storeId
+  }
+  const found = await cookies.getAll(details)
+  return { cookies: found.map(cookieSummary), count: found.length }
+}
+
+async function setCookie(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const cookies = requireCookies(chromeApi)
+  const name = normalizeOptionalText(args.name)
+  if (!name) {
+    throw new Error('set_cookie requires name')
+  }
+  const value = typeof args.value === 'string' ? args.value : ''
+  const details = {
+    url: await cookieUrl(chromeApi, args),
+    name,
+    value,
+    domain: normalizeOptionalText(args.domain),
+    path: normalizeOptionalText(args.path),
+    secure: args.secure,
+    httpOnly: args.http_only,
+    sameSite: args.same_site,
+    expirationDate: typeof args.expiration_date === 'number' ? args.expiration_date : undefined,
+    storeId: normalizeOptionalText(args.store_id)
+  }
+  const cookie = await cookies.set(details)
+  return { set: true, cookie: cookieSummary(cookie) }
+}
+
+async function deleteCookie(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const cookies = requireCookies(chromeApi)
+  const name = normalizeOptionalText(args.name)
+  if (!name) {
+    throw new Error('delete_cookie requires name')
+  }
+  const removed = await cookies.remove({
+    url: await cookieUrl(chromeApi, args),
+    name,
+    storeId: normalizeOptionalText(args.store_id)
+  })
+  return { deleted: Boolean(removed), cookie: removed || null }
+}
+
+async function clearBrowserCache(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  if (!chromeApi.browsingData) {
+    throw new Error('Chrome browsingData API is unavailable; enable the browsingData permission')
+  }
+  const origins = normalizedOrigins(args)
+  const since =
+    typeof args.since_ms === 'number' && Number.isFinite(args.since_ms)
+      ? Math.max(0, Math.floor(args.since_ms))
+      : 0
+  await chromeApi.browsingData.remove(
+    { since, origins: origins.length ? origins : undefined },
+    {
+      cache: true,
+      cacheStorage: true,
+      indexedDB: true,
+      localStorage: true,
+      serviceWorkers: true
+    }
+  )
+  return { cleared: true, origins, since_ms: since }
+}
+
+function requireDownloads(chromeApi: ChromeApi): NonNullable<ChromeApi['downloads']> {
+  if (!chromeApi.downloads) {
+    throw new Error('Chrome downloads API is unavailable; enable the downloads permission')
+  }
+  return chromeApi.downloads
+}
+
+function requireCookies(chromeApi: ChromeApi): NonNullable<ChromeApi['cookies']> {
+  if (!chromeApi.cookies) {
+    throw new Error('Chrome cookies API is unavailable; enable the cookies permission')
+  }
+  return chromeApi.cookies
+}
+
+function downloadSummary(item: ChromeDownloadItem): Record<string, unknown> {
+  return {
+    id: item.id,
+    url: item.url || '',
+    final_url: item.finalUrl || '',
+    filename: item.filename || '',
+    state: item.state || '',
+    paused: Boolean(item.paused),
+    error: item.error || null,
+    bytes_received: item.bytesReceived || 0,
+    total_bytes: item.totalBytes || 0,
+    start_time: item.startTime || null,
+    end_time: item.endTime || null,
+    exists: item.exists ?? null
+  }
+}
+
+function waitForDownloadComplete(
+  downloads: NonNullable<ChromeApi['downloads']>,
+  downloadId: number,
+  timeout: number
+): Promise<ChromeDownloadItem> {
+  const startedAt = Date.now()
+
+  return new Promise((resolve, reject) => {
+    const poll = async () => {
+      try {
+        const [item] = await downloads.search({ id: downloadId, limit: 1 })
+        if (item?.state === 'complete') {
+          resolve(item)
+          return
+        }
+        if (item?.state === 'interrupted') {
+          reject(new Error(`download interrupted: ${item.error || downloadId}`))
+          return
+        }
+        if (Date.now() - startedAt >= timeout) {
+          reject(new Error(`download ${downloadId} did not complete before timeout: ${timeout}ms`))
+          return
+        }
+        setTimeout(poll, 250)
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    }
+
+    void poll()
+  })
+}
+
+function cookieSummary(
+  cookie: ChromeCookieInfo | null | undefined
+): Record<string, unknown> | null {
+  if (!cookie) {
+    return null
+  }
+  return {
+    name: cookie.name || '',
+    value: cookie.value || '',
+    domain: cookie.domain || '',
+    path: cookie.path || '',
+    secure: Boolean(cookie.secure),
+    http_only: Boolean(cookie.httpOnly),
+    same_site: cookie.sameSite || null,
+    expiration_date: cookie.expirationDate || null,
+    session: Boolean(cookie.session),
+    store_id: cookie.storeId || null
+  }
+}
+
+async function cookieUrl(chromeApi: ChromeApi, args: BrowserActionArgs): Promise<string> {
+  const explicit = normalizeOptionalText(args.url)
+  if (explicit) {
+    return explicit
+  }
+  const tab = await activeTab(chromeApi)
+  const url = normalizeOptionalText(tab?.url)
+  if (!url) {
+    throw new Error('cookie action requires url or an active tab with a URL')
+  }
+  return url
+}
+
+function normalizedOrigins(args: BrowserActionArgs): string[] {
+  const origins = Array.isArray(args.origins)
+    ? args.origins
+        .filter((origin) => typeof origin === 'string' && origin.trim())
+        .map((origin) => origin.trim())
+    : []
+  const url = normalizeOptionalText(args.url)
+  if (!url) {
+    return origins
+  }
+  try {
+    origins.push(new URL(url).origin)
+  } catch (_error) {
+    origins.push(url)
+  }
+  return Array.from(new Set(origins))
 }
 
 async function tabForAction(
@@ -192,6 +653,101 @@ function requestedScriptWorld(value: unknown): RequestedScriptWorld {
   return 'ISOLATED'
 }
 
+function scriptWithImplicitReturn(code: string): string | null {
+  const body = code.trim().replace(/;+$/, '')
+  if (!body) {
+    return null
+  }
+  const splitAt = lastTopLevelSemicolon(body)
+  if (splitAt < 0) {
+    return null
+  }
+  const prefix = body.slice(0, splitAt + 1)
+  const tail = body.slice(splitAt + 1).trim()
+  if (!tail || !canImplicitlyReturn(tail)) {
+    return null
+  }
+  return `${prefix}\nreturn (${tail});`
+}
+
+function canImplicitlyReturn(statement: string): boolean {
+  return !/^(break|catch|class|const|continue|do|export|finally|for|function|if|import|let|return|switch|throw|try|var|while)\b/.test(
+    statement
+  )
+}
+
+function lastTopLevelSemicolon(code: string): number {
+  let quote: string | null = null
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  let parenDepth = 0
+  let braceDepth = 0
+  let bracketDepth = 0
+  let last = -1
+
+  for (let index = 0; index < code.length; index += 1) {
+    const char = code[index]
+    const next = code[index + 1]
+
+    if (lineComment) {
+      if (char === '\n' || char === '\r') {
+        lineComment = false
+      }
+      continue
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') {
+        blockComment = false
+        index += 1
+      }
+      continue
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === '/' && next === '/') {
+      lineComment = true
+      index += 1
+      continue
+    }
+    if (char === '/' && next === '*') {
+      blockComment = true
+      index += 1
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') {
+      parenDepth += 1
+    } else if (char === ')') {
+      parenDepth = Math.max(0, parenDepth - 1)
+    } else if (char === '{') {
+      braceDepth += 1
+    } else if (char === '}') {
+      braceDepth = Math.max(0, braceDepth - 1)
+    } else if (char === '[') {
+      bracketDepth += 1
+    } else if (char === ']') {
+      bracketDepth = Math.max(0, bracketDepth - 1)
+    } else if (char === ';' && parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+      last = index
+    }
+  }
+
+  return last
+}
+
 type DebuggerTarget = { tabId: number }
 type RuntimeRemoteObject = {
   type?: string
@@ -209,6 +765,43 @@ type RuntimeExceptionDetails = {
 type RuntimeEvaluateResult = {
   result?: RuntimeRemoteObject
   exceptionDetails?: RuntimeExceptionDetails
+}
+type RuntimeEvaluateParams = {
+  expression: string
+  awaitPromise?: boolean
+  returnByValue?: boolean
+  userGesture?: boolean
+  replMode?: boolean
+}
+type PageCaptureScreenshotResult = { data?: string }
+type PagePrintToPdfResult = { data?: string }
+type PageLayoutMetricsResult = {
+  contentSize?: { x?: number; y?: number; width?: number; height?: number }
+}
+type DomGetDocumentResult = { root?: { nodeId?: number } }
+type DomQuerySelectorResult = { nodeId?: number }
+
+async function withAttachedDebugger<T>(
+  chromeApi: ChromeApi,
+  tabId: number,
+  task: (target: DebuggerTarget) => Promise<T>
+): Promise<T> {
+  if (!chromeApi.debugger) {
+    throw new Error('Chrome debugger API is unavailable; enable the debugger permission')
+  }
+
+  const target = { tabId }
+  let attached = false
+  try {
+    await chromeApi.debugger.detach(target).catch(() => undefined)
+    await chromeApi.debugger.attach(target, DEBUGGER_PROTOCOL_VERSION)
+    attached = true
+    return await task(target)
+  } finally {
+    if (attached) {
+      await chromeApi.debugger.detach(target).catch(() => undefined)
+    }
+  }
 }
 
 async function executeJavaScriptWithDebugger(
@@ -250,24 +843,12 @@ async function executeJavaScriptWithAttachedDebugger(
       'execute_javascript frame_id is only supported when use_bridge is false and world is isolated or main'
     )
   }
-  if (!chromeApi.debugger) {
-    throw new Error('Chrome debugger API is unavailable; enable the debugger permission')
-  }
 
-  const target = { tabId }
-  let attached = false
-  try {
-    await chromeApi.debugger.detach(target).catch(() => undefined)
-    await chromeApi.debugger.attach(target, '1.3')
-    attached = true
-    await chromeApi.debugger.sendCommand(target, 'Runtime.enable').catch(() => undefined)
+  return withAttachedDebugger(chromeApi, tabId, async (target) => {
+    await chromeApi.debugger!.sendCommand(target, 'Runtime.enable').catch(() => undefined)
     const result = await evaluateDebuggerJavaScript(chromeApi, target, code)
     return { executed: true, world: 'debugger', result }
-  } finally {
-    if (attached) {
-      await chromeApi.debugger.detach(target).catch(() => undefined)
-    }
-  }
+  })
 }
 
 async function evaluateDebuggerJavaScript(
@@ -279,6 +860,18 @@ async function evaluateDebuggerJavaScript(
   const expressionResult = await sendDebuggerRuntimeEvaluate(chromeApi, target, `(${expression})`)
   if (!isSyntaxException(expressionResult.exceptionDetails)) {
     return debuggerEvaluationValue(expressionResult)
+  }
+
+  const implicitReturn = scriptWithImplicitReturn(code)
+  if (implicitReturn) {
+    const implicitResult = await sendDebuggerRuntimeEvaluate(
+      chromeApi,
+      target,
+      `(function () {\n${implicitReturn}\n})()`
+    )
+    if (!isSyntaxException(implicitResult.exceptionDetails)) {
+      return debuggerEvaluationValue(implicitResult)
+    }
   }
 
   const bodyResult = await sendDebuggerRuntimeEvaluate(
@@ -294,13 +887,14 @@ function sendDebuggerRuntimeEvaluate(
   target: DebuggerTarget,
   expression: string
 ): Promise<RuntimeEvaluateResult> {
-  return chromeApi.debugger!.sendCommand<RuntimeEvaluateResult>(target, 'Runtime.evaluate', {
+  const params: RuntimeEvaluateParams = {
     expression,
     awaitPromise: true,
     returnByValue: true,
     userGesture: true,
     replMode: true
-  })
+  }
+  return chromeApi.debugger!.sendCommand<RuntimeEvaluateResult>(target, 'Runtime.evaluate', params)
 }
 
 function isSyntaxException(details?: RuntimeExceptionDetails): boolean {
@@ -332,6 +926,545 @@ function debuggerExceptionText(details?: RuntimeExceptionDetails): string {
   ).toString()
 }
 
+async function captureScreenshotWithDebugger(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  tab: ChromeTabInfo | null
+): Promise<BrowserActionResult> {
+  const active = await activateTab(chromeApi, tabId).catch(() => tab)
+  const capture = await runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
+      const clip = args.selector
+        ? await elementScreenshotClip(chromeApi, target, args.selector)
+        : args.full_page
+          ? await fullPageScreenshotClip(chromeApi, target)
+          : undefined
+      const params: Record<string, unknown> = {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: Boolean(args.full_page || args.selector)
+      }
+      if (clip) {
+        params.clip = clip
+      }
+      const result = await chromeApi.debugger!.sendCommand<PageCaptureScreenshotResult>(
+        target,
+        'Page.captureScreenshot',
+        params
+      )
+      if (!result.data) {
+        throw new Error('Page.captureScreenshot returned no image data')
+      }
+      return { data: result.data, clip }
+    })
+  )
+  const dataUrl = `data:image/png;base64,${capture.data}`
+  return {
+    captured: true,
+    tab: tabSummary(active || tab),
+    mime_type: 'image/png',
+    size: dataUrl.length,
+    data_url: args.include_data_url ? dataUrl : undefined,
+    full_page: Boolean(args.full_page),
+    selector: args.selector || null,
+    clip: capture.clip || null
+  }
+}
+
+async function elementScreenshotClip(
+  chromeApi: ChromeApi,
+  target: DebuggerTarget,
+  selector: string
+): Promise<Record<string, number>> {
+  const script = `(() => {
+    const selector = ${JSON.stringify(selector)};
+    function deepQuery(root, query) {
+      const direct = root.querySelector(query);
+      if (direct) return direct;
+      for (const element of Array.from(root.querySelectorAll('*'))) {
+        const shadowRoot = element.shadowRoot;
+        if (!shadowRoot) continue;
+        const found = deepQuery(shadowRoot, query);
+        if (found) return found;
+      }
+      return null;
+    }
+    const element = deepQuery(document, selector);
+    if (!element) return null;
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.max(0, rect.left + window.scrollX),
+      y: Math.max(0, rect.top + window.scrollY),
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+      scale: 1
+    };
+  })()`
+  const clip = await evaluateDebuggerJavaScript(chromeApi, target, script)
+  if (!isScreenshotClip(clip)) {
+    throw new Error(`selector not found or has no visible bounds: ${selector}`)
+  }
+  return clip
+}
+
+async function fullPageScreenshotClip(
+  chromeApi: ChromeApi,
+  target: DebuggerTarget
+): Promise<Record<string, number>> {
+  const metrics = await chromeApi.debugger!.sendCommand<PageLayoutMetricsResult>(
+    target,
+    'Page.getLayoutMetrics'
+  )
+  const contentSize = metrics.contentSize || {}
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(1, Math.ceil(contentSize.width || 1)),
+    height: Math.max(1, Math.ceil(contentSize.height || 1)),
+    scale: 1
+  }
+}
+
+function isScreenshotClip(value: unknown): value is Record<string, number> {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const clip = value as Record<string, unknown>
+  return ['x', 'y', 'width', 'height', 'scale'].every(
+    (key) => typeof clip[key] === 'number' && Number.isFinite(clip[key])
+  )
+}
+
+async function getAccessibilityTree(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  return runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'Accessibility.enable').catch(() => undefined)
+      const result = await chromeApi.debugger!.sendCommand<{ nodes?: unknown[] }>(
+        target,
+        'Accessibility.getFullAXTree'
+      )
+      const nodes = Array.isArray(result.nodes) ? result.nodes : []
+      const maxNodes = Math.max(50, Math.min(1000, positiveInteger(args.amount) || 500))
+      return {
+        accessibility_tree: nodes.slice(0, maxNodes).map(compactAccessibilityNode),
+        count: nodes.length,
+        truncated: nodes.length > maxNodes
+      }
+    })
+  )
+}
+
+function compactAccessibilityNode(node: unknown): Record<string, unknown> {
+  const entry = node && typeof node === 'object' ? (node as Record<string, unknown>) : {}
+  return {
+    node_id: entry.nodeId || null,
+    backend_dom_node_id: entry.backendDOMNodeId || null,
+    role: remoteValue(entry.role),
+    name: remoteValue(entry.name),
+    value: remoteValue(entry.value),
+    description: remoteValue(entry.description),
+    ignored: Boolean(entry.ignored),
+    child_ids: Array.isArray(entry.childIds) ? entry.childIds.slice(0, 80) : [],
+    properties: compactAccessibilityProperties(entry.properties)
+  }
+}
+
+function compactAccessibilityProperties(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.slice(0, 40).map((property) => {
+    const entry =
+      property && typeof property === 'object' ? (property as Record<string, unknown>) : {}
+    return { name: entry.name || '', value: remoteValue(entry.value) }
+  })
+}
+
+function remoteValue(value: unknown): unknown {
+  if (!value || typeof value !== 'object') {
+    return value ?? null
+  }
+  const entry = value as Record<string, unknown>
+  if ('value' in entry) {
+    return entry.value ?? null
+  }
+  if ('description' in entry) {
+    return entry.description ?? null
+  }
+  return null
+}
+
+async function printToPdf(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  tab: ChromeTabInfo | null
+): Promise<BrowserActionResult> {
+  const result = await runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
+      const pdf = await chromeApi.debugger!.sendCommand<PagePrintToPdfResult>(
+        target,
+        'Page.printToPDF',
+        {
+          printBackground: true,
+          preferCSSPageSize: true
+        }
+      )
+      if (!pdf.data) {
+        throw new Error('Page.printToPDF returned no PDF data')
+      }
+      return pdf
+    })
+  )
+  const dataUrl = `data:application/pdf;base64,${result.data}`
+  return {
+    printed: true,
+    tab: tabSummary(tab),
+    mime_type: 'application/pdf',
+    size: dataUrl.length,
+    data_url: args.include_data_url ? dataUrl : undefined
+  }
+}
+
+async function waitForNetworkIdle(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const timeout = actionTimeoutMs(args, 30000)
+  return runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, (target) =>
+      waitForNetworkIdleWithAttachedDebugger(chromeApi, target, timeout)
+    )
+  )
+}
+
+async function waitForNetworkIdleWithAttachedDebugger(
+  chromeApi: ChromeApi,
+  target: DebuggerTarget,
+  timeout: number
+): Promise<BrowserActionResult> {
+  const event = chromeApi.debugger?.onEvent
+  if (!event) {
+    throw new Error('Chrome debugger event API is unavailable; cannot wait for network idle')
+  }
+
+  let inFlight = 0
+  let quietTimer: ReturnType<typeof setTimeout> | null = null
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+  let cleanedUp = false
+
+  let resolveWait: (value: BrowserActionResult) => void
+  let rejectWait: (reason: Error) => void
+  const wait = new Promise<BrowserActionResult>((resolve, reject) => {
+    resolveWait = resolve
+    rejectWait = reject
+  })
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return
+    }
+    cleanedUp = true
+    event.removeListener(listener)
+    if (quietTimer) {
+      clearTimeout(quietTimer)
+    }
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer)
+    }
+  }
+
+  const settle = (value: BrowserActionResult) => {
+    cleanup()
+    resolveWait(value)
+  }
+
+  const fail = (error: Error) => {
+    cleanup()
+    rejectWait(error)
+  }
+
+  const scheduleQuietCheck = () => {
+    if (quietTimer) {
+      clearTimeout(quietTimer)
+    }
+    if (inFlight > 0) {
+      return
+    }
+    quietTimer = setTimeout(() => {
+      settle({ network_idle: true, quiet_ms: NETWORK_IDLE_QUIET_MS })
+    }, NETWORK_IDLE_QUIET_MS)
+  }
+
+  const listener = (
+    source: { tabId?: number },
+    method: string,
+    _params?: Record<string, unknown>
+  ) => {
+    if (source.tabId !== target.tabId) {
+      return
+    }
+    if (method === 'Network.requestWillBeSent') {
+      inFlight += 1
+      if (quietTimer) {
+        clearTimeout(quietTimer)
+        quietTimer = null
+      }
+      return
+    }
+    if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
+      inFlight = Math.max(0, inFlight - 1)
+      scheduleQuietCheck()
+    }
+  }
+
+  event.addListener(listener)
+  timeoutTimer = setTimeout(() => {
+    fail(new Error(`network did not become idle before timeout: ${timeout}ms`))
+  }, timeout)
+
+  try {
+    await chromeApi.debugger!.sendCommand(target, 'Network.enable')
+    scheduleQuietCheck()
+    return await wait
+  } finally {
+    cleanup()
+    await chromeApi.debugger!.sendCommand(target, 'Network.disable').catch(() => undefined)
+  }
+}
+
+async function handleDialog(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  return runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
+      await chromeApi.debugger!.sendCommand(target, 'Page.handleJavaScriptDialog', {
+        accept: args.accept ?? true,
+        promptText: normalizeOptionalText(args.prompt_text)
+      })
+      return { handled_dialog: true, accepted: args.accept ?? true }
+    })
+  )
+}
+
+async function uploadFile(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const selector = normalizeOptionalText(args.selector)
+  if (!selector) {
+    throw new Error('upload_file requires selector')
+  }
+  const files = Array.isArray(args.files)
+    ? args.files
+        .filter((file) => typeof file === 'string' && file.trim())
+        .map((file) => file.trim())
+    : []
+  if (!files.length) {
+    throw new Error('upload_file requires files')
+  }
+
+  return runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'DOM.enable').catch(() => undefined)
+      const documentResult = await chromeApi.debugger!.sendCommand<DomGetDocumentResult>(
+        target,
+        'DOM.getDocument',
+        { depth: -1, pierce: true }
+      )
+      const rootNodeId = documentResult.root?.nodeId
+      if (!rootNodeId) {
+        throw new Error('DOM.getDocument returned no root node')
+      }
+      const queryResult = await chromeApi.debugger!.sendCommand<DomQuerySelectorResult>(
+        target,
+        'DOM.querySelector',
+        { nodeId: rootNodeId, selector }
+      )
+      const nodeId = queryResult.nodeId
+      if (!nodeId) {
+        throw new Error(`selector not found: ${selector}`)
+      }
+      await chromeApi.debugger!.sendCommand(target, 'DOM.setFileInputFiles', { nodeId, files })
+      return { uploaded: true, selector, files, count: files.length }
+    })
+  )
+}
+
+async function dispatchNativePointerAction(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const [execution] = await chromeApi.scripting.executeScript<
+    Record<string, unknown>,
+    BrowserActionArgs
+  >({
+    target: { tabId },
+    world: 'ISOLATED',
+    func: resolveInputTarget,
+    args: [args]
+  })
+  const target = execution?.result
+  const x = typeof target?.x === 'number' ? target.x : null
+  const y = typeof target?.y === 'number' ? target.y : null
+  if (x === null || y === null) {
+    throw new Error('could not resolve a native input coordinate')
+  }
+
+  await runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (debuggerTarget) => {
+      await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x,
+        y
+      })
+      if (args.action === 'click') {
+        await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x,
+          y,
+          button: 'left',
+          clickCount: 1
+        })
+        await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x,
+          y,
+          button: 'left',
+          clickCount: 1
+        })
+      }
+    })
+  )
+
+  return {
+    [args.action === 'click' ? 'clicked' : 'hovered']: true,
+    native: true,
+    selector: args.selector || null,
+    label: target.label || '',
+    x,
+    y,
+    bounding_box: target.bounding_box || null
+  }
+}
+
+async function dispatchNativeKey(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const key = normalizeOptionalText(args.key) || 'Enter'
+  const definition = keyDefinition(key)
+  await runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      await chromeApi.debugger!.sendCommand(target, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        ...definition
+      })
+      await chromeApi.debugger!.sendCommand(target, 'Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: definition.key,
+        code: definition.code,
+        windowsVirtualKeyCode: definition.windowsVirtualKeyCode,
+        nativeVirtualKeyCode: definition.nativeVirtualKeyCode
+      })
+    })
+  )
+  return { pressed: true, native: true, key }
+}
+
+function keyDefinition(key: string): Record<string, unknown> {
+  const special: Record<string, { code: string; windowsVirtualKeyCode: number }> = {
+    Enter: { code: 'Enter', windowsVirtualKeyCode: 13 },
+    Escape: { code: 'Escape', windowsVirtualKeyCode: 27 },
+    Tab: { code: 'Tab', windowsVirtualKeyCode: 9 },
+    Backspace: { code: 'Backspace', windowsVirtualKeyCode: 8 },
+    Delete: { code: 'Delete', windowsVirtualKeyCode: 46 },
+    ArrowUp: { code: 'ArrowUp', windowsVirtualKeyCode: 38 },
+    ArrowDown: { code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+    ArrowLeft: { code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+    ArrowRight: { code: 'ArrowRight', windowsVirtualKeyCode: 39 },
+    Home: { code: 'Home', windowsVirtualKeyCode: 36 },
+    End: { code: 'End', windowsVirtualKeyCode: 35 },
+    PageUp: { code: 'PageUp', windowsVirtualKeyCode: 33 },
+    PageDown: { code: 'PageDown', windowsVirtualKeyCode: 34 }
+  }
+  const mapped = special[key]
+  if (mapped) {
+    return {
+      key,
+      code: mapped.code,
+      windowsVirtualKeyCode: mapped.windowsVirtualKeyCode,
+      nativeVirtualKeyCode: mapped.windowsVirtualKeyCode
+    }
+  }
+  const text = key.length === 1 ? key : ''
+  const upper = text.toUpperCase()
+  const windowsVirtualKeyCode = upper ? upper.charCodeAt(0) : 0
+  return {
+    key,
+    code: upper && /^[A-Z]$/.test(upper) ? `Key${upper}` : key,
+    text,
+    windowsVirtualKeyCode,
+    nativeVirtualKeyCode: windowsVirtualKeyCode
+  }
+}
+
+function actionTimeoutMs(
+  args: BrowserActionArgs,
+  defaultTimeout = DEFAULT_PAGE_READY_TIMEOUT_MS
+): number {
+  const requested =
+    typeof args.timeout_ms === 'number' && Number.isFinite(args.timeout_ms)
+      ? args.timeout_ms
+      : defaultTimeout
+  return Math.max(100, Math.min(120000, Math.floor(requested)))
+}
+
+function shouldWaitAfterAction(action?: string): boolean {
+  return (
+    action === 'click' ||
+    action === 'type_text' ||
+    action === 'press_key' ||
+    action === 'scroll' ||
+    action === 'scroll_to' ||
+    action === 'drag_and_drop' ||
+    action === 'select_dropdown' ||
+    action === 'upload_file'
+  )
+}
+
+function withPageReady(
+  result: BrowserActionResult,
+  pageReady: Record<string, unknown> | null
+): BrowserActionResult {
+  if (!pageReady) {
+    return result
+  }
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), page_ready: pageReady }
+  }
+  return { value: result, page_ready: pageReady }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export async function activeTab(chromeApi: ChromeApi): Promise<ChromeTabInfo | null> {
   const [tab] = await chromeApi.tabs.query({ active: true, lastFocusedWindow: true })
   if (tab) {
@@ -343,6 +1476,317 @@ export async function activeTab(chromeApi: ChromeApi): Promise<ChromeTabInfo | n
   }
   const [fallbackTab] = await chromeApi.tabs.query({})
   return fallbackTab || null
+}
+
+type TabLoadWatcher = {
+  wait(options?: { noLoadTimeoutMs?: number }): Promise<Record<string, unknown>>
+  cancel(): void
+}
+
+function createTabLoadWatcher(
+  chromeApi: ChromeApi,
+  tabId: number,
+  timeout: number
+): TabLoadWatcher {
+  let done = false
+  let sawLoading = false
+  let sawComplete = false
+  let lastTab: ChromeTabInfo | null = null
+  let resolveWait: (value: Record<string, unknown>) => void
+  let rejectWait: (reason: Error) => void
+  let noLoadTimer: ReturnType<typeof setTimeout> | null = null
+
+  const wait = new Promise<Record<string, unknown>>((resolve, reject) => {
+    resolveWait = resolve
+    rejectWait = reject
+  })
+
+  const cleanup = () => {
+    if (done) {
+      return
+    }
+    done = true
+    clearTimeout(timer)
+    if (noLoadTimer) {
+      clearTimeout(noLoadTimer)
+      noLoadTimer = null
+    }
+    chromeApi.tabs.onUpdated.removeListener(listener)
+  }
+
+  const finish = (
+    tab: ChromeTabInfo | null,
+    alreadyComplete: boolean,
+    extra: Record<string, unknown> = {}
+  ) => {
+    if (done) {
+      return
+    }
+    cleanup()
+    resolveWait({
+      loaded: extra.loaded ?? true,
+      saw_loading: sawLoading,
+      saw_complete: sawComplete,
+      already_complete: alreadyComplete,
+      tab: tabSummary(tab || lastTab),
+      ...extra
+    })
+  }
+
+  const fail = (message: string) => {
+    if (done) {
+      return
+    }
+    cleanup()
+    rejectWait(new Error(message))
+  }
+
+  const listener = (
+    updatedTabId: number,
+    changeInfo: { title?: string; url?: string; status?: string },
+    tab: ChromeTabInfo
+  ) => {
+    if (updatedTabId !== tabId) {
+      return
+    }
+    lastTab = tab
+    if (changeInfo.status === 'loading' || tab.status === 'loading') {
+      sawLoading = true
+    }
+    if (changeInfo.status === 'complete' || tab.status === 'complete') {
+      sawComplete = true
+      finish(tab, false)
+    }
+  }
+
+  const timer = setTimeout(() => {
+    fail(`tab did not finish loading before timeout: ${timeout}ms`)
+  }, timeout)
+
+  chromeApi.tabs.onUpdated.addListener(listener)
+
+  return {
+    async wait(options?: { noLoadTimeoutMs?: number }) {
+      const current = await chromeApi.tabs.get(tabId).catch(() => null)
+      if (current) {
+        lastTab = current
+      }
+      if (current?.status === 'complete' || isInstantLoadUrl(current?.url)) {
+        finish(current, !sawLoading && !sawComplete)
+      }
+      if (done) {
+        return wait
+      }
+      const noLoadTimeoutMs = options?.noLoadTimeoutMs
+      if (noLoadTimeoutMs && noLoadTimeoutMs > 0) {
+        noLoadTimer = setTimeout(async () => {
+          if (done || sawLoading || sawComplete) {
+            return
+          }
+          const latest = await chromeApi.tabs.get(tabId).catch(() => lastTab)
+          if (latest) {
+            lastTab = latest
+          }
+          finish(latest || current, false, { loaded: false, no_load_detected: true })
+        }, noLoadTimeoutMs)
+      }
+      return wait
+    },
+    cancel() {
+      cleanup()
+    }
+  }
+}
+
+function isInstantLoadUrl(url?: string): boolean {
+  const normalized = normalizeOptionalText(url)?.toLowerCase() || ''
+  return (
+    normalized.startsWith('data:') ||
+    normalized.startsWith('about:') ||
+    normalized.startsWith('blob:') ||
+    normalized.startsWith('chrome:') ||
+    normalized.startsWith('chrome-extension:')
+  )
+}
+
+async function waitForTabReady(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args)),
+  waitOptions?: { noLoadTimeoutMs?: number }
+): Promise<Record<string, unknown>> {
+  try {
+    const load = await loadWatcher.wait(waitOptions)
+    const loaded = load.loaded !== false
+    const network = loaded
+      ? await waitForNetworkIdleBestEffort(chromeApi, tabId, args)
+      : { skipped: true, reason: 'no page load detected' }
+    const tab = await chromeApi.tabs.get(tabId).catch(() => null)
+    return {
+      loaded,
+      load,
+      network_idle: network,
+      tab: tabSummary(tab) || load.tab || null
+    }
+  } catch (error) {
+    loadWatcher.cancel()
+    throw error
+  }
+}
+
+async function waitForTabReadyIfLoading(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  options?: { bestEffort?: boolean; timeoutMs?: number; noLoadTimeoutMs?: number }
+): Promise<Record<string, unknown> | null> {
+  const current = await chromeApi.tabs.get(tabId).catch(() => null)
+  if (current?.status !== 'loading') {
+    return null
+  }
+  const timeout = Math.min(actionTimeoutMs(args), options?.timeoutMs || actionTimeoutMs(args))
+  const watcher = createTabLoadWatcher(chromeApi, tabId, timeout)
+  try {
+    return await waitForTabReady(chromeApi, tabId, args, watcher, {
+      noLoadTimeoutMs: options?.noLoadTimeoutMs
+    })
+  } catch (error) {
+    if (options?.bestEffort) {
+      return { skipped: true, error: errorMessage(error), tab: tabSummary(current) }
+    }
+    throw error
+  }
+}
+
+async function waitForNetworkIdleBestEffort(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<Record<string, unknown>> {
+  if (!chromeApi.debugger?.onEvent) {
+    return { skipped: true, reason: 'debugger event API unavailable' }
+  }
+  try {
+    return (await waitForNetworkIdle(chromeApi, tabId, args)) as Record<string, unknown>
+  } catch (error) {
+    return { skipped: true, error: errorMessage(error) }
+  }
+}
+
+async function waitForPageSettleAfterAction(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  loadWatcher: TabLoadWatcher | null
+): Promise<Record<string, unknown> | null> {
+  if (!loadWatcher) {
+    return null
+  }
+  try {
+    return await waitForTabReady(chromeApi, tabId, args, loadWatcher, {
+      noLoadTimeoutMs: ACTION_SETTLE_NO_LOAD_TIMEOUT_MS
+    })
+  } catch (error) {
+    return { settled: false, error: errorMessage(error) }
+  }
+}
+
+function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
+  function deepQuerySelector(
+    root: Document | ShadowRoot | Element,
+    selector: string
+  ): Element | null {
+    const direct = root.querySelector(selector)
+    if (direct) {
+      return direct
+    }
+    for (const element of Array.from(root.querySelectorAll('*'))) {
+      const shadowRoot = element instanceof HTMLElement ? element.shadowRoot : null
+      if (shadowRoot) {
+        const found = deepQuerySelector(shadowRoot, selector)
+        if (found) {
+          return found
+        }
+      }
+      const frameDocument = childFrameDocument(element)
+      if (frameDocument) {
+        const frameFound = deepQuerySelector(frameDocument, selector)
+        if (frameFound) {
+          return frameFound
+        }
+      }
+    }
+    return null
+  }
+
+  function childFrameDocument(element: Element): Document | null {
+    if (!(element instanceof HTMLIFrameElement)) {
+      return null
+    }
+    try {
+      return element.contentDocument || element.contentWindow?.document || null
+    } catch (_error) {
+      return null
+    }
+  }
+
+  function box(element: Element): Record<string, number> {
+    const rect = element.getBoundingClientRect()
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      left: rect.left
+    }
+  }
+
+  function label(element: Element): string {
+    return String(
+      element.getAttribute('aria-label') ||
+        element.getAttribute('title') ||
+        element.getAttribute('placeholder') ||
+        (element instanceof HTMLElement ? element.innerText : '') ||
+        element.textContent ||
+        element.tagName
+    ).slice(0, 240)
+  }
+
+  let element: Element | null = null
+  if (args.selector) {
+    element = deepQuerySelector(document, args.selector)
+    if (!element) {
+      throw new Error(`selector not found: ${args.selector}`)
+    }
+  } else if (
+    typeof args.x === 'number' &&
+    typeof args.y === 'number' &&
+    Number.isFinite(args.x) &&
+    Number.isFinite(args.y)
+  ) {
+    element = document.elementFromPoint(args.x, args.y)
+  }
+
+  if (!element) {
+    throw new Error('selector or x/y coordinates are required')
+  }
+
+  element.scrollIntoView({ block: 'center', inline: 'center' })
+  const rect = element.getBoundingClientRect()
+  const x =
+    typeof args.x === 'number' && Number.isFinite(args.x)
+      ? args.x
+      : rect.left + Math.max(1, rect.width) / 2
+  const y =
+    typeof args.y === 'number' && Number.isFinite(args.y)
+      ? args.y
+      : rect.top + Math.max(1, rect.height) / 2
+
+  return { x, y, label: label(element), bounding_box: box(element) }
 }
 
 async function activateTab(chromeApi: ChromeApi, tabId: number): Promise<ChromeTabInfo> {
@@ -476,15 +1920,32 @@ export function pageActionDispatcher(
 
     for (const element of Array.from(root.querySelectorAll('*'))) {
       const shadowRoot = element instanceof HTMLElement ? element.shadowRoot : null
-      if (!shadowRoot) {
-        continue
+      if (shadowRoot) {
+        const found = deepQuerySelector(shadowRoot, selector)
+        if (found) {
+          return found
+        }
       }
-      const found = deepQuerySelector(shadowRoot, selector)
-      if (found) {
-        return found
+      const frameDocument = childFrameDocument(element)
+      if (frameDocument) {
+        const frameFound = deepQuerySelector(frameDocument, selector)
+        if (frameFound) {
+          return frameFound
+        }
       }
     }
     return null
+  }
+
+  function childFrameDocument(element: Element): Document | null {
+    if (!(element instanceof HTMLIFrameElement)) {
+      return null
+    }
+    try {
+      return element.contentDocument || element.contentWindow?.document || null
+    } catch (_error) {
+      return null
+    }
   }
 
   function queryRequired(selector?: string): Element {
@@ -577,6 +2038,34 @@ export function pageActionDispatcher(
     return element
   }
 
+  function editableElement(selector = args.selector): Element {
+    if (selector) {
+      return queryRequired(selector)
+    }
+    const active = document.activeElement
+    const frameActive = active ? childFrameDocument(active)?.activeElement : null
+    if (frameActive && frameActive !== frameActive.ownerDocument.body) {
+      return frameActive
+    }
+    if (active && active !== document.body && active !== document.documentElement) {
+      return active
+    }
+    throw new Error('type_text requires selector or an active editable element')
+  }
+
+  function selectElement(selector = args.selector): HTMLSelectElement {
+    const element = queryRequired(selector)
+    if (element instanceof HTMLSelectElement) {
+      return element
+    }
+    const frameDocument = childFrameDocument(element)
+    const nestedSelect = frameDocument?.querySelector('select')
+    if (nestedSelect instanceof HTMLSelectElement) {
+      return nestedSelect
+    }
+    throw new Error(`selector is not a select element: ${selector}`)
+  }
+
   function centerOf(element: Element): { x: number; y: number } {
     const rect = element.getBoundingClientRect()
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
@@ -596,6 +2085,19 @@ export function pageActionDispatcher(
         view: window
       })
     )
+  }
+
+  function setElementValue(
+    element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+    value: string
+  ): void {
+    const prototype = Object.getPrototypeOf(element)
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value')
+    if (descriptor?.set) {
+      descriptor.set.call(element, value)
+    } else {
+      element.value = value
+    }
   }
 
   function scrollBehavior(): ScrollBehavior {
@@ -738,8 +2240,106 @@ export function pageActionDispatcher(
     }
   }
 
+  function scriptWithImplicitReturn(code: string): string | null {
+    const body = code.trim().replace(/;+$/, '')
+    if (!body) {
+      return null
+    }
+    const splitAt = lastTopLevelSemicolon(body)
+    if (splitAt < 0) {
+      return null
+    }
+    const prefix = body.slice(0, splitAt + 1)
+    const tail = body.slice(splitAt + 1).trim()
+    if (!tail || !canImplicitlyReturn(tail)) {
+      return null
+    }
+    return `${prefix}\nreturn (${tail});`
+  }
+
+  function canImplicitlyReturn(statement: string): boolean {
+    return !/^(break|catch|class|const|continue|do|export|finally|for|function|if|import|let|return|switch|throw|try|var|while)\b/.test(
+      statement
+    )
+  }
+
+  function lastTopLevelSemicolon(code: string): number {
+    let quote: string | null = null
+    let escaped = false
+    let lineComment = false
+    let blockComment = false
+    let parenDepth = 0
+    let braceDepth = 0
+    let bracketDepth = 0
+    let last = -1
+
+    for (let index = 0; index < code.length; index += 1) {
+      const char = code[index]
+      const next = code[index + 1]
+
+      if (lineComment) {
+        if (char === '\n' || char === '\r') {
+          lineComment = false
+        }
+        continue
+      }
+      if (blockComment) {
+        if (char === '*' && next === '/') {
+          blockComment = false
+          index += 1
+        }
+        continue
+      }
+      if (quote) {
+        if (escaped) {
+          escaped = false
+        } else if (char === '\\') {
+          escaped = true
+        } else if (char === quote) {
+          quote = null
+        }
+        continue
+      }
+
+      if (char === '/' && next === '/') {
+        lineComment = true
+        index += 1
+        continue
+      }
+      if (char === '/' && next === '*') {
+        blockComment = true
+        index += 1
+        continue
+      }
+      if (char === '"' || char === "'" || char === '`') {
+        quote = char
+        continue
+      }
+      if (char === '(') {
+        parenDepth += 1
+      } else if (char === ')') {
+        parenDepth = Math.max(0, parenDepth - 1)
+      } else if (char === '{') {
+        braceDepth += 1
+      } else if (char === '}') {
+        braceDepth = Math.max(0, braceDepth - 1)
+      } else if (char === '[') {
+        bracketDepth += 1
+      } else if (char === ']') {
+        bracketDepth = Math.max(0, bracketDepth - 1)
+      } else if (char === ';' && parenDepth === 0 && braceDepth === 0 && bracketDepth === 0) {
+        last = index
+      }
+    }
+
+    return last
+  }
+
   function compileScriptBody(code: string): (args: BrowserActionArgs) => unknown {
-    return new Function('args', `"use strict";\n${code}`) as (args: BrowserActionArgs) => unknown
+    const implicitReturn = scriptWithImplicitReturn(code)
+    return new Function('args', `"use strict";\n${implicitReturn || code}`) as (
+      args: BrowserActionArgs
+    ) => unknown
   }
 
   function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -762,27 +2362,87 @@ export function pageActionDispatcher(
     return isPromiseLike(result) ? Promise.resolve(result).then(scriptResult) : scriptResult(result)
   }
 
-  async function copyText(text: string): Promise<Record<string, unknown>> {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch (_error) {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.focus()
-      textarea.select()
-      const copied = document.execCommand('copy')
-      textarea.remove()
-      if (!copied) {
-        throw new Error('copy command failed')
-      }
+  function copyText(text: string): Record<string, unknown> | Promise<Record<string, unknown>> {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const copied = document.execCommand('copy')
+    textarea.remove()
+    if (copied) {
+      return { copied: true, length: text.length, method: 'execCommand' }
     }
-    return { copied: true, length: text.length }
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard
+        .writeText(text)
+        .then(() => ({ copied: true, length: text.length, method: 'clipboard' }))
+    }
+    throw new Error('copy command failed')
   }
 
   switch (args.action) {
+    case 'annotate_viewport': {
+      document.getElementById('__anda_viewport_annotations')?.remove()
+      const container = document.createElement('div')
+      container.id = '__anda_viewport_annotations'
+      container.style.position = 'fixed'
+      container.style.inset = '0'
+      container.style.pointerEvents = 'none'
+      container.style.zIndex = '2147483647'
+      const candidates = Array.from(
+        document.querySelectorAll(
+          "a[href], button, input, textarea, select, summary, [role='button'], [role='link'], [role='menuitem'], [tabindex]:not([tabindex='-1'])"
+        )
+      )
+        .filter(visible)
+        .filter((element) => {
+          const rect = element.getBoundingClientRect()
+          return (
+            rect.bottom >= 0 &&
+            rect.right >= 0 &&
+            rect.top <= innerHeight &&
+            rect.left <= innerWidth
+          )
+        })
+        .slice(0, 120)
+      const markers = candidates.map((element, index) => {
+        const markerId = index + 1
+        const rect = element.getBoundingClientRect()
+        const badge = document.createElement('div')
+        badge.textContent = String(markerId)
+        badge.style.position = 'fixed'
+        badge.style.left = `${Math.max(0, rect.left)}px`
+        badge.style.top = `${Math.max(0, rect.top)}px`
+        badge.style.minWidth = '18px'
+        badge.style.height = '18px'
+        badge.style.padding = '0 5px'
+        badge.style.borderRadius = '9px'
+        badge.style.background = '#f59e0b'
+        badge.style.color = '#111827'
+        badge.style.border = '1px solid #111827'
+        badge.style.font = '700 12px/18px system-ui, sans-serif'
+        badge.style.textAlign = 'center'
+        badge.style.boxShadow = '0 1px 4px rgba(0,0,0,0.35)'
+        container.appendChild(badge)
+        return {
+          marker: markerId,
+          selector: cssPath(element),
+          label: elementLabel(element),
+          tag: element.tagName.toLowerCase(),
+          bounding_box: elementBox(element)
+        }
+      })
+      document.body.appendChild(container)
+      return { annotated: true, count: markers.length, markers }
+    }
+    case 'clear_annotations': {
+      const existing = document.getElementById('__anda_viewport_annotations')
+      existing?.remove()
+      return { cleared: Boolean(existing) }
+    }
     case 'snapshot': {
       const links = args.include_links
         ? Array.from(document.querySelectorAll('a[href]'))
@@ -917,7 +2577,7 @@ export function pageActionDispatcher(
       return { hovered: true, selector: args.selector, label: elementLabel(element) }
     }
     case 'type_text': {
-      const element = queryRequired(args.selector)
+      const element = editableElement()
       element.scrollIntoView({ block: 'center', inline: 'center' })
       if (element instanceof HTMLElement) {
         element.focus()
@@ -929,9 +2589,13 @@ export function pageActionDispatcher(
         element instanceof HTMLTextAreaElement ||
         element instanceof HTMLSelectElement
       ) {
-        element.value = args.text || ''
+        setElementValue(element, args.text || '')
       } else {
-        throw new Error(`selector is not editable: ${args.selector}`)
+        throw new Error(
+          args.selector
+            ? `selector is not editable: ${args.selector}`
+            : 'active element is not editable'
+        )
       }
       element.dispatchEvent(
         new InputEvent('input', {
@@ -941,14 +2605,16 @@ export function pageActionDispatcher(
         })
       )
       element.dispatchEvent(new Event('change', { bubbles: true }))
-      return { typed: true, selector: args.selector, length: String(args.text || '').length }
+      return {
+        typed: true,
+        selector: args.selector || cssPath(element),
+        active_element: !args.selector,
+        length: String(args.text || '').length
+      }
     }
     case 'select_dropdown': {
-      const element = queryRequired(args.selector)
+      const element = selectElement()
       element.scrollIntoView({ block: 'center', inline: 'center' })
-      if (!(element instanceof HTMLSelectElement)) {
-        throw new Error(`selector is not a select element: ${args.selector}`)
-      }
       const value = String(args.value || '')
       const option = Array.from(element.options).find(
         (option) => option.value === value || option.label === value || option.text === value
@@ -956,7 +2622,7 @@ export function pageActionDispatcher(
       if (!option) {
         throw new Error(`select option not found: ${value}`)
       }
-      element.value = option.value
+      setElementValue(element, option.value)
       element.dispatchEvent(new Event('input', { bubbles: true }))
       element.dispatchEvent(new Event('change', { bubbles: true }))
       return { selected: true, selector: args.selector, value: option.value, label: option.label }
@@ -975,9 +2641,23 @@ export function pageActionDispatcher(
       return { scrolled: true, amount, scroll_y: window.scrollY }
     }
     case 'scroll_to': {
-      const element = queryRequired(args.selector)
-      element.scrollIntoView({ block: 'center', inline: 'center', behavior: scrollBehavior() })
-      return { scrolled_to: true, selector: args.selector, label: elementLabel(element) }
+      if (args.selector) {
+        const element = queryRequired(args.selector)
+        element.scrollIntoView({ block: 'center', inline: 'center', behavior: scrollBehavior() })
+        return { scrolled_to: true, selector: args.selector, label: elementLabel(element) }
+      }
+      const point = pointFromArgs()
+      if (!point) {
+        throw new Error('scroll_to requires selector or x/y coordinates')
+      }
+      window.scrollTo({ left: point.x, top: point.y, behavior: scrollBehavior() })
+      return {
+        scrolled_to: true,
+        x: point.x,
+        y: point.y,
+        scroll_x: window.scrollX,
+        scroll_y: window.scrollY
+      }
     }
     case 'drag_and_drop': {
       const source = queryRequired(args.from_selector)

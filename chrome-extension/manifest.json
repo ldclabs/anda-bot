@@ -7,12 +7,16 @@
   "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
+    "browsingData",
+    "cookies",
     "debugger",
+    "downloads",
     "scripting",
     "sidePanel",
     "storage",
     "tabs",
     "tts",
+    "webNavigation",
     "windows"
   ],
   "host_permissions": ["<all_urls>"],
