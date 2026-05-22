@@ -2,6 +2,91 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.0] — 2026-05-22
+
+The Chrome Extension release — Anda Bot now lives in your browser.
+
+### Highlights
+
+- **Chrome Extension (Anda Bot)**: a full-featured browser side panel that connects to the Anda Bot daemon via WebSocket. Chat with your agent, manage conversations and channels, browse files, run slash commands, and control browser tabs — all without leaving Chrome. Published to the Chrome Web Store.
+- **Browser Tools**: four focused tools (`chrome_tabs`, `chrome_page`, `chrome_input`, `chrome_script`) give the agent complete control over the browser — navigation, page inspection, screenshots, accessibility trees, PDF printing, form interaction, JavaScript execution, downloads, cookies, cache management, viewport annotations, file uploads, and dialog handling.
+- **Auto-Update System**: end-to-end self-update spanning daemon, TUI, Chrome extension, and gateway — checks GitHub releases, downloads platform assets, verifies SHA256 checksums, and installs with restart.
+- **Multimodal Media Understanding**: image, video, and audio understanding via model-label routing, with automatic model dispatch based on `image_understanding`, `video_understanding`, or `audio_understanding` labels.
+- **Voice in the Browser**: voice input/output, thinking detail display, and voice orb UI in the extension side panel.
+
+### Chrome Extension — Features
+
+- **Side panel UI**: SvelteKit-based side panel with chat, channels, tasks, and settings views.
+- **Multi-conversation history**: browse, switch, and manage conversations with real-time polling and local message reconciliation.
+- **Channel management**: create, switch, and delete channels with alert dialog confirmation.
+- **Slash command palette**: `/new`, `/stop`, and skill commands accessible via keyboard shortcut.
+- **Voice I/O**: speech-to-text input, text-to-speech playback, and voice orb visualization.
+- **Thinking display**: expandable reasoning traces with configurable detail level.
+- **Submit key modes**: choose between "Enter sends" or "Ctrl/Cmd+Enter sends" in settings.
+- **Onboarding flow**: guided first-run experience for new users.
+- **i18n**: 6 languages — English, Chinese (Simplified), Russian, Arabic, French, Spanish.
+- **Runtime model switching**: model selector with live daemon model list and refresh.
+- **Auto-update UI**: notification banner when an update is downloaded, with install-and-restart button.
+- **WebSocket transient recovery**: automatic reconnection on transient network errors.
+- **Vitest test suite**: unit tests for polling, side panel, and voice modules.
+
+### Browser Tools — Capabilities
+
+- **Tab management**: list, open, close, switch, navigate, go back/forward, reload.
+- **Page inspection**: snapshot (with links/forms), extract text, screenshot (viewport and full-page), get full HTML, accessibility tree, find in page, viewport size.
+- **Viewport annotations**: highlight elements visually via CDP Overlay for annotated screenshots.
+- **PDF printing**: generate PDFs from any tab via CDP `Page.printToPDF`.
+- **Input interaction**: click, type, press key, scroll, scroll-to (selector or coordinates), hover, drag-and-drop, select dropdown, upload files, copy to clipboard.
+- **JavaScript execution**: CSP-resistant execution via Chrome Debugger API bridge, supporting both isolated and main worlds.
+- **Downloads**: trigger downloads, list active downloads with state filtering, cancel, open completed.
+- **Cookies**: get, set, delete with full attribute support (domain, path, secure, httpOnly, sameSite, expiration).
+- **Cache management**: clear browsing data (cache, cacheStorage, indexedDB, localStorage, service workers) with optional origin filtering.
+- **Dialog handling**: accept or dismiss JavaScript alerts/confirms/prompts with optional prompt text.
+- **Screenshot materialization**: screenshots auto-saved to disk and paths injected into results for downstream `image_understanding`.
+
+### Engine
+
+- **Multimodal media understanding**: new `multimodal.rs` module (894 lines) handles media resource extraction, model dispatch by label, and content injection into the system prompt.
+- **OpenAI strict mode compliance**: all tool schemas pass OpenAI strict validation — `additionalProperties: false`, optional fields use `["type","null"]`, no unsupported keywords. Added schema-validation tests.
+- **Codex OAuth token auto-loading**: reads `~/.codex/auth.json` and injects `access_token` when `api_base` points to Codex backend.
+- **Datetime context injection**: RFC 3339 `Current datetime` field in implicit context for temporal awareness.
+- **ContentPart migration**: steering and follow-up messages use `Vec<ContentPart>` instead of string concatenation, enabling multimodal content passthrough.
+- **Hippocampus renamed to Brain**: all internal modules, file paths, i18n, and documentation updated to align with the `anda-brain` standalone crate.
+- **Conversations API**: status tracking, agent-aware formatting, and enhanced metadata.
+- **Cron metadata refactored**: `cron_job_id` replaces full job content string, reducing payload size.
+- **System extra content injection**: structured `ContentPart` with `[$system: ...]` prefix replaces ad-hoc string formatting.
+- **Compaction threshold simplified**: 80% of context window with 100K token minimum.
+- **Config context windows**: reduced from 1,000,000 to 400,000 to match actual provider limits.
+
+### Auto-Update System
+
+- **Daemon**: `AutoUpdater` checks GitHub releases API, downloads platform-specific assets, verifies SHA256 checksums, installs binaries, and restarts.
+- **REST endpoints**: `/auto_update`, `/auto_update/check`, `/auto_update/install_and_restart` with bearer-token auth.
+- **WebSocket RPC**: `auto_update_status`, `auto_update_check`, `auto_update_install_and_restart` for the extension.
+- **TUI integration**: async background check on chat init, notice banner in status area.
+- **Extension UI**: amber notification banner with version tag and install button.
+- **State machine**: persistent update state in `AndaDB` across daemon restarts.
+
+### CLI & TUI
+
+- **`/new` command**: `/new [prompt]` starts a fresh conversation across CLI, TUI, and extension. Stale conversation detection prefixes output with `[Previous conversation #N]`.
+- **TUI scrollback purge**: `ClearType::Purge` clears terminal scrollback on `/new`.
+- **Website pages**: privacy, terms, and support pages added.
+
+### Changed
+
+- **Browser tool split**: monolithic `chrome_browser` replaced by four focused tools with minimal schemas and independent timeout handling.
+- **Chrome extension modularized**: `client.ts` (2,099 lines) split into channel, side-panel, conversations, polling, voice, types, commands, and chrome modules. `service_worker.ts` (1,884 lines) split into browser-actions, speech, voice, audio, TTS, settings, and types.
+- **Manifest permissions**: `browsingData`, `cookies`, `downloads`, `webNavigation` added.
+- **Dependencies**: `anda_brain` 0.6.0→0.6.1, `anda_core` 0.12.2→0.12.3, `anda_engine` 0.12.16→0.12.19, `weixin-agent` 0.1.0→0.2.0 (git→crates.io).
+
+### Stats
+
+- 198 files changed, +25,377 / -1,913 lines
+- 32 commits across 8 patch releases (0.7.1 → 0.7.8)
+- Chrome extension: ~5,000+ lines of Svelte/TypeScript
+- Browser tools: ~3,000+ lines across Rust backend and TypeScript service worker
+
 ## [0.7.8] — 2026-05-22
 
 ### Added
