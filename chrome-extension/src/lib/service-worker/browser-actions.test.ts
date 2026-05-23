@@ -476,6 +476,149 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
     expect((second as Record<string, unknown>).result).toBe('(location.href)')
     expect(maxConcurrentAttached).toBe(1)
     expect(attach).toHaveBeenCalledTimes(2)
-    expect(detach).toHaveBeenCalledTimes(4)
+    expect(detach).toHaveBeenCalledTimes(2)
+  })
+
+  it('reattaches and retries debugger commands after transient detachment', async () => {
+    let evaluateAttempts = 0
+    const attach = vi.fn(async () => undefined)
+    const detach = vi.fn(async () => undefined)
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
+        if (method === 'Runtime.evaluate') {
+          evaluateAttempts += 1
+          if (evaluateAttempts === 1) {
+            throw new Error('Debugger is not attached to the tab with id: 123')
+          }
+          return { result: { type: 'string', value: params?.expression } }
+        }
+        return {}
+      }
+    )
+    const chromeApi = createChromeApi({
+      attach,
+      detach,
+      sendCommand: sendCommand as DebuggerSendCommand
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'execute_javascript', code: 'document.title' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.result).toBe('(document.title)')
+    expect(attach).toHaveBeenCalledTimes(2)
+    expect(detach).toHaveBeenCalledTimes(1)
+    expect(evaluateAttempts).toBe(2)
+  })
+})
+
+describe('executeBrowserAction native input', () => {
+  it('dispatches touch events for clicks on mobile-like pages', async () => {
+    const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, _params?: Record<string, unknown>) => {
+        if (method === 'Runtime.evaluate') {
+          return { result: { type: 'boolean', value: true } }
+        }
+        return {}
+      }
+    )
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      tab
+    )
+    chromeApi.tabs.get = vi.fn(async () => tab)
+    chromeApi.scripting.executeScript = vi.fn(async () => [
+      {
+        result: {
+          x: 12,
+          y: 34,
+          label: 'Tap me',
+          bounding_box: { x: 0, y: 0, width: 24, height: 68 }
+        }
+      }
+    ]) as ChromeApi['scripting']['executeScript']
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'click', selector: 'button' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    const inputEvents = sendCommand.mock.calls
+      .filter((call) => String(call[1]).startsWith('Input.'))
+      .map((call) => [call[1], (call[2] as Record<string, unknown> | undefined)?.type])
+
+    expect(result).toMatchObject({ clicked: true, native: true, x: 12, y: 34 })
+    expect(inputEvents).toEqual([
+      ['Input.dispatchMouseEvent', 'mouseMoved'],
+      ['Input.dispatchTouchEvent', 'touchStart'],
+      ['Input.dispatchTouchEvent', 'touchEnd']
+    ])
+  })
+
+  it('uses native CDP text insertion for editable text targets', async () => {
+    const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, _params?: Record<string, unknown>) => {
+        if (method === 'Runtime.evaluate') {
+          return { result: { type: 'boolean', value: false } }
+        }
+        return {}
+      }
+    )
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      tab
+    )
+    chromeApi.tabs.get = vi.fn(async () => tab)
+    chromeApi.scripting.executeScript = vi.fn(async () => [
+      {
+        result: {
+          native_text_input: true,
+          x: 20,
+          y: 30,
+          selector: '#name',
+          label: 'Name',
+          bounding_box: { x: 10, y: 10, width: 100, height: 40 }
+        }
+      }
+    ]) as ChromeApi['scripting']['executeScript']
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'type_text', selector: '#name', text: 'Ada' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    const insertTextCall = sendCommand.mock.calls.find((call) => call[1] === 'Input.insertText')
+    const selectAllCalls = sendCommand.mock.calls.filter(
+      (call) =>
+        call[1] === 'Input.dispatchKeyEvent' &&
+        Array.isArray((call[2] as Record<string, unknown> | undefined)?.commands)
+    )
+
+    expect(result).toMatchObject({ typed: true, native: true, selector: '#name', length: 3 })
+    expect(selectAllCalls).toHaveLength(2)
+    expect(insertTextCall?.[2]).toEqual({ text: 'Ada' })
   })
 })

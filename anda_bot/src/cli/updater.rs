@@ -243,15 +243,12 @@ pub(crate) fn release_download_base_url(latest_tag: &str) -> String {
 }
 
 pub(crate) async fn fetch_latest_version(client: &reqwest::Client) -> Result<String, BoxError> {
-    let url = format!("https://github.com/{REPO}/releases/latest");
-
-    if let Ok(response) = client.head(&url).send().await
-        && let Some(version) = release_version_from_response(&response)
-    {
+    if let Some(version) = fetch_latest_version_from_api(client).await? {
         return Ok(version);
     }
 
-    let response = client.get(&url).send().await?;
+    let url = format!("https://github.com/{REPO}/releases/latest");
+    let response = latest_release_request(client, &url).send().await?;
     if let Some(version) = release_version_from_response(&response) {
         return Ok(version);
     }
@@ -261,6 +258,53 @@ pub(crate) async fn fetch_latest_version(client: &reqwest::Client) -> Result<Str
         response.status()
     )
     .into())
+}
+
+async fn fetch_latest_version_from_api(
+    client: &reqwest::Client,
+) -> Result<Option<String>, BoxError> {
+    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    let response = match latest_release_request(client, &url)
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => return Ok(None),
+    };
+
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+
+    let content = response.text().await?;
+    Ok(release_version_from_github_api(&content))
+}
+
+fn latest_release_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
+    client
+        .get(url)
+        .header(header::CACHE_CONTROL, "no-cache, no-store, max-age=0")
+        .header(header::PRAGMA, "no-cache")
+        .header(
+            header::USER_AGENT,
+            format!("{BINARY_NAME}/{}", env!("CARGO_PKG_VERSION")),
+        )
+}
+
+fn release_version_from_github_api(content: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct GitHubRelease {
+        tag_name: String,
+    }
+
+    let release: GitHubRelease = serde_json::from_str(content).ok()?;
+    let tag = release.tag_name.trim();
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
 }
 
 fn release_version_from_response(response: &reqwest::Response) -> Option<String> {
@@ -700,6 +744,22 @@ mod tests {
         );
         assert_eq!(
             release_version_from_location("https://github.com/ldclabs/anda-bot/releases/latest"),
+            None
+        );
+    }
+
+    #[test]
+    fn release_version_parser_reads_github_api_payload() {
+        assert_eq!(
+            release_version_from_github_api(r#"{"tag_name":"v0.8.0"}"#),
+            Some("v0.8.0".to_string())
+        );
+        assert_eq!(
+            release_version_from_github_api(r#"{"tag_name":"   "}"#),
+            None
+        );
+        assert_eq!(
+            release_version_from_github_api(r#"{"name":"v0.8.0"}"#),
             None
         );
     }

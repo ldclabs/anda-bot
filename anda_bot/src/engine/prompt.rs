@@ -46,7 +46,7 @@ pub enum PromptCommand {
     // '/stop' | '/cancel', case-insensitive.
     // Cancels immediately. If a prompt is provided, it becomes the failed_reason.
     Stop {
-        prompt: Option<String>,
+        prompt: String,
     },
     // '/new' | '/clear', case-insensitive.
     // Starts a new conversation, complete the current conversation if it exists, and optionally uses the provided prompt as the first message in the new conversation.
@@ -88,7 +88,7 @@ impl From<String> for PromptCommand {
             }),
             "skill" => parse_skill_command(rest, trimmed),
             "stop" | "cancel" => Self::Stop {
-                prompt: (!trimmed.is_empty()).then(|| prompt.trim().to_string()),
+                prompt: prompt.trim().to_string(),
             },
             "new" | "clear" => Self::New {
                 prompt: (!rest.is_empty()).then(|| prompt.trim().to_string()),
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(
             PromptCommand::from("/stop because it is wrong".to_string()),
             PromptCommand::Stop {
-                prompt: Some("/stop because it is wrong".to_string())
+                prompt: "/stop because it is wrong".to_string()
             }
         );
         assert_eq!(

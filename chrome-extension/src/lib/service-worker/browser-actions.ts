@@ -14,10 +14,15 @@ type BrowserActionDependencies = {
 
 const debuggerActionLocks = new Map<number, Promise<void>>()
 const DEBUGGER_PROTOCOL_VERSION = '1.3'
+const DEBUGGER_COMMAND_MAX_RETRIES = 2
 const NETWORK_IDLE_QUIET_MS = 500
 const DEFAULT_PAGE_READY_TIMEOUT_MS = 30_000
 const PRE_ACTION_LOADING_TIMEOUT_MS = 1_500
 const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 export async function executeBrowserAction(
   command: BrowserCommand,
@@ -287,6 +292,22 @@ export async function executeBrowserAction(
       result,
       await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
     )
+  }
+
+  if (args.action === 'type_text' && !args.frame_id && chromeApi.debugger) {
+    let result: BrowserActionResult | null
+    try {
+      result = await dispatchNativeTextInput(chromeApi, tabId, args)
+    } catch (error) {
+      postActionLoadWatcher?.cancel()
+      throw error
+    }
+    if (result) {
+      return withPageReady(
+        result,
+        await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+      )
+    }
   }
 
   if (args.action === 'press_key' && !args.frame_id && chromeApi.debugger) {
@@ -775,6 +796,9 @@ function lastTopLevelSemicolon(code: string): number {
 }
 
 type DebuggerTarget = { tabId: number }
+type AttachedDebuggerTarget = DebuggerTarget & {
+  sendCommand<Result = unknown>(method: string, commandParams?: object): Promise<Result>
+}
 type RuntimeRemoteObject = {
   type?: string
   subtype?: string
@@ -810,24 +834,86 @@ type DomQuerySelectorResult = { nodeId?: number }
 async function withAttachedDebugger<T>(
   chromeApi: ChromeApi,
   tabId: number,
-  task: (target: DebuggerTarget) => Promise<T>
+  task: (target: AttachedDebuggerTarget) => Promise<T>
 ): Promise<T> {
   if (!chromeApi.debugger) {
     throw new Error('Chrome debugger API is unavailable; enable the debugger permission')
   }
 
   const target = { tabId }
-  let attached = false
+  let shouldDetach = false
+  const ensureAttached = async () => {
+    await attachDebuggerIfNeeded(chromeApi, target)
+    shouldDetach = true
+  }
+
   try {
-    await chromeApi.debugger.detach(target).catch(() => undefined)
-    await chromeApi.debugger.attach(target, DEBUGGER_PROTOCOL_VERSION)
-    attached = true
-    return await task(target)
+    await ensureAttached()
+    const attachedTarget: AttachedDebuggerTarget = {
+      ...target,
+      sendCommand: (method, commandParams) =>
+        sendAttachedDebuggerCommand(chromeApi, target, method, commandParams, ensureAttached)
+    }
+    return await task(attachedTarget)
   } finally {
-    if (attached) {
+    if (shouldDetach) {
       await chromeApi.debugger.detach(target).catch(() => undefined)
     }
   }
+}
+
+async function attachDebuggerIfNeeded(chromeApi: ChromeApi, target: DebuggerTarget): Promise<void> {
+  try {
+    await chromeApi.debugger!.attach(target, DEBUGGER_PROTOCOL_VERSION)
+  } catch (error) {
+    if (isDebuggerAlreadyAttachedError(error)) {
+      return
+    }
+    throw error
+  }
+}
+
+async function sendAttachedDebuggerCommand<Result = unknown>(
+  chromeApi: ChromeApi,
+  target: DebuggerTarget,
+  method: string,
+  commandParams: object | undefined,
+  ensureAttached: () => Promise<void>,
+  retryCount = 0
+): Promise<Result> {
+  try {
+    return await chromeApi.debugger!.sendCommand<Result>(
+      target,
+      method,
+      commandParams as Record<string, unknown> | undefined
+    )
+  } catch (error) {
+    if (isDebuggerDetachError(error) && retryCount < DEBUGGER_COMMAND_MAX_RETRIES) {
+      await ensureAttached()
+      return sendAttachedDebuggerCommand<Result>(
+        chromeApi,
+        target,
+        method,
+        commandParams,
+        ensureAttached,
+        retryCount + 1
+      )
+    }
+    throw error
+  }
+}
+
+function isDebuggerAlreadyAttachedError(error: unknown): boolean {
+  return errorMessage(error).includes('Another debugger is already attached')
+}
+
+function isDebuggerDetachError(error: unknown): boolean {
+  const message = errorMessage(error)
+  return (
+    message.includes('Debugger is not attached') ||
+    message.includes('Cannot access a Target') ||
+    message.includes('No target with given id')
+  )
 }
 
 async function executeJavaScriptWithDebugger(
@@ -871,19 +957,18 @@ async function executeJavaScriptWithAttachedDebugger(
   }
 
   return withAttachedDebugger(chromeApi, tabId, async (target) => {
-    await chromeApi.debugger!.sendCommand(target, 'Runtime.enable').catch(() => undefined)
-    const result = await evaluateDebuggerJavaScript(chromeApi, target, code)
+    await target.sendCommand('Runtime.enable').catch(() => undefined)
+    const result = await evaluateDebuggerJavaScript(target, code)
     return { executed: true, world: 'debugger', result }
   })
 }
 
 async function evaluateDebuggerJavaScript(
-  chromeApi: ChromeApi,
-  target: DebuggerTarget,
+  target: AttachedDebuggerTarget,
   code: string
 ): Promise<unknown> {
   const expression = code.trim().replace(/;+$/, '')
-  const expressionResult = await sendDebuggerRuntimeEvaluate(chromeApi, target, `(${expression})`)
+  const expressionResult = await sendDebuggerRuntimeEvaluate(target, `(${expression})`)
   if (!isSyntaxException(expressionResult.exceptionDetails)) {
     return debuggerEvaluationValue(expressionResult)
   }
@@ -891,7 +976,6 @@ async function evaluateDebuggerJavaScript(
   const implicitReturn = scriptWithImplicitReturn(code)
   if (implicitReturn) {
     const implicitResult = await sendDebuggerRuntimeEvaluate(
-      chromeApi,
       target,
       `(function () {\n${implicitReturn}\n})()`
     )
@@ -900,17 +984,12 @@ async function evaluateDebuggerJavaScript(
     }
   }
 
-  const bodyResult = await sendDebuggerRuntimeEvaluate(
-    chromeApi,
-    target,
-    `(function () {\n${code}\n})()`
-  )
+  const bodyResult = await sendDebuggerRuntimeEvaluate(target, `(function () {\n${code}\n})()`)
   return debuggerEvaluationValue(bodyResult)
 }
 
 function sendDebuggerRuntimeEvaluate(
-  chromeApi: ChromeApi,
-  target: DebuggerTarget,
+  target: AttachedDebuggerTarget,
   expression: string
 ): Promise<RuntimeEvaluateResult> {
   const params: RuntimeEvaluateParams = {
@@ -920,7 +999,7 @@ function sendDebuggerRuntimeEvaluate(
     userGesture: true,
     replMode: true
   }
-  return chromeApi.debugger!.sendCommand<RuntimeEvaluateResult>(target, 'Runtime.evaluate', params)
+  return target.sendCommand<RuntimeEvaluateResult>('Runtime.evaluate', params)
 }
 
 function isSyntaxException(details?: RuntimeExceptionDetails): boolean {
@@ -961,11 +1040,11 @@ async function captureScreenshotWithDebugger(
   const active = await activateTab(chromeApi, tabId).catch(() => tab)
   const capture = await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
+      await target.sendCommand('Page.enable').catch(() => undefined)
       const clip = args.selector
-        ? await elementScreenshotClip(chromeApi, target, args.selector)
+        ? await elementScreenshotClip(target, args.selector)
         : args.full_page
-          ? await fullPageScreenshotClip(chromeApi, target)
+          ? await fullPageScreenshotClip(target)
           : undefined
       const params: Record<string, unknown> = {
         format: 'png',
@@ -975,8 +1054,7 @@ async function captureScreenshotWithDebugger(
       if (clip) {
         params.clip = clip
       }
-      const result = await chromeApi.debugger!.sendCommand<PageCaptureScreenshotResult>(
-        target,
+      const result = await target.sendCommand<PageCaptureScreenshotResult>(
         'Page.captureScreenshot',
         params
       )
@@ -1000,8 +1078,7 @@ async function captureScreenshotWithDebugger(
 }
 
 async function elementScreenshotClip(
-  chromeApi: ChromeApi,
-  target: DebuggerTarget,
+  target: AttachedDebuggerTarget,
   selector: string
 ): Promise<Record<string, number>> {
   const script = `(() => {
@@ -1029,7 +1106,7 @@ async function elementScreenshotClip(
       scale: 1
     };
   })()`
-  const clip = await evaluateDebuggerJavaScript(chromeApi, target, script)
+  const clip = await evaluateDebuggerJavaScript(target, script)
   if (!isScreenshotClip(clip)) {
     throw new Error(`selector not found or has no visible bounds: ${selector}`)
   }
@@ -1037,13 +1114,9 @@ async function elementScreenshotClip(
 }
 
 async function fullPageScreenshotClip(
-  chromeApi: ChromeApi,
-  target: DebuggerTarget
+  target: AttachedDebuggerTarget
 ): Promise<Record<string, number>> {
-  const metrics = await chromeApi.debugger!.sendCommand<PageLayoutMetricsResult>(
-    target,
-    'Page.getLayoutMetrics'
-  )
+  const metrics = await target.sendCommand<PageLayoutMetricsResult>('Page.getLayoutMetrics')
   const contentSize = metrics.contentSize || {}
   return {
     x: 0,
@@ -1071,11 +1144,8 @@ async function getAccessibilityTree(
 ): Promise<BrowserActionResult> {
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'Accessibility.enable').catch(() => undefined)
-      const result = await chromeApi.debugger!.sendCommand<{ nodes?: unknown[] }>(
-        target,
-        'Accessibility.getFullAXTree'
-      )
+      await target.sendCommand('Accessibility.enable').catch(() => undefined)
+      const result = await target.sendCommand<{ nodes?: unknown[] }>('Accessibility.getFullAXTree')
       const nodes = Array.isArray(result.nodes) ? result.nodes : []
       const maxNodes = Math.max(50, Math.min(1000, positiveInteger(args.amount) || 500))
       return {
@@ -1135,15 +1205,11 @@ async function printToPdf(
 ): Promise<BrowserActionResult> {
   const result = await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
-      const pdf = await chromeApi.debugger!.sendCommand<PagePrintToPdfResult>(
-        target,
-        'Page.printToPDF',
-        {
-          printBackground: true,
-          preferCSSPageSize: true
-        }
-      )
+      await target.sendCommand('Page.enable').catch(() => undefined)
+      const pdf = await target.sendCommand<PagePrintToPdfResult>('Page.printToPDF', {
+        printBackground: true,
+        preferCSSPageSize: true
+      })
       if (!pdf.data) {
         throw new Error('Page.printToPDF returned no PDF data')
       }
@@ -1175,7 +1241,7 @@ async function waitForNetworkIdle(
 
 async function waitForNetworkIdleWithAttachedDebugger(
   chromeApi: ChromeApi,
-  target: DebuggerTarget,
+  target: AttachedDebuggerTarget,
   timeout: number
 ): Promise<BrowserActionResult> {
   const event = chromeApi.debugger?.onEvent
@@ -1259,12 +1325,12 @@ async function waitForNetworkIdleWithAttachedDebugger(
   }, timeout)
 
   try {
-    await chromeApi.debugger!.sendCommand(target, 'Network.enable')
+    await target.sendCommand('Network.enable')
     scheduleQuietCheck()
     return await wait
   } finally {
     cleanup()
-    await chromeApi.debugger!.sendCommand(target, 'Network.disable').catch(() => undefined)
+    await target.sendCommand('Network.disable').catch(() => undefined)
   }
 }
 
@@ -1275,8 +1341,8 @@ async function handleDialog(
 ): Promise<BrowserActionResult> {
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'Page.enable').catch(() => undefined)
-      await chromeApi.debugger!.sendCommand(target, 'Page.handleJavaScriptDialog', {
+      await target.sendCommand('Page.enable').catch(() => undefined)
+      await target.sendCommand('Page.handleJavaScriptDialog', {
         accept: args.accept ?? true,
         promptText: normalizeOptionalText(args.prompt_text)
       })
@@ -1305,26 +1371,24 @@ async function uploadFile(
 
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'DOM.enable').catch(() => undefined)
-      const documentResult = await chromeApi.debugger!.sendCommand<DomGetDocumentResult>(
-        target,
-        'DOM.getDocument',
-        { depth: -1, pierce: true }
-      )
+      await target.sendCommand('DOM.enable').catch(() => undefined)
+      const documentResult = await target.sendCommand<DomGetDocumentResult>('DOM.getDocument', {
+        depth: -1,
+        pierce: true
+      })
       const rootNodeId = documentResult.root?.nodeId
       if (!rootNodeId) {
         throw new Error('DOM.getDocument returned no root node')
       }
-      const queryResult = await chromeApi.debugger!.sendCommand<DomQuerySelectorResult>(
-        target,
-        'DOM.querySelector',
-        { nodeId: rootNodeId, selector }
-      )
+      const queryResult = await target.sendCommand<DomQuerySelectorResult>('DOM.querySelector', {
+        nodeId: rootNodeId,
+        selector
+      })
       const nodeId = queryResult.nodeId
       if (!nodeId) {
         throw new Error(`selector not found: ${selector}`)
       }
-      await chromeApi.debugger!.sendCommand(target, 'DOM.setFileInputFiles', { nodeId, files })
+      await target.sendCommand('DOM.setFileInputFiles', { nodeId, files })
       return { uploaded: true, selector, files, count: files.length }
     })
   )
@@ -1353,26 +1417,14 @@ async function dispatchNativePointerAction(
 
   await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (debuggerTarget) => {
-      await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x,
-        y
-      })
+      await dispatchNativeMouseMove(debuggerTarget, x, y)
       if (args.action === 'click') {
-        await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
-          type: 'mousePressed',
+        await dispatchNativePrimaryClick(
+          debuggerTarget,
           x,
           y,
-          button: 'left',
-          clickCount: 1
-        })
-        await chromeApi.debugger!.sendCommand(debuggerTarget, 'Input.dispatchMouseEvent', {
-          type: 'mouseReleased',
-          x,
-          y,
-          button: 'left',
-          clickCount: 1
-        })
+          await isMobileLikeTarget(debuggerTarget)
+        )
       }
     })
   )
@@ -1388,6 +1440,144 @@ async function dispatchNativePointerAction(
   }
 }
 
+async function dispatchNativeTextInput(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult | null> {
+  const [execution] = await chromeApi.scripting.executeScript<
+    Record<string, unknown>,
+    BrowserActionArgs
+  >({
+    target: { tabId },
+    world: 'ISOLATED',
+    func: resolveInputTarget,
+    args: [args]
+  })
+  const inputTarget = execution?.result
+  if (inputTarget?.native_text_input === false) {
+    return null
+  }
+  const x = typeof inputTarget?.x === 'number' ? inputTarget.x : null
+  const y = typeof inputTarget?.y === 'number' ? inputTarget.y : null
+  if (x === null || y === null) {
+    throw new Error('could not resolve a native text input coordinate')
+  }
+
+  const text = String(args.text || '')
+  await runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      const useTouch = await isMobileLikeTarget(target)
+      await dispatchNativeMouseMove(target, x, y)
+      await dispatchNativePrimaryClick(target, x, y, useTouch)
+      await delay(50)
+      await dispatchSelectAll(target)
+      await dispatchKeyDefinition(target, keyDefinition('Backspace'))
+      if (text) {
+        await target.sendCommand('Input.insertText', { text })
+      }
+    })
+  )
+
+  return {
+    typed: true,
+    native: true,
+    selector: inputTarget.selector || args.selector || null,
+    active_element: !args.selector,
+    label: inputTarget.label || '',
+    length: text.length,
+    x,
+    y,
+    bounding_box: inputTarget.bounding_box || null
+  }
+}
+
+async function isMobileLikeTarget(target: AttachedDebuggerTarget): Promise<boolean> {
+  const result = await target.sendCommand<RuntimeEvaluateResult>('Runtime.evaluate', {
+    expression:
+      '(/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1)',
+    returnByValue: true
+  })
+  return Boolean(result.result?.value)
+}
+
+async function dispatchNativeMouseMove(
+  target: AttachedDebuggerTarget,
+  x: number,
+  y: number
+): Promise<void> {
+  await target.sendCommand('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x,
+    y
+  })
+}
+
+async function dispatchNativePrimaryClick(
+  target: AttachedDebuggerTarget,
+  x: number,
+  y: number,
+  useTouch: boolean
+): Promise<void> {
+  if (useTouch) {
+    const touchPoints = [{ x: Math.round(x), y: Math.round(y) }]
+    await target.sendCommand('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints,
+      modifiers: 0
+    })
+    await target.sendCommand('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+      modifiers: 0
+    })
+    return
+  }
+
+  await target.sendCommand('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x,
+    y,
+    button: 'left',
+    clickCount: 1
+  })
+  await target.sendCommand('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x,
+    y,
+    button: 'left',
+    clickCount: 1
+  })
+}
+
+async function dispatchSelectAll(target: AttachedDebuggerTarget): Promise<void> {
+  await target.sendCommand('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    commands: ['selectAll']
+  })
+  await target.sendCommand('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    commands: ['selectAll']
+  })
+}
+
+async function dispatchKeyDefinition(
+  target: AttachedDebuggerTarget,
+  definition: Record<string, unknown>
+): Promise<void> {
+  await target.sendCommand('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    ...definition
+  })
+  await target.sendCommand('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: definition.key,
+    code: definition.code,
+    windowsVirtualKeyCode: definition.windowsVirtualKeyCode,
+    nativeVirtualKeyCode: definition.nativeVirtualKeyCode
+  })
+}
+
 async function dispatchNativeKey(
   chromeApi: ChromeApi,
   tabId: number,
@@ -1397,27 +1587,19 @@ async function dispatchNativeKey(
   const definition = keyDefinition(key)
   await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await chromeApi.debugger!.sendCommand(target, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        ...definition
-      })
-      await chromeApi.debugger!.sendCommand(target, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        key: definition.key,
-        code: definition.code,
-        windowsVirtualKeyCode: definition.windowsVirtualKeyCode,
-        nativeVirtualKeyCode: definition.nativeVirtualKeyCode
-      })
+      await dispatchKeyDefinition(target, definition)
     })
   )
   return { pressed: true, native: true, key }
 }
 
 function keyDefinition(key: string): Record<string, unknown> {
+  const normalizedKey = keyAliases[key] || key
   const special: Record<string, { code: string; windowsVirtualKeyCode: number }> = {
     Enter: { code: 'Enter', windowsVirtualKeyCode: 13 },
     Escape: { code: 'Escape', windowsVirtualKeyCode: 27 },
     Tab: { code: 'Tab', windowsVirtualKeyCode: 9 },
+    Space: { code: 'Space', windowsVirtualKeyCode: 32 },
     Backspace: { code: 'Backspace', windowsVirtualKeyCode: 8 },
     Delete: { code: 'Delete', windowsVirtualKeyCode: 46 },
     ArrowUp: { code: 'ArrowUp', windowsVirtualKeyCode: 38 },
@@ -1429,25 +1611,32 @@ function keyDefinition(key: string): Record<string, unknown> {
     PageUp: { code: 'PageUp', windowsVirtualKeyCode: 33 },
     PageDown: { code: 'PageDown', windowsVirtualKeyCode: 34 }
   }
-  const mapped = special[key]
+  const mapped = special[normalizedKey]
   if (mapped) {
     return {
-      key,
+      key: normalizedKey === 'Space' ? ' ' : normalizedKey,
       code: mapped.code,
       windowsVirtualKeyCode: mapped.windowsVirtualKeyCode,
       nativeVirtualKeyCode: mapped.windowsVirtualKeyCode
     }
   }
-  const text = key.length === 1 ? key : ''
+  const text = normalizedKey.length === 1 ? normalizedKey : ''
   const upper = text.toUpperCase()
   const windowsVirtualKeyCode = upper ? upper.charCodeAt(0) : 0
   return {
-    key,
-    code: upper && /^[A-Z]$/.test(upper) ? `Key${upper}` : key,
+    key: normalizedKey,
+    code: upper && /^[A-Z]$/.test(upper) ? `Key${upper}` : normalizedKey,
     text,
     windowsVirtualKeyCode,
     nativeVirtualKeyCode: windowsVirtualKeyCode
   }
+}
+
+const keyAliases: Record<string, string> = {
+  Esc: 'Escape',
+  Return: 'Enter',
+  ' ': 'Space',
+  Spacebar: 'Space'
 }
 
 function actionTimeoutMs(
@@ -1748,7 +1937,30 @@ function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
     )
   }
 
+  function editableTextInput(element: Element): boolean {
+    if (element instanceof HTMLTextAreaElement) {
+      return !element.readOnly && !element.disabled
+    }
+    if (element instanceof HTMLInputElement) {
+      const type = (element.getAttribute('type') || 'text').toLowerCase()
+      return (
+        !element.readOnly &&
+        !element.disabled &&
+        ['email', 'number', 'password', 'search', 'tel', 'text', 'url'].includes(type)
+      )
+    }
+    return element instanceof HTMLElement && element.isContentEditable
+  }
+
   function preferredMatch(elements: Element[]): Element | null {
+    if (args.action === 'type_text') {
+      return (
+        elements.find((element) => editableTextInput(element) && visible(element)) ||
+        elements.find((element) => visible(element)) ||
+        elements[0] ||
+        null
+      )
+    }
     return (
       elements.find((element) => interactable(element)) ||
       elements.find((element) => visible(element)) ||
@@ -1833,9 +2045,21 @@ function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
     Number.isFinite(args.y)
   ) {
     element = document.elementFromPoint(args.x, args.y)
+  } else if (args.action === 'type_text') {
+    const active = document.activeElement
+    const frameActive = active ? childFrameDocument(active)?.activeElement : null
+    element =
+      frameActive && frameActive !== frameActive.ownerDocument.body
+        ? frameActive
+        : active && active !== document.body && active !== document.documentElement
+          ? active
+          : null
   }
 
   if (!element) {
+    if (args.action === 'type_text') {
+      throw new Error('type_text requires selector or an active editable element')
+    }
     throw new Error('selector or x/y coordinates are required')
   }
 
@@ -1849,6 +2073,20 @@ function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
     typeof args.y === 'number' && Number.isFinite(args.y)
       ? args.y
       : rect.top + Math.max(1, rect.height) / 2
+
+  if (args.action === 'type_text') {
+    if (!editableTextInput(element)) {
+      return { native_text_input: false, reason: 'target is not a native text input' }
+    }
+    return {
+      native_text_input: true,
+      x,
+      y,
+      selector: args.selector || null,
+      label: label(element),
+      bounding_box: box(element)
+    }
+  }
 
   return { x, y, label: label(element), bounding_box: box(element) }
 }

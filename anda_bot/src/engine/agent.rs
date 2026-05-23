@@ -1535,8 +1535,7 @@ impl SessionRunner {
                     );
                 }
                 PromptCommand::Stop { prompt } => {
-                    cancellation_requested =
-                        Some(prompt.unwrap_or_else(|| "Cancelled by user".to_string()));
+                    cancellation_requested = Some(prompt);
                     break;
                 }
                 PromptCommand::New { .. } => {
@@ -1590,8 +1589,15 @@ impl SessionRunner {
             self.submit_pending_formation(self.runner.chat_history(), now_ms)
                 .await;
 
+            self.conversation.failed_reason = Some(failed_reason.clone());
+            self.conversation.messages.push(json!(Message {
+                role: "user".into(),
+                content: vec![failed_reason.into()],
+                timestamp: Some(now_ms),
+                ..Default::default()
+            }));
             self.conversation.status = ConversationStatus::Cancelled;
-            self.conversation.failed_reason = Some(failed_reason);
+
             self.conversation.updated_at = now_ms;
             self.persist_conversation_state().await;
             return Ok(false);
