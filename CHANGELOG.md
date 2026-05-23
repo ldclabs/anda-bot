@@ -2,6 +2,27 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.1] — 2026-05-23
+
+### Browser Extension
+
+- **Debugger reconnection**: commands transparently retry up to 2× on transient "not attached" errors; removed the unconditional detach-before-attach that caused excessive detach calls.
+- **Native text input**: `type_text` on editable elements now uses CDP `Input.insertText` (selectAll → Backspace → insert) instead of key-by-key dispatching — faster and more reliable.
+- **Mobile touch support**: click dispatches touchStart/touchEnd on pages with mobile user agents or `maxTouchPoints > 1`, matching real device behavior.
+- **goBack/goForward fallback**: when the native tabs API throws (e.g. localized errors like "无法在历史记录中找到下一页"), falls back to injecting `pageActionDispatcher` via `scripting.executeScript`.
+- **Smarter element resolution**: `deepQuerySelector` uses `preferredMatch()` to select the most interactable element from all `querySelectorAll` matches — `interactable()` checks visibility + `elementFromPoint` hit-test at element center, with fallback through `visible()`, then first match.
+- **Key aliases**: Esc→Escape, Return→Enter, Space→Space; added Space key definition.
+- **`preferredMatch` for `type_text`**: prefers editable text inputs over other visible elements; falls back to `document.activeElement` when no selector is provided.
+
+### Engine
+
+- **GitHub API version checking**: auto-updater now queries `api.github.com/repos/{REPO}/releases/latest` with anti-cache headers, falling back to the releases page when the API is unavailable.
+- **`/stop` stores failed_reason**: the prompt is always stored as `failed_reason` (not just when non-empty) and appended to the conversation as a user message before cancellation.
+
+### Changed
+
+- **Dependencies**: `anda_brain` 0.6.1→0.6.2, `anda_engine` 0.12.19→0.12.20, `wasm-bindgen` 0.2.121→0.2.122, `serde_json` 1.0.149→1.0.150, `lucide-svelte`, `tailwindcss`, `svelte`, `vite`, `vitest`, `katex`, `chrome-types`, `postcss`, `prettier-plugin-svelte`.
+
 ## [0.8.0] — 2026-05-22
 
 The Chrome Extension release — Anda Bot now lives in your browser.
