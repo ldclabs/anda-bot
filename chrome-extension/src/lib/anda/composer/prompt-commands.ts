@@ -67,6 +67,7 @@ const promptCommandItems: PromptCommandSuggestion[] = [
     label: '/skill',
     insertText: '/skill ',
     description: 'Route the prompt to a named skill subagent.',
+    detail: 'shortcut: $skill-name',
     kind: 'command'
   },
   {
@@ -105,6 +106,9 @@ export function readPromptCommandContext(value: string, caret: number): PromptCo
   const commandLine = value.slice(0, commandLineEnd)
   const leadingWhitespace = commandLine.match(/^\s*/)?.[0] || ''
   const slashIndex = leadingWhitespace.length
+  if (commandLine[slashIndex] === '$') {
+    return readDollarSkillContext(commandLine, safeCaret, slashIndex)
+  }
   if (commandLine[slashIndex] !== '/' || safeCaret < slashIndex + 1) {
     return emptyPromptCommandContext
   }
@@ -152,6 +156,33 @@ export function readPromptCommandContext(value: string, caret: number): PromptCo
     replaceStart: slashIndex,
     replaceEnd,
     key: `command:${query}:${slashIndex}:${replaceEnd}`
+  }
+}
+
+function readDollarSkillContext(
+  commandLine: string,
+  safeCaret: number,
+  dollarIndex: number
+): PromptCommandContext {
+  if (safeCaret < dollarIndex + 1) {
+    return emptyPromptCommandContext
+  }
+
+  const skillStart = dollarIndex + 1
+  const skillToken = commandLine.slice(skillStart).match(/^\S*/)?.[0] || ''
+  const skillEnd = skillStart + skillToken.length
+  if (safeCaret > skillEnd) {
+    return emptyPromptCommandContext
+  }
+
+  const query = commandLine.slice(skillStart, safeCaret)
+  return {
+    open: true,
+    mode: 'skill',
+    query,
+    replaceStart: skillStart,
+    replaceEnd: skillEnd,
+    key: `skill:${query}:${skillStart}:${skillEnd}`
   }
 }
 

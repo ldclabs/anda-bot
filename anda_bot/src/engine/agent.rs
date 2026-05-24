@@ -1136,14 +1136,15 @@ impl Agent<AgentCtx> for AndaBot {
             PromptCommand::Stop { .. } => {
                 return Err("/stop requires an active conversation".into());
             }
-            PromptCommand::Skill { mut skill, prompt } => {
+            PromptCommand::Skill { skill, prompt } => {
                 if let Some(subagent) = skill_subagent(&self.inner.skills_manager, &skill) {
-                    skill = subagent.name.clone();
+                    instructions = format!(
+                        "{instructions}\n\nUse the {} skill to handle user's request",
+                        subagent.name
+                    );
                     additional_tools.push(subagent.name);
                 }
 
-                instructions =
-                    format!("{instructions}\n\nUse the {skill} skill to handle user's request");
                 prompt
             }
             PromptCommand::Invalid { reason } => return Err(reason.into()),

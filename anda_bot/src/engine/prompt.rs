@@ -37,6 +37,7 @@ pub enum PromptCommand {
         prompt: String,
     },
     // '/skill', case-insensitive, followed by the skill name and prompt.
+    // '$skill-name prompt' is a shorthand for the same behavior.
     // Uses the provided skill name to route the prompt to a specific skill-based
     // subagent.
     Skill {
@@ -63,6 +64,10 @@ impl From<String> for PromptCommand {
         let trimmed = prompt.trim();
         if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("/ping") {
             return Self::Ping;
+        }
+
+        if let Some(stripped) = trimmed.strip_prefix('$') {
+            return parse_dollar_skill_command(stripped, trimmed);
         }
 
         let Some(stripped) = trimmed.strip_prefix('/') else {
@@ -125,17 +130,50 @@ where
 }
 
 fn parse_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
-    let mut parts = rest.splitn(2, char::is_whitespace);
+    parse_skill_parts(
+        rest,
+        full_prompt,
+        "/skill requires a skill name",
+        "/skill requires a prompt after the skill name",
+    )
+}
+
+fn parse_dollar_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
+    parse_skill_parts(
+        rest,
+        full_prompt,
+        "$ requires a skill name",
+        "$ requires a prompt after the skill name",
+    )
+}
+
+fn parse_skill_parts(
+    input: &str,
+    full_prompt: &str,
+    missing_skill_reason: &str,
+    missing_prompt_reason: &str,
+) -> PromptCommand {
+    let mut parts = input.splitn(2, char::is_whitespace);
     let skill = parts.next().unwrap_or_default().trim();
     let prompt = parts.next().unwrap_or_default().trim();
     if skill.is_empty() {
+        if full_prompt.starts_with('$') {
+            return PromptCommand::Plain {
+                prompt: full_prompt.to_string(),
+            };
+        }
         return PromptCommand::Invalid {
-            reason: "/skill requires a skill name".to_string(),
+            reason: missing_skill_reason.to_string(),
         };
     }
     if prompt.is_empty() {
+        if full_prompt.starts_with('$') {
+            return PromptCommand::Plain {
+                prompt: full_prompt.to_string(),
+            };
+        }
         return PromptCommand::Invalid {
-            reason: "/skill requires a prompt after the skill name".to_string(),
+            reason: missing_prompt_reason.to_string(),
         };
     }
 
@@ -169,6 +207,13 @@ mod tests {
             PromptCommand::Skill {
                 skill: "frontend-design".to_string(),
                 prompt: "/skill frontend-design polish this".to_string()
+            }
+        );
+        assert_eq!(
+            PromptCommand::from("$frontend-design polish this".to_string()),
+            PromptCommand::Skill {
+                skill: "frontend-design".to_string(),
+                prompt: "$frontend-design polish this".to_string()
             }
         );
         assert_eq!(
@@ -207,6 +252,14 @@ mod tests {
         ));
         assert!(matches!(
             PromptCommand::from("/skill frontend-design".to_string()),
+            PromptCommand::Invalid { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("$".to_string()),
+            PromptCommand::Invalid { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("$frontend-design".to_string()),
             PromptCommand::Invalid { .. }
         ));
     }
