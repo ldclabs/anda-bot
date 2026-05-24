@@ -2,6 +2,19 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.2] — 2026-05-24
+
+### Highlights
+
+- **shadcn-svelte UI**: the Chrome extension UI has been rebuilt on the shadcn-svelte component library — 30+ component families (accordion, alert, avatar, command, context-menu, dialog, dropdown-menu, field, hover-card, input-group, item, kbd, native-select, popover, select, skeleton, spinner, switch, tabs, tooltip) replacing ad-hoc Svelte markup across ChatComposer, ChatMessageItem, ChatSettings, ChatChannelsSidebar, AttachmentList, PromptCommandPanel, and VoicePanel.
+- **$skill-name shorthand**: `$skill-name prompt` is now equivalent to `/skill skill-name prompt` — quick skill routing without typing the leading slash. Both the Rust engine and the Chrome extension completion panel handle the dollar prefix.
+- **open_file action**: `chrome_tabs` can now open local files via `file://` URLs. Paths are resolved relative to the workspace and percent-encoded for URLs containing spaces and special characters. Returns metadata including the mime type guessed from file extension.
+- **Viewport screenshot controls**: `chrome_page.screenshot` now accepts `viewport_width`, `viewport_height`, and `device_scale_factor` — fixed-size screenshots via CDP device metrics emulation, independent of the browser window size.
+
+### Changed
+
+- **Dependencies**: version 0.8.1→0.8.2.
+
 ## [0.8.1] — 2026-05-23
 
 ### Browser Extension

@@ -256,11 +256,11 @@ mod tests {
         ));
         assert!(matches!(
             PromptCommand::from("$".to_string()),
-            PromptCommand::Invalid { .. }
+            PromptCommand::Plain { .. }
         ));
         assert!(matches!(
             PromptCommand::from("$frontend-design".to_string()),
-            PromptCommand::Invalid { .. }
+            PromptCommand::Plain { .. }
         ));
     }
 }
