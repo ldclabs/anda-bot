@@ -234,7 +234,7 @@ export async function executeBrowserAction(
     : null
 
   if (args.action === 'screenshot') {
-    if (args.full_page || args.selector) {
+    if (args.full_page || args.selector || hasViewportOverride(args)) {
       return captureScreenshotWithDebugger(chromeApi, tabId, args, tab)
     }
     const activeTab = await activateTab(chromeApi, tabId).catch(() => tab)
@@ -1041,27 +1041,37 @@ async function captureScreenshotWithDebugger(
   const capture = await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
       await target.sendCommand('Page.enable').catch(() => undefined)
-      const clip = args.selector
-        ? await elementScreenshotClip(target, args.selector)
-        : args.full_page
-          ? await fullPageScreenshotClip(target)
-          : undefined
-      const params: Record<string, unknown> = {
-        format: 'png',
-        fromSurface: true,
-        captureBeyondViewport: Boolean(args.full_page || args.selector)
+      const viewport = viewportOverrideParams(args)
+      if (viewport) {
+        await target.sendCommand('Emulation.setDeviceMetricsOverride', viewport)
       }
-      if (clip) {
-        params.clip = clip
+      try {
+        const clip = args.selector
+          ? await elementScreenshotClip(target, args.selector)
+          : args.full_page
+            ? await fullPageScreenshotClip(target)
+            : undefined
+        const params: Record<string, unknown> = {
+          format: 'png',
+          fromSurface: true,
+          captureBeyondViewport: Boolean(args.full_page || args.selector)
+        }
+        if (clip) {
+          params.clip = clip
+        }
+        const result = await target.sendCommand<PageCaptureScreenshotResult>(
+          'Page.captureScreenshot',
+          params
+        )
+        if (!result.data) {
+          throw new Error('Page.captureScreenshot returned no image data')
+        }
+        return { data: result.data, clip, viewport }
+      } finally {
+        if (viewport) {
+          await target.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+        }
       }
-      const result = await target.sendCommand<PageCaptureScreenshotResult>(
-        'Page.captureScreenshot',
-        params
-      )
-      if (!result.data) {
-        throw new Error('Page.captureScreenshot returned no image data')
-      }
-      return { data: result.data, clip }
     })
   )
   const dataUrl = `data:image/png;base64,${capture.data}`
@@ -1073,7 +1083,37 @@ async function captureScreenshotWithDebugger(
     data_url: args.include_data_url ? dataUrl : undefined,
     full_page: Boolean(args.full_page),
     selector: args.selector || null,
-    clip: capture.clip || null
+    clip: capture.clip || null,
+    viewport: capture.viewport || null
+  }
+}
+
+function hasViewportOverride(args: BrowserActionArgs): boolean {
+  return (
+    args.viewport_width !== undefined ||
+    args.viewport_height !== undefined ||
+    args.device_scale_factor !== undefined
+  )
+}
+
+function viewportOverrideParams(args: BrowserActionArgs): Record<string, unknown> | null {
+  if (!hasViewportOverride(args)) {
+    return null
+  }
+  const width = positiveInteger(args.viewport_width)
+  const height = positiveInteger(args.viewport_height)
+  if (!width || !height) {
+    throw new Error('viewport override requires viewport_width and viewport_height')
+  }
+  const deviceScaleFactor =
+    typeof args.device_scale_factor === 'number' && Number.isFinite(args.device_scale_factor)
+      ? Math.max(0.1, Math.min(5, args.device_scale_factor))
+      : 1
+  return {
+    width: Math.min(10000, width),
+    height: Math.min(10000, height),
+    deviceScaleFactor,
+    mobile: false
   }
 }
 

@@ -517,6 +517,58 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
   })
 })
 
+describe('executeBrowserAction screenshot debugger capture', () => {
+  it('uses CDP viewport emulation for fixed-size screenshots', async () => {
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, _params?: Record<string, unknown>) => {
+        if (method === 'Page.captureScreenshot') {
+          return { data: 'cG5nLWJ5dGVz' }
+        }
+        return {}
+      }
+    )
+    const chromeApi = createChromeApi({
+      attach: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      sendCommand: sendCommand as DebuggerSendCommand
+    })
+    chromeApi.tabs.captureVisibleTab = vi.fn()
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: {
+          action: 'screenshot',
+          viewport_width: 800,
+          viewport_height: 600,
+          device_scale_factor: 2,
+          include_data_url: true
+        }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(chromeApi.tabs.captureVisibleTab).not.toHaveBeenCalled()
+    expect(sendCommand).toHaveBeenCalledWith({ tabId: 123 }, 'Emulation.setDeviceMetricsOverride', {
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 2,
+      mobile: false
+    })
+    expect(sendCommand).toHaveBeenCalledWith(
+      { tabId: 123 },
+      'Emulation.clearDeviceMetricsOverride',
+      undefined
+    )
+    expect(result).toMatchObject({
+      captured: true,
+      data_url: 'data:image/png;base64,cG5nLWJ5dGVz',
+      viewport: { width: 800, height: 600, deviceScaleFactor: 2, mobile: false }
+    })
+  })
+})
+
 describe('executeBrowserAction native input', () => {
   it('dispatches touch events for clicks on mobile-like pages', async () => {
     const tab = { id: 123, windowId: 1, active: true, status: 'complete' }

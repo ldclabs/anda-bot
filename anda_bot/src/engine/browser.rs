@@ -109,6 +109,7 @@ pub enum BrowserAction {
     ListTabs,
     SwitchTab,
     OpenTab,
+    OpenFile,
     CloseTab,
     LaunchBrowser,
     ExecuteJavascript,
@@ -190,6 +191,15 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_page: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport_width: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport_height: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_scale_factor: Option<f64>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<bool>,
@@ -602,6 +612,10 @@ impl ChromeBrowserTool {
                     .join("browser-screenshots")
             })
     }
+
+    fn workspace_root(&self) -> Option<&Path> {
+        self.screenshot_workspace.as_deref().map(PathBuf::as_path)
+    }
 }
 
 impl ChromeBrowserToolKind {
@@ -620,13 +634,15 @@ impl ChromeBrowserToolKind {
             Self::Tabs => concat!(
                 "Manage Chrome tabs, navigation, downloads, cookies, and browser cache through the Anda browser extension. ",
                 "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
-                "and open_tab, close_tab, navigate, go_back, go_forward, reload, launch_browser, download, list_downloads, cookie, or cache actions as needed. Navigation and loading actions wait until the resulting page is usable before returning."
+                "and open_tab, open_file, close_tab, navigate, go_back, go_forward, reload, launch_browser, download, list_downloads, cookie, or cache actions as needed. ",
+                "Use open_file to open a local filesystem path or file:// URL in Chrome, including generated HTML/SVG pages, images, audio, video, PDFs, and other attachments. To generate an image from HTML/canvas/SVG, create the file, open it with open_file, then use chrome_page.screenshot. Navigation and loading actions wait until the resulting page is usable before returning."
             ),
             Self::Page => concat!(
                 "Inspect the active Chrome tab through the Anda browser extension. ",
                 "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first if another tab is needed. ",
                 "Use snapshot, extract_text, screenshot, read_selection, get_full_page_html, get_structured_data, ",
-                "get_accessibility_tree, print_to_pdf, annotate_viewport, get_element_info, get_viewport_size, find_in_page, or wait_for_element."
+                "get_accessibility_tree, print_to_pdf, annotate_viewport, get_element_info, get_viewport_size, find_in_page, or wait_for_element. ",
+                "screenshot can capture full pages, elements, and fixed viewport sizes for local file previews or generated web artifacts."
             ),
             Self::Input => concat!(
                 "Interact with the active Chrome tab through the Anda browser extension. ",
@@ -703,22 +719,96 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
             args.include_data_url = Some(true);
         }
 
-        let session = match self.bridge.connected_session(preferred_session.as_deref()) {
-            Some(session) => session,
+        let session = self
+            .connected_session_or_launch(preferred_session, timeout_ms)
+            .await?;
+
+        let result = match args.action {
+            BrowserAction::OpenFile => self.run_open_file_action(&session, args).await?,
+            _ => self.run_browser_action(&session, args).await?,
+        };
+        Ok(ToolOutput::new(Response::Ok {
+            result: json!(result),
+            next_cursor: None,
+        }))
+    }
+}
+
+impl ChromeBrowserTool {
+    async fn connected_session_or_launch(
+        &self,
+        preferred_session: Option<String>,
+        timeout_ms: u64,
+    ) -> Result<String, BoxError> {
+        match self.bridge.connected_session(preferred_session.as_deref()) {
+            Some(session) => Ok(session),
             None => {
                 let _launch = launch_browser(None)?;
                 self.bridge
                     .wait_for_connected_session(preferred_session, timeout_ms)
                     .await
-                    .ok_or("No connected Anda browser extension session. Install and configure the extension, then open the browser.")?
+                    .ok_or_else(|| "No connected Anda browser extension session. Install and configure the extension, then open the browser.".into())
             }
-        };
-        let mut result = self.bridge.run_action(session, args).await?;
+        }
+    }
+
+    async fn run_browser_action(
+        &self,
+        session: &str,
+        args: ChromeBrowserToolArgs,
+    ) -> Result<BrowserActionResult, BoxError> {
+        let mut result = self.bridge.run_action(session.to_string(), args).await?;
         materialize_screenshot_data_url(&mut result, &self.screenshot_tmp_dir())?;
-        Ok(ToolOutput::new(Response::Ok {
-            result: json!(result),
-            next_cursor: None,
-        }))
+        Ok(result)
+    }
+
+    async fn run_open_file_action(
+        &self,
+        session: &str,
+        args: ChromeBrowserToolArgs,
+    ) -> Result<BrowserActionResult, BoxError> {
+        let file = self.local_file_from_args(&args)?;
+        let file_url = file_url_for_path(&file.path)?;
+        let mut open_args = browser_args(BrowserAction::OpenTab);
+        open_args.url = Some(file_url.clone());
+        open_args.active = args.active;
+        open_args.window_id = args.window_id;
+        open_args.timeout_ms = args.timeout_ms;
+        open_args.reason = args.reason;
+
+        let mut result = self.run_browser_action(session, open_args).await?;
+        if let Some(value) = result.value.as_object_mut().filter(|_| result.ok) {
+            value.insert("opened_file".to_string(), json!(true));
+            value.insert("file_path".to_string(), json!(file.path_string));
+            value.insert("file_url".to_string(), json!(file_url));
+            value.insert("mime_type".to_string(), json!(file.mime_type));
+        }
+        Ok(result)
+    }
+
+    fn local_file_from_args(
+        &self,
+        args: &ChromeBrowserToolArgs,
+    ) -> Result<LocalBrowserFile, BoxError> {
+        let reference = args
+            .path
+            .as_deref()
+            .or(args.url.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("chrome_browser local file actions require path or file:// url")?;
+        let path = local_path_from_reference(reference, self.workspace_root())?;
+        if !path.exists() {
+            return Err(format!("local browser file does not exist: {}", path.display()).into());
+        }
+        let path = path.canonicalize()?;
+        let mime_type = browser_file_mime_type(&path);
+        let path_string = path.to_string_lossy().to_string();
+        Ok(LocalBrowserFile {
+            path,
+            path_string,
+            mime_type,
+        })
     }
 }
 
@@ -729,12 +819,12 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "close_tab", "navigate", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download", "get_cookies", "set_cookie", "delete_cookie", "clear_browser_cache"],
-                    "description": "Tab/navigation/browser-state action. Use switch_tab before chrome_page, chrome_input, or chrome_script when another tab is needed."
+                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "open_file", "close_tab", "navigate", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download", "get_cookies", "set_cookie", "delete_cookie", "clear_browser_cache"],
+                    "description": "Tab/navigation/browser-state action. Use switch_tab before chrome_page, chrome_input, or chrome_script when another tab is needed. Use open_file to open local files and generated artifacts via Chrome file://, including HTML/SVG pages, images, audio, video, PDFs, and other attachments. To turn generated HTML/canvas/SVG into an image, create the HTML file, open_file it, then call chrome_page.screenshot."
                 },
                 "url": {
                     "type": ["string", "null"],
-                    "description": "URL for navigate, open_tab, launch_browser, download, cookie, or cache actions. navigate targets the active tab unless the legacy chrome_browser tool is used."
+                    "description": "URL for navigate, open_tab, launch_browser, download, cookie, cache, or open_file actions. file:// URLs are accepted for open_file."
                 },
                 "value": {
                     "type": ["string", "null"],
@@ -782,7 +872,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "path": {
                     "type": ["string", "null"],
-                    "description": "Cookie path for set_cookie."
+                    "description": "Cookie path for set_cookie, or a local filesystem path for open_file. Relative local paths are resolved against the workspace."
                 },
                 "secure": {
                     "type": ["boolean", "null"],
@@ -852,6 +942,9 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                     "type": ["boolean", "null"],
                     "description": "Whether screenshot should capture the full scrollable page instead of just the viewport."
                 },
+                "viewport_width": viewport_dimension_schema("Viewport width in CSS pixels for screenshot capture. Use with viewport_height."),
+                "viewport_height": viewport_dimension_schema("Viewport height in CSS pixels for screenshot capture. Use with viewport_width."),
+                "device_scale_factor": device_scale_factor_schema(),
                 "amount": {
                     "type": ["integer", "null"],
                     "description": "Maximum accessibility tree nodes to return for get_accessibility_tree. Defaults to 500."
@@ -871,7 +964,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action", "selector", "query", "include_links", "include_forms", "highlight", "full_page", "amount", "accept", "prompt_text", "max_chars", "timeout_ms", "reason"],
+            "required": ["action", "selector", "query", "include_links", "include_forms", "highlight", "full_page", "viewport_width", "viewport_height", "device_scale_factor", "amount", "accept", "prompt_text", "max_chars", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Input => json!({
@@ -985,6 +1078,24 @@ fn coordinate_schema(description: &str) -> Value {
     })
 }
 
+fn viewport_dimension_schema(description: &str) -> Value {
+    json!({
+        "type": ["integer", "null"],
+        "minimum": 1,
+        "maximum": 10000,
+        "description": description
+    })
+}
+
+fn device_scale_factor_schema() -> Value {
+    json!({
+        "type": ["number", "null"],
+        "minimum": 0.1,
+        "maximum": 5,
+        "description": "Optional screenshot device scale factor for viewport captures. Defaults to 1."
+    })
+}
+
 pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
     request_meta_extra_as::<String>(meta, "source")
         .filter(|source| source.starts_with("browser:"))
@@ -1021,11 +1132,14 @@ fn validate_browser_action_for_tool(
         .into());
     }
 
+    validate_viewport_options(args)?;
+
     match args.action {
         BrowserAction::Click | BrowserAction::Hover => require_selector_or_coordinates(args),
         BrowserAction::TypeText => require_field(&args.text, "text", "type_text"),
         BrowserAction::PressKey => require_field(&args.key, "key", "press_key"),
         BrowserAction::Navigate => require_field(&args.url, "url", "navigate"),
+        BrowserAction::OpenFile => require_path_or_url(args),
         BrowserAction::Download => require_field(&args.url, "url", "download"),
         BrowserAction::SwitchTab => require_i64(&args.tab_id, "tab_id", "switch_tab"),
         BrowserAction::CloseTab => require_i64(&args.tab_id, "tab_id", "close_tab"),
@@ -1112,6 +1226,7 @@ fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> 
                 | BrowserAction::ListTabs
                 | BrowserAction::SwitchTab
                 | BrowserAction::OpenTab
+                | BrowserAction::OpenFile
                 | BrowserAction::CloseTab
                 | BrowserAction::Navigate
                 | BrowserAction::GoBack
@@ -1197,6 +1312,50 @@ fn require_i64(value: &Option<i64>, field: &str, action: &str) -> Result<(), Box
     }
 }
 
+fn require_path_or_url(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
+    if args
+        .path
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || args
+            .url
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "chrome_browser action {:?} requires path or file:// url",
+            args.action
+        )
+        .into())
+    }
+}
+
+fn validate_viewport_options(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
+    let has_viewport = args.viewport_width.is_some()
+        || args.viewport_height.is_some()
+        || args.device_scale_factor.is_some();
+    if !has_viewport {
+        return Ok(());
+    }
+
+    let width = args.viewport_width.ok_or(
+        "chrome_browser viewport capture requires viewport_width when viewport options are used",
+    )?;
+    let height = args.viewport_height.ok_or(
+        "chrome_browser viewport capture requires viewport_height when viewport options are used",
+    )?;
+    if !(1..=10_000).contains(&width) || !(1..=10_000).contains(&height) {
+        return Err("chrome_browser viewport dimensions must be between 1 and 10000".into());
+    }
+    if let Some(scale) = args.device_scale_factor
+        && (!scale.is_finite() || !(0.1..=5.0).contains(&scale)) {
+            return Err("chrome_browser device_scale_factor must be between 0.1 and 5".into());
+        }
+    Ok(())
+}
+
 fn require_selector_or_coordinates(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
     if args
         .selector
@@ -1244,6 +1403,212 @@ fn normalized_action_timeout(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
         .clamp(MIN_BROWSER_ACTION_TIMEOUT_MS, MAX_BROWSER_ACTION_TIMEOUT_MS)
+}
+
+#[derive(Debug)]
+struct LocalBrowserFile {
+    path: PathBuf,
+    path_string: String,
+    mime_type: String,
+}
+
+fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
+    ChromeBrowserToolArgs {
+        action,
+        selector: None,
+        text: None,
+        value: None,
+        code: None,
+        world: None,
+        use_bridge: None,
+        query: None,
+        url: None,
+        key: None,
+        amount: None,
+        x: None,
+        y: None,
+        to_x: None,
+        to_y: None,
+        from_selector: None,
+        to_selector: None,
+        tab_id: None,
+        window_id: None,
+        frame_id: None,
+        active: None,
+        include_links: None,
+        include_forms: None,
+        include_data_url: None,
+        full_page: None,
+        viewport_width: None,
+        viewport_height: None,
+        device_scale_factor: None,
+        highlight: None,
+        bypass_cache: None,
+        behavior: None,
+        filename: None,
+        save_as: None,
+        download_id: None,
+        files: None,
+        origins: None,
+        domain: None,
+        name: None,
+        path: None,
+        secure: None,
+        http_only: None,
+        same_site: None,
+        expiration_date: None,
+        since_ms: None,
+        store_id: None,
+        accept: None,
+        prompt_text: None,
+        max_chars: None,
+        timeout_ms: None,
+        reason: None,
+    }
+}
+
+fn local_path_from_reference(
+    reference: &str,
+    workspace: Option<&Path>,
+) -> Result<PathBuf, BoxError> {
+    let path = if reference
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("file://")
+    {
+        path_from_file_url(reference)?
+    } else {
+        PathBuf::from(reference.trim())
+    };
+    if path.is_absolute() {
+        Ok(path)
+    } else if let Some(workspace) = workspace {
+        Ok(workspace.join(path))
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn file_url_for_path(path: &Path) -> Result<String, BoxError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut path = absolute.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) && !path.starts_with('/') {
+        path = format!("/{path}");
+    }
+    Ok(format!("file://{}", percent_encode_url_path(&path)))
+}
+
+fn path_from_file_url(url: &str) -> Result<PathBuf, BoxError> {
+    let trimmed = url.trim();
+    let Some(payload) = trimmed.strip_prefix("file://") else {
+        return Err("local file URL must start with file://".into());
+    };
+    let payload = payload.strip_prefix("localhost/").unwrap_or(payload);
+    let decoded = percent_decode_url_path(payload)?;
+    #[cfg(windows)]
+    {
+        let decoded = decoded
+            .strip_prefix('/')
+            .unwrap_or(&decoded)
+            .replace('/', "\\");
+        Ok(PathBuf::from(decoded))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(PathBuf::from(decoded))
+    }
+}
+
+fn percent_encode_url_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(*byte as char)
+            }
+            byte => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn percent_decode_url_path(path: &str) -> Result<String, BoxError> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err("file URL has an incomplete percent escape".into());
+            }
+            let hi = hex_value(bytes[index + 1])?;
+            let lo = hex_value(bytes[index + 2])?;
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| "file URL path is not valid UTF-8".into())
+}
+
+fn hex_value(byte: u8) -> Result<u8, BoxError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("file URL has an invalid percent escape".into()),
+    }
+}
+
+fn browser_file_mime_type(path: &Path) -> String {
+    if path.is_dir() {
+        return "inode/directory".to_string();
+    }
+    file_extension_lower(path)
+        .as_deref()
+        .and_then(mime_type_for_extension)
+        .or_else(|| {
+            infer2::get_from_path(path)
+                .ok()
+                .flatten()
+                .map(|kind| kind.mime_type())
+        })
+        .or_else(|| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(infer2::get_from_filename)
+                .map(|kind| kind.mime_type())
+        })
+        .unwrap_or("application/octet-stream")
+        .to_string()
+}
+
+fn mime_type_for_extension(extension: &str) -> Option<&'static str> {
+    match extension {
+        "md" | "markdown" => Some("text/markdown"),
+        "html" | "htm" => Some("text/html"),
+        "svg" => Some("image/svg+xml"),
+        "css" => Some("text/css"),
+        "csv" => Some("text/csv"),
+        "json" | "jsonl" => Some("application/json"),
+        "js" | "mjs" | "cjs" => Some("text/javascript"),
+        "txt" | "text" | "log" | "toml" | "yaml" | "yml" | "xml" | "rs" | "ts" | "tsx" | "jsx"
+        | "svelte" | "vue" | "py" | "go" | "java" | "c" | "h" | "cpp" | "hpp" | "sh" | "zsh"
+        | "fish" | "sql" => Some("text/plain"),
+        _ => None,
+    }
+}
+
+fn file_extension_lower(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
 }
 
 fn materialize_screenshot_data_url(
@@ -1418,55 +1783,9 @@ mod tests {
     use crate::util::json_schema::assert_openai_strict_parameters;
 
     fn snapshot_args() -> ChromeBrowserToolArgs {
-        ChromeBrowserToolArgs {
-            action: BrowserAction::Snapshot,
-            selector: None,
-            text: None,
-            value: None,
-            code: None,
-            world: None,
-            use_bridge: None,
-            query: None,
-            url: None,
-            key: None,
-            amount: None,
-            x: None,
-            y: None,
-            to_x: None,
-            to_y: None,
-            from_selector: None,
-            to_selector: None,
-            tab_id: None,
-            window_id: None,
-            frame_id: None,
-            active: None,
-            include_links: None,
-            include_forms: None,
-            include_data_url: None,
-            full_page: None,
-            highlight: None,
-            bypass_cache: None,
-            behavior: None,
-            filename: None,
-            save_as: None,
-            download_id: None,
-            files: None,
-            origins: None,
-            domain: None,
-            name: None,
-            path: None,
-            secure: None,
-            http_only: None,
-            same_site: None,
-            expiration_date: None,
-            since_ms: None,
-            store_id: None,
-            accept: None,
-            prompt_text: None,
-            max_chars: None,
-            timeout_ms: Some(1_000),
-            reason: None,
-        }
+        let mut args = browser_args(BrowserAction::Snapshot);
+        args.timeout_ms = Some(1_000);
+        args
     }
 
     #[test]
@@ -1538,6 +1857,89 @@ mod tests {
         args.y = Some(500.0);
 
         assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &args).is_ok());
+    }
+
+    #[test]
+    fn tabs_validation_allows_local_file_actions() {
+        let mut args = browser_args(BrowserAction::OpenFile);
+        args.path = Some("report.html".to_string());
+
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Tabs, &args).is_ok());
+    }
+
+    #[test]
+    fn local_file_url_round_trips_spaces() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("hello world.html");
+        fs::write(&path, "<p>hi</p>").unwrap();
+
+        let url = file_url_for_path(&path).unwrap();
+
+        assert!(url.starts_with("file://"));
+        assert!(url.contains("hello%20world.html"));
+        assert_eq!(path_from_file_url(&url).unwrap(), path);
+    }
+
+    #[tokio::test]
+    async fn open_file_action_opens_local_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let report_path = temp_dir.path().join("report.html");
+        fs::write(&report_path, "<p>hi</p>").unwrap();
+        let canonical_report_path = report_path.canonicalize().unwrap();
+        let bridge = Arc::new(BrowserBridge::new());
+        let (connection_id, sender, mut receiver) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(
+                connection_id,
+                sender,
+                "chrome:tab:1".to_string(),
+                Some(1),
+                None,
+                None,
+            )
+            .unwrap();
+        let tool = ChromeBrowserTool::tabs(bridge.clone())
+            .with_screenshot_workspace(temp_dir.path().to_path_buf());
+        let mut args = browser_args(BrowserAction::OpenFile);
+        args.path = Some("report.html".to_string());
+        args.timeout_ms = Some(1_000);
+
+        let action = tokio::spawn(async move {
+            tool.run_open_file_action("chrome:tab:1", args)
+                .await
+                .unwrap()
+        });
+
+        let open_command = receiver.recv().await.unwrap();
+        assert_eq!(open_command.args.action, BrowserAction::OpenTab);
+        let file_url = open_command.args.url.as_deref().unwrap();
+        assert_eq!(path_from_file_url(file_url).unwrap(), canonical_report_path);
+        bridge
+            .complete(
+                "chrome:tab:1".to_string(),
+                open_command.request_id,
+                BrowserActionResult {
+                    ok: true,
+                    value: json!({
+                        "opened": true,
+                        "tab": { "id": 77, "url": file_url },
+                        "page_ready": { "loaded": true }
+                    }),
+                    error: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let result = action.await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.value["opened_file"], true);
+        assert_eq!(
+            result.value["file_path"].as_str().unwrap(),
+            canonical_report_path.to_string_lossy()
+        );
+        assert_eq!(result.value["file_url"].as_str().unwrap(), file_url);
+        assert_eq!(result.value["mime_type"], "text/html");
     }
 
     #[test]

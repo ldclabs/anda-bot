@@ -20,7 +20,8 @@
     "windows"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "file:///*"
   ],
   "background": {
     "service_worker": "service_worker.js",

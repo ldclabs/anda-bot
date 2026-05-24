@@ -78,6 +78,9 @@ export type BrowserActionArgs = {
   include_forms?: boolean
   include_data_url?: boolean
   full_page?: boolean
+  viewport_width?: number
+  viewport_height?: number
+  device_scale_factor?: number
   highlight?: boolean
   bypass_cache?: boolean
   behavior?: ScrollBehavior
@@ -99,6 +102,7 @@ export type BrowserActionArgs = {
   prompt_text?: string
   max_chars?: number
   timeout_ms?: number
+  reason?: string
 }
 
 export type BrowserCommand = {
