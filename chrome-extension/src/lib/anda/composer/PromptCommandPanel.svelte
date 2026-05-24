@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { PromptCommandSuggestion } from '$lib/anda/composer/prompt-commands'
+  import { Badge } from '$lib/components/ui/badge/index.js'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card/index.js'
   import { tick } from 'svelte'
 
   let {
@@ -14,7 +17,7 @@
     onApply: (suggestion: PromptCommandSuggestion) => void | Promise<void>
   } = $props()
 
-  let listElement: HTMLDivElement | null = $state(null)
+  let listElement: HTMLElement | null = $state(null)
 
   $effect(() => {
     activeIndex
@@ -30,129 +33,58 @@
   }
 </script>
 
-<div class="prompt-command-panel" role="listbox" aria-label={title}>
-  <div class="prompt-command-title">{title}</div>
-  <div class="prompt-command-list" bind:this={listElement}>
-    {#each suggestions as suggestion, index (suggestion.id)}
-      {#if suggestion.disabled}
-        <div class="prompt-command-status">{suggestion.description}</div>
-      {:else}
-        <button
-          type="button"
-          class="prompt-command-option"
-          class:active={index === activeIndex}
-          data-prompt-command-index={index}
-          role="option"
-          aria-selected={index === activeIndex}
-          onmousedown={(event) => event.preventDefault()}
-          onclick={() => void onApply(suggestion)}
-        >
-          <span class="prompt-command-main">
-            <span class="prompt-command-label">{suggestion.label}</span>
-            {#if suggestion.detail}
-              <span class="prompt-command-detail">{suggestion.detail}</span>
-            {/if}
-          </span>
-          <span class="prompt-command-description">{suggestion.description}</span>
-        </button>
-      {/if}
-    {/each}
-  </div>
+<div
+  class="absolute right-0 bottom-[calc(100%+8px)] left-0 z-30 max-h-[min(260px,45vh)] overflow-hidden"
+  role="listbox"
+  aria-label={title}
+>
+  <Card
+    class="gap-0 rounded-lg bg-white/98 py-0 shadow-[0_18px_48px_rgba(36,45,39,0.16)] backdrop-blur"
+  >
+    <CardHeader class="border-b px-3 py-2">
+      <CardTitle class="text-[10px] font-bold text-muted-foreground uppercase">
+        {title}
+      </CardTitle>
+    </CardHeader>
+    <CardContent class="scrollbar-slim max-h-55 overflow-y-auto p-1" bind:ref={listElement}>
+      {#each suggestions as suggestion, index (suggestion.id)}
+        {#if suggestion.disabled}
+          <div class="px-2 py-2 text-[11px] text-muted-foreground">{suggestion.description}</div>
+        {:else}
+          <Button
+            type="button"
+            variant="ghost"
+            class="h-auto w-full justify-start px-2 py-2 text-left hover:bg-emerald-50 hover:text-foreground {index ===
+            activeIndex
+              ? 'bg-emerald-50 text-foreground shadow-[inset_0_0_0_1px_rgba(16,185,129,0.16)]'
+              : ''}"
+            data-prompt-command-index={index}
+            role="option"
+            aria-selected={index === activeIndex}
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void onApply(suggestion)}
+          >
+            <span class="grid min-w-0 flex-1 gap-0.5">
+              <span class="flex min-w-0 items-center gap-1.5">
+                <Badge
+                  variant="secondary"
+                  class="rounded-md bg-emerald-50 font-mono text-[12px] font-bold text-emerald-800"
+                >
+                  {suggestion.label}
+                </Badge>
+                {#if suggestion.detail}
+                  <span class="min-w-0 truncate text-[10px] font-semibold text-amber-700">
+                    {suggestion.detail}
+                  </span>
+                {/if}
+              </span>
+              <span class="block min-w-0 truncate text-[11px] font-normal text-muted-foreground">
+                {suggestion.description}
+              </span>
+            </span>
+          </Button>
+        {/if}
+      {/each}
+    </CardContent>
+  </Card>
 </div>
-
-<style>
-  .prompt-command-panel {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: calc(100% + 8px);
-    z-index: 30;
-    max-height: min(260px, 45vh);
-    overflow: hidden;
-    border: 1px solid rgba(120, 113, 108, 0.18);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow:
-      0 18px 48px rgba(36, 45, 39, 0.16),
-      0 0 0 1px rgba(255, 255, 255, 0.7) inset;
-    backdrop-filter: blur(14px);
-  }
-
-  .prompt-command-title {
-    padding: 7px 9px 5px;
-    border-bottom: 1px solid rgba(231, 229, 228, 0.9);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-transform: uppercase;
-    color: #78716c;
-  }
-
-  .prompt-command-list {
-    max-height: 218px;
-    overflow-y: auto;
-    padding: 4px;
-  }
-
-  .prompt-command-option {
-    width: 100%;
-    min-width: 0;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    padding: 7px 8px;
-    text-align: left;
-    transition:
-      background 140ms ease-out,
-      box-shadow 140ms ease-out;
-  }
-
-  .prompt-command-option:hover,
-  .prompt-command-option.active {
-    background: #ecfdf5;
-    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.16);
-  }
-
-  .prompt-command-main {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .prompt-command-label {
-    flex: 0 0 auto;
-    font-family:
-      ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-    font-size: 12px;
-    font-weight: 750;
-    color: #065f46;
-  }
-
-  .prompt-command-detail,
-  .prompt-command-description {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .prompt-command-detail {
-    font-size: 10px;
-    font-weight: 600;
-    color: #a16207;
-  }
-
-  .prompt-command-description {
-    display: block;
-    margin-top: 2px;
-    font-size: 11px;
-    color: #57534e;
-  }
-
-  .prompt-command-status {
-    padding: 9px 8px;
-    font-size: 11px;
-    color: #78716c;
-  }
-</style>

@@ -1,6 +1,9 @@
 <script lang="ts">
   import type { ChatAttachment } from '$lib/anda/client'
   import { fileSizeLabel } from '$lib/anda/composer/attachments'
+  import { Badge } from '$lib/components/ui/badge/index.js'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { Card } from '$lib/components/ui/card/index.js'
   import { FileText, X } from '@lucide/svelte'
 
   let {
@@ -16,41 +19,46 @@
   <div class="mb-2 flex flex-wrap gap-1.5 px-1">
     {#each attachments as attachment (attachment.id)}
       {#if attachment.type?.startsWith('image/')}
-        <div
-          class="group relative size-8 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-50 shadow-sm transition-all hover:border-emerald-500/50"
+        <Card
+          class="group relative size-8 shrink-0 gap-0 rounded-md bg-muted/50 p-0 shadow-sm transition-all hover:border-emerald-500/50"
         >
           <img
             src={`data:${attachment.type};base64,${attachment.resource.blob}`}
             alt={attachment.name}
             class="size-full object-cover"
           />
-          <button
-            type="button"
-            class="absolute top-0 right-0 grid size-3.5 place-items-center rounded-bl-md bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
+          <Button
+            variant="destructive"
+            size="icon-xs"
+            class="absolute top-0 right-0 size-4 rounded-none rounded-bl-md bg-black/50 p-0 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500"
             aria-label={chrome.i18n.getMessage('removeAttachment')}
             onclick={() => onRemove(attachment.id)}
           >
             <X class="size-2" />
-          </button>
-        </div>
+          </Button>
+        </Card>
       {:else}
-        <span
-          class="inline-flex max-w-full items-center gap-1.5 rounded-md border border-stone-200 bg-stone-50 px-2 py-1 text-[11px] text-stone-600"
+        <Badge
+          variant="outline"
+          class="max-w-full rounded-md bg-muted/50 py-1 text-[11px] font-normal text-muted-foreground"
           title={attachment.name}
         >
           <FileText class="size-3 shrink-0 text-emerald-700" />
           <span class="max-w-30 truncate">{attachment.name}</span>
-          <span class="shrink-0 text-stone-400">{fileSizeLabel(attachment.size || 0)}</span>
-          <button
-            type="button"
-            class="grid size-4 shrink-0 place-items-center rounded-sm text-stone-400 hover:bg-stone-200 hover:text-stone-700"
+          <span class="shrink-0 text-muted-foreground/70"
+            >{fileSizeLabel(attachment.size || 0)}</span
+          >
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            class="size-4 rounded-sm text-muted-foreground/80 hover:text-foreground"
             aria-label={chrome.i18n.getMessage('removeAttachment')}
             title={chrome.i18n.getMessage('removeAttachment')}
             onclick={() => onRemove(attachment.id)}
           >
             <X class="size-3" />
-          </button>
-        </span>
+          </Button>
+        </Badge>
       {/if}
     {/each}
   </div>

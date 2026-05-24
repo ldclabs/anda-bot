@@ -1,6 +1,8 @@
 <script lang="ts">
   import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
+  import { Badge } from '$lib/components/ui/badge/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
+  import { Item, ItemContent, ItemMedia, ItemTitle } from '$lib/components/ui/item/index.js'
   import { ChevronDown, CircleAlert, History, LoaderCircle, Radio, Trash2 } from '@lucide/svelte'
   import type { Channel } from './client/channel.svelte'
 
@@ -154,9 +156,9 @@
         <div class="min-w-0 flex-1">
           <div class="truncate text-xs font-bold text-stone-800">
             {chrome.i18n.getMessage('channelsLabel')}
-          </div>
-          <div class="truncate text-[10px] font-medium text-stone-500">
-            {channels.length}
+            <Badge variant="outline">
+              {channels.length}
+            </Badge>
           </div>
         </div>
         <Button
@@ -171,16 +173,17 @@
         </Button>
       {/if}
     </div>
-
     <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5">
       {#each channels as channel (channel.source)}
         {@const active = channel.source === activeSource}
         {@const icon = statusIcon(channel)}
-        <div
-          class={`group relative flex w-full items-center rounded-md border text-left transition ${
+        <Item
+          size="xs"
+          variant={active ? 'outline' : 'default'}
+          class={`group relative flex-nowrap p-0 text-left ${
             active
-              ? 'border-emerald-900/15 bg-white text-stone-950 shadow-sm'
-              : 'border-transparent text-stone-600 hover:border-emerald-900/10 hover:bg-white/60 hover:text-stone-900'
+              ? 'border-emerald-900/15 bg-background text-stone-950 shadow-sm'
+              : 'text-stone-600 hover:border-emerald-900/10 hover:bg-background/60 hover:text-stone-900'
           } ${collapsed ? 'h-9 justify-center px-0' : ''}`}
         >
           <button
@@ -193,8 +196,9 @@
             title={`${channelTitle(channel.source)}\n${channel.source}`}
             onclick={() => selectChannel(channel.source)}
           >
-            <span
-              class={`relative grid size-6 shrink-0 place-items-center rounded-md border ${
+            <ItemMedia
+              variant="icon"
+              class={`relative grid size-6 place-items-center rounded-md border ${
                 active
                   ? 'border-emerald-900/10 bg-emerald-50 text-emerald-800'
                   : 'border-stone-200 bg-white/75 text-stone-500'
@@ -210,38 +214,40 @@
               <span
                 class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
               ></span>
-            </span>
+            </ItemMedia>
 
             {#if !collapsed}
-              <span class="min-w-0 flex-1">
-                <span class="flex min-w-0 items-center gap-2">
-                  <span class="truncate text-xs font-bold">{channelTitle(channel.source)}</span>
-                  {#if active && sending}
-                    <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
-                  {/if}
+              <ItemContent class="min-w-0 gap-0">
+                <div class="flex min-w-0 items-center gap-2">
+                  <div class="flex min-w-0 flex-1 items-center gap-2">
+                    <ItemTitle class="min-w-0 flex-1 text-xs font-bold">
+                      <span class="truncate">{channelTitle(channel.source)}</span>
+                    </ItemTitle>
+                    {#if active && sending}
+                      <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
+                    {/if}
+                  </div>
                   {#if channelMeta(channel)}
-                    <span
-                      class="shrink-0 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] leading-none font-bold text-stone-500"
-                    >
+                    <Badge variant="secondary" class="h-4 rounded-full px-1.5 text-[10px]">
                       {channelMeta(channel)}
-                    </span>
+                    </Badge>
                   {/if}
-                </span>
-                <span class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-stone-500">
+                </div>
+                <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-stone-500">
                   <span class="shrink-0">{statusLabel(channel)}</span>
                   <span class="min-w-0 truncate text-stone-400"
                     >{channelSubtitle(channel.source)}</span
                   >
-                </span>
-              </span>
+                </div>
+              </ItemContent>
             {/if}
           </button>
 
           {#if !collapsed}
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon-xs"
-              class="mr-1 shrink-0 text-stone-400 opacity-0 group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:opacity-100"
+              class="pointer-events-none absolute bottom-1 right-1 z-10 text-stone-400 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100"
               aria-label={chrome.i18n.getMessage('deleteChannel')}
               title={chrome.i18n.getMessage('deleteChannel')}
               disabled={sending || channel.sending}
@@ -250,7 +256,7 @@
               <Trash2 class="size-3.5" />
             </Button>
           {/if}
-        </div>
+        </Item>
       {/each}
     </div>
   </div>

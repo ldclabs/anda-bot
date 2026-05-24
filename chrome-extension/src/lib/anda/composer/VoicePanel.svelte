@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { VoiceProvider } from '$lib/anda/client'
+  import { Badge } from '$lib/components/ui/badge/index.js'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { Card } from '$lib/components/ui/card/index.js'
   import { LoaderCircle, Mic, Square } from '@lucide/svelte'
 
   type VoiceStage = 'idle' | 'recording' | 'processing'
@@ -33,16 +36,19 @@
   const active = $derived(voiceStage === 'recording' || voiceStage === 'processing' || sending)
 </script>
 
-<div
-  class="voice-panel relative grid min-h-32 place-items-center overflow-hidden rounded-md border border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white"
-  class:active
+<Card
+  class="voice-panel relative grid min-h-32 place-items-center rounded-md border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white {active
+    ? 'active'
+    : ''}"
 >
   <div class="voice-field"></div>
-  <button
+  <Button
     type="button"
-    class="voice-orb relative grid place-items-center"
-    class:recording={voiceStage === 'recording'}
-    class:processing={voiceStage === 'processing' || sending}
+    variant="ghost"
+    class="voice-orb relative grid place-items-center p-0 hover:bg-[#06120f] {voiceStage ===
+    'recording'
+      ? 'recording'
+      : ''} {voiceStage === 'processing' || sending ? 'processing' : ''}"
     style={voiceOrbStyle}
     disabled={!canRecordVoice}
     aria-label={voiceStage === 'recording'
@@ -63,32 +69,45 @@
         <Mic class="size-5" />
       {/if}
     </span>
-  </button>
+  </Button>
 
-  <div class="relative z-10 mt-3 flex items-center gap-2 text-[11px] font-semibold">
+  <Badge
+    variant="secondary"
+    class="relative z-10 mt-3 gap-2 rounded-full bg-white/10 text-[11px] font-semibold text-white hover:bg-white/10"
+  >
     <span class="voice-status-dot" class:recording={voiceStage === 'recording'}></span>
     <span>{voiceStatus}</span>
-  </div>
+  </Badge>
   <div class="voice-service relative z-10 mt-2 flex items-center gap-1 text-[11px]">
     <div class="voice-service-switch" aria-label="Voice service">
-      <button
+      <Button
         type="button"
-        class:active={voiceProvider === 'chrome'}
+        variant="ghost"
+        size="xs"
+        class="min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 {voiceProvider ===
+        'chrome'
+          ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
+          : ''}"
         disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
         title={chrome.i18n.getMessage('useChromeVoice')}
         onclick={() => onSelectVoiceProvider('chrome')}
       >
         Chrome
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        class:active={voiceProvider === 'anda'}
+        variant="ghost"
+        size="xs"
+        class="min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 {voiceProvider ===
+        'anda'
+          ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
+          : ''}"
         disabled={!canUseAndaVoice || voiceStage !== 'idle'}
         title={chrome.i18n.getMessage('useAndaVoice')}
         onclick={() => onSelectVoiceProvider('anda')}
       >
         Anda
-      </button>
+      </Button>
     </div>
     <span class="voice-service-label"
       >{voiceProvider === 'chrome'
@@ -103,14 +122,14 @@
       {voiceTranscript}
     </div>
   {/if}
-</div>
+</Card>
 
 <style>
-  .voice-panel {
+  :global(.voice-panel) {
     isolation: isolate;
   }
 
-  .voice-panel::before {
+  :global(.voice-panel)::before {
     position: absolute;
     inset: -50% -50%;
     content: '';
@@ -128,12 +147,12 @@
     z-index: -2;
   }
 
-  .voice-panel.active::before {
+  :global(.voice-panel.active)::before {
     opacity: 1;
     animation: voice-panel-rotate 10s linear infinite;
   }
 
-  .voice-panel::after {
+  :global(.voice-panel)::after {
     position: absolute;
     inset: 0;
     content: '';
@@ -158,7 +177,7 @@
     transition: transform 150ms cubic-bezier(0.2, 0, 0.3, 1);
   }
 
-  .voice-orb {
+  :global(.voice-orb) {
     width: 100px;
     height: 100px;
     border: 0;
@@ -171,11 +190,11 @@
     transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
-  .voice-orb:hover:not(:disabled) {
+  :global(.voice-orb:hover:not(:disabled)) {
     transform: scale(1.05);
   }
 
-  .voice-orb::before {
+  :global(.voice-orb)::before {
     content: '';
     position: absolute;
     inset: -2px;
@@ -189,7 +208,7 @@
     animation: voice-orb-border-rotate 4s linear infinite;
   }
 
-  .voice-orb.recording::after {
+  :global(.voice-orb.recording)::after {
     content: '';
     position: absolute;
     inset: -8px;
@@ -198,11 +217,11 @@
     animation: voice-orb-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
 
-  .voice-orb.recording {
+  :global(.voice-orb.recording) {
     transform: scale(calc(1 + var(--voice-level, 0) * 0.2));
   }
 
-  .voice-orb.processing {
+  :global(.voice-orb.processing) {
     animation: voice-orb-breathing 2s ease-in-out infinite;
   }
 
@@ -230,7 +249,7 @@
     transition: all 0.3s ease;
   }
 
-  .voice-orb.recording .voice-orb-icon {
+  :global(.voice-orb.recording) .voice-orb-icon {
     background: rgba(16, 185, 129, 0.2);
     box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
   }
@@ -318,32 +337,5 @@
     border-radius: 8px;
     background: rgba(6, 18, 15, 0.42);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  }
-
-  .voice-service-switch button {
-    min-width: 48px;
-    border: 0;
-    border-radius: 6px;
-    padding: 3px 8px;
-    color: rgba(236, 253, 245, 0.68);
-    font-weight: 700;
-    line-height: 1.2;
-    transition:
-      background 140ms ease-out,
-      color 140ms ease-out,
-      opacity 140ms ease-out;
-  }
-
-  .voice-service-switch button.active {
-    background: rgba(236, 253, 245, 0.92);
-    color: #064e3b;
-  }
-
-  .voice-service-switch button:disabled {
-    cursor: not-allowed;
-  }
-
-  .voice-service-switch button:disabled:not(.active) {
-    opacity: 0.42;
   }
 </style>

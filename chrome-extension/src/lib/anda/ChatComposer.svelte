@@ -44,7 +44,12 @@
     type BrowserSpeechRecognitionEvent
   } from '$lib/anda/composer/voice'
   import VoicePanel from '$lib/anda/composer/VoicePanel.svelte'
+  import * as Alert from '$lib/components/ui/alert/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
+  import { Card } from '$lib/components/ui/card/index.js'
+  import { InputGroup, InputGroupTextarea } from '$lib/components/ui/input-group/index.js'
+  import { Input } from '$lib/components/ui/input/index.js'
+  import * as Tooltip from '$lib/components/ui/tooltip/index.js'
   import {
     Keyboard,
     LoaderCircle,
@@ -1015,9 +1020,7 @@
 </script>
 
 <form
-  class="composer-shell rounded-lg border border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)]"
-  class:composer-working={composerWorking}
-  aria-busy={composerWorking}
+  class="contents"
   onsubmit={(event) => {
     event.preventDefault()
     void submitMessage()
@@ -1026,177 +1029,195 @@
   ondrop={handleDrop}
   ondragover={handleDragover}
 >
-  <input
-    bind:this={fileInputElement}
+  <Input
+    bind:ref={fileInputElement}
     type="file"
     multiple
     class="hidden"
     onchange={handleFileInput}
   />
 
-  <AttachmentList {attachments} onRemove={removeAttachment} />
+  <Card
+    class="composer-shell gap-2 rounded-lg border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)] {composerWorking
+      ? 'composer-working'
+      : ''}"
+    aria-busy={composerWorking}
+  >
+    <AttachmentList {attachments} onRemove={removeAttachment} />
 
-  {#if attachmentError}
-    <div
-      class="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
-    >
-      {attachmentError}
-    </div>
-  {/if}
-
-  <div class="grid gap-2">
-    {#if inputMode === 'voice'}
-      <VoicePanel
-        {voiceStage}
-        {sending}
-        {canRecordVoice}
-        {voiceOrbStyle}
-        {voiceStatus}
-        {voiceProvider}
-        {canUseBrowserSpeech}
-        {canUseAndaVoice}
-        {voiceTranscript}
-        onToggleRecording={toggleRecording}
-        onSelectVoiceProvider={selectVoiceProvider}
-      />
-    {:else}
-      <div class="prompt-input-wrap">
-        {#if promptCommandPanelOpen}
-          <PromptCommandPanel
-            title={promptCommandPanelTitle}
-            suggestions={promptCommandSuggestions}
-            activeIndex={activePromptCommandIndex}
-            onApply={applyPromptCommandSuggestion}
-          />
-        {/if}
-        <textarea
-          bind:this={textareaElement}
-          bind:value={text}
-          rows="1"
-          {placeholder}
-          spellcheck="true"
-          disabled={disabled || sending}
-          aria-haspopup="listbox"
-          class="max-h-38 min-h-10 w-full resize-none border-0 bg-transparent px-2 py-2 leading-5 text-stone-950 outline-none placeholder:text-stone-400 disabled:cursor-not-allowed disabled:opacity-60"
-          onkeydown={handleKeydown}
-          oninput={handleTextareaInput}
-          onfocus={handleTextareaFocus}
-          onblur={handleTextareaBlur}
-          onclick={updateTextareaCaret}
-          onkeyup={updateTextareaCaret}
-          onselect={updateTextareaCaret}
-        ></textarea>
-      </div>
-    {/if}
-
-    {#if inputMode === 'voice' && voiceError}
-      <div
-        class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+    {#if attachmentError}
+      <Alert.Alert
+        class="mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
       >
-        {voiceError}
-      </div>
+        <Alert.AlertDescription class="text-[11px] text-amber-800">
+          {attachmentError}
+        </Alert.AlertDescription>
+      </Alert.Alert>
     {/if}
 
-    <div class="flex items-center justify-between gap-2">
-      <div class="flex items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          class="text-stone-500 hover:text-emerald-700"
-          disabled={disabled || preparingAttachments}
-          aria-label={chrome.i18n.getMessage('attachFiles')}
-          title={chrome.i18n.getMessage('attachFiles')}
-          onclick={openFileDialog}
-        >
-          {#if preparingAttachments}
-            <LoaderCircle class="size-4 animate-spin" />
-          {:else}
-            <Paperclip class="size-4" />
+    <div class="grid gap-2">
+      {#if inputMode === 'voice'}
+        <VoicePanel
+          {voiceStage}
+          {sending}
+          {canRecordVoice}
+          {voiceOrbStyle}
+          {voiceStatus}
+          {voiceProvider}
+          {canUseBrowserSpeech}
+          {canUseAndaVoice}
+          {voiceTranscript}
+          onToggleRecording={toggleRecording}
+          onSelectVoiceProvider={selectVoiceProvider}
+        />
+      {:else}
+        <div class="prompt-input-wrap">
+          {#if promptCommandPanelOpen}
+            <PromptCommandPanel
+              title={promptCommandPanelTitle}
+              suggestions={promptCommandSuggestions}
+              activeIndex={activePromptCommandIndex}
+              onApply={applyPromptCommandSuggestion}
+            />
           {/if}
-        </Button>
+          <InputGroup
+            class="h-auto min-h-10 border-0 bg-transparent shadow-none has-[[data-slot=input-group-control]:focus-visible]:ring-0"
+          >
+            <InputGroupTextarea
+              bind:ref={textareaElement}
+              bind:value={text}
+              rows={1}
+              {placeholder}
+              spellcheck="true"
+              disabled={disabled || sending}
+              aria-haspopup="listbox"
+              class="max-h-38 min-h-10 px-2 leading-5 text-stone-950 placeholder:text-stone-400 disabled:opacity-60"
+              onkeydown={handleKeydown}
+              oninput={handleTextareaInput}
+              onfocus={handleTextareaFocus}
+              onblur={handleTextareaBlur}
+              onclick={updateTextareaCaret}
+              onkeyup={updateTextareaCaret}
+              onselect={updateTextareaCaret}
+            ></InputGroupTextarea>
+          </InputGroup>
+        </div>
+      {/if}
 
-        {#if canUseVoice}
+      {#if inputMode === 'voice' && voiceError}
+        <Alert.Alert
+          class="rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+        >
+          <Alert.AlertDescription class="text-[11px] text-amber-800">
+            {voiceError}
+          </Alert.AlertDescription>
+        </Alert.Alert>
+      {/if}
+
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-1">
           <Button
             type="button"
-            variant={inputMode === 'voice' ? 'secondary' : 'ghost'}
+            variant="ghost"
             size="icon-sm"
             class="text-stone-500 hover:text-emerald-700"
-            disabled={disabled || sending}
-            aria-label={inputMode === 'voice'
-              ? chrome.i18n.getMessage('switchToKeyboard')
-              : chrome.i18n.getMessage('switchToVoice')}
-            title={inputMode === 'voice'
-              ? chrome.i18n.getMessage('keyboardInput')
-              : chrome.i18n.getMessage('voiceInput')}
-            onclick={toggleInputMode}
+            disabled={disabled || preparingAttachments}
+            aria-label={chrome.i18n.getMessage('attachFiles')}
+            title={chrome.i18n.getMessage('attachFiles')}
+            onclick={openFileDialog}
           >
-            {#if inputMode === 'voice'}
-              <Keyboard class="size-4" />
+            {#if preparingAttachments}
+              <LoaderCircle class="size-4 animate-spin" />
             {:else}
-              <Mic class="size-4" />
+              <Paperclip class="size-4" />
             {/if}
           </Button>
-        {/if}
-      </div>
 
-      <div class="flex items-center gap-1">
-        {#if inputMode === 'voice'}
-          <Button
-            type="button"
-            variant={ttsEnabled ? 'secondary' : 'ghost'}
-            size="icon-sm"
-            class="text-stone- stone-500 hover:text-emerald-700"
-            disabled={disabled ||
-              sending ||
-              voiceStage === 'recording' ||
-              !selectedVoiceTtsAvailable}
-            aria-label={ttsEnabled
-              ? chrome.i18n.getMessage('disablePlayback')
-              : chrome.i18n.getMessage('enablePlayback')}
-            title={selectedVoiceTtsAvailable
-              ? `${voiceProviderLabel} ${ttsEnabled ? chrome.i18n.getMessage('playbackOn') : chrome.i18n.getMessage('playbackOff')}`
-              : `${voiceProviderLabel} ${chrome.i18n.getMessage('playbackUnavailable')}`}
-            onclick={() => (ttsEnabled = !ttsEnabled)}
-          >
-            {#if ttsEnabled}
-              <Volume2 class="size-4" />
-            {:else}
-              <VolumeX class="size-4" />
-            {/if}
-          </Button>
-        {:else}
-          <div class="group relative flex items-center">
-            <span
-              class="pointer-events-none absolute right-full mr-2 hidden rounded bg-stone-800 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-white opacity-0 transition-opacity duration-200 group-hover:block group-hover:opacity-100"
-            >
-              {submitTitle}
-            </span>
+          {#if canUseVoice}
             <Button
-              type="submit"
+              type="button"
+              variant={inputMode === 'voice' ? 'secondary' : 'ghost'}
               size="icon-sm"
-              variant={canSend ? 'default' : 'ghost'}
-              disabled={!canSend}
-              class="transition-all duration-200 {canSend
-                ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
-                : 'text-stone-300'}"
-              aria-label={chrome.i18n.getMessage('send')}
+              class="text-stone-500 hover:text-emerald-700"
+              disabled={disabled || sending}
+              aria-label={inputMode === 'voice'
+                ? chrome.i18n.getMessage('switchToKeyboard')
+                : chrome.i18n.getMessage('switchToVoice')}
+              title={inputMode === 'voice'
+                ? chrome.i18n.getMessage('keyboardInput')
+                : chrome.i18n.getMessage('voiceInput')}
+              onclick={toggleInputMode}
             >
-              {#if sending}
-                <LoaderCircle class="size-4 animate-spin" />
+              {#if inputMode === 'voice'}
+                <Keyboard class="size-4" />
               {:else}
-                <SendHorizontal class="size-4" />
+                <Mic class="size-4" />
               {/if}
             </Button>
-          </div>
-        {/if}
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-1">
+          {#if inputMode === 'voice'}
+            <Button
+              type="button"
+              variant={ttsEnabled ? 'secondary' : 'ghost'}
+              size="icon-sm"
+              class="text-stone-500 hover:text-emerald-700"
+              disabled={disabled ||
+                sending ||
+                voiceStage === 'recording' ||
+                !selectedVoiceTtsAvailable}
+              aria-label={ttsEnabled
+                ? chrome.i18n.getMessage('disablePlayback')
+                : chrome.i18n.getMessage('enablePlayback')}
+              title={selectedVoiceTtsAvailable
+                ? `${voiceProviderLabel} ${ttsEnabled ? chrome.i18n.getMessage('playbackOn') : chrome.i18n.getMessage('playbackOff')}`
+                : `${voiceProviderLabel} ${chrome.i18n.getMessage('playbackUnavailable')}`}
+              onclick={() => (ttsEnabled = !ttsEnabled)}
+            >
+              {#if ttsEnabled}
+                <Volume2 class="size-4" />
+              {:else}
+                <VolumeX class="size-4" />
+              {/if}
+            </Button>
+          {:else}
+            <Tooltip.Provider>
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Button
+                      {...props}
+                      type="submit"
+                      size="icon-sm"
+                      variant={canSend ? 'default' : 'ghost'}
+                      disabled={!canSend}
+                      class="duration-200 {canSend
+                        ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
+                        : 'text-stone-300'}"
+                      aria-label={chrome.i18n.getMessage('send')}
+                    >
+                      {#if sending}
+                        <LoaderCircle class="size-4 animate-spin" />
+                      {:else}
+                        <SendHorizontal class="size-4" />
+                      {/if}
+                    </Button>
+                  {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="top" sideOffset={6}>{submitTitle}</Tooltip.Content>
+              </Tooltip.Root>
+            </Tooltip.Provider>
+          {/if}
+        </div>
       </div>
     </div>
-  </div>
+  </Card>
 </form>
 
 <style>
-  .composer-shell {
+  :global(.composer-shell) {
     position: relative;
     isolation: isolate;
     overflow: visible;
@@ -1205,8 +1226,8 @@
       box-shadow 180ms ease-out;
   }
 
-  .composer-shell::before,
-  .composer-shell::after {
+  :global(.composer-shell)::before,
+  :global(.composer-shell)::after {
     position: absolute;
     content: '';
     pointer-events: none;
@@ -1215,7 +1236,7 @@
     z-index: 0;
   }
 
-  .composer-shell::before {
+  :global(.composer-shell)::before {
     inset: -1px;
     border-radius: 9px;
     background: linear-gradient(90deg, #10b981, #3b82f6, #f59e0b, #10b981);
@@ -1227,7 +1248,7 @@
     padding: 1.5px;
   }
 
-  .composer-shell::after {
+  :global(.composer-shell)::after {
     inset: -1px;
     border-radius: 9px;
     background: linear-gradient(
@@ -1246,17 +1267,17 @@
     padding: 3px;
   }
 
-  .composer-shell > :global(*) {
+  :global(.composer-shell) > :global(*) {
     position: relative;
     z-index: 1;
   }
 
-  .composer-shell.composer-working {
+  :global(.composer-shell.composer-working) {
     border-color: transparent;
   }
 
-  .composer-shell.composer-working::before,
-  .composer-shell.composer-working::after {
+  :global(.composer-shell.composer-working)::before,
+  :global(.composer-shell.composer-working)::after {
     opacity: 1;
     animation: composer-border-flow 4s linear infinite;
   }
@@ -1276,8 +1297,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .composer-shell.composer-working::before,
-    .composer-shell.composer-working::after {
+    :global(.composer-shell.composer-working)::before,
+    :global(.composer-shell.composer-working)::after {
       animation: none;
     }
   }
