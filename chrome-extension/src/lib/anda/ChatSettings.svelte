@@ -1,12 +1,19 @@
 <script lang="ts">
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { type SettingsState, type SubmitKeyMode } from '$lib/anda/client/types'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import * as Dialog from '$lib/components/ui/dialog/index.js'
-  import * as Field from '$lib/components/ui/field/index.js'
-  import { Input } from '$lib/components/ui/input/index.js'
-  import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select/index.js'
-  import { Separator } from '$lib/components/ui/separator/index.js'
+  import {
+    buttonClass,
+    dialogContentClass,
+    dialogDescriptionClass,
+    dialogOverlayClass,
+    fieldClass,
+    fieldGroupClass,
+    fieldLabelClass,
+    inputClass,
+    nativeSelectClass,
+    nativeSelectWrapperClass,
+    separatorClass
+  } from '$lib/anda/ui'
   import { delay } from '$lib/utils/helper'
   import {
     BrainCircuit,
@@ -23,8 +30,10 @@
     PlugZap,
     RefreshCw,
     Save,
-    Terminal
+    Terminal,
+    X
   } from '@lucide/svelte'
+  import { Dialog } from 'bits-ui'
   import { onMount } from 'svelte'
 
   let {
@@ -170,9 +179,9 @@
   <div class="grid min-w-0 gap-1.5">
     <div class="flex min-w-0 items-center justify-between gap-2">
       <span class="min-w-0 truncate text-[10px] font-semibold text-muted-foreground">{label}</span>
-      <Button
-        variant="ghost"
-        size="icon-xs"
+      <button
+        type="button"
+        class={buttonClass('ghost', 'icon-xs')}
         aria-label={chrome.i18n.getMessage('copyCommand')}
         title={chrome.i18n.getMessage('copyCommand')}
         onclick={() => copyCommand(command)}
@@ -182,7 +191,7 @@
         {:else}
           <Clipboard class="size-3" />
         {/if}
-      </Button>
+      </button>
     </div>
     <code
       class="block min-w-0 overflow-x-auto rounded-md border bg-muted/35 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-foreground shadow-xs"
@@ -192,283 +201,323 @@
 {/snippet}
 
 <Dialog.Root bind:open>
-  <Dialog.Content
-    class="max-h-[min(90vh,46rem)] gap-0 overflow-hidden p-0 sm:max-w-2xl"
-    aria-label={chrome.i18n.getMessage('settings')}
-  >
-    <Dialog.Header class="border-b bg-muted/35 px-5 py-4 pr-12">
-      <div class="flex min-w-0 items-start justify-between gap-3">
-        <div class="grid min-w-0 gap-1">
-          <Dialog.Title class="flex min-w-0 items-center gap-2 text-base font-bold">
-            <Terminal class="size-4 shrink-0 text-emerald-800" />
-            <span class="truncate">{chrome.i18n.getMessage('settings')}</span>
-          </Dialog.Title>
-          <Dialog.Description class="text-xs leading-relaxed">
-            {chrome.i18n.getMessage('onboardingIntro')}
-          </Dialog.Description>
+  <Dialog.Portal>
+    <Dialog.Overlay class={dialogOverlayClass()} />
+    <Dialog.Content
+      class={dialogContentClass(
+        'flex max-h-[min(90vh,46rem)] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl'
+      )}
+      aria-label={chrome.i18n.getMessage('settings')}
+    >
+      <Dialog.Close>
+        {#snippet child({ props })}
+          <button
+            {...props}
+            type="button"
+            class={buttonClass('ghost', 'icon-sm', 'absolute top-4 right-4 z-10')}
+          >
+            <X class="size-4" />
+            <span class="sr-only">Close</span>
+          </button>
+        {/snippet}
+      </Dialog.Close>
+
+      <div class="shrink-0 flex flex-col gap-2 border-b bg-muted/35 px-5 py-4 pr-12">
+        <div class="flex min-w-0 items-start justify-between gap-3">
+          <div class="grid min-w-0 gap-1">
+            <Dialog.Title class="flex min-w-0 items-center gap-2 text-base font-bold">
+              <Terminal class="size-4 shrink-0 text-emerald-800" />
+              <span class="truncate">{chrome.i18n.getMessage('settings')}</span>
+            </Dialog.Title>
+            <Dialog.Description class={dialogDescriptionClass('text-xs leading-relaxed')}>
+              {chrome.i18n.getMessage('onboardingIntro')}
+            </Dialog.Description>
+          </div>
         </div>
       </div>
-    </Dialog.Header>
 
-    <div
-      class="scrollbar-slim grid max-h-[calc(min(90vh,46rem)-8.5rem)] gap-4 overflow-y-auto px-5 py-4"
-    >
-      <div class="rounded-lg border bg-background shadow-xs">
+      <div class="scrollbar-slim min-h-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4">
+        <div class="rounded-lg border bg-background shadow-xs">
+          <button
+            type="button"
+            class="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            aria-expanded={setupGuideOpen}
+            aria-controls="local-setup-guide"
+            aria-label={setupGuideOpen
+              ? chrome.i18n.getMessage('collapseLocalSetup')
+              : chrome.i18n.getMessage('expandLocalSetup')}
+            onclick={() => (setupGuideOpen = !setupGuideOpen)}
+          >
+            <span class="grid min-w-0 gap-1">
+              <span class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
+                <Terminal class="size-3.5" />
+                <span>{chrome.i18n.getMessage('onboardingEyebrow')}</span>
+              </span>
+              <span class="text-sm font-bold text-foreground">
+                {chrome.i18n.getMessage('onboardingTitle')}
+              </span>
+              <span class="text-[11px] leading-relaxed text-muted-foreground">
+                {chrome.i18n.getMessage('onboardingIntro')}
+              </span>
+            </span>
+            <ChevronDown
+              class={`mt-0.5 size-4 shrink-0 text-emerald-800 transition-transform ${setupGuideOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {#if setupGuideOpen}
+            <div id="local-setup-guide" class="grid gap-3 border-t px-3 py-3">
+              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+                <div
+                  class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
+                >
+                  <Download class="size-3.5" />
+                </div>
+                <div class="grid min-w-0 gap-2">
+                  <div class="grid gap-0.5">
+                    <h3 class="text-xs font-bold text-foreground">
+                      {chrome.i18n.getMessage('onboardingInstallTitle')}
+                    </h3>
+                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                      {chrome.i18n.getMessage('onboardingInstallBody')}
+                    </p>
+                  </div>
+                  <div class="grid gap-2">
+                    {@render commandBlock('Homebrew', installCommand)}
+                    {@render commandBlock(chrome.i18n.getMessage('macLinux'), installScriptCommand)}
+                    {@render commandBlock('Windows PowerShell', windowsInstallCommand)}
+                  </div>
+                </div>
+              </div>
+
+              <div class={separatorClass()} data-orientation="horizontal"></div>
+
+              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+                <div
+                  class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
+                >
+                  <FileCog class="size-3.5" />
+                </div>
+                <div class="grid min-w-0 gap-2">
+                  <div class="grid gap-0.5">
+                    <h3 class="text-xs font-bold text-foreground">
+                      {chrome.i18n.getMessage('onboardingConfigureTitle')}
+                    </h3>
+                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                      {chrome.i18n.getMessage('onboardingConfigureBody')}
+                    </p>
+                  </div>
+                  {@render commandBlock(
+                    chrome.i18n.getMessage('launchCommandLabel'),
+                    launchCommand
+                  )}
+                </div>
+              </div>
+
+              <div class={separatorClass()} data-orientation="horizontal"></div>
+
+              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+                <div
+                  class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
+                >
+                  <KeyRound class="size-3.5" />
+                </div>
+                <div class="grid min-w-0 gap-2">
+                  <div class="grid gap-0.5">
+                    <h3 class="text-xs font-bold text-foreground">
+                      {chrome.i18n.getMessage('onboardingTokenTitle')}
+                    </h3>
+                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                      {chrome.i18n.getMessage('onboardingTokenBody')}
+                    </p>
+                  </div>
+                  {@render commandBlock(chrome.i18n.getMessage('tokenCommandLabel'), tokenCommand)}
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div data-slot="field-group" class={fieldGroupClass('gap-4')}>
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-foreground">
+              <Play class="size-3.5 shrink-0 text-emerald-800" />
+              <span class="truncate">{chrome.i18n.getMessage('connectionDetails')}</span>
+            </div>
+          </div>
+
+          <div data-slot="field" class={fieldClass('gap-1.5')}>
+            <label
+              class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}
+              for="base-url"
+            >
+              <ExternalLink class="size-3" />
+              {chrome.i18n.getMessage('gatewayUrl')}
+            </label>
+            <input
+              id="base-url"
+              type="url"
+              class={inputClass()}
+              spellcheck={false}
+              placeholder="http://127.0.0.1:8042"
+              bind:value={draftSettings.baseUrl}
+              oninput={markSettingsDirty}
+            />
+          </div>
+
+          <div data-slot="field" class={fieldClass('gap-1.5')}>
+            <label
+              class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}
+              for="token"
+            >
+              <KeyRound class="size-3" />
+              {chrome.i18n.getMessage('bearerToken')}
+            </label>
+            <input
+              id="token"
+              type="text"
+              class={inputClass()}
+              spellcheck={false}
+              placeholder={chrome.i18n.getMessage('tokenPlaceholder')}
+              bind:value={draftSettings.token}
+              oninput={markSettingsDirty}
+            />
+          </div>
+
+          <div data-slot="field" class={fieldClass('gap-1.5')}>
+            <div class="flex items-center justify-between gap-2">
+              <label
+                class={fieldLabelClass('min-w-0 text-[11px] font-bold text-muted-foreground')}
+                for="active-model"
+              >
+                <BrainCircuit class="size-3" />
+                <span class="truncate">{chrome.i18n.getMessage('activeModel')}</span>
+              </label>
+            </div>
+            <div class="grid grid-cols-[1fr_auto] items-center gap-2">
+              <div
+                class={nativeSelectWrapperClass('w-full')}
+                data-slot="native-select-wrapper"
+                data-size="sm"
+              >
+                <select
+                  id="active-model"
+                  data-slot="native-select"
+                  data-size="sm"
+                  class={nativeSelectClass()}
+                  value={activeModel}
+                  disabled={!canChangeModel}
+                  aria-label={chrome.i18n.getMessage('activeModel')}
+                  onchange={switchActiveModel}
+                >
+                  {#if modelNames.length === 0}
+                    <option class="bg-[Canvas] text-[CanvasText]" value="">
+                      {chrome.i18n.getMessage('modelListEmpty')}
+                    </option>
+                  {/if}
+                  {#each modelNames as modelName}
+                    <option class="bg-[Canvas] text-[CanvasText]" value={modelName}>
+                      {modelName}
+                    </option>
+                  {/each}
+                </select>
+                <ChevronDown
+                  class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground select-none"
+                  aria-hidden="true"
+                />
+              </div>
+              <button
+                type="button"
+                class={buttonClass('ghost')}
+                disabled={!andaClient.settings.token || loadingModels || switchingModel}
+                aria-label={chrome.i18n.getMessage('refreshModels')}
+                title={chrome.i18n.getMessage('refreshModels')}
+                onclick={refreshModels}
+              >
+                <RefreshCw
+                  class={`size-4 ${loadingModels || switchingModel ? 'animate-spin text-emerald-700' : ''}`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div data-slot="field" class={fieldClass('gap-1.5')}>
+            <label class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}>
+              <Keyboard class="size-3" />
+              {chrome.i18n.getMessage('enterKeyBehavior')}
+            </label>
+            <div
+              class="grid grid-cols-2 gap-1 rounded-md border bg-muted/45 p-1"
+              role="radiogroup"
+              aria-label={chrome.i18n.getMessage('enterKeyBehavior')}
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draftSettings.submitKeyMode === 'enter'}
+                class={buttonClass('ghost', 'default', submitKeyModeButtonClass('enter'))}
+                onclick={() => updateSubmitKeyMode('enter')}
+              >
+                <span class="grid min-w-0 gap-0.5">
+                  <span class="block truncate text-[11px] font-bold">
+                    {chrome.i18n.getMessage('enterSendsMessage')}
+                  </span>
+                  <span class="block truncate text-[10px] font-semibold opacity-70">
+                    {chrome.i18n.getMessage('shiftEnterNewLine')}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draftSettings.submitKeyMode === 'modifier-enter'}
+                class={buttonClass('ghost', 'default', submitKeyModeButtonClass('modifier-enter'))}
+                onclick={() => updateSubmitKeyMode('modifier-enter')}
+              >
+                <span class="grid min-w-0 gap-0.5">
+                  <span class="block truncate text-[11px] font-bold">
+                    {chrome.i18n.getMessage('modifierEnterSendsMessage')}
+                  </span>
+                  <span class="block truncate text-[10px] font-semibold opacity-70">
+                    {chrome.i18n.getMessage('enterNewLineModifierSends')}
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="shrink-0 grid grid-cols-2 gap-2 border-t bg-muted/25 px-5 py-4 sm:grid-cols-2 sm:justify-stretch"
+      >
         <button
           type="button"
-          class="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          aria-expanded={setupGuideOpen}
-          aria-controls="local-setup-guide"
-          aria-label={setupGuideOpen
-            ? chrome.i18n.getMessage('collapseLocalSetup')
-            : chrome.i18n.getMessage('expandLocalSetup')}
-          onclick={() => (setupGuideOpen = !setupGuideOpen)}
+          class={buttonClass('default', 'sm', 'w-full')}
+          disabled={savingSettings || !settingsDirty}
+          onclick={saveSettings}
         >
-          <span class="grid min-w-0 gap-1">
-            <span class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
-              <Terminal class="size-3.5" />
-              <span>{chrome.i18n.getMessage('onboardingEyebrow')}</span>
-            </span>
-            <span class="text-sm font-bold text-foreground">
-              {chrome.i18n.getMessage('onboardingTitle')}
-            </span>
-            <span class="text-[11px] leading-relaxed text-muted-foreground">
-              {chrome.i18n.getMessage('onboardingIntro')}
-            </span>
-          </span>
-          <ChevronDown
-            class={`mt-0.5 size-4 shrink-0 text-emerald-800 transition-transform ${setupGuideOpen ? 'rotate-180' : ''}`}
-          />
+          {#if savingSettings}
+            <LoaderCircle class="size-3.5 animate-spin" />
+          {:else}
+            <Save class="size-3.5" />
+          {/if}
+          {chrome.i18n.getMessage('save')}
         </button>
-
-        {#if setupGuideOpen}
-          <div id="local-setup-guide" class="grid gap-3 border-t px-3 py-3">
-            <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-              <div
-                class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
-              >
-                <Download class="size-3.5" />
-              </div>
-              <div class="grid min-w-0 gap-2">
-                <div class="grid gap-0.5">
-                  <h3 class="text-xs font-bold text-foreground">
-                    {chrome.i18n.getMessage('onboardingInstallTitle')}
-                  </h3>
-                  <p class="text-[11px] leading-relaxed text-muted-foreground">
-                    {chrome.i18n.getMessage('onboardingInstallBody')}
-                  </p>
-                </div>
-                <div class="grid gap-2">
-                  {@render commandBlock('Homebrew', installCommand)}
-                  {@render commandBlock(chrome.i18n.getMessage('macLinux'), installScriptCommand)}
-                  {@render commandBlock('Windows PowerShell', windowsInstallCommand)}
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-              <div
-                class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
-              >
-                <FileCog class="size-3.5" />
-              </div>
-              <div class="grid min-w-0 gap-2">
-                <div class="grid gap-0.5">
-                  <h3 class="text-xs font-bold text-foreground">
-                    {chrome.i18n.getMessage('onboardingConfigureTitle')}
-                  </h3>
-                  <p class="text-[11px] leading-relaxed text-muted-foreground">
-                    {chrome.i18n.getMessage('onboardingConfigureBody')}
-                  </p>
-                </div>
-                {@render commandBlock(chrome.i18n.getMessage('launchCommandLabel'), launchCommand)}
-              </div>
-            </div>
-
-            <Separator />
-
-            <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-              <div
-                class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
-              >
-                <KeyRound class="size-3.5" />
-              </div>
-              <div class="grid min-w-0 gap-2">
-                <div class="grid gap-0.5">
-                  <h3 class="text-xs font-bold text-foreground">
-                    {chrome.i18n.getMessage('onboardingTokenTitle')}
-                  </h3>
-                  <p class="text-[11px] leading-relaxed text-muted-foreground">
-                    {chrome.i18n.getMessage('onboardingTokenBody')}
-                  </p>
-                </div>
-                {@render commandBlock(chrome.i18n.getMessage('tokenCommandLabel'), tokenCommand)}
-              </div>
-            </div>
-          </div>
-        {/if}
+        <button
+          type="button"
+          class={buttonClass('outline', 'sm', 'w-full bg-background')}
+          disabled={testingConnection}
+          onclick={testConnection}
+        >
+          {#if testingConnection}
+            <LoaderCircle class="size-3.5 animate-spin" />
+          {:else}
+            <PlugZap class="size-3.5" />
+          {/if}
+          {chrome.i18n.getMessage('test')}
+        </button>
       </div>
-
-      <Field.FieldGroup class="gap-4">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-foreground">
-            <Play class="size-3.5 shrink-0 text-emerald-800" />
-            <span class="truncate">{chrome.i18n.getMessage('connectionDetails')}</span>
-          </div>
-        </div>
-
-        <Field.Field class="gap-1.5">
-          <Field.FieldLabel class="text-[11px] font-bold text-muted-foreground" for="base-url">
-            <ExternalLink class="size-3" />
-            {chrome.i18n.getMessage('gatewayUrl')}
-          </Field.FieldLabel>
-          <Input
-            id="base-url"
-            type="url"
-            spellcheck={false}
-            placeholder="http://127.0.0.1:8042"
-            bind:value={draftSettings.baseUrl}
-            oninput={markSettingsDirty}
-          />
-        </Field.Field>
-
-        <Field.Field class="gap-1.5">
-          <Field.FieldLabel class="text-[11px] font-bold text-muted-foreground" for="token">
-            <KeyRound class="size-3" />
-            {chrome.i18n.getMessage('bearerToken')}
-          </Field.FieldLabel>
-          <Input
-            id="token"
-            type="text"
-            spellcheck={false}
-            placeholder={chrome.i18n.getMessage('tokenPlaceholder')}
-            bind:value={draftSettings.token}
-            oninput={markSettingsDirty}
-          />
-        </Field.Field>
-
-        <Field.Field class="gap-1.5">
-          <div class="flex items-center justify-between gap-2">
-            <Field.FieldLabel
-              class="min-w-0 text-[11px] font-bold text-muted-foreground"
-              for="active-model"
-            >
-              <BrainCircuit class="size-3" />
-              <span class="truncate">{chrome.i18n.getMessage('activeModel')}</span>
-            </Field.FieldLabel>
-          </div>
-          <div class="grid grid-cols-[1fr_auto] items-center gap-2">
-            <NativeSelect
-              id="active-model"
-              class="w-full"
-              size="sm"
-              value={activeModel}
-              disabled={!canChangeModel}
-              aria-label={chrome.i18n.getMessage('activeModel')}
-              onchange={switchActiveModel}
-            >
-              {#if modelNames.length === 0}
-                <NativeSelectOption value=""
-                  >{chrome.i18n.getMessage('modelListEmpty')}</NativeSelectOption
-                >
-              {/if}
-              {#each modelNames as modelName}
-                <NativeSelectOption value={modelName}>{modelName}</NativeSelectOption>
-              {/each}
-            </NativeSelect>
-            <Button
-              variant="ghost"
-              disabled={!andaClient.settings.token || loadingModels || switchingModel}
-              aria-label={chrome.i18n.getMessage('refreshModels')}
-              title={chrome.i18n.getMessage('refreshModels')}
-              onclick={refreshModels}
-            >
-              <RefreshCw
-                class={`size-4 ${loadingModels || switchingModel ? 'animate-spin text-emerald-700' : ''}`}
-              />
-            </Button>
-          </div>
-        </Field.Field>
-
-        <Field.Field class="gap-1.5">
-          <Field.FieldLabel class="text-[11px] font-bold text-muted-foreground">
-            <Keyboard class="size-3" />
-            {chrome.i18n.getMessage('enterKeyBehavior')}
-          </Field.FieldLabel>
-          <div
-            class="grid grid-cols-2 gap-1 rounded-md border bg-muted/45 p-1"
-            role="radiogroup"
-            aria-label={chrome.i18n.getMessage('enterKeyBehavior')}
-          >
-            <Button
-              variant="ghost"
-              role="radio"
-              aria-checked={draftSettings.submitKeyMode === 'enter'}
-              class={submitKeyModeButtonClass('enter')}
-              onclick={() => updateSubmitKeyMode('enter')}
-            >
-              <span class="grid min-w-0 gap-0.5">
-                <span class="block truncate text-[11px] font-bold">
-                  {chrome.i18n.getMessage('enterSendsMessage')}
-                </span>
-                <span class="block truncate text-[10px] font-semibold opacity-70">
-                  {chrome.i18n.getMessage('shiftEnterNewLine')}
-                </span>
-              </span>
-            </Button>
-            <Button
-              variant="ghost"
-              role="radio"
-              aria-checked={draftSettings.submitKeyMode === 'modifier-enter'}
-              class={submitKeyModeButtonClass('modifier-enter')}
-              onclick={() => updateSubmitKeyMode('modifier-enter')}
-            >
-              <span class="grid min-w-0 gap-0.5">
-                <span class="block truncate text-[11px] font-bold">
-                  {chrome.i18n.getMessage('modifierEnterSendsMessage')}
-                </span>
-                <span class="block truncate text-[10px] font-semibold opacity-70">
-                  {chrome.i18n.getMessage('enterNewLineModifierSends')}
-                </span>
-              </span>
-            </Button>
-          </div>
-        </Field.Field>
-      </Field.FieldGroup>
-    </div>
-
-    <Dialog.Footer
-      class="grid grid-cols-2 border-t bg-muted/25 px-5 py-4 sm:grid-cols-2 sm:justify-stretch"
-    >
-      <Button
-        size="sm"
-        class="w-full"
-        disabled={savingSettings || !settingsDirty}
-        onclick={saveSettings}
-      >
-        {#if savingSettings}
-          <LoaderCircle class="size-3.5 animate-spin" />
-        {:else}
-          <Save class="size-3.5" />
-        {/if}
-        {chrome.i18n.getMessage('save')}
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        class="w-full bg-background"
-        disabled={testingConnection}
-        onclick={testConnection}
-      >
-        {#if testingConnection}
-          <LoaderCircle class="size-3.5 animate-spin" />
-        {:else}
-          <PlugZap class="size-3.5" />
-        {/if}
-        {chrome.i18n.getMessage('test')}
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
+    </Dialog.Content>
+  </Dialog.Portal>
 </Dialog.Root>

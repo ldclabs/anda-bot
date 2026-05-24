@@ -13,10 +13,7 @@
     type PageAudioResult,
     type PromptSkill
   } from '$lib/anda/client/types'
-  import { Badge } from '$lib/components/ui/badge/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import { Card } from '$lib/components/ui/card/index.js'
-  import { Separator } from '$lib/components/ui/separator/index.js'
+  import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
   import { scrollIntoView } from '$lib/utils/document'
   import {
     Bot,
@@ -341,9 +338,11 @@
       class="grid h-12 grid-cols-[1fr_auto] items-center gap-3 border-b border-emerald-900/10 bg-emerald-50/75 px-3"
     >
       <div class="min-w-0 text-center">
-        <Badge
-          variant="secondary"
-          class="mx-auto max-w-full gap-1.5 rounded-full bg-white/50 text-[11px] text-stone-500"
+        <span
+          class={badgeClass(
+            'secondary',
+            'mx-auto max-w-full gap-1.5 rounded-full bg-white/50 text-[11px] text-stone-500'
+          )}
         >
           {#if isBusy}
             <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
@@ -353,7 +352,7 @@
             <Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
           {/if}
           <span class="truncate">{status}</span>
-        </Badge>
+        </span>
         {#if andaClient.systemMessage || activeSource}
           <p class="truncate text-xs font-bold text-stone-800">
             {andaClient.systemMessage?.text || activeSource}
@@ -361,15 +360,15 @@
         {/if}
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon"
+      <button
+        type="button"
+        class={buttonClass('ghost', 'icon')}
         aria-label={chrome.i18n.getMessage('settings')}
         title={chrome.i18n.getMessage('settings')}
         onclick={toggleSettingsPanel}
       >
         <Settings class="size-4" />
-      </Button>
+      </button>
     </header>
 
     {#if settingsOpen}
@@ -392,10 +391,9 @@
               {chrome.i18n.getMessage('updateReadyBody', [updateState?.latest_tag || ''])}
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="xs"
-            class="max-w-32 bg-white/85 text-stone-700 shadow-sm"
+          <button
+            type="button"
+            class={buttonClass('outline', 'xs', 'max-w-32 bg-white/85 text-stone-700 shadow-sm')}
             disabled={updateRestarting}
             onclick={installUpdateAndRestart}
           >
@@ -405,7 +403,7 @@
               <RefreshCw class="size-3" />
             {/if}
             <span class="truncate">{chrome.i18n.getMessage('installRestartUpdate')}</span>
-          </Button>
+          </button>
         </div>
       </section>
     {/if}
@@ -416,13 +414,15 @@
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
         <div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
-          <Card class="grid size-11 place-items-center rounded-md bg-white p-0 shadow-sm">
+          <div
+            class={cardClass('grid size-11 place-items-center rounded-md bg-white p-0 shadow-sm')}
+          >
             {#if syncing}
               <LoaderCircle class="size-5 animate-spin text-emerald-800" />
             {:else}
               <Bot class="size-5 text-emerald-800" />
             {/if}
-          </Card>
+          </div>
           <div class="text-xs font-semibold text-stone-700">
             {syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
           </div>
@@ -430,10 +430,9 @@
       {:else}
         {#if hasPreviousConversations}
           <div class="flex justify-center">
-            <Button
-              variant="outline"
-              size="xs"
-              class="bg-white/80 text-stone-600 shadow-sm"
+            <button
+              type="button"
+              class={buttonClass('outline', 'xs', 'bg-white/80 text-stone-600 shadow-sm')}
               disabled={loadingPrevious}
               onclick={loadPreviousConversations}
             >
@@ -443,7 +442,7 @@
                 <History class="size-3" />
               {/if}
               {chrome.i18n.getMessage('loadHistory')}
-            </Button>
+            </button>
           </div>
         {/if}
 
@@ -453,12 +452,14 @@
               <div
                 class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
               >
-                <Separator class="flex-1" />
+                <div class={separatorClass('flex-1')} data-orientation="horizontal"></div>
                 <span class="max-w-[70%] truncate">{groupLabel(group)}</span>
-                <Badge variant="secondary" class="rounded-full px-1.5 text-[10px] text-stone-500">
+                <span
+                  class={badgeClass('secondary', 'rounded-full px-1.5 text-[10px] text-stone-500')}
+                >
                   {group.status}
-                </Badge>
-                <Separator class="flex-1" />
+                </span>
+                <div class={separatorClass('flex-1')} data-orientation="horizontal"></div>
               </div>
             {/if}
 
@@ -472,9 +473,13 @@
 
     {#if sideMessageCount > 0}
       <section class="max-h-3/4 border-t border-emerald-900/10 bg-emerald-50/80 backdrop-blur">
-        <Button
-          variant="ghost"
-          class="flex h-10 w-full gap-2 px-3 text-left transition hover:bg-white/55"
+        <button
+          type="button"
+          class={buttonClass(
+            'ghost',
+            'default',
+            'flex h-10 w-full gap-2 px-3 text-left transition hover:bg-white/55'
+          )}
           aria-expanded={sideMessagesOpen}
           aria-label={chrome.i18n.getMessage(
             sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
@@ -490,18 +495,20 @@
           <span class="min-w-0 flex-1 truncate text-xs font-bold text-stone-700">
             {chrome.i18n.getMessage('sideTasksLabel')}
           </span>
-          <Badge
-            variant="outline"
-            class="rounded-full border-emerald-900/10 bg-white/80 px-1.5 text-[10px] text-emerald-800"
+          <span
+            class={badgeClass(
+              'outline',
+              'rounded-full border-emerald-900/10 bg-white/80 px-1.5 text-[10px] text-emerald-800'
+            )}
           >
             {sideMessageCount}
-          </Badge>
+          </span>
           {#if sideMessagesOpen}
             <ChevronDown class="size-4 shrink-0 text-stone-500" />
           {:else}
             <ChevronUp class="size-4 shrink-0 text-stone-500" />
           {/if}
-        </Button>
+        </button>
 
         {#if sideMessagesOpen}
           <div

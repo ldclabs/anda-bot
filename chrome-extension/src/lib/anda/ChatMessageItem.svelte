@@ -4,9 +4,7 @@
 
 <script lang="ts">
   import type { ChatMessage } from '$lib/anda/client/types'
-  import { Badge } from '$lib/components/ui/badge/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import { Card, CardContent } from '$lib/components/ui/card/index.js'
+  import { badgeClass, buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import { Check, Clipboard, Wrench } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
@@ -97,36 +95,46 @@
       : 'justify-items-start'}"
 >
   {#if hasThinkingText && (isTool || !hasMainText)}
-    <Button
-      variant="outline"
-      size="xs"
-      class="rounded-full bg-background/70 text-muted-foreground shadow-sm hover:border-emerald-200 hover:text-emerald-700"
+    <button
+      type="button"
+      class={buttonClass(
+        'outline',
+        'xs',
+        'rounded-full bg-background/70 text-muted-foreground shadow-sm hover:border-emerald-200 hover:text-emerald-700'
+      )}
       onclick={toggleDetails}
     >
       <Wrench class="size-3" />
       <span>{detailsExpanded ? `Hide ${detailLabel}` : `Show ${detailLabel}`}</span>
-    </Button>
+    </button>
   {/if}
 
   {#if hasMainText}
-    <Card
-      class="relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs {isUser
-        ? ' rounded-br-none bg-sky-50 text-slate-950'
-        : isSystem
-          ? 'rounded-bl-none border-amber-200 bg-amber-50 text-amber-950'
-          : isTool
-            ? 'border-stone-200 bg-stone-50 text-stone-800'
-            : 'rounded-bl-none border-stone-100 bg-white text-stone-950'}"
+    <div
+      class={cardClass(
+        `relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs ${
+          isUser
+            ? ' rounded-br-none bg-sky-50 text-slate-950'
+            : isSystem
+              ? 'rounded-bl-none border-amber-200 bg-amber-50 text-amber-950'
+              : isTool
+                ? 'border-stone-200 bg-stone-50 text-stone-800'
+                : 'rounded-bl-none border-stone-100 bg-white text-stone-950'
+        }`
+      )}
     >
       <div
-        class="pointer-events-none absolute -top-4 {isUser
-          ? '-left-4'
-          : '-right-4'} z-10 opacity-0 transition duration-150 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100"
+        class="pointer-events-none absolute -top-3 {isUser
+          ? '-left-3'
+          : '-right-3'} z-10 opacity-0 transition duration-150 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100"
       >
-        <Button
-          variant="outline"
-          size="icon-sm"
-          class="pointer-events-none scale-95 bg-background/95 text-muted-foreground shadow-md backdrop-blur-sm duration-150 group-hover/card:pointer-events-auto group-hover/card:scale-100 group-focus-within/card:pointer-events-auto group-focus-within/card:scale-100 hover:border-emerald-200 hover:text-emerald-700 focus-visible:pointer-events-auto focus-visible:scale-100"
+        <button
+          type="button"
+          class={buttonClass(
+            'outline',
+            'icon-sm',
+            'pointer-events-none scale-95 bg-background/95 text-muted-foreground shadow-md backdrop-blur-sm duration-150 group-hover/card:pointer-events-auto group-hover/card:scale-100 group-focus-within/card:pointer-events-auto group-focus-within/card:scale-100 hover:border-emerald-200 hover:text-emerald-700 focus-visible:pointer-events-auto focus-visible:scale-100'
+          )}
           aria-label="Copy message"
           title="Copy message"
           onclick={copyMessage}
@@ -136,18 +144,20 @@
           {:else}
             <Clipboard class="size-4" />
           {/if}
-        </Button>
+        </button>
       </div>
 
-      <CardContent class="px-3 py-2">
+      <div class={cardContentClass('px-3 py-2')}>
         <div class="md-content w-full min-w-0 text-pretty wrap-break-word">{@html html}</div>
 
         {#if message.attachments?.length}
           <div class="mt-2 flex flex-wrap gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
-              <Badge
-                variant="outline"
-                class="max-w-full rounded-md bg-background/70 py-1 text-[11px] font-normal text-muted-foreground"
+              <span
+                class={badgeClass(
+                  'outline',
+                  'max-w-full rounded-md bg-background/70 py-1 text-[11px] font-normal text-muted-foreground'
+                )}
                 title={attachment.name}
               >
                 <span class="truncate">{attachment.name}</span>
@@ -156,7 +166,7 @@
                     {fileSizeLabel(attachment.size)}
                   </span>
                 {/if}
-              </Badge>
+              </span>
             {/each}
           </div>
         {/if}
@@ -168,17 +178,20 @@
               : ''}"
           >
             {#if hasThinkingText}
-              <Button
-                variant="ghost"
-                size="xs"
-                class="h-auto min-w-0 px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground/75 hover:text-muted-foreground"
+              <button
+                type="button"
+                class={buttonClass(
+                  'ghost',
+                  'xs',
+                  'h-auto min-w-0 px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground/75 hover:text-muted-foreground'
+                )}
                 onclick={toggleDetails}
               >
                 <Wrench class="size-3 shrink-0" />
                 <span class="truncate">
                   {detailsExpanded ? 'Hide thinking and tools' : 'Show thinking and tools'}
                 </span>
-              </Button>
+              </button>
             {/if}
             {#if messageTimeLabel}
               <div class="ml-auto shrink-0 text-[10px] leading-none text-muted-foreground/70">
@@ -195,15 +208,17 @@
             {@html thinkingHtml}
           </div>
         {/if}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   {/if}
 
   {#if hasThinkingText && !hasMainText && detailsExpanded}
-    <Card
-      class="relative max-w-[92%] min-w-0 gap-0 rounded-lg border-dashed bg-muted/50 py-0 text-[12px] leading-relaxed text-muted-foreground shadow-2xs"
+    <div
+      class={cardClass(
+        'relative max-w-[92%] min-w-0 gap-0 rounded-lg border-dashed bg-muted/50 py-0 text-[12px] leading-relaxed text-muted-foreground shadow-2xs'
+      )}
     >
-      <CardContent class="px-3 py-2">
+      <div class={cardContentClass('px-3 py-2')}>
         <div class="md-content w-full min-w-0 text-pretty wrap-break-word opacity-80">
           {@html thinkingHtml}
         </div>
@@ -212,7 +227,7 @@
             {messageTimeLabel}
           </div>
         {/if}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   {/if}
 </article>

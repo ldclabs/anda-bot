@@ -1,8 +1,6 @@
 <script lang="ts">
   import type { VoiceProvider } from '$lib/anda/client'
-  import { Badge } from '$lib/components/ui/badge/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import { Card } from '$lib/components/ui/card/index.js'
+  import { badgeClass, buttonClass, cardClass } from '$lib/anda/ui'
   import { LoaderCircle, Mic, Square } from '@lucide/svelte'
 
   type VoiceStage = 'idle' | 'recording' | 'processing'
@@ -36,19 +34,23 @@
   const active = $derived(voiceStage === 'recording' || voiceStage === 'processing' || sending)
 </script>
 
-<Card
-  class="voice-panel relative grid min-h-32 place-items-center rounded-md border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white {active
-    ? 'active'
-    : ''}"
+<div
+  class={cardClass(
+    `voice-panel relative grid gap-2 min-h-32 place-items-center rounded-md border-emerald-900/10 bg-[#06120f] px-3 py-4 text-white ${
+      active ? 'active' : ''
+    }`
+  )}
 >
   <div class="voice-field"></div>
-  <Button
+  <button
     type="button"
-    variant="ghost"
-    class="voice-orb relative grid place-items-center p-0 hover:bg-[#06120f] {voiceStage ===
-    'recording'
-      ? 'recording'
-      : ''} {voiceStage === 'processing' || sending ? 'processing' : ''}"
+    class={buttonClass(
+      'ghost',
+      'default',
+      `voice-orb relative grid place-items-center p-0 hover:bg-[#06120f] ${
+        voiceStage === 'recording' ? 'recording' : ''
+      } ${voiceStage === 'processing' || sending ? 'processing' : ''}`
+    )}
     style={voiceOrbStyle}
     disabled={!canRecordVoice}
     aria-label={voiceStage === 'recording'
@@ -69,45 +71,53 @@
         <Mic class="size-5" />
       {/if}
     </span>
-  </Button>
+  </button>
 
-  <Badge
-    variant="secondary"
-    class="relative z-10 mt-3 gap-2 rounded-full bg-white/10 text-[11px] font-semibold text-white hover:bg-white/10"
+  <div
+    class={badgeClass(
+      'secondary',
+      'relative z-10 gap-2 rounded-full bg-white/10 text-[11px] font-semibold text-white hover:bg-white/10'
+    )}
   >
     <span class="voice-status-dot" class:recording={voiceStage === 'recording'}></span>
     <span>{voiceStatus}</span>
-  </Badge>
-  <div class="voice-service relative z-10 mt-2 flex items-center gap-1 text-[11px]">
+  </div>
+  <div class="voice-service relative z-10 flex items-center gap-1 text-[11px]">
     <div class="voice-service-switch" aria-label="Voice service">
-      <Button
+      <button
         type="button"
-        variant="ghost"
-        size="xs"
-        class="min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 {voiceProvider ===
-        'chrome'
-          ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
-          : ''}"
+        class={buttonClass(
+          'ghost',
+          'xs',
+          `min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
+            voiceProvider === 'chrome'
+              ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
+              : ''
+          }`
+        )}
         disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
         title={chrome.i18n.getMessage('useChromeVoice')}
         onclick={() => onSelectVoiceProvider('chrome')}
       >
         Chrome
-      </Button>
-      <Button
+      </button>
+      <button
         type="button"
-        variant="ghost"
-        size="xs"
-        class="min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 {voiceProvider ===
-        'anda'
-          ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
-          : ''}"
+        class={buttonClass(
+          'ghost',
+          'xs',
+          `min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
+            voiceProvider === 'anda'
+              ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
+              : ''
+          }`
+        )}
         disabled={!canUseAndaVoice || voiceStage !== 'idle'}
         title={chrome.i18n.getMessage('useAndaVoice')}
         onclick={() => onSelectVoiceProvider('anda')}
       >
         Anda
-      </Button>
+      </button>
     </div>
     <span class="voice-service-label"
       >{voiceProvider === 'chrome'
@@ -117,12 +127,12 @@
   </div>
   {#if voiceTranscript}
     <div
-      class="voice-transcript relative z-10 mt-2 max-w-full truncate px-3 text-center text-[11px] text-emerald-50/90"
+      class="voice-transcript relative z-10 max-w-full truncate px-3 text-center text-[11px] text-emerald-50/90"
     >
       {voiceTranscript}
     </div>
   {/if}
-</Card>
+</div>
 
 <style>
   :global(.voice-panel) {

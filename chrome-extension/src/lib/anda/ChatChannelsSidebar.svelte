@@ -1,9 +1,17 @@
 <script lang="ts">
-  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js'
-  import { Badge } from '$lib/components/ui/badge/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import { Item, ItemContent, ItemMedia, ItemTitle } from '$lib/components/ui/item/index.js'
+  import {
+    alertDialogContentClass,
+    alertDialogDescriptionClass,
+    alertDialogOverlayClass,
+    badgeClass,
+    buttonClass,
+    itemClass,
+    itemContentClass,
+    itemMediaClass,
+    itemTitleClass
+  } from '$lib/anda/ui'
   import { ChevronDown, CircleAlert, History, LoaderCircle, Radio, Trash2 } from '@lucide/svelte'
+  import { AlertDialog } from 'bits-ui'
   import type { Channel } from './client/channel.svelte'
 
   type Props = {
@@ -141,50 +149,61 @@
 >
   <div class="flex h-full min-h-0 flex-col">
     <div class="flex h-12 shrink-0 items-center gap-2 border-b border-emerald-900/10 px-1.5">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        class="grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80"
+      <button
+        type="button"
+        class={buttonClass(
+          'ghost',
+          'icon-sm',
+          'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+        )}
         aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         onclick={toggleCollapsed}
       >
         <History class="size-4" />
-      </Button>
+      </button>
 
       {#if !collapsed}
         <div class="min-w-0 flex-1">
           <div class="truncate text-xs font-bold text-stone-800">
             {chrome.i18n.getMessage('channelsLabel')}
-            <Badge variant="outline">
+            <span class={badgeClass('outline')}>
               {channels.length}
-            </Badge>
+            </span>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80"
+        <button
+          type="button"
+          class={buttonClass(
+            'ghost',
+            'icon-sm',
+            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+          )}
           aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           onclick={toggleCollapsed}
         >
           <ChevronDown class="size-4 shrink-0 rotate-90 text-stone-400" />
-        </Button>
+        </button>
       {/if}
     </div>
     <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5">
       {#each channels as channel (channel.source)}
         {@const active = channel.source === activeSource}
         {@const icon = statusIcon(channel)}
-        <Item
-          size="xs"
-          variant={active ? 'outline' : 'default'}
-          class={`group relative flex-nowrap p-0 text-left ${
-            active
-              ? 'border-emerald-900/15 bg-background text-stone-950 shadow-sm'
-              : 'text-stone-600 hover:border-emerald-900/10 hover:bg-background/60 hover:text-stone-900'
-          } ${collapsed ? 'h-9 justify-center px-0' : ''}`}
+        <div
+          data-slot="item"
+          data-variant={active ? 'outline' : 'default'}
+          data-size="xs"
+          class={itemClass(
+            active ? 'outline' : 'default',
+            'xs',
+            `group relative flex-nowrap p-0 text-left ${
+              active
+                ? 'border-emerald-900/15 bg-background text-stone-950 shadow-sm'
+                : 'text-stone-600 hover:border-emerald-900/10 hover:bg-background/60 hover:text-stone-900'
+            } ${collapsed ? 'h-9 justify-center px-0' : ''}`
+          )}
         >
           <button
             type="button"
@@ -196,13 +215,17 @@
             title={`${channelTitle(channel.source)}\n${channel.source}`}
             onclick={() => selectChannel(channel.source)}
           >
-            <ItemMedia
-              variant="icon"
-              class={`relative grid size-6 place-items-center rounded-md border ${
-                active
-                  ? 'border-emerald-900/10 bg-emerald-50 text-emerald-800'
-                  : 'border-stone-200 bg-white/75 text-stone-500'
-              }`}
+            <span
+              data-slot="item-media"
+              data-variant="icon"
+              class={itemMediaClass(
+                'icon',
+                `relative grid size-6 place-items-center rounded-md border ${
+                  active
+                    ? 'border-emerald-900/10 bg-emerald-50 text-emerald-800'
+                    : 'border-stone-200 bg-white/75 text-stone-500'
+                }`
+              )}
             >
               {#if icon === 'loader'}
                 <LoaderCircle class="size-3.5 animate-spin" />
@@ -214,23 +237,26 @@
               <span
                 class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
               ></span>
-            </ItemMedia>
+            </span>
 
             {#if !collapsed}
-              <ItemContent class="min-w-0 gap-0">
+              <div data-slot="item-content" class={itemContentClass('min-w-0 gap-0')}>
                 <div class="flex min-w-0 items-center gap-2">
                   <div class="flex min-w-0 flex-1 items-center gap-2">
-                    <ItemTitle class="min-w-0 flex-1 text-xs font-bold">
+                    <div
+                      data-slot="item-title"
+                      class={itemTitleClass('min-w-0 flex-1 text-xs font-bold')}
+                    >
                       <span class="truncate">{channelTitle(channel.source)}</span>
-                    </ItemTitle>
+                    </div>
                     {#if active && sending}
                       <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
                     {/if}
                   </div>
                   {#if channelMeta(channel)}
-                    <Badge variant="secondary" class="h-4 rounded-full px-1.5 text-[10px]">
+                    <span class={badgeClass('secondary', 'h-4 rounded-full px-1.5 text-[10px]')}>
                       {channelMeta(channel)}
-                    </Badge>
+                    </span>
                   {/if}
                 </div>
                 <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-stone-500">
@@ -239,40 +265,54 @@
                     >{channelSubtitle(channel.source)}</span
                   >
                 </div>
-              </ItemContent>
+              </div>
             {/if}
           </button>
 
           {#if !collapsed}
-            <Button
-              variant="outline"
-              size="icon-xs"
-              class="pointer-events-none absolute bottom-1 right-1 z-10 text-stone-400 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100"
+            <button
+              type="button"
+              class={buttonClass(
+                'outline',
+                'icon-xs',
+                'pointer-events-none absolute bottom-1 right-1 z-10 text-stone-400 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100'
+              )}
               aria-label={chrome.i18n.getMessage('deleteChannel')}
               title={chrome.i18n.getMessage('deleteChannel')}
               disabled={sending || channel.sending}
               onclick={() => requestDeleteChannel(channel.source)}
             >
               <Trash2 class="size-3.5" />
-            </Button>
+            </button>
           {/if}
-        </Item>
+        </div>
       {/each}
     </div>
   </div>
 </aside>
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
-  <AlertDialog.Content size="sm">
-    <AlertDialog.Header>
-      <AlertDialog.Title>{chrome.i18n.getMessage('deleteChannel')}</AlertDialog.Title>
-      <AlertDialog.Description>{pendingDeleteDescription}</AlertDialog.Description>
-    </AlertDialog.Header>
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel>{chrome.i18n.getMessage('cancel')}</AlertDialog.Cancel>
-      <AlertDialog.Action variant="destructive" onclick={confirmDeleteChannel}>
-        {chrome.i18n.getMessage('deleteChannel')}
-      </AlertDialog.Action>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
+  <AlertDialog.Portal>
+    <AlertDialog.Overlay class={alertDialogOverlayClass()} />
+    <AlertDialog.Content class={alertDialogContentClass()}>
+      <div
+        class="grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6"
+      >
+        <AlertDialog.Title class="text-lg font-medium">
+          {chrome.i18n.getMessage('deleteChannel')}
+        </AlertDialog.Title>
+        <AlertDialog.Description class={alertDialogDescriptionClass()}>
+          {pendingDeleteDescription}
+        </AlertDialog.Description>
+      </div>
+      <div class="cn-alert-dialog-footer grid grid-cols-2 gap-2">
+        <AlertDialog.Cancel class={buttonClass('outline')}>
+          {chrome.i18n.getMessage('cancel')}
+        </AlertDialog.Cancel>
+        <AlertDialog.Action class={buttonClass('destructive')} onclick={confirmDeleteChannel}>
+          {chrome.i18n.getMessage('deleteChannel')}
+        </AlertDialog.Action>
+      </div>
+    </AlertDialog.Content>
+  </AlertDialog.Portal>
 </AlertDialog.Root>

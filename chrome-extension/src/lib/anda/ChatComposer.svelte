@@ -44,12 +44,17 @@
     type BrowserSpeechRecognitionEvent
   } from '$lib/anda/composer/voice'
   import VoicePanel from '$lib/anda/composer/VoicePanel.svelte'
-  import * as Alert from '$lib/components/ui/alert/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
-  import { Card } from '$lib/components/ui/card/index.js'
-  import { InputGroup, InputGroupTextarea } from '$lib/components/ui/input-group/index.js'
-  import { Input } from '$lib/components/ui/input/index.js'
-  import * as Tooltip from '$lib/components/ui/tooltip/index.js'
+  import {
+    alertClass,
+    alertDescriptionClass,
+    buttonClass,
+    cardClass,
+    inputClass,
+    inputGroupClass,
+    textareaClass,
+    tooltipArrowClass,
+    tooltipContentClass
+  } from '$lib/anda/ui'
   import {
     Keyboard,
     LoaderCircle,
@@ -59,6 +64,7 @@
     Volume2,
     VolumeX
   } from '@lucide/svelte'
+  import { Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick } from 'svelte'
 
   let {
@@ -1029,30 +1035,35 @@
   ondrop={handleDrop}
   ondragover={handleDragover}
 >
-  <Input
-    bind:ref={fileInputElement}
+  <input
+    bind:this={fileInputElement}
     type="file"
     multiple
-    class="hidden"
+    class={inputClass('hidden')}
     onchange={handleFileInput}
   />
 
-  <Card
-    class="composer-shell gap-2 rounded-lg border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)] {composerWorking
-      ? 'composer-working'
-      : ''}"
+  <div
+    class={cardClass(
+      `composer-shell gap-2 rounded-lg border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)] ${
+        composerWorking ? 'composer-working' : ''
+      }`
+    )}
     aria-busy={composerWorking}
   >
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
     {#if attachmentError}
-      <Alert.Alert
-        class="mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+      <div
+        role="alert"
+        class={alertClass(
+          'mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800'
+        )}
       >
-        <Alert.AlertDescription class="text-[11px] text-amber-800">
+        <div class={alertDescriptionClass('text-[11px] text-amber-800')}>
           {attachmentError}
-        </Alert.AlertDescription>
-      </Alert.Alert>
+        </div>
+      </div>
     {/if}
 
     <div class="grid gap-2">
@@ -1080,18 +1091,24 @@
               onApply={applyPromptCommandSuggestion}
             />
           {/if}
-          <InputGroup
-            class="h-auto min-h-10 border-0 bg-transparent shadow-none has-[[data-slot=input-group-control]:focus-visible]:ring-0"
+          <div
+            role="group"
+            class={inputGroupClass(
+              'h-auto min-h-10 border-0 bg-transparent shadow-none has-[[data-slot=input-group-control]:focus-visible]:ring-0'
+            )}
           >
-            <InputGroupTextarea
-              bind:ref={textareaElement}
+            <textarea
+              bind:this={textareaElement}
+              data-slot="input-group-control"
               bind:value={text}
               rows={1}
               {placeholder}
               spellcheck="true"
               disabled={disabled || sending}
               aria-haspopup="listbox"
-              class="max-h-38 min-h-10 px-2 leading-5 text-stone-950 placeholder:text-stone-400 disabled:opacity-60"
+              class={textareaClass(
+                'max-h-38 min-h-10 flex-1 resize-none rounded-none border-0 bg-transparent px-2 leading-5 text-stone-950 shadow-none ring-0 placeholder:text-stone-400 focus-visible:ring-0 disabled:opacity-60 aria-invalid:ring-0 dark:bg-transparent'
+              )}
               onkeydown={handleKeydown}
               oninput={handleTextareaInput}
               onfocus={handleTextareaFocus}
@@ -1099,28 +1116,29 @@
               onclick={updateTextareaCaret}
               onkeyup={updateTextareaCaret}
               onselect={updateTextareaCaret}
-            ></InputGroupTextarea>
-          </InputGroup>
+            ></textarea>
+          </div>
         </div>
       {/if}
 
       {#if inputMode === 'voice' && voiceError}
-        <Alert.Alert
-          class="rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+        <div
+          role="alert"
+          class={alertClass(
+            'rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800'
+          )}
         >
-          <Alert.AlertDescription class="text-[11px] text-amber-800">
+          <div class={alertDescriptionClass('text-[11px] text-amber-800')}>
             {voiceError}
-          </Alert.AlertDescription>
-        </Alert.Alert>
+          </div>
+        </div>
       {/if}
 
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-1">
-          <Button
+          <button
             type="button"
-            variant="ghost"
-            size="icon-sm"
-            class="text-stone-500 hover:text-emerald-700"
+            class={buttonClass('ghost', 'icon-sm', 'text-stone-500 hover:text-emerald-700')}
             disabled={disabled || preparingAttachments}
             aria-label={chrome.i18n.getMessage('attachFiles')}
             title={chrome.i18n.getMessage('attachFiles')}
@@ -1131,14 +1149,16 @@
             {:else}
               <Paperclip class="size-4" />
             {/if}
-          </Button>
+          </button>
 
           {#if canUseVoice}
-            <Button
+            <button
               type="button"
-              variant={inputMode === 'voice' ? 'secondary' : 'ghost'}
-              size="icon-sm"
-              class="text-stone-500 hover:text-emerald-700"
+              class={buttonClass(
+                inputMode === 'voice' ? 'secondary' : 'ghost',
+                'icon-sm',
+                'text-stone-500 hover:text-emerald-700'
+              )}
               disabled={disabled || sending}
               aria-label={inputMode === 'voice'
                 ? chrome.i18n.getMessage('switchToKeyboard')
@@ -1153,17 +1173,19 @@
               {:else}
                 <Mic class="size-4" />
               {/if}
-            </Button>
+            </button>
           {/if}
         </div>
 
         <div class="flex items-center gap-1">
           {#if inputMode === 'voice'}
-            <Button
+            <button
               type="button"
-              variant={ttsEnabled ? 'secondary' : 'ghost'}
-              size="icon-sm"
-              class="text-stone-500 hover:text-emerald-700"
+              class={buttonClass(
+                ttsEnabled ? 'secondary' : 'ghost',
+                'icon-sm',
+                'text-stone-500 hover:text-emerald-700'
+              )}
               disabled={disabled ||
                 sending ||
                 voiceStage === 'recording' ||
@@ -1181,21 +1203,25 @@
               {:else}
                 <VolumeX class="size-4" />
               {/if}
-            </Button>
+            </button>
           {:else}
-            <Tooltip.Provider>
+            <Tooltip.Provider delayDuration={0}>
               <Tooltip.Root>
                 <Tooltip.Trigger>
                   {#snippet child({ props })}
-                    <Button
+                    <button
                       {...props}
                       type="submit"
-                      size="icon-sm"
-                      variant={canSend ? 'default' : 'ghost'}
                       disabled={!canSend}
-                      class="duration-200 {canSend
-                        ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
-                        : 'text-stone-300'}"
+                      class={buttonClass(
+                        canSend ? 'default' : 'ghost',
+                        'icon-sm',
+                        `duration-200 ${
+                          canSend
+                            ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
+                            : 'text-stone-300'
+                        }`
+                      )}
                       aria-label={chrome.i18n.getMessage('send')}
                     >
                       {#if sending}
@@ -1203,17 +1229,26 @@
                       {:else}
                         <SendHorizontal class="size-4" />
                       {/if}
-                    </Button>
+                    </button>
                   {/snippet}
                 </Tooltip.Trigger>
-                <Tooltip.Content side="top" sideOffset={6}>{submitTitle}</Tooltip.Content>
+                <Tooltip.Portal>
+                  <Tooltip.Content side="top" sideOffset={6} class={tooltipContentClass()}>
+                    {submitTitle}
+                    <Tooltip.Arrow>
+                      {#snippet child({ props })}
+                        <div class={tooltipArrowClass()} {...props}></div>
+                      {/snippet}
+                    </Tooltip.Arrow>
+                  </Tooltip.Content>
+                </Tooltip.Portal>
               </Tooltip.Root>
             </Tooltip.Provider>
           {/if}
         </div>
       </div>
     </div>
-  </Card>
+  </div>
 </form>
 
 <style>
