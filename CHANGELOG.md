@@ -6,8 +6,9 @@ All notable changes to Anda Bot.
 
 ### Changed
 
-- **Browser script action simplified**: `action` is now optional on `chrome_script` — defaults to `execute_javascript` implicitly, removing the redundant enum from the tool schema. Models can pass `code` directly.
+- **Browser script action simplified**: `action` is now optional on `chrome_script` -- defaults to `execute_javascript` implicitly, removing the redundant enum from the tool schema. Models can pass `code` directly.
 - **Browser result deduplication**: `tab` is no longer nested inside `page_ready` in browser action results. All navigation actions (`open_tab`, `navigate`, `reload`, `go_back`, `go_forward`, `switch_tab`) use a shared `withTopLevelTab` helper, and `compactPageReadyInfo` ensures `page_ready` never carries duplicate tab data. Updated test assertions to match.
+- **`wait_for_navigation` and `wait_for_history_change` removed**: navigation and page-changing actions now rely entirely on built-in `page_ready` (included in `navigate`, `open_tab`, `open_file`, `reload`, `go_back`, `go_forward`, and page-changing `click`/`press_key` actions). The explicit wait actions were redundant and prone to timing races with fast navigations. Removed `expected_url` and `wait_until` fields from `BrowserActionArgs`.
 
 ## [0.8.3] — 2026-05-25
 

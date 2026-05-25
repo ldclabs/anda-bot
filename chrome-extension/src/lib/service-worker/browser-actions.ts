@@ -21,6 +21,7 @@ const NETWORK_IDLE_QUIET_MS = 500
 const DEFAULT_PAGE_READY_TIMEOUT_MS = 30_000
 const PRE_ACTION_LOADING_TIMEOUT_MS = 1_500
 const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
+const SCRIPT_NAVIGATION_SETTLE_NO_LOAD_TIMEOUT_MS = 2_500
 
 type NavigationWaitUntil = 'committed' | 'domcontentloaded' | 'complete' | 'history_change'
 type NavigationEventName =
@@ -81,10 +82,6 @@ export async function executeBrowserAction(
 
   if (args.action === 'get_current_tab') {
     return { tab: tabSummary(await activeTab(chromeApi)) }
-  }
-
-  if (args.action === 'wait_for_navigation' || args.action === 'wait_for_history_change') {
-    return waitForNavigationAction(chromeApi, args)
   }
 
   if (args.action === 'get_frames') {
@@ -238,7 +235,7 @@ export async function executeBrowserAction(
     noLoadTimeoutMs: ACTION_SETTLE_NO_LOAD_TIMEOUT_MS
   })
 
-  const postActionLoadWatcher = shouldWaitAfterAction(args.action)
+  const postActionLoadWatcher = shouldWaitAfterAction(args)
     ? createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args)
     : null
 
@@ -334,7 +331,17 @@ export async function executeBrowserAction(
   }
 
   if (args.action === 'execute_javascript' && scriptExecutionMode(args) === 'debugger') {
-    return executeJavaScriptWithDebugger(chromeApi, tabId, args)
+    let result: BrowserActionResult
+    try {
+      result = await executeJavaScriptWithDebugger(chromeApi, tabId, args)
+    } catch (error) {
+      postActionLoadWatcher?.cancel()
+      throw error
+    }
+    return withPageReady(
+      result,
+      await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
+    )
   }
 
   let execution: { result: Awaited<BrowserActionResult> } | undefined
@@ -650,33 +657,6 @@ function normalizedOrigins(args: BrowserActionArgs): string[] {
     origins.push(url)
   }
   return Array.from(new Set(origins))
-}
-
-async function waitForNavigationAction(
-  chromeApi: ChromeApi,
-  args: BrowserActionArgs
-): Promise<BrowserActionResult> {
-  const tab = await tabForAction(chromeApi, args)
-  const tabId = tab?.id
-  if (!tabId) {
-    throw new Error('no target tab')
-  }
-  const waitUntil: NavigationWaitUntil =
-    args.action === 'wait_for_history_change' ? 'history_change' : navigationWaitUntil(args)
-  const result = await waitForWebNavigation(chromeApi, tabId, args, {
-    waitUntil,
-    allowAlreadyComplete: false
-  })
-  return withTopLevelTab(
-    {
-      waited: true,
-      wait_until: waitUntil,
-      expected_url: navigationExpectedUrl(args) || null,
-      navigation: compactPageReadyInfo(result, { omitTab: true }) || result
-    },
-    result,
-    tab
-  )
 }
 
 async function getNavigationFrames(
@@ -1768,7 +1748,8 @@ function actionTimeoutMs(
   return Math.max(100, Math.min(120000, Math.floor(requested)))
 }
 
-function shouldWaitAfterAction(action?: string): boolean {
+function shouldWaitAfterAction(args: BrowserActionArgs): boolean {
+  const action = args.action
   return (
     action === 'click' ||
     action === 'type_text' ||
@@ -1777,8 +1758,27 @@ function shouldWaitAfterAction(action?: string): boolean {
     action === 'scroll_to' ||
     action === 'drag_and_drop' ||
     action === 'select_dropdown' ||
-    action === 'upload_file'
+    action === 'upload_file' ||
+    scriptMayTriggerPageChange(args)
   )
+}
+
+function scriptMayTriggerPageChange(args: BrowserActionArgs): boolean {
+  if (args.action !== 'execute_javascript') {
+    return false
+  }
+  const code = normalizeOptionalText(args.code)
+  if (!code) {
+    return false
+  }
+  return [
+    /\b(?:window\.|document\.)?location\s*=/i,
+    /\b(?:window\.|document\.)?location\.(?:href|hash|search|pathname)\s*=/i,
+    /\b(?:window\.|document\.)?location\.(?:assign|replace|reload)\s*\(/i,
+    /\b(?:window\.)?history\.(?:pushstate|replacestate|back|forward|go)\s*\(/i,
+    /\bwindow\.open\s*\(/i,
+    /\.submit\s*\(/i
+  ].some((pattern) => pattern.test(code))
 }
 
 function withPageReady(
@@ -1961,7 +1961,6 @@ function createWebNavigationWaiter(
           source: 'web_navigation',
           event,
           wait_until: options.waitUntil,
-          expected_url: expectedUrl || null,
           saw_loading: sawLoading,
           saw_committed: sawCommitted,
           saw_dom_content_loaded: sawDomContentLoaded,
@@ -2238,30 +2237,8 @@ function isInstantLoadUrl(url?: string): boolean {
   )
 }
 
-function navigationWaitUntil(args: BrowserActionArgs): NavigationWaitUntil {
-  const value = normalizeOptionalText(args.wait_until || args.value)?.toLowerCase()
-  if (value === 'committed') {
-    return 'committed'
-  }
-  if (value === 'domcontentloaded' || value === 'dom_content_loaded' || value === 'dom_ready') {
-    return 'domcontentloaded'
-  }
-  if (value === 'history_change' || value === 'history' || value === 'spa') {
-    return 'history_change'
-  }
-  return 'complete'
-}
-
 function navigationExpectedUrl(args: BrowserActionArgs): string | undefined {
-  const explicit = normalizeOptionalText(args.expected_url)
-  if (explicit) {
-    return explicit
-  }
-  if (
-    args.action === 'navigate' ||
-    args.action === 'open_tab' ||
-    args.action === 'wait_for_navigation'
-  ) {
+  if (args.action === 'navigate' || args.action === 'open_tab') {
     return normalizeOptionalText(args.url)
   }
   return undefined
@@ -2420,11 +2397,17 @@ async function waitForPageSettleAfterAction(
   }
   try {
     return await waitForTabReady(chromeApi, tabId, args, loadWatcher, {
-      noLoadTimeoutMs: ACTION_SETTLE_NO_LOAD_TIMEOUT_MS
+      noLoadTimeoutMs: postActionNoLoadTimeoutMs(args)
     })
   } catch (error) {
     return { settled: false, error: errorMessage(error) }
   }
+}
+
+function postActionNoLoadTimeoutMs(args: BrowserActionArgs): number {
+  return args.action === 'execute_javascript'
+    ? SCRIPT_NAVIGATION_SETTLE_NO_LOAD_TIMEOUT_MS
+    : ACTION_SETTLE_NO_LOAD_TIMEOUT_MS
 }
 
 function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {

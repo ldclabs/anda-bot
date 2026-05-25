@@ -90,8 +90,6 @@ pub enum BrowserAction {
     CopyToClipboard,
     UploadFile,
     Navigate,
-    WaitForNavigation,
-    WaitForHistoryChange,
     GoBack,
     GoForward,
     Reload,
@@ -147,12 +145,6 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_url: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_until: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -648,8 +640,8 @@ impl ChromeBrowserToolKind {
             Self::Tabs => concat!(
                 "Manage Chrome tabs, local files, navigation, and downloads through the Anda browser extension. ",
                 "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
-                "and open_tab, open_file, close_tab, navigate, wait_for_navigation, go_back, go_forward, reload, download, list_downloads, cancel_download, or open_download as needed. ",
-                "Navigation actions wait until the resulting page is usable before returning."
+                "and open_tab, open_file, close_tab, navigate, go_back, go_forward, reload, download, list_downloads, cancel_download, or open_download as needed. ",
+                "Navigation and page-changing actions wait until the resulting page is usable before returning. Inspect page_ready in the action result instead of issuing a separate navigation wait."
             ),
             Self::Page => concat!(
                 "Inspect the active Chrome tab through the Anda browser extension. ",
@@ -698,7 +690,6 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         mut args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        prepare_browser_tool_args(&mut args);
         validate_browser_action_for_tool(self.kind, &args)?;
         let preferred_session = browser_session_from_meta(ctx.meta());
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
@@ -832,12 +823,12 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "open_file", "close_tab", "navigate", "wait_for_navigation", "wait_for_history_change", "get_frames", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download"],
-                    "description": "Tab, local-file, navigation, frame, and download action. navigate, open_tab, open_file, reload, go_back, and go_forward wait for page readiness; use wait_for_navigation after page/input/script actions that may navigate."
+                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "open_file", "close_tab", "navigate", "get_frames", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download"],
+                    "description": "Tab, local-file, navigation, frame, and download action. navigate, open_tab, open_file, reload, go_back, go_forward, and page-changing input/script actions wait for page readiness and include page_ready in the result."
                 },
                 "url": {
                     "type": ["string", "null"],
-                    "description": "URL for navigate, open_tab, launch_browser, download, or open_file. For wait_for_navigation, url is treated as the expected URL."
+                    "description": "URL for navigate, open_tab, launch_browser, download, or open_file."
                 },
                 "path": {
                     "type": ["string", "null"],
@@ -845,7 +836,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "tab_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome tab id. Required for switch_tab, close_tab, get_frames on another tab, and optional for wait_for_navigation."
+                    "description": "Chrome tab id. Required for switch_tab, close_tab, and get_frames on another tab."
                 },
                 "window_id": {
                     "type": ["integer", "null"],
@@ -1065,12 +1056,6 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn prepare_browser_tool_args(args: &mut ChromeBrowserToolArgs) {
-    if args.action == BrowserAction::WaitForNavigation && args.expected_url.is_none() {
-        args.expected_url = normalize_optional_string(args.url.clone());
-    }
-}
-
 fn validate_browser_action_for_tool(
     kind: ChromeBrowserToolKind,
     args: &ChromeBrowserToolArgs,
@@ -1091,7 +1076,6 @@ fn validate_browser_action_for_tool(
         BrowserAction::TypeText => require_field(&args.text, "text", "type_text"),
         BrowserAction::PressKey => require_field(&args.key, "key", "press_key"),
         BrowserAction::Navigate => require_field(&args.url, "url", "navigate"),
-        BrowserAction::WaitForNavigation => validate_wait_until(&args.wait_until),
         BrowserAction::OpenFile => require_path_or_url(args),
         BrowserAction::Download => require_field(&args.url, "url", "download"),
         BrowserAction::SwitchTab => require_i64(&args.tab_id, "tab_id", "switch_tab"),
@@ -1163,7 +1147,6 @@ fn validate_browser_action_for_tool(
         | BrowserAction::ClearBrowserCache
         | BrowserAction::ListTabs
         | BrowserAction::OpenTab
-        | BrowserAction::WaitForHistoryChange
         | BrowserAction::GetFrames
         | BrowserAction::LaunchBrowser
         | BrowserAction::GoBack
@@ -1184,8 +1167,6 @@ fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> 
                 | BrowserAction::OpenFile
                 | BrowserAction::CloseTab
                 | BrowserAction::Navigate
-                | BrowserAction::WaitForNavigation
-                | BrowserAction::WaitForHistoryChange
                 | BrowserAction::GetFrames
                 | BrowserAction::GoBack
                 | BrowserAction::GoForward
@@ -1358,20 +1339,6 @@ fn validate_same_site(value: &Option<String>) -> Result<(), BoxError> {
     }
 }
 
-fn validate_wait_until(value: &Option<String>) -> Result<(), BoxError> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-    match value.trim().to_ascii_lowercase().as_str() {
-        "" | "committed" | "domcontentloaded" | "dom_content_loaded" | "dom_ready"
-        | "complete" | "history_change" | "history" | "spa" => Ok(()),
-        wait_until => Err(format!(
-            "chrome_browser action \"wait_for_navigation\" has unsupported wait_until {wait_until:?}"
-        )
-        .into()),
-    }
-}
-
 fn normalized_action_timeout(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
@@ -1396,8 +1363,6 @@ fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
         use_bridge: None,
         query: None,
         url: None,
-        expected_url: None,
-        wait_until: None,
         key: None,
         amount: None,
         x: None,
@@ -1821,33 +1786,17 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_navigation_uses_url_as_expected_url_alias() {
-        let mut args = browser_args(BrowserAction::WaitForNavigation);
-        args.url = Some(" https://example.com/done ".to_string());
-
-        prepare_browser_tool_args(&mut args);
-
-        assert_eq!(
-            args.expected_url.as_deref(),
-            Some("https://example.com/done")
-        );
-    }
-
-    #[test]
     fn browser_tool_schemas_expose_useful_actions_without_state_mutation_defaults() {
         let tabs = ChromeBrowserTool::tabs(Arc::new(BrowserBridge::new())).definition();
         let tabs_properties = tabs.parameters["properties"].as_object().unwrap();
         let tab_actions = tabs_properties["action"]["enum"].as_array().unwrap();
         assert!(schema_has_action(tab_actions, "navigate"));
-        assert!(schema_has_action(tab_actions, "wait_for_navigation"));
         assert!(schema_has_action(tab_actions, "open_file"));
         assert!(schema_has_action(tab_actions, "get_frames"));
         assert!(schema_has_action(tab_actions, "list_downloads"));
         assert!(schema_has_action(tab_actions, "open_download"));
         assert!(!schema_has_action(tab_actions, "get_cookies"));
         assert!(!schema_has_action(tab_actions, "clear_browser_cache"));
-        assert!(tabs_properties.get("expected_url").is_none());
-        assert!(tabs_properties.get("wait_until").is_none());
         assert!(tabs_properties.get("path").is_some());
         assert!(tabs_properties.get("window_id").is_some());
         assert!(tabs_properties.get("bypass_cache").is_some());

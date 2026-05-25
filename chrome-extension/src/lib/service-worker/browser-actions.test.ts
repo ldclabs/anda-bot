@@ -228,7 +228,65 @@ describe('executeBrowserAction waited browser actions', () => {
     expect(chromeApi.tabs.onUpdated.addListener).not.toHaveBeenCalled()
   })
 
-  it('waits explicitly for SPA history navigation events', async () => {
+  it('pre-arms page readiness for debugger scripts that trigger navigation', async () => {
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://old.example'
+    }
+    const completeTab = {
+      ...startTab,
+      url: 'https://new.example/app',
+      title: 'New App'
+    }
+    let currentTab = startTab
+    const sendCommand = vi.fn()
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      startTab
+    )
+    const navigationEvents = attachWebNavigationApi(chromeApi)
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    sendCommand.mockImplementation(async (_target: DebuggerTarget, method: string) => {
+      if (method === 'Runtime.evaluate') {
+        queueMicrotask(() => {
+          currentTab = completeTab
+          navigationEvents.onCompleted.emit({
+            tabId: 123,
+            frameId: 0,
+            url: completeTab.url,
+            timeStamp: 30
+          })
+        })
+        return { result: { type: 'string', value: completeTab.url } }
+      }
+      return {}
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'execute_javascript', code: "location.href = 'https://new.example/app'" }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.executed).toBe(true)
+    expect(result.result).toBe('https://new.example/app')
+    expect(result.tab).toMatchObject({ url: 'https://new.example/app' })
+    const pageReady = result.page_ready as Record<string, unknown>
+    expect(pageReady).toMatchObject({ loaded: true })
+    expect(pageReady.load).toMatchObject({ source: 'web_navigation', event: 'completed' })
+  })
+
+  it('pre-arms page readiness for script-triggered history changes', async () => {
     const startTab = {
       id: 123,
       windowId: 1,
@@ -238,39 +296,42 @@ describe('executeBrowserAction waited browser actions', () => {
     }
     const nextTab = { ...startTab, url: 'https://app.example/dashboard' }
     let currentTab = startTab
-    let emitted = false
     const chromeApi = createChromeApi(undefined, startTab)
     const navigationEvents = attachWebNavigationApi(chromeApi)
-    chromeApi.tabs.get = vi.fn(async () => {
-      const tab = currentTab
-      if (!emitted) {
-        emitted = true
-        queueMicrotask(() => {
-          currentTab = nextTab
-          navigationEvents.onHistoryStateUpdated.emit({
-            tabId: 123,
-            frameId: 0,
-            url: nextTab.url,
-            timeStamp: 20
-          })
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.scripting.executeScript = vi.fn(async () => {
+      queueMicrotask(() => {
+        currentTab = nextTab
+        navigationEvents.onHistoryStateUpdated.emit({
+          tabId: 123,
+          frameId: 0,
+          url: nextTab.url,
+          timeStamp: 40
         })
-      }
-      return tab
-    })
+      })
+      return [{ result: { executed: true, result: { pushed: true } } }]
+    }) as ChromeApi['scripting']['executeScript']
 
     const result = (await executeBrowserAction(
       {
         session: 'test',
         request_id: 1,
-        args: { action: 'wait_for_history_change', timeout_ms: 1000 }
+        args: {
+          action: 'execute_javascript',
+          code: "history.pushState({}, '', '/dashboard')",
+          use_bridge: false
+        }
       },
       { chromeApi }
     )) as Record<string, unknown>
 
-    expect(result.waited).toBe(true)
-    expect(result.wait_until).toBe('history_change')
+    expect(result.executed).toBe(true)
     expect(result.tab).toMatchObject({ url: 'https://app.example/dashboard' })
-    expect(result.navigation).toMatchObject({ event: 'history_state_updated', same_document: true })
+    const pageReady = result.page_ready as Record<string, unknown>
+    expect(pageReady.load).toMatchObject({
+      event: 'history_state_updated',
+      same_document: true
+    })
   })
 
   it('lists webNavigation frames for a tab', async () => {

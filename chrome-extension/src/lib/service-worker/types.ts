@@ -55,8 +55,6 @@ export type ChromeCookieInfo = {
 export type BrowserActionArgs = {
   action?: string
   url?: string
-  expected_url?: string
-  wait_until?: string
   selector?: string
   text?: string
   value?: string
