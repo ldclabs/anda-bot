@@ -515,7 +515,7 @@
             bind:this={sideMessagesElement}
             class="scrollbar-slim overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
           >
-            <div class="grid gap-2">
+            <div class="grid gap-4">
               {#each visibleSideMessages as message (message.id)}
                 <ChatMessageItem {message} />
               {/each}
