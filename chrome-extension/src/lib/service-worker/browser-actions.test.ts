@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { executeBrowserAction } from './browser-actions'
-import type { ChromeApi, ChromeTabInfo } from './types'
+import type { ChromeApi, ChromeTabInfo, ChromeWebNavigationDetails } from './types'
 
 type DebuggerTarget = { tabId: number }
 
@@ -11,6 +11,7 @@ type RuntimeEvaluateParams = {
 
 type DebuggerSendCommand = NonNullable<ChromeApi['debugger']>['sendCommand']
 type TabUpdatedListener = Parameters<ChromeApi['tabs']['onUpdated']['addListener']>[0]
+type WebNavigationListener = (details: ChromeWebNavigationDetails) => void
 
 function createChromeEvent<Listener extends (...args: any[]) => void>() {
   const listeners = new Set<Listener>()
@@ -65,6 +66,35 @@ function createChromeApi(
     debugger: debuggerApi,
     scripting: { executeScript: vi.fn() }
   } as unknown as ChromeApi
+}
+
+function attachWebNavigationApi(chromeApi: ChromeApi) {
+  const onBeforeNavigate = createChromeEvent<WebNavigationListener>()
+  const onCommitted = createChromeEvent<WebNavigationListener>()
+  const onDOMContentLoaded = createChromeEvent<WebNavigationListener>()
+  const onCompleted = createChromeEvent<WebNavigationListener>()
+  const onErrorOccurred = createChromeEvent<WebNavigationListener>()
+  const onHistoryStateUpdated = createChromeEvent<WebNavigationListener>()
+  const onReferenceFragmentUpdated = createChromeEvent<WebNavigationListener>()
+  chromeApi.webNavigation = {
+    onBeforeNavigate: onBeforeNavigate.event,
+    onCommitted: onCommitted.event,
+    onDOMContentLoaded: onDOMContentLoaded.event,
+    onCompleted: onCompleted.event,
+    onErrorOccurred: onErrorOccurred.event,
+    onHistoryStateUpdated: onHistoryStateUpdated.event,
+    onReferenceFragmentUpdated: onReferenceFragmentUpdated.event,
+    getAllFrames: vi.fn(async () => [])
+  }
+  return {
+    onBeforeNavigate,
+    onCommitted,
+    onDOMContentLoaded,
+    onCompleted,
+    onErrorOccurred,
+    onHistoryStateUpdated,
+    onReferenceFragmentUpdated
+  }
 }
 
 describe('executeBrowserAction waited browser actions', () => {
@@ -146,6 +176,139 @@ describe('executeBrowserAction waited browser actions', () => {
     expect(onUpdated.event.addListener.mock.invocationCallOrder[0]).toBeLessThan(
       (chromeApi.tabs.update as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
     )
+  })
+
+  it('uses webNavigation completion when it is available', async () => {
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://old.example'
+    }
+    const loadingTab = {
+      ...startTab,
+      status: 'loading',
+      url: 'https://new.example/app'
+    }
+    const completeTab = { ...loadingTab, status: 'complete', title: 'New App' }
+    let currentTab = startTab
+    const chromeApi = createChromeApi(undefined, startTab)
+    const navigationEvents = attachWebNavigationApi(chromeApi)
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.tabs.update = vi.fn(async () => {
+      currentTab = loadingTab
+      queueMicrotask(() => {
+        currentTab = completeTab
+        navigationEvents.onCompleted.emit({
+          tabId: 123,
+          frameId: 0,
+          url: completeTab.url,
+          timeStamp: 10
+        })
+      })
+      return loadingTab
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'navigate', url: 'https://new.example/app' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    const pageReady = result.page_ready as Record<string, unknown>
+    const load = pageReady.load as Record<string, unknown>
+    expect(result.navigated).toBe(true)
+    expect(result.tab).toMatchObject({ url: 'https://new.example/app', status: 'complete' })
+    expect(load).toMatchObject({ source: 'web_navigation', event: 'completed' })
+    expect(navigationEvents.onCompleted.event.addListener).toHaveBeenCalled()
+    expect(chromeApi.tabs.onUpdated.addListener).not.toHaveBeenCalled()
+  })
+
+  it('waits explicitly for SPA history navigation events', async () => {
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://app.example/start'
+    }
+    const nextTab = { ...startTab, url: 'https://app.example/dashboard' }
+    let currentTab = startTab
+    let emitted = false
+    const chromeApi = createChromeApi(undefined, startTab)
+    const navigationEvents = attachWebNavigationApi(chromeApi)
+    chromeApi.tabs.get = vi.fn(async () => {
+      const tab = currentTab
+      if (!emitted) {
+        emitted = true
+        queueMicrotask(() => {
+          currentTab = nextTab
+          navigationEvents.onHistoryStateUpdated.emit({
+            tabId: 123,
+            frameId: 0,
+            url: nextTab.url,
+            timeStamp: 20
+          })
+        })
+      }
+      return tab
+    })
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'wait_for_history_change', timeout_ms: 1000 }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.waited).toBe(true)
+    expect(result.wait_until).toBe('history_change')
+    expect(result.tab).toMatchObject({ url: 'https://app.example/dashboard' })
+    expect(result.navigation).toMatchObject({ event: 'history_state_updated', same_document: true })
+  })
+
+  it('lists webNavigation frames for a tab', async () => {
+    const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const chromeApi = createChromeApi(undefined, tab)
+    chromeApi.webNavigation = {
+      getAllFrames: vi.fn(async () => [
+        { frameId: 0, url: 'https://example.com' },
+        { frameId: 7, parentFrameId: 0, url: 'https://example.com/embed' }
+      ])
+    }
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'get_frames' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(result.count).toBe(2)
+    expect(result.frames).toEqual([
+      {
+        frame_id: 0,
+        parent_frame_id: null,
+        process_id: null,
+        url: 'https://example.com',
+        error_occurred: false
+      },
+      {
+        frame_id: 7,
+        parent_frame_id: 0,
+        process_id: null,
+        url: 'https://example.com/embed',
+        error_occurred: false
+      }
+    ])
   })
 
   it('falls back to page history when native goBack throws a localized error', async () => {

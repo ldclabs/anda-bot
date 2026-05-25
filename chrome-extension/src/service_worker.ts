@@ -14,6 +14,9 @@ import { chromeTtsAvailable, speakWithChromeTts } from '$lib/service-worker/tts'
 import type {
   BrowserCommand,
   ChromeTabInfo,
+  ChromeWebNavigationDetails,
+  ChromeWebNavigationTabReplacedDetails,
+  ChromeWebNavigationTargetDetails,
   ExtensionMessage,
   ExtensionResponse,
   PendingRpc,
@@ -68,6 +71,8 @@ chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
     scheduleBrowserSessionRefresh()
   }
 })
+
+registerWebNavigationSessionRefreshListeners()
 
 chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleExtensionMessage(message)
@@ -355,6 +360,35 @@ function stopKeepAlive(): void {
     clearInterval(keepAliveTimer)
     keepAliveTimer = null
   }
+}
+
+function registerWebNavigationSessionRefreshListeners(): void {
+  const webNavigation = chromeApi.webNavigation
+  if (!webNavigation) {
+    return
+  }
+
+  const refreshForMainFrame = (details: ChromeWebNavigationDetails) => {
+    if (details.frameId === 0) {
+      scheduleBrowserSessionRefresh()
+    }
+  }
+  const refreshForTarget = (_details: ChromeWebNavigationTargetDetails) => {
+    scheduleBrowserSessionRefresh()
+  }
+  const refreshForReplacement = (_details: ChromeWebNavigationTabReplacedDetails) => {
+    scheduleBrowserSessionRefresh()
+  }
+
+  webNavigation.onBeforeNavigate?.addListener(refreshForMainFrame)
+  webNavigation.onCommitted?.addListener(refreshForMainFrame)
+  webNavigation.onDOMContentLoaded?.addListener(refreshForMainFrame)
+  webNavigation.onCompleted?.addListener(refreshForMainFrame)
+  webNavigation.onErrorOccurred?.addListener(refreshForMainFrame)
+  webNavigation.onReferenceFragmentUpdated?.addListener(refreshForMainFrame)
+  webNavigation.onHistoryStateUpdated?.addListener(refreshForMainFrame)
+  webNavigation.onCreatedNavigationTarget?.addListener(refreshForTarget)
+  webNavigation.onTabReplaced?.addListener(refreshForReplacement)
 }
 
 function rejectPending(reason: string): void {

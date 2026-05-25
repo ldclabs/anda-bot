@@ -30,9 +30,9 @@ Chrome 116 or newer is required because the extension keeps its Manifest V3 serv
 
 ## Browser Actions
 
-When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The service worker refreshes that metadata as tabs are activated or updated.
+When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The service worker refreshes that metadata as tabs are activated, updated, or navigated through `webNavigation` events.
 
-The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `chrome_tabs.switch_tab` first when another tab is needed. The legacy `chrome_browser` tool remains available for older prompts.
+The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `chrome_tabs.switch_tab` first when another tab is needed. The public schemas expose the common browser actions while keeping lower-level browser-state handlers such as cookies and cache internal for compatibility.
 
 `chrome_tabs` actions:
 
@@ -40,25 +40,38 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `list_tabs`
 - `switch_tab`
 - `open_tab`
+- `open_file`
 - `close_tab`
 - `navigate`
+- `wait_for_navigation`
+- `wait_for_history_change`
+- `get_frames`
 - `go_back`
 - `go_forward`
 - `reload`
 - `launch_browser`
+- `download`
+- `list_downloads`
+- `cancel_download`
+- `open_download`
 
 `chrome_page` actions:
 
 - `snapshot`
 - `extract_text`
-- `get_full_page_html`
-- `get_structured_data`
-- `get_element_info`
-- `get_viewport_size`
-- `wait_for_element`
-- `find_in_page`
 - `screenshot`
 - `read_selection`
+- `get_full_page_html`
+- `get_structured_data`
+- `get_accessibility_tree`
+- `print_to_pdf`
+- `annotate_viewport`
+- `clear_annotations`
+- `get_element_info`
+- `get_viewport_size`
+- `find_in_page`
+- `wait_for_element`
+- `handle_dialog`
 
 `chrome_input` actions:
 
@@ -70,12 +83,13 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `hover`
 - `drag_and_drop`
 - `select_dropdown`
+- `upload_file`
 - `copy_to_clipboard`
 
 `chrome_script` actions:
 
 - `execute_javascript`
 
-`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. By default it uses a CSP-resistant debugger bridge (`use_bridge: true`) so it can evaluate in the page context even on sites with strict CSP. Set `use_bridge: false` with `world: "isolated"` or `world: "main"` to force `chrome.scripting.executeScript` injection.
+`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. By default it uses a CSP-resistant debugger bridge so it can evaluate in the page context even on sites with strict CSP.
 
 Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.

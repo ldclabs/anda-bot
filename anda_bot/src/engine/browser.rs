@@ -90,6 +90,8 @@ pub enum BrowserAction {
     CopyToClipboard,
     UploadFile,
     Navigate,
+    WaitForNavigation,
+    WaitForHistoryChange,
     GoBack,
     GoForward,
     Reload,
@@ -111,6 +113,7 @@ pub enum BrowserAction {
     OpenTab,
     OpenFile,
     CloseTab,
+    GetFrames,
     LaunchBrowser,
     ExecuteJavascript,
     HandleDialog,
@@ -144,6 +147,12 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_until: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -637,22 +646,20 @@ impl ChromeBrowserToolKind {
         let active_hint = format!("\n\nActive sessions: {sessions:?}");
         let body = match self {
             Self::Tabs => concat!(
-                "Manage Chrome tabs, navigation, downloads, cookies, and browser cache through the Anda browser extension. ",
+                "Manage Chrome tabs, local files, navigation, and downloads through the Anda browser extension. ",
                 "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
-                "and open_tab, open_file, close_tab, navigate, go_back, go_forward, reload, launch_browser, download, list_downloads, cookie, or cache actions as needed. ",
-                "Use open_file to open a local filesystem path or file:// URL in Chrome, including generated HTML/SVG pages, images, audio, video, PDFs, and other attachments. To generate an image from HTML/canvas/SVG, create the file, open it with open_file, then use chrome_page.screenshot. Navigation and loading actions wait until the resulting page is usable before returning."
+                "and open_tab, open_file, close_tab, navigate, wait_for_navigation, go_back, go_forward, reload, download, list_downloads, cancel_download, or open_download as needed. ",
+                "Navigation actions wait until the resulting page is usable before returning."
             ),
             Self::Page => concat!(
                 "Inspect the active Chrome tab through the Anda browser extension. ",
                 "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first if another tab is needed. ",
-                "Use snapshot, extract_text, screenshot, read_selection, get_full_page_html, get_structured_data, ",
-                "get_accessibility_tree, print_to_pdf, annotate_viewport, get_element_info, get_viewport_size, find_in_page, or wait_for_element. ",
-                "screenshot can capture full pages, elements, and fixed viewport sizes for local file previews or generated web artifacts."
+                "Use snapshot, extract_text, screenshot, print_to_pdf, read_selection, get_full_page_html, get_structured_data, get_element_info, get_accessibility_tree, get_viewport_size, find_in_page, wait_for_element, annotate_viewport, clear_annotations, or handle_dialog."
             ),
             Self::Input => concat!(
                 "Interact with the active Chrome tab through the Anda browser extension. ",
                 "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first to act on another tab. ",
-                "Use click, type_text, press_key, scroll, scroll_to, hover, drag_and_drop, select_dropdown, upload_file, or copy_to_clipboard."
+                "Use click, type_text, press_key, scroll, scroll_to, hover, drag_and_drop, select_dropdown, upload_file, or copy_to_clipboard. Native input is preferred by default when available."
             ),
             Self::Script => concat!(
                 "Run JavaScript in the active Chrome tab through the Anda browser extension. ",
@@ -691,6 +698,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         mut args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        prepare_browser_tool_args(&mut args);
         validate_browser_action_for_tool(self.kind, &args)?;
         let preferred_session = browser_session_from_meta(ctx.meta());
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
@@ -824,20 +832,20 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "open_file", "close_tab", "navigate", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download", "get_cookies", "set_cookie", "delete_cookie", "clear_browser_cache"],
-                    "description": "Tab/navigation/browser-state action. Use switch_tab before chrome_page, chrome_input, or chrome_script when another tab is needed. Use open_file to open local files and generated artifacts via Chrome file://, including HTML/SVG pages, images, audio, video, PDFs, and other attachments. To turn generated HTML/canvas/SVG into an image, create the HTML file, open_file it, then call chrome_page.screenshot."
+                    "enum": ["get_current_tab", "list_tabs", "switch_tab", "open_tab", "open_file", "close_tab", "navigate", "wait_for_navigation", "wait_for_history_change", "get_frames", "go_back", "go_forward", "reload", "launch_browser", "download", "list_downloads", "cancel_download", "open_download"],
+                    "description": "Tab, local-file, navigation, frame, and download action. navigate, open_tab, open_file, reload, go_back, and go_forward wait for page readiness; use wait_for_navigation after page/input/script actions that may navigate."
                 },
                 "url": {
                     "type": ["string", "null"],
-                    "description": "URL for navigate, open_tab, launch_browser, download, cookie, cache, or open_file actions. file:// URLs are accepted for open_file."
+                    "description": "URL for navigate, open_tab, launch_browser, download, or open_file. For wait_for_navigation, url is treated as the expected URL."
                 },
-                "value": {
+                "path": {
                     "type": ["string", "null"],
-                    "description": "Cookie value for set_cookie, or download state filter for list_downloads."
+                    "description": "Local filesystem path for open_file. Relative paths are resolved against the workspace."
                 },
                 "tab_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome tab id. Required for switch_tab and close_tab."
+                    "description": "Chrome tab id. Required for switch_tab, close_tab, get_frames on another tab, and optional for wait_for_navigation."
                 },
                 "window_id": {
                     "type": ["integer", "null"],
@@ -861,58 +869,19 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "download_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome download id for list_downloads, cancel_download, or open_download."
+                    "description": "Chrome download id for cancel_download or open_download."
                 },
                 "amount": {
                     "type": ["integer", "null"],
                     "description": "Maximum downloads to list. Defaults to 50."
                 },
-                "domain": {
+                "value": {
                     "type": ["string", "null"],
-                    "description": "Cookie domain filter or value."
+                    "description": "Optional download state filter for list_downloads."
                 },
-                "name": {
-                    "type": ["string", "null"],
-                    "description": "Cookie name for get_cookies, set_cookie, or delete_cookie."
-                },
-                "path": {
-                    "type": ["string", "null"],
-                    "description": "Cookie path for set_cookie, or a local filesystem path for open_file. Relative local paths are resolved against the workspace."
-                },
-                "secure": {
-                    "type": ["boolean", "null"],
-                    "description": "Cookie secure flag for set_cookie."
-                },
-                "http_only": {
-                    "type": ["boolean", "null"],
-                    "description": "Cookie httpOnly flag for set_cookie."
-                },
-                "same_site": {
-                    "type": ["string", "null"],
-                    "enum": ["no_restriction", "lax", "strict", null],
-                    "description": "Cookie SameSite value for set_cookie."
-                },
-                "expiration_date": {
-                    "type": ["number", "null"],
-                    "description": "Cookie expiration date in seconds since Unix epoch for set_cookie."
-                },
-                "since_ms": {
-                    "type": ["integer", "null"],
-                    "description": "Clear browser cache data created after this Unix timestamp in milliseconds. Defaults to 0."
-                },
-                "store_id": {
-                    "type": ["string", "null"],
-                    "description": "Chrome cookie store id."
-                },
-                "origins": {
-                    "type": ["array", "null"],
-                    "items": { "type": "string" },
-                    "description": "Optional origins to target for clear_browser_cache."
-                },
-                "timeout_ms": timeout_schema(),
-                "reason": reason_schema()
+                "timeout_ms": timeout_schema()
             },
-            "required": ["action", "url", "value", "tab_id", "window_id", "active", "bypass_cache", "filename", "save_as", "download_id", "amount", "domain", "name", "path", "secure", "http_only", "same_site", "expiration_date", "since_ms", "store_id", "origins", "timeout_ms", "reason"],
+            "required": ["action", "url", "path", "tab_id", "window_id", "active", "bypass_cache", "filename", "save_as", "download_id", "amount", "value", "timeout_ms"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Page => json!({
@@ -921,11 +890,11 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "action": {
                     "type": "string",
                     "enum": ["snapshot", "extract_text", "screenshot", "read_selection", "get_full_page_html", "get_structured_data", "get_accessibility_tree", "print_to_pdf", "annotate_viewport", "clear_annotations", "get_element_info", "get_viewport_size", "find_in_page", "wait_for_element", "handle_dialog"],
-                    "description": "Inspection action for the active tab. Use chrome_tabs.switch_tab first to inspect another tab."
+                    "description": "Inspection, capture, annotation, and dialog action for the active tab. Use chrome_tabs.switch_tab first to inspect another tab."
                 },
                 "selector": {
                     "type": ["string", "null"],
-                    "description": "CSS selector for extract_text, get_element_info, wait_for_element, or element screenshot. Open shadow roots are searched when possible."
+                    "description": "CSS selector for extract_text, get_element_info, wait_for_element, or element screenshot. Omit for whole-page actions. Open shadow roots are searched when possible."
                 },
                 "query": {
                     "type": ["string", "null"],
@@ -966,10 +935,9 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                     "type": ["integer", "null"],
                     "description": "Maximum characters returned for HTML/text-heavy actions."
                 },
-                "timeout_ms": timeout_schema(),
-                "reason": reason_schema()
+                "timeout_ms": timeout_schema()
             },
-            "required": ["action", "selector", "query", "include_links", "include_forms", "highlight", "full_page", "viewport_width", "viewport_height", "device_scale_factor", "amount", "accept", "prompt_text", "max_chars", "timeout_ms", "reason"],
+            "required": ["action", "selector", "query", "include_links", "include_forms", "highlight", "full_page", "viewport_width", "viewport_height", "device_scale_factor", "amount", "accept", "prompt_text", "max_chars", "timeout_ms"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Input => json!({
@@ -982,7 +950,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "selector": {
                     "type": ["string", "null"],
-                    "description": "CSS selector for click, type_text, scroll_to, hover, select_dropdown, or upload_file. type_text may omit selector when the active element is editable. select_dropdown can target a same-origin iframe containing a select. Open shadow roots and same-origin frames are searched when possible."
+                    "description": "CSS selector for click, type_text, scroll_to, hover, select_dropdown, or upload_file. type_text may omit selector when the active element is editable. Open shadow roots and same-origin frames are searched when possible."
                 },
                 "text": {
                     "type": ["string", "null"],
@@ -1022,10 +990,9 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                     "items": { "type": "string" },
                     "description": "Absolute local file paths for upload_file."
                 },
-                "timeout_ms": timeout_schema(),
-                "reason": reason_schema()
+                "timeout_ms": timeout_schema()
             },
-            "required": ["action", "selector", "text", "value", "key", "amount", "x", "y", "from_selector", "to_selector", "to_x", "to_y", "behavior", "files", "timeout_ms", "reason"],
+            "required": ["action", "selector", "text", "value", "key", "amount", "x", "y", "from_selector", "to_selector", "to_x", "to_y", "behavior", "files", "timeout_ms"],
             "additionalProperties": false
         }),
         ChromeBrowserToolKind::Script => json!({
@@ -1035,23 +1002,9 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                     "type": "string",
                     "description": "JavaScript expression or function body to execute. Bare expressions like document.title return automatically; for multi-statement code, an explicit return or final expression returns data. Keep returned data compact and serializable."
                 },
-                "world": {
-                    "type": ["string", "null"],
-                    "enum": ["debugger", "isolated", "main", null],
-                    "description": "Execution mode. debugger uses Chrome DevTools Runtime.evaluate and is the default CSP-resistant page-context bridge. isolated or main use chrome.scripting.executeScript when use_bridge is false."
-                },
-                "use_bridge": {
-                    "type": ["boolean", "null"],
-                    "description": "Whether to use the CSP-resistant debugger bridge. Defaults to true. Set false to force chrome.scripting.executeScript with world isolated or main."
-                },
-                "frame_id": {
-                    "type": ["integer", "null"],
-                    "description": "Optional frame id for non-bridge chrome.scripting.executeScript mode. Omit when using the default debugger bridge."
-                },
-                "timeout_ms": timeout_schema(),
-                "reason": reason_schema()
+                "timeout_ms": timeout_schema()
             },
-            "required": ["code", "world", "use_bridge", "frame_id", "timeout_ms", "reason"],
+            "required": ["code", "timeout_ms"],
             "additionalProperties": false
         }),
     }
@@ -1061,13 +1014,6 @@ fn timeout_schema() -> Value {
     json!({
         "type": ["integer", "null"],
         "description": "Optional action timeout in milliseconds, clamped between 1000 and 120000."
-    })
-}
-
-fn reason_schema() -> Value {
-    json!({
-        "type": ["string", "null"],
-        "description": "Brief reason for this browser action, useful for audit logs in the extension."
     })
 }
 
@@ -1091,8 +1037,8 @@ fn device_scale_factor_schema() -> Value {
     json!({
         "type": ["number", "null"],
         "minimum": 0.1,
-        "maximum": 5,
-        "description": "Optional screenshot device scale factor for viewport captures. Defaults to 1."
+        "maximum": 5.0,
+        "description": "Device scale factor for screenshot capture. Defaults to the current page scale."
     })
 }
 
@@ -1119,6 +1065,12 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn prepare_browser_tool_args(args: &mut ChromeBrowserToolArgs) {
+    if args.action == BrowserAction::WaitForNavigation && args.expected_url.is_none() {
+        args.expected_url = normalize_optional_string(args.url.clone());
+    }
+}
+
 fn validate_browser_action_for_tool(
     kind: ChromeBrowserToolKind,
     args: &ChromeBrowserToolArgs,
@@ -1139,6 +1091,7 @@ fn validate_browser_action_for_tool(
         BrowserAction::TypeText => require_field(&args.text, "text", "type_text"),
         BrowserAction::PressKey => require_field(&args.key, "key", "press_key"),
         BrowserAction::Navigate => require_field(&args.url, "url", "navigate"),
+        BrowserAction::WaitForNavigation => validate_wait_until(&args.wait_until),
         BrowserAction::OpenFile => require_path_or_url(args),
         BrowserAction::Download => require_field(&args.url, "url", "download"),
         BrowserAction::SwitchTab => require_i64(&args.tab_id, "tab_id", "switch_tab"),
@@ -1210,6 +1163,8 @@ fn validate_browser_action_for_tool(
         | BrowserAction::ClearBrowserCache
         | BrowserAction::ListTabs
         | BrowserAction::OpenTab
+        | BrowserAction::WaitForHistoryChange
+        | BrowserAction::GetFrames
         | BrowserAction::LaunchBrowser
         | BrowserAction::GoBack
         | BrowserAction::GoForward
@@ -1229,6 +1184,9 @@ fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> 
                 | BrowserAction::OpenFile
                 | BrowserAction::CloseTab
                 | BrowserAction::Navigate
+                | BrowserAction::WaitForNavigation
+                | BrowserAction::WaitForHistoryChange
+                | BrowserAction::GetFrames
                 | BrowserAction::GoBack
                 | BrowserAction::GoForward
                 | BrowserAction::Reload
@@ -1400,6 +1358,20 @@ fn validate_same_site(value: &Option<String>) -> Result<(), BoxError> {
     }
 }
 
+fn validate_wait_until(value: &Option<String>) -> Result<(), BoxError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "committed" | "domcontentloaded" | "dom_content_loaded" | "dom_ready"
+        | "complete" | "history_change" | "history" | "spa" => Ok(()),
+        wait_until => Err(format!(
+            "chrome_browser action \"wait_for_navigation\" has unsupported wait_until {wait_until:?}"
+        )
+        .into()),
+    }
+}
+
 fn normalized_action_timeout(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
@@ -1424,6 +1396,8 @@ fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
         use_bridge: None,
         query: None,
         url: None,
+        expected_url: None,
+        wait_until: None,
         key: None,
         amount: None,
         x: None,
@@ -1789,6 +1763,10 @@ mod tests {
         args
     }
 
+    fn schema_has_action(actions: &[Value], action: &str) -> bool {
+        actions.iter().any(|value| value.as_str() == Some(action))
+    }
+
     #[test]
     fn browser_session_prefers_explicit_meta() {
         let mut meta = RequestMeta::default();
@@ -1840,6 +1818,77 @@ mod tests {
 
         assert_eq!(args.action, BrowserAction::ExecuteJavascript);
         assert_eq!(args.code.as_deref(), Some("document.title"));
+    }
+
+    #[test]
+    fn wait_for_navigation_uses_url_as_expected_url_alias() {
+        let mut args = browser_args(BrowserAction::WaitForNavigation);
+        args.url = Some(" https://example.com/done ".to_string());
+
+        prepare_browser_tool_args(&mut args);
+
+        assert_eq!(
+            args.expected_url.as_deref(),
+            Some("https://example.com/done")
+        );
+    }
+
+    #[test]
+    fn browser_tool_schemas_expose_useful_actions_without_state_mutation_defaults() {
+        let tabs = ChromeBrowserTool::tabs(Arc::new(BrowserBridge::new())).definition();
+        let tabs_properties = tabs.parameters["properties"].as_object().unwrap();
+        let tab_actions = tabs_properties["action"]["enum"].as_array().unwrap();
+        assert!(schema_has_action(tab_actions, "navigate"));
+        assert!(schema_has_action(tab_actions, "wait_for_navigation"));
+        assert!(schema_has_action(tab_actions, "open_file"));
+        assert!(schema_has_action(tab_actions, "get_frames"));
+        assert!(schema_has_action(tab_actions, "list_downloads"));
+        assert!(schema_has_action(tab_actions, "open_download"));
+        assert!(!schema_has_action(tab_actions, "get_cookies"));
+        assert!(!schema_has_action(tab_actions, "clear_browser_cache"));
+        assert!(tabs_properties.get("expected_url").is_none());
+        assert!(tabs_properties.get("wait_until").is_none());
+        assert!(tabs_properties.get("path").is_some());
+        assert!(tabs_properties.get("window_id").is_some());
+        assert!(tabs_properties.get("bypass_cache").is_some());
+        assert!(tabs_properties.get("download_id").is_some());
+        assert!(tabs_properties.get("name").is_none());
+        assert!(tabs_properties.get("origins").is_none());
+
+        let page = ChromeBrowserTool::page(Arc::new(BrowserBridge::new())).definition();
+        let page_properties = page.parameters["properties"].as_object().unwrap();
+        let page_actions = page_properties["action"]["enum"].as_array().unwrap();
+        assert!(schema_has_action(page_actions, "snapshot"));
+        assert!(schema_has_action(page_actions, "screenshot"));
+        assert!(schema_has_action(page_actions, "print_to_pdf"));
+        assert!(schema_has_action(page_actions, "get_full_page_html"));
+        assert!(schema_has_action(page_actions, "get_structured_data"));
+        assert!(schema_has_action(page_actions, "get_element_info"));
+        assert!(schema_has_action(page_actions, "get_accessibility_tree"));
+        assert!(schema_has_action(page_actions, "handle_dialog"));
+        assert!(page_properties.get("full_page").is_some());
+        assert!(page_properties.get("viewport_width").is_some());
+        assert!(page_properties.get("include_forms").is_some());
+        assert!(page_properties.get("accept").is_some());
+
+        let input = ChromeBrowserTool::input(Arc::new(BrowserBridge::new())).definition();
+        let input_properties = input.parameters["properties"].as_object().unwrap();
+        let input_actions = input_properties["action"]["enum"].as_array().unwrap();
+        assert!(schema_has_action(input_actions, "click"));
+        assert!(schema_has_action(input_actions, "drag_and_drop"));
+        assert!(schema_has_action(input_actions, "select_dropdown"));
+        assert!(schema_has_action(input_actions, "upload_file"));
+        assert!(schema_has_action(input_actions, "copy_to_clipboard"));
+        assert!(input_properties.get("to_selector").is_some());
+        assert!(input_properties.get("files").is_some());
+        assert!(input_properties.get("value").is_some());
+
+        let script = ChromeBrowserTool::script(Arc::new(BrowserBridge::new())).definition();
+        let script_properties = script.parameters["properties"].as_object().unwrap();
+        assert!(script_properties.get("code").is_some());
+        assert!(script_properties.get("world").is_none());
+        assert!(script_properties.get("use_bridge").is_none());
+        assert!(script_properties.get("frame_id").is_none());
     }
 
     #[test]

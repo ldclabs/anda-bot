@@ -55,6 +55,8 @@ export type ChromeCookieInfo = {
 export type BrowserActionArgs = {
   action?: string
   url?: string
+  expected_url?: string
+  wait_until?: string
   selector?: string
   text?: string
   value?: string
@@ -142,8 +144,40 @@ export type PendingRpc = {
 }
 
 export interface ChromeEvent<Listener extends (...args: never[]) => void> {
-  addListener(listener: Listener): void
+  addListener(listener: Listener, ...extraParameters: unknown[]): void
   removeListener(listener: Listener): void
+}
+
+export type ChromeWebNavigationDetails = {
+  tabId: number
+  frameId: number
+  parentFrameId?: number
+  processId?: number
+  url: string
+  timeStamp?: number
+  error?: string
+  transitionType?: string
+  transitionQualifiers?: string[]
+}
+
+export type ChromeWebNavigationTabReplacedDetails = {
+  replacedTabId: number
+  tabId: number
+  timeStamp?: number
+}
+
+export type ChromeWebNavigationTargetDetails = ChromeWebNavigationDetails & {
+  sourceTabId?: number
+  sourceFrameId?: number
+  targetTabId?: number
+}
+
+export type ChromeWebNavigationFrame = {
+  frameId: number
+  parentFrameId?: number
+  processId?: number
+  url: string
+  errorOccurred?: boolean
 }
 
 export interface ChromeApi {
@@ -280,12 +314,21 @@ export interface ChromeApi {
     ): Promise<void>
   }
   webNavigation?: {
-    onCommitted?: ChromeEvent<
-      (details: { tabId: number; frameId: number; url: string; timeStamp?: number }) => void
-    >
-    onCompleted?: ChromeEvent<
-      (details: { tabId: number; frameId: number; url: string; timeStamp?: number }) => void
-    >
+    onBeforeNavigate?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onCommitted?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onDOMContentLoaded?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onCompleted?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onErrorOccurred?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onReferenceFragmentUpdated?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onHistoryStateUpdated?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
+    onTabReplaced?: ChromeEvent<(details: ChromeWebNavigationTabReplacedDetails) => void>
+    onCreatedNavigationTarget?: ChromeEvent<(details: ChromeWebNavigationTargetDetails) => void>
+    getFrame?(details: {
+      tabId: number
+      frameId: number
+      processId?: number
+    }): Promise<ChromeWebNavigationFrame | null>
+    getAllFrames?(details: { tabId: number }): Promise<ChromeWebNavigationFrame[] | null>
   }
   debugger?: {
     attach(target: { tabId: number }, requiredVersion: string): Promise<void>

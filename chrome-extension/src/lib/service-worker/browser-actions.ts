@@ -5,7 +5,9 @@ import type {
   ChromeApi,
   ChromeCookieInfo,
   ChromeDownloadItem,
-  ChromeTabInfo
+  ChromeTabInfo,
+  ChromeWebNavigationDetails,
+  ChromeWebNavigationFrame
 } from './types'
 
 type BrowserActionDependencies = {
@@ -19,6 +21,16 @@ const NETWORK_IDLE_QUIET_MS = 500
 const DEFAULT_PAGE_READY_TIMEOUT_MS = 30_000
 const PRE_ACTION_LOADING_TIMEOUT_MS = 1_500
 const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
+
+type NavigationWaitUntil = 'committed' | 'domcontentloaded' | 'complete' | 'history_change'
+type NavigationEventName =
+  | 'before_navigate'
+  | 'committed'
+  | 'dom_content_loaded'
+  | 'completed'
+  | 'error_occurred'
+  | 'history_state_updated'
+  | 'reference_fragment_updated'
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -71,6 +83,14 @@ export async function executeBrowserAction(
     return { tab: tabSummary(await activeTab(chromeApi)) }
   }
 
+  if (args.action === 'wait_for_navigation' || args.action === 'wait_for_history_change') {
+    return waitForNavigationAction(chromeApi, args)
+  }
+
+  if (args.action === 'get_frames') {
+    return getNavigationFrames(chromeApi, args)
+  }
+
   if (args.action === 'open_tab') {
     const tab = await chromeApi.tabs.create({
       url: normalizeOptionalText(args.url),
@@ -113,7 +133,7 @@ export async function executeBrowserAction(
       const pageReady = created.id ? await waitForTabReady(chromeApi, created.id, args) : null
       return withTopLevelTab({ navigated: true, url: args.url }, pageReady, created)
     }
-    const loadWatcher = createTabLoadWatcher(chromeApi, tab.id, actionTimeoutMs(args))
+    const loadWatcher = createTabLoadWatcher(chromeApi, tab.id, actionTimeoutMs(args), args)
     try {
       const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
       if (active && updated) {
@@ -133,7 +153,7 @@ export async function executeBrowserAction(
     if (!tabId) {
       throw new Error('no target tab')
     }
-    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args)
     try {
       await chromeApi.tabs.reload(tabId, { bypassCache: args.bypass_cache ?? false })
       const pageReady = await waitForTabReady(chromeApi, tabId, args, loadWatcher)
@@ -154,7 +174,7 @@ export async function executeBrowserAction(
     if (!tabId) {
       throw new Error('no target tab')
     }
-    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    const loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args)
     try {
       if (args.action === 'go_back' && chromeApi.tabs.goBack) {
         try {
@@ -219,7 +239,7 @@ export async function executeBrowserAction(
   })
 
   const postActionLoadWatcher = shouldWaitAfterAction(args.action)
-    ? createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args))
+    ? createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args)
     : null
 
   if (args.action === 'screenshot') {
@@ -630,6 +650,75 @@ function normalizedOrigins(args: BrowserActionArgs): string[] {
     origins.push(url)
   }
   return Array.from(new Set(origins))
+}
+
+async function waitForNavigationAction(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const tab = await tabForAction(chromeApi, args)
+  const tabId = tab?.id
+  if (!tabId) {
+    throw new Error('no target tab')
+  }
+  const waitUntil: NavigationWaitUntil =
+    args.action === 'wait_for_history_change' ? 'history_change' : navigationWaitUntil(args)
+  const result = await waitForWebNavigation(chromeApi, tabId, args, {
+    waitUntil,
+    allowAlreadyComplete: false
+  })
+  return withTopLevelTab(
+    {
+      waited: true,
+      wait_until: waitUntil,
+      expected_url: navigationExpectedUrl(args) || null,
+      navigation: compactPageReadyInfo(result, { omitTab: true }) || result
+    },
+    result,
+    tab
+  )
+}
+
+async function getNavigationFrames(
+  chromeApi: ChromeApi,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const webNavigation = chromeApi.webNavigation
+  if (!webNavigation?.getAllFrames) {
+    throw new Error(
+      'Chrome webNavigation frame API is unavailable; enable webNavigation permission'
+    )
+  }
+  const tab = await tabForAction(chromeApi, args)
+  const tabId = tab?.id
+  if (!tabId) {
+    throw new Error('no target tab')
+  }
+  const requestedFrameId = nonNegativeInteger(args.frame_id)
+  if (requestedFrameId !== null && webNavigation.getFrame) {
+    const frame = await webNavigation.getFrame({ tabId, frameId: requestedFrameId })
+    return {
+      frames: frame ? [navigationFrameSummary(frame)] : [],
+      count: frame ? 1 : 0,
+      tab: tabSummary(tab)
+    }
+  }
+  const frames = (await webNavigation.getAllFrames({ tabId })) || []
+  return {
+    frames: frames.map(navigationFrameSummary),
+    count: frames.length,
+    tab: tabSummary(tab)
+  }
+}
+
+function navigationFrameSummary(frame: ChromeWebNavigationFrame): Record<string, unknown> {
+  return {
+    frame_id: frame.frameId,
+    parent_frame_id: frame.parentFrameId ?? null,
+    process_id: frame.processId ?? null,
+    url: frame.url || '',
+    error_occurred: Boolean(frame.errorOccurred)
+  }
 }
 
 async function tabForAction(
@@ -1776,6 +1865,256 @@ type TabLoadWatcher = {
 function createTabLoadWatcher(
   chromeApi: ChromeApi,
   tabId: number,
+  timeout: number,
+  args: BrowserActionArgs = {}
+): TabLoadWatcher {
+  if (hasWebNavigationWaitSupport(chromeApi)) {
+    return createWebNavigationWaiter(
+      chromeApi,
+      tabId,
+      { ...args, timeout_ms: timeout },
+      { waitUntil: 'complete', allowAlreadyComplete: true }
+    )
+  }
+  return createTabsLoadWatcher(chromeApi, tabId, timeout)
+}
+
+function hasWebNavigationWaitSupport(chromeApi: ChromeApi): boolean {
+  const webNavigation = chromeApi.webNavigation
+  return Boolean(
+    webNavigation?.onCompleted &&
+    webNavigation.onErrorOccurred &&
+    (webNavigation.onCommitted || webNavigation.onBeforeNavigate)
+  )
+}
+
+function createWebNavigationWaiter(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  options: { waitUntil: NavigationWaitUntil; allowAlreadyComplete?: boolean }
+): TabLoadWatcher {
+  const webNavigation = chromeApi.webNavigation
+  if (!webNavigation) {
+    throw new Error('Chrome webNavigation API is unavailable; enable webNavigation permission')
+  }
+
+  const timeout = actionTimeoutMs(args)
+  const frameId = nonNegativeInteger(args.frame_id) ?? 0
+  const expectedUrl = navigationExpectedUrl(args)
+  let done = false
+  let sawLoading = false
+  let sawCommitted = false
+  let sawDomContentLoaded = false
+  let sawComplete = false
+  let sawHistoryChange = false
+  let lastDetails: ChromeWebNavigationDetails | null = null
+  let lastTab: ChromeTabInfo | null = null
+  let noLoadTimer: ReturnType<typeof setTimeout> | null = null
+  let resolveWait: (value: Record<string, unknown>) => void
+  let rejectWait: (reason: Error) => void
+
+  const wait = new Promise<Record<string, unknown>>((resolve, reject) => {
+    resolveWait = resolve
+    rejectWait = reject
+  })
+
+  const cleanup = () => {
+    if (done) {
+      return
+    }
+    done = true
+    clearTimeout(timer)
+    if (noLoadTimer) {
+      clearTimeout(noLoadTimer)
+      noLoadTimer = null
+    }
+    webNavigation.onBeforeNavigate?.removeListener(onBeforeNavigate)
+    webNavigation.onCommitted?.removeListener(onCommitted)
+    webNavigation.onDOMContentLoaded?.removeListener(onDOMContentLoaded)
+    webNavigation.onCompleted?.removeListener(onCompleted)
+    webNavigation.onErrorOccurred?.removeListener(onErrorOccurred)
+    webNavigation.onHistoryStateUpdated?.removeListener(onHistoryStateUpdated)
+    webNavigation.onReferenceFragmentUpdated?.removeListener(onReferenceFragmentUpdated)
+  }
+
+  const finish = (
+    details: ChromeWebNavigationDetails | null,
+    event: NavigationEventName | 'already_complete' | 'no_load_detected',
+    extra: Record<string, unknown> = {}
+  ) => {
+    if (done) {
+      return
+    }
+    lastDetails = details || lastDetails
+    const alreadyComplete = event === 'already_complete'
+    cleanup()
+    void chromeApi.tabs
+      .get(tabId)
+      .catch(() => lastTab)
+      .then((tab) => {
+        if (tab) {
+          lastTab = tab
+        }
+        resolveWait({
+          loaded: extra.loaded ?? true,
+          source: 'web_navigation',
+          event,
+          wait_until: options.waitUntil,
+          expected_url: expectedUrl || null,
+          saw_loading: sawLoading,
+          saw_committed: sawCommitted,
+          saw_dom_content_loaded: sawDomContentLoaded,
+          saw_complete: sawComplete,
+          saw_history_change: sawHistoryChange,
+          already_complete: alreadyComplete,
+          navigation: navigationDetailsSummary(lastDetails, event),
+          tab: tabSummary(tab || lastTab),
+          ...extra
+        })
+      })
+  }
+
+  const fail = (details: ChromeWebNavigationDetails | null, message: string) => {
+    if (done) {
+      return
+    }
+    lastDetails = details || lastDetails
+    cleanup()
+    rejectWait(new Error(message))
+  }
+
+  const record = (details: ChromeWebNavigationDetails, event: NavigationEventName) => {
+    if (!matchesNavigation(details, tabId, frameId, expectedUrl)) {
+      return false
+    }
+    lastDetails = details
+    if (event === 'before_navigate') {
+      sawLoading = true
+    } else if (event === 'committed') {
+      sawCommitted = true
+    } else if (event === 'dom_content_loaded') {
+      sawDomContentLoaded = true
+    } else if (event === 'completed') {
+      sawComplete = true
+    } else if (event === 'history_state_updated' || event === 'reference_fragment_updated') {
+      sawHistoryChange = true
+    }
+    return true
+  }
+
+  const maybeFinish = (details: ChromeWebNavigationDetails, event: NavigationEventName) => {
+    if (!record(details, event)) {
+      return
+    }
+    if (navigationEventSatisfiesWait(event, options.waitUntil)) {
+      finish(details, event, {
+        same_document: event === 'history_state_updated' || event === 'reference_fragment_updated'
+      })
+    }
+  }
+
+  const onBeforeNavigate = (details: ChromeWebNavigationDetails) => {
+    record(details, 'before_navigate')
+  }
+  const onCommitted = (details: ChromeWebNavigationDetails) => {
+    maybeFinish(details, 'committed')
+  }
+  const onDOMContentLoaded = (details: ChromeWebNavigationDetails) => {
+    maybeFinish(details, 'dom_content_loaded')
+  }
+  const onCompleted = (details: ChromeWebNavigationDetails) => {
+    maybeFinish(details, 'completed')
+  }
+  const onErrorOccurred = (details: ChromeWebNavigationDetails) => {
+    if (!matchesNavigation(details, tabId, frameId, expectedUrl)) {
+      return
+    }
+    fail(
+      details,
+      `navigation failed${details.error ? `: ${details.error}` : ''}${
+        details.url ? ` (${details.url})` : ''
+      }`
+    )
+  }
+  const onHistoryStateUpdated = (details: ChromeWebNavigationDetails) => {
+    maybeFinish(details, 'history_state_updated')
+  }
+  const onReferenceFragmentUpdated = (details: ChromeWebNavigationDetails) => {
+    maybeFinish(details, 'reference_fragment_updated')
+  }
+
+  const timer = setTimeout(() => {
+    fail(lastDetails, `navigation did not reach ${options.waitUntil} before timeout: ${timeout}ms`)
+  }, timeout)
+
+  webNavigation.onBeforeNavigate?.addListener(onBeforeNavigate)
+  webNavigation.onCommitted?.addListener(onCommitted)
+  webNavigation.onDOMContentLoaded?.addListener(onDOMContentLoaded)
+  webNavigation.onCompleted?.addListener(onCompleted)
+  webNavigation.onErrorOccurred?.addListener(onErrorOccurred)
+  webNavigation.onHistoryStateUpdated?.addListener(onHistoryStateUpdated)
+  webNavigation.onReferenceFragmentUpdated?.addListener(onReferenceFragmentUpdated)
+
+  return {
+    async wait(waitOptions?: { noLoadTimeoutMs?: number }) {
+      const current = await chromeApi.tabs.get(tabId).catch(() => null)
+      if (current) {
+        lastTab = current
+      }
+      const currentMatches = urlMatchesExpected(current?.url || '', expectedUrl)
+      if (
+        options.allowAlreadyComplete &&
+        currentMatches &&
+        (current?.status === 'complete' || isInstantLoadUrl(current?.url))
+      ) {
+        finish(navigationDetailsFromTab(current, tabId, frameId), 'already_complete')
+      }
+      if (done) {
+        return wait
+      }
+      const noLoadTimeoutMs = waitOptions?.noLoadTimeoutMs
+      if (noLoadTimeoutMs && noLoadTimeoutMs > 0) {
+        noLoadTimer = setTimeout(async () => {
+          if (done || sawLoading || sawCommitted || sawComplete || sawHistoryChange) {
+            return
+          }
+          const latest = await chromeApi.tabs.get(tabId).catch(() => lastTab)
+          if (latest) {
+            lastTab = latest
+          }
+          finish(navigationDetailsFromTab(latest || current, tabId, frameId), 'no_load_detected', {
+            loaded: false,
+            no_load_detected: true
+          })
+        }, noLoadTimeoutMs)
+      }
+      return wait
+    },
+    cancel() {
+      cleanup()
+    }
+  }
+}
+
+async function waitForWebNavigation(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs,
+  options: { waitUntil: NavigationWaitUntil; allowAlreadyComplete?: boolean }
+): Promise<Record<string, unknown>> {
+  const watcher = createWebNavigationWaiter(chromeApi, tabId, args, options)
+  try {
+    return await watcher.wait()
+  } catch (error) {
+    watcher.cancel()
+    throw error
+  }
+}
+
+function createTabsLoadWatcher(
+  chromeApi: ChromeApi,
+  tabId: number,
   timeout: number
 ): TabLoadWatcher {
   let done = false
@@ -1899,11 +2238,117 @@ function isInstantLoadUrl(url?: string): boolean {
   )
 }
 
+function navigationWaitUntil(args: BrowserActionArgs): NavigationWaitUntil {
+  const value = normalizeOptionalText(args.wait_until || args.value)?.toLowerCase()
+  if (value === 'committed') {
+    return 'committed'
+  }
+  if (value === 'domcontentloaded' || value === 'dom_content_loaded' || value === 'dom_ready') {
+    return 'domcontentloaded'
+  }
+  if (value === 'history_change' || value === 'history' || value === 'spa') {
+    return 'history_change'
+  }
+  return 'complete'
+}
+
+function navigationExpectedUrl(args: BrowserActionArgs): string | undefined {
+  const explicit = normalizeOptionalText(args.expected_url)
+  if (explicit) {
+    return explicit
+  }
+  if (
+    args.action === 'navigate' ||
+    args.action === 'open_tab' ||
+    args.action === 'wait_for_navigation'
+  ) {
+    return normalizeOptionalText(args.url)
+  }
+  return undefined
+}
+
+function matchesNavigation(
+  details: ChromeWebNavigationDetails,
+  tabId: number,
+  frameId: number,
+  expectedUrl?: string
+): boolean {
+  return (
+    details.tabId === tabId &&
+    details.frameId === frameId &&
+    urlMatchesExpected(details.url || '', expectedUrl)
+  )
+}
+
+function urlMatchesExpected(actualUrl: string, expectedUrl?: string): boolean {
+  const expected = normalizeOptionalText(expectedUrl)
+  if (!expected) {
+    return true
+  }
+  if (expected.includes('*')) {
+    const pattern = `^${expected
+      .split('*')
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.*')}$`
+    return new RegExp(pattern).test(actualUrl)
+  }
+  return actualUrl === expected || actualUrl.startsWith(expected) || actualUrl.includes(expected)
+}
+
+function navigationEventSatisfiesWait(
+  event: NavigationEventName,
+  waitUntil: NavigationWaitUntil
+): boolean {
+  if (event === 'history_state_updated' || event === 'reference_fragment_updated') {
+    return waitUntil === 'history_change' || waitUntil === 'complete'
+  }
+  if (waitUntil === 'committed') {
+    return event === 'committed' || event === 'dom_content_loaded' || event === 'completed'
+  }
+  if (waitUntil === 'domcontentloaded') {
+    return event === 'dom_content_loaded' || event === 'completed'
+  }
+  return waitUntil === 'complete' && event === 'completed'
+}
+
+function navigationDetailsSummary(
+  details: ChromeWebNavigationDetails | null,
+  event: string
+): Record<string, unknown> | null {
+  if (!details) {
+    return null
+  }
+  return {
+    event,
+    tab_id: details.tabId,
+    frame_id: details.frameId,
+    parent_frame_id: details.parentFrameId ?? null,
+    process_id: details.processId ?? null,
+    url: details.url || '',
+    error: details.error || null,
+    transition_type: details.transitionType || null,
+    transition_qualifiers: details.transitionQualifiers || [],
+    time_stamp: details.timeStamp ?? null
+  }
+}
+
+function navigationDetailsFromTab(
+  tab: ChromeTabInfo | null,
+  tabId: number,
+  frameId: number
+): ChromeWebNavigationDetails | null {
+  const url = normalizeOptionalText(tab?.url)
+  if (!url) {
+    return null
+  }
+  return { tabId, frameId, url }
+}
+
 async function waitForTabReady(
   chromeApi: ChromeApi,
   tabId: number,
   args: BrowserActionArgs,
-  loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args)),
+  loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args),
   waitOptions?: { noLoadTimeoutMs?: number }
 ): Promise<Record<string, unknown>> {
   try {
@@ -1936,7 +2381,7 @@ async function waitForTabReadyIfLoading(
     return null
   }
   const timeout = Math.min(actionTimeoutMs(args), options?.timeoutMs || actionTimeoutMs(args))
-  const watcher = createTabLoadWatcher(chromeApi, tabId, timeout)
+  const watcher = createTabLoadWatcher(chromeApi, tabId, timeout, args)
   try {
     return await waitForTabReady(chromeApi, tabId, args, watcher, {
       noLoadTimeoutMs: options?.noLoadTimeoutMs
@@ -2197,6 +2642,10 @@ export function tabSummary(tab: ChromeTabInfo | null | undefined): Record<string
 
 function positiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
 }
 
 function requirePositiveInteger(value: unknown, message: string): number {

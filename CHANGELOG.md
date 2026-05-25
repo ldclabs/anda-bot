@@ -2,6 +2,25 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.4] — 2026-05-25
+
+### Changed
+
+- **Browser script action simplified**: `action` is now optional on `chrome_script` — defaults to `execute_javascript` implicitly, removing the redundant enum from the tool schema. Models can pass `code` directly.
+- **Browser result deduplication**: `tab` is no longer nested inside `page_ready` in browser action results. All navigation actions (`open_tab`, `navigate`, `reload`, `go_back`, `go_forward`, `switch_tab`) use a shared `withTopLevelTab` helper, and `compactPageReadyInfo` ensures `page_ready` never carries duplicate tab data. Updated test assertions to match.
+
+## [0.8.3] — 2026-05-25
+
+### Changed
+
+- **Lightweight UI replaces shadcn-svelte**: removed `shadcn-svelte` and `tailwind-variants` dependencies. 175+ component library files replaced with a single `ui.ts` module exporting shadcn-compatible class generator functions (`buttonClass`, `badgeClass`, `itemClass`, `cardClass`, `inputClass`, `dialogContentClass`, etc.) using Tailwind classes directly. All Anda app components (`App`, `ChatComposer`, `ChatMessageItem`, `ChatSettings`, `AttachmentList`, `PromptCommandPanel`, `VoicePanel`) refactored accordingly. Net deletion: ~3,900 lines.
+
+### Fixed
+
+- **Table rendering**: tables now use `width:max-content` with `min-width:100%` instead of fixed `100%` with `overflow:hidden`, enabling proper responsive behavior.
+- **Message spacing**: grid gap increased from 2 to 4 for better visual separation.
+- **MiniMax model name**: corrected from `M2.7-highspeed` to `M2.7` in default config.
+
 ## [0.8.2] — 2026-05-24
 
 ### Highlights
