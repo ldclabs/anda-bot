@@ -118,6 +118,7 @@ pub enum BrowserAction {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ChromeBrowserToolArgs {
+    #[serde(default = "default_browser_action")]
     pub action: BrowserAction,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,6 +267,10 @@ pub struct ChromeBrowserToolArgs {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+fn default_browser_action() -> BrowserAction {
+    BrowserAction::ExecuteJavascript
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -651,7 +656,7 @@ impl ChromeBrowserToolKind {
             ),
             Self::Script => concat!(
                 "Run JavaScript in the active Chrome tab through the Anda browser extension. ",
-                "Use this only when the smaller page/input tools cannot express the operation, and keep returned data structured and compact. ",
+                "Pass code directly; execute_javascript is the implicit action. Use this only when the smaller page/input tools cannot express the operation, and keep returned data structured and compact. ",
                 "Use chrome_tabs.switch_tab first if another tab is needed."
             ),
         };
@@ -1026,11 +1031,6 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
         ChromeBrowserToolKind::Script => json!({
             "type": "object",
             "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["execute_javascript"],
-                    "description": "Execute JavaScript in the active tab and return structured data."
-                },
                 "code": {
                     "type": "string",
                     "description": "JavaScript expression or function body to execute. Bare expressions like document.title return automatically; for multi-statement code, an explicit return or final expression returns data. Keep returned data compact and serializable."
@@ -1051,7 +1051,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "timeout_ms": timeout_schema(),
                 "reason": reason_schema()
             },
-            "required": ["action", "code", "world", "use_bridge", "frame_id", "timeout_ms", "reason"],
+            "required": ["code", "world", "use_bridge", "frame_id", "timeout_ms", "reason"],
             "additionalProperties": false
         }),
     }
@@ -1350,9 +1350,10 @@ fn validate_viewport_options(args: &ChromeBrowserToolArgs) -> Result<(), BoxErro
         return Err("chrome_browser viewport dimensions must be between 1 and 10000".into());
     }
     if let Some(scale) = args.device_scale_factor
-        && (!scale.is_finite() || !(0.1..=5.0).contains(&scale)) {
-            return Err("chrome_browser device_scale_factor must be between 0.1 and 5".into());
-        }
+        && (!scale.is_finite() || !(0.1..=5.0).contains(&scale))
+    {
+        return Err("chrome_browser device_scale_factor must be between 0.1 and 5".into());
+    }
     Ok(())
 }
 
@@ -1811,6 +1812,34 @@ mod tests {
         assert_eq!(definition.name, ChromeBrowserTool::PAGE_NAME);
         assert!(properties.get("tab_id").is_none());
         assert!(properties.get("selector").is_some());
+    }
+
+    #[test]
+    fn script_tool_schema_uses_implicit_action() {
+        let tool = ChromeBrowserTool::script(Arc::new(BrowserBridge::new()));
+        let definition = tool.definition();
+        let properties = definition.parameters["properties"].as_object().unwrap();
+        let required = definition.parameters["required"].as_array().unwrap();
+
+        assert_eq!(definition.name, ChromeBrowserTool::SCRIPT_NAME);
+        assert!(properties.get("action").is_none());
+        assert!(
+            !required
+                .iter()
+                .any(|value| value.as_str() == Some("action"))
+        );
+        assert!(properties.get("code").is_some());
+    }
+
+    #[test]
+    fn script_args_default_to_execute_javascript() {
+        let args: ChromeBrowserToolArgs = serde_json::from_value(json!({
+            "code": "document.title"
+        }))
+        .unwrap();
+
+        assert_eq!(args.action, BrowserAction::ExecuteJavascript);
+        assert_eq!(args.code.as_deref(), Some("document.title"));
     }
 
     #[test]

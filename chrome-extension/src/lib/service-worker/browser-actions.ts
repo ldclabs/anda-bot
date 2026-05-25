@@ -78,14 +78,14 @@ export async function executeBrowserAction(
       windowId: positiveInteger(args.window_id) || undefined
     })
     const pageReady = tab.id ? await waitForTabReady(chromeApi, tab.id, args) : null
-    return { opened: true, tab: pageReady?.tab || tabSummary(tab), page_ready: pageReady }
+    return withTopLevelTab({ opened: true }, pageReady, tab)
   }
 
   if (args.action === 'switch_tab') {
     const tabId = requirePositiveInteger(args.tab_id, 'switch_tab requires tab_id')
     const tab = await activateTab(chromeApi, tabId)
     const pageReady = await waitForTabReadyIfLoading(chromeApi, tabId, args)
-    return { switched: true, tab: pageReady?.tab || tabSummary(tab), page_ready: pageReady }
+    return withTopLevelTab({ switched: true }, pageReady, tab)
   }
 
   if (args.action === 'close_tab') {
@@ -111,12 +111,7 @@ export async function executeBrowserAction(
         windowId: positiveInteger(args.window_id) || undefined
       })
       const pageReady = created.id ? await waitForTabReady(chromeApi, created.id, args) : null
-      return {
-        navigated: true,
-        url: args.url,
-        tab: pageReady?.tab || tabSummary(created),
-        page_ready: pageReady
-      }
+      return withTopLevelTab({ navigated: true, url: args.url }, pageReady, created)
     }
     const loadWatcher = createTabLoadWatcher(chromeApi, tab.id, actionTimeoutMs(args))
     try {
@@ -125,12 +120,7 @@ export async function executeBrowserAction(
         await focusWindow(chromeApi, updated.windowId).catch(() => undefined)
       }
       const pageReady = await waitForTabReady(chromeApi, tab.id, args, loadWatcher)
-      return {
-        navigated: true,
-        url: args.url,
-        tab: pageReady?.tab || tabSummary(updated),
-        page_ready: pageReady
-      }
+      return withTopLevelTab({ navigated: true, url: args.url }, pageReady, updated)
     } catch (error) {
       loadWatcher.cancel()
       throw error
@@ -147,12 +137,11 @@ export async function executeBrowserAction(
     try {
       await chromeApi.tabs.reload(tabId, { bypassCache: args.bypass_cache ?? false })
       const pageReady = await waitForTabReady(chromeApi, tabId, args, loadWatcher)
-      return {
-        reloaded: true,
-        bypass_cache: args.bypass_cache ?? false,
-        tab: pageReady?.tab || tabSummary(tab),
-        page_ready: pageReady
-      }
+      return withTopLevelTab(
+        { reloaded: true, bypass_cache: args.bypass_cache ?? false },
+        pageReady,
+        tab
+      )
     } catch (error) {
       loadWatcher.cancel()
       throw error
@@ -206,11 +195,11 @@ export async function executeBrowserAction(
         })
       }
       const pageReady = await waitForTabReady(chromeApi, tabId, args, loadWatcher)
-      return {
-        [args.action === 'go_back' ? 'went_back' : 'went_forward']: true,
-        tab: pageReady?.tab || tabSummary(tab),
-        page_ready: pageReady
-      }
+      return withTopLevelTab(
+        { [args.action === 'go_back' ? 'went_back' : 'went_forward']: true },
+        pageReady,
+        tab
+      )
     } catch (error) {
       loadWatcher.cancel()
       throw error
@@ -1710,10 +1699,56 @@ function withPageReady(
   if (!pageReady) {
     return result
   }
+  const tab = pageReadyTab(pageReady)
+  const compactPageReady = compactPageReadyInfo(pageReady, { omitTab: true })
   if (result && typeof result === 'object' && !Array.isArray(result)) {
-    return { ...(result as Record<string, unknown>), page_ready: pageReady }
+    const output: Record<string, unknown> = {
+      ...(result as Record<string, unknown>),
+      page_ready: compactPageReady
+    }
+    if (tab && !('tab' in output)) {
+      output.tab = tab
+    }
+    return output
   }
-  return { value: result, page_ready: pageReady }
+  return { value: result, tab, page_ready: compactPageReady }
+}
+
+function withTopLevelTab(
+  result: Record<string, unknown>,
+  pageReady: Record<string, unknown> | null,
+  fallbackTab?: ChromeTabInfo | null
+): BrowserActionResult {
+  return {
+    ...result,
+    tab: pageReadyTab(pageReady) || tabSummary(fallbackTab),
+    page_ready: compactPageReadyInfo(pageReady, { omitTab: true })
+  }
+}
+
+function pageReadyTab(pageReady: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!pageReady || typeof pageReady.tab !== 'object' || Array.isArray(pageReady.tab)) {
+    return null
+  }
+  return pageReady.tab as Record<string, unknown>
+}
+
+function compactPageReadyInfo(
+  pageReady: Record<string, unknown> | null,
+  options: { omitTab?: boolean } = {}
+): Record<string, unknown> | null {
+  if (!pageReady) {
+    return null
+  }
+  const compact = { ...pageReady }
+  if (compact.load && typeof compact.load === 'object' && !Array.isArray(compact.load)) {
+    const { tab: _tab, ...load } = compact.load as Record<string, unknown>
+    compact.load = load
+  }
+  if (options.omitTab) {
+    delete compact.tab
+  }
+  return compact
 }
 
 function errorMessage(error: unknown): string {
@@ -1880,7 +1915,7 @@ async function waitForTabReady(
     const tab = await chromeApi.tabs.get(tabId).catch(() => null)
     return {
       loaded,
-      load,
+      load: compactPageReadyInfo(load, { omitTab: true }) || load,
       network_idle: network,
       tab: tabSummary(tab) || load.tab || null
     }

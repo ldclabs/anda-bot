@@ -103,7 +103,11 @@ describe('executeBrowserAction waited browser actions', () => {
 
     expect(result.opened).toBe(true)
     expect(result.tab).toMatchObject({ id: 234, status: 'complete', title: 'Example' })
-    expect(result.page_ready).toMatchObject({ loaded: true })
+    const pageReady = result.page_ready as Record<string, unknown>
+    expect(pageReady).toMatchObject({ loaded: true })
+    expect(pageReady).not.toHaveProperty('tab')
+    expect(pageReady).toHaveProperty('load')
+    expect(pageReady.load as Record<string, unknown>).not.toHaveProperty('tab')
     expect(onUpdated.event.addListener).toHaveBeenCalled()
     expect(onUpdated.event.removeListener).toHaveBeenCalled()
   })
@@ -320,7 +324,12 @@ describe('executeBrowserAction waited browser actions', () => {
     )) as Record<string, unknown>
 
     expect(result.clicked).toBe(true)
-    expect(result.page_ready).toMatchObject({ loaded: true })
+    expect(result.tab).toMatchObject({ id: 123, status: 'complete' })
+    const pageReady = result.page_ready as Record<string, unknown>
+    expect(pageReady).toMatchObject({ loaded: true })
+    expect(pageReady).not.toHaveProperty('tab')
+    expect(pageReady).toHaveProperty('load')
+    expect(pageReady.load as Record<string, unknown>).not.toHaveProperty('tab')
   })
 })
 

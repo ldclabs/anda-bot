@@ -395,9 +395,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.21"
+version = "0.12.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d81dde14c9b7d9211528228d6e185bbd2228d2a20f3aac7777c2783f74021c43"
+checksum = "3ee46dc2e6c33c60dee9d66038fef604312313970d7b382a25bfd745896de129"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -3799,9 +3799,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 dependencies = [
  "serde_core",
  "value-bag",
