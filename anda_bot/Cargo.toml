@@ -17,6 +17,7 @@ anda_engine = { workspace = true }
 anda_engine_server = { workspace = true }
 anda_web3_client = { workspace = true }
 anda_db = { workspace = true }
+anda_db_utils = { workspace = true }
 anda_kip = { workspace = true }
 anda_object_store = { workspace = true }
 axum = { workspace = true }

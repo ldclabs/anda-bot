@@ -4,6 +4,7 @@ use anda_core::{
     Documents, FunctionDefinition, Message, Principal, RequestMeta, Resource, StateFeatures, Tool,
     ToolOutput, Usage,
 };
+use anda_db_utils::UniqueVec;
 use anda_engine::{
     ANONYMOUS,
     context::{AgentCtx, BaseCtx, CompletionRunner, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -265,15 +266,11 @@ impl AndaBot {
         active_im_channels: Vec<String>,
     ) -> Self {
         let mut tool_dependencies = base_tool_dependencies();
-        let mut tools = base_tools();
-
         if tts_manager.is_some() {
             tool_dependencies.push(TtsManager::NAME.to_string());
-            tools.push(TtsManager::NAME.to_string());
         }
         if transcription_manager.is_some() {
             tool_dependencies.push(TranscriptionManager::NAME.to_string());
-            tools.push(TranscriptionManager::NAME.to_string());
         }
 
         Self {
@@ -282,7 +279,7 @@ impl AndaBot {
                 home_dir,
                 conversations,
                 tool_dependencies,
-                tools,
+                tools: base_tools(),
                 sessions: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 skills_manager,
@@ -643,7 +640,7 @@ impl AndaBot {
                 now_ms,
             )
             .await?;
-        let mut tools = self.inner.tools.clone();
+        let mut tools = UniqueVec::from(self.inner.tools.clone());
         if self.inner.browser_manager.is_active() {
             tools.extend(
                 ChromeBrowserTool::active_tool_names()
@@ -651,11 +648,12 @@ impl AndaBot {
                     .map(str::to_string),
             );
         }
-        let additional_tools = self
-            .inner
-            .conversations
-            .tool_usage_with(|usage| select_most_used_tools(&available_tools, &tools, usage, 5));
-        tools.extend(additional_tools);
+
+        tools.extend(
+            self.inner.conversations.tool_usage_with(|usage| {
+                select_most_used_tools(&available_tools, &tools, usage, 3)
+            }),
+        );
         let initial_req = CompletionRequest {
             instructions,
             prompt,
@@ -1124,7 +1122,7 @@ impl Agent<AgentCtx> for AndaBot {
         } = input;
 
         let mut initial_goal = None;
-        let mut additional_tools: Vec<String> = Vec::new();
+        let mut tools = UniqueVec::from(self.inner.tools.clone());
         let mut force_standalone_conversation = false;
         let prompt = match command {
             PromptCommand::Plain { prompt } | PromptCommand::Steer { prompt } => prompt,
@@ -1142,7 +1140,7 @@ impl Agent<AgentCtx> for AndaBot {
                         "{instructions}\n\nUse the {} skill to handle user's request",
                         subagent.name
                     );
-                    additional_tools.push(subagent.name);
+                    tools.push(subagent.name);
                 }
 
                 prompt
@@ -1373,7 +1371,6 @@ impl Agent<AgentCtx> for AndaBot {
             chat_history.push(new_chat_history_message);
         };
 
-        let mut tools = assistant.inner.tools.clone();
         if assistant.inner.browser_manager.is_active() {
             tools.extend(
                 ChromeBrowserTool::active_tool_names()
@@ -1381,12 +1378,12 @@ impl Agent<AgentCtx> for AndaBot {
                     .map(str::to_string),
             );
         }
-        tools.extend(additional_tools);
-        let additional_tools = assistant
-            .inner
-            .conversations
-            .tool_usage_with(|usage| select_most_used_tools(&available_tools, &tools, usage, 5));
-        tools.extend(additional_tools);
+
+        tools.extend(
+            assistant.inner.conversations.tool_usage_with(|usage| {
+                select_most_used_tools(&available_tools, &tools, usage, 3)
+            }),
+        );
         let req = CompletionRequest {
             instructions,
             prompt,

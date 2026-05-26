@@ -112,6 +112,7 @@ dependencies = [
  "anda_brain",
  "anda_core",
  "anda_db",
+ "anda_db_utils",
  "anda_engine",
  "anda_engine_server",
  "anda_kip",
