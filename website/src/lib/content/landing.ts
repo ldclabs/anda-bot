@@ -25,6 +25,11 @@ type WorkCardCopy = {
 	detail: string;
 };
 
+type ExtensionActionCopy = {
+	label: string;
+	detail: string;
+};
+
 export type LandingCopy = {
 	meta: {
 		title: string;
@@ -36,6 +41,7 @@ export type LandingCopy = {
 		install: string;
 		reasoning: string;
 		memory: string;
+		browser: string;
 		surfaces: string;
 		docs: string;
 	};
@@ -95,6 +101,18 @@ export type LandingCopy = {
 		maintenanceTitle: string;
 		maintenanceBody: string;
 	};
+	extension: {
+		badge: string;
+		title: string;
+		body: string;
+		store: string;
+		docs: string;
+		setupLabel: string;
+		trustLabel: string;
+		sessionLabel: string;
+		steps: [string, string, string];
+		actions: ExtensionActionCopy[];
+	};
 	work: {
 		contextRoutes: string;
 		memoryRoute: string;
@@ -150,6 +168,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Install',
 			reasoning: 'Reasoning',
 			memory: 'Memory',
+			browser: 'Chrome',
 			surfaces: 'Surfaces',
 			docs: 'Docs'
 		},
@@ -255,6 +274,38 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceBody:
 				'I consolidate, merge, decay, and preserve timelines so durable knowledge stays reachable while old noise fades.'
 		},
+		extension: {
+			badge: 'Chrome extension',
+			title: 'Bring Anda into the page you are already using.',
+			body: 'The Chrome side panel connects to your local Anda daemon with a Gateway URL and Bearer token. It can send current tab context, use browser actions when you ask, and still keep terminal tools, project files, Skills, subagents, and graph memory in the same loop.',
+			store: 'Get the Chrome extension',
+			docs: 'Set up browser access',
+			setupLabel: 'Connect in three steps',
+			trustLabel: 'local bridge',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'Install Anda Bot from the Chrome Web Store.',
+				'Run anda start, then generate a browser token.',
+				'Paste the Gateway URL and Bearer token into the side panel settings.'
+			],
+			actions: [
+				{
+					label: 'Read the current page',
+					detail:
+						'Pass tab title, URL, selection, page text, screenshots, and structured data into the local agent.'
+				},
+				{
+					label: 'Drive browser tasks',
+					detail:
+						'Open tabs, navigate, click, type, scroll, wait for pages, download files, and export results when the task needs it.'
+				},
+				{
+					label: 'Keep the local runtime',
+					detail:
+						'Prompts go to the daemon you connect, so shell tools, files, Skills, IM channels, and Brain memory stay available.'
+				}
+			]
+		},
 		work: {
 			contextRoutes: 'context routes',
 			memoryRoute: 'anda://memory',
@@ -328,7 +379,14 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			ogDescription:
 				'在本地运行 Anda：让 Anda Brain 记住上下文，让长程目标、Claude Code、Codex、子智能体 和 IM 工作流持续推进。'
 		},
-		nav: { install: '安装', reasoning: '推理', memory: '记忆', surfaces: '场景', docs: '文档' },
+		nav: {
+			install: '安装',
+			reasoning: '推理',
+			memory: '记忆',
+			browser: 'Chrome 扩展',
+			surfaces: '场景',
+			docs: '文档'
+		},
 		language: { label: '语言' },
 		hero: {
 			badge: '开源 Rust 终端 Agent',
@@ -430,6 +488,36 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceTitle: '维护',
 			maintenanceBody: '我会合并、巩固、衰减并保留时间线，让重要知识始终可达，旧噪声自然淡出。'
 		},
+		extension: {
+			badge: 'Chrome 扩展',
+			title: '把 Anda 带进你正在使用的网页。',
+			body: 'Chrome 侧边栏会通过 Gateway URL 和 Bearer token 连接到本机 Anda daemon。它可以把当前标签页上下文交给 Anda，在你授权时执行浏览器动作，同时继续使用终端工具、项目文件、Skills、子智能体和图谱记忆。',
+			store: '安装 Chrome 扩展',
+			docs: '查看浏览器接入文档',
+			setupLabel: '三步完成连接',
+			trustLabel: '本地桥接',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'从 Chrome Web Store 安装 Anda Bot。',
+				'运行 anda start，然后生成浏览器 token。',
+				'把 Gateway URL 和 Bearer token 粘贴到侧边栏设置。'
+			],
+			actions: [
+				{
+					label: '理解当前网页',
+					detail: '把标签页标题、URL、选中文本、页面文本、截图和结构化数据交给本机智能体。'
+				},
+				{
+					label: '执行浏览器任务',
+					detail: '打开标签页、导航、点击、输入、滚动、等待页面、下载文件，并在需要时导出结果。'
+				},
+				{
+					label: '保留本地运行时',
+					detail:
+						'提示词会发送到你连接的 daemon，因此 shell、文件、Skills、IM 频道和 Brain 记忆仍然可用。'
+				}
+			]
+		},
 		work: {
 			contextRoutes: '上下文路径',
 			memoryRoute: 'anda://memory',
@@ -489,6 +577,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Instalar',
 			reasoning: 'Razonamiento',
 			memory: 'Memoria',
+			browser: 'Chrome',
 			surfaces: 'Entornos',
 			docs: 'Docs'
 		},
@@ -599,6 +688,38 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceBody:
 				'Consolido, fusiono, reduzco y preservo líneas de tiempo para que el conocimiento durable siga accesible mientras el ruido viejo se desvanece.'
 		},
+		extension: {
+			badge: 'Extensión de Chrome',
+			title: 'Lleva Anda a la página que ya estás usando.',
+			body: 'El panel lateral de Chrome se conecta a tu daemon local de Anda con una Gateway URL y un token Bearer. Puede enviar el contexto de la pestaña actual, usar acciones del navegador cuando lo pides y mantener herramientas de terminal, archivos, Skills, subagents y memoria de grafo en el mismo ciclo.',
+			store: 'Instalar la extensión',
+			docs: 'Configurar acceso web',
+			setupLabel: 'Conecta en tres pasos',
+			trustLabel: 'puente local',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'Instala Anda Bot desde Chrome Web Store.',
+				'Ejecuta anda start y genera un token para el navegador.',
+				'Pega la Gateway URL y el token Bearer en los ajustes del panel lateral.'
+			],
+			actions: [
+				{
+					label: 'Leer la página actual',
+					detail:
+						'Envía título, URL, selección, texto de página, capturas y datos estructurados al agente local.'
+				},
+				{
+					label: 'Guiar tareas del navegador',
+					detail:
+						'Abre pestañas, navega, hace clic, escribe, desplaza, espera páginas, descarga archivos y exporta resultados.'
+				},
+				{
+					label: 'Conservar el runtime local',
+					detail:
+						'Los prompts van al daemon que conectas, así que shell, archivos, Skills, canales IM y Brain siguen disponibles.'
+				}
+			]
+		},
 		work: {
 			contextRoutes: 'rutas de contexto',
 			memoryRoute: 'anda://memory',
@@ -675,6 +796,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Installer',
 			reasoning: 'Raisonnement',
 			memory: 'Mémoire',
+			browser: 'Chrome',
 			surfaces: 'Espaces',
 			docs: 'Docs'
 		},
@@ -781,6 +903,38 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceBody:
 				'Je consolide, fusionne, fais décroître et préserve les chronologies afin que le savoir durable reste accessible pendant que le bruit ancien s’efface.'
 		},
+		extension: {
+			badge: 'Extension Chrome',
+			title: 'Amenez Anda dans la page que vous utilisez déjà.',
+			body: 'Le panneau latéral Chrome se connecte à votre daemon Anda local avec une Gateway URL et un jeton Bearer. Il peut envoyer le contexte de l’onglet actuel, utiliser des actions du navigateur à votre demande et garder outils terminal, fichiers, Skills, subagents et mémoire graphe dans la même boucle.',
+			store: 'Installer l’extension',
+			docs: 'Configurer le navigateur',
+			setupLabel: 'Connexion en trois étapes',
+			trustLabel: 'pont local',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'Installez Anda Bot depuis le Chrome Web Store.',
+				'Lancez anda start, puis générez un token navigateur.',
+				'Collez la Gateway URL et le jeton Bearer dans les réglages du panneau.'
+			],
+			actions: [
+				{
+					label: 'Lire la page actuelle',
+					detail:
+						'Transmettez titre, URL, sélection, texte, captures et données structurées à l’agent local.'
+				},
+				{
+					label: 'Piloter le navigateur',
+					detail:
+						'Ouvrez des onglets, naviguez, cliquez, saisissez, faites défiler, attendez les pages, téléchargez et exportez les résultats.'
+				},
+				{
+					label: 'Garder le runtime local',
+					detail:
+						'Les prompts vont au daemon connecté, donc shell, fichiers, Skills, canaux IM et Brain restent disponibles.'
+				}
+			]
+		},
 		work: {
 			contextRoutes: 'routes de contexte',
 			memoryRoute: 'anda://memory',
@@ -857,6 +1011,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Установка',
 			reasoning: 'Рассуждение',
 			memory: 'Память',
+			browser: 'Chrome',
 			surfaces: 'Среды',
 			docs: 'Документация'
 		},
@@ -963,6 +1118,38 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceBody:
 				'Я консолидирую, объединяю, ослабляю и сохраняю линии времени, чтобы прочное знание оставалось доступным, а старый шум исчезал.'
 		},
+		extension: {
+			badge: 'Расширение Chrome',
+			title: 'Перенесите Anda на страницу, с которой уже работаете.',
+			body: 'Боковая панель Chrome подключается к локальному daemon Anda через Gateway URL и Bearer token. Она может передавать контекст текущей вкладки, выполнять действия браузера по вашему запросу и сохранять терминал, файлы проекта, Skills, subagents и графовую память в одном цикле.',
+			store: 'Установить расширение',
+			docs: 'Настроить браузер',
+			setupLabel: 'Подключение за три шага',
+			trustLabel: 'локальный мост',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'Установите Anda Bot из Chrome Web Store.',
+				'Запустите anda start, затем создайте browser token.',
+				'Вставьте Gateway URL и Bearer token в настройки боковой панели.'
+			],
+			actions: [
+				{
+					label: 'Читать текущую страницу',
+					detail:
+						'Передавайте заголовок, URL, выделение, текст страницы, скриншоты и структурированные данные локальному агенту.'
+				},
+				{
+					label: 'Управлять браузером',
+					detail:
+						'Открывайте вкладки, переходите по страницам, нажимайте, вводите текст, прокручивайте, ждите загрузки, скачивайте файлы и экспортируйте результаты.'
+				},
+				{
+					label: 'Сохранять локальный runtime',
+					detail:
+						'Промпты идут в подключенный daemon, поэтому shell, файлы, Skills, IM-каналы и Brain остаются доступны.'
+				}
+			]
+		},
 		work: {
 			contextRoutes: 'маршруты контекста',
 			memoryRoute: 'anda://memory',
@@ -1037,6 +1224,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'التثبيت',
 			reasoning: 'الاستدلال',
 			memory: 'الذاكرة',
+			browser: 'Chrome',
 			surfaces: 'بيئات العمل',
 			docs: 'الوثائق'
 		},
@@ -1141,6 +1329,38 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			maintenanceTitle: 'الصيانة',
 			maintenanceBody:
 				'أدمج وأوحّد وأخفّض الضجيج وأحافظ على الجداول الزمنية كي تبقى المعرفة الدائمة قابلة للوصول بينما يتلاشى الضجيج القديم.'
+		},
+		extension: {
+			badge: 'امتداد Chrome',
+			title: 'أدخل Anda إلى الصفحة التي تستخدمها الآن.',
+			body: 'تتصل لوحة Chrome الجانبية بـ daemon المحلي لـ Anda عبر Gateway URL و Bearer token. يمكنها إرسال سياق التبويب الحالي، واستخدام إجراءات المتصفح عندما تطلب ذلك، مع إبقاء أدوات الطرفية وملفات المشروع و Skills و subagents وذاكرة الرسم البياني في الحلقة نفسها.',
+			store: 'ثبّت امتداد Chrome',
+			docs: 'إعداد وصول المتصفح',
+			setupLabel: 'اتصل في ثلاث خطوات',
+			trustLabel: 'جسر محلي',
+			sessionLabel: 'browser://side-panel',
+			steps: [
+				'ثبّت Anda Bot من Chrome Web Store.',
+				'شغّل anda start، ثم أنشئ browser token.',
+				'ألصق Gateway URL و Bearer token في إعدادات اللوحة الجانبية.'
+			],
+			actions: [
+				{
+					label: 'قراءة الصفحة الحالية',
+					detail:
+						'أرسل عنوان التبويب، والرابط، والتحديد، ونص الصفحة، ولقطات الشاشة، والبيانات المنظمة إلى الوكيل المحلي.'
+				},
+				{
+					label: 'قيادة مهام المتصفح',
+					detail:
+						'افتح تبويبات، وتنقل، وانقر، واكتب، ومرر، وانتظر الصفحات، وحمّل الملفات، وصدّر النتائج.'
+				},
+				{
+					label: 'الحفاظ على runtime المحلي',
+					detail:
+						'تذهب المطالبات إلى daemon الذي تصل به، لذلك تبقى shell والملفات و Skills وقنوات IM و Brain متاحة.'
+				}
+			]
 		},
 		work: {
 			contextRoutes: 'مسارات السياق',

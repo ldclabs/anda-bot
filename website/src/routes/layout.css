@@ -634,6 +634,85 @@ img {
 	background: linear-gradient(135deg, #091411 0%, #10201c 48%, #19170f 100%);
 }
 
+.browser-band {
+	background: linear-gradient(180deg, #07110f 0%, #0b1714 54%, #091411 100%);
+}
+
+.browser-side-panel {
+	position: relative;
+	overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	border-radius: var(--radius-lg);
+	background:
+		linear-gradient(135deg, rgba(53, 178, 171, 0.13), transparent 34%),
+		linear-gradient(180deg, rgba(7, 17, 15, 0.84), rgba(7, 17, 15, 0.62));
+	box-shadow:
+		0 34px 120px rgba(0, 0, 0, 0.38),
+		inset 0 1px 0 rgba(255, 255, 255, 0.09);
+	backdrop-filter: blur(24px);
+}
+
+.browser-side-panel::before {
+	position: absolute;
+	inset: 0;
+	content: '';
+	background:
+		repeating-linear-gradient(90deg, transparent 0 38px, rgba(244, 238, 227, 0.035) 38px 39px),
+		linear-gradient(118deg, transparent 0 45%, rgba(241, 166, 78, 0.1) 45.4%, transparent 46% 100%);
+	pointer-events: none;
+}
+
+.browser-step {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 0.8rem;
+	align-items: start;
+	min-height: 4.15rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.045);
+	padding: 0.85rem;
+}
+
+.browser-step span {
+	display: grid;
+	width: 2rem;
+	aspect-ratio: 1;
+	place-items: center;
+	border-radius: 0.55rem;
+	background: rgba(241, 166, 78, 0.13);
+	color: var(--anda-amber-soft);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+	font-size: 0.75rem;
+	font-weight: 700;
+}
+
+.browser-step p {
+	margin: 0;
+	color: rgba(244, 238, 227, 0.68);
+	font-size: 0.92rem;
+	line-height: 1.55;
+}
+
+.browser-action-tile {
+	position: relative;
+	min-height: 10rem;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: var(--radius-lg);
+	background: rgba(255, 255, 255, 0.045);
+	padding: 1rem;
+	transition:
+		transform 180ms ease,
+		border-color 180ms ease,
+		background 180ms ease;
+}
+
+.browser-action-tile:hover {
+	transform: translateY(-3px);
+	border-color: rgba(255, 208, 138, 0.3);
+	background: rgba(255, 255, 255, 0.065);
+}
+
 .context-board {
 	position: relative;
 }

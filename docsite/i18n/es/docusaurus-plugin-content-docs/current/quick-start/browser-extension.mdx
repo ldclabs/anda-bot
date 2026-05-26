@@ -1,0 +1,75 @@
+---
+sidebar_position: 3
+title: Extensión de Chrome
+description: Usa el panel lateral de Anda Bot en Chrome con tu daemon local de Anda.
+---
+
+# Extensión de Chrome
+
+La extensión de Anda Bot abre Anda en el panel lateral nativo de Chrome. Es un puente hacia el daemon local de Anda que se ejecuta en tu computadora, de modo que el contexto del navegador, las herramientas de terminal, los archivos del proyecto, las Skills, los subagents, los canales y la memoria Brain puedan permanecer en el mismo runtime.
+
+## Requisitos
+
+- Chrome 116 o posterior.
+- Anda instalado y configurado con al menos una clave API de proveedor de modelos.
+- El daemon local de Anda ejecutándose en la computadora que controlas.
+
+Instala la extensión desde Chrome Web Store:
+
+[Anda Bot en Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+
+## Conectar el panel lateral
+
+Inicia el daemon local:
+
+```bash
+anda start
+```
+
+Genera un token para el navegador:
+
+```bash
+anda browser token --days 365
+```
+
+Copia la Gateway URL y el token Bearer impresos. Abre el panel lateral de Anda Bot en Chrome, entra en ajustes, pega ambos valores y guarda. Cuando la conexión funcione, podrás chatear con el mismo agente local desde cualquier página web.
+
+## Trabajar desde una página
+
+Cuando envías un mensaje desde el panel lateral, Anda recibe el título y la URL de la pestaña actual como contexto de la solicitud. Si pides trabajo en el navegador, el agente puede usar acciones de Chrome para inspeccionar páginas y operar pestañas.
+
+Ejemplos útiles:
+
+- Resumir o comparar la página que estás leyendo.
+- Reunir información en varias pestañas y conservar las URL de origen.
+- Rellenar formularios, hacer clic en botones, desplazarse, tomar capturas o exportar una página a PDF cuando la tarea lo requiera.
+- Preparar comandos shell o inspeccionar archivos locales del proyecto manteniendo el contexto de la página.
+
+## Capacidades del navegador
+
+La extensión expone herramientas del navegador al daemon local. Las acciones comunes incluyen:
+
+- Enumerar, cambiar, abrir, cerrar, recargar y navegar pestañas.
+- Leer selecciones, extraer texto de página, capturar pantallas, inspeccionar datos de accesibilidad e imprimir páginas como PDF.
+- Hacer clic, escribir, pulsar teclas, desplazarse, seleccionar desplegables, subir archivos y manejar diálogos.
+- Descargar archivos e inspeccionar descargas iniciadas por el navegador.
+
+Las acciones de página y entrada apuntan a la pestaña activa. Si la tarea necesita otra pestaña, pide a Anda que cambie de pestaña primero.
+
+## Runtime local y datos
+
+La extensión guarda la Gateway URL, el token Bearer, el id de sesión del navegador y los ajustes en el almacenamiento local de Chrome. Envía prompts, adjuntos seleccionados, metadatos de sesión del navegador e información relevante de pestañas al daemon de Anda que conectes.
+
+El daemon y los proveedores de modelos configurados en Anda pueden procesar el prompt y los datos de la tarea. Usa la extensión solo con un daemon y una configuración de modelos en los que confíes, especialmente en páginas sensibles.
+
+## Canales remotos
+
+El panel lateral de Chrome es solo una superficie. Si configuras canales de WeChat, Telegram, Discord, Lark / Feishu o IRC, esos mensajes pueden llegar al mismo daemon local mientras sigue ejecutándose en tu computadora.
+
+Consulta [Canales y voz](../runtime/channels) para configurar canales.
+
+## Solución de problemas
+
+- Si el panel lateral no conecta, confirma que `anda start` sigue ejecutándose y que la Gateway URL y el token Bearer se pegaron exactamente.
+- Si las acciones del navegador fallan en páginas `chrome://` o en Chrome Web Store, abre una página normal. Chrome bloquea scripts de extensiones en páginas protegidas.
+- Si aparece un error de modelo, verifica la clave del proveedor en `~/.anda/config.yaml` o la variable de entorno usada para iniciar el daemon.

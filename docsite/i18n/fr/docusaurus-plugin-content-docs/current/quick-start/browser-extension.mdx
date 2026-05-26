@@ -1,0 +1,75 @@
+---
+sidebar_position: 3
+title: Extension Chrome
+description: Utiliser le panneau latéral Chrome d'Anda Bot avec votre daemon Anda local.
+---
+
+# Extension Chrome
+
+L'extension Chrome d'Anda Bot ouvre Anda dans le panneau latéral natif de Chrome. C'est un pont vers le daemon Anda local exécuté sur votre ordinateur, afin que le contexte du navigateur, les outils terminal, les fichiers de projet, les Skills, les subagents, les canaux et la mémoire Brain restent dans le même runtime.
+
+## Prérequis
+
+- Chrome 116 ou plus récent.
+- Anda installé et configuré avec au moins une clé API de fournisseur de modèle.
+- Le daemon Anda local lancé sur l'ordinateur que vous contrôlez.
+
+Installez l'extension depuis le Chrome Web Store :
+
+[Anda Bot sur le Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+
+## Connecter le panneau latéral
+
+Lancez le daemon local :
+
+```bash
+anda start
+```
+
+Générez un token navigateur :
+
+```bash
+anda browser token --days 365
+```
+
+Copiez la Gateway URL et le jeton Bearer affichés. Ouvrez le panneau latéral Anda Bot dans Chrome, ouvrez les réglages, collez les deux valeurs et enregistrez. Une fois la connexion établie, vous pouvez discuter avec le même agent local depuis n'importe quelle page Web.
+
+## Travailler depuis une page
+
+Lorsque vous envoyez un message depuis le panneau latéral, Anda reçoit le titre et l'URL de l'onglet actuel comme contexte de requête. Si vous demandez un travail dans le navigateur, l'agent peut utiliser les actions Chrome pour inspecter les pages et manipuler les onglets.
+
+Exemples utiles :
+
+- Résumer ou comparer la page que vous lisez.
+- Collecter des informations dans plusieurs onglets en gardant les URL sources.
+- Remplir des formulaires, cliquer sur des boutons, faire défiler, prendre des captures ou exporter une page en PDF lorsque la tâche l'exige.
+- Préparer des commandes shell ou inspecter des fichiers de projet locaux tout en gardant la page dans le contexte.
+
+## Capacités du navigateur
+
+L'extension expose des outils de navigateur au daemon local. Les actions courantes incluent :
+
+- Lister, changer, ouvrir, fermer, recharger et naviguer dans les onglets.
+- Lire les sélections, extraire le texte de page, capturer des écrans, inspecter les données d'accessibilité et imprimer des pages en PDF.
+- Cliquer, saisir, presser des touches, faire défiler, choisir dans des listes, téléverser des fichiers et gérer des dialogues.
+- Télécharger des fichiers et inspecter les téléchargements initiés par le navigateur.
+
+Les actions de page et de saisie ciblent l'onglet actif. Si la tâche nécessite un autre onglet, demandez d'abord à Anda de changer d'onglet.
+
+## Runtime local et données
+
+L'extension stocke la Gateway URL, le jeton Bearer, l'id de session navigateur et les réglages dans le stockage local de Chrome. Elle envoie les prompts, pièces jointes choisies, métadonnées de session navigateur et informations d'onglets pertinentes au daemon Anda connecté.
+
+Le daemon et les fournisseurs de modèles configurés dans Anda peuvent traiter le prompt et les données de tâche. Utilisez l'extension uniquement avec un daemon et une configuration de modèles de confiance, surtout sur des pages sensibles.
+
+## Canaux distants
+
+Le panneau latéral Chrome n'est qu'une surface. Si vous configurez WeChat, Telegram, Discord, Lark / Feishu ou IRC, ces messages peuvent atteindre le même daemon local pendant qu'il continue de tourner sur votre ordinateur.
+
+Voir [Canaux et voix](../runtime/channels) pour la configuration des canaux.
+
+## Dépannage
+
+- Si le panneau latéral ne se connecte pas, confirmez que `anda start` tourne toujours et que la Gateway URL et le jeton Bearer ont été collés exactement.
+- Si les actions de navigateur échouent sur les pages `chrome://` ou le Chrome Web Store, ouvrez une page Web ordinaire. Chrome bloque les scripts d'extension sur les pages protégées.
+- Si une erreur de modèle apparaît, vérifiez la clé du fournisseur dans `~/.anda/config.yaml` ou la variable d'environnement utilisée pour lancer le daemon.

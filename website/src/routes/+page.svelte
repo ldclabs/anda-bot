@@ -219,7 +219,7 @@
 			</a>
 
 			<nav
-				class="hidden items-center gap-1 rounded-lg border border-white/10 bg-black/20 p-1 text-sm text-white/74 backdrop-blur-xl md:flex"
+				class="hidden items-center gap-1 rounded-lg border border-white/10 bg-black/20 p-1 text-sm text-white/74 backdrop-blur-xl lg:flex"
 			>
 				<a href="#install" class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
 					>{copy.nav.install}</a
@@ -231,6 +231,9 @@
 				>
 				<a href="#memory" class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
 					>{copy.nav.memory}</a
+				>
+				<a href="#browser" class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
+					>{copy.nav.browser}</a
 				>
 				<a href="#work" class="rounded-md px-3 py-2 transition hover:bg-white/8 hover:text-white"
 					>{copy.nav.surfaces}</a
@@ -593,6 +596,104 @@
 						{copy.memory.maintenanceBody}
 					</p>
 				</Card>
+			</div>
+		</div>
+	</section>
+
+	<section
+		id="browser"
+		class="browser-band relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
+	>
+		<div class="memory-strata absolute inset-0 opacity-30"></div>
+		<div class="relative mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+			<div>
+				<Badge tone="cool" class="gap-2">
+					<MessageSquare class="size-3.5" />
+					{copy.extension.badge}
+				</Badge>
+				<h2 class="anda-display mt-5 max-w-xl text-4xl leading-tight text-white sm:text-5xl">
+					{copy.extension.title}
+				</h2>
+				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">
+					{copy.extension.body}
+				</p>
+
+				<div class="mt-8 flex flex-col gap-3 sm:flex-row">
+					<Button
+						href="https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd"
+						target="_blank"
+						rel="noreferrer"
+						class="bg-(--anda-amber) text-(--anda-ink) shadow-[0_18px_46px_rgba(241,166,78,0.22)] hover:bg-(--anda-amber-soft)"
+						size="lg"
+					>
+						<ArrowRight class="size-4" />
+						{copy.extension.store}
+					</Button>
+					<Button
+						href="https://docs.anda.bot/docs/quick-start/browser-extension"
+						target="_blank"
+						rel="noreferrer"
+						variant="secondary"
+						class="border-white/14 bg-white/7 text-white backdrop-blur-xl hover:bg-white/12"
+						size="lg"
+					>
+						<BookOpen class="size-4" />
+						{copy.extension.docs}
+					</Button>
+				</div>
+			</div>
+
+			<div class="browser-side-panel">
+				<div
+					class="relative z-10 flex items-center justify-between gap-4 border-b border-white/10 p-5 text-sm text-white/62"
+				>
+					<span class="inline-flex min-w-0 items-center gap-2 font-mono text-(--anda-amber-soft)">
+						<MessageSquare class="size-4 shrink-0 text-(--anda-teal)" />
+						<span class="truncate">{copy.extension.sessionLabel}</span>
+					</span>
+					<span
+						class="shrink-0 rounded-full border border-[rgba(53,178,171,0.34)] bg-[rgba(53,178,171,0.1)] px-3 py-1 text-xs font-semibold text-(--anda-teal)"
+					>
+						{copy.extension.trustLabel}
+					</span>
+				</div>
+
+				<div class="relative z-10 grid gap-4 p-5 lg:grid-cols-[0.82fr_1fr]">
+					<div class="space-y-3">
+						<p class="text-xs font-medium tracking-[0.16em] text-(--anda-amber-soft) uppercase">
+							{copy.extension.setupLabel}
+						</p>
+						{#each copy.extension.steps as step, index}
+							<div class="browser-step">
+								<span>{String(index + 1).padStart(2, '0')}</span>
+								<p>{step}</p>
+							</div>
+						{/each}
+					</div>
+
+					<div class="grid gap-3">
+						{#each copy.extension.actions as action, index}
+							<article class="browser-action-tile">
+								<div class="mb-4 flex items-center justify-between gap-3">
+									<div
+										class="grid size-10 place-items-center rounded-lg bg-white/7 text-(--anda-amber-soft)"
+									>
+										{#if index === 0}
+											<Eye class="size-5" />
+										{:else if index === 1}
+											<Network class="size-5" />
+										{:else}
+											<Terminal class="size-5" />
+										{/if}
+									</div>
+									<span class="font-mono text-xs text-white/38">0{index + 1}</span>
+								</div>
+								<h3 class="text-lg font-semibold text-white">{action.label}</h3>
+								<p class="mt-2 leading-7 text-white/62">{action.detail}</p>
+							</article>
+						{/each}
+					</div>
+				</div>
 			</div>
 		</div>
 	</section>

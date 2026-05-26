@@ -1,0 +1,75 @@
+---
+sidebar_position: 3
+title: Chrome 扩展
+description: 使用 Anda Bot Chrome 扩展侧边栏连接本机 Anda daemon。
+---
+
+# Chrome 扩展
+
+Anda Bot Chrome 扩展会把 Anda 打开在 Chrome 原生侧边栏中。它是浏览器和你本机 Anda daemon 之间的桥梁，让网页上下文、终端工具、项目文件、Skills、子智能体、频道和 Brain 记忆都留在同一个本地运行时里。
+
+## 准备条件
+
+- Chrome 116 或更新版本。
+- 已安装 Anda，并至少配置一个模型服务商 API key。
+- 本机 Anda daemon 正在你控制的电脑上运行。
+
+从 Chrome Web Store 安装扩展：
+
+[Chrome Web Store 上的 Anda Bot](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+
+## 连接侧边栏
+
+启动本机 daemon：
+
+```bash
+anda start
+```
+
+生成浏览器 token：
+
+```bash
+anda browser token --days 365
+```
+
+复制命令输出的 Gateway URL 和 Bearer token。打开 Chrome 中的 Anda Bot 侧边栏，进入设置，粘贴这两个值并保存。连接成功后，你就可以从任意网页和同一个本机智能体对话。
+
+## 从网页开始工作
+
+从侧边栏发送消息时，Anda 会收到当前标签页标题和 URL 作为请求上下文。如果你提出浏览器任务，智能体可以使用 Chrome 动作检查页面并操作标签页。
+
+常见用法：
+
+- 总结或比较正在阅读的页面。
+- 跨多个标签页收集信息，并保留来源 URL。
+- 在任务需要时填写表单、点击按钮、滚动、截图，或把页面导出为 PDF。
+- 在保留网页上下文的同时准备 shell 命令或检查本地项目文件。
+
+## 浏览器能力
+
+扩展会把浏览器工具开放给本机 daemon。常见动作包括：
+
+- 列出、切换、打开、关闭、刷新和导航标签页。
+- 读取选区、提取页面文本、截图、检查无障碍数据，并把页面打印为 PDF。
+- 点击、输入、按键、滚动、选择下拉框、上传文件，并处理弹窗。
+- 下载文件并查看浏览器发起的下载任务。
+
+页面和输入动作默认作用于当前活动标签页。如果任务需要另一个标签页，请先让 Anda 切换标签页。
+
+## 本地运行时和数据
+
+扩展会把 Gateway URL、Bearer token、浏览器 session id 和设置保存在 Chrome 本地存储中。它会把提示词、你选择的附件、浏览器 session 元数据和相关标签页信息发送给你连接的 Anda daemon。
+
+你本机的 daemon 以及 Anda 配置里的模型服务商可能会处理提示词和任务数据。尤其在敏感页面上，请只连接你信任的 daemon 和模型配置。
+
+## 远程频道
+
+Chrome 侧边栏只是其中一个入口。如果你配置了微信、Telegram、Discord、Lark / 飞书或 IRC 频道，这些消息也可以到达同一个长期运行的本机 daemon。
+
+参见[频道和语音](../runtime/channels)了解频道配置。
+
+## 故障排查
+
+- 如果侧边栏无法连接，请确认 `anda start` 仍在运行，并且 Gateway URL 和 Bearer token 粘贴准确。
+- 如果浏览器动作在 `chrome://` 页面或 Chrome Web Store 失败，请切换到普通网页。Chrome 会阻止扩展脚本访问受保护页面。
+- 如果出现模型错误，请检查 `~/.anda/config.yaml` 中的模型服务商 key，或启动 daemon 时使用的环境变量。

@@ -133,7 +133,7 @@ model:
 
     - family: anthropic
       model: "glm-5.1"
-      api_base: "https://open.bigmodel.cn/api/anthropic"
+      api_base: "https://open.bigmodel.cn/api/anthropic/v1"
       api_key: ""
       context_window: 200000
       max_output: 128000

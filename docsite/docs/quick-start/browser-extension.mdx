@@ -1,0 +1,75 @@
+---
+sidebar_position: 3
+title: Chrome Extension
+description: Use the Anda Bot Chrome extension side panel with your local Anda daemon.
+---
+
+# Chrome Extension
+
+The Anda Bot Chrome extension opens Anda in Chrome's native side panel. It is a bridge to the local Anda daemon running on your own computer, so browser context, terminal tools, project files, Skills, subagents, channels, and Brain memory can stay in one runtime.
+
+## Requirements
+
+- Chrome 116 or newer.
+- Anda installed and configured with at least one model provider API key.
+- The local Anda daemon running on the computer you control.
+
+Install the extension from the Chrome Web Store:
+
+[Anda Bot on Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+
+## Connect the Side Panel
+
+Start the local daemon:
+
+```bash
+anda start
+```
+
+Generate a browser token:
+
+```bash
+anda browser token --days 365
+```
+
+Copy the printed Gateway URL and Bearer token. Open the Anda Bot side panel in Chrome, open settings, paste both values, and save. Once the connection succeeds, you can chat with the same local agent from any webpage.
+
+## Work from a Page
+
+When you send a message from the side panel, Anda receives the current tab title and URL as request context. If you ask for browser work, the agent can use Chrome actions to inspect pages and operate tabs.
+
+Useful examples:
+
+- Summarize or compare the page you are reading.
+- Collect information across several tabs and keep source URLs attached.
+- Fill forms, click buttons, scroll, take screenshots, or export a page to PDF when the task requires it.
+- Prepare shell commands or inspect local project files while keeping the browser page in context.
+
+## Browser Capabilities
+
+The extension exposes browser tools to the local daemon. Common actions include:
+
+- List, switch, open, close, reload, and navigate tabs.
+- Read selections, extract page text, capture screenshots, inspect accessibility data, and print pages to PDF.
+- Click, type, press keys, scroll, select dropdowns, upload files, and handle dialogs.
+- Download files and inspect browser-initiated downloads.
+
+Page and input actions target the active tab. If the task needs another tab, ask Anda to switch tabs first.
+
+## Local Runtime and Data
+
+The extension stores the Gateway URL, Bearer token, browser session id, and settings in Chrome local storage. It sends prompts, selected attachments, browser session metadata, and relevant tab information to the Anda daemon you connect.
+
+The daemon and the model providers configured in your Anda setup may process the prompt and task data. Use the extension only with a daemon and model configuration you trust, especially on sensitive pages.
+
+## Remote Channels
+
+The Chrome side panel is only one surface. If you configure WeChat, Telegram, Discord, Lark / Feishu, or IRC channels, those messages can reach the same local daemon while it keeps running on your computer.
+
+See [Channels and Voice](../runtime/channels) for channel setup.
+
+## Troubleshooting
+
+- If the side panel cannot connect, confirm that `anda start` is still running and that the Gateway URL and Bearer token were pasted exactly.
+- If browser actions fail on `chrome://` pages or the Chrome Web Store, open a normal webpage. Chrome blocks extension scripts on protected pages.
+- If a model error appears, verify your model provider key in `~/.anda/config.yaml` or the environment variable used to start the daemon.

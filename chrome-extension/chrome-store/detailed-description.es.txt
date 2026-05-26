@@ -1,0 +1,49 @@
+Anda Bot integra su agente local de Anda en Chrome, para que pueda pedir ayuda mientras navega y permitir que el agente trabaje con las páginas, pestañas, archivos, herramientas de línea de comandos y habilidades (Skills) en su propia computadora.
+
+Para qué sirve
+
+Anda Bot está diseñado para el trabajo informático cotidiano que es demasiado largo, demasiado disperso o demasiado repetitivo para una ventana de chat normal. Puede mantener el panel lateral de Chrome abierto junto a la página que está leyendo, pedirle a Anda que comprenda la pestaña actual, recopile información, resuma el contexto, compare fuentes, administre pestañas del navegador, prepare comandos o continúe con un objetivo mayor que necesite varios pasos.
+
+La extensión es un puente. El pensamiento y la orquestación de herramientas provienen del programa local Anda Bot que se ejecuta en su máquina. La extensión de Chrome se conecta a ese demonio local a través de una URL de Gateway y un token Bearer que usted genera con Anda. Esto mantiene la comodidad de la experiencia del navegador mientras permite que el agente use el tiempo de ejecución local, las herramientas de shell, los archivos, las habilidades y la memoria a largo plazo que hacen que Anda sea útil.
+
+Anda también se puede conectar a herramientas de mensajería instantánea como WeChat, Telegram, Discord, Lark o IRC a través de la configuración de sus canales. Cuando estos canales están configurados, puede comunicarse con el mismo agente local de forma remota desde una aplicación de chat mientras el demonio sigue ejecutándose en la computadora que usted controla.
+
+Por qué instalarlo
+
+1. Trabaje desde la página que ya está viendo
+Anda puede recibir el título y la URL de la pestaña actual como contexto y, cuando usted lo permita, realizar acciones en el navegador como enumerar pestañas, abrir páginas, cambiar de pestaña, navegar, leer el contenido de la página, completar campos, hacer clic en elementos, desplazarse y tomar capturas de pantalla. Eso lo hace útil para la investigación, la documentación, los flujos de trabajo con muchos formularios, las comprobaciones de aplicaciones web y las tareas en las que el navegador es parte del trabajo.
+
+2. Combine el trabajo del navegador con la capacidad de la línea de comandos
+Muchas tareas no viven solo en el navegador. Anda es especialmente útil cuando el contexto web necesita encontrarse con sus herramientas locales: programas de línea de comandos, archivos de proyecto, registros, scripts, herramientas de desarrollador y automatización. La extensión le brinda un panel lateral de Chrome para hablar con el mismo agente local que también puede operar en su terminal.
+
+3. Mantenga el progreso en tareas largas
+Anda Bot está diseñado para el razonamiento de largo alcance. En lugar de tratar cada solicitud como una única respuesta aislada, Anda puede mantener un objetivo activo, compactar el contexto, llamar a herramientas, coordinar subagentes y continuar hasta que haya evidencia de que el trabajo se ha completado realmente. Esto es útil para la investigación, la depuración, la configuración de varios pasos, la preparación de documentos y las tareas operativas recurrentes.
+
+4. Expándase con Habilidades
+Las habilidades (Skills) le permiten a Anda aprender flujos de trabajo especializados. Puede agregar habilidades para dominios específicos, formatos de archivos, herramientas o procesos de equipo, y luego usarlas desde la misma conversación de Chrome. Esto significa que la extensión puede pasar de ser un asistente general a ser un colaborador local más capaz que sabe cómo manejar el trabajo que usted realmente realiza.
+
+5. Aprenda a través de la memoria de grafos
+Anda Hippocampus convierte las conversaciones útiles en una memoria a largo plazo basada en grafos: proyectos, personas, preferencias, decisiones, eventos, relaciones y líneas de tiempo. Esa memoria está destinada a ayudar a Anda a mejorar con el tiempo, recordar los antecedentes adecuados para futuras tareas y evolucionar con su trabajo en lugar de empezar de cero en cada sesión.
+
+6. Use Anda de forma remota desde herramientas de mensajería instantánea
+Chrome es un gran lugar para trabajar con páginas, pero es posible que también quiera preguntarle algo a Anda cuando esté lejos del navegador. Anda admite integraciones de canales para herramientas de mensajería instantánea y chat de equipo, incluidos WeChat y Telegram. Con esos canales configurados, los mensajes pueden llegar al mismo demonio local de larga ejecución, de modo que Anda pueda continuar ayudando con recordatorios, investigación, preguntas de seguimiento o tareas operativas desde una interfaz de chat remota.
+
+Se requiere configuración local
+
+Esta extensión requiere el programa local Anda Bot. Después de instalar la extensión, instale Anda en su computadora, configure al menos una clave API de proveedor de modelos, inicie el demonio en segundo plano y luego genere un token de extensión:
+
+anda start
+
+anda browser token --days 365
+
+Copie la URL de Gateway y el token Bearer impresos en la configuración de la extensión. Una vez conectado, puede chatear con Anda desde el panel lateral de Chrome.
+
+Privacidad y permisos en lenguaje sencillo
+
+La extensión almacena su URL de Gateway, el token Bearer y el ID de sesión del navegador en el almacenamiento local de Chrome. Envía instrucciones, archivos adjuntos seleccionados, metadatos de la sesión del navegador e información relevante de las pestañas al demonio local de Anda al que se conecte. Puede acceder a las pestañas, la página activa, capturas de pantalla, scripts de página, texto a voz y funciones opcionales de grabación de voz para que el agente pueda ayudar con las tareas del navegador. El tiempo de ejecución local de Anda y los proveedores de modelos que configure pueden procesar sus instrucciones y los datos de las tareas. Revise la política de privacidad antes de publicar o usar la extensión en entornos sensibles.
+
+También usa el permiso downloads para manejar archivos iniciados desde el navegador, el permiso cookies para inspeccionar y actualizar cookies cuando el usuario lo solicita, el permiso browsingData para borrar la caché y los datos relacionados del sitio al restablecer el estado de una página, el permiso debugger para una automatización más confiable de la página y para generar resultados como capturas de pantalla o exportaciones en PDF, y el permiso webNavigation para observar la navegación y la finalización de la carga de la página, de modo que el agente pueda esperar a que las pestañas estén listas.
+
+Para quién es
+
+Anda Bot es para personas que usan una computadora para pensar, navegar, escribir, construir, investigar, solucionar problemas y coordinar el trabajo. No necesita ser un desarrollador para beneficiarse de él, pero es especialmente poderoso si desea un asistente que pueda comprender el contexto del navegador, usar herramientas de línea de comandos, recordar antecedentes útiles y seguir trabajando en objetivos que requieren tiempo.

@@ -1,0 +1,49 @@
+Anda Bot brings your local Anda agent into Chrome, so you can ask for help while you browse and let the agent work with the pages, tabs, files, command-line tools, and Skills on your own computer.
+
+What it is for
+
+Anda Bot is designed for everyday computer work that is too long, too scattered, or too repetitive for a normal chat window. You can keep the Chrome side panel open beside the page you are reading, ask Anda to understand the current tab, gather information, summarize context, compare sources, manage browser tabs, prepare commands, or continue a larger objective that needs several steps.
+
+The extension is a bridge. The thinking and tool orchestration come from the local Anda Bot program running on your machine. The Chrome extension connects to that local daemon through a Gateway URL and Bearer token that you generate with Anda. This keeps the browser experience convenient while still letting the agent use the local runtime, shell tools, files, Skills, and long-term memory that make Anda useful.
+
+Anda can also be connected to IM tools such as WeChat, Telegram, Discord, Lark, or IRC through its channel settings. When those channels are configured, you can reach the same local agent remotely from a chat app while the daemon keeps running on the computer you control.
+
+Why install it
+
+1. Work from the page you are already viewing
+Anda can receive the current tab title and URL as context, and when you allow it, use browser actions such as listing tabs, opening pages, switching tabs, navigating, reading page content, filling fields, clicking elements, scrolling, and taking screenshots. That makes it useful for research, documentation, form-heavy workflows, web app checks, and tasks where the browser is part of the work.
+
+2. Combine browser work with command-line capability
+Many tasks do not live only in the browser. Anda is especially useful when web context needs to meet your local tools: command-line programs, project files, logs, scripts, developer tools, and automation. The extension gives you a Chrome side panel for talking to the same local agent that can also operate in your terminal.
+
+3. Keep long tasks moving
+Anda Bot is built for long-horizon reasoning. Instead of treating every request as a single isolated answer, Anda can keep a goal active, compact context, call tools, coordinate subagents, and continue until there is evidence that the work is actually complete. This is useful for research, debugging, multi-step setup, document preparation, and recurring operational tasks.
+
+4. Expand with Skills
+Skills let Anda learn specialized workflows. You can add Skills for specific domains, file formats, tools, or team processes, and then use them from the same Chrome conversation. This means the extension can grow from a general assistant into a more capable local collaborator that knows how to handle the work you actually do.
+
+5. Learn through graph memory
+Anda Hippocampus turns useful conversations into graph-based long-term memory: projects, people, preferences, decisions, events, relationships, and timelines. That memory is meant to help Anda improve over time, recall the right background for future tasks, and evolve with your work instead of starting from zero every session.
+
+6. Use Anda remotely from IM tools
+Chrome is a great place to work with pages, but you may also want to ask Anda something when you are away from the browser. Anda supports channel integrations for IM and team chat tools, including WeChat and Telegram. With those channels configured, messages can reach the same long-running local daemon, so Anda can continue to help with reminders, research, follow-up questions, or operational tasks from a remote chat interface.
+
+Local setup required
+
+This extension requires the local Anda Bot program. After installing the extension, install Anda on your computer, configure at least one model provider API key, start the daemon in the background, then generate an extension token:
+
+anda start
+
+anda browser token --days 365
+
+Copy the printed Gateway URL and Bearer token into the extension settings. Once connected, you can chat with Anda from the Chrome side panel.
+
+Privacy and permissions in plain language
+
+The extension stores your Gateway URL, Bearer token, and browser session id in Chrome local storage. It sends prompts, selected attachments, browser session metadata, and relevant tab information to the local Anda daemon you connect. It can access tabs, the active page, screenshots, page scripts, text-to-speech, and optional voice recording features so the agent can help with browser tasks. The local Anda runtime and the model providers you configure may process your prompts and task data. Review the privacy policy before publishing or using the extension in sensitive environments.
+
+It also uses downloads permission for browser-initiated file handling, cookies permission for user-requested session inspection and cookie updates, browsingData permission to clear cache and related site data when resetting page state, debugger permission for reliable page automation and outputs such as screenshots or PDF export, and webNavigation permission to observe page navigation and load completion so the agent can wait for tabs to become ready.
+
+Who it is for
+
+Anda Bot is for people who use a computer to think, browse, write, build, research, troubleshoot, and coordinate work. You do not need to be a developer to benefit from it, but it is especially powerful if you want one assistant that can understand browser context, use command-line tools, remember useful background, and keep working on goals that take time.

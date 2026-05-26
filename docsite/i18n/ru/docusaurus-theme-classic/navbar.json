@@ -15,6 +15,10 @@
     "message": "Быстрый старт",
     "description": "Navbar item with label Quick Start"
   },
+  "item.label.Chrome Extension": {
+    "message": "Расширение Chrome",
+    "description": "Navbar item with label Chrome Extension"
+  },
   "item.label.Main Site": {
     "message": "Главный сайт",
     "description": "Navbar item with label Main Site"

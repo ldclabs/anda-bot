@@ -9,7 +9,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Quick Start',
       collapsed: false,
-      items: ['quick-start/install', 'quick-start/terminal'],
+      items: ['quick-start/install', 'quick-start/terminal', 'quick-start/browser-extension'],
     },
     {
       type: 'category',

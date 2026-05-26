@@ -92,6 +92,7 @@ const config: Config = {
           label: 'Docs',
         },
         {to: '/docs/quick-start/install', label: 'Quick Start', position: 'left'},
+        {to: '/docs/quick-start/browser-extension', label: 'Chrome Extension', position: 'left'},
         {
           type: 'localeDropdown',
           position: 'right',
@@ -125,6 +126,10 @@ const config: Config = {
             {
               label: 'Terminal',
               to: '/docs/quick-start/terminal',
+            },
+            {
+              label: 'Chrome Extension',
+              to: '/docs/quick-start/browser-extension',
             },
           ],
         },
