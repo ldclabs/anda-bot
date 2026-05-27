@@ -224,6 +224,7 @@ fn base_tool_dependencies() -> Vec<String> {
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
         cron::CreateCronTool::NAME.to_string(),
+        cron::UpdateCronJobTool::NAME.to_string(),
         cron::ManageCronJobTool::NAME.to_string(),
         cron::ListCronJobsTool::NAME.to_string(),
         cron::ListCronRunsTool::NAME.to_string(),

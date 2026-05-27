@@ -268,6 +268,7 @@ impl Engines {
             )))?
             .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(cron::UpdateCronJobTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
             .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
             .register_tool(chrome_tabs_tool)?

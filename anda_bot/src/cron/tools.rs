@@ -5,7 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::{runtime::CronRuntime, types::CreateCronJobArgs, types::CronJobOrigin};
+use super::{
+    runtime::CronRuntime,
+    types::{
+        CreateCronJobArgs, CronJobOrigin, UpdateCronJobArgs,
+        deserialize_optional_u64_from_number_or_string,
+        deserialize_optional_usize_from_number_or_string, deserialize_u64_from_number_or_string,
+    },
+};
 use crate::engine::SessionRequestMeta;
 
 #[derive(Clone)]
@@ -34,7 +41,7 @@ impl Tool<BaseCtx> for CreateCronTool {
             "Creates a scheduled cron job with the specified parameters. ",
             "Example 1: {\"job_kind\":\"shell\",\"job\":\"echo hello\",\"schedule_kind\":\"cron\",\"schedule\":\"0 9 * * 1-5\",\"tz\":\"Asia/Shanghai\"}. ",
             "Example 2: {\"job_kind\":\"agent\",\"job\":\"Send the daily summary to me\",\"schedule_kind\":\"every\",\"schedule\":\"30m\",\"name\":\"daily-summary\"}.",
-            "Relevant tools: manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_select."
+            "Relevant tools: update_cron_job, manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_select."
         )
         .to_string()
     }
@@ -67,6 +74,60 @@ impl Tool<BaseCtx> for CreateCronTool {
     }
 }
 
+#[derive(Clone)]
+pub struct UpdateCronJobTool {
+    cron: Arc<CronRuntime>,
+}
+
+impl UpdateCronJobTool {
+    pub const NAME: &'static str = "update_cron_job";
+
+    pub fn new(cron: Arc<CronRuntime>) -> Self {
+        Self { cron }
+    }
+}
+
+impl Tool<BaseCtx> for UpdateCronJobTool {
+    type Args = UpdateCronJobArgs;
+    type Output = Response;
+
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
+    fn description(&self) -> String {
+        concat!(
+            "Updates an existing cron job without changing its origin or run history. ",
+            "Pass null for fields that should stay unchanged. ",
+            "When schedule_kind, schedule, or tz is updated, next_run is recalculated from the new schedule. ",
+            "Use an empty string for name or tz to clear that field."
+        )
+        .to_string()
+    }
+
+    fn definition(&self) -> FunctionDefinition {
+        FunctionDefinition {
+            name: self.name(),
+            description: self.description(),
+            parameters: update_cron_job_parameters(),
+            strict: Some(true),
+        }
+    }
+
+    async fn call(
+        &self,
+        _ctx: BaseCtx,
+        args: Self::Args,
+        _resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let job = self.cron.store.update_job(args).await?;
+        Ok(ToolOutput::new(Response::Ok {
+            result: json!(job),
+            next_cursor: None,
+        }))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CronJobAction {
@@ -79,13 +140,22 @@ pub enum CronJobAction {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ManageCronJobArgs {
     pub action: CronJobAction,
+    #[serde(deserialize_with = "deserialize_u64_from_number_or_string")]
     pub id: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ListCronArgs {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u64_from_number_or_string"
+    )]
     pub job_id: Option<u64>,
     pub cursor: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_usize_from_number_or_string"
+    )]
     pub limit: Option<usize>,
 }
 
@@ -125,6 +195,46 @@ fn create_cron_job_parameters() -> Value {
     })
 }
 
+fn update_cron_job_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": ["integer", "string"],
+                "description": "The cron job id to update. Numeric strings are accepted."
+            },
+            "job_kind": {
+                "type": ["string", "null"],
+                "enum": ["shell", "agent", null],
+                "description": "New job kind, or null to leave unchanged."
+            },
+            "job": {
+                "type": ["string", "null"],
+                "description": "New shell command or agent prompt, or null to leave unchanged."
+            },
+            "schedule_kind": {
+                "type": ["string", "null"],
+                "enum": ["cron", "at", "every", "once", null],
+                "description": "New schedule kind, or null to leave unchanged."
+            },
+            "schedule": {
+                "type": ["string", "null"],
+                "description": "New schedule value, or null to leave unchanged. For 'cron', provide a cron expression. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units."
+            },
+            "name": {
+                "type": ["string", "null"],
+                "description": "New human-readable name. Null leaves unchanged; an empty string clears the name."
+            },
+            "tz": {
+                "type": ["string", "null"],
+                "description": "New IANA timezone name for cron schedules. Null leaves unchanged; an empty string clears the timezone."
+            }
+        },
+        "required": ["id", "job_kind", "job", "schedule_kind", "schedule", "name", "tz"],
+        "additionalProperties": false
+    })
+}
+
 fn manage_cron_job_parameters() -> Value {
     json!({
         "type": "object",
@@ -135,8 +245,8 @@ fn manage_cron_job_parameters() -> Value {
                 "description": "The management action to perform on the cron job."
             },
             "id": {
-                "type": "integer",
-                "description": "The cron job id to manage."
+                "type": ["integer", "string"],
+                "description": "The cron job id to manage. Numeric strings are accepted."
             }
         },
         "required": ["action", "id"],
@@ -153,8 +263,8 @@ fn list_cron_jobs_parameters() -> Value {
                 "description": "Pagination cursor returned by a previous list_cron_jobs call."
             },
             "limit": {
-                "type": ["integer", "null"],
-                "description": "Maximum number of jobs to return. Defaults to 10 and is capped at 100."
+                "type": ["integer", "string", "null"],
+                "description": "Maximum number of jobs to return. Numeric strings are accepted. Defaults to 10 and is capped at 100."
             }
         },
         "required": ["cursor", "limit"],
@@ -167,16 +277,16 @@ fn list_cron_runs_parameters() -> Value {
         "type": "object",
         "properties": {
             "job_id": {
-                "type": ["integer", "null"],
-                "description": "Optional cron job id. When present, only runs for that job are returned."
+                "type": ["integer", "string", "null"],
+                "description": "Optional cron job id. Numeric strings are accepted. When present, only runs for that job are returned."
             },
             "cursor": {
                 "type": ["string", "null"],
                 "description": "Pagination cursor returned by a previous list_cron_runs call."
             },
             "limit": {
-                "type": ["integer", "null"],
-                "description": "Maximum number of runs to return. Defaults to 10 and is capped at 100."
+                "type": ["integer", "string", "null"],
+                "description": "Maximum number of runs to return. Numeric strings are accepted. Defaults to 10 and is capped at 100."
             }
         },
         "required": ["job_id", "cursor", "limit"],
@@ -370,16 +480,50 @@ impl Tool<BaseCtx> for ListCronRunsTool {
 mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
+    use serde_json::json;
 
     #[test]
     fn cron_tool_schemas_are_openai_strict() {
         for parameters in [
             create_cron_job_parameters(),
+            update_cron_job_parameters(),
             manage_cron_job_parameters(),
             list_cron_jobs_parameters(),
             list_cron_runs_parameters(),
         ] {
             assert_openai_strict_parameters(&parameters);
         }
+    }
+
+    #[test]
+    fn cron_tool_args_accept_numeric_strings() {
+        let manage: ManageCronJobArgs = serde_json::from_value(json!({
+            "action": "get",
+            "id": "5"
+        }))
+        .unwrap();
+        assert_eq!(manage.id, 5);
+
+        let list: ListCronArgs = serde_json::from_value(json!({
+            "job_id": "5",
+            "cursor": null,
+            "limit": "25"
+        }))
+        .unwrap();
+        assert_eq!(list.job_id, Some(5));
+        assert_eq!(list.limit, Some(25));
+
+        let update: UpdateCronJobArgs = serde_json::from_value(json!({
+            "id": "5",
+            "job_kind": null,
+            "job": "echo updated",
+            "schedule_kind": null,
+            "schedule": null,
+            "name": null,
+            "tz": null
+        }))
+        .unwrap();
+        assert_eq!(update.id, 5);
+        assert_eq!(update.job, Some("echo updated".to_string()));
     }
 }

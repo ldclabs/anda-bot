@@ -4,7 +4,7 @@ use anda_db::schema::{
 };
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronExprSchedule;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{fmt, str::FromStr, time::Duration};
 
 use crate::util::request_meta::request_meta_extra_as;
@@ -85,6 +85,17 @@ pub enum ScheduleKind {
     At,
     Every,
     Once,
+}
+
+impl fmt::Display for ScheduleKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScheduleKind::Cron => write!(f, "cron"),
+            ScheduleKind::At => write!(f, "at"),
+            ScheduleKind::Every => write!(f, "every"),
+            ScheduleKind::Once => write!(f, "once"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -289,6 +300,183 @@ impl CreateCronJobArgs {
             last_conversation_id: None,
         })
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateCronJobArgs {
+    #[serde(deserialize_with = "deserialize_u64_from_number_or_string")]
+    pub id: u64,
+    #[serde(default)]
+    pub job_kind: Option<JobKind>,
+    #[serde(default)]
+    pub job: Option<String>,
+    #[serde(default)]
+    pub schedule_kind: Option<ScheduleKind>,
+    #[serde(default)]
+    pub schedule: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tz: Option<String>,
+}
+
+impl UpdateCronJobArgs {
+    pub fn into_update(self) -> CronJobUpdate {
+        CronJobUpdate {
+            job_kind: self.job_kind,
+            job: self.job,
+            schedule_kind: self.schedule_kind,
+            schedule: self.schedule,
+            name: self.name,
+            tz: self.tz,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CronJobUpdate {
+    pub job_kind: Option<JobKind>,
+    pub job: Option<String>,
+    pub schedule_kind: Option<ScheduleKind>,
+    pub schedule: Option<String>,
+    pub name: Option<String>,
+    pub tz: Option<String>,
+}
+
+impl CronJobUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.job_kind.is_none()
+            && self.job.is_none()
+            && self.schedule_kind.is_none()
+            && self.schedule.is_none()
+            && self.name.is_none()
+            && self.tz.is_none()
+    }
+
+    pub fn apply_to(self, mut job: CronJob, now_ms: u64) -> Result<CronJob, BoxError> {
+        if self.is_empty() {
+            return Err("at least one cron job field must be provided for update".into());
+        }
+
+        let CronJobUpdate {
+            job_kind,
+            job: job_text,
+            schedule_kind,
+            schedule,
+            name,
+            tz,
+        } = self;
+        let schedule_changed = schedule_kind.is_some() || schedule.is_some() || tz.is_some();
+
+        if let Some(job_kind) = job_kind {
+            job.job_kind = job_kind;
+        }
+        if let Some(job_text) = job_text {
+            job.job = job_text;
+        }
+        if let Some(name) = name {
+            job.name = normalize_optional_name(&name);
+        }
+
+        if schedule_changed {
+            let next_schedule_kind = schedule_kind.unwrap_or_else(|| job.schedule_kind.clone());
+            let next_schedule_value = schedule.unwrap_or_else(|| job.schedule.clone());
+            let next_tz = match tz {
+                Some(tz) => normalize_optional_name(&tz),
+                None if matches!(next_schedule_kind, ScheduleKind::Cron) => job.tz.clone(),
+                None => None,
+            };
+            let schedule =
+                build_schedule(&next_schedule_kind, &next_schedule_value, next_tz.as_ref())?;
+            schedule.validate(now_ms)?;
+            let (persisted_kind, persisted_schedule) =
+                persisted_schedule(&next_schedule_kind, &next_schedule_value, &schedule)?;
+
+            job.schedule_kind = persisted_kind;
+            job.schedule = persisted_schedule;
+            job.tz = next_tz;
+            job.next_run = schedule.next_run(now_ms);
+        }
+
+        job.updated_at = now_ms;
+        Ok(job)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum U64OrString {
+    U64(u64),
+    String(String),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum UsizeOrString {
+    Usize(usize),
+    String(String),
+}
+
+pub(crate) fn deserialize_u64_from_number_or_string<'de, D>(
+    deserializer: D,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    parse_u64_or_string(U64OrString::deserialize(deserializer)?).map_err(de::Error::custom)
+}
+
+pub(crate) fn deserialize_optional_u64_from_number_or_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<U64OrString>::deserialize(deserializer)?
+        .map(parse_u64_or_string)
+        .transpose()
+        .map_err(de::Error::custom)
+}
+
+pub(crate) fn deserialize_optional_usize_from_number_or_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<UsizeOrString>::deserialize(deserializer)?
+        .map(parse_usize_or_string)
+        .transpose()
+        .map_err(de::Error::custom)
+}
+
+fn parse_u64_or_string(value: U64OrString) -> Result<u64, String> {
+    match value {
+        U64OrString::U64(value) => Ok(value),
+        U64OrString::String(value) => parse_unsigned_integer_string(&value),
+    }
+}
+
+fn parse_usize_or_string(value: UsizeOrString) -> Result<usize, String> {
+    match value {
+        UsizeOrString::Usize(value) => Ok(value),
+        UsizeOrString::String(value) => parse_unsigned_integer_string(&value),
+    }
+}
+
+fn parse_unsigned_integer_string<T>(value: &str) -> Result<T, String>
+where
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("expected a non-empty unsigned integer string".to_string());
+    }
+
+    value
+        .parse::<T>()
+        .map_err(|err| format!("invalid unsigned integer '{value}': {err}"))
 }
 
 #[derive(Debug, Clone, Default)]

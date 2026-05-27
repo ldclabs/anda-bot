@@ -2,6 +2,16 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.5] — 2026-05-27
+
+### Added
+
+- **MinerU document extraction skill**: new `mineru-document-extractor` skill for converting PDFs, scanned documents, images, Office formats (Word DOC/DOCX, PowerPoint PPT/PPTX, Excel XLS/XLSX), and web pages into clean Markdown, HTML, LaTeX, or DOCX via the official `mineru-open-api` CLI. Two extraction modes: flash-extract for instant zero-config conversion (no token, table/formula recognition, OCR) and precision extract with VLM-based layout analysis and batch processing. Covers 80+ languages including Chinese, English, Japanese, Korean, and Arabic.
+
+- **`update_cron_job` tool**: new tool for modifying existing cron jobs without losing their origin metadata or run history. Supports partial updates — pass `null` for fields that should stay unchanged. Changing the schedule recalculates `next_run`; updating only non-schedule fields (job, name) preserves the existing schedule.
+- **Cron run ID tracking**: `run_id` is now carried through the full cron execution pipeline — agent job prompts, shell job result notifications, and all log messages — making it straightforward to correlate a specific execution with its conversation and error traces.
+
+
 ## [0.8.4] — 2026-05-25
 
 ### Changed

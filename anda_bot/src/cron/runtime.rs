@@ -143,6 +143,7 @@ impl CronRuntime {
                             engine.clone(),
                             caller,
                             &job,
+                            run._id,
                             &result,
                             request_meta.clone(),
                         )
@@ -153,12 +154,13 @@ impl CronRuntime {
                     result
                 }
                 Err(err) => {
-                    log::error!(name = "cron"; "failed to submit cron job {}: {err}", job._id);
+                    log::error!(name = "cron"; "failed to submit cron job {} (run id: {}): {err}", job._id, run._id);
                     let result: CronJobResult = err.into();
                     self.notify_shell_result(
                         engine.clone(),
                         caller,
                         &job,
+                        run._id,
                         &result,
                         request_meta.clone(),
                     )
@@ -170,9 +172,10 @@ impl CronRuntime {
                 let prompt = system_runtime_prompt(
                     "cron agent job",
                     format!(
-                        "Scheduled agent job is running. Execute the following instructions and produce a helpful result for the user.\n\nJob id: {}\nJob name: {}\nInstructions:\n{}",
+                        "Scheduled agent job is running. Execute the following instructions and produce a helpful result for the user.\n\nJob id: {}\nJob name: {}\nRun id: {}\nInstructions:\n{}",
                         job._id,
                         job.name.as_deref().unwrap_or("unnamed"),
+                        run._id,
                         job.job
                     ),
                 );
@@ -181,7 +184,7 @@ impl CronRuntime {
                 match engine.agent_run(caller, input).await {
                     Ok(result) => result.into(),
                     Err(err) => {
-                        log::error!(name = "cron"; "failed to submit cron job {}: {err}", job._id);
+                        log::error!(name = "cron"; "failed to submit cron job {} (run id: {}): {err}", job._id, run._id);
                         err.into()
                     }
                 }
@@ -189,28 +192,32 @@ impl CronRuntime {
         };
 
         let finished_at_ms = unix_ms();
+        let run_id = run._id;
         if let Err(err) = self.store.job_finish(run, finished_at_ms, result).await {
-            log::error!(name = "cron"; "failed to mark cron job {} as finished: {err}", job._id);
+            log::error!(name = "cron"; "failed to mark cron job {} (run id: {}) as finished: {err}", job._id, run_id);
         }
 
         self.running_jobs.lock().remove(&job._id);
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn notify_shell_result(
         &self,
         engine: Arc<Engine>,
         caller: Principal,
         job: &CronJob,
+        run_id: u64,
         result: &CronJobResult,
         request_meta: Option<anda_core::RequestMeta>,
     ) -> Option<u64> {
         let request_meta = request_meta?;
-        let mut input = AgentInput::new(String::new(), cron_shell_result_prompt(job, result));
+        let mut input =
+            AgentInput::new(String::new(), cron_shell_result_prompt(job, run_id, result));
         input.meta = Some(request_meta);
         match engine.agent_run(caller, input).await {
             Ok(output) => output.conversation,
             Err(err) => {
-                log::error!(name = "cron"; "failed to notify agent about cron job {} result: {err}", job._id);
+                log::error!(name = "cron"; "failed to notify agent about cron job {} (run id: {}) result: {err}", job._id, run_id);
                 None
             }
         }
@@ -246,7 +253,7 @@ impl CronRuntime {
     }
 }
 
-fn cron_shell_result_prompt(job: &CronJob, result: &CronJobResult) -> String {
+fn cron_shell_result_prompt(job: &CronJob, run_id: u64, result: &CronJobResult) -> String {
     let outcome = if let Some(error) = &result.error {
         format!("Shell command failed:\n\n{error}")
     } else if let Some(result) = &result.result {
@@ -259,8 +266,8 @@ fn cron_shell_result_prompt(job: &CronJob, result: &CronJobResult) -> String {
     system_runtime_prompt(
         "cron shell job result",
         format!(
-            "Scheduled shell job completed. Incorporate this result into the current conversation and tell the originating user the useful outcome succinctly.\n\nJob id: {}\nJob name: {}\nCommand:\n{}\n\n{}",
-            job._id, name, job.job, outcome
+            "Scheduled shell job completed. Incorporate this result into the current conversation and tell the originating user the useful outcome succinctly.\n\nJob id: {}\nJob name: {}\nRun id: {}\nCommand:\n{}\n\n{}",
+            job._id, name, run_id, job.job, outcome
         ),
     )
 }

@@ -239,8 +239,8 @@ channels:
 
 ## 继续了解
 
-- [Anda Bot 二进制使用指南](anda_bot/README.md)
-- [Anda Brain](https://github.com/ldclabs/anda-brain)
+- [Anda Bot 源码](anda_bot/README.md)
+- [Anda Brain 源码](https://github.com/ldclabs/anda-brain)
 - [Anda Brain 产品站](https://brain.anda.ai/)
 
 ## 许可证

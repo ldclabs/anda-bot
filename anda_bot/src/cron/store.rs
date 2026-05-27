@@ -72,6 +72,16 @@ impl CronStore {
         Ok(job)
     }
 
+    pub async fn update_job(&self, args: UpdateCronJobArgs) -> Result<CronJob, BoxError> {
+        let now_ms = unix_ms();
+        let job: CronJob = self.jobs.get_as(args.id).await?;
+        let updated = args.into_update().apply_to(job, now_ms)?;
+        let patch = cron_job_update_patch(&updated);
+        let job = self.jobs.update(updated._id, patch).await?;
+        self.jobs.flush(now_ms).await?;
+        Ok(job.try_into()?)
+    }
+
     pub async fn list_jobs(
         &self,
         cursor: Option<String>,
@@ -318,6 +328,29 @@ impl CronStore {
     }
 }
 
+fn cron_job_update_patch(job: &CronJob) -> BTreeMap<String, Fv> {
+    BTreeMap::from([
+        ("job_kind".to_string(), Fv::Text(job.job_kind.to_string())),
+        ("job".to_string(), Fv::Text(job.job.clone())),
+        (
+            "schedule_kind".to_string(),
+            Fv::Text(job.schedule_kind.to_string()),
+        ),
+        ("schedule".to_string(), Fv::Text(job.schedule.clone())),
+        ("tz".to_string(), optional_text(&job.tz)),
+        ("name".to_string(), optional_text(&job.name)),
+        ("updated_at".to_string(), Fv::U64(job.updated_at)),
+        ("next_run".to_string(), Fv::U64(job.next_run)),
+    ])
+}
+
+fn optional_text(value: &Option<String>) -> Fv {
+    value
+        .as_ref()
+        .map(|value| Fv::Text(value.clone()))
+        .unwrap_or(Fv::Null)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +517,91 @@ mod tests {
         let due_ids: Vec<u64> = due_jobs.iter().map(|job| job._id).collect();
         assert_eq!(due_ids, vec![job_earliest._id, job_middle._id]);
         assert!(!due_ids.contains(&job_late._id));
+    }
+
+    #[tokio::test]
+    async fn update_job_changes_fields_preserves_origin_and_history() {
+        let (_dir, store) = test_store().await;
+        let origin = CronJobOrigin {
+            user: Some("alice".to_string()),
+            source: Some("wechat:daily".to_string()),
+            ..Default::default()
+        };
+        let job = store
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Agent,
+                    job: "old prompt".to_string(),
+                    schedule_kind: ScheduleKind::Every,
+                    schedule: "60".to_string(),
+                    name: Some("old-name".to_string()),
+                    tz: None,
+                },
+                Some(origin.clone()),
+            )
+            .await
+            .unwrap();
+        let run = store.job_start(job._id, unix_ms()).await.unwrap();
+        store
+            .job_finish(
+                run,
+                unix_ms(),
+                CronJobResult {
+                    conversation_id: Some(7),
+                    result: Some("done".to_string()),
+                    error: None,
+                },
+            )
+            .await
+            .unwrap();
+        let before_update = store.get_job(job._id).await.unwrap();
+
+        let updated = store
+            .update_job(UpdateCronJobArgs {
+                id: job._id,
+                job_kind: Some(JobKind::Shell),
+                job: Some("echo updated".to_string()),
+                schedule_kind: Some(ScheduleKind::Every),
+                schedule: Some("2m".to_string()),
+                name: Some("".to_string()),
+                tz: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(updated._id, job._id);
+        assert_eq!(updated.origin, Some(origin));
+        assert_eq!(updated.created_at, job.created_at);
+        assert_eq!(updated.job_kind, JobKind::Shell);
+        assert_eq!(updated.job, "echo updated");
+        assert_eq!(updated.schedule_kind, ScheduleKind::Every);
+        assert_eq!(updated.schedule, "2m");
+        assert_eq!(updated.name, None);
+        assert_eq!(updated.last_conversation_id, Some(7));
+        assert_eq!(updated.last_result, Some("done".to_string()));
+        assert!(updated.updated_at >= before_update.updated_at);
+        assert!(updated.next_run > before_update.next_run);
+    }
+
+    #[tokio::test]
+    async fn update_job_without_schedule_change_keeps_next_run() {
+        let (_dir, store) = test_store().await;
+        let job = insert_test_job(&store, "job-1").await;
+
+        let updated = store
+            .update_job(UpdateCronJobArgs {
+                id: job._id,
+                job_kind: None,
+                job: Some("updated prompt".to_string()),
+                schedule_kind: None,
+                schedule: None,
+                name: None,
+                tz: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(updated.job, "updated prompt");
+        assert_eq!(updated.next_run, job.next_run);
     }
 }

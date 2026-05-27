@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -146,7 +146,7 @@ dependencies = [
  "prost",
  "rand 0.10.1",
  "ratatui",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde-saphyr",
  "serde_json",
@@ -168,9 +168,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ecfaa9cfa030909328ad9d161e325754897b4d981ef168be12ffd202a107e00"
+checksum = "3c5a90bcb128e20a06803ef4771b9253c1ee846067c19c0baa65ed1bf8e25838"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -259,7 +259,7 @@ dependencies = [
  "ic_cose_types",
  "infer2",
  "object_store",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "schemars",
  "serde",
  "serde_bytes",
@@ -396,9 +396,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.22"
+version = "0.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ee46dc2e6c33c60dee9d66038fef604312313970d7b382a25bfd745896de129"
+checksum = "82123ef5be9b6e95b87266e39590dc7afd3e114e88feab978c63dfe83d0ddc56"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -431,7 +431,7 @@ dependencies = [
  "object_store",
  "parking_lot",
  "rand 0.10.1",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "schemars",
  "serde",
  "serde-saphyr",
@@ -524,7 +524,7 @@ dependencies = [
  "ic_cose",
  "ic_cose_types",
  "ic_tee_gateway_sdk",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
 ]
 
@@ -1326,9 +1326,9 @@ dependencies = [
 
 [[package]]
 name = "compact_str"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fdb1325a1cece981e8a296ab8f0f9b63ae357bd0784a9faaf548cc7b480707a"
+checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
 dependencies = [
  "castaway",
  "cfg-if",
@@ -2402,9 +2402,9 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "granit-parser"
-version = "0.0.2"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7e736dfe3881c53a7dce0685eb18202d0d9fe6911782f9870946eb9ee89d778"
+checksum = "f50ba32164f9e098d5da618776a32afbb32270adcbe3d3d006107dae11e37c91"
 dependencies = [
  "arraydeque",
  "smallvec",
@@ -2583,9 +2583,9 @@ checksum = "e9025058dae765dee5070ec375f591e2ba14638c63feff74f13805a72e523163"
 
 [[package]]
 name = "http"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a"
+checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
 dependencies = [
  "bytes",
  "itoa",
@@ -2763,7 +2763,7 @@ dependencies = [
  "pkcs8",
  "rand 0.10.1",
  "rangemap",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "sec1",
  "serde",
  "serde_bytes",
@@ -3233,7 +3233,7 @@ dependencies = [
  "ic_cose_types",
  "ic_tee_cdk",
  "log",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_bytes",
  "sha3 0.11.0",
@@ -3899,9 +3899,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.8.0"
+version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "memmem"
@@ -5204,9 +5204,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
+checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5519,9 +5519,9 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "0.0.26"
+version = "0.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcc7fe48e34d02a97bc8e6253b8b91e5a47fe2c47eaacb5149cefbb69922eaf0"
+checksum = "5897b4c3faadadd35fdb6689f015641f3bc481d5adaaac56231ea15aeb243db3"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -5998,15 +5998,15 @@ checksum = "734676eb262c623cec13c3155096e08d1f8f29adce39ba17948b18dad1e54142"
 
 [[package]]
 name = "sval"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a05195a68cb8336336413c3f52ea0467c7666f5f652e01ba807319ffcc090f2"
+checksum = "5fb9efbae90f97301f4d25f3be63dfd99d6b7af9d088228a52ec960d649b2e7d"
 
 [[package]]
 name = "sval_buffer"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2887fd5e2454319f2f170860427f615451bb057fc9b3fd7f28b7a99ac2ccf0e4"
+checksum = "ff5c0280ea0af40b3a1fd0b532680b5067482ffb81412ee66ec04b1d9952b49a"
 dependencies = [
  "sval",
  "sval_ref",
@@ -6014,18 +6014,18 @@ dependencies = [
 
 [[package]]
 name = "sval_dynamic"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12ddf3833aa407554ad40be081aea9cc3ea6d6798832ec83dd35022b45373896"
+checksum = "59b9067f2e68f58e110cf8019a268057e3791cf74b0fdb1b3c7c6e49104f44e6"
 dependencies = [
  "sval",
 ]
 
 [[package]]
 name = "sval_fmt"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94398bdd2ee99eee108e0b7b0df9081700a96cdefac3add5c09ad3e6f2376bcb"
+checksum = "96ebdbf0e4b175884aa587fcf551c16dabe245ea04235abdd8cbbd160b27ed5a"
 dependencies = [
  "itoa",
  "ryu",
@@ -6034,9 +6034,9 @@ dependencies = [
 
 [[package]]
 name = "sval_json"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f51ae40f37b541fdf81531e51d5071e8edc7c5a191cc23d288b654995b9eaba"
+checksum = "1e448d9fa216a6c16670b28d624fbbcf5c04e41eb187bd7c52e01222ffa72a12"
 dependencies = [
  "itoa",
  "ryu",
@@ -6045,9 +6045,9 @@ dependencies = [
 
 [[package]]
 name = "sval_nested"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3abe05be8455348e3f6edc14a85fd2fcf32f801a14f0126ce025e63851b4f13b"
+checksum = "021de5b5c26efd544c694cef9b8a9abe8633481bf3be1ea145a18a740818b291"
 dependencies = [
  "sval",
  "sval_buffer",
@@ -6056,18 +6056,18 @@ dependencies = [
 
 [[package]]
 name = "sval_ref"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a36361fa3c42c9fd129f4c5023a812d5b275742b28a672c758ec70049c61df00"
+checksum = "54ef5ffec8bc52ded04ee424ab8d959e25e64fd40a48a16d21f8991ce824c1bb"
 dependencies = [
  "sval",
 ]
 
 [[package]]
 name = "sval_serde"
-version = "2.19.0"
+version = "2.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb76707179eccecab345902a803aacacab6889f3af675dbe89766bc790b1a6cb"
+checksum = "b983833a8a2390f89ebcf9b9acd06883017014b4ffd72ee28e0c9de6852039f5"
 dependencies = [
  "serde_core",
  "sval",
@@ -7119,7 +7119,7 @@ dependencies = [
  "ecb",
  "md-5",
  "rand 0.9.4",
- "reqwest 0.13.3",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serde_repr",
