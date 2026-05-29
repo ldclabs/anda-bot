@@ -2876,6 +2876,7 @@ mod tests {
             content: vec![ContentPart::ToolOutput {
                 name: "shell".to_string(),
                 output: serde_json::json!({"stdout": "a very long output line that should wrap and be truncated before it can take over the transcript area"}),
+                is_error: None,
                 call_id: None,
                 remote_id: None,
             }],

@@ -25,6 +25,7 @@ model:
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 384000
       labels: ["memory"]
@@ -34,6 +35,7 @@ model:
       model: "MiniMax-M2.7"
       api_base: "https://api.minimaxi.com/anthropic/v1"
       api_key: ""
+      effort: high
       context_window: 200000
       max_output: 130000
       labels: ["lite"]
@@ -43,6 +45,7 @@ model:
       model: "gpt-5.5"
       api_base: "https://chatgpt.com/backend-api/codex"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 128000
       labels: ["memory", "image", "audio", "video"]
@@ -52,6 +55,7 @@ model:
       model: "gpt-5.4"
       api_base: "https://api.openai.com/v1"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 128000
       labels: ["flash", "memory", "image", "audio", "video"]
@@ -61,6 +65,7 @@ model:
       model: "claude-opus-4-7"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 128000
       labels: ["memory", "image", "audio", "video"]
@@ -70,6 +75,7 @@ model:
       model: "claude-haiku-4-5"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
+      effort: high
       context_window: 200000
       max_output: 64000
       labels: ["flash", "memory"]
@@ -79,6 +85,7 @@ model:
       model: "gemini-pro-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 64000
       labels: ["memory", "image", "audio", "video"]
@@ -88,6 +95,7 @@ model:
       model: "gemini-flash-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 64000
       labels: ["flash", "memory", "image", "audio", "video"]
@@ -97,6 +105,7 @@ model:
       model: "gemini-flash-lite-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 64000
       labels: ["lite"]
@@ -106,6 +115,7 @@ model:
       model: "mimo-v2.5-pro"
       api_base: "https://api.xiaomimimo.com/anthropic/v1"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 128000
       labels: ["fallback"]
@@ -116,6 +126,7 @@ model:
       model: "mimo-v2.5"
       api_base: "https://api.xiaomimimo.com/v1"
       api_key: ""
+      effort: high
       context_window: 400000
       max_output: 128000
       labels: ["flash", "image", "audio", "video"]
@@ -126,6 +137,7 @@ model:
       model: "kimi-k2.6"
       api_base: "https://api.moonshot.cn/v1"
       api_key: ""
+      effort: high
       context_window: 256000
       max_output: 32000
       labels: []
@@ -135,9 +147,20 @@ model:
       model: "glm-5.1"
       api_base: "https://open.bigmodel.cn/api/anthropic/v1"
       api_key: ""
+      effort: high
       context_window: 200000
       max_output: 128000
       labels: ["memory"]
+      disabled: false
+
+    - family: openai
+      model: "step-3.7-flash"
+      api_base: "https://api.stepfun.com/v1"
+      api_key: ""
+      effort: high
+      context_window: 256000
+      max_output: 32000
+      labels: ["flash", "image", "video"]
       disabled: false
 
 tts:

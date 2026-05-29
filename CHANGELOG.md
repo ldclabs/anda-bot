@@ -1,6 +1,37 @@
 # Changelog
 
 All notable changes to Anda Bot.
+## [0.8.6] — 2026-05-29
+
+### Added
+
+- **StepFun step-3.7-flash model**: new `step-3.7-flash` entry in `config.yaml` (StepFun API, 256K context, 32K max output, labels: flash/image/video).
+- **`effort: high` default for all models**: every model entry in `config.yaml` now specifies `effort: high`, aligning with the brain default `ModelEffort::High`.
+
+### Changed
+
+- **Completion hook reads `SessionRequestMeta` first**: `completion_meta()` now checks agent context state for `SessionRequestMeta` before falling back to `ctx.meta()`, restoring correct cron job route recovery when the runtime meta lacks route info.
+- **Direct async send replaces `tokio::spawn`**: `on_completion` now awaits `try_send` directly instead of spawning a detached task, simplifying error handling and ensuring channel bindings are visible immediately.
+- **`completion_message` takes `&RequestMeta`**: decoupled from `&AgentCtx`, making it easier to test and reuse.
+
+### Fixed
+
+- **TUI test**: `ContentPart::ToolOutput` in `tui/mod.rs` test now includes `is_error: None` to match the updated struct definition.
+
+### Dependencies
+
+- `anda_brain` 0.6.4 → 0.6.5.
+- `anda_cognitive_nexus` 0.7.18 → 0.7.19.
+- `anda_core` 0.12.3 → 0.12.4.
+- `anda_engine` 0.12.23 → 0.12.24.
+- `anda_kip` 0.7.12 → 0.7.13.
+- `hyper` 1.9.0 → 1.10.0.
+- `candid` 0.10.28 → 0.10.29.
+- `zerocopy` 0.8.48 → 0.8.49.
+- `displaydoc` 0.2.5 → 0.2.6.
+- `socket2` 0.6.3 → 0.6.4.
+- `mio` 1.2.0 → 1.2.1.
+- `cmov` 0.5.3 → 0.5.4.
 
 ## [0.8.5] — 2026-05-27
 

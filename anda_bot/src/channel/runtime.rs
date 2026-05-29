@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::types::*;
-use crate::engine::{CompletionHook, PromptCommand, external_user_prompt};
+use crate::engine::{CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt};
 use crate::util::request_meta::request_meta_extra_as;
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
@@ -459,6 +459,7 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         if output.content.is_empty() {
             return;
         }
+        let meta = completion_meta(ctx);
 
         let (route, stale) = match self.route_for_conversation(conv_id) {
             Some(route) => {
@@ -466,7 +467,7 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
                 (route, stale)
             }
             None => {
-                let Some(route) = self.route_from_meta(ctx.meta()) else {
+                let Some(route) = self.route_from_meta(&meta) else {
                     return;
                 };
                 if let Some(channels_conversation) = self.bind_conversation(route.clone(), conv_id)
@@ -484,17 +485,19 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         };
 
         let channel = route.channel.clone();
-        let msg = completion_message(ctx, output, route, stale);
+        let msg = completion_message(&meta, output, route, stale);
 
-        tokio::spawn({
-            let this = self.clone();
-            async move {
-                if let Err(err) = this.try_send(channel.clone(), msg, Some(conv_id)).await {
-                    log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
-                }
-            }
-        });
+        if let Err(err) = self.try_send(channel.clone(), msg, Some(conv_id)).await {
+            log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
+        }
     }
+}
+
+fn completion_meta(ctx: &AgentCtx) -> RequestMeta {
+    ctx.base
+        .get_state::<SessionRequestMeta>()
+        .map(|state| state.get())
+        .unwrap_or_else(|| ctx.meta().clone())
 }
 
 fn build_conversation_routes(
@@ -524,13 +527,12 @@ fn normalize_non_empty(value: &str) -> Option<String> {
 }
 
 fn completion_message(
-    ctx: &AgentCtx,
+    meta: &RequestMeta,
     output: &AgentOutput,
     route: ChannelRoute,
     stale: bool,
 ) -> SendMessage {
     let mut msg = String::new();
-    let meta = ctx.meta();
     if stale {
         if let Some(conv_id) = output.conversation {
             msg.push_str(&format!("[Previous conversation #{conv_id}]\n\n"));
@@ -912,7 +914,6 @@ mod tests {
 
     #[test]
     fn completion_message_preserves_thread_context() {
-        let ctx = Engine::builder().mock_ctx();
         let route = ChannelRoute {
             channel: "test:threaded".to_string(),
             reply_target: "#anda".to_string(),
@@ -924,7 +925,7 @@ mod tests {
             ..Default::default()
         };
 
-        let message = completion_message(&ctx, &output, route.clone(), false);
+        let message = completion_message(&RequestMeta::default(), &output, route.clone(), false);
 
         assert_eq!(message.content, output.content);
         assert_eq!(message.recipient, route.reply_target);
@@ -934,7 +935,6 @@ mod tests {
 
     #[test]
     fn completion_message_marks_stale_conversation() {
-        let ctx = Engine::builder().mock_ctx();
         let route = ChannelRoute {
             channel: "test:threaded".to_string(),
             reply_target: "#anda".to_string(),
@@ -946,12 +946,59 @@ mod tests {
             ..Default::default()
         };
 
-        let message = completion_message(&ctx, &output, route, true);
+        let message = completion_message(&RequestMeta::default(), &output, route, true);
 
         assert_eq!(
             message.content,
             "[Previous conversation #42]\n\nlate answer"
         );
+    }
+
+    #[tokio::test]
+    async fn on_completion_routes_from_latest_session_meta() {
+        let channel = Arc::new(TestChannel::new("test:cron-route", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let ctx = Engine::builder().mock_ctx();
+        let route = ChannelRoute {
+            channel: channel.id(),
+            reply_target: "#anda".to_string(),
+            thread: Some("thread-1".to_string()),
+        };
+        let mut extra = serde_json::Map::new();
+        extra.insert("source".to_string(), route.channel.clone().into());
+        extra.insert(
+            "reply_target".to_string(),
+            route.reply_target.clone().into(),
+        );
+        extra.insert("thread".to_string(), "thread-1".into());
+        extra.insert("cron_job_id".to_string(), 11.into());
+        extra.insert("cron_job_name".to_string(), "hourly-research".into());
+        extra.insert("cron_job_kind".to_string(), "agent".into());
+        ctx.base.set_state(SessionRequestMeta::new(RequestMeta {
+            extra,
+            ..Default::default()
+        }));
+        let output = AgentOutput {
+            content: "done".to_string(),
+            conversation: Some(154),
+            ..Default::default()
+        };
+
+        runtime.inner.clone().on_completion(&ctx, &output).await;
+
+        let sent_messages = channel.sent_messages().await;
+        assert_eq!(sent_messages.len(), 1);
+        assert_eq!(sent_messages[0].recipient, route.reply_target);
+        assert_eq!(sent_messages[0].thread, route.thread);
+        assert_eq!(
+            sent_messages[0].content,
+            "Cron Job (agent): hourly-research\n\ndone"
+        );
+        assert_eq!(
+            runtime.inner.current_conversation_for_route(&route),
+            Some(154)
+        );
+        assert_eq!(runtime.inner.route_for_conversation(154), Some(route));
     }
 
     #[test]
