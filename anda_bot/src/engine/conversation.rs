@@ -141,10 +141,27 @@ impl ConversationsTool {
     }
 
     pub fn state_from_meta(&self, meta: &RequestMeta) -> RequestState {
-        let workspace = request_meta_extra_as::<String>(meta, "workspace")
-            .unwrap_or_else(|| self.default_workspace.clone());
-        let source = request_meta_extra_as::<String>(meta, "source")
-            .unwrap_or_else(|| format!("cli:{workspace}"));
+        let (workspace, source) = match (
+            request_meta_extra_as::<String>(meta, "workspace"),
+            request_meta_extra_as::<String>(meta, "source"),
+        ) {
+            (Some(workspace), Some(source)) => (workspace, source),
+            (Some(workspace), None) => (workspace.clone(), format!("cli:{workspace}")),
+            (None, Some(source)) => {
+                let workspace = if let Some(v) = source.strip_prefix("cli:") {
+                    v.to_string()
+                } else {
+                    self.default_workspace.clone()
+                };
+                (workspace, source)
+            }
+            (None, None) => {
+                let workspace = self.default_workspace.clone();
+                let source = format!("cli:{workspace}");
+                (workspace, source)
+            }
+        };
+
         let reply_target = request_meta_extra_as::<String>(meta, "reply_target");
         let thread = request_meta_extra_as::<String>(meta, "thread");
         let source_key =
