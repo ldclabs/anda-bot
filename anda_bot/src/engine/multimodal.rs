@@ -1,10 +1,11 @@
 use anda_core::{
     Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionFeatures,
     CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
-    Usage,
+    Usage, inline_data_from_data_url,
 };
 use anda_engine::context::AgentCtx;
 use futures_util::{StreamExt, stream};
+use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -55,13 +56,13 @@ impl MediaKind {
     fn description(self) -> &'static str {
         match self {
             Self::Image => {
-                "Understand image attachments or image file paths using the model labeled `image`, returning a textual description for downstream agents."
+                "Understand image attachments, image file paths, or image URLs using the model labeled `image`, returning a textual description for downstream agents."
             }
             Self::Audio => {
-                "Understand audio attachments or audio file paths using the model labeled `audio`, returning transcription and sound notes for downstream agents."
+                "Understand audio attachments, audio file paths, or audio URLs using the model labeled `audio`, returning transcription and sound notes for downstream agents."
             }
             Self::Video => {
-                "Understand video attachments or video file paths using the model labeled `video`, returning a textual summary for downstream agents."
+                "Understand video attachments, video file paths, or video URLs using the model labeled `video`, returning a textual summary for downstream agents."
             }
         }
     }
@@ -90,7 +91,7 @@ impl MediaKind {
 
     fn instructions(self) -> String {
         format!(
-            "You are a specialized {kind} understanding subagent. Use the provided {kind} content or file path only. Answer the caller's question when one is provided; otherwise produce a concise but complete understanding that a text-only main agent can rely on. Return Markdown plain text. Preserve observable facts, transcribe visible or audible text when possible, and clearly mark uncertainty instead of guessing.",
+            "You are a specialized {kind} understanding subagent. Use the provided {kind} content, file path, or URL only. Answer the caller's question when one is provided; otherwise produce a concise but complete understanding that a text-only main agent can rely on. Return Markdown plain text. Preserve observable facts, transcribe visible or audible text when possible, and clearly mark uncertainty instead of guessing.",
             kind = self.noun()
         )
     }
@@ -164,6 +165,8 @@ impl MediaKind {
 struct MediaUnderstandingArgs {
     #[serde(default, alias = "file_path")]
     path: Option<String>,
+    #[serde(default, alias = "uri", alias = "file_uri")]
+    url: Option<String>,
     #[serde(
         default,
         alias = "query",
@@ -184,6 +187,7 @@ impl MediaUnderstandingArgs {
 
         serde_json::from_str::<Self>(trimmed).unwrap_or_else(|_| Self {
             path: None,
+            url: None,
             question: Some(trimmed.to_string()),
         })
     }
@@ -202,6 +206,7 @@ impl MediaUnderstandingArgs {
 pub struct MediaUnderstandingAgent {
     kind: MediaKind,
     workspaces: Vec<PathBuf>,
+    http: reqwest::Client,
 }
 
 impl MediaUnderstandingAgent {
@@ -209,6 +214,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Image,
             workspaces,
+            http: reqwest::Client::new(),
         }
     }
 
@@ -216,6 +222,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Audio,
             workspaces,
+            http: reqwest::Client::new(),
         }
     }
 
@@ -223,11 +230,45 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Video,
             workspaces,
+            http: reqwest::Client::new(),
         }
+    }
+
+    pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
+        self.http = http;
+        self
     }
 
     pub fn model_label(&self) -> &'static str {
         self.kind.model_label()
+    }
+
+    async fn content_from_location(
+        &self,
+        meta: &RequestMeta,
+        location: &str,
+    ) -> Result<ContentPart, BoxError> {
+        let location = location.trim();
+        if location.is_empty() {
+            return Err("media location cannot be empty".into());
+        }
+
+        if strip_data_url_scheme(location).is_some() {
+            return self.content_from_data_url(location);
+        }
+
+        if let Ok(url) = reqwest::Url::parse(location) {
+            return match url.scheme() {
+                "http" | "https" => self.content_from_http_url(url).await,
+                "file" => self.content_from_path(meta, location).await,
+                scheme if location.contains("://") => {
+                    Err(format!("unsupported media URL scheme: {scheme}").into())
+                }
+                _ => self.content_from_path(meta, location).await,
+            };
+        }
+
+        self.content_from_path(meta, location).await
     }
 
     async fn content_from_path(
@@ -250,22 +291,61 @@ impl MediaUnderstandingAgent {
 
         let data = tokio::fs::read(&resolved).await?;
         let mime_type = mime_type_for_data_or_path(&data, &resolved, "application/octet-stream");
-        if MediaKind::from_mime_type(&mime_type).is_none()
-            && extension_from_name(&resolved.to_string_lossy()).and_then(MediaKind::from_extension)
-                != Some(self.kind)
-        {
-            return Err(format!(
-                "file does not look like {} media: {} ({mime_type})",
-                self.kind.noun(),
-                resolved.display()
-            )
-            .into());
-        }
+        let source = resolved.to_string_lossy();
+        ensure_media_kind(self.kind, &mime_type, source.as_ref())?;
 
         Ok(ContentPart::InlineData {
             mime_type,
             data: ByteBufB64(data),
         })
+    }
+
+    async fn content_from_http_url(&self, url: reqwest::Url) -> Result<ContentPart, BoxError> {
+        let response = self.http.get(url.clone()).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("failed to fetch media URL {url}: {status}").into());
+        }
+
+        if let Some(content_length) = response.content_length()
+            && content_length > MAX_MEDIA_FILE_SIZE_BYTES
+        {
+            return Err(format!(
+                "media URL is too large: {content_length} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}"
+            )
+            .into());
+        }
+
+        let content_type = response_content_type(&response);
+        let data = read_limited_response_bytes(response).await?;
+        let mime_type = mime_type_for_data_or_name(
+            &data,
+            url.path(),
+            content_type.as_deref(),
+            "application/octet-stream",
+        );
+        ensure_media_kind(self.kind, &mime_type, url.as_str())?;
+
+        Ok(ContentPart::InlineData {
+            mime_type,
+            data: ByteBufB64(data),
+        })
+    }
+
+    fn content_from_data_url(&self, data_url: &str) -> Result<ContentPart, BoxError> {
+        let (data, mime_type) = inline_data_from_data_url(data_url)
+            .ok_or_else(|| "invalid media data URL".to_string())?;
+        if data.len() as u64 > MAX_MEDIA_FILE_SIZE_BYTES {
+            return Err(format!(
+                "media data URL is too large: {} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}",
+                data.len()
+            )
+            .into());
+        }
+
+        ensure_media_kind(self.kind, &mime_type, "data URL")?;
+
+        Ok(ContentPart::InlineData { mime_type, data })
     }
 
     fn content_from_resource(&self, resource: Resource) -> Result<ContentPart, BoxError> {
@@ -318,16 +398,33 @@ impl MediaUnderstandingAgent {
         Err(format!("media resource {} has no inline data or URI", name).into())
     }
 
-    fn completion_prompt(&self, args: &MediaUnderstandingArgs, resources_len: usize) -> String {
-        let target = if resources_len == 0 {
-            "the media file at the supplied path".to_string()
-        } else if resources_len == 1 {
-            format!("the attached {} resource", self.kind.noun())
-        } else {
-            format!(
-                "the {resources_len} attached {} resources",
+    fn completion_prompt(
+        &self,
+        args: &MediaUnderstandingArgs,
+        resources_len: usize,
+        locations_len: usize,
+    ) -> String {
+        let target = match (resources_len, locations_len) {
+            (0, 0) => "the supplied media".to_string(),
+            (0, 1) => "the media file at the supplied path or URL".to_string(),
+            (0, locations_len) => {
+                format!("the {locations_len} media files at the supplied paths or URLs")
+            }
+            (1, 0) => format!("the attached {} resource", self.kind.noun()),
+            (resources_len, 0) => {
+                format!(
+                    "the {resources_len} attached {} resources",
+                    self.kind.noun()
+                )
+            }
+            (1, 1) => format!(
+                "the attached {} resource and the media file at the supplied path or URL",
                 self.kind.noun()
-            )
+            ),
+            (resources_len, locations_len) => format!(
+                "the {resources_len} attached {} resources and the {locations_len} media files at the supplied paths or URLs",
+                self.kind.noun()
+            ),
         };
 
         format!(
@@ -352,18 +449,22 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             description: self.description(),
             parameters: json!({
                 "type": "object",
-                "description": "Understand one media attachment selected by resource tags, or read a local media file path from the configured workspace. Do not include a `prompt` property; use `question` for optional guidance so the file path is preserved.",
+                "description": "Understand one media attachment selected by resource tags, read a local media file path from the configured workspace, or fetch media from an http/https/data URL. Do not include a `prompt` property; use `question` for optional guidance so the media location is preserved.",
                 "properties": {
                     "path": {
                         "type": ["string", "null"],
-                        "description": "Optional local media file path. Relative paths resolve from the current configured workspace; absolute paths must be inside an allowed workspace. Omit when passing an attached resource."
+                        "description": "Optional local media file path. Relative paths resolve from the current configured workspace; absolute paths must be inside an allowed workspace. This also accepts file/http/https/data URLs for compatibility. Omit when passing an attached resource."
+                    },
+                    "url": {
+                        "type": ["string", "null"],
+                        "description": "Optional media URL. Supports http, https, and data URLs. Omit when using a local path or attached resource."
                     },
                     "question": {
                         "type": ["string", "null"],
                         "description": "Optional question or focus for the media understanding task."
                     }
                 },
-                "required": ["path", "question"],
+                "required": ["path", "url", "question"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -382,10 +483,21 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
     ) -> Result<AgentOutput, BoxError> {
         let args = MediaUnderstandingArgs::from_prompt(&prompt);
         let resources_len = resources.len();
-        let mut content = Vec::with_capacity(resources.len() + 1);
+        let mut locations_len = 0;
+        let mut content = Vec::with_capacity(resources.len() + 2);
 
         for resource in resources {
             content.push(self.content_from_resource(resource)?);
+        }
+
+        if let Some(url) = args
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            content.push(self.content_from_location(ctx.meta(), url).await?);
+            locations_len += 1;
         }
 
         if let Some(path) = args
@@ -394,12 +506,13 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             .map(str::trim)
             .filter(|path| !path.is_empty())
         {
-            content.push(self.content_from_path(ctx.meta(), path).await?);
+            content.push(self.content_from_location(ctx.meta(), path).await?);
+            locations_len += 1;
         }
 
         if content.is_empty() {
             return Err(format!(
-                "{} requires an attached {} resource or a workspace file path",
+                "{} requires an attached {} resource, workspace file path, or media URL",
                 self.kind.agent_name(),
                 self.kind.noun()
             )
@@ -409,7 +522,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
         ctx.completion(
             CompletionRequest {
                 instructions: self.kind.instructions(),
-                prompt: self.completion_prompt(&args, resources_len),
+                prompt: self.completion_prompt(&args, resources_len, locations_len),
                 content,
                 ..Default::default()
             },
@@ -640,11 +753,111 @@ fn strip_file_uri(path: &str) -> &str {
     path.strip_prefix("file://").unwrap_or(path)
 }
 
+fn strip_data_url_scheme(url: &str) -> Option<&str> {
+    let trimmed = url.trim();
+    if trimmed
+        .as_bytes()
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"data:"))
+    {
+        Some(&trimmed[5..])
+    } else {
+        None
+    }
+}
+
+async fn read_limited_response_bytes(response: reqwest::Response) -> Result<Vec<u8>, BoxError> {
+    let mut data = Vec::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let next_len = data.len() + chunk.len();
+        if next_len as u64 > MAX_MEDIA_FILE_SIZE_BYTES {
+            return Err(format!(
+                "media URL is too large: at least {next_len} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}"
+            )
+            .into());
+        }
+        data.extend_from_slice(&chunk);
+    }
+
+    Ok(data)
+}
+
+fn response_content_type(response: &reqwest::Response) -> Option<String> {
+    response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(normalize_mime_type)
+}
+
+fn normalize_mime_type(value: &str) -> Option<String> {
+    value
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|mime_type| !mime_type.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+fn ensure_media_kind(kind: MediaKind, mime_type: &str, source_name: &str) -> Result<(), BoxError> {
+    let detected = MediaKind::from_mime_type(mime_type);
+    if detected == Some(kind) {
+        return Ok(());
+    }
+
+    if detected.is_none()
+        && extension_from_name(source_name).and_then(MediaKind::from_extension) == Some(kind)
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "media source does not look like {} media: {} ({mime_type})",
+        kind.noun(),
+        source_name
+    )
+    .into())
+}
+
 fn mime_type_for_data_or_path(data: &[u8], path: &Path, fallback: &str) -> String {
-    infer2::get(data)
-        .map(|kind| kind.mime_type().to_string())
-        .or_else(|| mime_type_from_name(&path.to_string_lossy()))
-        .unwrap_or_else(|| fallback.to_string())
+    let name = path.to_string_lossy();
+    mime_type_for_data_or_name(data, name.as_ref(), None, fallback)
+}
+
+fn mime_type_for_data_or_name(
+    data: &[u8],
+    name: &str,
+    preferred: Option<&str>,
+    fallback: &str,
+) -> String {
+    let inferred = infer2::get(data).map(|kind| kind.mime_type().to_string());
+    if let Some(mime_type) = inferred
+        .as_deref()
+        .filter(|mime_type| MediaKind::from_mime_type(mime_type).is_some())
+    {
+        return mime_type.to_string();
+    }
+
+    let preferred = preferred.and_then(normalize_mime_type);
+    if let Some(mime_type) = preferred
+        .as_deref()
+        .filter(|mime_type| *mime_type != "application/octet-stream")
+    {
+        return mime_type.to_string();
+    }
+
+    if let Some(mime_type) = mime_type_from_name(name) {
+        return mime_type;
+    }
+
+    if let Some(mime_type) = inferred {
+        return mime_type;
+    }
+
+    preferred.unwrap_or_else(|| fallback.to_string())
 }
 
 fn mime_type_from_name(name: &str) -> Option<String> {
@@ -667,11 +880,45 @@ fn title_case(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+
+    async fn spawn_media_http_server(body: Vec<u8>, content_type: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test server address should be available");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept one request");
+            let mut request = [0; 1024];
+            let _ = socket.read(&mut request).await;
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(headers.as_bytes())
+                .await
+                .expect("test response headers should write");
+            socket
+                .write_all(&body)
+                .await
+                .expect("test response body should write");
+        });
+
+        format!("http://{addr}/media.png")
+    }
 
     #[test]
     fn media_understanding_schema_is_openai_strict() {
@@ -693,6 +940,18 @@ mod tests {
         );
 
         assert_eq!(args.path.as_deref(), Some("images/cat.png"));
+        assert_eq!(args.url, None);
+        assert_eq!(args.question.as_deref(), Some("What is unusual?"));
+    }
+
+    #[test]
+    fn parses_json_args_with_url_and_question() {
+        let args = MediaUnderstandingArgs::from_prompt(
+            r#"{"url":"https://example.com/cat.png","question":"What is unusual?"}"#,
+        );
+
+        assert_eq!(args.path, None);
+        assert_eq!(args.url.as_deref(), Some("https://example.com/cat.png"));
         assert_eq!(args.question.as_deref(), Some("What is unusual?"));
     }
 
@@ -701,6 +960,7 @@ mod tests {
         let args = MediaUnderstandingArgs::from_prompt("describe the scene");
 
         assert_eq!(args.path, None);
+        assert_eq!(args.url, None);
         assert_eq!(args.question.as_deref(), Some("describe the scene"));
     }
 
@@ -864,6 +1124,66 @@ mod tests {
             ContentPart::InlineData { mime_type, data } => {
                 assert_eq!(mime_type, "image/png");
                 assert_eq!(data.0, PNG_SIGNATURE.to_vec());
+            }
+            other => panic!("expected inline data, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn content_from_location_fetches_http_url() {
+        let url = spawn_media_http_server(PNG_SIGNATURE.to_vec(), "image/png").await;
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+
+        let content = agent
+            .content_from_location(&RequestMeta::default(), &url)
+            .await
+            .expect("HTTP image URL should be accepted");
+
+        match content {
+            ContentPart::InlineData { mime_type, data } => {
+                assert_eq!(mime_type, "image/png");
+                assert_eq!(data.0, PNG_SIGNATURE.to_vec());
+            }
+            other => panic!("expected inline data, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn content_from_location_decodes_base64_data_url() {
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(PNG_SIGNATURE)
+        );
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+
+        let content = agent
+            .content_from_location(&RequestMeta::default(), &data_url)
+            .await
+            .expect("base64 image data URL should be accepted");
+
+        match content {
+            ContentPart::InlineData { mime_type, data } => {
+                assert_eq!(mime_type, "image/png");
+                assert_eq!(data.0, PNG_SIGNATURE.to_vec());
+            }
+            other => panic!("expected inline data, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn content_from_data_url_decodes_percent_encoded_payload() {
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let content = agent
+            .content_from_data_url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E")
+            .expect("percent encoded SVG data URL should be accepted");
+
+        match content {
+            ContentPart::InlineData { mime_type, data } => {
+                assert_eq!(mime_type, "image/svg+xml");
+                assert_eq!(
+                    data.0,
+                    br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec()
+                );
             }
             other => panic!("expected inline data, got {other:?}"),
         }

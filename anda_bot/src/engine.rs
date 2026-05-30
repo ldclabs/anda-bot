@@ -228,12 +228,18 @@ impl Engines {
             transcription_manager.clone(),
             active_im_channels,
         ));
-        let image_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::image(cfg.workspaces.clone()));
-        let audio_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::audio(cfg.workspaces.clone()));
-        let video_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::video(cfg.workspaces.clone()));
+        let image_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::image(cfg.workspaces.clone())
+                .with_http_client(outer_http_client.clone()),
+        );
+        let audio_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::audio(cfg.workspaces.clone())
+                .with_http_client(outer_http_client.clone()),
+        );
+        let video_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::video(cfg.workspaces.clone())
+                .with_http_client(outer_http_client.clone()),
+        );
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager
                 .as_ref()
