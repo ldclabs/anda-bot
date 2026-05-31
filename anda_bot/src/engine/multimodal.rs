@@ -3,8 +3,17 @@ use anda_core::{
     CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
     Usage, inline_data_from_data_url,
 };
-use anda_engine::context::AgentCtx;
+use anda_engine::{
+    context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
+    extension::{
+        fs::{ReadFileTool, SearchFileTool},
+        shell::ShellTool,
+        skill::SkillManager,
+    },
+    subagent::SubAgentManager,
+};
 use futures_util::{StreamExt, stream};
+use liteparse::{LiteParse, LiteParseConfig, types::PdfInput};
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::json;
@@ -13,19 +22,24 @@ use std::path::{Path, PathBuf};
 pub const IMAGE_UNDERSTANDING_AGENT_NAME: &str = "image_understanding";
 pub const AUDIO_UNDERSTANDING_AGENT_NAME: &str = "audio_understanding";
 pub const VIDEO_UNDERSTANDING_AGENT_NAME: &str = "video_understanding";
+pub const OTHER_UNDERSTANDING_AGENT_NAME: &str = "attachment_understanding";
 
 pub const IMAGE_MODEL_LABEL: &str = "image";
 pub const AUDIO_MODEL_LABEL: &str = "audio";
 pub const VIDEO_MODEL_LABEL: &str = "video";
+pub const OTHER_MODEL_LABEL: &str = "flash";
 
 const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_MEDIA_UNDERSTANDING_CONCURRENCY: usize = 8;
+const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
+const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaKind {
     Image,
     Audio,
     Video,
+    Other,
 }
 
 impl MediaKind {
@@ -34,6 +48,7 @@ impl MediaKind {
             Self::Image => IMAGE_UNDERSTANDING_AGENT_NAME,
             Self::Audio => AUDIO_UNDERSTANDING_AGENT_NAME,
             Self::Video => VIDEO_UNDERSTANDING_AGENT_NAME,
+            Self::Other => OTHER_UNDERSTANDING_AGENT_NAME,
         }
     }
 
@@ -42,6 +57,7 @@ impl MediaKind {
             Self::Image => IMAGE_MODEL_LABEL,
             Self::Audio => AUDIO_MODEL_LABEL,
             Self::Video => VIDEO_MODEL_LABEL,
+            Self::Other => OTHER_MODEL_LABEL,
         }
     }
 
@@ -50,6 +66,7 @@ impl MediaKind {
             Self::Image => "image",
             Self::Audio => "audio",
             Self::Video => "video",
+            Self::Other => "attachment",
         }
     }
 
@@ -64,6 +81,9 @@ impl MediaKind {
             Self::Video => {
                 "Understand video attachments, video file paths, or video URLs using the model labeled `video`, returning a textual summary for downstream agents."
             }
+            Self::Other => {
+                "Understand non-image/audio/video attachments. UTF-8 blobs are handled as text, PDFs are parsed locally with LiteParse, and other formats are delegated to available skills or shell-assisted extraction."
+            }
         }
     }
 
@@ -72,6 +92,14 @@ impl MediaKind {
             Self::Image => ["image"].into_iter().map(ToString::to_string).collect(),
             Self::Audio => ["audio"].into_iter().map(ToString::to_string).collect(),
             Self::Video => ["video"].into_iter().map(ToString::to_string).collect(),
+            Self::Other => [
+                "text", "txt", "md", "markdown", "pdf", "json", "csv", "tsv", "doc", "docx", "xls",
+                "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "html", "xml", "yaml", "toml",
+                "log", "document", "file", "other",
+            ]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
         }
     }
 
@@ -86,10 +114,17 @@ impl MediaKind {
             Self::Video => {
                 "Understand this video for a text-only agent. Summarize the key visual events, scenes, actions, on-screen text, and audible speech or sounds when available."
             }
+            Self::Other => {
+                "Understand this attachment for a text-only agent. Extract or summarize useful text, structure, metadata, and uncertainty. Do not invent unavailable content."
+            }
         }
     }
 
     fn instructions(self) -> String {
+        if self == Self::Other {
+            return "You are a specialized attachment understanding subagent. Prefer local, faithful extraction over guessing. For UTF-8 text, preserve the actual content when it is small and summarize it when it is large. For PDFs, use LiteParse extraction results. For other formats, look for a suitable installed skill first, then use safe shell/read-only inspection, and only research a method over the network when local options are insufficient. Return Markdown plain text for the main agent and clearly mark failures or uncertainty.".to_string();
+        }
+
         format!(
             "You are a specialized {kind} understanding subagent. Use the provided {kind} content, file path, or URL only. Answer the caller's question when one is provided; otherwise produce a concise but complete understanding that a text-only main agent can rely on. Return Markdown plain text. Preserve observable facts, transcribe visible or audible text when possible, and clearly mark uncertainty instead of guessing.",
             kind = self.noun()
@@ -97,7 +132,7 @@ impl MediaKind {
     }
 
     fn from_resource(resource: &Resource) -> Option<Self> {
-        resource
+        let media_kind = resource
             .mime_type
             .as_deref()
             .and_then(Self::from_mime_type)
@@ -113,7 +148,9 @@ impl MediaKind {
                     .and_then(|kind| Self::from_mime_type(kind.mime_type()))
             })
             .or_else(|| Self::from_tags(&resource.tags))
-            .or_else(|| extension_from_name(&resource.name).and_then(Self::from_extension))
+            .or_else(|| extension_from_name(&resource.name).and_then(Self::from_extension));
+
+        media_kind.or_else(|| is_other_resource_candidate(resource).then_some(Self::Other))
     }
 
     fn from_mime_type(mime_type: &str) -> Option<Self> {
@@ -156,6 +193,7 @@ impl MediaKind {
             "3gp" | "avi" | "flv" | "m4v" | "mkv" | "mov" | "mp4" | "mpg" | "ogv" | "webm"
             | "wmv" => Some(Self::Video),
             "mpeg" => Some(Self::Audio),
+            "pdf" => Some(Self::Other),
             _ => None,
         }
     }
@@ -234,6 +272,14 @@ impl MediaUnderstandingAgent {
         }
     }
 
+    pub fn other(workspaces: Vec<PathBuf>) -> Self {
+        Self {
+            kind: MediaKind::Other,
+            workspaces,
+            http: reqwest::Client::new(),
+        }
+    }
+
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
         self
@@ -241,6 +287,404 @@ impl MediaUnderstandingAgent {
 
     pub fn model_label(&self) -> &'static str {
         self.kind.model_label()
+    }
+
+    async fn run_other(
+        &self,
+        ctx: AgentCtx,
+        prompt: String,
+        resources: Vec<Resource>,
+    ) -> Result<AgentOutput, BoxError> {
+        let args = MediaUnderstandingArgs::from_prompt(&prompt);
+        let question = args.question_or_default(self.kind);
+        let mut attachments = Vec::with_capacity(resources.len() + 2);
+
+        for resource in resources {
+            attachments.push(OtherAttachment::from_resource(resource));
+        }
+
+        if let Some(url) = args
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            attachments.push(self.other_attachment_from_location(ctx.meta(), url).await?);
+        }
+
+        if let Some(path) = args
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            attachments.push(
+                self.other_attachment_from_location(ctx.meta(), path)
+                    .await?,
+            );
+        }
+
+        if attachments.is_empty() {
+            return Err(
+                "other_understanding requires an attached resource, workspace file path, or URL"
+                    .into(),
+            );
+        }
+
+        let mut output = AgentOutput::default();
+        let mut sections = Vec::with_capacity(attachments.len());
+        for attachment in attachments {
+            let label = attachment.label.clone();
+            match self
+                .understand_other_attachment(&ctx, attachment, &question)
+                .await
+            {
+                Ok(section) => {
+                    output.usage.accumulate(&section.usage);
+                    let content = section.content.trim();
+                    if content.is_empty() {
+                        sections.push(format!("No description was returned for {label}."));
+                    } else {
+                        sections.push(content.to_string());
+                    }
+                }
+                Err(err) => {
+                    sections.push(format!("Failed to understand {label}, error: {err}"));
+                }
+            }
+        }
+
+        output.content = sections.join("\n\n---\n\n");
+        Ok(output)
+    }
+
+    async fn other_attachment_from_location(
+        &self,
+        meta: &RequestMeta,
+        location: &str,
+    ) -> Result<OtherAttachment, BoxError> {
+        let location = location.trim();
+        if location.is_empty() {
+            return Err("attachment location cannot be empty".into());
+        }
+
+        if strip_data_url_scheme(location).is_some() {
+            let (data, mime_type) = inline_data_from_data_url(location)
+                .ok_or_else(|| "invalid attachment data URL".to_string())?;
+            if data.0.len() as u64 > MAX_MEDIA_FILE_SIZE_BYTES {
+                return Err(format!(
+                    "attachment data URL is too large: {} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}",
+                    data.0.len()
+                )
+                .into());
+            }
+
+            return Ok(OtherAttachment {
+                label: "data URL".to_string(),
+                name: "data-url".to_string(),
+                mime_type: Some(mime_type),
+                uri: Some(location.to_string()),
+                size: Some(data.0.len() as u64),
+                data: Some(data.0),
+                tags: Vec::new(),
+                read_error: None,
+            });
+        }
+
+        if let Ok(url) = reqwest::Url::parse(location) {
+            return match url.scheme() {
+                "http" | "https" => self.other_attachment_from_http_url(url).await,
+                "file" => self.other_attachment_from_path(meta, location).await,
+                scheme if location.contains("://") => {
+                    Err(format!("unsupported attachment URL scheme: {scheme}").into())
+                }
+                _ => self.other_attachment_from_path(meta, location).await,
+            };
+        }
+
+        self.other_attachment_from_path(meta, location).await
+    }
+
+    async fn other_attachment_from_path(
+        &self,
+        meta: &RequestMeta,
+        path: &str,
+    ) -> Result<OtherAttachment, BoxError> {
+        let resolved = resolve_media_path(meta, &self.workspaces, path).await?;
+        let metadata = tokio::fs::metadata(&resolved).await?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "attachment path is not a regular file: {}",
+                resolved.display()
+            )
+            .into());
+        }
+        if metadata.len() > MAX_MEDIA_FILE_SIZE_BYTES {
+            return Err(format!(
+                "attachment file is too large: {} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}",
+                metadata.len()
+            )
+            .into());
+        }
+
+        let data = tokio::fs::read(&resolved).await?;
+        let name = resolved.to_string_lossy().to_string();
+        let mime_type = mime_type_for_data_or_path(&data, &resolved, "application/octet-stream");
+
+        Ok(OtherAttachment {
+            label: name.clone(),
+            name,
+            mime_type: Some(mime_type),
+            uri: Some(format!("file://{}", resolved.display())),
+            size: Some(metadata.len()),
+            data: Some(data),
+            tags: Vec::new(),
+            read_error: None,
+        })
+    }
+
+    async fn other_attachment_from_http_url(
+        &self,
+        url: reqwest::Url,
+    ) -> Result<OtherAttachment, BoxError> {
+        let response = self.http.get(url.clone()).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("failed to fetch attachment URL {url}: {status}").into());
+        }
+
+        if let Some(content_length) = response.content_length()
+            && content_length > MAX_MEDIA_FILE_SIZE_BYTES
+        {
+            return Err(format!(
+                "attachment URL is too large: {content_length} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}"
+            )
+            .into());
+        }
+
+        let content_type = response_content_type(&response);
+        let data = read_limited_response_bytes(response).await?;
+        let mime_type = mime_type_for_data_or_name(
+            &data,
+            url.path(),
+            content_type.as_deref(),
+            "application/octet-stream",
+        );
+        let name = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("attachment")
+            .to_string();
+
+        Ok(OtherAttachment {
+            label: url.to_string(),
+            name,
+            mime_type: Some(mime_type),
+            uri: Some(url.to_string()),
+            size: Some(data.len() as u64),
+            data: Some(data),
+            tags: Vec::new(),
+            read_error: None,
+        })
+    }
+
+    async fn understand_other_attachment(
+        &self,
+        ctx: &AgentCtx,
+        mut attachment: OtherAttachment,
+        question: &str,
+    ) -> Result<AgentOutput, BoxError> {
+        if attachment.data.is_none()
+            && let Some(uri) = attachment
+                .uri
+                .as_deref()
+                .filter(|uri| !uri.trim().is_empty())
+        {
+            match self.other_attachment_from_location(ctx.meta(), uri).await {
+                Ok(mut loaded) => {
+                    if loaded.name.trim().is_empty() || loaded.name == "attachment" {
+                        loaded.name = attachment.name.clone();
+                    }
+                    if loaded.label.trim().is_empty() {
+                        loaded.label = attachment.label.clone();
+                    }
+                    if loaded.tags.is_empty() {
+                        loaded.tags = attachment.tags.clone();
+                    }
+                    attachment = loaded;
+                }
+                Err(err) => {
+                    attachment.read_error = Some(err.to_string());
+                    return self
+                        .fallback_other_attachment(ctx, attachment, question)
+                        .await;
+                }
+            }
+        }
+
+        let Some(data) = attachment.data.as_deref() else {
+            return self
+                .fallback_other_attachment(ctx, attachment, question)
+                .await;
+        };
+
+        if attachment_looks_like_pdf(data, &attachment) {
+            return self
+                .understand_pdf_attachment(ctx, attachment, question)
+                .await;
+        }
+
+        if let Some(text) = utf8_text_from_bytes(data) {
+            return self
+                .text_or_summary_output(
+                    ctx,
+                    &attachment.label,
+                    &attachment.name,
+                    "UTF-8 text attachment",
+                    text,
+                    question,
+                )
+                .await;
+        }
+
+        self.fallback_other_attachment(ctx, attachment, question)
+            .await
+    }
+
+    async fn understand_pdf_attachment(
+        &self,
+        ctx: &AgentCtx,
+        mut attachment: OtherAttachment,
+        question: &str,
+    ) -> Result<AgentOutput, BoxError> {
+        let Some(data) = attachment.data.clone() else {
+            return self
+                .fallback_other_attachment(ctx, attachment, question)
+                .await;
+        };
+
+        match parse_pdf_text(&data).await {
+            Ok(text) if !text.trim().is_empty() => {
+                self.text_or_summary_output(
+                    ctx,
+                    &attachment.label,
+                    &attachment.name,
+                    "PDF text parsed by LiteParse",
+                    &text,
+                    question,
+                )
+                .await
+            }
+            Ok(_) => Ok(AgentOutput {
+                content: format!(
+                    "LiteParse recognized {} as a PDF but did not extract text. The file may be scanned, image-only, encrypted, or otherwise sparse.",
+                    attachment.label
+                ),
+                ..Default::default()
+            }),
+            Err(err) => {
+                attachment.read_error = Some(format!("LiteParse failed: {err}"));
+                self.fallback_other_attachment(ctx, attachment, question)
+                    .await
+            }
+        }
+    }
+
+    async fn text_or_summary_output(
+        &self,
+        ctx: &AgentCtx,
+        label: &str,
+        name: &str,
+        source: &str,
+        text: &str,
+        question: &str,
+    ) -> Result<AgentOutput, BoxError> {
+        if text.len() <= MAX_OTHER_TEXT_INLINE_BYTES {
+            return Ok(AgentOutput {
+                content: format!(
+                    "Detected {source} from {label} ({} bytes). Full text:\n\n{}",
+                    text.len(),
+                    fenced_text(text_language_for_name(name), text)
+                ),
+                ..Default::default()
+            });
+        }
+
+        let (summary_input, truncated) = bounded_text_for_summary(text);
+        let mut output = ctx
+            .completion(
+                CompletionRequest {
+                    instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
+                    prompt: format!(
+                        "Summarize {source} from {label}. Original text length: {} bytes.{}\n\nCaller question or focus:\n{question}",
+                        text.len(),
+                        if truncated {
+                            " The supplied text is a bounded head/tail excerpt because the attachment is very large; say when conclusions may be incomplete."
+                        } else {
+                            ""
+                        }
+                    ),
+                    content: vec![ContentPart::Text {
+                        text: summary_input,
+                    }],
+                    max_output_tokens: Some(2048),
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .await?;
+
+        let summary = output.content.trim();
+        output.content = format!(
+            "Detected {source} from {label} ({} bytes). The text is too large to inline, so this is a summary{}:\n\n{}",
+            text.len(),
+            if truncated {
+                " based on a bounded excerpt"
+            } else {
+                ""
+            },
+            if summary.is_empty() {
+                "No summary was returned."
+            } else {
+                summary
+            }
+        );
+        Ok(output)
+    }
+
+    async fn fallback_other_attachment(
+        &self,
+        ctx: &AgentCtx,
+        attachment: OtherAttachment,
+        question: &str,
+    ) -> Result<AgentOutput, BoxError> {
+        let metadata = attachment.metadata_markdown();
+        let tools = ctx
+            .definitions(Some(&other_understanding_tool_names()))
+            .await;
+        let mut output = ctx
+            .completion(
+                CompletionRequest {
+                    instructions: self.kind.instructions(),
+                    prompt: format!(
+                        "Understand this non-image/audio/video attachment for the main agent.\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. If no skill fits, use safe shell or read-only file inspection to extract text or metadata when the attachment has an accessible local path or URL.\n3. If local tools are insufficient, use network-capable tools or shell commands to research a practical extraction method, then report the best next action.\n\nDo not invent attachment contents. If extraction is impossible, explain what was tried or what capability is missing.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
+                    ),
+                    tools,
+                    max_output_tokens: Some(2048),
+                    ..Default::default()
+                },
+                vec![attachment.to_resource()],
+            )
+            .await?;
+
+        if output.content.trim().is_empty() {
+            output.content = format!(
+                "No automatic parser produced output for this attachment.\n\nAttachment metadata:\n{metadata}"
+            );
+        }
+
+        Ok(output)
     }
 
     async fn content_from_location(
@@ -477,12 +921,24 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
         self.kind.tags()
     }
 
+    fn tool_dependencies(&self) -> Vec<String> {
+        if self.kind == MediaKind::Other {
+            other_understanding_tool_names()
+        } else {
+            Vec::new()
+        }
+    }
+
     async fn run(
         &self,
         ctx: AgentCtx,
         prompt: String,
         resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
+        if self.kind == MediaKind::Other {
+            return self.run_other(ctx, prompt, resources).await;
+        }
+
         let args = MediaUnderstandingArgs::from_prompt(&prompt);
         let resources_len = resources.len();
         let mut locations_len = 0;
@@ -539,6 +995,7 @@ pub fn media_agent_names() -> Vec<String> {
         IMAGE_UNDERSTANDING_AGENT_NAME,
         AUDIO_UNDERSTANDING_AGENT_NAME,
         VIDEO_UNDERSTANDING_AGENT_NAME,
+        OTHER_UNDERSTANDING_AGENT_NAME,
     ]
     .into_iter()
     .map(ToString::to_string)
@@ -547,7 +1004,12 @@ pub fn media_agent_names() -> Vec<String> {
 
 pub fn supported_media_resource_tags() -> Vec<String> {
     let mut tags = Vec::new();
-    for kind in [MediaKind::Image, MediaKind::Audio, MediaKind::Video] {
+    for kind in [
+        MediaKind::Image,
+        MediaKind::Audio,
+        MediaKind::Video,
+        MediaKind::Other,
+    ] {
         for tag in kind.tags() {
             if !tags.contains(&tag) {
                 tags.push(tag);
@@ -555,6 +1017,256 @@ pub fn supported_media_resource_tags() -> Vec<String> {
         }
     }
     tags
+}
+
+fn other_understanding_tool_names() -> Vec<String> {
+    vec![
+        TOOLS_SEARCH_NAME.to_string(),
+        TOOLS_SELECT_NAME.to_string(),
+        SkillManager::NAME.to_string(),
+        SubAgentManager::NAME.to_string(),
+        ShellTool::NAME.to_string(),
+        ReadFileTool::NAME.to_string(),
+        SearchFileTool::NAME.to_string(),
+    ]
+}
+
+#[derive(Clone, Debug)]
+struct OtherAttachment {
+    label: String,
+    name: String,
+    mime_type: Option<String>,
+    uri: Option<String>,
+    size: Option<u64>,
+    data: Option<Vec<u8>>,
+    tags: Vec<String>,
+    read_error: Option<String>,
+}
+
+impl OtherAttachment {
+    fn from_resource(resource: Resource) -> Self {
+        let label = resource_label(&resource);
+        let data = resource.blob.map(|blob| blob.0);
+        let size = resource
+            .size
+            .or_else(|| data.as_ref().map(|data| data.len() as u64));
+
+        Self {
+            label,
+            name: resource.name,
+            mime_type: resource.mime_type,
+            uri: resource.uri,
+            size,
+            data,
+            tags: resource.tags,
+            read_error: None,
+        }
+    }
+
+    fn to_resource(&self) -> Resource {
+        Resource {
+            name: self.name.clone(),
+            mime_type: self.mime_type.clone(),
+            uri: self.uri.clone(),
+            size: self.size,
+            blob: self.data.clone().map(ByteBufB64),
+            tags: self.tags.clone(),
+            ..Default::default()
+        }
+    }
+
+    fn metadata_markdown(&self) -> String {
+        let mut lines = vec![format!("- label: {}", self.label)];
+        if !self.name.trim().is_empty() {
+            lines.push(format!("- name: {}", self.name.trim()));
+        }
+        if let Some(mime_type) = self
+            .mime_type
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            lines.push(format!("- mime_type: {}", mime_type.trim()));
+        }
+        if let Some(uri) = self.uri.as_deref().filter(|value| !value.trim().is_empty()) {
+            lines.push(format!("- uri: {}", uri.trim()));
+            if let Some(path) = uri.strip_prefix("file://") {
+                lines.push(format!("- local_path: {path}"));
+            }
+        }
+        if let Some(size) = self.size {
+            lines.push(format!("- size_bytes: {size}"));
+        }
+        if !self.tags.is_empty() {
+            lines.push(format!("- tags: {}", self.tags.join(", ")));
+        }
+        if self.data.is_some() {
+            lines.push("- inline_blob_available: true".to_string());
+        }
+        if let Some(err) = self.read_error.as_deref() {
+            lines.push(format!("- read_error: {err}"));
+        }
+
+        lines.join("\n")
+    }
+}
+
+fn is_other_resource_candidate(resource: &Resource) -> bool {
+    resource.blob.is_some()
+        || resource
+            .uri
+            .as_deref()
+            .is_some_and(|uri| !uri.trim().is_empty())
+        || !resource.name.trim().is_empty()
+        || resource
+            .mime_type
+            .as_deref()
+            .is_some_and(|mime_type| !mime_type.trim().is_empty())
+        || resource.size.unwrap_or_default() > 0
+        || resource.tags.iter().any(|tag| !tag.trim().is_empty())
+}
+
+fn attachment_looks_like_pdf(data: &[u8], attachment: &OtherAttachment) -> bool {
+    attachment
+        .mime_type
+        .as_deref()
+        .and_then(normalize_mime_type)
+        .as_deref()
+        .is_some_and(is_pdf_mime_type)
+        || infer2::get(data).is_some_and(|kind| is_pdf_mime_type(kind.mime_type()))
+        || extension_from_name(&attachment.name).is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        || attachment
+            .uri
+            .as_deref()
+            .and_then(extension_from_name)
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+}
+
+fn is_pdf_mime_type(mime_type: &str) -> bool {
+    mime_type.trim().eq_ignore_ascii_case("application/pdf")
+}
+
+fn utf8_text_from_bytes(data: &[u8]) -> Option<&str> {
+    let text = std::str::from_utf8(data).ok()?;
+    looks_like_text(text).then_some(text)
+}
+
+fn looks_like_text(text: &str) -> bool {
+    let mut sampled = 0usize;
+    let mut suspicious = 0usize;
+    for ch in text.chars().take(4096) {
+        sampled += 1;
+        if ch.is_control() && !matches!(ch, '\n' | '\r' | '\t') {
+            suspicious += 1;
+        }
+    }
+
+    sampled == 0 || suspicious * 100 / sampled <= 5
+}
+
+async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
+    let mut config = LiteParseConfig {
+        quiet: true,
+        ..Default::default()
+    };
+    let parser = LiteParse::new(config.clone());
+    match parser.parse_input(PdfInput::Bytes(data.to_vec())).await {
+        Ok(result) => Ok(result.text),
+        Err(first_err) => {
+            config.ocr_enabled = false;
+            let parser = LiteParse::new(config);
+            parser
+                .parse_input(PdfInput::Bytes(data.to_vec()))
+                .await
+                .map(|result| result.text)
+                .map_err(|second_err| {
+                    format!("with OCR enabled: {first_err}; with OCR disabled: {second_err}").into()
+                })
+        }
+    }
+}
+
+fn fenced_text(language: &str, text: &str) -> String {
+    let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+    if language.is_empty() {
+        format!("{fence}\n{text}\n{fence}")
+    } else {
+        format!("{fence}{language}\n{text}\n{fence}")
+    }
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
+}
+
+fn text_language_for_name(name: &str) -> &'static str {
+    match extension_from_name(name)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("c") | Some("h") => "c",
+        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") => "cpp",
+        Some("css") => "css",
+        Some("csv") => "csv",
+        Some("go") => "go",
+        Some("html") | Some("htm") => "html",
+        Some("java") => "java",
+        Some("js") | Some("mjs") | Some("cjs") => "javascript",
+        Some("json") => "json",
+        Some("jsonl") => "jsonl",
+        Some("md") | Some("markdown") => "markdown",
+        Some("py") => "python",
+        Some("rs") => "rust",
+        Some("sh") | Some("bash") | Some("zsh") => "bash",
+        Some("toml") => "toml",
+        Some("ts") | Some("tsx") => "typescript",
+        Some("xml") => "xml",
+        Some("yaml") | Some("yml") => "yaml",
+        _ => "text",
+    }
+}
+
+fn bounded_text_for_summary(text: &str) -> (String, bool) {
+    if text.len() <= MAX_OTHER_TEXT_SUMMARY_BYTES {
+        return (text.to_string(), false);
+    }
+
+    let head_len = previous_char_boundary(text, MAX_OTHER_TEXT_SUMMARY_BYTES / 2);
+    let tail_start = next_char_boundary(text, text.len() - (MAX_OTHER_TEXT_SUMMARY_BYTES / 2));
+    let omitted = tail_start.saturating_sub(head_len);
+    (
+        format!(
+            "{}\n\n[... omitted {omitted} bytes from the middle of this attachment ...]\n\n{}",
+            &text[..head_len],
+            &text[tail_start..]
+        ),
+        true,
+    )
+}
+
+fn previous_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn next_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
 }
 
 pub async fn understand_media_resources(
@@ -585,14 +1297,14 @@ pub async fn understand_media_resources(
                     let content = agent_output.content.trim();
                     let text = if content.is_empty() {
                         format!(
-                            "[$system: kind={}]\n{} understanding {} from attachments\n\nNo description was returned.",
+                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nNo description was returned.",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label
                         )
                     } else {
                         format!(
-                            "[$system: kind={}]\n{} understanding {} from attachments\n\n{}",
+                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\n{}",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label,
@@ -604,7 +1316,7 @@ pub async fn understand_media_resources(
                 }
                 Err(err) => (
                     format!(
-                        "[$system: kind={}]\n{} understanding {} from attachments\n\nFailed to understand this {} from attachments, error: {}",
+                        "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nFailed to understand this {} from attachments, error: {}",
                         kind.agent_name(),
                         title_case(kind.noun()),
                         label,
@@ -920,6 +1632,7 @@ mod tests {
             MediaUnderstandingAgent::image(Vec::new()),
             MediaUnderstandingAgent::audio(Vec::new()),
             MediaUnderstandingAgent::video(Vec::new()),
+            MediaUnderstandingAgent::other(Vec::new()),
         ] {
             let definition = agent.definition();
             assert_eq!(definition.strict, Some(true));
@@ -970,6 +1683,34 @@ mod tests {
     }
 
     #[test]
+    fn detects_other_kind_for_utf8_blob() {
+        let resource = Resource {
+            name: "notes.txt".to_string(),
+            blob: Some(ByteBufB64(b"hello from a text attachment".to_vec())),
+            ..Default::default()
+        };
+
+        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Other));
+    }
+
+    #[test]
+    fn detects_other_kind_for_pdf() {
+        let resource = Resource {
+            name: "report.bin".to_string(),
+            mime_type: Some("application/pdf".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Other));
+    }
+
+    #[test]
+    fn media_agent_names_include_other_understanding() {
+        assert!(media_agent_names().contains(&OTHER_UNDERSTANDING_AGENT_NAME.to_string()));
+        assert!(supported_media_resource_tags().contains(&"pdf".to_string()));
+    }
+
+    #[test]
     fn blank_alias_question_uses_default_question() {
         let args =
             MediaUnderstandingArgs::from_prompt(r#"{"path":"audio/sample.mp3","query":"   "}"#);
@@ -995,6 +1736,30 @@ mod tests {
             merge_resource_description(Some("Original description"), "   "),
             "Original description"
         );
+    }
+
+    #[test]
+    fn utf8_text_detection_rejects_control_heavy_binary() {
+        assert_eq!(utf8_text_from_bytes(b"plain text"), Some("plain text"));
+        assert!(utf8_text_from_bytes(&[0, 0, 0, 0, 0, 0]).is_none());
+    }
+
+    #[test]
+    fn bounded_text_for_summary_preserves_char_boundaries() {
+        let text = "你".repeat(MAX_OTHER_TEXT_SUMMARY_BYTES);
+        let (bounded, truncated) = bounded_text_for_summary(&text);
+
+        assert!(truncated);
+        assert!(bounded.contains("omitted"));
+        assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn fenced_text_extends_backtick_fence() {
+        let fenced = fenced_text("markdown", "```inner```");
+
+        assert!(fenced.starts_with("````markdown"));
+        assert!(fenced.ends_with("````"));
     }
 
     #[test]

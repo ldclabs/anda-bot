@@ -4,16 +4,21 @@
 
 <script lang="ts">
   import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
+  import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import { Check, Clipboard, Download, FileText, Image, LoaderCircle, Wrench } from '@lucide/svelte'
-  import { onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
 
   let { message }: { message: ChatMessage } = $props()
 
   let copied = $state(false)
   let detailsExpanded = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
+  let resourceBlobs = $state(new Map<number, string>())
+  let resourceObjectUrls = $state(new Map<string, string>())
+  let loadingResourceIds = $state(new Set<number>())
+  let failedResourceIds = $state(new Set<number>())
   const isUser = $derived(message.role === 'user')
   const isSystem = $derived(message.role === 'system')
   const isTool = $derived(message.role === 'tool')
@@ -83,8 +88,33 @@
     return attachment.type || attachment.resource.mime_type || ''
   }
 
+  function resourceId(attachment: ChatAttachment): number {
+    return attachment.resource._id || 0
+  }
+
+  function attachmentCacheKey(attachment: ChatAttachment): string {
+    const id = resourceId(attachment)
+    return id ? `resource:${id}` : attachment.id
+  }
+
+  function attachmentResourceBlob(attachment: ChatAttachment): string {
+    const inlineBlob = attachment.resource.blob?.trim()
+    if (inlineBlob) {
+      return inlineBlob
+    }
+
+    const id = resourceId(attachment)
+    return id ? (resourceBlobs.get(id) || '').trim() : ''
+  }
+
+  function attachmentObjectUrl(attachment: ChatAttachment): string {
+    return resourceObjectUrls.get(attachmentCacheKey(attachment)) || ''
+  }
+
   function attachmentMetaLabel(attachment: ChatAttachment): string {
-    return [attachmentMimeType(attachment), fileSizeLabel(attachment.size)].filter(Boolean).join(' / ')
+    return [attachmentMimeType(attachment), fileSizeLabel(attachment.size)]
+      .filter(Boolean)
+      .join(' / ')
   }
 
   function attachmentDescription(attachment: ChatAttachment): string {
@@ -95,9 +125,9 @@
   }
 
   function attachmentDownloadUrl(attachment: ChatAttachment): string {
-    const blob = attachment.resource.blob?.trim()
-    if (blob) {
-      return `data:${attachmentMimeType(attachment) || 'application/octet-stream'};base64,${blob}`
+    const objectUrl = attachmentObjectUrl(attachment)
+    if (objectUrl) {
+      return objectUrl
     }
 
     const uri = attachment.resource.uri?.trim()
@@ -111,17 +141,167 @@
     return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'attachment'
   }
 
+  function attachmentHasDownloadData(attachment: ChatAttachment): boolean {
+    return Boolean(
+      attachmentDownloadUrl(attachment) ||
+      attachmentResourceBlob(attachment) ||
+      resourceId(attachment)
+    )
+  }
+
+  function attachmentSaveTitle(attachment: ChatAttachment): string {
+    return attachmentHasDownloadData(attachment)
+      ? `Save ${attachment.name}`
+      : 'No downloadable data'
+  }
+
+  function normalizeBase64(value: string): string {
+    const payload = value.trim().replace(/^data:[^,]*,/i, '')
+    const normalized = payload.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
+    const remainder = normalized.length % 4
+    return remainder ? normalized + '='.repeat(4 - remainder) : normalized
+  }
+
+  function base64ToBytes(value: string): Uint8Array {
+    const binary = atob(normalizeBase64(value))
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  }
+
+  function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+    const buffer = new ArrayBuffer(bytes.byteLength)
+    new Uint8Array(buffer).set(bytes)
+    return buffer
+  }
+
+  function ensureAttachmentObjectUrl(
+    attachment: ChatAttachment,
+    blob = attachmentResourceBlob(attachment)
+  ): string {
+    const existingUrl = attachmentObjectUrl(attachment)
+    if (existingUrl || !blob) {
+      return existingUrl
+    }
+
+    try {
+      const url = URL.createObjectURL(
+        new Blob([bytesToArrayBuffer(base64ToBytes(blob))], {
+          type: attachmentMimeType(attachment) || 'application/octet-stream'
+        })
+      )
+      resourceObjectUrls = new Map([...resourceObjectUrls, [attachmentCacheKey(attachment), url]])
+      return url
+    } catch (error) {
+      console.warn('Failed to create attachment object URL', resourceId(attachment), error)
+      return ''
+    }
+  }
+
+  function downloadWithAnchor(url: string, filename: string) {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  }
+
+  async function loadAttachmentResource(
+    attachment: ChatAttachment,
+    options: { retry?: boolean } = {}
+  ): Promise<string> {
+    const id = resourceId(attachment)
+    if (!id) {
+      return attachmentResourceBlob(attachment)
+    }
+
+    const existingBlob = attachmentResourceBlob(attachment)
+    if (existingBlob) {
+      return existingBlob
+    }
+    if (loadingResourceIds.has(id) || (!options.retry && failedResourceIds.has(id))) {
+      return ''
+    }
+
+    loadingResourceIds = new Set([...loadingResourceIds, id])
+    const nextFailed = new Set(failedResourceIds)
+    nextFailed.delete(id)
+    failedResourceIds = nextFailed
+
+    try {
+      const resource = await andaClient.loadResource(attachment.resource)
+      const blob = resource?.blob?.trim() || ''
+      if (blob) {
+        resourceBlobs = new Map([...resourceBlobs, [id, blob]])
+        ensureAttachmentObjectUrl(attachment, blob)
+        return blob
+      }
+
+      failedResourceIds = new Set([...failedResourceIds, id])
+      return ''
+    } catch (error) {
+      failedResourceIds = new Set([...failedResourceIds, id])
+      console.warn('Failed to load attachment resource', id, error)
+      return ''
+    } finally {
+      const nextLoading = new Set(loadingResourceIds)
+      nextLoading.delete(id)
+      loadingResourceIds = nextLoading
+    }
+  }
+
+  function loadImageAttachmentResources() {
+    for (const attachment of message.attachments || []) {
+      if (
+        attachmentMimeType(attachment).startsWith('image/') &&
+        attachmentResourceBlob(attachment) &&
+        !attachmentObjectUrl(attachment)
+      ) {
+        ensureAttachmentObjectUrl(attachment)
+      }
+
+      if (
+        attachmentMimeType(attachment).startsWith('image/') &&
+        resourceId(attachment) &&
+        !attachmentResourceBlob(attachment) &&
+        !loadingResourceIds.has(resourceId(attachment)) &&
+        !failedResourceIds.has(resourceId(attachment))
+      ) {
+        loadAttachmentResource(attachment).catch(() => undefined)
+      }
+    }
+  }
+
   async function saveAttachment(attachment: ChatAttachment) {
-    const url = attachmentDownloadUrl(attachment)
-    if (!url || !chrome.downloads?.download) {
+    let url = attachmentDownloadUrl(attachment)
+    if (!url && resourceId(attachment)) {
+      await loadAttachmentResource(attachment, { retry: true })
+      url = attachmentDownloadUrl(attachment)
+    }
+    if (!url && attachmentResourceBlob(attachment)) {
+      ensureAttachmentObjectUrl(attachment)
+      url = attachmentDownloadUrl(attachment)
+    }
+
+    if (!url) {
       return
     }
 
     downloadingAttachmentIds = new Set([...downloadingAttachmentIds, attachment.id])
     try {
+      const filename = safeDownloadName(attachment.name)
+      if (url.startsWith('blob:') || !chrome.downloads?.download) {
+        downloadWithAnchor(url, filename)
+        return
+      }
+
       await chrome.downloads.download({
         url,
-        filename: safeDownloadName(attachment.name),
+        filename,
         saveAs: true
       })
     } finally {
@@ -131,12 +311,22 @@
     }
   }
 
+  $effect(() => {
+    loadImageAttachmentResources()
+  })
+
   onMount(() => {
     if (expandedDetailMessageIds.has(message.id)) {
       detailsExpanded = true
     }
     hook()
     thinkingHook()
+  })
+
+  onDestroy(() => {
+    for (const url of resourceObjectUrls.values()) {
+      URL.revokeObjectURL(url)
+    }
   })
 </script>
 
@@ -216,12 +406,14 @@
                   <div
                     class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border border-border/60 bg-muted/50 text-emerald-700"
                   >
-                    {#if attachmentMimeType(attachment).startsWith('image/') && attachment.resource.blob}
+                    {#if attachmentMimeType(attachment).startsWith('image/') && attachmentObjectUrl(attachment)}
                       <img
-                        src={`data:${attachmentMimeType(attachment)};base64,${attachment.resource.blob}`}
+                        src={attachmentObjectUrl(attachment)}
                         alt={attachment.name}
                         class="size-full object-cover"
                       />
+                    {:else if attachmentMimeType(attachment).startsWith('image/') && loadingResourceIds.has(resourceId(attachment))}
+                      <LoaderCircle class="size-4 animate-spin" />
                     {:else if attachmentMimeType(attachment).startsWith('image/')}
                       <Image class="size-4" />
                     {:else}
@@ -247,15 +439,14 @@
                       'icon-xs',
                       'size-6 rounded-sm text-muted-foreground hover:text-emerald-700'
                     )}
-                    disabled={!attachmentDownloadUrl(attachment) ||
-                      downloadingAttachmentIds.has(attachment.id)}
+                    disabled={!attachmentHasDownloadData(attachment) ||
+                      downloadingAttachmentIds.has(attachment.id) ||
+                      loadingResourceIds.has(resourceId(attachment))}
                     aria-label={`Save ${attachment.name}`}
-                    title={attachmentDownloadUrl(attachment)
-                      ? `Save ${attachment.name}`
-                      : 'No downloadable data'}
+                    title={attachmentSaveTitle(attachment)}
                     onclick={() => saveAttachment(attachment)}
                   >
-                    {#if downloadingAttachmentIds.has(attachment.id)}
+                    {#if downloadingAttachmentIds.has(attachment.id) || loadingResourceIds.has(resourceId(attachment))}
                       <LoaderCircle class="size-3 animate-spin" />
                     {:else}
                       <Download class="size-3" />

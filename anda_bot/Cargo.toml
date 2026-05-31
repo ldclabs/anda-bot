@@ -55,6 +55,7 @@ tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
 libc = { workspace = true }
+liteparse = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }

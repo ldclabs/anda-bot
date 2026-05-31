@@ -64,6 +64,8 @@ export class AndaSidePanelClient extends EventTarget {
   updateState = $state<AutoUpdateState | null>(null)
 
   #initPromise: Promise<void> | null = null
+  #resourceCache = new Map<number, Resource>()
+  #resourceRequests = new Map<number, Promise<Resource>>()
   #localChannelSource = ''
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
   #tabUpdatedListener?: (tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
@@ -430,6 +432,39 @@ export class AndaSidePanelClient extends EventTarget {
     return state
   }
 
+  async loadResource(resource: Resource): Promise<Resource | null> {
+    const id = resource._id || 0
+    if (!id) {
+      return resource.blob ? resource : null
+    }
+    if (resource.blob) {
+      return resource
+    }
+
+    const cached = this.#resourceCache.get(id)
+    if (cached) {
+      return mergeResource(resource, cached)
+    }
+
+    let request = this.#resourceRequests.get(id)
+    if (!request) {
+      request = this.toolCall<RpcOutput<Resource>>('resources_api', {
+        type: 'GetResource',
+        _id: id
+      })
+        .then(({ output: { result } }) => {
+          this.#resourceCache.set(id, result)
+          return result
+        })
+        .finally(() => {
+          this.#resourceRequests.delete(id)
+        })
+      this.#resourceRequests.set(id, request)
+    }
+
+    return mergeResource(resource, await request)
+  }
+
   async installUpdateAndRestart(): Promise<AutoUpdateState | null> {
     if (!this.settings.token) {
       this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
@@ -753,6 +788,20 @@ function normalizeModelState(state: DaemonModelState | null | undefined): ModelS
   return {
     activeModel: activeModel || null,
     modelNames
+  }
+}
+
+function mergeResource(summary: Resource, full: Resource): Resource {
+  return {
+    ...summary,
+    ...full,
+    tags: full.tags?.length ? full.tags : summary.tags,
+    metadata: {
+      ...(summary.metadata || {}),
+      ...(full.metadata || {})
+    },
+    blob: full.blob || summary.blob,
+    description: full.description || summary.description
   }
 }
 

@@ -224,7 +224,7 @@ impl Engines {
             brain_client.clone(),
             cfg.home_dir.clone(),
             conversations_tool.clone(),
-            resource_store,
+            resource_store.clone(),
             completion_hooks,
             skills_tool.clone(),
             chrome_tabs_tool.clone(),
@@ -242,6 +242,10 @@ impl Engines {
         );
         let video_understanding_agent = Arc::new(
             MediaUnderstandingAgent::video(cfg.workspaces.clone())
+                .with_http_client(outer_http_client.clone()),
+        );
+        let other_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::other(cfg.workspaces.clone())
                 .with_http_client(outer_http_client.clone()),
         );
         let voice_capabilities = BrowserVoiceCapabilities {
@@ -286,6 +290,7 @@ impl Engines {
             .register_tool(chrome_input_tool)?
             .register_tool(chrome_script_tool)?
             .register_tool(skills_tool.clone())?
+            .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
             .register_tool(bot.clone())?;
 
@@ -309,9 +314,11 @@ impl Engines {
                 video_understanding_agent.clone(),
                 Some(video_understanding_agent.model_label().to_string()),
             )?
+            .register_agent(other_understanding_agent.clone(), None)?
             .register_agent(bot.clone(), None)?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
+                ResourceStore::NAME.to_string(),
                 Tool::name(bot.as_ref()),
             ]);
 
