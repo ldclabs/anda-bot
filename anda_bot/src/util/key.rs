@@ -172,3 +172,61 @@ pub fn random_ed25519_privkey() -> [u8; 32] {
     rand::Rng::fill_bytes(&mut rng, &mut bytes);
     bytes
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: [u8; 32] = [
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32,
+    ];
+
+    #[test]
+    fn private_key_round_trips_between_raw_and_cose_formats() {
+        let raw = ByteBufB64(SECRET.to_vec()).to_string();
+        assert_eq!(parse_ed25519_privkey(&raw).unwrap(), SECRET);
+
+        let encoded = encode_ed25519_privkey(&SECRET).unwrap();
+        assert_eq!(parse_ed25519_privkey(&encoded).unwrap(), SECRET);
+    }
+
+    #[test]
+    fn public_key_parser_accepts_raw_public_key_bytes() {
+        let key = Ed25519Key::new(SECRET);
+        let raw = ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string();
+
+        assert_eq!(
+            parse_ed25519_pubkey(&raw).unwrap(),
+            *key.pubkey().as_bytes()
+        );
+    }
+
+    #[test]
+    fn key_constructors_derive_matching_principals_and_identity() {
+        let key = Ed25519Key::new(SECRET);
+        let pubkey = key.pubkey();
+
+        assert_eq!(key.id(), pubkey.id());
+        assert_eq!(key.as_bytes(), &SECRET);
+        assert_eq!(key.identity().sender().unwrap(), key.id());
+    }
+
+    #[test]
+    fn invalid_key_input_returns_error() {
+        assert!(parse_ed25519_privkey("not base64").is_err());
+        assert!(parse_ed25519_pubkey("not base64").is_err());
+
+        let short = ByteBufB64(vec![1, 2, 3]).to_string();
+        assert!(parse_ed25519_privkey(&short).is_err());
+        assert!(parse_ed25519_pubkey(&short).is_err());
+    }
+
+    #[test]
+    fn random_private_key_has_expected_length_and_is_not_all_zeroes() {
+        let key = random_ed25519_privkey();
+
+        assert_eq!(key.len(), 32);
+        assert!(key.iter().any(|byte| *byte != 0));
+    }
+}

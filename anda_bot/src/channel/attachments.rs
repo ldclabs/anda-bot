@@ -203,3 +203,124 @@ async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, 
 fn local_file_uri(path: &Path) -> String {
     format!("file://{}", path.to_string_lossy())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_path_component_keeps_safe_ascii_and_collapses_separators() {
+        assert_eq!(
+            sanitize_path_component(" report-01.json ", "fallback"),
+            "report-01.json"
+        );
+        assert_eq!(
+            sanitize_path_component("../奇怪 文件?.png", "fallback"),
+            "png"
+        );
+        assert_eq!(
+            sanitize_path_component("***", "fallback.bin"),
+            "fallback.bin"
+        );
+        assert_eq!(
+            sanitize_path_component(&"a".repeat(128), "fallback"),
+            "a".repeat(96)
+        );
+    }
+
+    #[test]
+    fn stored_attachment_name_uses_sanitized_message_key_and_file_name() {
+        assert_eq!(
+            stored_attachment_name(Some(" chat/42 "), " report final.pdf "),
+            "chat_42-report_final.pdf"
+        );
+
+        let generated = stored_attachment_name(Some("***"), "***");
+        assert!(generated.ends_with("-attachment.bin"));
+        assert!(
+            generated[..generated.len() - "-attachment.bin".len()]
+                .chars()
+                .all(|ch| ch.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn infer_resource_normalizes_name_mime_and_tags() {
+        let resource = infer_resource(Resource {
+            name: " photo ".to_string(),
+            mime_type: Some("image/png".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(resource.name, "photo.png");
+        assert_eq!(resource.mime_type.as_deref(), Some("image/png"));
+        assert!(resource.tags.iter().any(|tag| tag == "Image"));
+    }
+
+    #[test]
+    fn file_name_for_resource_uses_trimmed_name_or_inferred_fallback() {
+        let named = Resource {
+            name: " document.txt ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(file_name_for_resource(&named), "document.txt");
+
+        let inferred = Resource {
+            name: String::new(),
+            mime_type: Some("image/png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(file_name_for_resource(&inferred), "Image.png");
+
+        assert_eq!(file_name_for_resource(&Resource::default()), "document.bin");
+    }
+
+    #[test]
+    fn resource_from_bytes_sets_blob_size_description_and_infers_when_possible() {
+        let png = vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R',
+        ];
+        let resource = resource_from_bytes("screenshot".to_string(), png.clone(), "screen grab");
+
+        assert_eq!(resource.description.as_deref(), Some("screen grab"));
+        assert_eq!(resource.size, Some(png.len() as u64));
+        assert_eq!(
+            resource.blob.as_ref().map(|blob| blob.0.as_slice()),
+            Some(png.as_slice())
+        );
+        assert_eq!(resource.name, "screenshot.png");
+        assert_eq!(resource.mime_type.as_deref(), Some("image/png"));
+    }
+
+    #[test]
+    fn http_url_detection_is_scheme_specific() {
+        assert!(is_http_url("http://example.com/file"));
+        assert!(is_http_url("https://example.com/file"));
+        assert!(!is_http_url("ftp://example.com/file"));
+        assert!(!is_http_url("HTTPS://example.com/file"));
+    }
+
+    #[tokio::test]
+    async fn unique_attachment_path_adds_suffix_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let existing = dir.path().join("voice.mp3");
+        tokio::fs::write(&existing, b"old").await.unwrap();
+
+        let path = unique_attachment_path(dir.path(), "voice.mp3")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("voice-1.mp3")
+        );
+    }
+
+    #[test]
+    fn local_file_uri_prefixes_path_losslessly() {
+        assert_eq!(
+            local_file_uri(Path::new("/tmp/voice.mp3")),
+            "file:///tmp/voice.mp3"
+        );
+    }
+}

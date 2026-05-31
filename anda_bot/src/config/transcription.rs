@@ -238,3 +238,84 @@ fn default_openai_stt_model() -> String {
 fn default_google_stt_language_code() -> String {
     "en-US".into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_transcription_config_uses_groq_and_safe_limits() {
+        let config = TranscriptionConfig::default();
+
+        assert!(!config.enabled);
+        assert_eq!(config.default_provider, "groq");
+        assert_eq!(config.initial_prompt, None);
+        assert_eq!(config.max_duration_secs, 120);
+        assert!(config.groq.is_none());
+        assert!(config.openai.is_none());
+        assert!(config.google.is_none());
+        assert!(config.stepfun.is_none());
+        assert!(config.local_whisper.is_none());
+        assert!(!config.transcribe_non_ptt_audio);
+    }
+
+    #[test]
+    fn partial_transcription_config_deserializes_with_defaults() {
+        let config: TranscriptionConfig = serde_json::from_value(json!({
+            "enabled": true,
+            "initial_prompt": "project names"
+        }))
+        .unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(config.default_provider, "groq");
+        assert_eq!(config.initial_prompt.as_deref(), Some("project names"));
+        assert_eq!(config.max_duration_secs, 120);
+        assert!(!config.transcribe_non_ptt_audio);
+    }
+
+    #[test]
+    fn stt_provider_defaults_match_expected_models() {
+        let groq: GroqSttConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(
+            groq.api_url,
+            "https://api.groq.com/openai/v1/audio/transcriptions"
+        );
+        assert_eq!(groq.model, "whisper-large-v3-turbo");
+        assert_eq!(groq.language, None);
+        assert_eq!(groq.language_code, "en-US");
+
+        let openai: OpenAiSttConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(openai.api_key, "");
+        assert_eq!(openai.model, "whisper-1");
+
+        let google: GoogleSttConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(google.api_key, "");
+        assert_eq!(google.language_code, "en-US");
+    }
+
+    #[test]
+    fn stepfun_and_local_whisper_defaults_are_complete() {
+        let stepfun = StepFunSttConfig::default();
+        assert_eq!(stepfun.api_url, "https://api.stepfun.com/v1/audio/asr/sse");
+        assert_eq!(stepfun.model, "stepaudio-2.5-asr");
+        assert_eq!(stepfun.language, "zh");
+        assert!(stepfun.hotwords.is_empty());
+        assert_eq!(stepfun.prompt, None);
+        assert!(stepfun.enable_itn);
+        assert_eq!(stepfun.pcm_codec, "pcm_s16le");
+        assert_eq!(stepfun.pcm_rate, 16000);
+        assert_eq!(stepfun.pcm_bits, 16);
+        assert_eq!(stepfun.pcm_channel, 1);
+
+        let local: LocalWhisperConfig = serde_json::from_value(json!({
+            "url": "http://127.0.0.1:8001/v1/transcribe"
+        }))
+        .unwrap();
+        assert_eq!(local.url, "http://127.0.0.1:8001/v1/transcribe");
+        assert_eq!(local.bearer_token, None);
+        assert_eq!(local.max_audio_bytes, 25 * 1024 * 1024);
+        assert_eq!(local.timeout_secs, 300);
+    }
+}

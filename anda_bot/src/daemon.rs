@@ -466,3 +466,89 @@ pub fn process_exists(pid: u32) -> bool {
 pub fn process_exists(_pid: u32) -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn daemon_at(home: &str) -> Daemon {
+        Daemon::new(PathBuf::from(home), Config::default())
+    }
+
+    #[test]
+    fn daemon_paths_are_rooted_under_home() {
+        let daemon = daemon_at("/tmp/anda-home");
+
+        assert_eq!(
+            daemon.config_file_path(),
+            PathBuf::from("/tmp/anda-home/config.yaml")
+        );
+        assert_eq!(
+            daemon.pid_file_path(),
+            PathBuf::from("/tmp/anda-home/anda-daemon.pid")
+        );
+        assert_eq!(daemon.keys_dir_path(), PathBuf::from("/tmp/anda-home/keys"));
+        assert_eq!(daemon.db_dir_path(), PathBuf::from("/tmp/anda-home/db"));
+        assert_eq!(
+            daemon.skills_dir_path(),
+            PathBuf::from("/tmp/anda-home/skills")
+        );
+        assert_eq!(
+            daemon.sandbox_dir_path(),
+            PathBuf::from("/tmp/anda-home/sandbox")
+        );
+        assert_eq!(daemon.logs_dir_path(), PathBuf::from("/tmp/anda-home/logs"));
+        assert_eq!(
+            daemon.channels_dir_path(),
+            PathBuf::from("/tmp/anda-home/channels")
+        );
+        assert_eq!(
+            daemon.workspace_dir_path(),
+            PathBuf::from("/tmp/anda-home/workspace")
+        );
+    }
+
+    #[test]
+    fn workspaces_include_runtime_writable_directories() {
+        let daemon = daemon_at("/tmp/anda-home");
+
+        assert_eq!(
+            daemon.workspaces(),
+            vec![
+                PathBuf::from("/tmp/anda-home/workspace"),
+                PathBuf::from("/tmp/anda-home/sandbox"),
+                PathBuf::from("/tmp/anda-home/channels"),
+                PathBuf::from("/tmp/anda-home/skills"),
+            ]
+        );
+    }
+
+    #[test]
+    fn bot_db_config_matches_runtime_storage_defaults() {
+        let config = Daemon::bot_db_config();
+
+        assert_eq!(config.name, "bot_db");
+        assert_eq!(config.description, "Anda Brain database");
+        assert_eq!(config.storage.cache_max_capacity, 100000);
+        assert_eq!(config.storage.compress_level, 3);
+        assert_eq!(config.storage.object_chunk_size, 256 * 1024);
+        assert_eq!(config.storage.bucket_overload_size, 1024 * 1024);
+        assert_eq!(config.storage.max_small_object_size, 1024 * 1024 * 10);
+        assert!(config.lock.is_none());
+    }
+
+    #[test]
+    fn base_url_delegates_to_config_address() {
+        let mut config = Config::default();
+        config.addr = "0.0.0.0:9000".to_string();
+        let daemon = Daemon::new(PathBuf::from("/tmp/anda-home"), config);
+
+        assert_eq!(daemon.base_url(), "http://127.0.0.1:9000");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_process_is_detected_as_existing() {
+        assert!(process_exists(std::process::id()));
+    }
+}

@@ -295,3 +295,53 @@ pub trait Channel: Send + Sync {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_message_new_sets_required_fields_only() {
+        let message = SendMessage::new("hello", "alice");
+
+        assert_eq!(message.content, "hello");
+        assert_eq!(message.recipient, "alice");
+        assert_eq!(message.subject, None);
+        assert_eq!(message.thread, None);
+        assert!(message.attachments.is_empty());
+    }
+
+    #[test]
+    fn send_message_builders_preserve_subject_thread_and_attachments() {
+        let attachment = Resource {
+            name: "voice.mp3".to_string(),
+            mime_type: Some("audio/mpeg".to_string()),
+            ..Default::default()
+        };
+        let message = SendMessage::with_subject("report", "ops", "daily")
+            .in_thread(Some("thread-42".to_string()))
+            .with_attachments(vec![attachment]);
+
+        assert_eq!(message.content, "report");
+        assert_eq!(message.recipient, "ops");
+        assert_eq!(message.subject.as_deref(), Some("daily"));
+        assert_eq!(message.thread.as_deref(), Some("thread-42"));
+        assert_eq!(message.attachments.len(), 1);
+        assert_eq!(message.attachments[0].name, "voice.mp3");
+        assert_eq!(
+            message.attachments[0].mime_type.as_deref(),
+            Some("audio/mpeg")
+        );
+    }
+
+    #[test]
+    fn channel_init_result_constructors_encode_changed_state() {
+        let changed = ChannelInitResult::changed("created config");
+        assert!(changed.changed);
+        assert_eq!(changed.message, "created config");
+
+        let unchanged = ChannelInitResult::unchanged("already configured");
+        assert!(!unchanged.changed);
+        assert_eq!(unchanged.message, "already configured");
+    }
+}

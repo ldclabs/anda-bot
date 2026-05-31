@@ -460,3 +460,124 @@ impl IrcChannelSettings {
 fn default_port() -> u16 {
     6697
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn lark_platform_maps_to_correct_endpoints_and_headers() {
+        assert_eq!(LarkPlatform::Lark.api_base(), DEFAULT_LARK_API_BASE);
+        assert_eq!(LarkPlatform::Lark.ws_base(), DEFAULT_LARK_WS_BASE);
+        assert_eq!(LarkPlatform::Lark.locale_header(), "en");
+        assert_eq!(LarkPlatform::Lark.channel_name(), "lark");
+
+        assert_eq!(LarkPlatform::Feishu.api_base(), DEFAULT_FEISHU_API_BASE);
+        assert_eq!(LarkPlatform::Feishu.ws_base(), DEFAULT_FEISHU_WS_BASE);
+        assert_eq!(LarkPlatform::Feishu.locale_header(), "zh");
+        assert_eq!(LarkPlatform::Feishu.channel_name(), "feishu");
+    }
+
+    #[test]
+    fn channel_ids_trim_or_fall_back_to_defaults() {
+        let lark = LarkChannelSettings {
+            id: Some("  work  ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(lark.channel_id(), "work");
+        assert_eq!(LarkChannelSettings::default().channel_id(), "default");
+
+        let discord = DiscordChannelSettings {
+            id: Some("  server  ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(discord.channel_id(), "server");
+        assert_eq!(DiscordChannelSettings::default().channel_id(), "default");
+
+        let telegram = TelegramChannelSettings {
+            id: Some("  personal  ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(telegram.channel_id(), "personal");
+        assert_eq!(TelegramChannelSettings::default().channel_id(), "default");
+
+        let wechat = WechatChannelSettings {
+            id: Some("  wx  ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(wechat.channel_id(), "wx");
+        assert_eq!(WechatChannelSettings::default().channel_id(), "default");
+
+        let irc = IrcChannelSettings {
+            server: "  irc.libera.chat  ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(irc.channel_id(), "irc.libera.chat");
+        assert_eq!(IrcChannelSettings::default().label(2), "#3");
+    }
+
+    #[test]
+    fn default_channel_settings_are_empty_until_meaningful_fields_are_set() {
+        assert!(LarkChannelSettings::default().is_empty());
+        assert!(DiscordChannelSettings::default().is_empty());
+        assert!(TelegramChannelSettings::default().is_empty());
+        assert!(WechatChannelSettings::default().is_empty());
+        assert!(IrcChannelSettings::default().is_empty());
+
+        assert!(
+            !LarkChannelSettings {
+                app_id: "cli_a".to_string(),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !DiscordChannelSettings {
+                listen_to_bots: true,
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !TelegramChannelSettings {
+                mention_only: true,
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !WechatChannelSettings {
+                route_tag: Some(7),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !IrcChannelSettings {
+                verify_tls: false,
+                ..Default::default()
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn serde_defaults_preserve_ack_and_irc_port_defaults() {
+        let settings: ChannelSettings = serde_json::from_value(json!({
+            "lark": [{}],
+            "discord": [{}],
+            "telegram": [{}],
+            "irc": [{}],
+            "wechat": [{}]
+        }))
+        .unwrap();
+
+        assert!(settings.lark[0].ack_reactions);
+        assert!(settings.discord[0].ack_reactions);
+        assert!(settings.telegram[0].ack_reactions);
+        assert_eq!(settings.irc[0].port, 6697);
+        assert!(settings.irc[0].verify_tls);
+        assert_eq!(settings.wechat[0].route_tag, None);
+    }
+}

@@ -201,3 +201,32 @@ fn format_duration_ms(ms: u64) -> String {
     let hours = mins / 60;
     format!("{}h{}m", hours, mins % 60)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_str_returns_dash_for_missing_or_blank_values() {
+        assert_eq!(optional_str(&None), "-");
+        assert_eq!(optional_str(&Some(String::new())), "-");
+        assert_eq!(optional_str(&Some("   ".to_string())), "-");
+        assert_eq!(optional_str(&Some("alice".to_string())), "alice");
+    }
+
+    #[test]
+    fn single_line_collapses_all_whitespace() {
+        assert_eq!(single_line("hello\n  brave\tworld"), "hello brave world");
+        assert_eq!(single_line("  already   spaced  "), "already spaced");
+    }
+
+    #[test]
+    fn format_duration_ms_uses_seconds_minutes_or_hours() {
+        assert_eq!(format_duration_ms(0), "0s");
+        assert_eq!(format_duration_ms(59_999), "59s");
+        assert_eq!(format_duration_ms(60_000), "1m0s");
+        assert_eq!(format_duration_ms(125_000), "2m5s");
+        assert_eq!(format_duration_ms(3_600_000), "1h0m");
+        assert_eq!(format_duration_ms(7_260_000), "2h1m");
+    }
+}

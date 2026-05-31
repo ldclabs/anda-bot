@@ -89,3 +89,45 @@ fn open_daily_log_file(logs_dir: &Path, file_prefix: &str, date: NaiveDate) -> i
 fn daily_log_file_name(file_prefix: &str, date: NaiveDate) -> String {
     format!("{}-{}.log", file_prefix, date.format("%Y%m%d"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daily_log_file_name_formats_date_as_yyyymmdd() {
+        let date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+
+        assert_eq!(
+            daily_log_file_name("anda-cli", date),
+            "anda-cli-20260601.log"
+        );
+    }
+
+    #[test]
+    fn current_daily_log_file_path_joins_logs_dir_and_prefix() {
+        let path = current_daily_log_file_path(PathBuf::from("/tmp/anda/logs"), "anda-daemon");
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
+
+        assert_eq!(path.parent(), Some(Path::new("/tmp/anda/logs")));
+        assert!(file_name.starts_with("anda-daemon-"));
+        assert!(file_name.ends_with(".log"));
+    }
+
+    #[test]
+    fn daily_json_writer_creates_log_directory_and_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let date = Local::now().date_naive();
+        let expected = dir.path().join(daily_log_file_name("anda-test", date));
+
+        let _writer = DailyJsonWriter::new(dir.path().join("nested"), "anda-test").unwrap();
+
+        assert!(dir.path().join("nested").is_dir());
+        assert!(
+            dir.path()
+                .join("nested")
+                .join(expected.file_name().unwrap())
+                .is_file()
+        );
+    }
+}
