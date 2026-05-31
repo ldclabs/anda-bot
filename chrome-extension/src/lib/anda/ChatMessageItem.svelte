@@ -3,16 +3,17 @@
 </script>
 
 <script lang="ts">
-  import type { ChatMessage } from '$lib/anda/client/types'
-  import { badgeClass, buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
+  import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
+  import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
-  import { Check, Clipboard, Wrench } from '@lucide/svelte'
+  import { Check, Clipboard, Download, FileText, Image, LoaderCircle, Wrench } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
 
   let { message }: { message: ChatMessage } = $props()
 
   let copied = $state(false)
   let detailsExpanded = $state(false)
+  let downloadingAttachmentIds = $state(new Set<string>())
   const isUser = $derived(message.role === 'user')
   const isSystem = $derived(message.role === 'system')
   const isTool = $derived(message.role === 'tool')
@@ -76,6 +77,58 @@
       return `${(size / 1024).toFixed(1)} KB`
     }
     return `${(size / 1024 / 1024).toFixed(1)} MB`
+  }
+
+  function attachmentMimeType(attachment: ChatAttachment): string {
+    return attachment.type || attachment.resource.mime_type || ''
+  }
+
+  function attachmentMetaLabel(attachment: ChatAttachment): string {
+    return [attachmentMimeType(attachment), fileSizeLabel(attachment.size)].filter(Boolean).join(' / ')
+  }
+
+  function attachmentDescription(attachment: ChatAttachment): string {
+    return (attachment.resource.description || '')
+      .trim()
+      .replace(/^\[\$system:[^\]]+\]\s*/i, '')
+      .trim()
+  }
+
+  function attachmentDownloadUrl(attachment: ChatAttachment): string {
+    const blob = attachment.resource.blob?.trim()
+    if (blob) {
+      return `data:${attachmentMimeType(attachment) || 'application/octet-stream'};base64,${blob}`
+    }
+
+    const uri = attachment.resource.uri?.trim()
+    if (/^(https?:|file:|data:|blob:)/i.test(uri || '')) {
+      return uri || ''
+    }
+    return ''
+  }
+
+  function safeDownloadName(name: string): string {
+    return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'attachment'
+  }
+
+  async function saveAttachment(attachment: ChatAttachment) {
+    const url = attachmentDownloadUrl(attachment)
+    if (!url || !chrome.downloads?.download) {
+      return
+    }
+
+    downloadingAttachmentIds = new Set([...downloadingAttachmentIds, attachment.id])
+    try {
+      await chrome.downloads.download({
+        url,
+        filename: safeDownloadName(attachment.name),
+        saveAs: true
+      })
+    } finally {
+      const next = new Set(downloadingAttachmentIds)
+      next.delete(attachment.id)
+      downloadingAttachmentIds = next
+    }
   }
 
   onMount(() => {
@@ -154,22 +207,70 @@
         {/if}
 
         {#if message.attachments?.length}
-          <div class="{hasMainText ? 'mt-2' : ''} flex flex-wrap gap-1.5">
+          <div class="{hasMainText ? 'mt-2' : ''} grid gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
-              <span
-                class={badgeClass(
-                  'outline',
-                  'max-w-full rounded-md bg-background/70 py-1 text-[11px] font-normal text-muted-foreground'
-                )}
-                title={attachment.name}
+              <div
+                class="max-w-full rounded-md border border-border/70 bg-background/65 p-1.5 text-[11px] text-muted-foreground"
               >
-                <span class="truncate">{attachment.name}</span>
-                {#if fileSizeLabel(attachment.size)}
-                  <span class="shrink-0 text-muted-foreground/70">
-                    {fileSizeLabel(attachment.size)}
-                  </span>
+                <div class="flex min-w-0 items-center gap-2">
+                  <div
+                    class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border border-border/60 bg-muted/50 text-emerald-700"
+                  >
+                    {#if attachmentMimeType(attachment).startsWith('image/') && attachment.resource.blob}
+                      <img
+                        src={`data:${attachmentMimeType(attachment)};base64,${attachment.resource.blob}`}
+                        alt={attachment.name}
+                        class="size-full object-cover"
+                      />
+                    {:else if attachmentMimeType(attachment).startsWith('image/')}
+                      <Image class="size-4" />
+                    {:else}
+                      <FileText class="size-4" />
+                    {/if}
+                  </div>
+
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate font-medium text-foreground" title={attachment.name}>
+                      {attachment.name}
+                    </div>
+                    {#if attachmentMetaLabel(attachment)}
+                      <div class="truncate text-[10px] text-muted-foreground/75">
+                        {attachmentMetaLabel(attachment)}
+                      </div>
+                    {/if}
+                  </div>
+
+                  <button
+                    type="button"
+                    class={buttonClass(
+                      'ghost',
+                      'icon-xs',
+                      'size-6 rounded-sm text-muted-foreground hover:text-emerald-700'
+                    )}
+                    disabled={!attachmentDownloadUrl(attachment) ||
+                      downloadingAttachmentIds.has(attachment.id)}
+                    aria-label={`Save ${attachment.name}`}
+                    title={attachmentDownloadUrl(attachment)
+                      ? `Save ${attachment.name}`
+                      : 'No downloadable data'}
+                    onclick={() => saveAttachment(attachment)}
+                  >
+                    {#if downloadingAttachmentIds.has(attachment.id)}
+                      <LoaderCircle class="size-3 animate-spin" />
+                    {:else}
+                      <Download class="size-3" />
+                    {/if}
+                  </button>
+                </div>
+
+                {#if attachmentDescription(attachment)}
+                  <div
+                    class="mt-1.5 max-h-44 overflow-y-auto rounded-sm border border-border/50 bg-muted/35 px-2 py-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-foreground/80"
+                  >
+                    {attachmentDescription(attachment)}
+                  </div>
                 {/if}
-              </span>
+              </div>
             {/each}
           </div>
         {/if}

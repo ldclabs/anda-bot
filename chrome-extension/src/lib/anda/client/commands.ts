@@ -1,5 +1,5 @@
 export type PromptCommand = {
-  kind: 'new' | 'side'
+  kind: 'new' | 'side' | 'stop'
   prompt: string
 }
 
@@ -21,6 +21,9 @@ export function parsePromptCommand(prompt: string): PromptCommand | null {
     case 'side':
     case 'btw':
       return { kind: 'side', prompt: rest ? trimmed : '' }
+    case 'stop':
+    case 'cancel':
+      return { kind: 'stop', prompt: trimmed }
     default:
       return null
   }

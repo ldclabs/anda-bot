@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Channel, type API } from './channel.svelte'
 import { PollConversation } from './poll-conversation'
-import type { AgentOutput, ChatMessage, Conversation, ConversationDelta, ToolInput } from './types'
+import type {
+  AgentInput,
+  AgentOutput,
+  ChatAttachment,
+  ChatMessage,
+  Conversation,
+  ConversationDelta,
+  Resource,
+  ToolInput
+} from './types'
+import { SubmitMessageConversationId } from './types'
 
 function message(id: string, text: string): ChatMessage {
   return {
@@ -51,6 +61,66 @@ function conversationDelta(
   }
 }
 
+function rawMessage(role: 'user' | 'assistant', text: string, timestamp: number) {
+  return {
+    role,
+    content: [{ type: 'Text' as const, text }],
+    timestamp
+  }
+}
+
+function rawMessageWithResource(
+  role: 'user' | 'assistant',
+  text: string,
+  resource: Resource,
+  timestamp: number
+) {
+  return {
+    role,
+    content: [
+      { type: 'Text' as const, text },
+      { type: 'Resource' as const, ...resource }
+    ],
+    timestamp
+  }
+}
+
+function resource(overrides: Partial<Resource> = {}): Resource {
+  return {
+    _id: 7,
+    tags: ['image', 'jpeg'],
+    name: 'company&memory.jpeg',
+    mime_type: 'image/jpeg',
+    size: 143207,
+    ...overrides
+  }
+}
+
+function imageAttachment(): ChatAttachment {
+  const localResource = resource({
+    _id: 0,
+    blob: 'local-image-bytes',
+    metadata: { source: 'chrome_extension', last_modified: 1 }
+  })
+  return {
+    id: 'company&memory.jpeg-143207-1',
+    name: localResource.name,
+    type: localResource.mime_type,
+    size: localResource.size,
+    resource: localResource
+  }
+}
+
+function deferred<Result>() {
+  let resolve!: (value: Result) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<Result>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function toolResult<Result>(result: Result) {
   return {
     output: { result },
@@ -67,7 +137,8 @@ function toolArgs(input: ToolInput): Record<string, unknown> {
 
 function createApi(
   options: {
-    agentOutputs?: AgentOutput[]
+    agentOutputs?: Array<AgentOutput | Promise<AgentOutput>>
+    onAgentRun?: (input: AgentInput) => void
     toolCall?: (input: ToolInput) => Promise<unknown> | unknown
     defaultAgentOutput?: AgentOutput
   } = {}
@@ -85,6 +156,7 @@ function createApi(
     requestExtra: vi.fn().mockResolvedValue({}),
     rpc: vi.fn().mockImplementation(async (method: string, tupleArgs: unknown[]) => {
       if (method === 'agent_run') {
+        options.onAgentRun?.(tupleArgs[0] as AgentInput)
         return agentOutputs.shift() || fallbackAgentOutput
       }
 
@@ -138,6 +210,234 @@ describe('PollConversation', () => {
 })
 
 describe('Channel.sendPrompt', () => {
+  it.each(['/stop because it is wrong', '/cancel because it is wrong'])(
+    'inserts %s into the active conversation while the request is pending',
+    async (prompt) => {
+      const currentConversation = conversation(1, {
+        messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+        updated_at: 11
+      })
+      const agentRunStarted = deferred<void>()
+      const agentRun = deferred<AgentOutput>()
+      const api = createApi({
+        agentOutputs: [agentRun.promise],
+        onAgentRun: () => agentRunStarted.resolve(),
+        toolCall: async (input) => {
+          const args = toolArgs(input)
+          switch (args.type) {
+            case 'GetSourceState':
+              return toolResult({ conv_id: currentConversation._id })
+            case 'GetConversation':
+              return toolResult(currentConversation)
+            default:
+              throw new Error(`Unexpected tool call: ${String(args.type)}`)
+          }
+        }
+      })
+      const channel = new Channel('source:test', api)
+      await channel.init()
+
+      const send = channel.sendPrompt(prompt, [])
+      await agentRunStarted.promise
+
+      expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'working',
+        prompt
+      ])
+      expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+        conversation: currentConversation._id,
+        pending: true
+      })
+      expect(channel.messageGroups.map((group) => group._id)).not.toContain(
+        SubmitMessageConversationId
+      )
+
+      agentRun.resolve({ content: '', usage: usage() })
+      await send
+    }
+  )
+
+  it('keeps a pending stop command in the active conversation after a stale refresh', async () => {
+    const prompt = '/stop because it is wrong'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      updated_at: 11
+    })
+    const api = createApi({
+      agentOutputs: [
+        {
+          content: '',
+          conversation: currentConversation._id,
+          usage: usage()
+        }
+      ],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                updated_at: currentConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const poller = await channel.sendPrompt(prompt, [])
+    for await (const _current of poller!) {
+      // drain the async poll loop so the test observes the settled state.
+    }
+
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'working',
+      prompt
+    ])
+  })
+
+  it('keeps local attachments when the server user message is still text-only', async () => {
+    const prompt = 'look at this image'
+    const attachment = imageAttachment()
+    const currentConversation = conversation(2, {
+      messages: [rawMessage('user', prompt, 10)],
+      status: 'completed',
+      updated_at: 12
+    })
+    const api = createApi({
+      agentOutputs: [
+        {
+          content: '',
+          conversation: currentConversation._id,
+          usage: usage()
+        }
+      ],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                status: currentConversation.status,
+                updated_at: currentConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    const poller = await channel.sendPrompt(prompt, [attachment])
+    for await (const _current of poller!) {
+      // drain the async poll loop so the test observes the settled state.
+    }
+
+    const group = channel.messageGroups.find((item) => item._id === currentConversation._id)!
+    expect(group.messages[0]).toMatchObject({
+      text: prompt,
+      pending: true,
+      attachments: [
+        {
+          id: attachment.id,
+          name: attachment.name,
+          resource: { blob: 'local-image-bytes' }
+        }
+      ]
+    })
+  })
+
+  it('merges completed backend resources with local attachment blobs', async () => {
+    const prompt = 'look at this image'
+    const attachment = imageAttachment()
+    const interimConversation = conversation(2, {
+      messages: [rawMessage('user', prompt, 10)],
+      status: 'working',
+      updated_at: 10
+    })
+    const finalResource = resource({
+      _id: 7,
+      hash: 'image-hash',
+      description: '[$system: kind=image_understanding]\n\nImage understanding result'
+    })
+    const finalConversation = conversation(2, {
+      messages: [
+        rawMessageWithResource('user', prompt, finalResource, 10),
+        rawMessage('assistant', 'done', 13)
+      ],
+      status: 'completed',
+      updated_at: 14
+    })
+    let getConversationCalls = 0
+    const api = createApi({
+      agentOutputs: [
+        {
+          content: '',
+          conversation: interimConversation._id,
+          usage: usage()
+        }
+      ],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetConversation':
+            getConversationCalls += 1
+            return toolResult(getConversationCalls === 1 ? interimConversation : finalConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(interimConversation._id, {
+                messages: [rawMessage('assistant', 'done', 13)],
+                status: 'completed',
+                updated_at: finalConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    const poller = await channel.sendPrompt(prompt, [attachment])
+    for await (const _current of poller!) {
+      // drain the async poll loop so the test observes the settled state.
+    }
+
+    const group = channel.messageGroups.find((item) => item._id === finalConversation._id)!
+    expect(getConversationCalls).toBeGreaterThanOrEqual(2)
+    expect(group.messages.map((item) => item.text)).toEqual([prompt, 'done'])
+    expect(group.messages[0]).toMatchObject({
+      pending: undefined,
+      attachments: [
+        {
+          id: 'resource-7',
+          name: 'company&memory.jpeg',
+          type: 'image/jpeg',
+          resource: {
+            _id: 7,
+            hash: 'image-hash',
+            description: finalResource.description,
+            blob: 'local-image-bytes'
+          }
+        }
+      ]
+    })
+  })
+
   it('finishes a one-shot poller when agent_run returns direct content', async () => {
     const api = createApi({
       defaultAgentOutput: {

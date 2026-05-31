@@ -214,6 +214,13 @@ export class Channel extends EventTarget {
             timestamp
           }
         ]
+      } else if (command && command.kind === 'stop') {
+        this.appendLocalMessage({
+          role: 'user',
+          text: command.prompt,
+          conversation: this.#conversation?._id || SubmitMessageConversationId,
+          attachments: attachments.length ? attachments : undefined
+        })
       } else {
         this.appendLocalMessage({
           role: 'user',
@@ -227,6 +234,7 @@ export class Channel extends EventTarget {
 
       const output = await this.agentRun({ name: '', prompt, resources, meta })
       this.#session = output.session || ''
+      const hasConversation = Boolean(output.conversation)
       if (output.conversation) {
         const conversation = await this.fetchConversation(output.conversation)
         this.updateLatestConversation(conversation)
@@ -253,10 +261,7 @@ export class Channel extends EventTarget {
 
         const sideMessages = []
         for (const msg of this.#sideMessages) {
-          if (
-            msg.id.startsWith('m-side-') &&
-            messages.some((m) => m.text.trim() === msg.text.trim() && m.role === msg.role)
-          ) {
+          if (msg.id.startsWith('m-side-') && messages.some((m) => sameMessageContent(m, msg))) {
             continue
           }
           sideMessages.push(msg)
@@ -265,7 +270,7 @@ export class Channel extends EventTarget {
         poller.push(...messages.filter((message) => message.role === 'assistant'))
         this.#api.updateStatus('completed', null)
         poller.finish()
-      } else {
+      } else if (!hasConversation) {
         this.#api.updateStatus('idle', null)
         poller.finish()
       }
@@ -342,7 +347,21 @@ export class Channel extends EventTarget {
         poller.drain()
       }
 
+      const terminal = isTerminalConversationStatus(conversation.status)
+      if (terminal || this.hasPendingLocalAttachments(conversation._id)) {
+        const refreshed = await this.fetchConversation(conversation._id)
+        conversation.messages = refreshed.messages || []
+        conversation.artifacts = refreshed.artifacts || []
+        conversation.status = refreshed.status
+        conversation.usage = refreshed.usage
+        conversation.failed_reason = refreshed.failed_reason
+        conversation.updated_at = refreshed.updated_at
+        conversation.child = refreshed.child
+        this.updateLatestConversation(refreshed)
+      }
+
       if (
+        terminal ||
         conversation.status === 'completed' ||
         conversation.status === 'cancelled' ||
         conversation.status === 'failed'
@@ -445,9 +464,11 @@ export class Channel extends EventTarget {
     this.#conversationAncestors = conversation.ancestors || []
     this.#api.updateStatus(conversation.status, null)
     const group = conversationToGroup(conversation)
+    const existingGroup = this.#messageGroups.find((existing) => existing._id === conversation._id)
     const submitGroup = this.#messageGroups.find(
       (existing) => existing._id === SubmitMessageConversationId
     )
+    mergePendingLocalMessages(group, [existingGroup, submitGroup])
 
     const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
     if (idx >= 0) {
@@ -458,10 +479,15 @@ export class Channel extends EventTarget {
     this.#messageGroups.push(group)
     if (submitGroup) {
       this.#messageGroups.push(submitGroup)
-      this.removeSubmittedMessage((msg) =>
-        group.messages.some((m) => m.text.trim() === msg.text.trim() && m.role === msg.role)
-      )
+      this.removeSubmittedMessage((msg) => group.messages.some((m) => sameMessageContent(m, msg)))
     }
+  }
+
+  private hasPendingLocalAttachments(conversationId: number): boolean {
+    const group = this.#messageGroups.find((group) => group._id === conversationId)
+    return Boolean(
+      group?.messages.some((message) => message.pending && (message.attachments?.length || 0) > 0)
+    )
   }
 
   private updateConversationChain(conversations: Conversation[]): void {
@@ -534,6 +560,7 @@ export class Channel extends EventTarget {
             ...message,
             id: `m-${group._id}-${timestamp}`,
             conversation: group._id,
+            pending: true,
             timestamp
           }
         ]
@@ -557,15 +584,134 @@ export class Channel extends EventTarget {
     } else {
       const nowMs = Date.now()
       const group = fn({
-        _id: SubmitMessageConversationId,
+        _id,
         status: 'submitted',
         ancestors: [],
         createdAt: nowMs,
         updatedAt: nowMs,
         messages: [],
-        current: false
+        current: _id === this.#conversation?._id
       })
       this.#messageGroups = [...this.#messageGroups, group]
     }
   }
+}
+
+function sameMessageContent(a: ChatMessage, b: ChatMessage): boolean {
+  return a.role === b.role && a.text.trim() === b.text.trim()
+}
+
+function mergePendingLocalMessages(
+  group: MessageGroup,
+  localGroups: Array<MessageGroup | undefined>
+): void {
+  const localMessages = localGroups
+    .flatMap((localGroup) => localGroup?.messages || [])
+    .filter((message) => message.pending)
+  if (!localMessages.length) {
+    return
+  }
+
+  const matched = new Set<ChatMessage>()
+  group.messages = group.messages.map((message) => {
+    const localMessage = localMessages.find(
+      (candidate) => !matched.has(candidate) && sameMessageContent(message, candidate)
+    )
+    if (!localMessage) {
+      return message
+    }
+
+    matched.add(localMessage)
+    return mergeServerAndLocalMessage(message, localMessage)
+  })
+
+  const unmatched = localMessages.filter((message) => !matched.has(message))
+  if (!unmatched.length) {
+    return
+  }
+
+  group.messages = [...group.messages, ...unmatched]
+  group.updatedAt = Math.max(group.updatedAt, ...unmatched.map((message) => message.timestamp || 0))
+}
+
+function mergeServerAndLocalMessage(server: ChatMessage, local: ChatMessage): ChatMessage {
+  const attachments = mergeAttachments(server.attachments || [], local.attachments || [])
+  const missingLocalAttachments = (local.attachments || []).some(
+    (attachment) => !hasMatchingAttachment(server.attachments || [], attachment)
+  )
+
+  return {
+    ...server,
+    attachments: attachments.length ? attachments : undefined,
+    pending: missingLocalAttachments || undefined
+  }
+}
+
+function mergeAttachments(server: ChatAttachment[], local: ChatAttachment[]): ChatAttachment[] {
+  const merged = [...server]
+  for (const localAttachment of local) {
+    const idx = merged.findIndex((attachment) => sameAttachment(attachment, localAttachment))
+    if (idx >= 0) {
+      merged[idx] = mergeAttachment(merged[idx]!, localAttachment)
+    } else {
+      merged.push(localAttachment)
+    }
+  }
+  return merged
+}
+
+function mergeAttachment(server: ChatAttachment, local: ChatAttachment): ChatAttachment {
+  const resource = {
+    ...local.resource,
+    ...server.resource,
+    tags: mergeTags(local.resource.tags, server.resource.tags),
+    metadata: {
+      ...(local.resource.metadata || {}),
+      ...(server.resource.metadata || {})
+    },
+    blob: server.resource.blob || local.resource.blob,
+    description: server.resource.description || local.resource.description
+  }
+
+  return {
+    ...local,
+    ...server,
+    id: resource._id ? `resource-${resource._id}` : server.id || local.id,
+    name: server.name || local.name,
+    type: server.type || local.type,
+    size: server.size || local.size,
+    resource
+  }
+}
+
+function hasMatchingAttachment(attachments: ChatAttachment[], target: ChatAttachment): boolean {
+  return attachments.some((attachment) => sameAttachment(attachment, target))
+}
+
+function sameAttachment(a: ChatAttachment, b: ChatAttachment): boolean {
+  if (a.id && b.id && a.id === b.id) {
+    return true
+  }
+  if (a.resource._id && b.resource._id && a.resource._id === b.resource._id) {
+    return true
+  }
+  if (a.resource.hash && b.resource.hash && a.resource.hash === b.resource.hash) {
+    return true
+  }
+  if (a.resource.uri && b.resource.uri && a.resource.uri === b.resource.uri) {
+    return true
+  }
+
+  const aType = a.type || a.resource.mime_type || ''
+  const bType = b.type || b.resource.mime_type || ''
+  const sizeMatches = a.size == null || b.size == null || a.size === b.size
+  return a.name === b.name && sizeMatches && aType === bType
+}
+
+function mergeTags(a: string[] = [], b: string[] = []): string[] {
+  return Array.from(new Set([...a, ...b].filter(Boolean)))
+}
+
+function isTerminalConversationStatus(status: Conversation['status']): boolean {
+  return status === 'completed' || status === 'cancelled' || status === 'failed'
 }

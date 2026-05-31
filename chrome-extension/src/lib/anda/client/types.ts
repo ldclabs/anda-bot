@@ -120,6 +120,7 @@ export interface ChatMessage {
   thinkingText?: string
   attachments?: ChatAttachment[]
   timestamp?: number
+  pending?: boolean
 }
 
 export interface MessageGroup {
