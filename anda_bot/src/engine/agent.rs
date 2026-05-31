@@ -45,6 +45,7 @@ use super::{
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
     multimodal,
     prompt::{PromptCommand, skill_subagent},
+    resources::ResourceStore,
     side,
     system::{
         SYSTEM_PERSON_NAME, external_user_name, mark_special_user_messages,
@@ -123,6 +124,7 @@ pub struct AndaBot {
 struct AndaBotInner {
     brain: brain::Client,
     conversations: Arc<ConversationsTool>,
+    resource_store: Arc<ResourceStore>,
     tool_dependencies: Vec<String>,
     tools: Vec<String>,
     sessions: ActiveSessions,
@@ -259,6 +261,7 @@ impl AndaBot {
         brain: brain::Client,
         home_dir: PathBuf,
         conversations: Arc<ConversationsTool>,
+        resource_store: Arc<ResourceStore>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         skills_manager: Arc<SkillManager>,
         browser_manager: Arc<ChromeBrowserTool>,
@@ -279,6 +282,7 @@ impl AndaBot {
                 brain,
                 home_dir,
                 conversations,
+                resource_store,
                 tool_dependencies,
                 tools: base_tools(),
                 sessions: RwLock::new(HashMap::new()),
@@ -409,6 +413,17 @@ impl AndaBot {
                 );
             }
         }
+    }
+
+    async fn persist_resources_for_message(
+        &self,
+        user: &Principal,
+        resources: Vec<Resource>,
+    ) -> Result<Vec<Resource>, BoxError> {
+        self.inner
+            .resource_store
+            .persist_resources(user, resources)
+            .await
     }
 
     async fn complete_conversation_if_unfinished(
@@ -802,11 +817,14 @@ impl AndaBot {
         tokio::spawn(async move {
             let (resources, media_usage) =
                 multimodal::understand_media_resources(&ctx, resources).await;
-            let content: Vec<ContentPart> = resources
+            let resources_without_blob = assistant
+                .persist_resources_for_message(ctx.caller(), resources)
+                .await
+                .unwrap_or_default();
+            let content = resources_without_blob
                 .into_iter()
-                .filter_map(|res| res.try_into().ok())
-                .filter(|c| matches!(c, ContentPart::Text { .. }))
-                .collect();
+                .map(|res| ContentPart::any_from("Resource", res))
+                .collect::<Vec<_>>();
             let mut runner = ctx
                 .clone()
                 .completion_iter(
@@ -976,7 +994,16 @@ impl Agent<AgentCtx> for AndaBot {
             return Err("anonymous caller not allowed".into());
         }
 
-        let command = PromptCommand::from(prompt);
+        let has_resources = !resources.is_empty();
+        let command = match PromptCommand::from(prompt) {
+            PromptCommand::Ping if has_resources => PromptCommand::Plain {
+                prompt: String::new(),
+            },
+            PromptCommand::New { prompt: None } if has_resources => PromptCommand::New {
+                prompt: Some(String::new()),
+            },
+            command => command,
+        };
         if let PromptCommand::Invalid { reason } = &command {
             return Err(reason.clone().into());
         }
@@ -1219,7 +1246,7 @@ impl Agent<AgentCtx> for AndaBot {
             chat_history = reserve_chat_history.clone();
             conv
         } else {
-            if prompt.trim().is_empty() {
+            if prompt.trim().is_empty() && !has_resources {
                 return Err("prompt cannot be empty".into());
             }
 
@@ -1257,7 +1284,7 @@ impl Agent<AgentCtx> for AndaBot {
                 thread: Some(sess_id.clone()),
                 messages: initial_messages.into_iter().map(|msg| json!(msg)).collect(),
                 ancestors,
-                resources: vec![], // Don't save the resources in the conversation, as they are already included in the message content as documents
+                resources: vec![],
                 period: now_ms / 3600 / 1000,
                 created_at: now_ms,
                 updated_at: now_ms,
@@ -1504,27 +1531,37 @@ impl SessionRunner {
         }
 
         for input in inputs {
+            let ConversationInput {
+                command,
+                resources,
+                extra,
+                usage,
+            } = input;
+
             // 累计来自于后台任务的工具使用情况
-            self.runner.accumulate(&input.usage);
+            self.runner.accumulate(&usage);
 
             let (resources, media_usage) =
-                multimodal::understand_media_resources(&self.ctx, input.resources).await;
+                multimodal::understand_media_resources(&self.ctx, resources).await;
             self.runner.accumulate(&media_usage);
-
-            let mut content: Vec<ContentPart> = resources
+            let resources_without_blob = self
+                .assistant
+                .persist_resources_for_message(self.ctx.caller(), resources)
+                .await
+                .unwrap_or_default();
+            let mut content = resources_without_blob
                 .into_iter()
-                .filter_map(|res| res.try_into().ok())
-                .filter(|c| matches!(c, ContentPart::Text { .. }))
-                .collect();
+                .map(|res| ContentPart::any_from("Resource", res))
+                .collect::<Vec<_>>();
 
-            if let Some(msg) = system_extra_user_context(&input.extra)
+            if let Some(msg) = system_extra_user_context(&extra)
                 && self.last_extra_user_context.as_ref() != Some(&msg)
             {
                 self.extra_user_context = Some(msg.clone());
                 self.last_extra_user_context = Some(msg);
             }
 
-            match input.command {
+            match command {
                 PromptCommand::Ping | PromptCommand::Invalid { .. } => {
                     // PING from the user to keep the conversation alive.
                     log::info!(
@@ -1545,11 +1582,11 @@ impl SessionRunner {
                     );
                 }
                 PromptCommand::Plain { prompt } => {
-                    content.push(prompt.into());
+                    prepend_prompt_content(&mut content, prompt);
                     self.runner.follow_up_content(content);
                 }
                 PromptCommand::Goal { prompt } => {
-                    content.push(prompt.clone().into());
+                    prepend_prompt_content(&mut content, prompt.clone());
                     self.runner.follow_up_content(content);
 
                     let mut next_goal = self.session.goal.write();
@@ -1560,11 +1597,11 @@ impl SessionRunner {
                     };
                 }
                 PromptCommand::Side { prompt } => {
-                    content.push(prompt.into());
+                    prepend_prompt_content(&mut content, prompt);
                     self.runner.follow_up_content(content);
                 }
                 PromptCommand::Steer { prompt } => {
-                    content.push(prompt.into());
+                    prepend_prompt_content(&mut content, prompt);
                     self.runner.follow_up_content(content);
                 }
                 PromptCommand::Skill { mut skill, prompt } => {
@@ -1573,8 +1610,9 @@ impl SessionRunner {
                     {
                         skill = subagent.name;
                     }
-                    content.push(
-                        format!("Use the {skill} skill to handle this request:\n\n{prompt}").into(),
+                    prepend_prompt_content(
+                        &mut content,
+                        format!("Use the {skill} skill to handle this request:\n\n{prompt}"),
                     );
                     self.runner.follow_up_content(content);
                 }
@@ -1740,12 +1778,16 @@ impl SessionRunner {
                         .await;
                     self.submit_pending_formation(&output.chat_history, now_ms)
                         .await;
+                    let artifacts = self
+                        .assistant
+                        .persist_resources_for_message(&self.conversation.user, output.artifacts)
+                        .await?;
 
                     self.conversation.messages.clear();
                     self.conversation.append_messages(output.chat_history);
                     self.conversation.status = ConversationStatus::Completed;
                     self.conversation.usage = output.usage;
-                    self.conversation.artifacts = output.artifacts;
+                    self.conversation.artifacts = artifacts;
                     self.conversation.updated_at = now_ms;
                     // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
                     self.conversation.child = child.as_ref().map(|(conv, _)| conv._id);
@@ -2019,6 +2061,13 @@ fn conversation_chat_history(conversation: &Conversation) -> Vec<Message> {
     messages
 }
 
+fn prepend_prompt_content(content: &mut Vec<ContentPart>, prompt: String) {
+    if prompt.is_empty() {
+        return;
+    }
+    content.insert(0, prompt.into());
+}
+
 fn should_auto_resume_conversation(status: &ConversationStatus) -> bool {
     matches!(
         status,
@@ -2166,7 +2215,7 @@ impl AgentHook for Session {
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain { prompt },
-                resources: vec![],
+                resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
                 usage: output.usage,
             })
@@ -2204,7 +2253,7 @@ impl AgentHook for Session {
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain { prompt },
-                resources: vec![],
+                resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
                 usage: output.usage,
             })

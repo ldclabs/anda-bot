@@ -1,4 +1,12 @@
-import type { ChatMessage, ContentPart, Conversation, Message, MessageGroup } from './types'
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ContentPart,
+  Conversation,
+  Message,
+  MessageGroup,
+  Resource
+} from './types'
 
 export function conversationToGroup(conversation: Conversation): MessageGroup {
   const messages = (conversation.messages || [])
@@ -44,11 +52,14 @@ export function normalizeMessage(
   raw: Message,
   context: { conversation: number; index: number; fallbackTimestamp?: number }
 ): ChatMessage | null {
-  if (raw.name?.startsWith('$')) {
+  const attachments = resourcesToAttachments(messageResources(raw))
+  if (raw.name?.startsWith('$') && attachments.length === 0) {
     return null
   }
-  const content = contentToMessageContent(raw.content)
-  if (!content.text && !content.thinkingText) {
+  const content = contentToMessageContent(raw.content, {
+    hideSystemRuntimeText: Boolean(raw.name?.startsWith('$') && attachments.length > 0)
+  })
+  if (!content.text && !content.thinkingText && attachments.length === 0) {
     return null
   }
   const timestamp = raw.timestamp || context.fallbackTimestamp || Date.now()
@@ -58,12 +69,19 @@ export function normalizeMessage(
     role: raw.role,
     text: content.text,
     thinkingText: content.thinkingText,
+    attachments: attachments.length ? attachments : undefined,
     timestamp
   }
 }
 
-function contentToMessageContent(content: ContentPart[]): { text: string; thinkingText: string } {
+function contentToMessageContent(
+  content: ContentPart[],
+  options: { hideSystemRuntimeText?: boolean } = {}
+): { text: string; thinkingText: string } {
   if (typeof content === 'string') {
+    if (shouldHideTextPart(content, options)) {
+      return { text: '', thinkingText: '' }
+    }
     return splitLegacyThoughtText(content)
   }
   if (!Array.isArray(content)) {
@@ -73,6 +91,9 @@ function contentToMessageContent(content: ContentPart[]): { text: string; thinki
   const thinkingParts: string[] = []
   for (const part of content) {
     if (typeof part === 'string') {
+      if (shouldHideTextPart(part, options)) {
+        continue
+      }
       const split = splitLegacyThoughtText(part)
       if (split.text) {
         textParts.push(split.text)
@@ -85,6 +106,9 @@ function contentToMessageContent(content: ContentPart[]): { text: string; thinki
 
     switch (part.type) {
       case 'Text':
+        if (shouldHideTextPart(part.text, options)) {
+          continue
+        }
         const split = splitLegacyThoughtText(part.text)
         if (split.text) {
           textParts.push(split.text)
@@ -105,6 +129,8 @@ function contentToMessageContent(content: ContentPart[]): { text: string; thinki
           formatToolDetail(`Tool call${part.name ? `: ${part.name}` : ''}`, part.args)
         )
         continue
+      case 'Resource':
+        continue
       default:
         continue
     }
@@ -114,6 +140,55 @@ function contentToMessageContent(content: ContentPart[]): { text: string; thinki
     text: textParts.filter(Boolean).join('\n\n').trim(),
     thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim()
   }
+}
+
+function messageResources(raw: Message): Resource[] {
+  return resourcesFromContent(raw.content)
+}
+
+function resourcesFromContent(content: ContentPart[]): Resource[] {
+  if (!Array.isArray(content)) {
+    return []
+  }
+
+  return content
+    .map(resourceFromContentPart)
+    .filter((resource): resource is Resource => Boolean(resource))
+}
+
+function resourceFromContentPart(part: ContentPart): Resource | null {
+  if (typeof part === 'string' || part.type !== 'Resource') {
+    return null
+  }
+
+  const { type: _type, ...resource } = part
+  return resource
+}
+
+function resourcesToAttachments(resources: Resource[]): ChatAttachment[] {
+  return resources
+    .map((resource, index) => resourceToAttachment(resource, index))
+    .filter((attachment): attachment is ChatAttachment => !!attachment)
+}
+
+function resourceToAttachment(resource: Resource, index: number): ChatAttachment | null {
+  const name =
+    resource.name?.trim() || resource.uri?.trim() || `resource-${resource._id || index + 1}`
+  if (!name) {
+    return null
+  }
+
+  return {
+    id: resource._id ? `resource-${resource._id}` : `${name}-${resource.size || 0}-${index}`,
+    name,
+    type: resource.mime_type,
+    size: resource.size,
+    resource
+  }
+}
+
+function shouldHideTextPart(text: string, options: { hideSystemRuntimeText?: boolean }): boolean {
+  return Boolean(options.hideSystemRuntimeText && text.trimStart().startsWith('[$system:'))
 }
 
 function fencedJson(value: unknown): string {

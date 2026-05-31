@@ -112,6 +112,7 @@ dependencies = [
  "anda_brain",
  "anda_core",
  "anda_db",
+ "anda_db_tfs",
  "anda_db_utils",
  "anda_engine",
  "anda_engine_server",
@@ -168,9 +169,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f59ffac570e7ca531477ae62b4b60067344bbb893d505ecff338d65fad9f3e54"
+checksum = "9eca8a64772c344123163790595dac8b3df8e0ff1a831ea9ee6d2d37cb193f26"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -242,9 +243,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.4"
+version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88adeeb26551c90054790809e2c8ad7e0fec9caea0359787370d71c42bd601b5"
+checksum = "3fa6869dcb1bdb300ff82ad9a7a8516a8584cb2f8194bf748e35ac933842cc6e"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -396,9 +397,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.24"
+version = "0.12.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2abdf17404cb776a85d6da63a23672428a5dbf4194899e62e1353081d301bbe3"
+checksum = "97cc235abef1625e46c09e6bc127d1de881c8f9c2d4f91187f02f6554ae1a6fd"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -2643,9 +2644,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.10.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb92f162bf56536459fc83c79b974bb12837acfed43d6bc370a7916d0ae15ecc"
+checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -6703,9 +6704,9 @@ checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "typenum"
-version = "1.20.0"
+version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
+checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "typetag"
@@ -7757,18 +7758,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.49"
+version = "0.8.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bce33a6288fa3f072a8c2c7d0f2fdbb90e28298f0135c1f99b96c3db2efcc60b"
+checksum = "3b065d4f0e55f82fae73202e189638116a87c55ab6b8e6c2721e13dd9d854ad1"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.49"
+version = "0.8.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fd425244944f4ab65ccff928e7323354c5a018c75838362fdce749dfad2ee1e"
+checksum = "0b631b19d36a892ab55420c92dbc83ccd79274f25be714855d3074aa71cab639"
 dependencies = [
  "proc-macro2",
  "quote",

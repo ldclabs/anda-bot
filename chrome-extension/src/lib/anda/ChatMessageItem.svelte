@@ -19,6 +19,7 @@
   const mainText = $derived(message.text.trim())
   const thinkingText = $derived((message.thinkingText || '').trim())
   const hasMainText = $derived(Boolean(mainText))
+  const hasAttachments = $derived(Boolean(message.attachments?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
   const messageTimeLabel = $derived(timeLabel(message.timestamp))
   const detailLabel = $derived(isTool ? 'tool output' : 'thinking and tools')
@@ -90,11 +91,11 @@
   id={message.id}
   class="grid w-full gap-1 {isUser
     ? 'justify-items-end'
-    : isTool || !hasMainText
+    : isTool || (!hasMainText && !hasAttachments)
       ? 'justify-items-center'
       : 'justify-items-start'}"
 >
-  {#if hasThinkingText && (isTool || !hasMainText)}
+  {#if hasThinkingText && (isTool || (!hasMainText && !hasAttachments))}
     <button
       type="button"
       class={buttonClass(
@@ -109,7 +110,7 @@
     </button>
   {/if}
 
-  {#if hasMainText}
+  {#if hasMainText || hasAttachments}
     <div
       class={cardClass(
         `relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs ${
@@ -148,10 +149,12 @@
       </div>
 
       <div class={cardContentClass('px-3 py-2')}>
-        <div class="md-content w-full min-w-0 text-pretty wrap-break-word">{@html html}</div>
+        {#if hasMainText}
+          <div class="md-content w-full min-w-0 text-pretty wrap-break-word">{@html html}</div>
+        {/if}
 
         {#if message.attachments?.length}
-          <div class="mt-2 flex flex-wrap gap-1.5">
+          <div class="{hasMainText ? 'mt-2' : ''} flex flex-wrap gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
               <span
                 class={badgeClass(

@@ -35,6 +35,7 @@ mod conversation;
 mod goal;
 mod multimodal;
 mod prompt;
+mod resources;
 mod side;
 mod system;
 
@@ -54,6 +55,7 @@ pub use conversation::*;
 pub use goal::GoalTool;
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
+pub use resources::ResourceStore;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
 pub struct Engines {
@@ -141,6 +143,7 @@ impl Engines {
             .cloned()
             .ok_or("At least one workspace must be provided")?;
         let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await?);
         let conversations_tool = Arc::new(ConversationsTool::new(
             conversations.clone(),
             default_workspace.to_string_lossy().to_string(),
@@ -221,6 +224,7 @@ impl Engines {
             brain_client.clone(),
             cfg.home_dir.clone(),
             conversations_tool.clone(),
+            resource_store,
             completion_hooks,
             skills_tool.clone(),
             chrome_tabs_tool.clone(),

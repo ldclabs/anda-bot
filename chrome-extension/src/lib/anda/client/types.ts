@@ -253,7 +253,10 @@ export type ContentPart =
       callId?: string
     }
   | ({
-      type: 'Any'
+      type: 'Resource'
+    } & Resource)
+  | ({
+      type: 'Any' // no specific type, the content is determined by the fields of the object
     } & Record<string, Json>)
 
 export interface Message {

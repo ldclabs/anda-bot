@@ -186,7 +186,15 @@ export class Channel extends EventTarget {
           this.appendLocalMessage({
             role: 'user',
             text: command.prompt,
-            conversation: SubmitMessageConversationId
+            conversation: SubmitMessageConversationId,
+            attachments: attachments.length ? attachments : undefined
+          })
+        } else if (attachments.length) {
+          this.appendLocalMessage({
+            role: 'user',
+            text: '',
+            conversation: SubmitMessageConversationId,
+            attachments
           })
         }
       } else if (command && command.kind === 'side') {
@@ -202,6 +210,7 @@ export class Channel extends EventTarget {
             role: 'user',
             text: command.prompt,
             conversation: SubmitMessageConversationId,
+            attachments: attachments.length ? attachments : undefined,
             timestamp
           }
         ]
@@ -209,7 +218,8 @@ export class Channel extends EventTarget {
         this.appendLocalMessage({
           role: 'user',
           text: prompt,
-          conversation: SubmitMessageConversationId
+          conversation: SubmitMessageConversationId,
+          attachments: attachments.length ? attachments : undefined
         })
       }
 

@@ -388,7 +388,9 @@ impl MediaUnderstandingAgent {
             });
         }
 
-        if let Some(file_uri) = uri.filter(|uri| !uri.trim().is_empty()) {
+        if let Some(file_uri) = uri.filter(|uri| !uri.trim().is_empty())
+            && (file_uri.starts_with("https://") || file_uri.starts_with("data:"))
+        {
             return Ok(ContentPart::FileData {
                 file_uri,
                 mime_type,
@@ -559,7 +561,7 @@ pub async fn understand_media_resources(
     ctx: &AgentCtx,
     resources: Vec<Resource>,
 ) -> (Vec<Resource>, Usage) {
-    let results = stream::iter(resources.into_iter().map(|resource| {
+    let results = stream::iter(resources.into_iter().map(|mut resource| {
         let ctx = ctx.clone();
 
         async move {
@@ -572,25 +574,25 @@ pub async fn understand_media_resources(
             let input = AgentInput {
                 name: kind.agent_name().to_string(),
                 prompt,
-                resources: vec![resource],
+                resources: vec![resource.clone()],
                 ..Default::default()
             };
 
-            let (text, usage) = match ctx.agent_run(input).await {
+            let (understanding, usage) = match ctx.agent_run(input).await {
                 Ok((agent_output, _)) => {
                     let mut usage = Usage::default();
                     usage.accumulate(&agent_output.usage);
                     let content = agent_output.content.trim();
                     let text = if content.is_empty() {
                         format!(
-                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nNo description was returned.",
+                            "[$system: kind={}]\n{} understanding {} from attachments\n\nNo description was returned.",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label
                         )
                     } else {
                         format!(
-                            "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\n{:?}",
+                            "[$system: kind={}]\n{} understanding {} from attachments\n\n{}",
                             kind.agent_name(),
                             title_case(kind.noun()),
                             label,
@@ -602,7 +604,7 @@ pub async fn understand_media_resources(
                 }
                 Err(err) => (
                     format!(
-                        "[$system: kind={:?}]\n{} understanding {:?} from attachments\n\nFailed to understand this {} from attachments: {}",
+                        "[$system: kind={}]\n{} understanding {} from attachments\n\nFailed to understand this {} from attachments, error: {}",
                         kind.agent_name(),
                         title_case(kind.noun()),
                         label,
@@ -613,14 +615,11 @@ pub async fn understand_media_resources(
                 ),
             };
 
-            (
-                text_resource(
-                    format!("{}_understanding.md", kind.noun()),
-                    format!("Text understanding generated from {label}"),
-                    text,
-                ),
-                usage,
-            )
+            resource.description = Some(merge_resource_description(
+                resource.description.as_deref(),
+                &understanding,
+            ));
+            (resource, usage)
         }
     }))
     .buffered(MAX_MEDIA_UNDERSTANDING_CONCURRENCY)
@@ -637,20 +636,15 @@ pub async fn understand_media_resources(
     (output, usage)
 }
 
-fn text_resource(name: String, description: String, text: String) -> Resource {
-    let bytes = text.into_bytes();
-    Resource {
-        tags: vec![
-            "text".to_string(),
-            "md".to_string(),
-            "media_understanding".to_string(),
-        ],
-        name,
-        description: Some(description),
-        mime_type: Some("text/markdown".to_string()),
-        size: Some(bytes.len() as u64),
-        blob: Some(ByteBufB64(bytes)),
-        ..Default::default()
+fn merge_resource_description(existing: Option<&str>, understanding: &str) -> String {
+    let understanding = understanding.trim();
+    match existing
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+    {
+        Some(description) if understanding.is_empty() => description.to_string(),
+        Some(description) => format!("{description}\n\n---\n\n{understanding}"),
+        None => understanding.to_string(),
     }
 }
 
@@ -988,6 +982,22 @@ mod tests {
     }
 
     #[test]
+    fn media_understanding_merges_into_resource_description() {
+        assert_eq!(
+            merge_resource_description(None, "Image description"),
+            "Image description"
+        );
+        assert_eq!(
+            merge_resource_description(Some("Original description"), "Image description"),
+            "Original description\n\n---\n\nImage description"
+        );
+        assert_eq!(
+            merge_resource_description(Some("Original description"), "   "),
+            "Original description"
+        );
+    }
+
+    #[test]
     fn detects_media_kind_from_tag_extension() {
         let resource = Resource {
             name: "payload.bin".to_string(),
@@ -1069,7 +1079,7 @@ mod tests {
         let agent = MediaUnderstandingAgent::video(Vec::new());
         let resource = Resource {
             name: "clip.mp4".to_string(),
-            uri: Some("file:///tmp/clip.mp4".to_string()),
+            uri: Some("https://example.com/clip.mp4".to_string()),
             mime_type: Some("video/mp4".to_string()),
             ..Default::default()
         };
@@ -1083,7 +1093,7 @@ mod tests {
                 file_uri,
                 mime_type,
             } => {
-                assert_eq!(file_uri, "file:///tmp/clip.mp4");
+                assert_eq!(file_uri, "https://example.com/clip.mp4");
                 assert_eq!(mime_type.as_deref(), Some("video/mp4"));
             }
             other => panic!("expected file data, got {other:?}"),
