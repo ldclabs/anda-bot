@@ -58,6 +58,9 @@ pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
 pub(crate) use system::{external_user_prompt, system_runtime_prompt};
 
+// Empty model labels resolve through Models::get_model(), which tracks the active model.
+const ACTIVE_MODEL_LABEL: &str = "";
+
 pub struct Engines {
     state: AppState,
     browser_bridge: Arc<BrowserBridge>,
@@ -314,8 +317,11 @@ impl Engines {
                 video_understanding_agent.clone(),
                 Some(video_understanding_agent.model_label().to_string()),
             )?
-            .register_agent(other_understanding_agent.clone(), None)?
-            .register_agent(bot.clone(), None)?
+            .register_agent(
+                other_understanding_agent.clone(),
+                Some(other_understanding_agent.model_label().to_string()),
+            )?
+            .register_agent(bot.clone(), Some(ACTIVE_MODEL_LABEL.to_string()))?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
                 ResourceStore::NAME.to_string(),

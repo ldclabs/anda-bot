@@ -474,7 +474,7 @@ impl AndaBot {
         let (resources, media_usage) = multimodal::understand_media_resources(ctx, resources).await;
         let mut output = subagent
             .run(
-                ctx.child(&subagent.name, &subagent.name)?,
+                ctx.child(&subagent.name, super::ACTIVE_MODEL_LABEL)?,
                 prompt,
                 resources,
             )

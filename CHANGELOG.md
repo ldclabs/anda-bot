@@ -1,6 +1,38 @@
 # Changelog
 
 All notable changes to Anda Bot.
+## [0.8.7] — 2026-06-01
+
+### Added
+
+- **URL and data-URL support for media understanding agents**: `url` parameter alongside existing `path` in `MediaUnderstandingArgs` — supports `http`/`https`/`data` URLs, streaming HTTP responses with size limit enforcement, base64 and percent-encoded data URL decoding. Shared `reqwest::Client` injected via `with_http_client` builder.
+- **Resource persistence and attachment handling**: new `ResourceStore` for persisting resources (images, files) in the database. Integrated into the AndaBot engine with full attachment lifecycle management — from media understanding through to chat message display.
+- **Attachment download in Chrome extension**: one-click download for message attachments directly from the chat UI, with progress tracking and concurrent download management.
+- **Multi-format attachment support**: new `Other` media type for non-image/audio/video attachments — supports text, PDF, document, spreadsheet, and other file formats. `liteparse` integration for PDF parsing.
+- **Pending local attachment sync**: Chrome extension synchronizes locally queued attachments with the server on reconnect, ensuring no attachment is lost during offline usage.
+- **Resource API tool**: `resources_api` tool exposed to agents for loading persisted resources by ID, with caching and lazy loading in the Chrome extension.
+- **Rich text copy in Chrome extension**: `copyRichMessage()` copies both plain text and rendered HTML to the clipboard via `ClipboardItem`, preserving formatting when pasted into rich-text editors.
+- **Print message in Chrome extension**: `printMessage()` opens a styled print window with rendered Markdown content and image attachments, ready for printing or saving as PDF.
+- **Comprehensive unit tests for Rust core modules**: 300+ new tests covering attachments, channel types, session formatting, channel/transcription/TTS config, daemon paths, logger, and Ed25519 key operations — all following Rust testing conventions.
+
+### Changed
+
+- **Engine model resolution via active model label**: `ACTIVE_MODEL_LABEL` (`""`) constant.
+- **MIME detection improved**: media MIME detection now prefers inferred media MIME, then `Content-Type` header, then filename extension, with a normalized fallback chain for all media understanding paths.
+- **Chrome extension message actions refactored**: shared `messageActionButtonClass` extracted; action button row gains Copy, Clipboard, and Printer icons, with consistent hover/focus animations.
+
+### Fixed
+
+- **Workspace derivation from source prefix**: when only the `source` field is provided (e.g. from browser extension), extract workspace from the `"cli:"` prefix. Conversations created via non-CLI channels now correctly resolve a valid workspace directory.
+
+### Dependencies
+
+- `anda_brain` 0.6.5 → 0.6.7.
+- `anda_core` 0.12.4 → 0.12.5.
+- `anda_engine` 0.12.24 → 0.12.26 (`Models::resolve()` simplification — delegates to `get_model()`).
+- `anda_db_tfs` 0.1.0 (new, for resource tokenization).
+- `liteparse` 2 (new, for PDF parsing).
+
 ## [0.8.6] — 2026-05-29
 
 ### Added

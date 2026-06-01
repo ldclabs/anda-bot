@@ -539,8 +539,10 @@ mod tests {
 
     #[test]
     fn base_url_delegates_to_config_address() {
-        let mut config = Config::default();
-        config.addr = "0.0.0.0:9000".to_string();
+        let config = Config {
+            addr: "0.0.0.0:9000".to_string(),
+            ..Config::default()
+        };
         let daemon = Daemon::new(PathBuf::from("/tmp/anda-home"), config);
 
         assert_eq!(daemon.base_url(), "http://127.0.0.1:9000");

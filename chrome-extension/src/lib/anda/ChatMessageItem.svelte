@@ -7,12 +7,23 @@
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
-  import { Check, Clipboard, Download, FileText, Image, LoaderCircle, Wrench } from '@lucide/svelte'
+  import {
+    Check,
+    Clipboard,
+    Copy,
+    Download,
+    FileText,
+    Image,
+    LoaderCircle,
+    Printer,
+    Wrench
+  } from '@lucide/svelte'
   import { onDestroy, onMount, tick } from 'svelte'
 
   let { message }: { message: ChatMessage } = $props()
 
   let copied = $state(false)
+  let richCopied = $state(false)
   let detailsExpanded = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
   let resourceBlobs = $state(new Map<number, string>())
@@ -31,6 +42,11 @@
   const detailLabel = $derived(isTool ? 'tool output' : 'thinking and tools')
   const [html, hook] = $derived.by(() => renderMarkdown(mainText))
   const [thinkingHtml, thinkingHook] = $derived.by(() => renderMarkdown(thinkingText))
+  const messageActionButtonClass = buttonClass(
+    'outline',
+    'icon-sm',
+    'pointer-events-none scale-95 bg-background/95 text-muted-foreground shadow-md backdrop-blur-sm duration-150 group-hover/card:pointer-events-auto group-hover/card:scale-100 group-focus-within/card:pointer-events-auto group-focus-within/card:scale-100 hover:border-emerald-200 hover:text-emerald-700 focus-visible:pointer-events-auto focus-visible:scale-100'
+  )
 
   async function copyMessage() {
     if (!navigator.clipboard || !mainText) {
@@ -41,6 +57,112 @@
     window.setTimeout(() => {
       copied = false
     }, 1200)
+  }
+
+  async function copyRichMessage() {
+    if (!navigator.clipboard || !mainText) {
+      return
+    }
+
+    if (navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([mainText], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' })
+        })
+      ])
+    } else {
+      await navigator.clipboard.writeText(mainText)
+    }
+
+    richCopied = true
+    window.setTimeout(() => {
+      richCopied = false
+    }, 1200)
+  }
+
+  function escapeHtml(value: string): string {
+    return value.replace(/[&<>"]/g, (character) => {
+      switch (character) {
+        case '&':
+          return '&amp;'
+        case '<':
+          return '&lt;'
+        case '>':
+          return '&gt;'
+        default:
+          return '&quot;'
+      }
+    })
+  }
+
+  function printableAttachmentHtml(): string {
+    return (message.attachments || [])
+      .map((attachment) => {
+        const imageUrl = attachmentMimeType(attachment).startsWith('image/')
+          ? ensureAttachmentObjectUrl(attachment) || attachmentDownloadUrl(attachment)
+          : ''
+        const description = attachmentDescription(attachment)
+        return `
+            <div class="attachment-header">
+              <strong>${escapeHtml(attachment.name)}</strong>
+              <span>${escapeHtml(attachmentMetaLabel(attachment))}</span>
+            </div>
+            ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(attachment.name)}" />` : ''}
+            ${description ? `<pre>${escapeHtml(description)}</pre>` : ''}
+        `
+      })
+      .join('')
+  }
+
+  function printMessage() {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    const roleLabel = isUser ? 'User' : isSystem ? 'System' : isTool ? 'Tool' : 'Assistant'
+    const attachmentsHtml = printableAttachmentHtml()
+    const doc = printWindow.document
+    doc.title = `${escapeHtml(roleLabel)} message`
+
+    // 注入打印样式
+    const style = doc.createElement('style')
+    style.textContent = `
+      body { font-family: sans-serif; padding: 40px; color: #1e293b; background: white; }
+      .message-container { max-width: 800px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; }
+      .role { font-weight: bold; margin-bottom: 12px; color: #64748b; text-transform: uppercase; font-size: 12px; letter-spacing: 1px; }
+      .content { line-height: 1.6; word-break: break-word; }
+      @media print {
+        body { padding: 0; }
+        .message-container { border: none; padding: 0; }
+      }
+    `
+    doc.head.appendChild(style)
+
+    // 构建内容结构
+    const container = doc.createElement('div')
+    container.className = 'message-container'
+    container.innerHTML = `
+      <div class="role">${roleLabel}</div>
+      <div class="content"></div>
+      <div class="attachment"></div>
+    `
+    const contentPlaceholder = container.querySelector('.content')
+    if (contentPlaceholder) contentPlaceholder.innerHTML = html
+    const attachmentPlaceholder = container.querySelector('.attachment')
+    if (attachmentPlaceholder) attachmentPlaceholder.innerHTML = attachmentsHtml
+
+    doc.body.appendChild(container)
+
+    // 打印并自动关闭
+    // printWindow.addEventListener('afterprint', () => {
+    //   printWindow.close()
+    // })
+
+    // 确保内容加载完成后触发打印
+    printWindow.requestAnimationFrame(() => {
+      printWindow.focus()
+      printWindow.print()
+    })
   }
 
   async function toggleDetails() {
@@ -370,15 +492,11 @@
       <div
         class="pointer-events-none absolute -top-3 {isUser
           ? '-left-3'
-          : '-right-3'} z-10 opacity-0 transition duration-150 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100"
+          : '-right-3'} z-10 flex items-center gap-1 opacity-0 transition duration-150 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100"
       >
         <button
           type="button"
-          class={buttonClass(
-            'outline',
-            'icon-sm',
-            'pointer-events-none scale-95 bg-background/95 text-muted-foreground shadow-md backdrop-blur-sm duration-150 group-hover/card:pointer-events-auto group-hover/card:scale-100 group-focus-within/card:pointer-events-auto group-focus-within/card:scale-100 hover:border-emerald-200 hover:text-emerald-700 focus-visible:pointer-events-auto focus-visible:scale-100'
-          )}
+          class={messageActionButtonClass}
           aria-label="Copy message"
           title="Copy message"
           onclick={copyMessage}
@@ -386,8 +504,30 @@
           {#if copied}
             <Check class="size-4" />
           {:else}
+            <Copy class="size-4" />
+          {/if}
+        </button>
+        <button
+          type="button"
+          class={messageActionButtonClass}
+          aria-label="Copy rich text"
+          title="Copy rich text"
+          onclick={copyRichMessage}
+        >
+          {#if richCopied}
+            <Check class="size-4" />
+          {:else}
             <Clipboard class="size-4" />
           {/if}
+        </button>
+        <button
+          type="button"
+          class={messageActionButtonClass}
+          aria-label="Print message"
+          title="Print message"
+          onclick={printMessage}
+        >
+          <Printer class="size-4" />
         </button>
       </div>
 
