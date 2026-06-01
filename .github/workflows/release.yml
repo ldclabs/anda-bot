@@ -96,6 +96,8 @@ jobs:
 
       - name: Build Rust binary (cross)
         if: ${{ matrix.cross }}
+        env:
+          XDG_CACHE_HOME: /tmp/anda-xdg-cache
         run: |
           cross build --release --locked --target-dir ${{ matrix.build_dir }} --target ${{ matrix.rust_target }}
 

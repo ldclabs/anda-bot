@@ -2,3 +2,6 @@
 pre-build = [
   "apt-get update && apt-get install -y --no-install-recommends protobuf-compiler linux-libc-dev",
 ]
+
+[target.aarch64-unknown-linux-musl.env]
+passthrough = ["XDG_CACHE_HOME"]
