@@ -20,6 +20,7 @@ All notable changes to Anda Bot.
 - **Engine model resolution via active model label**: `ACTIVE_MODEL_LABEL` (`""`) constant.
 - **MIME detection improved**: media MIME detection now prefers inferred media MIME, then `Content-Type` header, then filename extension, with a normalized fallback chain for all media understanding paths.
 - **Chrome extension message actions refactored**: shared `messageActionButtonClass` extracted; action button row gains Copy, Clipboard, and Printer icons, with consistent hover/focus animations.
+- **MiniMax model upgraded to M3**: default config swaps `MiniMax-M2.7` (200K context, `lite` label) for `MiniMax-M3` (400K context, `flash`/`memory`/`image`/`video` labels) — doubles context window and unlocks image, video, and memory-class routing on the MiniMax provider.
 
 ### Fixed
 

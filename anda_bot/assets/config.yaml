@@ -32,13 +32,13 @@ model:
       disabled: false
 
     - family: anthropic
-      model: "MiniMax-M2.7"
+      model: "MiniMax-M3"
       api_base: "https://api.minimaxi.com/anthropic/v1"
       api_key: ""
       effort: high
-      context_window: 200000
+      context_window: 400000
       max_output: 130000
-      labels: ["lite"]
+      labels: ["flash", "memory", "image", "video"]
       disabled: false
 
     - family: openai
