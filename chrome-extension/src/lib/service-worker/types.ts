@@ -262,6 +262,7 @@ export interface ChromeApi {
   }
   windows?: {
     update(windowId: number, updateInfo: { focused?: boolean }): Promise<unknown>
+    onFocusChanged?: ChromeEvent<(windowId: number) => void>
   }
   downloads?: {
     download(options: { url: string; filename?: string; saveAs?: boolean }): Promise<number>

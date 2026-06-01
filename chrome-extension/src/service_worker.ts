@@ -1,4 +1,8 @@
-import { activeTab, executeBrowserAction } from '$lib/service-worker/browser-actions'
+import {
+  activeTab,
+  executeBrowserAction,
+  rememberActiveTab
+} from '$lib/service-worker/browser-actions'
 import { getChromeApi, isDevelopmentMode } from '$lib/service-worker/chrome'
 import { handlePageAudioCapture, handlePageSpeechRecognition } from '$lib/service-worker/page-voice'
 import {
@@ -41,6 +45,7 @@ let nextMessageId = 1
 let status = 'starting'
 const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let browserActionQueue: Promise<void> = Promise.resolve()
 
 chromeApi.runtime.onInstalled.addListener((reason: string) => {
   if (chromeApi.sidePanel?.setPanelBehavior) {
@@ -59,17 +64,35 @@ chromeApi.runtime.onStartup.addListener(() => {
 })
 
 chromeApi.action.onClicked.addListener((tab) => {
+  rememberActiveTab(tab)
   openSidePanel(tab)
 })
 
-chromeApi.tabs.onActivated.addListener(() => {
+chromeApi.tabs.onActivated.addListener((activeInfo) => {
+  rememberActiveTab(activeInfo.tabId)
   scheduleBrowserSessionRefresh()
 })
 
 chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   if (tab.active || changeInfo.title || changeInfo.url) {
+    if (tab.active) {
+      rememberActiveTab(tab)
+    }
     scheduleBrowserSessionRefresh()
   }
+})
+
+chromeApi.windows?.onFocusChanged?.addListener((windowId) => {
+  if (windowId < 0) {
+    return
+  }
+  chromeApi.tabs
+    .query({ active: true, windowId })
+    .then(([tab]) => {
+      rememberActiveTab(tab)
+      scheduleBrowserSessionRefresh()
+    })
+    .catch(() => undefined)
 })
 
 registerWebNavigationSessionRefreshListeners()
@@ -406,7 +429,7 @@ async function handleSocketMessage(data: unknown): Promise<void> {
 
   const message = JSON.parse(data) as RpcResponseMessage
   if (message.method === 'browser_action') {
-    await handleBrowserActionRequest(message)
+    await queueBrowserActionRequest(message)
     return
   }
 
@@ -426,6 +449,17 @@ async function handleSocketMessage(data: unknown): Promise<void> {
   } else {
     entry.resolve(message.result)
   }
+}
+
+function queueBrowserActionRequest(message: RpcResponseMessage): Promise<void> {
+  const run = browserActionQueue
+    .catch(() => undefined)
+    .then(() => handleBrowserActionRequest(message))
+  browserActionQueue = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
 }
 
 async function handleBrowserActionRequest(message: RpcResponseMessage): Promise<void> {

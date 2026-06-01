@@ -26,6 +26,12 @@ All notable changes to Anda Bot.
 
 - **Musl build compatibility**: `liteparse` default features disabled at workspace level; `tesseract` OCR feature conditionally enabled only on non-musl targets. PDF OCR automatically disabled on musl targets via `cfg!(target_env = "musl")`, enabling static musl builds (Alpine Linux) that previously failed due to unavailable tesseract system libraries.
 - **Workspace derivation from source prefix**: when only the `source` field is provided (e.g. from browser extension), extract workspace from the `"cli:"` prefix. Conversations created via non-CLI channels now correctly resolve a valid workspace directory.
+- **Browser action active tab tracking**: `get_current_tab` and `list_tabs` no longer return stale data — a remembered active tab id is updated on every `tabs.onActivated`, `tabs.onUpdated`, `windows.onFocusChanged`, and `chrome.action.onClicked` event, so `activeTab()` and per-window `active_tab_id` resolution stay in sync with the real focused tab across multi-window sessions.
+- **`type_text` verification and scripted fallback**: native `Input.insertText` is now followed by a `verifyNativeTextInput` check that compares the actual input value to the expected text; when verification fails the action returns a `null` result that triggers a `chrome.scripting.executeScript` fallback so typed text is never silently lost. The result also exposes a `verified` field for caller introspection. New test covers the scripted fallback path.
+- **Browser action request serialization**: `service_worker.ts` now queues `browser_action` requests through `queueBrowserActionRequest`, ensuring only one browser action runs at a time and the active tab context cannot drift between adjacent calls.
+- **Viewport dimension validation**: `validate_viewport_options` no longer requires `viewport_width` when only `device_scale_factor` is provided — width/height are only enforced as a pair, and `device_scale_factor` alone is now accepted. Two new unit tests cover the relaxed contract.
+- **Clipboard write timeout**: `copy_to_clipboard` now races `navigator.clipboard.writeText` against a 2 s timeout so a hung clipboard write no longer blocks the whole extension message loop.
+- **Generic script-result error**: when a script-mode action returns no `result` the error message now reflects the actual action name (not just `execute_javascript`), surfacing the failure for `click`/`type_text`/`scroll_to`/etc. as well.
 
 ### Dependencies
 

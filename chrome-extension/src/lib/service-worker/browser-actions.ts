@@ -15,6 +15,7 @@ type BrowserActionDependencies = {
 }
 
 const debuggerActionLocks = new Map<number, Promise<void>>()
+let rememberedActiveTabId: number | null = null
 const DEBUGGER_PROTOCOL_VERSION = '1.3'
 const DEBUGGER_COMMAND_MAX_RETRIES = 2
 const NETWORK_IDLE_QUIET_MS = 500
@@ -94,6 +95,9 @@ export async function executeBrowserAction(
       active: args.active ?? true,
       windowId: positiveInteger(args.window_id) || undefined
     })
+    if (args.active ?? true) {
+      rememberActiveTab(tab)
+    }
     const pageReady = tab.id ? await waitForTabReady(chromeApi, tab.id, args) : null
     return withTopLevelTab({ opened: true }, pageReady, tab)
   }
@@ -108,6 +112,7 @@ export async function executeBrowserAction(
   if (args.action === 'close_tab') {
     const tabId = requirePositiveInteger(args.tab_id, 'close_tab requires tab_id')
     await chromeApi.tabs.remove(tabId)
+    forgetActiveTab(tabId)
     return { closed: true, tab_id: tabId }
   }
 
@@ -135,6 +140,7 @@ export async function executeBrowserAction(
       const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
       if (active && updated) {
         await focusWindow(chromeApi, updated.windowId).catch(() => undefined)
+        rememberActiveTab(updated)
       }
       const pageReady = await waitForTabReady(chromeApi, tab.id, args, loadWatcher)
       return withTopLevelTab({ navigated: true, url: args.url }, pageReady, updated)
@@ -356,10 +362,11 @@ export async function executeBrowserAction(
     postActionLoadWatcher?.cancel()
     throw error
   }
-  if (args.action === 'execute_javascript' && execution?.result === undefined) {
-    throw new Error('execute_javascript did not return a script result')
+  if (execution?.result === undefined) {
+    const action = args.action || 'browser action'
+    throw new Error(`${action} did not return a script result`)
   }
-  const result = execution ? execution.result : null
+  const result = execution.result
   return withPageReady(
     result,
     await waitForPageSettleAfterAction(chromeApi, tabId, args, postActionLoadWatcher)
@@ -373,9 +380,10 @@ async function listTabs(
   const windowId = positiveInteger(args.window_id)
   const queryInfo = windowId ? { windowId } : {}
   const tabs = await chromeApi.tabs.query(queryInfo)
+  const active = windowId ? tabs.find((tab) => tab.active) || null : await activeTab(chromeApi)
   return {
     tabs: tabs.map(tabSummary),
-    active_tab_id: tabs.find((tab) => tab.active)?.id || null
+    active_tab_id: active?.id || null
   }
 }
 
@@ -1563,6 +1571,7 @@ async function dispatchNativeTextInput(
   }
 
   const text = String(args.text || '')
+  let verified: boolean | null = null
   await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
       const useTouch = await isMobileLikeTarget(target)
@@ -1574,19 +1583,53 @@ async function dispatchNativeTextInput(
       if (text) {
         await target.sendCommand('Input.insertText', { text })
       }
+      verified = await verifyNativeTextInput(target, inputTarget.selector, text)
     })
   )
+
+  if (verified === false) {
+    return null
+  }
 
   return {
     typed: true,
     native: true,
     selector: inputTarget.selector || args.selector || null,
     active_element: !args.selector,
+    verified,
     label: inputTarget.label || '',
     length: text.length,
     x,
     y,
     bounding_box: inputTarget.bounding_box || null
+  }
+}
+
+async function verifyNativeTextInput(
+  target: AttachedDebuggerTarget,
+  selector: unknown,
+  expectedText: string
+): Promise<boolean | null> {
+  if (typeof selector !== 'string' || !selector.trim()) {
+    return null
+  }
+
+  try {
+    const evaluation = await sendDebuggerRuntimeEvaluate(
+      target,
+      `(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!element) return null;
+        const value = 'value' in element ? String(element.value) : String(element.textContent || '');
+        return { value, matches: value === ${JSON.stringify(expectedText)} };
+      })()`
+    )
+    const value = debuggerEvaluationValue(evaluation)
+    return value && typeof value === 'object' && 'matches' in value
+      ? Boolean((value as Record<string, unknown>).matches)
+      : null
+  } catch (_error) {
+    return null
   }
 }
 
@@ -1844,14 +1887,59 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+export function rememberActiveTab(tabOrId: ChromeTabInfo | number | null | undefined): void {
+  if (tabOrId === null || tabOrId === undefined) {
+    rememberedActiveTabId = null
+    return
+  }
+  const tabId = typeof tabOrId === 'number' ? tabOrId : tabOrId?.id
+  if (typeof tabId === 'number' && Number.isFinite(tabId)) {
+    rememberedActiveTabId = tabId
+  }
+}
+
+function forgetActiveTab(tabId: number): void {
+  if (rememberedActiveTabId === tabId) {
+    rememberedActiveTabId = null
+  }
+}
+
+async function rememberedActiveTab(chromeApi: ChromeApi): Promise<ChromeTabInfo | null> {
+  if (!rememberedActiveTabId) {
+    return null
+  }
+  try {
+    const tab = await chromeApi.tabs.get(rememberedActiveTabId)
+    if (tab?.active) {
+      return tab
+    }
+  } catch (_error) {
+    // The remembered tab may have been closed; fall back to Chrome's active-tab queries.
+  }
+  rememberedActiveTabId = null
+  return null
+}
+
 export async function activeTab(chromeApi: ChromeApi): Promise<ChromeTabInfo | null> {
+  const remembered = await rememberedActiveTab(chromeApi)
+  if (remembered) {
+    return remembered
+  }
+
   const [tab] = await chromeApi.tabs.query({ active: true, lastFocusedWindow: true })
   if (tab) {
+    rememberActiveTab(tab)
     return tab
   }
   const [currentWindowTab] = await chromeApi.tabs.query({ active: true, currentWindow: true })
   if (currentWindowTab) {
+    rememberActiveTab(currentWindowTab)
     return currentWindowTab
+  }
+  const [anyActiveTab] = await chromeApi.tabs.query({ active: true })
+  if (anyActiveTab) {
+    rememberActiveTab(anyActiveTab)
+    return anyActiveTab
   }
   const [fallbackTab] = await chromeApi.tabs.query({})
   return fallbackTab || null
@@ -2568,12 +2656,13 @@ function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
 
   element.scrollIntoView({ block: 'center', inline: 'center' })
   const rect = element.getBoundingClientRect()
+  const useExplicitPoint = !args.selector
   const x =
-    typeof args.x === 'number' && Number.isFinite(args.x)
+    useExplicitPoint && typeof args.x === 'number' && Number.isFinite(args.x)
       ? args.x
       : rect.left + Math.max(1, rect.width) / 2
   const y =
-    typeof args.y === 'number' && Number.isFinite(args.y)
+    useExplicitPoint && typeof args.y === 'number' && Number.isFinite(args.y)
       ? args.y
       : rect.top + Math.max(1, rect.height) / 2
 
@@ -2597,6 +2686,7 @@ function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
 async function activateTab(chromeApi: ChromeApi, tabId: number): Promise<ChromeTabInfo> {
   const tab = (await chromeApi.tabs.update(tabId, { active: true })) as ChromeTabInfo
   await focusWindow(chromeApi, tab.windowId).catch(() => undefined)
+  rememberActiveTab(tab)
   return tab
 }
 
@@ -2911,7 +3001,7 @@ export function pageActionDispatcher(
   }
 
   function pointerPoint(element: Element): { x: number; y: number } {
-    return pointFromArgs() || centerOf(element)
+    return args.selector ? centerOf(element) : pointFromArgs() || centerOf(element)
   }
 
   function dispatchMouse(element: Element, type: string, point: { x: number; y: number }): void {
@@ -3215,9 +3305,19 @@ export function pageActionDispatcher(
       return { copied: true, length: text.length, method: 'execCommand' }
     }
     if (navigator.clipboard?.writeText) {
-      return navigator.clipboard
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('clipboard write timed out')), 2000)
+      })
+      const write = navigator.clipboard
         .writeText(text)
         .then(() => ({ copied: true, length: text.length, method: 'clipboard' }))
+        .finally(() => {
+          if (timer) {
+            clearTimeout(timer)
+          }
+        })
+      return Promise.race([write, timeout])
     }
     throw new Error('copy command failed')
   }
@@ -3515,7 +3615,9 @@ export function pageActionDispatcher(
           })()
       source.scrollIntoView({ block: 'center', inline: 'center' })
       const sourcePoint = centerOf(source)
-      const targetPoint = pointFromArgs('to_') || centerOf(target)
+      const targetPoint = args.to_selector
+        ? centerOf(target)
+        : pointFromArgs('to_') || centerOf(target)
       const dataTransfer = new DataTransfer()
       source.dispatchEvent(
         new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer })

@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { executeBrowserAction } from './browser-actions'
+import { executeBrowserAction, rememberActiveTab } from './browser-actions'
 import type { ChromeApi, ChromeTabInfo, ChromeWebNavigationDetails } from './types'
 
 type DebuggerTarget = { tabId: number }
@@ -96,6 +96,56 @@ function attachWebNavigationApi(chromeApi: ChromeApi) {
     onReferenceFragmentUpdated
   }
 }
+
+beforeEach(() => {
+  rememberActiveTab(null)
+})
+
+describe('executeBrowserAction tab targeting', () => {
+  it('uses the remembered active tab for get_current_tab and list_tabs', async () => {
+    const staleTab = {
+      id: 111,
+      windowId: 1,
+      active: true,
+      title: 'Stale tab'
+    }
+    const activeTab = {
+      id: 222,
+      windowId: 2,
+      active: true,
+      title: 'Remembered tab'
+    }
+    const chromeApi = createChromeApi(undefined, staleTab)
+    chromeApi.tabs.get = vi.fn(async (tabId: number) => {
+      if (tabId === activeTab.id) {
+        return activeTab
+      }
+      return staleTab
+    })
+    chromeApi.tabs.query = vi.fn(async () => [staleTab, activeTab])
+    rememberActiveTab(activeTab.id)
+
+    const current = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'get_current_tab' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+    const listed = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 2,
+        args: { action: 'list_tabs' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    expect(current.tab).toMatchObject({ id: activeTab.id, title: 'Remembered tab' })
+    expect(listed.active_tab_id).toBe(activeTab.id)
+  })
+})
 
 describe('executeBrowserAction waited browser actions', () => {
   it('waits for open_tab to reach a loaded page before returning', async () => {
@@ -905,5 +955,70 @@ describe('executeBrowserAction native input', () => {
     expect(result).toMatchObject({ typed: true, native: true, selector: '#name', length: 3 })
     expect(selectAllCalls).toHaveLength(2)
     expect(insertTextCall?.[2]).toEqual({ text: 'Ada' })
+  })
+
+  it('falls back to scripted text entry when native insertion does not update the target', async () => {
+    const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, params?: Record<string, unknown>) => {
+        if (method === 'Runtime.evaluate') {
+          const expression = String((params as RuntimeEvaluateParams | undefined)?.expression || '')
+          if (expression.includes('navigator.userAgent')) {
+            return { result: { type: 'boolean', value: false } }
+          }
+          return { result: { type: 'object', value: { value: '', matches: false } } }
+        }
+        return {}
+      }
+    )
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      tab
+    )
+    chromeApi.tabs.get = vi.fn(async () => tab)
+    chromeApi.scripting.executeScript = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          result: {
+            native_text_input: true,
+            x: 20,
+            y: 30,
+            selector: '#name',
+            label: 'Name',
+            bounding_box: { x: 10, y: 10, width: 100, height: 40 }
+          }
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          result: {
+            typed: true,
+            selector: '#name',
+            active_element: false,
+            length: 3
+          }
+        }
+      ]) as ChromeApi['scripting']['executeScript']
+
+    const result = (await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'type_text', selector: '#name', text: 'Ada' }
+      },
+      { chromeApi }
+    )) as Record<string, unknown>
+
+    const insertTextCall = sendCommand.mock.calls.find((call) => call[1] === 'Input.insertText')
+
+    expect(result).toMatchObject({ typed: true, selector: '#name', length: 3 })
+    expect(result).not.toHaveProperty('native')
+    expect(insertTextCall?.[2]).toEqual({ text: 'Ada' })
+    expect(chromeApi.scripting.executeScript).toHaveBeenCalledTimes(2)
   })
 })

@@ -1272,21 +1272,16 @@ fn require_path_or_url(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
 }
 
 fn validate_viewport_options(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
-    let has_viewport = args.viewport_width.is_some()
-        || args.viewport_height.is_some()
-        || args.device_scale_factor.is_some();
-    if !has_viewport {
-        return Ok(());
-    }
-
-    let width = args.viewport_width.ok_or(
-        "chrome_browser viewport capture requires viewport_width when viewport options are used",
-    )?;
-    let height = args.viewport_height.ok_or(
-        "chrome_browser viewport capture requires viewport_height when viewport options are used",
-    )?;
-    if !(1..=10_000).contains(&width) || !(1..=10_000).contains(&height) {
-        return Err("chrome_browser viewport dimensions must be between 1 and 10000".into());
+    if args.viewport_width.is_some() || args.viewport_height.is_some() {
+        let width = args.viewport_width.ok_or(
+            "chrome_browser viewport capture requires viewport_width when viewport_height is used",
+        )?;
+        let height = args.viewport_height.ok_or(
+            "chrome_browser viewport capture requires viewport_height when viewport_width is used",
+        )?;
+        if !(1..=10_000).contains(&width) || !(1..=10_000).contains(&height) {
+            return Err("chrome_browser viewport dimensions must be between 1 and 10000".into());
+        }
     }
     if let Some(scale) = args.device_scale_factor
         && (!scale.is_finite() || !(0.1..=5.0).contains(&scale))
@@ -1884,6 +1879,26 @@ mod tests {
         args.y = Some(500.0);
 
         assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &args).is_ok());
+    }
+
+    #[test]
+    fn viewport_validation_allows_device_scale_factor_without_dimensions() {
+        let mut args = snapshot_args();
+        args.device_scale_factor = Some(1.0);
+
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Page, &args).is_ok());
+    }
+
+    #[test]
+    fn viewport_validation_requires_dimensions_as_a_pair() {
+        let mut args = snapshot_args();
+        args.viewport_width = Some(1280);
+
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Page, &args).is_err());
+
+        args.viewport_height = Some(720);
+
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Page, &args).is_ok());
     }
 
     #[test]
