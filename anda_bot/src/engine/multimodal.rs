@@ -29,10 +29,10 @@ pub const AUDIO_MODEL_LABEL: &str = "audio";
 pub const VIDEO_MODEL_LABEL: &str = "video";
 pub const OTHER_MODEL_LABEL: &str = "flash";
 
-const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_MEDIA_UNDERSTANDING_CONCURRENCY: usize = 8;
 const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
-const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 512 * 1024;
+const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaKind {
@@ -326,7 +326,7 @@ impl MediaUnderstandingAgent {
 
         if attachments.is_empty() {
             return Err(
-                "other_understanding requires an attached resource, workspace file path, or URL"
+                format!("{OTHER_UNDERSTANDING_AGENT_NAME} requires an attached resource, workspace file path, or URL")
                     .into(),
             );
         }
@@ -628,7 +628,6 @@ impl MediaUnderstandingAgent {
                     content: vec![ContentPart::Text {
                         text: summary_input,
                     }],
-                    max_output_tokens: Some(2048),
                     ..Default::default()
                 },
                 Vec::new(),
@@ -670,8 +669,8 @@ impl MediaUnderstandingAgent {
                     prompt: format!(
                         "Understand this non-image/audio/video attachment for the main agent.\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. If no skill fits, use safe shell or read-only file inspection to extract text or metadata when the attachment has an accessible local path or URL.\n3. If local tools are insufficient, use network-capable tools or shell commands to research a practical extraction method, then report the best next action.\n\nDo not invent attachment contents. If extraction is impossible, explain what was tried or what capability is missing.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
                     ),
+                    model: Some("".to_string()), // ACTIVE_MODEL_LABEL
                     tools,
-                    max_output_tokens: Some(2048),
                     ..Default::default()
                 },
                 vec![attachment.to_resource()],

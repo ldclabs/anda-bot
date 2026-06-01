@@ -1,6 +1,32 @@
 # Changelog
 
 All notable changes to Anda Bot.
+## [0.8.8] — 2026-06-01
+
+### Added
+
+- **Cross-browser detection in Chrome extension**: new async `getCurrentBrowser()` in `service-worker/chrome.ts` that uses User-Agent Client Hints (`navigator.userAgentData.getHighEntropyValues(['brands'])`), Brave's `navigator.brave.isBrave()`, and UA string matching to return `chrome | edge | brave | opera | vivaldi | arc | chromium`. Powers the new session scoping below.
+- **Window id in side-panel tab payload**: `requestExtra` now includes the active tab's `windowId`, letting the engine reason about and correlate tabs across multi-window Chrome sessions.
+
+### Changed
+
+- **Media size limits tightened**: `MAX_MEDIA_FILE_SIZE_BYTES` reduced from 25 MB to 10 MB and `MAX_OTHER_TEXT_SUMMARY_BYTES` from 512 KB to 256 KB — keeps a single attachment well under the per-request model context budget.
+- **Browser session scope now names the browser**: `browserSessionScope` returns `chrome | incognito_chrome | brave | incognito_brave | edge | ...` (was a binary `chrome | incognito`). Isolates persistent session state across browsers, so switching from Chrome to Brave no longer collides with the prior session.
+- **Active model resolution in `other_understanding` agent**: the agent call now sets `model: Some(ACTIVE_MODEL_LABEL.into())` (empty string) instead of relying on the engine default — the active model label is picked from runtime config the same way the main agent does, keeping routing consistent.
+- **`requestExtra` always refreshes active tab**: the conditional `if (!this.tab) await this.refreshActiveTab()` was replaced with an unconditional refresh, so the engine always sees the tab the user is actually looking at, not a stale cache from a previous focus.
+- **Other media agent error string uses constant name**: the "requires an attached resource..." error is now formatted with `OTHER_UNDERSTANDING_AGENT_NAME` for consistency with other agent error paths.
+
+### Fixed
+
+- **`rememberActiveTab` null/undefined handling**: switched the guard from `=== null || === undefined` to a single `== null` check, so the remembered tab id is correctly cleared on any "no value" input. The previous branch missed `undefined` in some callers and let stale ids linger.
+
+### Removed
+
+- **Pre-populated `initial_messages` in new conversations**: the engine no longer injects a synthetic user message containing the prompt into a fresh `Conversation`'s `messages` field — the prompt is still sent to the LLM, but the conversation record now starts with an empty `messages` array, matching what the rest of the engine actually observes.
+- **"Active sessions" hint from browser tool description**: the live `Vec<BrowserSession>` debug dump was appended to `description()` on every call, polluting the LLM's tool prompt. The hint is gone; the description now contains only the stable tool contract.
+- **Redundant `max_output_tokens: Some(2048)` on multimodal LLM calls**: removed from both the `other_understanding` and other media summary calls — letting the active model's default token budget apply.
+- **`requestMeta()` call on the extension prompt path**: the channel no longer pre-fetches meta before `agentRun`, and `meta` is no longer threaded through the `agentRun` argument list.
+
 ## [0.8.7] — 2026-06-01
 
 ### Added

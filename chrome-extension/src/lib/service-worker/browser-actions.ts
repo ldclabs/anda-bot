@@ -1888,7 +1888,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function rememberActiveTab(tabOrId: ChromeTabInfo | number | null | undefined): void {
-  if (tabOrId === null || tabOrId === undefined) {
+  if (tabOrId == null) {
     rememberedActiveTabId = null
     return
   }

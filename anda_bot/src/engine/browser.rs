@@ -634,8 +634,7 @@ impl ChromeBrowserToolKind {
         }
     }
 
-    fn description(self, sessions: Vec<BrowserSession>) -> String {
-        let active_hint = format!("\n\nActive sessions: {sessions:?}");
+    fn description(self) -> String {
         let body = match self {
             Self::Tabs => concat!(
                 "Manage Chrome tabs, local files, navigation, and downloads through the Anda browser extension. ",
@@ -659,7 +658,7 @@ impl ChromeBrowserToolKind {
                 "Use chrome_tabs.switch_tab first if another tab is needed."
             ),
         };
-        format!("{body}{active_hint}")
+        body.to_string()
     }
 }
 
@@ -672,7 +671,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
     }
 
     fn description(&self) -> String {
-        self.kind.description(self.bridge.sessions())
+        self.kind.description()
     }
 
     fn definition(&self) -> FunctionDefinition {

@@ -728,10 +728,7 @@ export class AndaSidePanelClient extends EventTarget {
   }
 
   async requestExtra(): Promise<Record<string, unknown>> {
-    if (!this.tab) {
-      await this.refreshActiveTab()
-    }
-
+    await this.refreshActiveTab()
     const extra: Record<string, unknown> = {
       conversation: 0,
       browser_client: 'chrome_extension'
@@ -742,7 +739,8 @@ export class AndaSidePanelClient extends EventTarget {
         id: this.tab.id,
         url: this.tab.url,
         title: this.tab.title,
-        incognito: this.tab.incognito
+        incognito: this.tab.incognito,
+        window: this.tab.windowId
       }
     }
 

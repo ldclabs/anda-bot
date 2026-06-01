@@ -1216,14 +1216,6 @@ impl Agent<AgentCtx> for AndaBot {
             }
         };
 
-        let mut initial_messages = vec![Message {
-            role: "user".into(),
-            content: vec![prompt.clone().into()],
-            timestamp: Some(now_ms),
-            ..Default::default()
-        }];
-        mark_special_user_messages(&mut initial_messages);
-
         let mut chat_history: Vec<Message> = Vec::new();
         let mut reserve_chat_history: Vec<Message> = Vec::new();
         let mut new_chat_history_message = Message {
@@ -1282,7 +1274,7 @@ impl Agent<AgentCtx> for AndaBot {
             let mut conv = Conversation {
                 user: *caller,
                 thread: Some(sess_id.clone()),
-                messages: initial_messages.into_iter().map(|msg| json!(msg)).collect(),
+                messages: vec![],
                 ancestors,
                 resources: vec![],
                 period: now_ms / 3600 / 1000,

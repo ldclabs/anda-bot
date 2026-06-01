@@ -178,7 +178,6 @@ export class Channel extends EventTarget {
     const command = parsePromptCommand(prompt)
 
     try {
-      const meta = await this.requestMeta()
       const poller = new PollConversation()
       if (command && command.kind === 'new') {
         this.clearConversationDisplay()
@@ -232,7 +231,7 @@ export class Channel extends EventTarget {
 
       this.#api.updateStatus('sending', null)
 
-      const output = await this.agentRun({ name: '', prompt, resources, meta })
+      const output = await this.agentRun({ name: '', prompt, resources })
       this.#session = output.session || ''
       const hasConversation = Boolean(output.conversation)
       if (output.conversation) {

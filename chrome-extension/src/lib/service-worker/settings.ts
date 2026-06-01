@@ -1,4 +1,5 @@
 import type { ChromeApi, SettingsState, SubmitKeyMode } from './types'
+import { getCurrentBrowser } from './chrome'
 
 export const defaultSettings: SettingsState = {
   baseUrl: 'http://127.0.0.1:8042',
@@ -24,11 +25,13 @@ export async function browserSession(chromeApi: ChromeApi): Promise<string> {
     id = Date.now().toString()
     await chromeApi.storage.local.set({ browserSessionId: id })
   }
-  return `browser:${browserSessionScope(chromeApi)}:${id}`
+  let scope = await browserSessionScope(chromeApi)
+  return `browser:${scope}:${id}`
 }
 
-function browserSessionScope(chromeApi: ChromeApi): string {
-  return chromeApi.extension?.inIncognitoContext ? 'incognito' : 'chrome'
+async function browserSessionScope(chromeApi: ChromeApi): Promise<string> {
+  let browser = await getCurrentBrowser()
+  return chromeApi.extension?.inIncognitoContext ? `incognito_${browser}` : browser
 }
 
 export function websocketUrl(settings: SettingsState): string {
