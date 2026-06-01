@@ -23,6 +23,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Musl build compatibility**: `liteparse` default features disabled at workspace level; `tesseract` OCR feature conditionally enabled only on non-musl targets. PDF OCR automatically disabled on musl targets via `cfg!(target_env = "musl")`, enabling static musl builds (Alpine Linux) that previously failed due to unavailable tesseract system libraries.
 - **Workspace derivation from source prefix**: when only the `source` field is provided (e.g. from browser extension), extract workspace from the `"cli:"` prefix. Conversations created via non-CLI channels now correctly resolve a valid workspace directory.
 
 ### Dependencies

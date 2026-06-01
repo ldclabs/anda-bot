@@ -55,7 +55,6 @@ tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
 libc = { workspace = true }
-liteparse = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
 crossterm = { workspace = true, features = ["event-stream"] }
@@ -66,6 +65,12 @@ tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
 zip = { workspace = true }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+liteparse = { workspace = true }
+
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+liteparse = { workspace = true, features = ["tesseract"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = { workspace = true }

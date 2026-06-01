@@ -1166,6 +1166,7 @@ fn looks_like_text(text: &str) -> bool {
 async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
     let mut config = LiteParseConfig {
         quiet: true,
+        ocr_enabled: !cfg!(target_env = "musl"),
         ..Default::default()
     };
     let parser = LiteParse::new(config.clone());
