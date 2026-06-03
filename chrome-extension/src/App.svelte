@@ -148,6 +148,14 @@
     await andaClient.switchChannel(source)
   }
 
+  async function openFolderChannel() {
+    if (!andaClient.settings.token) {
+      settingsOpen = true
+      setupGuideOpen = true
+    }
+    await andaClient.openWorkspaceChannel()
+  }
+
   async function deleteChannel(source: string) {
     await andaClient.deleteChannel(source)
   }
@@ -330,6 +338,7 @@
     {activeSource}
     {sending}
     onSelect={switchChannel}
+    onOpenFolder={openFolderChannel}
     onDelete={deleteChannel}
   />
 

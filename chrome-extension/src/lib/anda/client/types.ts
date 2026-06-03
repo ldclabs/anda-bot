@@ -9,6 +9,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json } | 
 
 export interface StorageState extends Partial<SettingsState> {
   browserSessionId?: string
+  workspaceChannelSources?: string[]
 }
 
 export interface ChromeTabInfo {

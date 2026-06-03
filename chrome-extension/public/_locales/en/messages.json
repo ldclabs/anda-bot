@@ -8,6 +8,9 @@
   "actionTitle": {
     "message": "Open Anda Bot"
   },
+  "localFileAccessDisabled": {
+    "message": "Enable \"Allow access to file URLs\" for the Anda Bot extension in the browser extension details, then retry."
+  },
   "placeholderMessage": {
     "message": "Message Anda"
   },
@@ -298,6 +301,9 @@
   },
   "collapseChannels": {
     "message": "Collapse channels"
+  },
+  "openFolder": {
+    "message": "Open folder"
   },
   "deleteChannel": {
     "message": "Delete channel"

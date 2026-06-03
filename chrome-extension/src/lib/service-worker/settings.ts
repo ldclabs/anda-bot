@@ -64,6 +64,14 @@ export function errorToMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+export function errorToCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined
+  }
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && code.trim() ? code.trim() : undefined
+}
+
 export function errorToError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }

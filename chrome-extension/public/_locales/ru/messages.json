@@ -8,6 +8,9 @@
   "actionTitle": {
     "message": "Открыть Anda Bot"
   },
+  "localFileAccessDisabled": {
+    "message": "Включите «Разрешить доступ к URL файлов» для расширения Anda Bot на странице сведений о расширении браузера, затем повторите попытку."
+  },
   "placeholderMessage": {
     "message": "Сообщение для Anda"
   },
@@ -298,6 +301,9 @@
   },
   "collapseChannels": {
     "message": "Свернуть каналы"
+  },
+  "openFolder": {
+    "message": "Открыть папку"
   },
   "deleteChannel": {
     "message": "Удалить канал"

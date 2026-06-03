@@ -832,7 +832,9 @@ impl MediaUnderstandingAgent {
         }
 
         if let Some(file_uri) = uri.filter(|uri| !uri.trim().is_empty())
-            && (file_uri.starts_with("https://") || file_uri.starts_with("data:"))
+            && (file_uri.starts_with("https://")
+                || file_uri.starts_with("http://")
+                || file_uri.starts_with("data:"))
         {
             return Ok(ContentPart::FileData {
                 file_uri,

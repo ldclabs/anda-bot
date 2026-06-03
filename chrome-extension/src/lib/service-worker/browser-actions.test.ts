@@ -192,6 +192,75 @@ describe('executeBrowserAction waited browser actions', () => {
     expect(onUpdated.event.removeListener).toHaveBeenCalled()
   })
 
+  it('rejects open_tab file URLs when local file access is disabled', async () => {
+    const chromeApi = createChromeApi(undefined)
+    chromeApi.i18n = {
+      getMessage: vi.fn((key: string) =>
+        key === 'localFileAccessDisabled' ? '请在扩展详情页启用“允许访问文件 URL”，然后重试。' : ''
+      )
+    } as unknown as typeof chrome.i18n
+    chromeApi.extension = {
+      inIncognitoContext: false,
+      isAllowedFileSchemeAccess: vi.fn((callback: (isAllowedAccess: boolean) => void) => {
+        callback(false)
+      })
+    }
+
+    let error: unknown
+    try {
+      await executeBrowserAction(
+        {
+          session: 'test',
+          request_id: 1,
+          args: { action: 'open_tab', url: 'file:///tmp/report.html' }
+        },
+        { chromeApi }
+      )
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('请在扩展详情页启用“允许访问文件 URL”，然后重试。')
+    expect((error as { code?: string }).code).toBe('local_file_access_disabled')
+    expect(chromeApi.tabs.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects navigate file URLs when local file access is disabled', async () => {
+    const chromeApi = createChromeApi(undefined)
+    chromeApi.i18n = {
+      getMessage: vi.fn((key: string) =>
+        key === 'localFileAccessDisabled' ? '请在扩展详情页启用“允许访问文件 URL”，然后重试。' : ''
+      )
+    } as unknown as typeof chrome.i18n
+    chromeApi.extension = {
+      inIncognitoContext: false,
+      isAllowedFileSchemeAccess: vi.fn((callback: (isAllowedAccess: boolean) => void) => {
+        callback(false)
+      })
+    }
+
+    let error: unknown
+    try {
+      await executeBrowserAction(
+        {
+          session: 'test',
+          request_id: 1,
+          args: { action: 'navigate', url: 'file:///tmp/report.html' }
+        },
+        { chromeApi }
+      )
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('请在扩展详情页启用“允许访问文件 URL”，然后重试。')
+    expect((error as { code?: string }).code).toBe('local_file_access_disabled')
+    expect(chromeApi.tabs.update).not.toHaveBeenCalled()
+    expect(chromeApi.tabs.create).not.toHaveBeenCalled()
+  })
+
   it('pre-arms navigation waiting before navigate updates the tab', async () => {
     const onUpdated = createChromeEvent<TabUpdatedListener>()
     const startTab = {

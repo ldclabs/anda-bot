@@ -30,6 +30,8 @@ const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
 const BROWSER_SCREENSHOT_TMP_DIR: &str = "browser-screenshots";
+const LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE: &str = "local_file_access_disabled";
+const LOCAL_FILE_ACCESS_WARNING: &str = "Opened the local file via the browser application because the extension does not have access to file:// URLs. Enable \"Allow access to file URLs\" in the extension details to inspect or automate the page directly.";
 
 #[derive(Debug, Default)]
 pub struct BrowserBridge {
@@ -292,6 +294,9 @@ pub struct BrowserActionResult {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
 }
 
 #[derive(Clone)]
@@ -708,6 +713,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                     "session": session,
                 }),
                 error: None,
+                error_code: None,
             };
             return Ok(ToolOutput::new(Response::Ok {
                 result: json!(result),
@@ -779,14 +785,14 @@ impl ChromeBrowserTool {
         open_args.timeout_ms = args.timeout_ms;
         open_args.reason = args.reason;
 
-        let mut result = self.run_browser_action(session, open_args).await?;
-        if let Some(value) = result.value.as_object_mut().filter(|_| result.ok) {
-            value.insert("opened_file".to_string(), json!(true));
-            value.insert("file_path".to_string(), json!(file.path_string));
-            value.insert("file_url".to_string(), json!(file_url));
-            value.insert("mime_type".to_string(), json!(file.mime_type));
-        }
-        Ok(result)
+        let result = self.run_browser_action(session, open_args).await?;
+        open_file_result_with_fallback(
+            session,
+            &file,
+            &file_url,
+            result,
+            launch_browser_for_session,
+        )
     }
 
     fn local_file_from_args(
@@ -813,6 +819,61 @@ impl ChromeBrowserTool {
             mime_type,
         })
     }
+}
+
+fn annotate_open_file_value(
+    value: &mut serde_json::Map<String, Value>,
+    file: &LocalBrowserFile,
+    file_url: &str,
+) {
+    value.insert("opened_file".to_string(), json!(true));
+    value.insert("file_path".to_string(), json!(file.path_string));
+    value.insert("file_url".to_string(), json!(file_url));
+    value.insert("mime_type".to_string(), json!(file.mime_type));
+}
+
+fn is_local_file_access_error(error_code: Option<&str>) -> bool {
+    error_code == Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE)
+}
+
+fn open_file_result_with_fallback<F>(
+    session: &str,
+    file: &LocalBrowserFile,
+    file_url: &str,
+    mut result: BrowserActionResult,
+    launch_browser: F,
+) -> Result<BrowserActionResult, BoxError>
+where
+    F: FnOnce(Option<&str>, &str) -> Result<Value, BoxError>,
+{
+    if result.ok {
+        if let Some(value) = result.value.as_object_mut() {
+            annotate_open_file_value(value, file, file_url);
+        }
+        return Ok(result);
+    }
+
+    if !is_local_file_access_error(result.error_code.as_deref()) {
+        return Ok(result);
+    }
+
+    let launch = launch_browser(Some(file_url), session)?;
+    Ok(BrowserActionResult {
+        ok: true,
+        value: json!({
+            "opened": true,
+            "opened_file": true,
+            "file_path": file.path_string,
+            "file_url": file_url,
+            "mime_type": file.mime_type,
+            "launch": launch,
+            "fallback_launch": true,
+            "local_file_access": false,
+            "warning": LOCAL_FILE_ACCESS_WARNING,
+        }),
+        error: None,
+        error_code: None,
+    })
 }
 
 fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
@@ -1047,6 +1108,16 @@ fn normalize_session(session: String) -> Result<String, BoxError> {
         return Err("browser session is too long".into());
     }
     Ok(session.to_string())
+}
+
+fn browser_scope_from_session(session: &str) -> Option<&str> {
+    let mut parts = session.splitn(3, ':');
+    if parts.next()? != "browser" {
+        return None;
+    }
+
+    let scope = parts.next()?;
+    Some(scope.strip_prefix("incognito_").unwrap_or(scope))
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -1632,11 +1703,22 @@ fn json_null() -> Value {
 }
 
 fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
+    launch_browser_with_preferred_scope(url, None)
+}
+
+fn launch_browser_for_session(url: Option<&str>, session: &str) -> Result<Value, BoxError> {
+    launch_browser_with_preferred_scope(url, browser_scope_from_session(session))
+}
+
+fn launch_browser_with_preferred_scope(
+    url: Option<&str>,
+    preferred_scope: Option<&str>,
+) -> Result<Value, BoxError> {
     let url = url.map(str::trim).filter(|url| !url.is_empty());
 
     #[cfg(target_os = "macos")]
     {
-        let browsers = ["Google Chrome", "Microsoft Edge", "Chromium"];
+        let browsers = macos_browser_candidates(preferred_scope);
         let mut last_error = None;
         for browser in browsers {
             let mut command = Command::new("open");
@@ -1666,27 +1748,25 @@ fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
 
     #[cfg(target_os = "windows")]
     {
+        let browser = match preferred_scope {
+            Some("edge") => "msedge",
+            Some("chromium") => "chromium",
+            _ => "chrome",
+        };
         let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", "chrome"]);
+        command.args(["/C", "start", "", browser]);
         if let Some(url) = url {
             command.arg(url);
         }
         command
             .status()
-            .map_err(|err| format!("failed to launch Chrome: {err}"))?;
-        return Ok(json!({ "browser": "chrome", "url": url }));
+            .map_err(|err| format!("failed to launch {browser}: {err}"))?;
+        return Ok(json!({ "browser": browser, "url": url }));
     }
 
     #[cfg(target_os = "linux")]
     {
-        let browsers = [
-            "google-chrome",
-            "google-chrome-stable",
-            "chromium-browser",
-            "chromium",
-            "microsoft-edge",
-            "microsoft-edge-stable",
-        ];
+        let browsers = linux_browser_candidates(preferred_scope);
         let mut last_error = None;
         for browser in browsers {
             let mut command = Command::new(browser);
@@ -1709,6 +1789,46 @@ fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
     {
         Err("launch_browser is not supported on this operating system".into())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_browser_candidates(preferred_scope: Option<&str>) -> Vec<&'static str> {
+    let mut browsers = vec!["Google Chrome", "Microsoft Edge", "Chromium"];
+    let preferred = match preferred_scope {
+        Some("edge") => Some("Microsoft Edge"),
+        Some("chromium") => Some("Chromium"),
+        Some("chrome") => Some("Google Chrome"),
+        _ => None,
+    };
+    if let Some(preferred) = preferred
+        && let Some(index) = browsers.iter().position(|browser| *browser == preferred) {
+            browsers.swap(0, index);
+        }
+    browsers
+}
+
+#[cfg(target_os = "linux")]
+fn linux_browser_candidates(preferred_scope: Option<&str>) -> Vec<&'static str> {
+    let mut browsers = vec![
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium-browser",
+        "chromium",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+    ];
+    let preferred = match preferred_scope {
+        Some("edge") => Some("microsoft-edge"),
+        Some("chromium") => Some("chromium"),
+        Some("chrome") => Some("google-chrome"),
+        _ => None,
+    };
+    if let Some(preferred) = preferred {
+        if let Some(index) = browsers.iter().position(|browser| *browser == preferred) {
+            browsers.swap(0, index);
+        }
+    }
+    browsers
 }
 
 #[cfg(test)]
@@ -1738,6 +1858,16 @@ mod tests {
             browser_session_from_meta(&meta).as_deref(),
             Some("browser:chrome:1")
         );
+    }
+
+    #[test]
+    fn browser_scope_from_session_strips_incognito_prefix() {
+        assert_eq!(browser_scope_from_session("browser:edge:42"), Some("edge"));
+        assert_eq!(
+            browser_scope_from_session("browser:incognito_chrome:42"),
+            Some("chrome")
+        );
+        assert_eq!(browser_scope_from_session("terminal:chrome:42"), None);
     }
 
     #[test]
@@ -1967,6 +2097,7 @@ mod tests {
                         "page_ready": { "loaded": true }
                     }),
                     error: None,
+                    error_code: None,
                 },
             )
             .await
@@ -1984,6 +2115,74 @@ mod tests {
     }
 
     #[test]
+    fn open_file_result_falls_back_for_local_file_access_errors() {
+        let file = LocalBrowserFile {
+            path: PathBuf::from("/tmp/report.html"),
+            path_string: "/tmp/report.html".to_string(),
+            mime_type: "text/html".to_string(),
+        };
+        let result = BrowserActionResult {
+            ok: false,
+            value: Value::Null,
+            error: Some("无法导航到文件 URL，请在扩展详情页启用本地文件访问。".to_string()),
+            error_code: Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE.to_string()),
+        };
+
+        let fallback = open_file_result_with_fallback(
+            "browser:edge:42",
+            &file,
+            "file:///tmp/report.html",
+            result,
+            |url, session| {
+                assert_eq!(url, Some("file:///tmp/report.html"));
+                assert_eq!(session, "browser:edge:42");
+                Ok(json!({ "browser": "Microsoft Edge", "url": url }))
+            },
+        )
+        .unwrap();
+
+        assert!(fallback.ok);
+        assert_eq!(fallback.error, None);
+        assert_eq!(fallback.value["opened"], true);
+        assert_eq!(fallback.value["opened_file"], true);
+        assert_eq!(fallback.value["file_path"], "/tmp/report.html");
+        assert_eq!(fallback.value["file_url"], "file:///tmp/report.html");
+        assert_eq!(fallback.value["mime_type"], "text/html");
+        assert_eq!(fallback.value["fallback_launch"], true);
+        assert_eq!(fallback.value["local_file_access"], false);
+        assert_eq!(fallback.value["warning"], LOCAL_FILE_ACCESS_WARNING);
+        assert_eq!(fallback.value["launch"]["browser"], "Microsoft Edge");
+    }
+
+    #[test]
+    fn open_file_result_does_not_fallback_for_other_errors() {
+        let file = LocalBrowserFile {
+            path: PathBuf::from("/tmp/report.html"),
+            path_string: "/tmp/report.html".to_string(),
+            mime_type: "text/html".to_string(),
+        };
+        let result = BrowserActionResult {
+            ok: false,
+            value: Value::Null,
+            error: Some("No tab with id: 7.".to_string()),
+            error_code: None,
+        };
+
+        let preserved = open_file_result_with_fallback(
+            "browser:edge:42",
+            &file,
+            "file:///tmp/report.html",
+            result.clone(),
+            |_url, _session| panic!("unexpected fallback launch"),
+        )
+        .unwrap();
+
+        assert_eq!(preserved.ok, result.ok);
+        assert_eq!(preserved.error, result.error);
+        assert_eq!(preserved.value, result.value);
+    }
+
+    #[test]
     fn screenshot_data_url_is_saved_to_tmp_path() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut result = BrowserActionResult {
@@ -1995,6 +2194,7 @@ mod tests {
                 "data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="
             }),
             error: None,
+            error_code: None,
         };
 
         materialize_screenshot_data_url(&mut result, temp_dir.path()).unwrap();
@@ -2049,6 +2249,7 @@ mod tests {
                     ok: true,
                     value: json!({ "title": "Example" }),
                     error: None,
+                    error_code: None,
                 },
             )
             .await

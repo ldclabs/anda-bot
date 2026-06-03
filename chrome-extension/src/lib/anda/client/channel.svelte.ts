@@ -383,6 +383,10 @@ export class Channel extends EventTarget {
   private async requestMeta(): Promise<RequestMeta> {
     const extra = await this.#api.requestExtra()
     extra.source = this.source
+    const workspace = workspaceFromCliSource(this.source)
+    if (workspace) {
+      extra.workspace = workspace
+    }
     extra.conversation = this.#conversation?._id || 0
     return extra as RequestMeta
   }
@@ -594,6 +598,36 @@ export class Channel extends EventTarget {
       this.#messageGroups = [...this.#messageGroups, group]
     }
   }
+}
+
+function workspaceFromCliSource(source: string): string {
+  if (!source.startsWith('cli:')) {
+    return ''
+  }
+
+  const raw = source.slice(4).trim()
+  const workspace = raw.startsWith('voice:') ? raw.slice(6).trim() : raw
+  if (!isAbsoluteWorkspacePath(workspace)) {
+    return ''
+  }
+  return trimTrailingPathSeparator(workspace)
+}
+
+function isAbsoluteWorkspacePath(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
+}
+
+function trimTrailingPathSeparator(value: string): string {
+  let trimmed = value.trim()
+  while (
+    trimmed.length > 1 &&
+    /[\\/]$/.test(trimmed) &&
+    trimmed !== '/' &&
+    !/^[A-Za-z]:[\\/]$/.test(trimmed)
+  ) {
+    trimmed = trimmed.slice(0, -1)
+  }
+  return trimmed
 }
 
 function sameMessageContent(a: ChatMessage, b: ChatMessage): boolean {

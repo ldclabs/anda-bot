@@ -8,6 +8,7 @@ export interface SettingsState {
 
 export type StorageState = Partial<SettingsState> & {
   browserSessionId?: string
+  workspaceChannelSources?: string[]
 }
 
 export type ChromeTabInfo = {
@@ -213,6 +214,7 @@ export interface ChromeApi {
   }
   extension?: {
     inIncognitoContext?: boolean
+    isAllowedFileSchemeAccess?(callback: (isAllowedAccess: boolean) => void): void
   }
   action: {
     onClicked: ChromeEvent<(tab: ChromeTabInfo) => void>

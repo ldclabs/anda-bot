@@ -29,6 +29,7 @@ function createChromeApi(
     settings?: Partial<SettingsState>
     activeTabs?: ChromeTabInfo[]
     browserSessionId?: string
+    workspaceChannelSources?: string[]
   } = {}
 ): MockChromeApi {
   const tabActivatedListeners: TabActivatedListener[] = []
@@ -38,6 +39,7 @@ function createChromeApi(
     token: '',
     submitKeyMode: 'enter' as const,
     browserSessionId: options.browserSessionId || '1700000000000',
+    workspaceChannelSources: options.workspaceChannelSources || [],
     ...options.settings
   }
 
@@ -221,5 +223,39 @@ describe('AndaSidePanelClient.bindChromeEvents', () => {
       title: 'After',
       url: 'https://after.example'
     })
+  })
+})
+
+describe('AndaSidePanelClient.openWorkspaceChannel', () => {
+  it('persists a CLI workspace channel source and switches to it', async () => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token' }
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    client.settings = {
+      baseUrl: 'http://127.0.0.1:8042',
+      token: 'token',
+      submitKeyMode: 'enter'
+    }
+
+    vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+      if (method === 'pick_workspace') {
+        return { path: '/tmp/anda/workspace/' } as any
+      }
+      throw new Error(`unexpected RPC method: ${method}`)
+    })
+    const switchChannel = vi.spyOn(client, 'switchChannel').mockResolvedValue()
+
+    await client.openWorkspaceChannel()
+
+    expect(chromeApi.storage.local.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceChannelSources: ['cli:/tmp/anda/workspace']
+      })
+    )
+    expect(switchChannel).toHaveBeenCalledWith('cli:/tmp/anda/workspace')
   })
 })

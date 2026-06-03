@@ -45,6 +45,8 @@ import {
   voiceTtsChunkChars
 } from './voice'
 
+const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
+
 export class AndaSidePanelClient extends EventTarget {
   readonly chrome: ChromeApi
 
@@ -67,6 +69,7 @@ export class AndaSidePanelClient extends EventTarget {
   #resourceCache = new Map<number, Resource>()
   #resourceRequests = new Map<number, Promise<Resource>>()
   #localChannelSource = ''
+  #workspaceChannelSources = new Set<string>()
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
   #tabUpdatedListener?: (tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
 
@@ -85,6 +88,7 @@ export class AndaSidePanelClient extends EventTarget {
 
   async #init(): Promise<void> {
     await this.loadSettings()
+    await this.loadWorkspaceChannels()
     const localChannel = await browserSession(this.chrome)
     this.#localChannelSource = localChannel
     const channel = this.ensureChannel(localChannel)
@@ -141,6 +145,9 @@ export class AndaSidePanelClient extends EventTarget {
     if (this.#localChannelSource) {
       sources.add(this.#localChannelSource)
     }
+    for (const source of this.#workspaceChannelSources) {
+      sources.add(source)
+    }
     for (const source of Object.keys(states || {})) {
       if (source.trim()) {
         sources.add(source)
@@ -191,6 +198,7 @@ export class AndaSidePanelClient extends EventTarget {
         source: sourceKey
       })
       console.log('Delete channel API call completed:', sourceKey)
+      await this.removeWorkspaceChannelSource(sourceKey)
 
       const wasActive = this.activeChannel?.source === sourceKey
       if (sourceKey === this.#localChannelSource) {
@@ -211,6 +219,31 @@ export class AndaSidePanelClient extends EventTarget {
       this.systemMessage = { kind: 'info', text: chrome.i18n.getMessage('channelDeleted') }
     } catch (error) {
       this.updateStatus('delete failed', { kind: 'error', text: errorToMessage(error) })
+    }
+  }
+
+  async openWorkspaceChannel(): Promise<void> {
+    if (this.sending) {
+      return
+    }
+
+    if (!this.settings.token) {
+      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      return
+    }
+
+    try {
+      const result = await this.rpc<{ path?: string | null }>('pick_workspace', [])
+      const workspace = normalizeAbsoluteWorkspace(result?.path)
+      if (!workspace) {
+        return
+      }
+
+      const source = `cli:${workspace}`
+      await this.saveWorkspaceChannelSource(source)
+      await this.switchChannel(source)
+    } catch (error) {
+      this.updateStatus('open folder failed', { kind: 'error', text: errorToMessage(error) })
     }
   }
 
@@ -586,6 +619,42 @@ export class AndaSidePanelClient extends EventTarget {
     })
   }
 
+  private async loadWorkspaceChannels(): Promise<void> {
+    const saved = await this.chrome.storage.local.get([workspaceChannelSourcesStorageKey])
+    const sources = normalizeWorkspaceChannelSources(saved.workspaceChannelSources)
+    this.#workspaceChannelSources = new Set(sources)
+    for (const source of sources) {
+      this.ensureChannel(source)
+    }
+  }
+
+  private async saveWorkspaceChannelSource(source: string): Promise<void> {
+    const normalized = normalizeWorkspaceChannelSource(source)
+    if (!normalized || this.#workspaceChannelSources.has(normalized)) {
+      return
+    }
+
+    this.#workspaceChannelSources.add(normalized)
+    this.ensureChannel(normalized)
+    await this.persistWorkspaceChannelSources()
+  }
+
+  private async removeWorkspaceChannelSource(source: string): Promise<void> {
+    const normalized = normalizeWorkspaceChannelSource(source)
+    if (!normalized || !this.#workspaceChannelSources.delete(normalized)) {
+      return
+    }
+    await this.persistWorkspaceChannelSources()
+  }
+
+  private async persistWorkspaceChannelSources(): Promise<void> {
+    await this.chrome.storage.local.set({
+      workspaceChannelSources: Array.from(this.#workspaceChannelSources).sort((left, right) =>
+        left.localeCompare(right)
+      )
+    })
+  }
+
   private async refreshActiveTab(): Promise<ChromeTabInfo | null> {
     const [tab] = await this.chrome.tabs.query({ active: true, lastFocusedWindow: true })
     this.tab = tab || null
@@ -766,6 +835,58 @@ export class AndaSidePanelClient extends EventTarget {
 
 function emptyModelState(): ModelState {
   return { activeModel: null, modelNames: [] }
+}
+
+function normalizeWorkspaceChannelSources(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const sources = new Set<string>()
+  for (const item of value) {
+    const source = normalizeWorkspaceChannelSource(String(item || ''))
+    if (source) {
+      sources.add(source)
+    }
+  }
+  return Array.from(sources)
+}
+
+function normalizeWorkspaceChannelSource(source: string): string {
+  const trimmed = source.trim()
+  if (!trimmed.startsWith('cli:')) {
+    return ''
+  }
+
+  if (trimmed.startsWith('cli:voice:')) {
+    const workspace = normalizeAbsoluteWorkspace(trimmed.slice('cli:voice:'.length))
+    return workspace ? `cli:voice:${workspace}` : ''
+  }
+
+  const workspace = normalizeAbsoluteWorkspace(trimmed.slice('cli:'.length))
+  return workspace ? `cli:${workspace}` : ''
+}
+
+function normalizeAbsoluteWorkspace(value: unknown): string {
+  const trimmed = String(value || '').trim()
+  if (!isAbsoluteWorkspacePath(trimmed)) {
+    return ''
+  }
+
+  let normalized = trimmed
+  while (
+    normalized.length > 1 &&
+    /[\\/]$/.test(normalized) &&
+    normalized !== '/' &&
+    !/^[A-Za-z]:[\\/]$/.test(normalized)
+  ) {
+    normalized = normalized.slice(0, -1)
+  }
+  return normalized
+}
+
+function isAbsoluteWorkspacePath(value: string): boolean {
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
 }
 
 function normalizeModelState(state: DaemonModelState | null | undefined): ModelState {

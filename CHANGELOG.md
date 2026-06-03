@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to Anda Bot.
+
+## [0.8.9] — 2026-06-03
+
+### Added
+
+- **Native OS folder picker for CLI workspace channels**: new `pick_workspace` WebSocket method opens a native folder picker dialog — `osascript` on macOS, PowerShell `FolderBrowserDialog` on Windows, `zenity` or `kdialog` on Linux. The Chrome extension persists chosen workspace channels to local storage and adds a new "Open folder" button (FolderOpen icon) in the channel sidebar, available even when no channels exist yet.
+- **`open_file` browser-launch fallback**: when the Chrome extension lacks `file://` URL access, the engine now falls back to launching the file directly in the native browser application — no configuration required. The result includes a `warning` message guiding users to enable "Allow access to file URLs" for full extension inspection.
+- **File URL access detection in the Chrome extension**: `open_tab` and `navigate` actions on `file://` URLs now check `chrome.extension.isAllowedFileSchemeAccess()` before executing. When disabled, the service worker returns a `local_file_access_disabled` error code, enabling the engine's browser-launch fallback path. Both actions have new unit tests verifying the rejection path.
+
+### Changed
+
+- **Browser launch now respects session scope**: `launch_browser()` prioritises the browser matching the active session (chrome, edge, or chromium) across macOS, Windows, and Linux — so file fallback launches and fresh browser sessions open in the same browser the channel is bound to.
+- **Channel sidebar title shows real browser name**: sidebar channel titles now display the actual browser (Brave, Edge, Opera, Vivaldi, Arc, etc.) via `titleCase()` instead of the previous hardcoded "Chrome" / "Incognito" labels.
+- **CLI workspace sent in channel metadata**: `cli:` channel sources now parse and forward their workspace path to the engine via `requestExtra`, giving the engine workspace context for CLI-originated channels opened in the extension.
+- **`error_code` propagation in browser action results**: `BrowserActionResult` now carries an optional `error_code` field. The service worker propagates `BrowserActionError.code` to WebSocket responses, letting the engine handle specific error classes (e.g. fallback on `local_file_access_disabled`) instead of treating all failures the same way.
+- **Docsite updated**: added a note to the browser extension quick-start page explaining how to enable `Allow access to file URLs` for `open_file` functionality with local files and folders.
+
 ## [0.8.8] — 2026-06-01
 
 ### Added

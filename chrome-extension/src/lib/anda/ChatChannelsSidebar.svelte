@@ -10,7 +10,15 @@
     itemMediaClass,
     itemTitleClass
   } from '$lib/anda/ui'
-  import { ChevronDown, CircleAlert, History, LoaderCircle, Radio, Trash2 } from '@lucide/svelte'
+  import {
+    ChevronDown,
+    CircleAlert,
+    FolderOpen,
+    History,
+    LoaderCircle,
+    Radio,
+    Trash2
+  } from '@lucide/svelte'
   import { AlertDialog } from 'bits-ui'
   import type { Channel } from './client/channel.svelte'
 
@@ -19,10 +27,18 @@
     activeSource: string | null
     sending?: boolean
     onSelect?: (source: string) => void | Promise<void>
+    onOpenFolder?: () => void | Promise<void>
     onDelete?: (source: string) => void | Promise<void>
   }
 
-  let { channels = [], activeSource = null, sending = false, onSelect, onDelete }: Props = $props()
+  let {
+    channels = [],
+    activeSource = null,
+    sending = false,
+    onSelect,
+    onOpenFolder,
+    onDelete
+  }: Props = $props()
   let viewportWidth = $state(0)
   let collapsedOverride = $state<boolean | null>(null)
   let deleteDialogOpen = $state(false)
@@ -50,6 +66,10 @@
     await onSelect?.(source)
   }
 
+  async function openFolder() {
+    await onOpenFolder?.()
+  }
+
   function requestDeleteChannel(source: string) {
     pendingDeleteSource = source
     deleteDialogOpen = true
@@ -68,8 +88,9 @@
   function channelTitle(source: string): string {
     if (source.startsWith('browser:')) {
       const [, scope] = source.split(':')
-      return scope === 'incognito' ? 'Incognito' : 'Chrome'
+      return titleCase(scope || 'browser')
     }
+
     if (source.startsWith('cli:')) {
       return `CLI ${lastPathPart(source.slice(4)) || source.slice(4)}`.trim()
     }
@@ -179,11 +200,40 @@
             'icon-sm',
             'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
           )}
+          aria-label={chrome.i18n.getMessage('openFolder')}
+          title={chrome.i18n.getMessage('openFolder')}
+          disabled={sending}
+          onclick={openFolder}
+        >
+          <FolderOpen class="size-4" />
+        </button>
+        <button
+          type="button"
+          class={buttonClass(
+            'ghost',
+            'icon-sm',
+            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+          )}
           aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           onclick={toggleCollapsed}
         >
           <ChevronDown class="size-4 shrink-0 rotate-90 text-stone-400" />
+        </button>
+      {:else}
+        <button
+          type="button"
+          class={buttonClass(
+            'ghost',
+            'icon-sm',
+            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+          )}
+          aria-label={chrome.i18n.getMessage('openFolder')}
+          title={chrome.i18n.getMessage('openFolder')}
+          disabled={sending}
+          onclick={openFolder}
+        >
+          <FolderOpen class="size-4" />
         </button>
       {/if}
     </div>

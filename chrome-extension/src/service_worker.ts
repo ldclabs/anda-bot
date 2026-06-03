@@ -9,6 +9,7 @@ import {
   browserSession,
   connectionKey,
   defaultSettings,
+  errorToCode,
   errorToMessage,
   loadSettings,
   normalizeSettings,
@@ -471,7 +472,13 @@ async function handleBrowserActionRequest(message: RpcResponseMessage): Promise<
     const value = await executeBrowserAction(command, { chromeApi })
     result = { ok: true, value }
   } catch (error) {
-    result = { ok: false, value: null, error: errorToMessage(error) }
+    const errorCode = errorToCode(error)
+    result = {
+      ok: false,
+      value: null,
+      error: errorToMessage(error),
+      ...(errorCode ? { error_code: errorCode } : {})
+    }
   }
 
   if (socket?.readyState === WebSocket.OPEN) {

@@ -8,6 +8,9 @@
   "actionTitle": {
     "message": "Abrir Anda Bot"
   },
+  "localFileAccessDisabled": {
+    "message": "Activa \"Permitir acceso a URL de archivo\" para la extensión Anda Bot en los detalles de la extensión del navegador y vuelve a intentarlo."
+  },
   "placeholderMessage": {
     "message": "Mensaje para Anda"
   },
@@ -298,6 +301,9 @@
   },
   "collapseChannels": {
     "message": "Contraer canales"
+  },
+  "openFolder": {
+    "message": "Abrir carpeta"
   },
   "deleteChannel": {
     "message": "Eliminar canal"

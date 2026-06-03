@@ -8,6 +8,9 @@
   "actionTitle": {
     "message": "افتح Anda Bot"
   },
+  "localFileAccessDisabled": {
+    "message": "فعّل \"السماح بالوصول إلى عناوين URL للملفات\" لإضافة Anda Bot في تفاصيل إضافة المتصفح، ثم أعد المحاولة."
+  },
   "placeholderMessage": {
     "message": "رسالة إلى Anda"
   },
@@ -298,6 +301,9 @@
   },
   "collapseChannels": {
     "message": "طي القنوات"
+  },
+  "openFolder": {
+    "message": "فتح المجلد"
   },
   "deleteChannel": {
     "message": "حذف القناة"

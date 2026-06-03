@@ -8,6 +8,9 @@
   "actionTitle": {
     "message": "打开 Anda Bot"
   },
+  "localFileAccessDisabled": {
+    "message": "请在浏览器扩展详情页为 Anda Bot 启用“允许访问文件 URL”，然后重试。"
+  },
   "placeholderMessage": {
     "message": "给 Anda 发消息"
   },
@@ -298,6 +301,9 @@
   },
   "collapseChannels": {
     "message": "收起频道"
+  },
+  "openFolder": {
+    "message": "打开文件夹"
   },
   "deleteChannel": {
     "message": "删除频道"

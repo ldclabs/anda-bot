@@ -38,6 +38,65 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+const LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE = 'local_file_access_disabled'
+const LOCAL_FILE_ACCESS_DISABLED_FALLBACK_MESSAGE =
+  'Cannot navigate to a file URL without local file access. Enable "Allow access to file URLs" for the Anda browser extension in the browser extension details, then retry.'
+
+class BrowserActionError extends Error {
+  code: string
+
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'BrowserActionError'
+    this.code = code
+  }
+}
+
+function localFileAccessDisabledMessage(chromeApi: ChromeApi): string {
+  return (
+    chromeApi.i18n?.getMessage?.('localFileAccessDisabled') ||
+    (typeof chrome !== 'undefined' ? chrome.i18n.getMessage('localFileAccessDisabled') : '') ||
+    LOCAL_FILE_ACCESS_DISABLED_FALLBACK_MESSAGE
+  )
+}
+
+function isFileSchemeUrl(url: unknown): boolean {
+  return (normalizeOptionalText(url)?.toLowerCase() || '').startsWith('file://')
+}
+
+async function ensureLocalFileAccess(chromeApi: ChromeApi, url: unknown): Promise<void> {
+  if (!isFileSchemeUrl(url)) {
+    return
+  }
+
+  const extensionApi = chromeApi.extension
+  if (!extensionApi?.isAllowedFileSchemeAccess) {
+    return
+  }
+
+  const isAllowed = await new Promise<boolean>((resolve, reject) => {
+    try {
+      extensionApi.isAllowedFileSchemeAccess?.((allowedAccess) => {
+        const lastError = chromeApi.runtime.lastError?.message
+        if (lastError) {
+          reject(new Error(lastError))
+          return
+        }
+        resolve(Boolean(allowedAccess))
+      })
+    } catch (error) {
+      reject(error)
+    }
+  })
+
+  if (!isAllowed) {
+    throw new BrowserActionError(
+      LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE,
+      localFileAccessDisabledMessage(chromeApi)
+    )
+  }
+}
+
 export async function executeBrowserAction(
   command: BrowserCommand,
   deps: BrowserActionDependencies
@@ -90,8 +149,10 @@ export async function executeBrowserAction(
   }
 
   if (args.action === 'open_tab') {
+    const url = normalizeOptionalText(args.url)
+    await ensureLocalFileAccess(chromeApi, url)
     const tab = await chromeApi.tabs.create({
-      url: normalizeOptionalText(args.url),
+      url,
       active: args.active ?? true,
       windowId: positiveInteger(args.window_id) || undefined
     })
@@ -121,29 +182,31 @@ export async function executeBrowserAction(
   }
 
   if (args.action === 'navigate') {
-    if (!args.url) {
+    const url = normalizeOptionalText(args.url)
+    if (!url) {
       throw new Error('navigate requires url')
     }
+    await ensureLocalFileAccess(chromeApi, url)
     const tab = await tabForAction(chromeApi, args)
     const active = args.active ?? true
     if (!tab?.id) {
       const created = await chromeApi.tabs.create({
-        url: args.url,
+        url,
         active,
         windowId: positiveInteger(args.window_id) || undefined
       })
       const pageReady = created.id ? await waitForTabReady(chromeApi, created.id, args) : null
-      return withTopLevelTab({ navigated: true, url: args.url }, pageReady, created)
+      return withTopLevelTab({ navigated: true, url }, pageReady, created)
     }
     const loadWatcher = createTabLoadWatcher(chromeApi, tab.id, actionTimeoutMs(args), args)
     try {
-      const updated = await chromeApi.tabs.update(tab.id, { url: args.url, active })
+      const updated = await chromeApi.tabs.update(tab.id, { url, active })
       if (active && updated) {
         await focusWindow(chromeApi, updated.windowId).catch(() => undefined)
         rememberActiveTab(updated)
       }
       const pageReady = await waitForTabReady(chromeApi, tab.id, args, loadWatcher)
-      return withTopLevelTab({ navigated: true, url: args.url }, pageReady, updated)
+      return withTopLevelTab({ navigated: true, url }, pageReady, updated)
     } catch (error) {
       loadWatcher.cancel()
       throw error

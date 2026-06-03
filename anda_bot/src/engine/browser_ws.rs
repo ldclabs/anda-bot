@@ -15,8 +15,8 @@ use hyper::upgrade;
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::{path::PathBuf, sync::Arc};
+use tokio::{process::Command, sync::mpsc};
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, handshake::derive_accept_key, protocol::Role},
@@ -260,6 +260,7 @@ async fn handle_browser_ws_request(
         "agent_run" => handle_agent_run(incoming.params, state, caller, engine_id).await,
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
         "information" => handle_information(state, engine_id),
+        "pick_workspace" => handle_pick_workspace().await,
         "capabilities" => handle_capabilities(state, engine_id),
         "model_names" => handle_model_names(state, engine_id),
         "set_model" => handle_set_model(incoming.params, state, engine_id),
@@ -342,6 +343,149 @@ fn handle_information(
         .get(&engine_id)
         .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
     serde_json::to_value(engine.information()).map_err(|err| err.to_string())
+}
+
+async fn handle_pick_workspace() -> Result<Value, String> {
+    let path = select_workspace_path().await?;
+    Ok(json!({
+        "path": path.map(|path| path.to_string_lossy().to_string())
+    }))
+}
+
+async fn select_workspace_path() -> Result<Option<PathBuf>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        pick_workspace_path_macos().await
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return pick_workspace_path_windows().await;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        pick_workspace_path_linux().await
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn pick_workspace_path_macos() -> Result<Option<PathBuf>, String> {
+    let output = Command::new("osascript")
+        .args([
+            "-e",
+            "POSIX path of (choose folder with prompt \"Open a workspace folder for Anda\")",
+        ])
+        .output()
+        .await
+        .map_err(|err| format!("failed to launch macOS folder picker: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("-128") {
+            return Ok(None);
+        }
+        return Err(format!(
+            "macOS folder picker failed: {}",
+            stderr.trim().trim_matches('"')
+        ));
+    }
+
+    parse_selected_workspace_path(&output.stdout)
+}
+
+#[cfg(target_os = "windows")]
+async fn pick_workspace_path_windows() -> Result<Option<PathBuf>, String> {
+    let script = concat!(
+        "Add-Type -AssemblyName System.Windows.Forms > $null; ",
+        "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ",
+        "$dialog.Description = 'Open a workspace folder for Anda'; ",
+        "$dialog.UseDescriptionForTitle = $true; ",
+        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }"
+    );
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-STA", "-Command", script])
+        .output()
+        .await
+        .map_err(|err| format!("failed to launch Windows folder picker: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Windows folder picker failed: {}",
+            stderr.trim().trim_matches('"')
+        ));
+    }
+
+    parse_selected_workspace_path(&output.stdout)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+async fn pick_workspace_path_linux() -> Result<Option<PathBuf>, String> {
+    let mut errors = Vec::new();
+
+    for (program, args) in [
+        (
+            "zenity",
+            vec![
+                "--file-selection",
+                "--directory",
+                "--title=Open a workspace folder for Anda",
+            ],
+        ),
+        (
+            "kdialog",
+            vec![
+                "--getexistingdirectory",
+                ".",
+                "Open a workspace folder for Anda",
+            ],
+        ),
+    ] {
+        let output = match Command::new(program).args(&args).output().await {
+            Ok(output) => output,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                errors.push(format!("{program}: {err}"));
+                continue;
+            }
+        };
+
+        if output.status.success() {
+            return parse_selected_workspace_path(&output.stdout);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() == Some(1) && stderr.trim().is_empty() {
+            return Ok(None);
+        }
+
+        errors.push(format!("{program}: {}", stderr.trim()));
+    }
+
+    if errors.is_empty() {
+        Err("no supported folder picker found; install zenity or kdialog".to_string())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn parse_selected_workspace_path(stdout: &[u8]) -> Result<Option<PathBuf>, String> {
+    let selected = String::from_utf8_lossy(stdout);
+    Ok(normalize_selected_workspace_path(&selected))
+}
+
+fn normalize_selected_workspace_path(selected: &str) -> Option<PathBuf> {
+    let trimmed = selected.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path: PathBuf = std::path::Path::new(trimmed).components().collect();
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return None;
+    }
+    Some(path)
 }
 
 fn handle_capabilities(
@@ -456,6 +600,7 @@ async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &Browser
             ok: false,
             value: Value::Null,
             error: Some(error),
+            error_code: None,
         }
     } else {
         match serde_json::from_value::<BrowserActionResult>(incoming.result.unwrap_or(Value::Null))
@@ -465,6 +610,7 @@ async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &Browser
                 ok: false,
                 value: Value::Null,
                 error: Some(format!("invalid browser action response: {err}")),
+                error_code: None,
             },
         }
     };
@@ -581,4 +727,22 @@ fn percent_decode(value: &str) -> String {
         }
     }
     String::from_utf8_lossy(&output).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_selected_workspace_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn normalize_selected_workspace_path_trims_and_drops_trailing_separator() {
+        let path = normalize_selected_workspace_path("  /tmp/anda/workspace/  ").unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/anda/workspace"));
+    }
+
+    #[test]
+    fn normalize_selected_workspace_path_rejects_empty_or_relative_values() {
+        assert_eq!(normalize_selected_workspace_path("   "), None);
+        assert_eq!(normalize_selected_workspace_path("workspace/project"), None);
+    }
 }
