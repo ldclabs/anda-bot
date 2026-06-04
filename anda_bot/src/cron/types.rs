@@ -318,10 +318,12 @@ pub struct UpdateCronJobArgs {
     pub name: Option<String>,
     #[serde(default)]
     pub tz: Option<String>,
+    #[serde(default)]
+    pub origin: Option<bool>,
 }
 
 impl UpdateCronJobArgs {
-    pub fn into_update(self) -> CronJobUpdate {
+    pub fn into_update_with_origin(self, origin: Option<CronJobOrigin>) -> CronJobUpdate {
         CronJobUpdate {
             job_kind: self.job_kind,
             job: self.job,
@@ -329,6 +331,7 @@ impl UpdateCronJobArgs {
             schedule: self.schedule,
             name: self.name,
             tz: self.tz,
+            origin,
         }
     }
 }
@@ -341,6 +344,7 @@ pub struct CronJobUpdate {
     pub schedule: Option<String>,
     pub name: Option<String>,
     pub tz: Option<String>,
+    pub origin: Option<CronJobOrigin>,
 }
 
 impl CronJobUpdate {
@@ -351,6 +355,7 @@ impl CronJobUpdate {
             && self.schedule.is_none()
             && self.name.is_none()
             && self.tz.is_none()
+            && self.origin.is_none()
     }
 
     pub fn apply_to(self, mut job: CronJob, now_ms: u64) -> Result<CronJob, BoxError> {
@@ -365,6 +370,7 @@ impl CronJobUpdate {
             schedule,
             name,
             tz,
+            origin,
         } = self;
         let schedule_changed = schedule_kind.is_some() || schedule.is_some() || tz.is_some();
 
@@ -376,6 +382,9 @@ impl CronJobUpdate {
         }
         if let Some(name) = name {
             job.name = normalize_optional_name(&name);
+        }
+        if let Some(origin) = origin {
+            job.origin = Some(origin);
         }
 
         if schedule_changed {

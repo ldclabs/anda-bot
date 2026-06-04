@@ -72,11 +72,20 @@ impl CronStore {
         Ok(job)
     }
 
+    #[allow(unused)]
     pub async fn update_job(&self, args: UpdateCronJobArgs) -> Result<CronJob, BoxError> {
+        self.update_job_with_origin(args, None).await
+    }
+
+    pub async fn update_job_with_origin(
+        &self,
+        args: UpdateCronJobArgs,
+        origin: Option<CronJobOrigin>,
+    ) -> Result<CronJob, BoxError> {
         let now_ms = unix_ms();
         let job: CronJob = self.jobs.get_as(args.id).await?;
-        let updated = args.into_update().apply_to(job, now_ms)?;
-        let patch = cron_job_update_patch(&updated);
+        let updated = args.into_update_with_origin(origin).apply_to(job, now_ms)?;
+        let patch = cron_job_update_patch(&updated)?;
         let job = self.jobs.update(updated._id, patch).await?;
         self.jobs.flush(now_ms).await?;
         Ok(job.try_into()?)
@@ -328,8 +337,9 @@ impl CronStore {
     }
 }
 
-fn cron_job_update_patch(job: &CronJob) -> BTreeMap<String, Fv> {
-    BTreeMap::from([
+fn cron_job_update_patch(job: &CronJob) -> Result<BTreeMap<String, Fv>, BoxError> {
+    Ok(BTreeMap::from([
+        ("origin".to_string(), Fv::serialized(&job.origin, None)?),
         ("job_kind".to_string(), Fv::Text(job.job_kind.to_string())),
         ("job".to_string(), Fv::Text(job.job.clone())),
         (
@@ -341,7 +351,7 @@ fn cron_job_update_patch(job: &CronJob) -> BTreeMap<String, Fv> {
         ("name".to_string(), optional_text(&job.name)),
         ("updated_at".to_string(), Fv::U64(job.updated_at)),
         ("next_run".to_string(), Fv::U64(job.next_run)),
-    ])
+    ]))
 }
 
 fn optional_text(value: &Option<String>) -> Fv {
@@ -565,6 +575,7 @@ mod tests {
                 schedule: Some("2m".to_string()),
                 name: Some("".to_string()),
                 tz: None,
+                origin: None,
             })
             .await
             .unwrap();
@@ -584,6 +595,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_job_can_replace_origin() {
+        let (_dir, store) = test_store().await;
+        let job = store
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Agent,
+                    job: "old prompt".to_string(),
+                    schedule_kind: ScheduleKind::Every,
+                    schedule: "60".to_string(),
+                    name: Some("daily".to_string()),
+                    tz: None,
+                },
+                Some(CronJobOrigin {
+                    user: Some("alice".to_string()),
+                    source: Some("wechat:old".to_string()),
+                    reply_target: Some("alice".to_string()),
+                    conversation_id: Some(7),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let new_origin = CronJobOrigin {
+            user: Some("bob".to_string()),
+            source: Some("wechat:new".to_string()),
+            reply_target: Some("bob".to_string()),
+            thread: Some("session-2".to_string()),
+            conversation_id: Some(42),
+            external_user: Some(true),
+            ..Default::default()
+        };
+
+        let updated = store
+            .update_job_with_origin(
+                UpdateCronJobArgs {
+                    id: job._id,
+                    job_kind: None,
+                    job: None,
+                    schedule_kind: None,
+                    schedule: None,
+                    name: None,
+                    tz: None,
+                    origin: Some(true),
+                },
+                Some(new_origin.clone()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.origin, Some(new_origin));
+        assert_eq!(updated.job, job.job);
+        assert_eq!(updated.next_run, job.next_run);
+    }
+
+    #[tokio::test]
     async fn update_job_without_schedule_change_keeps_next_run() {
         let (_dir, store) = test_store().await;
         let job = insert_test_job(&store, "job-1").await;
@@ -597,6 +663,7 @@ mod tests {
                 schedule: None,
                 name: None,
                 tz: None,
+                origin: None,
             })
             .await
             .unwrap();

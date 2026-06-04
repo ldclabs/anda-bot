@@ -2,6 +2,19 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.10] — 2026-06-04
+
+### Added
+
+- **Cron job origin propagation**: `update_cron_job` tool now accepts `origin=true` to replace the saved `CronJobOrigin` with the current caller and request metadata (user, source, reply target, conversation id, etc.). The engine resolves caller identity from `SessionRequestMeta` and constructs a fresh origin, enabling cron jobs created in one context to be reassigned to another.
+- **`origin` field written into cron job database patches**: `cron_job_update_patch` now includes the `origin` column so origin changes persist correctly through `update_job_with_origin`.
+
+### Changed
+
+- **WeChat context token persistence refactored**: the bulk `save_context_tokens` call at the end of the WeChat channel event loop is replaced by per-message `save_context_token_to_workspace` — each incoming message with a `context_token` is merged into the existing token map immediately, removing the race between message receipt and loop-iteration bulk flush.
+- **`fallback` label removed from default model config**: the MiniMax-M3 model entry in `config.yaml` no longer carries `labels: ["fallback"]`, aligning with anda_engine v0.12.28's removal of the `fallback` model concept (`fallback` is now just an ordinary label).
+- **Dependencies bumped**: `anda_brain` 0.6.7 → 0.6.8, `anda_core` 0.12.5 → 0.12.6, `anda_engine` 0.12.27 → 0.12.28, plus `bitflags` 2.11.1 → 2.12.1, `liteparse` 2.0.4 → 2.0.5, `log` 0.4.30 → 0.4.31, `rustls-native-certs` 0.8.3 → 0.8.4, `unicode-segmentation` 1.13.2 → 1.13.3, `yoke` 0.8.2 → 0.8.3, and `liteparse-pdfium-sys` 1.1.0 → 1.1.1.
+
 ## [0.8.9] — 2026-06-03
 
 ### Added

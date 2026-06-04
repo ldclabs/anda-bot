@@ -352,8 +352,6 @@ impl Channel for WechatChannel {
                 .await?;
         }
 
-        self.save_context_tokens(&client.context_tokens().export_all())
-            .await;
         Ok(())
     }
 
@@ -429,6 +427,9 @@ impl MessageHandler for WechatMessageHandler {
                 ctx.from
             );
             return Ok(());
+        }
+        if let Some(context_token) = ctx.context_token.as_deref() {
+            save_context_token_to_workspace(&self.workspace, &ctx.from, context_token).await;
         }
 
         let Some(mut message) =
@@ -685,6 +686,26 @@ async fn save_context_tokens_to_workspace(
     }
 }
 
+async fn save_context_token_to_workspace(
+    workspace: &Arc<ChannelWorkspace>,
+    user_id: &str,
+    token: &str,
+) {
+    let user_id = user_id.trim();
+    let token = token.trim();
+    if user_id.is_empty() || token.is_empty() {
+        return;
+    }
+
+    let mut tokens = load_context_tokens_from_workspace(workspace).await;
+    if tokens.get(user_id).is_some_and(|current| current == token) {
+        return;
+    }
+
+    tokens.insert(user_id.to_string(), token.to_string());
+    save_context_tokens_to_workspace(workspace, &tokens).await;
+}
+
 fn split_message_for_wechat(message: &str) -> Vec<String> {
     if message.chars().count() <= WECHAT_MAX_MESSAGE_LENGTH {
         return vec![message.to_string()];
@@ -806,5 +827,22 @@ mod tests {
             sanitize_path_component("hello world.txt", "media.bin"),
             "hello_world.txt"
         );
+    }
+
+    #[tokio::test]
+    async fn save_context_token_merges_existing_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_path_buf());
+        let mut existing = HashMap::new();
+        existing.insert("alice".to_string(), "old-token".to_string());
+        existing.insert("bob".to_string(), "bob-token".to_string());
+        save_context_tokens_to_workspace(&workspace, &existing).await;
+
+        save_context_token_to_workspace(&workspace, "alice", "new-token").await;
+
+        let tokens = load_context_tokens_from_workspace(&workspace).await;
+        assert_eq!(tokens.get("alice").map(String::as_str), Some("new-token"));
+        assert_eq!(tokens.get("bob").map(String::as_str), Some("bob-token"));
     }
 }

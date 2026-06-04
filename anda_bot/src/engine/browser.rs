@@ -1801,9 +1801,10 @@ fn macos_browser_candidates(preferred_scope: Option<&str>) -> Vec<&'static str> 
         _ => None,
     };
     if let Some(preferred) = preferred
-        && let Some(index) = browsers.iter().position(|browser| *browser == preferred) {
-            browsers.swap(0, index);
-        }
+        && let Some(index) = browsers.iter().position(|browser| *browser == preferred)
+    {
+        browsers.swap(0, index);
+    }
     browsers
 }
 

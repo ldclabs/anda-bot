@@ -118,7 +118,7 @@ model:
       effort: high
       context_window: 400000
       max_output: 128000
-      labels: ["fallback"]
+      labels: []
       disabled: false
       bearer_auth: true
 

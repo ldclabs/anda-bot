@@ -97,8 +97,9 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
 
     fn description(&self) -> String {
         concat!(
-            "Updates an existing cron job without changing its origin or run history. ",
+            "Updates an existing cron job without changing its run history. ",
             "Pass null for fields that should stay unchanged. ",
+            "Pass origin=true to replace the job origin with the current caller and request context. ",
             "When schedule_kind, schedule, or tz is updated, next_run is recalculated from the new schedule. ",
             "Use an empty string for name or tz to clear that field."
         )
@@ -116,11 +117,20 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let job = self.cron.store.update_job(args).await?;
+        let origin = if args.origin.unwrap_or(false) {
+            let meta = ctx
+                .get_state::<SessionRequestMeta>()
+                .map(|state| state.get())
+                .unwrap_or_else(|| ctx.meta().clone());
+            CronJobOrigin::from_meta_with_caller(&meta, ctx.caller())
+        } else {
+            None
+        };
+        let job = self.cron.store.update_job_with_origin(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: json!(job),
             next_cursor: None,
@@ -228,9 +238,13 @@ fn update_cron_job_parameters() -> Value {
             "tz": {
                 "type": ["string", "null"],
                 "description": "New IANA timezone name for cron schedules. Null leaves unchanged; an empty string clears the timezone."
+            },
+            "origin": {
+                "type": ["boolean", "null"],
+                "description": "Set true to replace the saved origin with the current caller and request metadata; null or false leaves origin unchanged."
             }
         },
-        "required": ["id", "job_kind", "job", "schedule_kind", "schedule", "name", "tz"],
+        "required": ["id", "job_kind", "job", "schedule_kind", "schedule", "name", "tz", "origin"],
         "additionalProperties": false
     })
 }
@@ -520,10 +534,12 @@ mod tests {
             "schedule_kind": null,
             "schedule": null,
             "name": null,
-            "tz": null
+            "tz": null,
+            "origin": null
         }))
         .unwrap();
         assert_eq!(update.id, 5);
         assert_eq!(update.job, Some("echo updated".to_string()));
+        assert_eq!(update.origin, None);
     }
 }
