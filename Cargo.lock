@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.8.10"
+version = "0.8.11"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -170,9 +170,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c751ab7ffa84ef7f52664b97028fd1470612044fad1a89a30ae41be8b11a2a0b"
+checksum = "199dc6b47dd88f4d51802bf2372f1f87d8ef35e52abb70d5e598b7a523df3518"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -222,9 +222,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.7.19"
+version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d0e86348c54fca943df7f95a8b9f9dc19068c6d306ca67307b7c100bccb50c4"
+checksum = "0c6b77c43005de8520bf65400d1a42f209605b7c4bfd1b8caf553a2ce5b10b6b"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -244,9 +244,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.6"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7ee88d68ad301c5484a473b534bb14155d91e0e4e93d9d2405d85f47832c99c"
+checksum = "6d2c90576afccf16ad106d34f99640212aab44e08add4596aaf1b625c24b2a9b"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -272,9 +272,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.7.28"
+version = "0.7.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1005a61f1bfe5ee97b266a36efa7ef2378cbef8b638b9ea11d5772407edbfb00"
+checksum = "99dfea5e1d97c0ec5ffab2064ff7354b207d0139fa2ca621dc4285d82f9e5895"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -303,9 +303,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.5.11"
+version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69309baef499d81bf08fbbfe2c7145c5a353e4b726b884ccf393bf3020ef57a9"
+checksum = "805d6c1ee8bb0bc719d753e7331f0275414c43279acec43ab7e3d096c67ad820"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_derive"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a6a820acda3ccae5048bf9224b2d16c82715c09e89c72d27eb049c76f846645"
+checksum = "fc2c7cf8233439b3b4b0b0517eeb54441926b621cd12f61d8042aaf40e164242"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -331,9 +331,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_hnsw"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef7e160797255a74fa41d1929228314a8981d6f8013d157985aa9d1043698b73"
+checksum = "0d3b4ea8e3d8f19deccef0f46449fdeae599567b1e0a224e0d614de0dfd5ab37"
 dependencies = [
  "ciborium",
  "croaring",
@@ -352,9 +352,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ffb62fe1f2affa41034a6ea402fa866556e6c24ef2e8fbf062dbc0cf9e00cfb"
+checksum = "ef7c2ea19772ce48c3d5029792989b5a0f2e735880c28e758185cfa14d89cdf8"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",
@@ -368,9 +368,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31b7d8b59974d03d4029b1f01e59cdcec25273b76ae70646b5e78528068bb5ac"
+checksum = "7745d2aee7ad7f34f262b99ea35f780877ab5a0f1c45cff949ed7fee43fe5cf4"
 dependencies = [
  "anda_db_utils",
  "ciborium",
@@ -386,9 +386,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_utils"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c9ac24d3495bf61cd6e426262c44933597f6ee24316bd740f265e7aa3b5b4d"
+checksum = "97cbde5b2548e08cfea99a73f70e91f279774c09ad78f1fbbf49b58247fca63a"
 dependencies = [
  "ciborium",
  "half 2.7.1",
@@ -398,9 +398,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.28"
+version = "0.12.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69becbc953a3b9699fd03a7587db756f8e180dc5937e551bbd7ea741b429f665"
+checksum = "b861aa13ab82dd1d66b06ad702537b42db62a9cc55dc5c0e855021b5340d2c90"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -472,9 +472,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.7.13"
+version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65bd8aa725df6d3e6db754b6afa12d361306351966d9ba70903576004aeefb62"
+checksum = "bcdb4c403212572e3a87dcd9edc23ec7d68cad3e79962ad2cd84d4824ea13c25"
 dependencies = [
  "async-trait",
  "chrono",
@@ -487,9 +487,9 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9f79b3b1948de99684d1b0fe76e4ca977f2cd46aedf872e15ab2ad10cafbe8"
+checksum = "eecbb530076a8a58cad48761be1a82402d6e1b129b258cd98b51b775968c66a7"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -1232,9 +1232,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -3991,9 +3991,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.31"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "113b30b4cd05f7c06868fdb2854f66a7b9fece9a48425351cd532e810d74024f"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 dependencies = [
  "serde_core",
  "value-bag",

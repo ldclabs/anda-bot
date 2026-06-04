@@ -214,14 +214,18 @@ impl Engines {
             }
             shell::ShellTool::new_with_custom_envs(runtime, envs, None)
         };
+        let additional_skills_dirs = std::env::home_dir()
+            .map(|home_dir| vec![home_dir.join(".agents").join("skills")])
+            .unwrap_or_default();
         let skills_tool = Arc::new(
-            skill::SkillManager::new(cfg.skills_dir).with_default_skill_tools(vec![
-                "shell".to_string(),
-                "read_file".to_string(),
-                "search_file".to_string(),
-                "note".to_string(),
-                "tools_select".to_string(),
-            ]),
+            skill::SkillManager::new_with_dirs(cfg.skills_dir, additional_skills_dirs)
+                .with_default_skill_tools(vec![
+                    "shell".to_string(),
+                    "read_file".to_string(),
+                    "search_file".to_string(),
+                    "note".to_string(),
+                    "tools_select".to_string(),
+                ]),
         );
         let bot = Arc::new(AndaBot::new(
             brain_client.clone(),

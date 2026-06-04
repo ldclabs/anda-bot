@@ -1909,7 +1909,12 @@ mod tests {
     #[tokio::test]
     async fn content_from_location_fetches_http_url() {
         let url = spawn_media_http_server(PNG_SIGNATURE.to_vec(), "image/png").await;
-        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let agent = MediaUnderstandingAgent::image(Vec::new()).with_http_client(
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("test HTTP client should build"),
+        );
 
         let content = agent
             .content_from_location(&RequestMeta::default(), &url)

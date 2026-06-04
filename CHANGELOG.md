@@ -2,6 +2,17 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.11] — 2026-06-04
+
+### Added
+
+- **Secondary Agent Skills directory support**: the built-in `skills_manager` now loads skills from both the configured Anda skills directory and `~/.agents/skills`, making reusable Agent Skills installed by other agent tooling available without copying them into `~/.anda/skills`.
+
+### Changed
+
+- **Dependencies bumped**: `anda_brain` 0.6.8 → 0.6.9, `anda_core` 0.12.6 → 0.12.7, `anda_engine` 0.12.28 → 0.12.30, plus `anda_cognitive_nexus` 0.7.19 → 0.7.20, `anda_db` 0.7.28 → 0.7.29, `anda_kip` 0.7.13 → 0.7.14, `anda_object_store` 0.3.3 → 0.3.4, `chrono` 0.4.44 → 0.4.45, and `log` 0.4.31 → 0.4.32.
+- **Multimodal HTTP fetch test isolation**: the URL media-understanding regression test now uses a proxy-free `reqwest` client, avoiding interference from developer proxy environment variables when fetching the local test server.
+
 ## [0.8.10] — 2026-06-04
 
 ### Added
