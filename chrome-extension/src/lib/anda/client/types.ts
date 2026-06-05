@@ -20,7 +20,7 @@ export interface ChromeTabInfo {
   incognito?: boolean
 }
 
-export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
+export type MessageRole = 'user' | 'assistant' | 'system' | 'tool' | 'external_user'
 
 export interface AttachmentSummary {
   id: string
@@ -118,10 +118,18 @@ export interface ChatMessage {
   conversation: number
   role: MessageRole
   text: string
+  externalUser?: ExternalUserMessageInfo
   thinkingText?: string
   attachments?: ChatAttachment[]
   timestamp?: number
   pending?: boolean
+}
+
+export interface ExternalUserMessageInfo {
+  channel?: string
+  sender?: string
+  space?: string
+  scope?: string
 }
 
 export interface MessageGroup {

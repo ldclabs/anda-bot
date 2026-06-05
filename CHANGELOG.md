@@ -9,6 +9,7 @@ All notable changes to Anda Bot.
 - **Scoped external-user identity for IM channels**: external IM participants are now identified with channel, discussion space, and sender scope (for example `$external_user:"wechat:agents/room-7/agent-a"`), keeping memory formation and counterparty attribution separated across channels, rooms, and senders.
 - **Discussion-space metadata in external-user prompts**: external IM prompts now include `space="..."` in the `$external_user` header when a thread or room is available, making multi-participant WeChat and other channel conversations clearer to the agent.
 - **Queued follow-up prompts in the Chrome extension**: when the active conversation is still working, plain follow-up prompts now appear in a dedicated composer queue instead of being inserted into the transcript prematurely; accepted follow-ups are removed once conversation updates arrive.
+- **External-user and runtime message rendering in the Chrome extension**: external IM messages now render as distinct external-user bubbles with sender/channel context, while embedded runtime `$system` output is split into standalone tool-output cards instead of being mixed into the user prompt.
 - **Repository-wide coding-agent guidance**: added a top-level `AGENTS.md` with project structure, subsystem rules, channel identity invariants, and focused verification commands for coding agents working in this repository.
 
 ### Changed

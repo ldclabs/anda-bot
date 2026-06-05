@@ -5,7 +5,7 @@ import {
 } from '$lib/service-worker/settings'
 import { delay } from '$lib/utils/helper'
 import { parsePromptCommand } from './commands'
-import { conversationToGroup, normalizeMessage } from './conversations'
+import { conversationToGroup, normalizeMessages } from './conversations'
 import { PollConversation } from './poll-conversation'
 import type {
   AgentInput,
@@ -264,15 +264,13 @@ export class Channel extends EventTarget {
       } else if (output.chat_history && output.chat_history.length > 0) {
         // side messages
         const timestamp = Date.now()
-        const messages = output.chat_history
-          .map((message, index) =>
-            normalizeMessage(message, {
-              conversation: 0,
-              index,
-              fallbackTimestamp: timestamp
-            })
-          )
-          .filter((message) => !!message)
+        const messages = output.chat_history.flatMap((message, index) =>
+          normalizeMessages(message, {
+            conversation: 0,
+            index,
+            fallbackTimestamp: timestamp
+          })
+        )
 
         const sideMessages = []
         for (const msg of this.#sideMessages) {
@@ -355,15 +353,13 @@ export class Channel extends EventTarget {
       if (result.messages.length > 0) {
         const start = conversation.messages!.length - result.messages.length || 0
         poller.push(
-          ...result.messages
-            .map((message, index) =>
-              normalizeMessage(message, {
-                conversation: conversation._id,
-                index: start + index,
-                fallbackTimestamp: conversation.updated_at
-              })
-            )
-            .filter((message) => !!message)
+          ...result.messages.flatMap((message, index) =>
+            normalizeMessages(message, {
+              conversation: conversation._id,
+              index: start + index,
+              fallbackTimestamp: conversation.updated_at
+            })
+          )
         )
         poller.drain()
       }

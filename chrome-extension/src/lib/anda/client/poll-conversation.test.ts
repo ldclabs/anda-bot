@@ -439,10 +439,16 @@ describe('Channel.sendPrompt', () => {
     }
 
     expect(channel.pendingFollowUps).toEqual([])
-    expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+    expect(channel.messageGroups[0]!.messages.at(-2)).toMatchObject({
       role: 'user',
       text: `${firstPrompt}\n\n${secondPrompt}`
     })
+    expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      text: ''
+    })
+    expect(channel.messageGroups[0]!.messages.at(-1)?.thinkingText).toContain('background shell')
+    expect(channel.messageGroups[0]!.messages.at(-1)?.thinkingText).toContain('tool output')
   })
 
   it.each(['/stop because it is wrong', '/cancel because it is wrong'])(

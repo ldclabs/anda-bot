@@ -3,21 +3,20 @@ import type {
   ChatMessage,
   ContentPart,
   Conversation,
+  ExternalUserMessageInfo,
   Message,
   MessageGroup,
   Resource
 } from './types'
 
 export function conversationToGroup(conversation: Conversation): MessageGroup {
-  const messages = (conversation.messages || [])
-    .map((message, index) =>
-      normalizeMessage(message, {
-        conversation: conversation._id,
-        index,
-        fallbackTimestamp: conversation.updated_at
-      })
-    )
-    .filter((message) => !!message)
+  const messages = (conversation.messages || []).flatMap((message, index) =>
+    normalizeMessages(message, {
+      conversation: conversation._id,
+      index,
+      fallbackTimestamp: conversation.updated_at
+    })
+  )
 
   if (conversation.status === 'failed') {
     const text = failureReasonMessage(conversation.failed_reason)
@@ -52,35 +51,87 @@ export function normalizeMessage(
   raw: Message,
   context: { conversation: number; index: number; fallbackTimestamp?: number }
 ): ChatMessage | null {
+  return normalizeMessages(raw, context)[0] || null
+}
+
+export function normalizeMessages(
+  raw: Message,
+  context: { conversation: number; index: number; fallbackTimestamp?: number }
+): ChatMessage[] {
   const attachments = resourcesToAttachments(messageResources(raw))
-  if (raw.name?.startsWith('$') && attachments.length === 0) {
-    return null
-  }
   const content = contentToMessageContent(raw.content, {
     hideSystemRuntimeText: Boolean(raw.name?.startsWith('$') && attachments.length > 0)
   })
-  if (!content.text && !content.thinkingText && attachments.length === 0) {
-    return null
+  const externalUser = content.externalUser || externalUserFromName(raw.name)
+  if (
+    raw.name?.startsWith('$') &&
+    attachments.length === 0 &&
+    !externalUser &&
+    !content.runtimeToolText
+  ) {
+    return []
+  }
+  if (
+    !content.text &&
+    !content.thinkingText &&
+    !content.runtimeToolText &&
+    attachments.length === 0
+  ) {
+    return []
   }
   const timestamp = raw.timestamp || context.fallbackTimestamp || Date.now()
-  return {
-    id: `m-${context.conversation}-${context.index}-${timestamp}`,
-    conversation: context.conversation,
-    role: raw.role,
-    text: content.text,
-    thinkingText: content.thinkingText,
-    attachments: attachments.length ? attachments : undefined,
-    timestamp
+  const baseId = `m-${context.conversation}-${context.index}-${timestamp}`
+  const messages: ChatMessage[] = []
+  if (content.text || content.thinkingText || attachments.length > 0) {
+    messages.push({
+      id: baseId,
+      conversation: context.conversation,
+      role: externalUser ? 'external_user' : raw.role,
+      text: content.text,
+      externalUser,
+      thinkingText: content.thinkingText,
+      attachments: attachments.length ? attachments : undefined,
+      timestamp
+    })
   }
+
+  if (content.runtimeToolText) {
+    messages.push({
+      id: `${baseId}-tool`,
+      conversation: context.conversation,
+      role: 'tool',
+      text: '',
+      thinkingText: content.runtimeToolText,
+      timestamp
+    })
+  }
+
+  return messages
 }
 
 function contentToMessageContent(
-  content: ContentPart[],
+  content: ContentPart[] | string,
   options: { hideSystemRuntimeText?: boolean } = {}
-): { text: string; thinkingText: string } {
+): {
+  text: string
+  thinkingText: string
+  runtimeToolText?: string
+  externalUser?: ExternalUserMessageInfo
+} {
   if (typeof content === 'string') {
+    const externalUserMessage = parseExternalUserPrompt(content)
+    if (externalUserMessage) {
+      return {
+        text: externalUserMessage.body,
+        thinkingText: '',
+        externalUser: externalUserMessage.externalUser
+      }
+    }
     if (shouldHideTextPart(content, options)) {
       return { text: '', thinkingText: '' }
+    }
+    if (isSystemRuntimeText(content)) {
+      return { text: '', thinkingText: '', runtimeToolText: content.trim() }
     }
     return splitLegacyThoughtText(content)
   }
@@ -89,14 +140,24 @@ function contentToMessageContent(
   }
   const textParts: string[] = []
   const thinkingParts: string[] = []
+  const runtimeToolParts: string[] = []
+  let externalUser: ExternalUserMessageInfo | undefined
   for (const part of content) {
     if (typeof part === 'string') {
       const text = part as string
+      const externalUserMessage = parseExternalUserPrompt(text)
+      if (externalUserMessage) {
+        externalUser ||= externalUserMessage.externalUser
+        if (externalUserMessage.body) {
+          textParts.push(externalUserMessage.body)
+        }
+        continue
+      }
       if (shouldHideTextPart(text, options)) {
         continue
       }
       if (isSystemRuntimeText(text)) {
-        thinkingParts.push(text.trim())
+        runtimeToolParts.push(text.trim())
         continue
       }
       const split = splitLegacyThoughtText(text)
@@ -111,11 +172,19 @@ function contentToMessageContent(
 
     switch (part.type) {
       case 'Text':
+        const externalUserMessage = parseExternalUserPrompt(part.text)
+        if (externalUserMessage) {
+          externalUser ||= externalUserMessage.externalUser
+          if (externalUserMessage.body) {
+            textParts.push(externalUserMessage.body)
+          }
+          continue
+        }
         if (shouldHideTextPart(part.text, options)) {
           continue
         }
         if (isSystemRuntimeText(part.text)) {
-          thinkingParts.push(part.text.trim())
+          runtimeToolParts.push(part.text.trim())
           continue
         }
         const split = splitLegacyThoughtText(part.text)
@@ -147,7 +216,9 @@ function contentToMessageContent(
 
   return {
     text: textParts.filter(Boolean).join('\n\n').trim(),
-    thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim()
+    thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim(),
+    runtimeToolText: runtimeToolParts.filter(Boolean).join('\n\n---\n\n').trim(),
+    externalUser
   }
 }
 
@@ -155,7 +226,7 @@ function messageResources(raw: Message): Resource[] {
   return resourcesFromContent(raw.content)
 }
 
-function resourcesFromContent(content: ContentPart[]): Resource[] {
+function resourcesFromContent(content: ContentPart[] | string): Resource[] {
   if (!Array.isArray(content)) {
     return []
   }
@@ -202,6 +273,75 @@ function shouldHideTextPart(text: string, options: { hideSystemRuntimeText?: boo
 
 function isSystemRuntimeText(text: string): boolean {
   return text.trimStart().startsWith('[$system:')
+}
+
+function parseExternalUserPrompt(
+  text: string
+): { externalUser: ExternalUserMessageInfo; body: string } | null {
+  const trimmed = text.trimStart()
+  if (!trimmed.startsWith('[$external_user:')) {
+    return null
+  }
+
+  const headerEnd = trimmed.indexOf(']')
+  if (headerEnd < 0) {
+    return null
+  }
+
+  const header = trimmed.slice('[$external_user:'.length, headerEnd)
+  const bodyText = trimmed.slice(headerEnd + 1).trim()
+  return {
+    externalUser: parseExternalUserHeader(header),
+    body: extractExternalUserBody(bodyText)
+  }
+}
+
+function parseExternalUserHeader(header: string): ExternalUserMessageInfo {
+  const externalUser: ExternalUserMessageInfo = {}
+  const fieldPattern = /(\w+)\s*=\s*("(?:\\.|[^"\\])*"|[^,\s]+)/g
+  for (const match of header.matchAll(fieldPattern)) {
+    const key = match[1]
+    const value = decodeQuotedString(match[2] || '').trim()
+    if (!value) {
+      continue
+    }
+    if (key === 'channel' || key === 'sender' || key === 'space') {
+      externalUser[key] = value
+    }
+  }
+  return externalUser
+}
+
+function extractExternalUserBody(text: string): string {
+  const separator = text.lastIndexOf('\n\n')
+  const body = (separator >= 0 ? text.slice(separator + 2) : text).trim()
+  return decodeQuotedString(body).trim()
+}
+
+function decodeQuotedString(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch (_error) {
+      return trimmed.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+    }
+  }
+  return trimmed
+}
+
+function externalUserFromName(name: string | undefined): ExternalUserMessageInfo | undefined {
+  const trimmed = name?.trim()
+  if (!trimmed?.startsWith('$external_user')) {
+    return undefined
+  }
+
+  const externalUser: ExternalUserMessageInfo = {}
+  const scopeMatch = trimmed.match(/^\$external_user:(.+)$/)
+  if (scopeMatch?.[1]) {
+    externalUser.scope = decodeQuotedString(scopeMatch[1])
+  }
+  return externalUser
 }
 
 function fencedJson(value: unknown): string {

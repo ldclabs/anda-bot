@@ -333,7 +333,7 @@
   <title>Anda Bot</title>
 </svelte:head>
 
-<div class="flex h-screen min-w-80 overflow-hidden bg-[#f6f8f5] text-stone-950">
+<div class="flex h-screen min-w-80 overflow-hidden bg-[#fbfaf7] text-stone-950">
   <ChatChannelsSidebar
     {channels}
     {activeSource}
@@ -420,7 +420,7 @@
 
     <main
       bind:this={messagesElement}
-      class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
+      class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto bg-[#fbfaf7] px-3 py-4"
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
         <div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
@@ -457,7 +457,7 @@
         {/if}
 
         {#each visibleMessageGroups as group (group._id)}
-          <section class="grid w-full gap-2">
+          <section class="grid w-full gap-4">
             {#if visibleMessageGroups.length > 1}
               <div
                 class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
@@ -525,7 +525,7 @@
             bind:this={sideMessagesElement}
             class="scrollbar-slim overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
           >
-            <div class="grid gap-4">
+            <div class="grid gap-2">
               {#each visibleSideMessages as message (message.id)}
                 <ChatMessageItem {message} />
               {/each}
@@ -535,7 +535,7 @@
       </section>
     {/if}
 
-    <footer class="border-t border-stone-200 bg-[#f6f8f5]/90 p-2.5 backdrop-blur">
+    <footer class="border-t border-stone-200 bg-[#fbfaf7]/90 p-2.5 backdrop-blur">
       <ChatComposer
         placeholder={andaClient.settings.token
           ? chrome.i18n.getMessage('placeholderMessage')

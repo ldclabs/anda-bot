@@ -3,8 +3,8 @@
 </script>
 
 <script lang="ts">
-  import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import {
@@ -31,21 +31,29 @@
   let loadingResourceIds = $state(new Set<number>())
   let failedResourceIds = $state(new Set<number>())
   const isUser = $derived(message.role === 'user')
+  const isExternalUser = $derived(message.role === 'external_user')
   const isSystem = $derived(message.role === 'system')
   const isTool = $derived(message.role === 'tool')
+  const isAssistant = $derived(!isUser && !isExternalUser && !isSystem && !isTool)
   const mainText = $derived(message.text.trim())
   const thinkingText = $derived((message.thinkingText || '').trim())
   const hasMainText = $derived(Boolean(mainText))
   const hasAttachments = $derived(Boolean(message.attachments?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
   const messageTimeLabel = $derived(timeLabel(message.timestamp))
+  const externalUserSenderLabel = $derived(
+    message.externalUser?.sender || message.externalUser?.scope || 'External user'
+  )
+  const externalUserContextLabel = $derived(
+    [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
+  )
   const detailLabel = $derived(isTool ? 'tool output' : 'thinking and tools')
   const [html, hook] = $derived.by(() => renderMarkdown(mainText))
   const [thinkingHtml, thinkingHook] = $derived.by(() => renderMarkdown(thinkingText))
   const messageActionButtonClass = buttonClass(
-    'outline',
-    'icon-sm',
-    'pointer-events-none scale-95 bg-background/95 text-muted-foreground shadow-md backdrop-blur-sm duration-150 group-hover/card:pointer-events-auto group-hover/card:scale-100 group-focus-within/card:pointer-events-auto group-focus-within/card:scale-100 hover:border-emerald-200 hover:text-emerald-700 focus-visible:pointer-events-auto focus-visible:scale-100'
+    'ghost',
+    'icon-xs',
+    'size-5 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-stone-700'
   )
 
   async function copyMessage() {
@@ -119,7 +127,15 @@
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
-    const roleLabel = isUser ? 'User' : isSystem ? 'System' : isTool ? 'Tool' : 'Assistant'
+    const roleLabel = isUser
+      ? 'User'
+      : isExternalUser
+        ? 'External user'
+        : isSystem
+          ? 'System'
+          : isTool
+            ? 'Tool'
+            : 'Assistant'
     const attachmentsHtml = printableAttachmentHtml()
     const doc = printWindow.document
     doc.title = `${escapeHtml(roleLabel)} message`
@@ -481,57 +497,37 @@
         `relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs ${
           isUser
             ? ' rounded-br-none bg-sky-50 text-slate-950'
-            : isSystem
-              ? 'rounded-bl-none border-amber-200 bg-amber-50 text-amber-950'
-              : isTool
-                ? 'border-stone-200 bg-stone-50 text-stone-800'
-                : 'rounded-bl-none border-stone-100 bg-white text-stone-950'
+            : isExternalUser
+              ? 'rounded-bl-none border-teal-200 bg-teal-50 text-teal-950'
+              : isSystem
+                ? 'rounded-bl-none border-amber-200 bg-amber-50 text-amber-950'
+                : isTool
+                  ? 'border-stone-200 bg-stone-50 text-stone-800'
+                  : 'rounded-none bg-transparent text-stone-950 shadow-none ring-0'
         }`
       )}
     >
-      <div
-        class="pointer-events-none absolute -top-3 {isUser
-          ? '-left-3'
-          : '-right-3'} z-10 flex items-center gap-1 opacity-0 transition duration-150 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-focus-within/card:pointer-events-auto group-focus-within/card:opacity-100"
-      >
-        <button
-          type="button"
-          class={messageActionButtonClass}
-          aria-label="Copy message"
-          title="Copy message"
-          onclick={copyMessage}
-        >
-          {#if copied}
-            <Check class="size-4" />
-          {:else}
-            <Copy class="size-4" />
-          {/if}
-        </button>
-        <button
-          type="button"
-          class={messageActionButtonClass}
-          aria-label="Copy rich text"
-          title="Copy rich text"
-          onclick={copyRichMessage}
-        >
-          {#if richCopied}
-            <Check class="size-4" />
-          {:else}
-            <Clipboard class="size-4" />
-          {/if}
-        </button>
-        <button
-          type="button"
-          class={messageActionButtonClass}
-          aria-label="Print message"
-          title="Print message"
-          onclick={printMessage}
-        >
-          <Printer class="size-4" />
-        </button>
-      </div>
+      <div class={cardContentClass(isAssistant ? 'px-0 py-0' : 'px-3 py-2')}>
+        {#if isExternalUser}
+          <div
+            class="{hasMainText || hasAttachments
+              ? 'mb-1.5'
+              : ''} flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-none"
+          >
+            <span class="inline-flex min-w-0 items-center gap-1 font-semibold text-teal-800">
+              <span class="size-1.5 shrink-0 rounded-full bg-teal-500"></span>
+              <span class="min-w-0 max-w-48 truncate" title={externalUserSenderLabel}>
+                {externalUserSenderLabel}
+              </span>
+            </span>
+            {#if externalUserContextLabel}
+              <span class="min-w-0 truncate text-teal-700/70" title={externalUserContextLabel}>
+                {externalUserContextLabel}
+              </span>
+            {/if}
+          </div>
+        {/if}
 
-      <div class={cardContentClass('px-3 py-2')}>
         {#if hasMainText}
           <div class="md-content w-full min-w-0 text-pretty wrap-break-word">{@html html}</div>
         {/if}
@@ -606,9 +602,9 @@
           </div>
         {/if}
 
-        {#if hasThinkingText || messageTimeLabel}
+        {#if hasThinkingText}
           <div
-            class="mt-1.5 flex min-h-5 items-center gap-2 {hasThinkingText
+            class="mt-1.5 flex min-h-5 items-center gap-2 {hasThinkingText && !isAssistant
               ? 'border-t border-border/70 pt-1.5'
               : ''}"
           >
@@ -628,11 +624,6 @@
                 </span>
               </button>
             {/if}
-            {#if messageTimeLabel}
-              <div class="ml-auto shrink-0 text-[10px] leading-none text-muted-foreground/70">
-                {messageTimeLabel}
-              </div>
-            {/if}
           </div>
         {/if}
 
@@ -644,6 +635,59 @@
           </div>
         {/if}
       </div>
+    </div>
+
+    <div
+      class="flex min-h-5 max-w-[92%] items-center gap-1 px-0.5 text-[10px] leading-none text-stone-400 {isUser
+        ? 'justify-end'
+        : isTool
+          ? 'justify-center'
+          : 'justify-start'}"
+    >
+      {#if mainText}
+        <button
+          type="button"
+          class={messageActionButtonClass}
+          aria-label="Copy message"
+          title="Copy message"
+          onclick={copyMessage}
+        >
+          {#if copied}
+            <Check class="size-3.5" />
+          {:else}
+            <Copy class="size-3.5" />
+          {/if}
+        </button>
+      {/if}
+      {#if !isUser}
+        {#if mainText}
+          <button
+            type="button"
+            class={messageActionButtonClass}
+            aria-label="Copy rich text"
+            title="Copy rich text"
+            onclick={copyRichMessage}
+          >
+            {#if richCopied}
+              <Check class="size-3.5" />
+            {:else}
+              <Clipboard class="size-3.5" />
+            {/if}
+          </button>
+        {/if}
+        <button
+          type="button"
+          class={messageActionButtonClass}
+          aria-label="Print message"
+          title="Print message"
+          onclick={printMessage}
+        >
+          <Printer class="size-3.5" />
+        </button>
+      {/if}
+      {#if messageTimeLabel}
+        <span class="px-1 text-stone-400">{messageTimeLabel}</span>
+      {/if}
     </div>
   {/if}
 
