@@ -85,6 +85,14 @@ function rawMessageWithResource(
   }
 }
 
+function rawMessageParts(role: 'user' | 'assistant', texts: string[], timestamp: number) {
+  return {
+    role,
+    content: texts.map((text) => ({ type: 'Text' as const, text })),
+    timestamp
+  }
+}
+
 function resource(overrides: Partial<Resource> = {}): Resource {
   return {
     _id: 7,
@@ -210,6 +218,233 @@ describe('PollConversation', () => {
 })
 
 describe('Channel.sendPrompt', () => {
+  it('inserts an idle conversation prompt into the active conversation immediately', async () => {
+    const prompt = 'continue from idle'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'waiting', 11)],
+      status: 'idle',
+      updated_at: 11
+    })
+    const agentRunStarted = deferred<void>()
+    const agentRun = deferred<AgentOutput>()
+    const api = createApi({
+      agentOutputs: [agentRun.promise],
+      onAgentRun: () => agentRunStarted.resolve(),
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                status: 'completed',
+                updated_at: currentConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const send = channel.sendPrompt(prompt, [])
+    await agentRunStarted.promise
+
+    try {
+      expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'waiting',
+        prompt
+      ])
+      expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+        conversation: currentConversation._id,
+        pending: true
+      })
+    } finally {
+      agentRun.resolve({
+        content: '',
+        conversation: currentConversation._id,
+        usage: usage()
+      })
+      const poller = await send
+      for await (const _current of poller!) {
+        // drain the async poll loop so the test observes the stale-refresh state.
+      }
+    }
+
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'waiting',
+      prompt
+    ])
+  })
+
+  it('queues a plain prompt outside the conversation while the active conversation is working', async () => {
+    const prompt = 'please adjust the approach'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const finalConversation = conversation(1, {
+      messages: [
+        rawMessage('user', 'hello', 10),
+        rawMessage('assistant', 'working', 11),
+        rawMessage('user', prompt, 12)
+      ],
+      status: 'completed',
+      updated_at: 13
+    })
+    const agentRunStarted = deferred<void>()
+    const agentRun = deferred<AgentOutput>()
+    let getConversationCalls = 0
+    const api = createApi({
+      agentOutputs: [agentRun.promise],
+      onAgentRun: () => agentRunStarted.resolve(),
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            getConversationCalls += 1
+            return toolResult(getConversationCalls < 3 ? currentConversation : finalConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                messages: [rawMessage('user', prompt, 12)],
+                status: 'completed',
+                updated_at: finalConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const send = channel.sendPrompt(prompt, [])
+    await agentRunStarted.promise
+
+    try {
+      expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'working'
+      ])
+      expect(channel.pendingFollowUps.map((item) => item.text)).toEqual([prompt])
+    } catch (error) {
+      agentRun.resolve({
+        content: '',
+        conversation: currentConversation._id,
+        usage: usage()
+      })
+      const poller = await send
+      for await (const _current of poller!) {
+        // drain the async poll loop before surfacing the assertion failure.
+      }
+      throw error
+    }
+
+    agentRun.resolve({
+      content: '',
+      conversation: currentConversation._id,
+      usage: usage()
+    })
+    const poller = await send
+    for await (const _current of poller!) {
+      // drain the async poll loop so the test observes the settled state.
+    }
+
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'working',
+      prompt
+    ])
+  })
+
+  it('clears a queued follow-up when it is accepted inside a combined user message', async () => {
+    const firstPrompt = '是的，一个交互优化'
+    const secondPrompt = '后面的提交变更就没必要跑测试了'
+    const runtimeText =
+      '[$system: kind="background shell"]\nThis message is from the Anda runtime.\n\n"tool output"'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const finalConversation = conversation(1, {
+      messages: [
+        rawMessage('user', 'hello', 10),
+        rawMessage('assistant', 'working', 11),
+        rawMessageParts('user', [firstPrompt, runtimeText, secondPrompt], 12)
+      ],
+      status: 'completed',
+      updated_at: 13
+    })
+    const agentRunStarted = deferred<void>()
+    const agentRun = deferred<AgentOutput>()
+    let getConversationCalls = 0
+    const api = createApi({
+      agentOutputs: [agentRun.promise],
+      onAgentRun: () => agentRunStarted.resolve(),
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            getConversationCalls += 1
+            return toolResult(getConversationCalls < 2 ? currentConversation : finalConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                messages: [rawMessageParts('user', [firstPrompt, runtimeText, secondPrompt], 12)],
+                status: 'completed',
+                updated_at: finalConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const send = channel.sendPrompt(firstPrompt, [])
+    await agentRunStarted.promise
+
+    expect(channel.pendingFollowUps.map((item) => item.text)).toEqual([firstPrompt])
+
+    agentRun.resolve({
+      content: '',
+      conversation: currentConversation._id,
+      usage: usage()
+    })
+
+    const poller = await send
+    for await (const _current of poller!) {
+      // drain the async poll loop.
+    }
+
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: `${firstPrompt}\n\n${secondPrompt}`
+    })
+  })
+
   it.each(['/stop because it is wrong', '/cancel because it is wrong'])(
     'inserts %s into the active conversation while the request is pending',
     async (prompt) => {

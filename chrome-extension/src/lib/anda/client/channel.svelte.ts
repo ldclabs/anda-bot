@@ -39,12 +39,14 @@ export class Channel extends EventTarget {
   #conversation: Conversation | null = $state(null)
   #messageGroups: MessageGroup[] = $state([])
   #sideMessages: ChatMessage[] = $state([])
+  #pendingFollowUps: ChatMessage[] = $state([])
   #sending: boolean = $state(false)
   #loadingPrevious: boolean = $state(false)
   #pollingConversation: number = $state(0)
   #conversationAncestors: number[] = $state([])
   #syncing: boolean = $state(false)
   #syncAt: number = 0
+  #localMessageSeq: number = 0
   #api: API
 
   constructor(source: string, api: API) {
@@ -95,6 +97,9 @@ export class Channel extends EventTarget {
     for (const message of this.#sideMessages) {
       latest = Math.max(latest, message.timestamp || 0)
     }
+    for (const message of this.#pendingFollowUps) {
+      latest = Math.max(latest, message.timestamp || 0)
+    }
     return latest
   }
 
@@ -108,6 +113,10 @@ export class Channel extends EventTarget {
 
   get sideMessages(): ChatMessage[] {
     return this.#sideMessages
+  }
+
+  get pendingFollowUps(): ChatMessage[] {
+    return this.#pendingFollowUps
   }
 
   destroy(): void {
@@ -176,6 +185,8 @@ export class Channel extends EventTarget {
     this.#sending = true
     const resources = attachments.map((attachment) => attachment.resource)
     const command = parsePromptCommand(prompt)
+    const queueAsFollowUp = this.shouldQueueFollowUp(command)
+    let pendingFollowUpId = ''
 
     try {
       const poller = new PollConversation()
@@ -205,7 +216,7 @@ export class Channel extends EventTarget {
         this.#sideMessages = [
           ...this.#sideMessages,
           {
-            id: `m-side-${timestamp}`,
+            id: this.nextLocalMessageId('m-side', SubmitMessageConversationId, timestamp),
             role: 'user',
             text: command.prompt,
             conversation: SubmitMessageConversationId,
@@ -220,11 +231,13 @@ export class Channel extends EventTarget {
           conversation: this.#conversation?._id || SubmitMessageConversationId,
           attachments: attachments.length ? attachments : undefined
         })
+      } else if (queueAsFollowUp) {
+        pendingFollowUpId = this.appendPendingFollowUp(prompt, attachments)
       } else {
         this.appendLocalMessage({
           role: 'user',
           text: prompt,
-          conversation: SubmitMessageConversationId,
+          conversation: this.optimisticConversationId(),
           attachments: attachments.length ? attachments : undefined
         })
       }
@@ -242,6 +255,9 @@ export class Channel extends EventTarget {
       }
 
       if (output.failed_reason) {
+        if (pendingFollowUpId) {
+          this.removePendingFollowUp(pendingFollowUpId)
+        }
         this.appendSystemMessage(output.failed_reason)
         this.#api.updateStatus('failed', null)
         poller.finish()
@@ -270,12 +286,18 @@ export class Channel extends EventTarget {
         this.#api.updateStatus('completed', null)
         poller.finish()
       } else if (!hasConversation) {
+        if (pendingFollowUpId) {
+          this.removePendingFollowUp(pendingFollowUpId)
+        }
         this.#api.updateStatus('idle', null)
         poller.finish()
       }
 
       return poller
     } catch (error) {
+      if (pendingFollowUpId) {
+        this.removePendingFollowUp(pendingFollowUpId)
+      }
       this.#api.updateStatus('request failed', { kind: 'error', text: errorToMessage(error) })
       return null
     } finally {
@@ -472,6 +494,7 @@ export class Channel extends EventTarget {
       (existing) => existing._id === SubmitMessageConversationId
     )
     mergePendingLocalMessages(group, [existingGroup, submitGroup])
+    this.removeAcceptedPendingFollowUps(group.messages)
 
     const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
     if (idx >= 0) {
@@ -530,6 +553,7 @@ export class Channel extends EventTarget {
 
     this.#conversationAncestors = merged[0]?.ancestors || []
     this.#messageGroups = merged
+    this.removeAcceptedPendingFollowUps(merged.flatMap((group) => group.messages))
   }
 
   private clearConversationDisplay(): void {
@@ -542,6 +566,7 @@ export class Channel extends EventTarget {
     this.#syncing = false
     this.#syncAt = 0
     this.#conversationAncestors = []
+    this.#pendingFollowUps = []
   }
 
   private appendSystemMessage(text: string): void {
@@ -561,7 +586,7 @@ export class Channel extends EventTarget {
           ...group.messages,
           {
             ...message,
-            id: `m-${group._id}-${timestamp}`,
+            id: this.nextLocalMessageId('m', group._id, timestamp),
             conversation: group._id,
             pending: true,
             timestamp
@@ -570,6 +595,75 @@ export class Channel extends EventTarget {
         return { ...group }
       }
     )
+  }
+
+  private appendPendingFollowUp(prompt: string, attachments: ChatAttachment[]): string {
+    const timestamp = Date.now()
+    const id = this.nextLocalMessageId('m-follow-up', this.#conversation?._id || 0, timestamp)
+    this.#pendingFollowUps = [
+      ...this.#pendingFollowUps,
+      {
+        id,
+        role: 'user',
+        text: prompt,
+        conversation: this.#conversation?._id || SubmitMessageConversationId,
+        attachments: attachments.length ? attachments : undefined,
+        pending: true,
+        timestamp
+      }
+    ]
+    return id
+  }
+
+  private removePendingFollowUp(id: string): void {
+    this.#pendingFollowUps = this.#pendingFollowUps.filter((message) => message.id !== id)
+  }
+
+  private removeAcceptedPendingFollowUps(serverMessages: ChatMessage[]): void {
+    if (!this.#pendingFollowUps.length || !serverMessages.length) {
+      return
+    }
+
+    const acceptedMessages = serverMessages
+      .filter((message) => message.role === 'user')
+      .map((message) => ({
+        remainingText: normalizedFollowUpText(message.text)
+      }))
+    const remaining: ChatMessage[] = []
+    for (const pending of this.#pendingFollowUps) {
+      const pendingText = normalizedFollowUpText(pending.text)
+      const accepted = pendingText
+        ? acceptedMessages.find((message) => message.remainingText.includes(pendingText))
+        : undefined
+      if (!accepted) {
+        remaining.push(pending)
+        continue
+      }
+
+      const index = accepted.remainingText.indexOf(pendingText)
+      accepted.remainingText =
+        accepted.remainingText.slice(0, index) +
+        accepted.remainingText.slice(index + pendingText.length)
+    }
+    this.#pendingFollowUps = remaining
+  }
+
+  private shouldQueueFollowUp(command: ReturnType<typeof parsePromptCommand>): boolean {
+    if (command) {
+      return false
+    }
+    return this.#conversation?.status === 'working' || this.#conversation?.status === 'submitted'
+  }
+
+  private optimisticConversationId(): number {
+    return this.#conversation?.status === 'idle'
+      ? this.#conversation._id
+      : SubmitMessageConversationId
+  }
+
+  private nextLocalMessageId(prefix: string, conversation: number, timestamp = Date.now()): string {
+    this.#localMessageSeq += 1
+    return `${prefix}-${conversation}-${timestamp}-${this.#localMessageSeq}`
   }
 
   private removeSubmittedMessage(isSubmitted: (msg: ChatMessage) => boolean): void {
@@ -632,6 +726,10 @@ function trimTrailingPathSeparator(value: string): string {
 
 function sameMessageContent(a: ChatMessage, b: ChatMessage): boolean {
   return a.role === b.role && a.text.trim() === b.text.trim()
+}
+
+function normalizedFollowUpText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ')
 }
 
 function mergePendingLocalMessages(

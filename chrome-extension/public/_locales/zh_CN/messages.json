@@ -125,6 +125,9 @@
   "sideTasksLabel": {
     "message": "Side 任务"
   },
+  "queuedFollowUps": {
+    "message": "要求后续变更"
+  },
   "expandSideTasks": {
     "message": "展开 Side 任务"
   },

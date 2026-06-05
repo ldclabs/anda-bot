@@ -67,4 +67,30 @@ describe('normalizeMessage', () => {
       type: 'image/png'
     })
   })
+
+  it('moves embedded runtime system text out of a user message body', () => {
+    const message: Message = {
+      role: 'user',
+      content: [
+        { type: 'Text', text: '是的，一个交互优化' },
+        {
+          type: 'Text',
+          text: '[$system: kind="background shell"]\nThis message is from the Anda runtime.\n\n"tool output"'
+        },
+        { type: 'Text', text: '后面的提交变更就没必要跑测试了' }
+      ],
+      timestamp: 1234
+    }
+
+    const normalized = normalizeMessage(message, {
+      conversation: 55,
+      index: 2,
+      fallbackTimestamp: 999
+    })
+
+    expect(normalized?.role).toBe('user')
+    expect(normalized?.text).toBe('是的，一个交互优化\n\n后面的提交变更就没必要跑测试了')
+    expect(normalized?.thinkingText).toContain('background shell')
+    expect(normalized?.thinkingText).toContain('tool output')
+  })
 })

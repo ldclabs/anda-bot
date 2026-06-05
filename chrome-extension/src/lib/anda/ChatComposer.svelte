@@ -1,6 +1,7 @@
 <script lang="ts" module>
   import type {
     ChatAttachment,
+    ChatMessage,
     PageAudioResult,
     PromptSkill,
     SubmitKeyMode,
@@ -72,6 +73,7 @@
     sending = false,
     placeholder = chrome.i18n.getMessage('placeholderMessage'),
     working = false,
+    pendingFollowUps = [],
     voiceAvailable = false,
     voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
     onSend,
@@ -89,6 +91,7 @@
     sending?: boolean
     placeholder?: string
     working?: boolean
+    pendingFollowUps?: ChatMessage[]
     voiceAvailable?: boolean
     voiceCapabilities?: VoiceCapabilities
     submitKeyMode?: SubmitKeyMode
@@ -529,6 +532,14 @@
 
   function removeAttachment(id: string) {
     attachments = attachments.filter((attachment) => attachment.id !== id)
+  }
+
+  function pendingFollowUpPreview(message: ChatMessage): string {
+    const text = message.text.trim()
+    if (text) {
+      return text
+    }
+    return (message.attachments || []).map((attachment) => attachment.name).join(', ')
   }
 
   function toggleInputMode() {
@@ -1053,6 +1064,28 @@
   >
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
+    {#if pendingFollowUps.length}
+      <div class="pending-follow-ups" aria-live="polite">
+        <div class="pending-follow-ups-header">
+          <span class="pending-follow-ups-pulse">
+            <LoaderCircle class="size-3 animate-spin" />
+          </span>
+          <span class="min-w-0 flex-1 truncate">
+            {chrome.i18n.getMessage('queuedFollowUps')}
+          </span>
+          <span class="pending-follow-ups-count">{pendingFollowUps.length}</span>
+        </div>
+        <div class="pending-follow-ups-list">
+          {#each pendingFollowUps as message (message.id)}
+            <div class="pending-follow-up-item">
+              <span class="pending-follow-up-dot"></span>
+              <span class="min-w-0 flex-1 truncate">{pendingFollowUpPreview(message)}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if attachmentError}
       <div
         role="alert"
@@ -1315,6 +1348,78 @@
   :global(.composer-shell.composer-working)::after {
     opacity: 1;
     animation: composer-border-flow 4s linear infinite;
+  }
+
+  .pending-follow-ups {
+    display: grid;
+    gap: 6px;
+    border-radius: 7px;
+    border: 1px solid rgba(4, 120, 87, 0.16);
+    background: rgba(236, 253, 245, 0.82);
+    padding: 7px;
+    color: #2f3b35;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  }
+
+  .pending-follow-ups-header,
+  .pending-follow-up-item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .pending-follow-ups-header {
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .pending-follow-ups-pulse {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 6px;
+    border: 1px solid rgba(4, 120, 87, 0.12);
+    background: rgba(255, 255, 255, 0.74);
+    color: #047857;
+  }
+
+  .pending-follow-ups-count {
+    min-width: 18px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.76);
+    padding: 1px 6px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 800;
+    color: #047857;
+  }
+
+  .pending-follow-ups-list {
+    display: grid;
+    gap: 4px;
+  }
+
+  .pending-follow-up-item {
+    gap: 7px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.58);
+    padding: 5px 7px;
+    font-size: 12px;
+    line-height: 1.25;
+    color: #1f2d27;
+  }
+
+  .pending-follow-up-dot {
+    width: 5px;
+    height: 5px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
   }
 
   .prompt-input-wrap {

@@ -91,10 +91,15 @@ function contentToMessageContent(
   const thinkingParts: string[] = []
   for (const part of content) {
     if (typeof part === 'string') {
-      if (shouldHideTextPart(part, options)) {
+      const text = part as string
+      if (shouldHideTextPart(text, options)) {
         continue
       }
-      const split = splitLegacyThoughtText(part)
+      if (isSystemRuntimeText(text)) {
+        thinkingParts.push(text.trim())
+        continue
+      }
+      const split = splitLegacyThoughtText(text)
       if (split.text) {
         textParts.push(split.text)
       }
@@ -107,6 +112,10 @@ function contentToMessageContent(
     switch (part.type) {
       case 'Text':
         if (shouldHideTextPart(part.text, options)) {
+          continue
+        }
+        if (isSystemRuntimeText(part.text)) {
+          thinkingParts.push(part.text.trim())
           continue
         }
         const split = splitLegacyThoughtText(part.text)
@@ -189,6 +198,10 @@ function resourceToAttachment(resource: Resource, index: number): ChatAttachment
 
 function shouldHideTextPart(text: string, options: { hideSystemRuntimeText?: boolean }): boolean {
   return Boolean(options.hideSystemRuntimeText && text.trimStart().startsWith('[$system:'))
+}
+
+function isSystemRuntimeText(text: string): boolean {
+  return text.trimStart().startsWith('[$system:')
 }
 
 function fencedJson(value: unknown): string {
