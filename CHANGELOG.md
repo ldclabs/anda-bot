@@ -2,6 +2,17 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.12] — 2026-06-05
+
+### Added
+
+- **Scoped external-user identity for IM channels**: external IM participants are now identified with channel, discussion space, and sender scope (for example `$external_user:"wechat:agents/room-7/agent-a"`), keeping memory formation and counterparty attribution separated across channels, rooms, and senders.
+- **Discussion-space metadata in external-user prompts**: external IM prompts now include `space="..."` in the `$external_user` header when a thread or room is available, making multi-participant WeChat and other channel conversations clearer to the agent.
+
+### Changed
+
+- **WeChat reply/thread normalization**: WeChat messages now trim reply targets, ignore empty session ids, persist context tokens by the normalized reply target, and store source `from`, `session_id`, and `space` metadata for downstream routing and attribution.
+
 ## [0.8.11] — 2026-06-04
 
 ### Added

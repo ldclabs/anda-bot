@@ -20,7 +20,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::types::*;
-use crate::engine::{CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt};
+use crate::engine::{
+    CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt_with_space,
+};
 use crate::util::request_meta::request_meta_extra_as;
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
@@ -556,7 +558,12 @@ fn completion_message(
 
 fn agent_prompt_from_message(message: &ChannelMessage) -> String {
     if message.external_user.unwrap_or_default() {
-        external_user_prompt(&message.channel, &message.sender, &message.content)
+        external_user_prompt_with_space(
+            &message.channel,
+            &message.sender,
+            message.thread.as_deref(),
+            &message.content,
+        )
     } else {
         message.content.clone()
     }
@@ -1047,8 +1054,26 @@ mod tests {
         assert!(
             prompt.starts_with("[$external_user: channel=\"telegram:public\", sender=\"bob\"]")
         );
-        assert!(prompt.contains("external untrusted IM user"));
+        assert!(prompt.contains("external untrusted IM participant"));
         assert!(prompt.ends_with("hello\""));
+    }
+
+    #[test]
+    fn agent_prompt_includes_external_discussion_space() {
+        let message = ChannelMessage {
+            sender: "agent-a".to_string(),
+            channel: "wechat:family".to_string(),
+            content: "hello".to_string(),
+            thread: Some("room-7".to_string()),
+            external_user: Some(true),
+            ..Default::default()
+        };
+
+        let prompt = agent_prompt_from_message(&message);
+
+        assert!(prompt.starts_with(
+            "[$external_user: channel=\"wechat:family\", sender=\"agent-a\", space=\"room-7\"]"
+        ));
     }
 
     #[tokio::test]

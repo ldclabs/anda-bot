@@ -428,16 +428,20 @@ impl MessageHandler for WechatMessageHandler {
             );
             return Ok(());
         }
-        if let Some(context_token) = ctx.context_token.as_deref() {
-            save_context_token_to_workspace(&self.workspace, &ctx.from, context_token).await;
-        }
-
         let Some(mut message) =
             channel_message_from_context(ctx, &self.channel_id, &self.workspace).await
         else {
             return Ok(());
         };
         message.external_user = (!trusted_user).then_some(true);
+        message
+            .extra
+            .insert("trusted_user".to_string(), trusted_user.into());
+
+        if let Some(context_token) = ctx.context_token.as_deref() {
+            save_context_token_to_workspace(&self.workspace, &message.reply_target, context_token)
+                .await;
+        }
 
         if self.tx.send(message).await.is_err() {
             self.cancel_token.cancel();
@@ -483,29 +487,47 @@ async fn channel_message_from_context(
         .filter(|timestamp| *timestamp > 0)
         .unwrap_or_else(unix_ms);
 
+    let reply_target = wechat_reply_target(ctx);
+    let thread = wechat_thread(ctx);
     let mut extra = std::collections::BTreeMap::new();
     extra.insert("message_id".to_string(), ctx.message_id.clone().into());
+    extra.insert("from".to_string(), ctx.from.clone().into());
     extra.insert("to".to_string(), ctx.to.clone().into());
     if let Some(server_message_id) = ctx.server_message_id {
         extra.insert("server_message_id".to_string(), server_message_id.into());
     }
-    if let Some(session_id) = &ctx.session_id
-        && !session_id.is_empty()
-    {
+    if let Some(session_id) = &thread {
         extra.insert("session_id".to_string(), session_id.clone().into());
+        extra.insert("space".to_string(), session_id.clone().into());
     }
 
     Some(ChannelMessage {
         sender: ctx.from.clone(),
-        reply_target: ctx.from.clone(),
+        reply_target,
         content,
         channel: channel_id.to_string(),
         timestamp,
-        thread: ctx.session_id.clone(),
+        thread,
         attachments,
         extra,
         ..Default::default()
     })
+}
+
+fn wechat_reply_target(ctx: &MessageContext) -> String {
+    wechat_reply_target_from(&ctx.from)
+}
+
+fn wechat_thread(ctx: &MessageContext) -> Option<String> {
+    wechat_thread_from_session_id(ctx.session_id.as_deref())
+}
+
+fn wechat_reply_target_from(from: &str) -> String {
+    from.trim().to_string()
+}
+
+fn wechat_thread_from_session_id(session_id: Option<&str>) -> Option<String> {
+    session_id.and_then(normalize_string)
 }
 
 async fn download_media_resource(
@@ -827,6 +849,25 @@ mod tests {
             sanitize_path_component("hello world.txt", "media.bin"),
             "hello_world.txt"
         );
+    }
+
+    #[test]
+    fn wechat_thread_ignores_empty_session_id() {
+        assert_eq!(wechat_thread_from_session_id(None), None);
+        assert_eq!(wechat_thread_from_session_id(Some("  ")), None);
+    }
+
+    #[test]
+    fn wechat_thread_preserves_discussion_space() {
+        assert_eq!(
+            wechat_thread_from_session_id(Some(" room-7 ")).as_deref(),
+            Some("room-7")
+        );
+    }
+
+    #[test]
+    fn wechat_reply_target_trims_sender_target() {
+        assert_eq!(wechat_reply_target_from(" wxid_123 "), "wxid_123");
     }
 
     #[tokio::test]

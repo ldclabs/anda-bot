@@ -48,7 +48,7 @@ use super::{
     resources::ResourceStore,
     side,
     system::{
-        SYSTEM_PERSON_NAME, external_user_name, mark_special_user_messages,
+        SYSTEM_PERSON_NAME, mark_special_user_messages, scoped_external_user_name,
         system_extra_user_context, system_runtime_prompt, system_user_message,
     },
 };
@@ -690,10 +690,7 @@ impl AndaBot {
         let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
         let external_user = request_meta_extra_as::<bool>(&meta, "external_user").unwrap_or(false);
         let formation_counterparty = if external_user {
-            meta.user
-                .as_ref()
-                .map(|sender| format!("$external_user:{sender}"))
-                .or_else(|| Some("$external_user".to_string()))
+            Some(scoped_external_user_name_from_meta(&meta))
         } else {
             Some(conversation.user.to_string())
         };
@@ -1126,6 +1123,7 @@ impl Agent<AgentCtx> for AndaBot {
                         return Ok(AgentOutput {
                             conversation: (response_conversation_id > 0)
                                 .then_some(response_conversation_id),
+                            session: Some(session.id.to_string()),
                             ..Default::default()
                         });
                     }
@@ -1341,11 +1339,7 @@ impl Agent<AgentCtx> for AndaBot {
         let external_user =
             request_meta_extra_as::<bool>(ctx.meta(), "external_user").unwrap_or(false);
         let formation_counterparty = if external_user {
-            ctx.meta()
-                .user
-                .as_ref()
-                .map(|sender| external_user_name(sender))
-                .or_else(|| Some(external_user_name("")))
+            Some(scoped_external_user_name_from_meta(ctx.meta()))
         } else {
             Some(caller.to_string())
         };
@@ -1996,6 +1990,21 @@ fn conversation_extra_without_id(meta: &RequestMeta) -> Map<String, Value> {
     extra
 }
 
+fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String {
+    let source = request_meta_extra_as::<String>(meta, "source").unwrap_or_default();
+    let sender = meta.user.as_deref().unwrap_or_default();
+    let thread = request_meta_extra_as::<String>(meta, "thread")
+        .map(|thread| thread.trim().to_string())
+        .filter(|thread| !thread.is_empty());
+    let reply_target = request_meta_extra_as::<String>(meta, "reply_target")
+        .map(|reply_target| reply_target.trim().to_string())
+        .filter(|reply_target| !reply_target.is_empty())
+        .filter(|reply_target| reply_target != sender);
+    let space = thread.as_deref().or(reply_target.as_deref());
+
+    scoped_external_user_name(&source, space, sender)
+}
+
 fn request_meta_from_conversation(conversation: &Conversation, source_key: &str) -> RequestMeta {
     let mut extra = conversation
         .extra
@@ -2522,6 +2531,40 @@ mod tests {
         assert_eq!(
             meta.get_extra_as::<String>("source"),
             Some("cli:/tmp/workspace".to_string())
+        );
+    }
+
+    #[test]
+    fn scoped_external_user_name_from_meta_includes_channel_and_sender() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("source".to_string(), "wechat:mom".into());
+        let meta = RequestMeta {
+            user: Some("wxid_123".to_string()),
+            extra,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            scoped_external_user_name_from_meta(&meta),
+            "$external_user:\"wechat:mom/wxid_123\""
+        );
+    }
+
+    #[test]
+    fn scoped_external_user_name_from_meta_includes_discussion_space() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("source".to_string(), "wechat:agents".into());
+        extra.insert("thread".to_string(), "room-7".into());
+        extra.insert("reply_target".to_string(), "wxid_123".into());
+        let meta = RequestMeta {
+            user: Some("agent-a".to_string()),
+            extra,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            scoped_external_user_name_from_meta(&meta),
+            "$external_user:\"wechat:agents/room-7/agent-a\""
         );
     }
 

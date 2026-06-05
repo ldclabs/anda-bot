@@ -56,7 +56,7 @@ pub use goal::GoalTool;
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
-pub(crate) use system::{external_user_prompt, system_runtime_prompt};
+pub(crate) use system::{external_user_prompt_with_space, system_runtime_prompt};
 
 // Empty model labels resolve through Models::get_model(), which tracks the active model.
 const ACTIVE_MODEL_LABEL: &str = "";
