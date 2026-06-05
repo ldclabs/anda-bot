@@ -15,10 +15,10 @@ export async function handlePageSpeechRecognition(
 ): Promise<PageSpeechResult> {
   const tab = await activeTab(chromeApi)
   const tabId = tab?.id
-  if (!tabId) {
+  if (typeof tabId !== 'number') {
     throw new Error('No active tab is available for browser speech recognition.')
   }
-  if (!injectablePageUrl(tab.url)) {
+  if (!injectablePageUrl(tab?.url)) {
     throw new Error('Browser speech recognition needs an active http or https tab.')
   }
 
@@ -37,10 +37,10 @@ export async function handlePageAudioCapture(
 ): Promise<PageAudioResult> {
   const tab = await activeTab(chromeApi)
   const tabId = tab?.id
-  if (!tabId) {
+  if (typeof tabId !== 'number') {
     throw new Error('No active tab is available for voice recording.')
   }
-  if (!injectablePageUrl(tab.url)) {
+  if (!injectablePageUrl(tab?.url)) {
     throw new Error('Anda voice recording needs an active http or https tab.')
   }
 

@@ -48,12 +48,12 @@ const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let browserActionQueue: Promise<void> = Promise.resolve()
 
-chromeApi.runtime.onInstalled.addListener((reason: string) => {
+chromeApi.runtime.onInstalled.addListener((details) => {
   if (chromeApi.sidePanel?.setPanelBehavior) {
     chromeApi.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {})
   }
   loadSettingsAndConnect()
-  if (reason === 'install') {
+  if (details.reason === 'install') {
     chromeApi.tabs.create({
       url: 'index.html'
     })
@@ -104,7 +104,11 @@ chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(res)
       isDevelopmentModePromise.then((dev) => {
         if (dev) {
-          console.log(`onMessage: ${message.type}`, message, res)
+          console.log(
+            `onMessage: ${message.type || 'unknown'}`,
+            extensionMessageLogSummary(message),
+            extensionResponseLogSummary(res)
+          )
         }
       })
     })
@@ -222,12 +226,38 @@ async function openSidePanel(tab: ChromeTabInfo): Promise<void> {
   }
 
   try {
-    if (tab.id) {
+    if (typeof tab.id === 'number') {
       await chromeApi.sidePanel.open({ tabId: tab.id })
-    } else if (tab.windowId) {
+    } else if (typeof tab.windowId === 'number') {
       await chromeApi.sidePanel.open({ windowId: tab.windowId })
     }
   } catch (_error) {}
+}
+
+function extensionMessageLogSummary(message: ExtensionMessage): Record<string, unknown> {
+  return {
+    type: message.type || 'unknown',
+    method: message.method,
+    settings: message.settings
+      ? {
+          ...message.settings,
+          token: message.settings.token ? '<redacted>' : ''
+        }
+      : undefined,
+    params_count: Array.isArray(message.params) ? message.params.length : undefined,
+    has_text: typeof message.text === 'string' ? message.text.length > 0 : undefined,
+    language: message.language,
+    mime_type: message.mimeType
+  }
+}
+
+function extensionResponseLogSummary(response: ExtensionResponse): Record<string, unknown> {
+  return {
+    ok: response.ok,
+    status: response.status,
+    has_result: response.ok ? response.result !== undefined : undefined,
+    error: response.ok ? undefined : response.error
+  }
 }
 
 async function sendRpc(

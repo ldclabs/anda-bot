@@ -23,6 +23,12 @@ export type ChromeTabInfo = {
   url?: string
 }
 
+export type ChromeRuntimeOnInstalledDetails = {
+  reason: string
+  previousVersion?: string
+  id?: string
+}
+
 export type ChromeCookieSameSite = 'no_restriction' | 'lax' | 'strict'
 
 export type ChromeDownloadItem = {
@@ -182,7 +188,7 @@ export type ChromeWebNavigationFrame = {
 export interface ChromeApi {
   runtime: {
     lastError?: { message?: string }
-    onInstalled: ChromeEvent<(raeson: string) => void>
+    onInstalled: ChromeEvent<(details: ChromeRuntimeOnInstalledDetails) => void>
     onStartup: ChromeEvent<() => void>
     sendMessage<Result>(message: ExtensionMessage): Promise<ExtensionResponse<Result>>
     onMessage: {
@@ -194,6 +200,9 @@ export interface ChromeApi {
         ) => boolean | void
       ): void
     }
+  }
+  management?: {
+    getSelf(): Promise<{ installType?: string }>
   }
   tts?: {
     speak(

@@ -528,7 +528,7 @@ export class Channel extends EventTarget {
       const b = incoming[j]!
 
       if (a._id === b._id) {
-        // Replace existing with incoming when IDs match
+        mergePendingLocalMessages(b, [a])
         merged.push(b)
         i++
         j++

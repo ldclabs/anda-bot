@@ -286,6 +286,78 @@ describe('Channel.sendPrompt', () => {
     ])
   })
 
+  it('keeps an idle prompt visible when a stale channel sync finishes after send starts', async () => {
+    let nowMs = 1_000_000_000_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+    const prompt = 'continue after switching back'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'waiting', 11)],
+      status: 'idle',
+      updated_at: 11
+    })
+    const secondFetchStarted = deferred<void>()
+    const secondFetch = deferred<Conversation>()
+    const agentRunStarted = deferred<void>()
+    const agentRun = deferred<AgentOutput>()
+    let getConversationCalls = 0
+    const api = createApi({
+      agentOutputs: [agentRun.promise],
+      onAgentRun: () => agentRunStarted.resolve(),
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            getConversationCalls += 1
+            if (getConversationCalls === 1) {
+              return toolResult(currentConversation)
+            }
+            secondFetchStarted.resolve()
+            return toolResult(await secondFetch.promise)
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    try {
+      await channel.init()
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'waiting'
+      ])
+
+      nowMs += 61_000
+      const sync = channel.init()
+      await secondFetchStarted.promise
+
+      const send = channel.sendPrompt(prompt, [])
+      await agentRunStarted.promise
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'waiting',
+        prompt
+      ])
+
+      secondFetch.resolve(currentConversation)
+      await sync
+      expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+        'hello',
+        'waiting',
+        prompt
+      ])
+
+      agentRun.resolve({ content: '', usage: usage() })
+      await send
+    } finally {
+      nowSpy.mockRestore()
+      agentRun.resolve({ content: '', usage: usage() })
+      secondFetch.resolve(currentConversation)
+    }
+  })
+
   it('queues a plain prompt outside the conversation while the active conversation is working', async () => {
     const prompt = 'please adjust the approach'
     const currentConversation = conversation(1, {

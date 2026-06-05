@@ -17,6 +17,11 @@ All notable changes to Anda Bot.
 - **WeChat reply/thread normalization**: WeChat messages now trim reply targets, ignore empty session ids, persist context tokens by the normalized reply target, and store source `from`, `session_id`, and `space` metadata for downstream routing and attribution.
 - **Chrome extension release metadata synchronized**: the extension manifests and package version now advertise `0.8.12`.
 
+### Fixed
+
+- **Chrome extension prompt visibility during stale syncs**: locally sent idle prompts now stay visible if an older channel sync finishes after the send starts, preventing a fresh prompt from disappearing until the next poll.
+- **Chrome extension service-worker edge cases**: install/update handling now uses Chrome's structured `onInstalled` details, development logs redact settings tokens and omit prompt payload bodies, missing management permissions no longer break startup logging checks, and tab id `0` is handled as a valid tab id for side panel and voice actions.
+
 ## [0.8.11] — 2026-06-04
 
 ### Added

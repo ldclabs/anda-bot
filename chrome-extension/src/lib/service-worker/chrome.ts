@@ -1,5 +1,11 @@
 import { type ChromeApi } from './types'
 
+type ChromeWithManagement = ChromeApi & {
+  management?: {
+    getSelf?(): Promise<{ installType?: string }>
+  }
+}
+
 type NavigatorBrand = {
   brand: string
   version: string
@@ -24,9 +30,20 @@ export function getChromeApi(): ChromeApi {
   return chromeApi
 }
 
-export async function isDevelopmentMode() {
-  const self = await chrome.management.getSelf()
-  return self.installType === 'development'
+export async function isDevelopmentMode(
+  chromeApi: ChromeWithManagement = getChromeApi()
+): Promise<boolean> {
+  const getSelf = chromeApi.management?.getSelf
+  if (!getSelf) {
+    return false
+  }
+
+  try {
+    const self = await getSelf.call(chromeApi.management)
+    return self.installType === 'development'
+  } catch (_error) {
+    return false
+  }
 }
 
 /**
