@@ -18,6 +18,10 @@ log_level: warn
 # Optional: for example http://127.0.0.1:7890
 # https_proxy: http://127.0.0.1:7890
 
+# Optional extra filesystem workspaces. Relative paths are rooted under ANDA_HOME.
+# The first configured workspace becomes the default workspace for file and shell tools.
+# workspaces: [/path/to/project]
+
 model:
   active: "deepseek-v4-pro"
   providers:

@@ -35,6 +35,9 @@ pub struct Config {
     pub https_proxy: Option<String>,
 
     #[serde(default)]
+    pub workspaces: Vec<PathBuf>,
+
+    #[serde(default)]
     pub model: ModelSettings,
 
     #[serde(default)]
@@ -53,6 +56,7 @@ impl Default for Config {
             addr: default_gateway_addr(),
             log_level: default_log_level(),
             https_proxy: None,
+            workspaces: Vec::new(),
             model: ModelSettings::default(),
             channels: ChannelSettings::default(),
             tts: TtsConfig::default(),
@@ -288,6 +292,7 @@ mod tests {
             r##"
 addr: 127.0.0.1:9000
 https_proxy: http://127.0.0.1:7890
+workspaces: [/tmp/project]
 model:
   active: claude-sonnet-4-6
   providers:
@@ -311,6 +316,7 @@ channels:
 
         assert_eq!(config.addr, "127.0.0.1:9000");
         assert_eq!(config.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(config.workspaces, vec![PathBuf::from("/tmp/project")]);
         assert_eq!(config.model.active, "claude-sonnet-4-6");
         let model: ModelConfig = config.model.providers[0].clone();
 
@@ -440,6 +446,7 @@ channels:
 
         assert!(template.contains("addr:"));
         assert!(template.contains("https_proxy:"));
+        assert!(template.contains("workspaces:"));
         assert!(template.contains("model:"));
         assert!(template.contains("OPENAI_API_KEY"));
         assert!(template.contains("ANTHROPIC_API_KEY"));

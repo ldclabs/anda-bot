@@ -1,4 +1,4 @@
-use anda_core::{AgentInput, BoxError, Json, RequestMeta, ToolInput};
+use anda_core::{BoxError, Json, ToolInput};
 use clap::{Parser, Subcommand};
 use coset::cwt::Timestamp;
 use mimalloc::MiMalloc;
@@ -67,7 +67,7 @@ pub enum Commands {
     Tool(ToolCommand),
     /// Agent-related operations against the running daemon.
     #[command(subcommand)]
-    Agent(AgentCommand),
+    Agent(cli::agent::AgentCommand),
     /// Browser (chrome) extension helper commands.
     #[command(subcommand)]
     Browser(BrowserCommand),
@@ -90,22 +90,6 @@ pub enum ToolCommand {
         /// Tool arguments as a JSON value (object/array/scalar). Defaults to `{}`.
         #[arg(long, default_value = "{}")]
         args: String,
-        /// Optional request metadata as a JSON object.
-        #[arg(long)]
-        meta: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum AgentCommand {
-    /// Run an agent once with a text prompt.
-    Run {
-        /// Agent name. Empty value uses the default agent.
-        #[arg(long, default_value = "")]
-        name: String,
-        /// User prompt sent to the agent.
-        #[arg(long)]
-        prompt: String,
         /// Optional request metadata as a JSON object.
         #[arg(long)]
         meta: Option<String>,
@@ -281,17 +265,7 @@ async fn run() -> Result<(), BoxError> {
 
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
-
-            match cmd {
-                AgentCommand::Run { name, prompt, meta } => {
-                    let mut input = AgentInput::new(name, prompt);
-                    let request_meta = parse_request_meta(meta)?.unwrap_or_default();
-                    input.meta = Some(request_meta);
-
-                    let output = client.agent_run(&input).await?;
-                    println!("\n{}", serde_json::to_string_pretty(&output)?);
-                }
-            }
+            cli::agent::run(&client, cmd).await?;
         }
         Some(Commands::Browser(cmd)) => {
             log::info!(
@@ -333,15 +307,6 @@ async fn run() -> Result<(), BoxError> {
         }
     }
     Ok(())
-}
-
-fn parse_request_meta(meta: Option<String>) -> Result<Option<RequestMeta>, BoxError> {
-    match meta {
-        Some(meta) => Ok(Some(
-            serde_json::from_str(&meta).map_err(|e| format!("invalid --meta JSON: {e}"))?,
-        )),
-        None => Ok(None),
-    }
 }
 
 fn default_home() -> PathBuf {

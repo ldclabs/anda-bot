@@ -134,12 +134,25 @@ impl Daemon {
     }
 
     pub fn workspaces(&self) -> Vec<PathBuf> {
-        vec![
+        let mut workspaces = Vec::new();
+        for workspace in &self.cfg.workspaces {
+            let path = if workspace.is_absolute() {
+                workspace.clone()
+            } else {
+                self.home.join(workspace)
+            };
+            push_unique_workspace(&mut workspaces, path);
+        }
+
+        for path in [
             self.workspace_dir_path(),
             self.sandbox_dir_path(),
             self.channels_dir_path(),
             self.skills_dir_path(),
-        ]
+        ] {
+            push_unique_workspace(&mut workspaces, path);
+        }
+        workspaces
     }
 
     pub fn log_file_path(&self) -> PathBuf {
@@ -344,6 +357,12 @@ impl Daemon {
     }
 }
 
+fn push_unique_workspace(workspaces: &mut Vec<PathBuf>, path: PathBuf) {
+    if !workspaces.contains(&path) {
+        workspaces.push(path);
+    }
+}
+
 struct PidFileGuard {
     path: PathBuf,
 }
@@ -517,6 +536,30 @@ mod tests {
             vec![
                 PathBuf::from("/tmp/anda-home/workspace"),
                 PathBuf::from("/tmp/anda-home/sandbox"),
+                PathBuf::from("/tmp/anda-home/channels"),
+                PathBuf::from("/tmp/anda-home/skills"),
+            ]
+        );
+    }
+
+    #[test]
+    fn configured_workspaces_are_first_and_deduplicated() {
+        let config = Config {
+            workspaces: vec![
+                PathBuf::from("/workspace/task"),
+                PathBuf::from("sandbox"),
+                PathBuf::from("/workspace/task"),
+            ],
+            ..Default::default()
+        };
+        let daemon = Daemon::new(PathBuf::from("/tmp/anda-home"), config);
+
+        assert_eq!(
+            daemon.workspaces(),
+            vec![
+                PathBuf::from("/workspace/task"),
+                PathBuf::from("/tmp/anda-home/sandbox"),
+                PathBuf::from("/tmp/anda-home/workspace"),
                 PathBuf::from("/tmp/anda-home/channels"),
                 PathBuf::from("/tmp/anda-home/skills"),
             ]

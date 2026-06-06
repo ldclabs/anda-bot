@@ -1,5 +1,6 @@
 use anda_core::BoxError;
 
+pub mod agent;
 pub mod channel;
 pub mod session;
 pub mod updater;

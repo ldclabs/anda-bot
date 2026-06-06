@@ -142,7 +142,7 @@ anda stop
 anda restart
 ```
 
-不打开终端 UI，直接发起一次请求：
+不打开终端 UI，直接发起一次请求并等待完整结果：
 
 ```bash
 anda agent run --prompt "总结一下你记得的当前项目背景"

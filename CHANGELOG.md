@@ -2,6 +2,17 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.13] — 2026-06-06
+
+### Added
+
+- **Blocking `anda agent run` CLI mode**: `anda agent run` now waits for the complete conversation result, follows child conversation chains, supports prompt files, session ids, workspace metadata, request metadata JSON, output JSON files, polling interval control, and optional wait timeouts.
+- **Configured daemon workspaces**: `config.yaml` now accepts a `workspaces` list. Configured paths are resolved before the default workspace, sandbox, channels, and skills directories, and duplicate paths are removed.
+
+### Changed
+
+- **Terminal quick-start documentation clarified**: README and docsite command references now state that `anda agent run --prompt "..."` waits for the complete result instead of only submitting a request.
+
 ## [0.8.12] — 2026-06-05
 
 ### Added

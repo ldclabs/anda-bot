@@ -142,7 +142,7 @@ anda stop
 anda restart
 ```
 
-Send a one-time prompt without opening the terminal UI:
+Send a one-time prompt and wait for the complete result without opening the terminal UI:
 
 ```bash
 anda agent run --prompt "Summarize what you remember about my current project"
