@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -25,6 +25,9 @@ const WECHAT_CONTINUATION_OVERHEAD: usize = 30;
 const WECHAT_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 const WECHAT_QR_POLL_DELAY: Duration = Duration::from_secs(2);
 const WECHAT_MAX_QR_REFRESH_COUNT: u32 = 3;
+const WECHAT_CONTEXT_TOKEN_MAX_AGE_MS: u64 = 2 * 60 * 60 * 1000;
+const WECHAT_CONTEXT_TOKENS_FILE: &str = "context_tokens.json";
+const WECHAT_CONTEXT_TOKEN_META_FILE: &str = "context_tokens_meta.json";
 
 pub fn build_wechat_channels(
     cfg: &[config::WechatChannelSettings],
@@ -255,6 +258,31 @@ impl WechatChannel {
         Err(format!("WeChat resource '{}' has no uri or blob", resource.name).into())
     }
 
+    async fn send_message_parts(
+        &self,
+        client: &WeixinClient,
+        recipient: &str,
+        message: &SendMessage,
+        context_token: Option<&str>,
+    ) -> Result<(), BoxError> {
+        if !message.content.trim().is_empty() {
+            self.send_text_chunks(client, recipient, &message.content, context_token)
+                .await?;
+        }
+
+        for resource in &message.attachments {
+            self.send_resource(client, recipient, resource, context_token)
+                .await?;
+        }
+
+        if message.content.trim().is_empty() && message.attachments.is_empty() {
+            self.send_text_chunks(client, recipient, " ", context_token)
+                .await?;
+        }
+
+        Ok(())
+    }
+
     async fn write_outgoing_blob(
         &self,
         resource: &Resource,
@@ -331,28 +359,30 @@ impl Channel for WechatChannel {
 
         let token = self.resolve_token().await?;
         let client = self.build_client(&token, NoopMessageHandler, CancellationToken::new())?;
-        client
-            .context_tokens()
-            .import(self.load_context_tokens().await);
-        let context_token = client.context_tokens().get(recipient);
-        let context_token = context_token.as_deref();
+        let context_token = load_context_token_for_send(&self.workspace, recipient).await;
+        let result = self
+            .send_message_parts(&client, recipient, message, context_token.as_deref())
+            .await;
 
-        if !message.content.trim().is_empty() {
-            self.send_text_chunks(&client, recipient, &message.content, context_token)
-                .await?;
+        match result {
+            Ok(()) => Ok(()),
+            Err(err)
+                if context_token.is_some() && is_wechat_context_token_error(&err.to_string()) =>
+            {
+                log::warn!(
+                    "WeChat send to {recipient} failed with a cached context token; clearing it and retrying without context token: {err}"
+                );
+                remove_context_token_from_workspace(
+                    &self.workspace,
+                    recipient,
+                    context_token.as_deref(),
+                )
+                .await;
+                self.send_message_parts(&client, recipient, message, None)
+                    .await
+            }
+            Err(err) => Err(err),
         }
-
-        for resource in &message.attachments {
-            self.send_resource(&client, recipient, resource, context_token)
-                .await?;
-        }
-
-        if message.content.trim().is_empty() && message.attachments.is_empty() {
-            self.send_text_chunks(&client, recipient, " ", context_token)
-                .await?;
-        }
-
-        Ok(())
     }
 
     fn should_retry_send(&self, error: &str) -> bool {
@@ -365,7 +395,7 @@ impl Channel for WechatChannel {
             || error.contains("502")
             || error.contains("503")
             || error.contains("504")
-            || error.contains("session expired")
+            || is_wechat_context_token_error(&error)
     }
 
     async fn listen(
@@ -679,7 +709,20 @@ async fn load_context_tokens_from_workspace(
     let Some(path) = workspace.path() else {
         return HashMap::new();
     };
-    let Ok(data) = tokio::fs::read_to_string(path.join("context_tokens.json")).await else {
+    let Ok(data) = tokio::fs::read_to_string(path.join(WECHAT_CONTEXT_TOKENS_FILE)).await else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+async fn load_context_token_meta_from_workspace(
+    workspace: &Arc<ChannelWorkspace>,
+) -> HashMap<String, u64> {
+    let Some(path) = workspace.path() else {
+        return HashMap::new();
+    };
+    let Ok(data) = tokio::fs::read_to_string(path.join(WECHAT_CONTEXT_TOKEN_META_FILE)).await
+    else {
         return HashMap::new();
     };
     serde_json::from_str(&data).unwrap_or_default()
@@ -703,8 +746,147 @@ async fn save_context_tokens_to_workspace(
             return;
         }
     };
-    if let Err(err) = tokio::fs::write(path.join("context_tokens.json"), data).await {
+    if let Err(err) = tokio::fs::write(path.join(WECHAT_CONTEXT_TOKENS_FILE), data).await {
         log::warn!("failed to save WeChat context tokens: {err}");
+        return;
+    }
+
+    ensure_context_token_meta_to_workspace(workspace, tokens).await;
+}
+
+async fn save_context_token_meta_to_workspace(
+    workspace: &Arc<ChannelWorkspace>,
+    meta: &HashMap<String, u64>,
+) {
+    let Some(path) = workspace.path() else {
+        return;
+    };
+    if let Err(err) = tokio::fs::create_dir_all(&path).await {
+        log::warn!("failed to create WeChat workspace for context token metadata: {err}");
+        return;
+    }
+    let data = match serde_json::to_string(meta) {
+        Ok(data) => data,
+        Err(err) => {
+            log::warn!("failed to serialize WeChat context token metadata: {err}");
+            return;
+        }
+    };
+    if let Err(err) = tokio::fs::write(path.join(WECHAT_CONTEXT_TOKEN_META_FILE), data).await {
+        log::warn!("failed to save WeChat context token metadata: {err}");
+    }
+}
+
+async fn ensure_context_token_meta_to_workspace(
+    workspace: &Arc<ChannelWorkspace>,
+    tokens: &HashMap<String, String>,
+) {
+    let mut meta = load_context_token_meta_from_workspace(workspace).await;
+    let mut changed = false;
+
+    meta.retain(|user_id, _| {
+        let keep = tokens.contains_key(user_id);
+        changed |= !keep;
+        keep
+    });
+
+    let now = unix_ms();
+    for user_id in tokens.keys() {
+        if !meta.contains_key(user_id) {
+            meta.insert(user_id.clone(), now);
+            changed = true;
+        }
+    }
+
+    if changed {
+        save_context_token_meta_to_workspace(workspace, &meta).await;
+    }
+}
+
+async fn touch_context_token_meta_to_workspace(workspace: &Arc<ChannelWorkspace>, user_id: &str) {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return;
+    }
+
+    let mut meta = load_context_token_meta_from_workspace(workspace).await;
+    meta.insert(user_id.to_string(), unix_ms());
+    save_context_token_meta_to_workspace(workspace, &meta).await;
+}
+
+async fn context_tokens_file_modified_ms(workspace: &Arc<ChannelWorkspace>) -> Option<u64> {
+    let path = workspace.path()?.join(WECHAT_CONTEXT_TOKENS_FILE);
+    let modified = tokio::fs::metadata(path).await.ok()?.modified().ok()?;
+    let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
+    u64::try_from(millis).ok()
+}
+
+fn context_token_is_stale(updated_at: Option<u64>) -> bool {
+    let Some(updated_at) = updated_at else {
+        return false;
+    };
+    unix_ms().saturating_sub(updated_at) > WECHAT_CONTEXT_TOKEN_MAX_AGE_MS
+}
+
+async fn load_context_token_for_send(
+    workspace: &Arc<ChannelWorkspace>,
+    user_id: &str,
+) -> Option<String> {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return None;
+    }
+
+    let tokens = load_context_tokens_from_workspace(workspace).await;
+    let token = tokens.get(user_id)?.trim().to_string();
+    if token.is_empty() {
+        return None;
+    }
+
+    let meta = load_context_token_meta_from_workspace(workspace).await;
+    let updated_at = match meta.get(user_id).copied() {
+        Some(updated_at) => Some(updated_at),
+        None => context_tokens_file_modified_ms(workspace).await,
+    };
+    if context_token_is_stale(updated_at) {
+        log::warn!(
+            "WeChat cached context token for {user_id} is stale; retrying future sends without it"
+        );
+        remove_context_token_from_workspace(workspace, user_id, Some(&token)).await;
+        return None;
+    }
+
+    Some(token)
+}
+
+async fn remove_context_token_from_workspace(
+    workspace: &Arc<ChannelWorkspace>,
+    user_id: &str,
+    expected_token: Option<&str>,
+) {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return;
+    }
+
+    let mut tokens = load_context_tokens_from_workspace(workspace).await;
+    let should_remove = expected_token.is_none_or(|expected| {
+        tokens
+            .get(user_id)
+            .is_some_and(|current| current == expected)
+    });
+    if !should_remove {
+        return;
+    }
+
+    if tokens.remove(user_id).is_some() {
+        save_context_tokens_to_workspace(workspace, &tokens).await;
+        return;
+    }
+
+    let mut meta = load_context_token_meta_from_workspace(workspace).await;
+    if meta.remove(user_id).is_some() {
+        save_context_token_meta_to_workspace(workspace, &meta).await;
     }
 }
 
@@ -720,12 +902,22 @@ async fn save_context_token_to_workspace(
     }
 
     let mut tokens = load_context_tokens_from_workspace(workspace).await;
-    if tokens.get(user_id).is_some_and(|current| current == token) {
-        return;
+    if !tokens.get(user_id).is_some_and(|current| current == token) {
+        tokens.insert(user_id.to_string(), token.to_string());
+        save_context_tokens_to_workspace(workspace, &tokens).await;
     }
 
-    tokens.insert(user_id.to_string(), token.to_string());
-    save_context_tokens_to_workspace(workspace, &tokens).await;
+    touch_context_token_meta_to_workspace(workspace, user_id).await;
+}
+
+fn is_wechat_context_token_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("session expired")
+        || error.contains("errcode=-14")
+        || error.contains("context_token")
+        || error.contains("context token")
+        || error.contains("invalid token")
+        || ((error.contains("token") || error.contains("session")) && error.contains("expired"))
 }
 
 fn split_message_for_wechat(message: &str) -> Vec<String> {
@@ -885,5 +1077,59 @@ mod tests {
         let tokens = load_context_tokens_from_workspace(&workspace).await;
         assert_eq!(tokens.get("alice").map(String::as_str), Some("new-token"));
         assert_eq!(tokens.get("bob").map(String::as_str), Some("bob-token"));
+    }
+
+    #[tokio::test]
+    async fn load_context_token_for_send_returns_fresh_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_path_buf());
+        save_context_token_to_workspace(&workspace, "alice", "fresh-token").await;
+
+        let token = load_context_token_for_send(&workspace, "alice").await;
+
+        assert_eq!(token.as_deref(), Some("fresh-token"));
+    }
+
+    #[tokio::test]
+    async fn load_context_token_for_send_removes_stale_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_path_buf());
+        save_context_token_to_workspace(&workspace, "alice", "stale-token").await;
+        let mut meta = HashMap::new();
+        meta.insert(
+            "alice".to_string(),
+            unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1,
+        );
+        save_context_token_meta_to_workspace(&workspace, &meta).await;
+
+        let token = load_context_token_for_send(&workspace, "alice").await;
+
+        assert_eq!(token, None);
+        let tokens = load_context_tokens_from_workspace(&workspace).await;
+        assert!(!tokens.contains_key("alice"));
+        let meta = load_context_token_meta_from_workspace(&workspace).await;
+        assert!(!meta.contains_key("alice"));
+    }
+
+    #[tokio::test]
+    async fn save_context_token_refreshes_meta_when_token_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_path_buf());
+        save_context_token_to_workspace(&workspace, "alice", "same-token").await;
+        let old_updated_at = unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1;
+        let mut meta = HashMap::new();
+        meta.insert("alice".to_string(), old_updated_at);
+        save_context_token_meta_to_workspace(&workspace, &meta).await;
+
+        save_context_token_to_workspace(&workspace, "alice", "same-token").await;
+
+        let meta = load_context_token_meta_from_workspace(&workspace).await;
+        assert!(
+            meta.get("alice")
+                .is_some_and(|updated| *updated > old_updated_at)
+        );
     }
 }

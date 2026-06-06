@@ -103,6 +103,7 @@ zip = { version = "2", default-features = false, features = [
 
 [patch.crates-io]
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }
+weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", branch = "main" }
 
 [profile.release]
 debug = false

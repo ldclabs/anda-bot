@@ -17,6 +17,10 @@ All notable changes to Anda Bot.
 - **Chrome extension message surface refreshed**: chat panels, composer controls, markdown blocks, attachments, and external/system/tool bubbles now use shared light/dark message-surface tokens for a cleaner neutral theme.
 - **Chrome extension release metadata and dependencies synchronized**: extension manifests and package metadata now advertise `0.8.13`, with frontend dependency updates recorded in the lockfile.
 
+### Fixed
+
+- **WeChat cached context token recovery**: stale cached context tokens are now expired after two hours, session/context-token send failures clear the cached token and retry without it, and context token metadata is refreshed whenever a token is observed.
+
 ## [0.8.12] — 2026-06-05
 
 ### Added
