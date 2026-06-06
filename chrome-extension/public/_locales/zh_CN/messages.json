@@ -194,6 +194,12 @@
   "send": {
     "message": "发送"
   },
+  "stopTask": {
+    "message": "停止当前任务"
+  },
+  "stoppingTask": {
+    "message": "正在停止当前任务"
+  },
   "sendWithEnter": {
     "message": "按 Enter 发送，Shift + Enter 换行"
   },

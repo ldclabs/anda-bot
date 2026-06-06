@@ -147,6 +147,7 @@ function createApi(
   options: {
     agentOutputs?: Array<AgentOutput | Promise<AgentOutput>>
     onAgentRun?: (input: AgentInput) => void
+    requestExtra?: () => Promise<Record<string, unknown>> | Record<string, unknown>
     toolCall?: (input: ToolInput) => Promise<unknown> | unknown
     defaultAgentOutput?: AgentOutput
   } = {}
@@ -161,7 +162,7 @@ function createApi(
     activeChannel() {
       return 'source:test'
     },
-    requestExtra: vi.fn().mockResolvedValue({}),
+    requestExtra: vi.fn().mockImplementation(options.requestExtra || (() => ({}))),
     rpc: vi.fn().mockImplementation(async (method: string, tupleArgs: unknown[]) => {
       if (method === 'agent_run') {
         options.onAgentRun?.(tupleArgs[0] as AgentInput)
@@ -445,6 +446,68 @@ describe('Channel.sendPrompt', () => {
     ])
   })
 
+  it('cancels a queued follow-up before it leaves the frontend', async () => {
+    const prompt = 'never send this follow-up'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const requestExtraStarted = deferred<void>()
+    const requestExtra = deferred<Record<string, unknown>>()
+    let blockNextRequestExtra = false
+    const agentInputs: AgentInput[] = []
+    const api = createApi({
+      onAgentRun: (input) => {
+        agentInputs.push(input)
+      },
+      requestExtra: async () => {
+        if (blockNextRequestExtra) {
+          blockNextRequestExtra = false
+          requestExtraStarted.resolve()
+          return requestExtra.promise
+        }
+        return {}
+      },
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    blockNextRequestExtra = true
+    const send = channel.sendPrompt(prompt, [])
+    await requestExtraStarted.promise
+
+    const pendingFollowUp = channel.pendingFollowUps[0]!
+    expect(pendingFollowUp.text).toBe(prompt)
+    expect(channel.cancelPendingFollowUp(pendingFollowUp.id)).toBe(true)
+    expect(channel.pendingFollowUps).toEqual([])
+
+    requestExtra.resolve({})
+    const poller = await send
+    for await (const _current of poller!) {
+      // drain the cancelled poller so the test observes the final state.
+    }
+
+    expect(agentInputs).toEqual([])
+    expect(channel.cancelPendingFollowUp(pendingFollowUp.id)).toBe(false)
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'working'
+    ])
+  })
+
   it('clears a queued follow-up when it is accepted inside a combined user message', async () => {
     const firstPrompt = '是的，一个交互优化'
     const secondPrompt = '后面的提交变更就没必要跑测试了'
@@ -617,6 +680,260 @@ describe('Channel.sendPrompt', () => {
       'hello',
       'working',
       prompt
+    ])
+  })
+
+  it('keeps a steer command in the active conversation instead of queued follow-ups', async () => {
+    const prompt = '/steer focus on the shorter fix'
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const api = createApi({
+      agentOutputs: [
+        {
+          content: '',
+          conversation: currentConversation._id,
+          usage: usage()
+        }
+      ],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                updated_at: currentConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const poller = await channel.sendPrompt(prompt, [])
+    for await (const _current of poller!) {
+      // drain the async poll loop so the test observes the settled state.
+    }
+
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.sideMessages).toEqual([])
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'working',
+      prompt
+    ])
+  })
+
+  it('sends a steer command immediately while another send is still in progress', async () => {
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'waiting', 11)],
+      status: 'idle',
+      updated_at: 11
+    })
+    const firstAgentRunStarted = deferred<void>()
+    const firstAgentRun = deferred<AgentOutput>()
+    const agentInputs: AgentInput[] = []
+    const api = createApi({
+      agentOutputs: [
+        firstAgentRun.promise,
+        {
+          content: '',
+          conversation: currentConversation._id,
+          usage: usage()
+        }
+      ],
+      onAgentRun: (input) => {
+        agentInputs.push(input)
+        if (agentInputs.length === 1) {
+          firstAgentRunStarted.resolve()
+        }
+      },
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(currentConversation._id, {
+                status: 'completed',
+                updated_at: currentConversation.updated_at
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const firstSend = channel.sendPrompt('continue', [])
+    await firstAgentRunStarted.promise
+
+    const steerPoller = await channel.sendPrompt('/steer correct course', [])
+
+    expect(agentInputs.map((input) => input.prompt)).toEqual(['continue', '/steer correct course'])
+    expect(steerPoller).not.toBeNull()
+
+    firstAgentRun.resolve({
+      content: '',
+      conversation: currentConversation._id,
+      usage: usage()
+    })
+    await firstSend
+    for await (const _current of steerPoller!) {
+      // drain the steer poller before the test completes.
+    }
+  })
+
+  it('starts a new session immediately and ignores stale output from the detached send', async () => {
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const firstAgentRunStarted = deferred<void>()
+    const secondAgentRunStarted = deferred<void>()
+    const firstAgentRun = deferred<AgentOutput>()
+    const secondAgentRun = deferred<AgentOutput>()
+    const agentInputs: AgentInput[] = []
+    const api = createApi({
+      agentOutputs: [firstAgentRun.promise, secondAgentRun.promise],
+      onAgentRun: (input) => {
+        agentInputs.push(input)
+        if (agentInputs.length === 1) {
+          firstAgentRunStarted.resolve()
+        } else if (agentInputs.length === 2) {
+          secondAgentRunStarted.resolve()
+        }
+      },
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    const firstSend = channel.sendPrompt('queued follow-up', [])
+    await firstAgentRunStarted.promise
+
+    const newSend = channel.sendPrompt('/new fresh start', [])
+    await secondAgentRunStarted.promise
+
+    expect(agentInputs.map((input) => input.prompt)).toEqual([
+      'queued follow-up',
+      '/new fresh start'
+    ])
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([SubmitMessageConversationId])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      '/new fresh start'
+    ])
+
+    secondAgentRun.resolve({
+      content: '',
+      usage: usage()
+    })
+    const newPoller = await newSend
+    for await (const _current of newPoller!) {
+      // drain the new-session poller before resolving the detached send.
+    }
+
+    firstAgentRun.resolve({
+      content: '',
+      conversation: currentConversation._id,
+      usage: usage()
+    })
+    const firstPoller = await firstSend
+    for await (const _current of firstPoller!) {
+      // drain the stale poller so the test observes the final state.
+    }
+
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([SubmitMessageConversationId])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      '/new fresh start'
+    ])
+  })
+
+  it('does not send an older prompt if /new invalidates it before agent_run starts', async () => {
+    const currentConversation = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
+      status: 'working',
+      updated_at: 11
+    })
+    const oldRequestMetaStarted = deferred<void>()
+    const oldRequestMeta = deferred<Record<string, unknown>>()
+    let blockNextRequestExtra = false
+    const agentInputs: AgentInput[] = []
+    const api = createApi({
+      onAgentRun: (input) => {
+        agentInputs.push(input)
+      },
+      requestExtra: async () => {
+        if (blockNextRequestExtra) {
+          blockNextRequestExtra = false
+          oldRequestMetaStarted.resolve()
+          return oldRequestMeta.promise
+        }
+        return {}
+      },
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetSourceState':
+            return toolResult({ conv_id: currentConversation._id })
+          case 'GetConversation':
+            return toolResult(currentConversation)
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+    await channel.init()
+
+    blockNextRequestExtra = true
+    const oldSend = channel.sendPrompt('late follow-up', [])
+    await oldRequestMetaStarted.promise
+
+    const newPoller = await channel.sendPrompt('/new fresh start', [])
+    expect(agentInputs.map((input) => input.prompt)).toEqual(['/new fresh start'])
+
+    oldRequestMeta.resolve({})
+    const oldPoller = await oldSend
+    for await (const _current of oldPoller!) {
+      // drain the cancelled stale poller.
+    }
+    for await (const _current of newPoller!) {
+      // drain the new-session poller.
+    }
+
+    expect(agentInputs.map((input) => input.prompt)).toEqual(['/new fresh start'])
+    expect(channel.pendingFollowUps).toEqual([])
+    expect(channel.messageGroups.map((group) => group._id)).toEqual([SubmitMessageConversationId])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      '/new fresh start'
     ])
   })
 

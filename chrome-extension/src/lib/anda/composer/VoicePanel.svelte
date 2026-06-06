@@ -76,20 +76,20 @@
   <div
     class={badgeClass(
       'secondary',
-      'relative z-10 gap-2 rounded-full bg-white/10 text-[11px] font-semibold text-white hover:bg-white/10'
+      'relative z-10 gap-2 rounded-full bg-white/10 text-xs font-semibold text-white hover:bg-white/10'
     )}
   >
     <span class="voice-status-dot" class:recording={voiceStage === 'recording'}></span>
     <span>{voiceStatus}</span>
   </div>
-  <div class="voice-service relative z-10 flex items-center gap-1 text-[11px]">
+  <div class="voice-service relative z-10 flex items-center gap-1 text-xs">
     <div class="voice-service-switch" aria-label="Voice service">
       <button
         type="button"
         class={buttonClass(
           'ghost',
           'xs',
-          `min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
+          `min-w-12 rounded-md py-1 text-xs font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
             voiceProvider === 'chrome'
               ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
               : ''
@@ -106,7 +106,7 @@
         class={buttonClass(
           'ghost',
           'xs',
-          `min-w-12 rounded-md py-1 text-[11px] font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
+          `min-w-12 rounded-md py-1 text-xs font-bold text-emerald-50/70 hover:bg-emerald-50/10 hover:text-emerald-50 ${
             voiceProvider === 'anda'
               ? 'bg-emerald-50/90 text-emerald-950 hover:bg-emerald-50/90 hover:text-emerald-950'
               : ''
@@ -127,7 +127,7 @@
   </div>
   {#if voiceTranscript}
     <div
-      class="voice-transcript relative z-10 max-w-full truncate px-3 text-center text-[11px] text-emerald-50/90"
+      class="voice-transcript relative z-10 max-w-full truncate px-3 text-center text-xs text-emerald-50/90"
     >
       {voiceTranscript}
     </div>

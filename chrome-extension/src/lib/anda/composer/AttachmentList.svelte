@@ -44,7 +44,7 @@
         <span
           class={badgeClass(
             'outline',
-            'max-w-full rounded-md bg-muted/50 py-1 text-[11px] font-normal text-muted-foreground'
+            'max-w-full rounded-md bg-muted/50 py-1 text-xs font-normal text-muted-foreground'
           )}
           title={attachment.name}
         >

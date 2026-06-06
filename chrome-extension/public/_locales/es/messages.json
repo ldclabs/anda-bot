@@ -194,6 +194,12 @@
   "send": {
     "message": "Enviar"
   },
+  "stopTask": {
+    "message": "Detener tarea actual"
+  },
+  "stoppingTask": {
+    "message": "Deteniendo tarea actual"
+  },
   "sendWithEnter": {
     "message": "Enter para enviar. Shift + Enter para nueva línea."
   },

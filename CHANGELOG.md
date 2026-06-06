@@ -8,10 +8,14 @@ All notable changes to Anda Bot.
 
 - **Blocking `anda agent run` CLI mode**: `anda agent run` now waits for the complete conversation result, follows child conversation chains, supports prompt files, session ids, workspace metadata, request metadata JSON, output JSON files, polling interval control, and optional wait timeouts.
 - **Configured daemon workspaces**: `config.yaml` now accepts a `workspaces` list. Configured paths are resolved before the default workspace, sandbox, channels, and skills directories, and duplicate paths are removed.
+- **Chrome extension stop control**: the side-panel composer now shows a stop button while a task is sending, submitted, or working, and sends `/stop` without being blocked by the normal prompt-send guard.
+- **Chrome extension prompt steering and follow-up cancellation**: queued follow-up prompts can now be cancelled before dispatch, `/new`, `/steer`, and `/stop` commands can bypass busy-state send guards, and stale detached outputs are ignored after a new session starts.
 
 ### Changed
 
 - **Terminal quick-start documentation clarified**: README and docsite command references now state that `anda agent run --prompt "..."` waits for the complete result instead of only submitting a request.
+- **Chrome extension message surface refreshed**: chat panels, composer controls, markdown blocks, attachments, and external/system/tool bubbles now use shared light/dark message-surface tokens for a cleaner neutral theme.
+- **Chrome extension release metadata and dependencies synchronized**: extension manifests and package metadata now advertise `0.8.13`, with frontend dependency updates recorded in the lockfile.
 
 ## [0.8.12] — 2026-06-05
 

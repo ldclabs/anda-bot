@@ -194,6 +194,12 @@
   "send": {
     "message": "Отправить"
   },
+  "stopTask": {
+    "message": "Остановить текущую задачу"
+  },
+  "stoppingTask": {
+    "message": "Останавливаю текущую задачу"
+  },
   "sendWithEnter": {
     "message": "Enter: отправить. Shift + Enter: новая строка."
   },

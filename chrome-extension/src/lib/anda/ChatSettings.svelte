@@ -194,7 +194,7 @@
       </button>
     </div>
     <code
-      class="block min-w-0 overflow-x-auto rounded-md border bg-muted/35 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-foreground shadow-xs"
+      class="block min-w-0 overflow-x-auto rounded-md border bg-muted/35 px-2 py-1.5 font-mono text-xs leading-relaxed text-foreground shadow-xs"
       >{command}</code
     >
   </div>
@@ -249,14 +249,14 @@
             onclick={() => (setupGuideOpen = !setupGuideOpen)}
           >
             <span class="grid min-w-0 gap-1">
-              <span class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800">
+              <span class="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
                 <Terminal class="size-3.5" />
                 <span>{chrome.i18n.getMessage('onboardingEyebrow')}</span>
               </span>
               <span class="text-sm font-bold text-foreground">
                 {chrome.i18n.getMessage('onboardingTitle')}
               </span>
-              <span class="text-[11px] leading-relaxed text-muted-foreground">
+              <span class="text-xs leading-relaxed text-muted-foreground">
                 {chrome.i18n.getMessage('onboardingIntro')}
               </span>
             </span>
@@ -278,7 +278,7 @@
                     <h3 class="text-xs font-bold text-foreground">
                       {chrome.i18n.getMessage('onboardingInstallTitle')}
                     </h3>
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                    <p class="text-xs leading-relaxed text-muted-foreground">
                       {chrome.i18n.getMessage('onboardingInstallBody')}
                     </p>
                   </div>
@@ -303,7 +303,7 @@
                     <h3 class="text-xs font-bold text-foreground">
                       {chrome.i18n.getMessage('onboardingConfigureTitle')}
                     </h3>
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                    <p class="text-xs leading-relaxed text-muted-foreground">
                       {chrome.i18n.getMessage('onboardingConfigureBody')}
                     </p>
                   </div>
@@ -327,7 +327,7 @@
                     <h3 class="text-xs font-bold text-foreground">
                       {chrome.i18n.getMessage('onboardingTokenTitle')}
                     </h3>
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
+                    <p class="text-xs leading-relaxed text-muted-foreground">
                       {chrome.i18n.getMessage('onboardingTokenBody')}
                     </p>
                   </div>
@@ -348,7 +348,7 @@
 
           <div data-slot="field" class={fieldClass('gap-1.5')}>
             <label
-              class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}
+              class={fieldLabelClass('text-xs font-bold text-muted-foreground')}
               for="base-url"
             >
               <ExternalLink class="size-3" />
@@ -366,10 +366,7 @@
           </div>
 
           <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label
-              class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}
-              for="token"
-            >
+            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')} for="token">
               <KeyRound class="size-3" />
               {chrome.i18n.getMessage('bearerToken')}
             </label>
@@ -387,7 +384,7 @@
           <div data-slot="field" class={fieldClass('gap-1.5')}>
             <div class="flex items-center justify-between gap-2">
               <label
-                class={fieldLabelClass('min-w-0 text-[11px] font-bold text-muted-foreground')}
+                class={fieldLabelClass('min-w-0 text-xs font-bold text-muted-foreground')}
                 for="active-model"
               >
                 <BrainCircuit class="size-3" />
@@ -442,7 +439,7 @@
           </div>
 
           <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label class={fieldLabelClass('text-[11px] font-bold text-muted-foreground')}>
+            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
               <Keyboard class="size-3" />
               {chrome.i18n.getMessage('enterKeyBehavior')}
             </label>
@@ -459,7 +456,7 @@
                 onclick={() => updateSubmitKeyMode('enter')}
               >
                 <span class="grid min-w-0 gap-0.5">
-                  <span class="block truncate text-[11px] font-bold">
+                  <span class="block truncate text-xs font-bold">
                     {chrome.i18n.getMessage('enterSendsMessage')}
                   </span>
                   <span class="block truncate text-[10px] font-semibold opacity-70">
@@ -475,7 +472,7 @@
                 onclick={() => updateSubmitKeyMode('modifier-enter')}
               >
                 <span class="grid min-w-0 gap-0.5">
-                  <span class="block truncate text-[11px] font-bold">
+                  <span class="block truncate text-xs font-bold">
                     {chrome.i18n.getMessage('modifierEnterSendsMessage')}
                   </span>
                   <span class="block truncate text-[10px] font-semibold opacity-70">

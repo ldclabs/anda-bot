@@ -53,7 +53,7 @@
   const messageActionButtonClass = buttonClass(
     'ghost',
     'icon-xs',
-    'size-5 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-stone-700'
+    'chat-message-action size-5 rounded-sm'
   )
 
   async function copyMessage() {
@@ -482,12 +482,12 @@
       class={buttonClass(
         'outline',
         'xs',
-        'rounded-full bg-background/70 text-muted-foreground shadow-sm hover:border-emerald-200 hover:text-emerald-700'
+        'chat-message-muted-button rounded-full shadow-sm hover:border-emerald-200 hover:text-emerald-700'
       )}
       onclick={toggleDetails}
     >
       <Wrench class="size-3" />
-      <span>{detailsExpanded ? `Hide ${detailLabel}` : `Show ${detailLabel}`}</span>
+      <span class="text-xs">{detailsExpanded ? `Hide ${detailLabel}` : `Show ${detailLabel}`}</span>
     </button>
   {/if}
 
@@ -496,14 +496,14 @@
       class={cardClass(
         `relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs ${
           isUser
-            ? ' rounded-br-none bg-sky-50 text-slate-950'
+            ? 'chat-message-card-user rounded-br-none'
             : isExternalUser
-              ? 'rounded-bl-none border-teal-200 bg-teal-50 text-teal-950'
+              ? 'chat-message-card-external rounded-bl-none'
               : isSystem
-                ? 'rounded-bl-none border-amber-200 bg-amber-50 text-amber-950'
+                ? 'chat-message-card-system rounded-bl-none'
                 : isTool
-                  ? 'border-stone-200 bg-stone-50 text-stone-800'
-                  : 'rounded-none bg-transparent text-stone-950 shadow-none ring-0'
+                  ? 'chat-message-card-tool'
+                  : 'chat-message-card-assistant rounded-none bg-transparent shadow-none ring-0'
         }`
       )}
     >
@@ -512,16 +512,16 @@
           <div
             class="{hasMainText || hasAttachments
               ? 'mb-1.5'
-              : ''} flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-none"
+              : ''} flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-none"
           >
-            <span class="inline-flex min-w-0 items-center gap-1 font-semibold text-teal-800">
-              <span class="size-1.5 shrink-0 rounded-full bg-teal-500"></span>
+            <span class="chat-external-sender inline-flex min-w-0 items-center gap-1 font-semibold">
+              <span class="chat-external-dot size-1.5 shrink-0 rounded-full"></span>
               <span class="min-w-0 max-w-48 truncate" title={externalUserSenderLabel}>
                 {externalUserSenderLabel}
               </span>
             </span>
             {#if externalUserContextLabel}
-              <span class="min-w-0 truncate text-teal-700/70" title={externalUserContextLabel}>
+              <span class="chat-external-context min-w-0 truncate" title={externalUserContextLabel}>
                 {externalUserContextLabel}
               </span>
             {/if}
@@ -535,12 +535,10 @@
         {#if message.attachments?.length}
           <div class="{hasMainText ? 'mt-2' : ''} grid gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
-              <div
-                class="max-w-full rounded-md border border-border/70 bg-background/65 p-1.5 text-[11px] text-muted-foreground"
-              >
+              <div class="chat-message-attachment max-w-full rounded-md border p-1.5 text-xs">
                 <div class="flex min-w-0 items-center gap-2">
                   <div
-                    class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border border-border/60 bg-muted/50 text-emerald-700"
+                    class="chat-message-attachment-icon grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border text-emerald-700"
                   >
                     {#if attachmentMimeType(attachment).startsWith('image/') && attachmentObjectUrl(attachment)}
                       <img
@@ -558,11 +556,14 @@
                   </div>
 
                   <div class="min-w-0 flex-1">
-                    <div class="truncate font-medium text-foreground" title={attachment.name}>
+                    <div
+                      class="chat-message-attachment-name truncate font-medium"
+                      title={attachment.name}
+                    >
                       {attachment.name}
                     </div>
                     {#if attachmentMetaLabel(attachment)}
-                      <div class="truncate text-[10px] text-muted-foreground/75">
+                      <div class="chat-message-attachment-meta truncate text-[10px]">
                         {attachmentMetaLabel(attachment)}
                       </div>
                     {/if}
@@ -592,7 +593,7 @@
 
                 {#if attachmentDescription(attachment)}
                   <div
-                    class="mt-1.5 max-h-44 overflow-y-auto rounded-sm border border-border/50 bg-muted/35 px-2 py-1.5 whitespace-pre-wrap text-[11px] leading-relaxed text-foreground/80"
+                    class="chat-message-attachment-description mt-1.5 max-h-44 overflow-y-auto rounded-sm border px-2 py-1.5 whitespace-pre-wrap text-xs leading-relaxed"
                   >
                     {attachmentDescription(attachment)}
                   </div>
@@ -605,7 +606,7 @@
         {#if hasThinkingText}
           <div
             class="mt-1.5 flex min-h-5 items-center gap-2 {hasThinkingText && !isAssistant
-              ? 'border-t border-border/70 pt-1.5'
+              ? 'chat-message-detail-divider border-t pt-1.5'
               : ''}"
           >
             {#if hasThinkingText}
@@ -614,12 +615,12 @@
                 class={buttonClass(
                   'ghost',
                   'xs',
-                  'h-auto min-w-0 px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground/75 hover:text-muted-foreground'
+                  'chat-message-details-button h-auto min-w-0 px-1.5 py-0.5 font-semibold'
                 )}
                 onclick={toggleDetails}
               >
                 <Wrench class="size-3 shrink-0" />
-                <span class="truncate">
+                <span class="truncate text-xs">
                   {detailsExpanded ? 'Hide thinking and tools' : 'Show thinking and tools'}
                 </span>
               </button>
@@ -629,7 +630,7 @@
 
         {#if hasThinkingText && detailsExpanded}
           <div
-            class="md-content mt-1 w-full min-w-0 text-[12px] leading-relaxed text-pretty wrap-break-word text-muted-foreground opacity-80"
+            class="chat-message-thinking md-content mt-1 w-full min-w-0 text-xs leading-relaxed text-pretty wrap-break-word"
           >
             {@html thinkingHtml}
           </div>
@@ -638,7 +639,7 @@
     </div>
 
     <div
-      class="flex min-h-5 max-w-[92%] items-center gap-1 px-0.5 text-[10px] leading-none text-stone-400 {isUser
+      class="chat-message-meta flex min-h-5 max-w-[92%] items-center gap-1 px-0.5 text-[10px] leading-none {isUser
         ? 'justify-end'
         : isTool
           ? 'justify-center'
@@ -686,7 +687,7 @@
         </button>
       {/if}
       {#if messageTimeLabel}
-        <span class="px-1 text-stone-400">{messageTimeLabel}</span>
+        <span class="chat-message-time px-1">{messageTimeLabel}</span>
       {/if}
     </div>
   {/if}
@@ -694,7 +695,7 @@
   {#if hasThinkingText && !hasMainText && detailsExpanded}
     <div
       class={cardClass(
-        'relative max-w-[92%] min-w-0 gap-0 rounded-lg border-dashed bg-muted/50 py-0 text-[12px] leading-relaxed text-muted-foreground shadow-2xs'
+        'chat-message-thinking-only relative max-w-[92%] min-w-0 gap-0 rounded-lg border-dashed py-0 text-xs leading-relaxed shadow-2xs'
       )}
     >
       <div class={cardContentClass('px-3 py-2')}>
@@ -702,7 +703,7 @@
           {@html thinkingHtml}
         </div>
         {#if messageTimeLabel}
-          <div class="mt-1 text-right text-[10px] text-muted-foreground/70">
+          <div class="chat-message-time mt-1 text-right text-[10px]">
             {messageTimeLabel}
           </div>
         {/if}
@@ -710,3 +711,148 @@
     </div>
   {/if}
 </article>
+
+<style>
+  .chat-message-card-user {
+    background: var(--message-user-bubble, #f4f4f4);
+    color: var(--message-text, #171717);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--message-border, #e6e6e6) 72%, transparent),
+      0 1px 2px rgba(0, 0, 0, 0.03);
+  }
+
+  .chat-message-card-assistant {
+    color: var(--message-text, #171717);
+  }
+
+  .chat-message-card-tool,
+  .chat-message-thinking-only {
+    border-color: var(--message-border, #e6e6e6);
+    background: var(--message-surface, #f7f7f7);
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-message-card-external {
+    border-color: rgba(13, 148, 136, 0.24);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, #ccfbf1);
+    color: #115e59;
+  }
+
+  .chat-message-card-system {
+    border-color: rgba(180, 83, 9, 0.24);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 74%, #fef3c7);
+    color: #78350f;
+  }
+
+  .chat-external-sender {
+    color: #0f766e;
+  }
+
+  .chat-external-dot {
+    background: #14b8a6;
+  }
+
+  .chat-external-context {
+    color: rgba(15, 118, 110, 0.72);
+  }
+
+  .chat-message-muted-button,
+  .chat-message-action,
+  .chat-message-details-button {
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-message-muted-button {
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 76%, var(--message-surface, #f7f7f7));
+  }
+
+  .chat-message-muted-button:hover,
+  .chat-message-action:hover,
+  .chat-message-details-button:hover {
+    background: var(--message-surface-hover, #eeeeee);
+    color: var(--message-text, #171717);
+  }
+
+  .chat-message-attachment {
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 68%, var(--message-surface, #f7f7f7));
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-message-attachment-icon {
+    border-color: var(--message-border, #e6e6e6);
+    background: var(--message-surface-strong, #f4f4f4);
+  }
+
+  .chat-message-attachment-name {
+    color: var(--message-text, #171717);
+  }
+
+  .chat-message-attachment-meta,
+  .chat-message-thinking,
+  .chat-message-meta,
+  .chat-message-time {
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-message-attachment-description {
+    border-color: var(--message-border, #e6e6e6);
+    background: var(--message-surface-strong, #f4f4f4);
+    color: color-mix(in srgb, var(--message-text, #171717) 82%, transparent);
+  }
+
+  .chat-message-detail-divider {
+    border-color: var(--message-border, #e6e6e6);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .chat-message-card-external {
+      border-color: rgba(45, 212, 191, 0.22);
+      background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #0f766e);
+      color: #ccfbf1;
+    }
+
+    .chat-message-card-system {
+      border-color: rgba(251, 191, 36, 0.24);
+      background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #92400e);
+      color: #fde68a;
+    }
+
+    .chat-external-sender {
+      color: #99f6e4;
+    }
+
+    .chat-external-dot {
+      background: #2dd4bf;
+    }
+
+    .chat-external-context {
+      color: rgba(153, 246, 228, 0.68);
+    }
+  }
+
+  :global(.dark) .chat-message-card-external {
+    border-color: rgba(45, 212, 191, 0.22);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #0f766e);
+    color: #ccfbf1;
+  }
+
+  :global(.dark) .chat-message-card-system {
+    border-color: rgba(251, 191, 36, 0.24);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #92400e);
+    color: #fde68a;
+  }
+
+  :global(.dark) .chat-external-sender {
+    color: #99f6e4;
+  }
+
+  :global(.dark) .chat-external-dot {
+    background: #2dd4bf;
+  }
+
+  :global(.dark) .chat-external-context {
+    color: rgba(153, 246, 228, 0.68);
+  }
+</style>

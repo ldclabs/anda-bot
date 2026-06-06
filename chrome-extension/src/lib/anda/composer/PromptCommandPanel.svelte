@@ -59,7 +59,7 @@
     >
       {#each suggestions as suggestion, index (suggestion.id)}
         {#if suggestion.disabled}
-          <div class="px-2 py-2 text-[11px] text-muted-foreground">{suggestion.description}</div>
+          <div class="px-2 py-2 text-xs text-muted-foreground">{suggestion.description}</div>
         {:else}
           <button
             type="button"
@@ -83,7 +83,7 @@
                 <span
                   class={badgeClass(
                     'secondary',
-                    'rounded-md bg-emerald-50 font-mono text-[12px] font-bold text-emerald-800'
+                    'rounded-md bg-emerald-50 font-mono text-xs font-bold text-emerald-800'
                   )}
                 >
                   {suggestion.label}
@@ -94,7 +94,7 @@
                   </span>
                 {/if}
               </span>
-              <span class="block min-w-0 truncate text-[11px] font-normal text-muted-foreground">
+              <span class="block min-w-0 truncate text-xs font-normal text-muted-foreground">
                 {suggestion.description}
               </span>
             </span>

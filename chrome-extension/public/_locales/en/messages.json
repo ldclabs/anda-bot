@@ -194,6 +194,12 @@
   "send": {
     "message": "Send"
   },
+  "stopTask": {
+    "message": "Stop current task"
+  },
+  "stoppingTask": {
+    "message": "Stopping current task"
+  },
   "sendWithEnter": {
     "message": "Enter to send. Shift + Enter for a new line."
   },

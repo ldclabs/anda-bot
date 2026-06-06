@@ -182,6 +182,82 @@ describe('AndaSidePanelClient.sendVoiceTurn', () => {
   })
 })
 
+describe('AndaSidePanelClient.stopActiveTask', () => {
+  it('sends /stop even while a normal prompt send is marked in progress', async () => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token' }
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    const sendPrompt = vi.fn().mockResolvedValue(null)
+
+    client.settings = {
+      baseUrl: 'http://127.0.0.1:8042',
+      token: 'token',
+      submitKeyMode: 'enter'
+    }
+    client.sending = true
+    client.activeChannel = {
+      sendPrompt
+    } as any
+
+    await client.stopActiveTask()
+
+    expect(sendPrompt).toHaveBeenCalledWith('/stop', [])
+  })
+})
+
+describe('AndaSidePanelClient.sendPrompt', () => {
+  it.each([
+    ['steer', '/steer correct course'],
+    ['new', '/new fresh start']
+  ])('allows %s commands through the global sending lock', async (_name, prompt) => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token' }
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    const sendPrompt = vi.fn().mockResolvedValue(null)
+
+    client.settings = {
+      baseUrl: 'http://127.0.0.1:8042',
+      token: 'token',
+      submitKeyMode: 'enter'
+    }
+    client.sending = true
+    client.activeChannel = {
+      sendPrompt
+    } as any
+    vi.spyOn(client as any, 'refreshActiveTab').mockResolvedValue(null)
+
+    await client.sendPrompt(prompt)
+
+    expect(sendPrompt).toHaveBeenCalledWith(prompt, [])
+    expect(client.sending).toBe(true)
+  })
+})
+
+describe('AndaSidePanelClient.cancelPendingFollowUp', () => {
+  it('delegates cancellation to the active channel', async () => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token' }
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    const cancelPendingFollowUp = vi.fn().mockReturnValue(true)
+
+    client.activeChannel = {
+      cancelPendingFollowUp
+    } as any
+
+    expect(client.cancelPendingFollowUp('m-follow-up-1')).toBe(true)
+    expect(cancelPendingFollowUp).toHaveBeenCalledWith('m-follow-up-1')
+  })
+})
+
 describe('AndaSidePanelClient.bindChromeEvents', () => {
   it('ignores tab update events until the active tab is known', async () => {
     const chromeApi = createChromeApi({ activeTabs: [] })

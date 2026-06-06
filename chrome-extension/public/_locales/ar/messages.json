@@ -194,6 +194,12 @@
   "send": {
     "message": "إرسال"
   },
+  "stopTask": {
+    "message": "إيقاف المهمة الحالية"
+  },
+  "stoppingTask": {
+    "message": "جارٍ إيقاف المهمة الحالية"
+  },
   "sendWithEnter": {
     "message": "Enter للإرسال. Shift + Enter لسطر جديد."
   },

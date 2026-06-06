@@ -4,7 +4,7 @@ import {
   isTransientWebSocketError
 } from '$lib/service-worker/settings'
 import { delay } from '$lib/utils/helper'
-import { parsePromptCommand } from './commands'
+import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import { conversationToGroup, normalizeMessages } from './conversations'
 import { PollConversation } from './poll-conversation'
 import type {
@@ -47,6 +47,7 @@ export class Channel extends EventTarget {
   #syncing: boolean = $state(false)
   #syncAt: number = 0
   #localMessageSeq: number = 0
+  #sendEpoch: number = 0
   #api: API
 
   constructor(source: string, api: API) {
@@ -119,6 +120,14 @@ export class Channel extends EventTarget {
     return this.#pendingFollowUps
   }
 
+  cancelPendingFollowUp(id: string): boolean {
+    if (!this.hasPendingFollowUp(id)) {
+      return false
+    }
+    this.removePendingFollowUp(id)
+    return true
+  }
+
   destroy(): void {
     this.clearConversationDisplay()
   }
@@ -178,20 +187,29 @@ export class Channel extends EventTarget {
     prompt: string,
     attachments: ChatAttachment[]
   ): Promise<PollConversation | null> {
-    if (this.#sending || (!prompt && attachments.length === 0)) {
+    const command = parsePromptCommand(prompt)
+    const immediate = isImmediatePromptCommand(command)
+    if ((this.#sending && !immediate) || (!prompt && attachments.length === 0)) {
       return null
     }
 
-    this.#sending = true
+    const ownsSendingFlag = !this.#sending || command?.kind === 'new'
+    if (ownsSendingFlag) {
+      this.#sending = true
+    }
     const resources = attachments.map((attachment) => attachment.resource)
-    const command = parsePromptCommand(prompt)
     const queueAsFollowUp = this.shouldQueueFollowUp(command)
     let pendingFollowUpId = ''
+    let sendEpoch = this.#sendEpoch
 
     try {
       const poller = new PollConversation()
       if (command && command.kind === 'new') {
         this.clearConversationDisplay()
+        sendEpoch = this.#sendEpoch
+        if (ownsSendingFlag) {
+          this.#sending = true
+        }
         if (command.prompt) {
           this.appendLocalMessage({
             role: 'user',
@@ -224,7 +242,7 @@ export class Channel extends EventTarget {
             timestamp
           }
         ]
-      } else if (command && command.kind === 'stop') {
+      } else if (command && (command.kind === 'stop' || command.kind === 'steer')) {
         this.appendLocalMessage({
           role: 'user',
           text: command.prompt,
@@ -244,7 +262,15 @@ export class Channel extends EventTarget {
 
       this.#api.updateStatus('sending', null)
 
-      const output = await this.agentRun({ name: '', prompt, resources })
+      const isRequestStale = () =>
+        sendEpoch !== this.#sendEpoch ||
+        Boolean(pendingFollowUpId && !this.hasPendingFollowUp(pendingFollowUpId))
+      const output = await this.agentRun({ name: '', prompt, resources }, isRequestStale)
+      if (!output || isRequestStale()) {
+        poller.finish()
+        return poller
+      }
+
       this.#session = output.session || ''
       const hasConversation = Boolean(output.conversation)
       if (output.conversation) {
@@ -299,7 +325,9 @@ export class Channel extends EventTarget {
       this.#api.updateStatus('request failed', { kind: 'error', text: errorToMessage(error) })
       return null
     } finally {
-      this.#sending = false
+      if (ownsSendingFlag && sendEpoch === this.#sendEpoch) {
+        this.#sending = false
+      }
     }
   }
 
@@ -463,8 +491,11 @@ export class Channel extends EventTarget {
     }
   }
 
-  private async agentRun(input: AgentInput): Promise<AgentOutput> {
+  private async agentRun(input: AgentInput, isStale?: () => boolean): Promise<AgentOutput | null> {
     const meta = await this.requestMeta()
+    if (isStale?.()) {
+      return null
+    }
     input.meta = { ...input.meta, ...meta }
     return this.#api.rpc<AgentOutput>('agent_run', [input])
   }
@@ -553,6 +584,7 @@ export class Channel extends EventTarget {
   }
 
   private clearConversationDisplay(): void {
+    this.#sendEpoch += 1
     this.#session = ''
     this.#conversation = null
     this.#messageGroups = []
@@ -613,6 +645,10 @@ export class Channel extends EventTarget {
 
   private removePendingFollowUp(id: string): void {
     this.#pendingFollowUps = this.#pendingFollowUps.filter((message) => message.id !== id)
+  }
+
+  private hasPendingFollowUp(id: string): boolean {
+    return this.#pendingFollowUps.some((message) => message.id === id)
   }
 
   private removeAcceptedPendingFollowUps(serverMessages: ChatMessage[]): void {

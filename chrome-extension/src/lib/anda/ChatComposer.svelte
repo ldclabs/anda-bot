@@ -21,6 +21,7 @@
 <script lang="ts">
   import AttachmentList from '$lib/anda/composer/AttachmentList.svelte'
   import { fileToAttachment } from '$lib/anda/composer/attachments'
+  import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import {
     buildPromptCommandSuggestions,
     firstEnabledPromptCommandIndex,
@@ -62,8 +63,10 @@
     Mic,
     Paperclip,
     SendHorizontal,
+    Square,
     Volume2,
-    VolumeX
+    VolumeX,
+    X
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick } from 'svelte'
@@ -73,10 +76,13 @@
     sending = false,
     placeholder = chrome.i18n.getMessage('placeholderMessage'),
     working = false,
+    stoppable = false,
     pendingFollowUps = [],
     voiceAvailable = false,
     voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
     onSend,
+    onCancelFollowUp,
+    onStop,
     onVoiceSend,
     onBrowserSpeechStart,
     onBrowserSpeechStop,
@@ -91,11 +97,13 @@
     sending?: boolean
     placeholder?: string
     working?: boolean
+    stoppable?: boolean
     pendingFollowUps?: ChatMessage[]
     voiceAvailable?: boolean
     voiceCapabilities?: VoiceCapabilities
     submitKeyMode?: SubmitKeyMode
     onSend: (payload: ComposerSubmitPayload) => Promise<void> | void
+    onStop?: () => Promise<void> | void
     onVoiceSend?: (payload: ComposerVoicePayload) => Promise<void> | void
     onBrowserSpeechStart?: (language: string) => Promise<void>
     onBrowserSpeechStop?: () => Promise<string>
@@ -104,11 +112,13 @@
     onBrowserAudioStop?: () => Promise<PageAudioResult>
     onBrowserAudioCancel?: () => Promise<void>
     onLoadSkills?: () => Promise<PromptSkill[]>
+    onCancelFollowUp?: (id: string) => void
   } = $props()
 
   let text = $state('')
   let attachments = $state<ChatAttachment[]>([])
   let attachmentError = $state('')
+  let stopPending = $state(false)
   let preparingAttachments = $state(false)
   let inputMode = $state<'text' | 'voice'>('text')
   let voiceStage = $state<'idle' | 'recording' | 'processing'>('idle')
@@ -145,11 +155,11 @@
   let levelAnimationFrame: number | null = null
   let ignoreNextRecording = false
 
+  const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
+  const draftCommand = $derived(parsePromptCommand(text))
+  const draftBypassesSending = $derived(isImmediatePromptCommand(draftCommand))
   const canSend = $derived(
-    (Boolean(text.trim()) || attachments.length > 0) &&
-      !disabled &&
-      !sending &&
-      !preparingAttachments
+    hasDraft && !disabled && !preparingAttachments && (!sending || draftBypassesSending)
   )
   const submitTitle = $derived(
     submitKeyMode === 'modifier-enter'
@@ -157,6 +167,11 @@
         ? chrome.i18n.getMessage('sendWithCmdEnter')
         : chrome.i18n.getMessage('sendWithCtrlEnter')
       : chrome.i18n.getMessage('sendWithEnter')
+  )
+  const showStopButton = $derived(Boolean(onStop) && stoppable && inputMode === 'text' && !hasDraft)
+  const stopTitle = $derived(
+    chrome.i18n.getMessage(stopPending ? 'stoppingTask' : 'stopTask') ||
+      (stopPending ? 'Stopping current task' : 'Stop current task')
   )
   const canUseBrowserSpeech = $derived(
     Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable
@@ -438,6 +453,18 @@
     resizeTextarea()
   }
 
+  async function stopTask() {
+    if (!onStop || stopPending) {
+      return
+    }
+    stopPending = true
+    try {
+      await onStop()
+    } finally {
+      stopPending = false
+    }
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (handlePromptCommandKeydown(event)) {
       return
@@ -540,6 +567,10 @@
       return text
     }
     return (message.attachments || []).map((attachment) => attachment.name).join(', ')
+  }
+
+  function cancelPendingFollowUp(id: string) {
+    onCancelFollowUp?.(id)
   }
 
   function toggleInputMode() {
@@ -1056,9 +1087,7 @@
 
   <div
     class={cardClass(
-      `composer-shell gap-2 rounded-lg border-stone-100 bg-white p-2 shadow-[0_10px_30px_rgba(36,45,39,0.08)] ${
-        composerWorking ? 'composer-working' : ''
-      }`
+      `composer-shell gap-2 rounded-lg p-2 ${composerWorking ? 'composer-working' : ''}`
     )}
     aria-busy={composerWorking}
   >
@@ -1080,6 +1109,15 @@
             <div class="pending-follow-up-item">
               <span class="pending-follow-up-dot"></span>
               <span class="min-w-0 flex-1 truncate">{pendingFollowUpPreview(message)}</span>
+              <button
+                type="button"
+                class={buttonClass('ghost', 'icon-xs', 'pending-follow-up-cancel')}
+                aria-label={chrome.i18n.getMessage('cancel')}
+                title={chrome.i18n.getMessage('cancel')}
+                onclick={() => cancelPendingFollowUp(message.id)}
+              >
+                <X class="size-3.5" />
+              </button>
             </div>
           {/each}
         </div>
@@ -1090,10 +1128,10 @@
       <div
         role="alert"
         class={alertClass(
-          'mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800'
+          'mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800'
         )}
       >
-        <div class={alertDescriptionClass('text-[11px] text-amber-800')}>
+        <div class={alertDescriptionClass('text-xs text-amber-800')}>
           {attachmentError}
         </div>
       </div>
@@ -1137,10 +1175,10 @@
               rows={1}
               {placeholder}
               spellcheck="true"
-              disabled={disabled || sending}
+              {disabled}
               aria-haspopup="listbox"
               class={textareaClass(
-                'max-h-38 min-h-10 flex-1 resize-none rounded-none border-0 bg-transparent px-2 leading-5 text-stone-950 shadow-none ring-0 placeholder:text-stone-400 focus-visible:ring-0 disabled:opacity-60 aria-invalid:ring-0 dark:bg-transparent'
+                'composer-textarea max-h-38 min-h-10 flex-1 resize-none rounded-none border-0 bg-transparent px-2 leading-5 shadow-none ring-0 focus-visible:ring-0 disabled:opacity-60 aria-invalid:ring-0 dark:bg-transparent'
               )}
               onkeydown={handleKeydown}
               oninput={handleTextareaInput}
@@ -1158,10 +1196,10 @@
         <div
           role="alert"
           class={alertClass(
-            'rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800'
+            'rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800'
           )}
         >
-          <div class={alertDescriptionClass('text-[11px] text-amber-800')}>
+          <div class={alertDescriptionClass('text-xs text-amber-800')}>
             {voiceError}
           </div>
         </div>
@@ -1171,7 +1209,7 @@
         <div class="flex items-center gap-1">
           <button
             type="button"
-            class={buttonClass('ghost', 'icon-sm', 'text-stone-500 hover:text-emerald-700')}
+            class={buttonClass('ghost', 'icon-sm', 'composer-icon-button hover:text-emerald-700')}
             disabled={disabled || preparingAttachments}
             aria-label={chrome.i18n.getMessage('attachFiles')}
             title={chrome.i18n.getMessage('attachFiles')}
@@ -1190,7 +1228,7 @@
               class={buttonClass(
                 inputMode === 'voice' ? 'secondary' : 'ghost',
                 'icon-sm',
-                'text-stone-500 hover:text-emerald-700'
+                'composer-icon-button hover:text-emerald-700'
               )}
               disabled={disabled || sending}
               aria-label={inputMode === 'voice'
@@ -1217,7 +1255,7 @@
               class={buttonClass(
                 ttsEnabled ? 'secondary' : 'ghost',
                 'icon-sm',
-                'text-stone-500 hover:text-emerald-700'
+                'composer-icon-button hover:text-emerald-700'
               )}
               disabled={disabled ||
                 sending ||
@@ -1242,32 +1280,53 @@
               <Tooltip.Root>
                 <Tooltip.Trigger>
                   {#snippet child({ props })}
-                    <button
-                      {...props}
-                      type="submit"
-                      disabled={!canSend}
-                      class={buttonClass(
-                        canSend ? 'default' : 'ghost',
-                        'icon-sm',
-                        `duration-200 ${
-                          canSend
-                            ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
-                            : 'text-stone-300'
-                        }`
-                      )}
-                      aria-label={chrome.i18n.getMessage('send')}
-                    >
-                      {#if sending}
-                        <LoaderCircle class="size-4 animate-spin" />
-                      {:else}
-                        <SendHorizontal class="size-4" />
-                      {/if}
-                    </button>
+                    {#if showStopButton}
+                      <button
+                        {...props}
+                        type="button"
+                        disabled={stopPending}
+                        class={buttonClass(
+                          'default',
+                          'icon-sm',
+                          'composer-stop-button duration-200 shadow-sm rounded-full'
+                        )}
+                        aria-label={stopTitle}
+                        onclick={stopTask}
+                      >
+                        {#if stopPending}
+                          <LoaderCircle class="size-4 animate-spin" />
+                        {:else}
+                          <Square class="size-3.5 fill-current" />
+                        {/if}
+                      </button>
+                    {:else}
+                      <button
+                        {...props}
+                        type="submit"
+                        disabled={!canSend}
+                        class={buttonClass(
+                          canSend ? 'default' : 'ghost',
+                          'icon-sm',
+                          `duration-200 ${
+                            canSend
+                              ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
+                              : 'composer-send-disabled'
+                          }`
+                        )}
+                        aria-label={chrome.i18n.getMessage('send')}
+                      >
+                        {#if sending}
+                          <LoaderCircle class="size-4 animate-spin" />
+                        {:else}
+                          <SendHorizontal class="size-4" />
+                        {/if}
+                      </button>
+                    {/if}
                   {/snippet}
                 </Tooltip.Trigger>
                 <Tooltip.Portal>
                   <Tooltip.Content side="top" sideOffset={6} class={tooltipContentClass()}>
-                    {submitTitle}
+                    {showStopButton ? stopTitle : submitTitle}
                     <Tooltip.Arrow>
                       {#snippet child({ props })}
                         <div class={tooltipArrowClass()} {...props}></div>
@@ -1289,8 +1348,13 @@
     position: relative;
     isolation: isolate;
     overflow: visible;
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 86%, var(--message-surface, #f7f7f7));
+    color: var(--message-text, #171717);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
     transition:
       border-color 180ms ease-out,
+      background-color 180ms ease-out,
       box-shadow 180ms ease-out;
   }
 
@@ -1355,10 +1419,10 @@
     gap: 6px;
     border-radius: 7px;
     border: 1px solid rgba(4, 120, 87, 0.16);
-    background: rgba(236, 253, 245, 0.82);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, #ecfdf5);
     padding: 7px;
-    color: #2f3b35;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+    color: var(--message-text, #171717);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--message-bg, #ffffff) 78%, transparent);
   }
 
   .pending-follow-ups-header,
@@ -1383,14 +1447,14 @@
     place-items: center;
     border-radius: 6px;
     border: 1px solid rgba(4, 120, 87, 0.12);
-    background: rgba(255, 255, 255, 0.74);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
     color: #047857;
   }
 
   .pending-follow-ups-count {
     min-width: 18px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.76);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
     padding: 1px 6px;
     text-align: center;
     font-size: 10px;
@@ -1406,11 +1470,11 @@
   .pending-follow-up-item {
     gap: 7px;
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.58);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 82%, var(--message-surface, #f7f7f7));
     padding: 5px 7px;
     font-size: 12px;
     line-height: 1.25;
-    color: #1f2d27;
+    color: var(--message-text, #171717);
   }
 
   .pending-follow-up-dot {
@@ -1422,9 +1486,49 @@
     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
   }
 
+  :global(.pending-follow-up-cancel) {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    border-radius: 6px;
+    color: var(--message-muted, #737373);
+  }
+
+  :global(.pending-follow-up-cancel:hover) {
+    background: var(--message-surface-hover, #eeeeee);
+    color: var(--message-text, #171717);
+  }
+
   .prompt-input-wrap {
     position: relative;
     min-width: 0;
+  }
+
+  :global(.composer-textarea) {
+    color: var(--message-text, #171717);
+  }
+
+  :global(.composer-textarea::placeholder) {
+    color: var(--message-muted-soft, #a0a0a0);
+  }
+
+  :global(.composer-icon-button),
+  :global(.composer-send-disabled) {
+    color: var(--message-muted, #737373);
+  }
+
+  :global(.composer-icon-button:hover) {
+    background: var(--message-surface-hover, #eeeeee);
+  }
+
+  :global(.composer-stop-button) {
+    background: #2a2a2a;
+    color: #ffffff;
+  }
+
+  :global(.composer-stop-button:hover),
+  :global(.composer-stop-button:focus-visible) {
+    background: #000000;
   }
 
   @keyframes composer-border-flow {

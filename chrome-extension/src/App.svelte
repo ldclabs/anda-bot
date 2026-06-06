@@ -13,6 +13,7 @@
     type PageAudioResult,
     type PromptSkill
   } from '$lib/anda/client/types'
+  import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
   import { scrollIntoView } from '$lib/utils/document'
   import {
@@ -40,6 +41,9 @@
   const status = $derived(andaClient.status)
   const syncing = $derived(andaClient.activeChannel?.syncing || false)
   const sending = $derived(andaClient.sending || andaClient.activeChannel?.sending || false)
+  const stoppable = $derived(
+    sending || ['sending', 'submitted', 'working'].includes(andaClient.status)
+  )
   const isBusy = $derived(
     sending ||
       syncing ||
@@ -162,13 +166,26 @@
   }
 
   async function sendPrompt(payload: ComposerSubmitPayload) {
-    if (sending) {
+    const command = parsePromptCommand(payload.text)
+    if (sending && !isImmediatePromptCommand(command)) {
       return
     }
     if (!andaClient.settings.token) {
       settingsOpen = true
     }
     await andaClient.sendPrompt(payload.text, payload.attachments)
+  }
+
+  function cancelPendingFollowUp(id: string) {
+    andaClient.cancelPendingFollowUp(id)
+  }
+
+  async function stopActiveTask() {
+    if (!andaClient.settings.token) {
+      settingsOpen = true
+      return
+    }
+    await andaClient.stopActiveTask()
   }
 
   async function sendVoiceTurn(payload: ComposerVoicePayload) {
@@ -333,7 +350,7 @@
   <title>Anda Bot</title>
 </svelte:head>
 
-<div class="flex h-screen min-w-80 overflow-hidden bg-[#fbfaf7] text-stone-950">
+<div class="flex h-screen min-w-80 overflow-hidden bg-white text-neutral-950">
   <ChatChannelsSidebar
     {channels}
     {activeSource}
@@ -343,15 +360,13 @@
     onDelete={deleteChannel}
   />
 
-  <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-    <header
-      class="grid h-12 grid-cols-[1fr_auto] items-center gap-3 border-b border-emerald-900/10 bg-emerald-50/75 px-3"
-    >
+  <div class="message-panel flex min-w-0 flex-1 flex-col overflow-hidden">
+    <header class="message-header grid h-12 grid-cols-[1fr_auto] items-center gap-3 border-b px-3">
       <div class="min-w-0 text-center">
         <span
           class={badgeClass(
             'secondary',
-            'mx-auto max-w-full gap-1.5 rounded-full bg-white/50 text-[11px] text-stone-500'
+            'message-status-badge mx-auto max-w-full gap-1.5 rounded-full text-xs'
           )}
         >
           {#if isBusy}
@@ -364,7 +379,7 @@
           <span class="truncate">{status}</span>
         </span>
         {#if andaClient.systemMessage || activeSource}
-          <p class="truncate text-xs font-bold text-stone-800">
+          <p class="message-active-source truncate text-xs font-bold">
             {andaClient.systemMessage?.text || activeSource}
           </p>
         {/if}
@@ -397,7 +412,7 @@
             <p class="truncate text-xs font-bold text-stone-800">
               {chrome.i18n.getMessage('updateReadyTitle')}
             </p>
-            <p class="truncate text-[11px] text-stone-600">
+            <p class="truncate text-xs text-stone-600">
               {chrome.i18n.getMessage('updateReadyBody', [updateState?.latest_tag || ''])}
             </p>
           </div>
@@ -420,12 +435,12 @@
 
     <main
       bind:this={messagesElement}
-      class="scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto bg-[#fbfaf7] px-3 py-4"
+      class="message-scroll scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
-        <div class="m-auto grid max-w-64 place-items-center gap-2 text-center text-stone-500">
+        <div class="message-empty m-auto grid max-w-64 place-items-center gap-2 text-center">
           <div
-            class={cardClass('grid size-11 place-items-center rounded-md bg-white p-0 shadow-sm')}
+            class={cardClass('message-empty-icon grid size-11 place-items-center rounded-md p-0')}
           >
             {#if syncing}
               <LoaderCircle class="size-5 animate-spin text-emerald-800" />
@@ -433,7 +448,7 @@
               <Bot class="size-5 text-emerald-800" />
             {/if}
           </div>
-          <div class="text-xs font-semibold text-stone-700">
+          <div class="message-empty-title text-xs font-semibold">
             {syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
           </div>
         </div>
@@ -442,7 +457,7 @@
           <div class="flex justify-center">
             <button
               type="button"
-              class={buttonClass('outline', 'xs', 'bg-white/80 text-stone-600 shadow-sm')}
+              class={buttonClass('outline', 'xs', 'message-muted-button shadow-sm')}
               disabled={loadingPrevious}
               onclick={loadPreviousConversations}
             >
@@ -460,16 +475,25 @@
           <section class="grid w-full gap-4">
             {#if visibleMessageGroups.length > 1}
               <div
-                class="flex items-center justify-center gap-2 py-1 text-[10px] font-semibold text-stone-400"
+                class="message-group-divider flex items-center justify-center gap-2 py-1 text-[10px] font-semibold"
               >
-                <div class={separatorClass('flex-1')} data-orientation="horizontal"></div>
+                <div
+                  class={separatorClass('message-separator flex-1')}
+                  data-orientation="horizontal"
+                ></div>
                 <span class="max-w-[70%] truncate">{groupLabel(group)}</span>
                 <span
-                  class={badgeClass('secondary', 'rounded-full px-1.5 text-[10px] text-stone-500')}
+                  class={badgeClass(
+                    'secondary',
+                    'message-group-status rounded-full px-1.5 text-[10px]'
+                  )}
                 >
                   {group.status}
                 </span>
-                <div class={separatorClass('flex-1')} data-orientation="horizontal"></div>
+                <div
+                  class={separatorClass('message-separator flex-1')}
+                  data-orientation="horizontal"
+                ></div>
               </div>
             {/if}
 
@@ -482,13 +506,13 @@
     </main>
 
     {#if sideMessageCount > 0}
-      <section class="max-h-3/4 border-t border-emerald-900/10 bg-emerald-50/80 backdrop-blur">
+      <section class="message-side-tasks max-h-3/4 border-t backdrop-blur">
         <button
           type="button"
           class={buttonClass(
             'ghost',
             'default',
-            'flex h-10 w-full gap-2 px-3 text-left transition hover:bg-white/55'
+            'message-side-toggle flex h-10 w-full gap-2 px-3 text-left transition'
           )}
           aria-expanded={sideMessagesOpen}
           aria-label={chrome.i18n.getMessage(
@@ -498,32 +522,32 @@
           onclick={toggleSideMessagesPanel}
         >
           <span
-            class="grid size-6 shrink-0 place-items-center rounded-md border border-emerald-900/10 bg-white/85 text-emerald-800 shadow-sm"
+            class="message-side-icon grid size-6 shrink-0 place-items-center rounded-md border text-emerald-800 shadow-sm"
           >
             <Bot class="size-3.5" />
           </span>
-          <span class="min-w-0 flex-1 truncate text-xs font-bold text-stone-700">
+          <span class="message-side-title min-w-0 flex-1 truncate text-xs font-bold">
             {chrome.i18n.getMessage('sideTasksLabel')}
           </span>
           <span
             class={badgeClass(
               'outline',
-              'rounded-full border-emerald-900/10 bg-white/80 px-1.5 text-[10px] text-emerald-800'
+              'message-side-count rounded-full px-1.5 text-[10px] text-emerald-800'
             )}
           >
             {sideMessageCount}
           </span>
           {#if sideMessagesOpen}
-            <ChevronDown class="size-4 shrink-0 text-stone-500" />
+            <ChevronDown class="message-side-chevron size-4 shrink-0" />
           {:else}
-            <ChevronUp class="size-4 shrink-0 text-stone-500" />
+            <ChevronUp class="message-side-chevron size-4 shrink-0" />
           {/if}
         </button>
 
         {#if sideMessagesOpen}
           <div
             bind:this={sideMessagesElement}
-            class="scrollbar-slim overflow-y-auto border-t border-emerald-900/10 px-3 py-3"
+            class="message-side-body scrollbar-slim overflow-y-auto border-t px-3 py-3"
           >
             <div class="grid gap-2">
               {#each visibleSideMessages as message (message.id)}
@@ -535,19 +559,21 @@
       </section>
     {/if}
 
-    <footer class="border-t border-stone-200 bg-[#fbfaf7]/90 p-2.5 backdrop-blur">
+    <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatComposer
         placeholder={andaClient.settings.token
           ? chrome.i18n.getMessage('placeholderMessage')
           : chrome.i18n.getMessage('placeholderSettings')}
-        disabled={sending}
         {sending}
         working={isBusy}
+        {stoppable}
         {pendingFollowUps}
         voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voiceCapabilities}
         submitKeyMode={andaClient.settings.submitKeyMode}
         onSend={sendPrompt}
+        onCancelFollowUp={cancelPendingFollowUp}
+        onStop={stopActiveTask}
         onVoiceSend={sendVoiceTurn}
         onBrowserSpeechStart={startBrowserSpeechRecognition}
         onBrowserSpeechStop={stopBrowserSpeechRecognition}
@@ -560,3 +586,114 @@
     </footer>
   </div>
 </div>
+
+<style>
+  .message-panel {
+    --message-bg: #ffffff;
+    --message-user-bubble: #f4f4f4;
+    --message-surface: #f7f7f7;
+    --message-surface-strong: #f4f4f4;
+    --message-surface-hover: #eeeeee;
+    --message-border: #e6e6e6;
+    --message-border-soft: #eeeeee;
+    --message-text: #171717;
+    --message-muted: #737373;
+    --message-muted-soft: #a0a0a0;
+
+    background: var(--message-bg);
+    color: var(--message-text);
+    color-scheme: light;
+  }
+
+  .message-header,
+  .message-footer {
+    border-color: var(--message-border);
+    background: color-mix(in srgb, var(--message-bg) 94%, transparent);
+  }
+
+  .message-scroll {
+    background: var(--message-bg);
+  }
+
+  .message-status-badge,
+  .message-group-status,
+  .message-side-count {
+    border-color: var(--message-border);
+    background: var(--message-surface-strong);
+    color: var(--message-muted);
+  }
+
+  .message-active-source,
+  .message-empty-title,
+  .message-side-title {
+    color: var(--message-text);
+  }
+
+  .message-empty,
+  .message-group-divider,
+  .message-side-chevron {
+    color: var(--message-muted);
+  }
+
+  .message-empty-icon,
+  .message-muted-button,
+  .message-side-icon {
+    border-color: var(--message-border);
+    background: var(--message-surface-strong);
+  }
+
+  .message-muted-button {
+    color: var(--message-muted);
+  }
+
+  .message-muted-button:hover,
+  .message-side-toggle:hover {
+    background: var(--message-surface-hover);
+    color: var(--message-text);
+  }
+
+  .message-separator {
+    background: var(--message-border-soft);
+  }
+
+  .message-side-tasks {
+    border-color: var(--message-border);
+    background: color-mix(in srgb, var(--message-surface) 88%, transparent);
+  }
+
+  .message-side-body {
+    border-color: var(--message-border);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .message-panel {
+      --message-bg: #2a2a2a;
+      --message-user-bubble: #343434;
+      --message-surface: #303030;
+      --message-surface-strong: #343434;
+      --message-surface-hover: #3a3a3a;
+      --message-border: #424242;
+      --message-border-soft: #3a3a3a;
+      --message-text: #f4f4f4;
+      --message-muted: #adadad;
+      --message-muted-soft: #858585;
+
+      color-scheme: dark;
+    }
+  }
+
+  :global(.dark) .message-panel {
+    --message-bg: #2a2a2a;
+    --message-user-bubble: #343434;
+    --message-surface: #303030;
+    --message-surface-strong: #343434;
+    --message-surface-hover: #3a3a3a;
+    --message-border: #424242;
+    --message-border-soft: #3a3a3a;
+    --message-text: #f4f4f4;
+    --message-muted: #adadad;
+    --message-muted-soft: #858585;
+
+    color-scheme: dark;
+  }
+</style>

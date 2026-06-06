@@ -8,6 +8,7 @@ import {
 import { SvelteMap } from 'svelte/reactivity'
 import { Channel, type API } from './channel.svelte'
 import { getChromeApi } from './chrome'
+import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import { normalizePromptSkills } from './helper'
 import type {
   ChatAttachment,
@@ -282,7 +283,9 @@ export class AndaSidePanelClient extends EventTarget {
   async sendPrompt(text: string, attachments: ChatAttachment[] = []): Promise<void> {
     const prompt = text.trim()
     const channel = this.activeChannel
-    if ((!prompt && attachments.length === 0) || this.sending || !channel) {
+    const command = parsePromptCommand(prompt)
+    const immediate = isImmediatePromptCommand(command)
+    if ((!prompt && attachments.length === 0) || (this.sending && !immediate) || !channel) {
       return
     }
 
@@ -291,14 +294,41 @@ export class AndaSidePanelClient extends EventTarget {
       return
     }
 
-    this.sending = true
+    const ownsSendingFlag = !this.sending
+    if (ownsSendingFlag) {
+      this.sending = true
+    }
     try {
       await this.refreshActiveTab()
       await channel.sendPrompt(prompt, attachments)
     } catch (error) {
       this.updateStatus('send failed', { kind: 'error', text: errorToMessage(error) })
     } finally {
-      this.sending = false
+      if (ownsSendingFlag) {
+        this.sending = false
+      }
+    }
+  }
+
+  cancelPendingFollowUp(id: string): boolean {
+    return this.activeChannel?.cancelPendingFollowUp(id) || false
+  }
+
+  async stopActiveTask(): Promise<void> {
+    const channel = this.activeChannel
+    if (!channel) {
+      return
+    }
+
+    if (!this.settings.token) {
+      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      return
+    }
+
+    try {
+      await channel.sendPrompt('/stop', [])
+    } catch (error) {
+      this.updateStatus('stop failed', { kind: 'error', text: errorToMessage(error) })
     }
   }
 

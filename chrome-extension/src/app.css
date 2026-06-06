@@ -219,8 +219,8 @@
   .md-content blockquote {
     margin: 1em 0;
     padding: 0.8em 1em;
-    border-left: 4px solid #e5e7eb;
-    background-color: #e8e8e8;
+    border-left: 4px solid var(--message-border, #dcdcdc);
+    background-color: var(--message-surface-strong, #f4f4f4);
     border-radius: 0 0.25rem 0.25rem 0;
   }
 
@@ -237,13 +237,13 @@
   }
 
   .dark .md-content blockquote {
-    border-left-color: #4b5563;
-    background-color: #181818;
+    border-left-color: #4a4a4a;
+    background-color: #343434;
   }
 
   /* 行内代码 */
   .md-content code:not(pre code) {
-    background-color: #e8e8e8;
+    background-color: var(--message-surface-strong, #f4f4f4);
     color: #dc2626;
     padding: 0.15em 0.35em;
     border-radius: 0.25rem;
@@ -254,7 +254,7 @@
   }
 
   .dark .md-content code:not(pre code) {
-    background-color: #181818;
+    background-color: #343434;
     color: #fca5a5;
   }
 
@@ -262,8 +262,8 @@
   .md-content pre {
     margin: 1em 0;
     padding: 1em;
-    background-color: #e8e8e8;
-    border: 1px solid #e2e8f0;
+    background-color: var(--message-surface-strong, #f4f4f4);
+    border: 1px solid var(--message-border, #e2e2e2);
     border-radius: 0.5rem;
     overflow-x: auto;
     font-size: 0.875em;
@@ -275,8 +275,8 @@
   }
 
   .dark .md-content pre {
-    background-color: #181818;
-    border-color: #475569;
+    background-color: #343434;
+    border-color: #464646;
   }
 
   .md-content pre code {
@@ -315,7 +315,7 @@
     margin: 1em 0;
     border-collapse: separate;
     border-spacing: 0;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--message-border, #e6e6e6);
     border-radius: 0.5rem;
   }
 
@@ -323,12 +323,12 @@
   .md-content td {
     padding: 0.75em 1em;
     text-align: left;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--message-border, #e6e6e6);
     white-space: nowrap;
   }
 
   .md-content th {
-    background-color: #f9fafb;
+    background-color: var(--message-surface-strong, #f4f4f4);
     font-weight: 600;
   }
 
@@ -337,27 +337,27 @@
   }
 
   .dark .md-content table {
-    border-color: #4b5563;
+    border-color: #464646;
   }
 
   .dark .md-content th,
   .dark .md-content td {
-    border-bottom-color: #4b5563;
+    border-bottom-color: #464646;
   }
 
   .dark .md-content th {
-    background-color: #374151;
+    background-color: #343434;
   }
 
   /* 分隔线 */
   .md-content hr {
     margin: 1.5em 0;
     border: none;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid var(--message-border, #e6e6e6);
   }
 
   .dark .md-content hr {
-    border-top-color: #4b5563;
+    border-top-color: #464646;
   }
 
   /* 图片 */
