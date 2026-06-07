@@ -58,9 +58,10 @@ On Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The Windows installer registers Anda to start when the current user logs in and
-tries to start the daemon immediately. Use `-NoAutostart` or `-NoStart` if you
-want to opt out.
+The release install scripts register Anda to start when the current user logs in
+and try to start the daemon immediately. For PowerShell, use `-NoAutostart` or
+`-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or
+`ANDA_NO_START=1`.
 
 Requirements:
 

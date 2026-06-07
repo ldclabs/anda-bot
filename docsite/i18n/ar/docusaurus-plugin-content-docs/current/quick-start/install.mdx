@@ -28,7 +28,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-يسجل مثبت Windows تشغيل Anda عند تسجيل دخول المستخدم الحالي ويحاول بدء daemon فورًا. أضف `-NoAutostart` أو `-NoStart` لتعطيل ذلك.
+تسجل مثبتات الإصدار تشغيل Anda عند تسجيل دخول المستخدم الحالي وتحاول بدء daemon فورًا. في PowerShell أضف `-NoAutostart` أو `-NoStart`؛ وفي مثبت shell استخدم `ANDA_NO_AUTOSTART=1` أو `ANDA_NO_START=1`.
 
 ثم افتح طرفية جديدة:
 

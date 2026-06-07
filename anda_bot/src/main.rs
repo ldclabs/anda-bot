@@ -74,7 +74,7 @@ pub enum Commands {
     /// Browser (chrome) extension helper commands.
     #[command(subcommand)]
     Browser(BrowserCommand),
-    /// Manage Windows login autostart for the current user.
+    /// Manage login autostart for the current user.
     #[command(subcommand)]
     Autostart(autostart::AutostartCommand),
     /// Channel-related operations that run directly from this CLI.
@@ -452,7 +452,7 @@ async fn run_autostart_command(
             }
             autostart::AutostartStatus::Installed => unreachable!(),
             autostart::AutostartStatus::Unsupported => {
-                println!("anda autostart is only supported on Windows for now.")
+                println!("anda autostart is not supported on this platform.")
             }
         },
         autostart::AutostartCommand::Status => match autostart::status()? {
@@ -463,7 +463,7 @@ async fn run_autostart_command(
                 println!("Anda autostart is not registered.")
             }
             autostart::AutostartStatus::Unsupported => {
-                println!("anda autostart is only supported on Windows for now.")
+                println!("anda autostart is not supported on this platform.")
             }
         },
     }

@@ -28,7 +28,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-Установщик Windows регистрирует Anda для запуска при входе текущего пользователя и пытается сразу запустить daemon. Добавьте `-NoAutostart` или `-NoStart`, чтобы отключить это.
+Установщики релизов регистрируют Anda для запуска при входе текущего пользователя и пытаются сразу запустить daemon. В PowerShell добавьте `-NoAutostart` или `-NoStart`; в shell-установщике используйте `ANDA_NO_AUTOSTART=1` или `ANDA_NO_START=1`.
 
 Затем откройте новый терминал:
 

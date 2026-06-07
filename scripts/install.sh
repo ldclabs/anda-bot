@@ -309,6 +309,40 @@ download_and_install_skills() {
     fi
 }
 
+register_autostart() {
+    if [ "${ANDA_NO_AUTOSTART:-0}" = "1" ]; then
+        return 0
+    fi
+
+    info "Registering Anda to start when you log in..."
+    if AUTOSTART_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" autostart install 2>&1); then
+        success "Autostart registered."
+    else
+        info "Could not register autostart. You can retry with:"
+        printf '    %s --home "%s" autostart install\n' "$BINARY_NAME" "$ANDA_HOME_DIR"
+        if [ -n "$AUTOSTART_OUTPUT" ]; then
+            printf '%s\n' "$AUTOSTART_OUTPUT"
+        fi
+    fi
+}
+
+start_daemon() {
+    if [ "${ANDA_NO_START:-0}" = "1" ]; then
+        return 0
+    fi
+
+    info "Starting Anda daemon..."
+    if START_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" start 2>&1); then
+        success "Anda daemon started."
+    else
+        info "Anda is installed, but the daemon did not start yet. Configure ${ANDA_HOME_DIR}/config.yaml, then run:"
+        printf '    %s --home "%s" start\n' "$BINARY_NAME" "$ANDA_HOME_DIR"
+        if [ -n "$START_OUTPUT" ]; then
+            printf '%s\n' "$START_OUTPUT"
+        fi
+    fi
+}
+
 # Detect OS
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$OS" in
@@ -401,11 +435,14 @@ fi
 if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     INSTALLED_VERSION=$("${INSTALL_DIR}/${INSTALL_NAME}" --version 2>/dev/null || echo "unknown")
     success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
+    register_autostart
+    start_daemon
     echo ""
-    echo "  Run Anda:"
-    echo "    DEEPSEEK_API_KEY=**** ${BINARY_NAME}"
-    echo "    # or add api_key to ~/.anda/config.yaml, then:"
-    echo "    ${BINARY_NAME}"
+    echo "  Manage Anda:"
+    echo "    ${BINARY_NAME} status"
+    echo "    ${BINARY_NAME} start"
+    echo "    ${BINARY_NAME} stop"
+    echo "    ${BINARY_NAME} autostart status"
     echo "    ${BINARY_NAME} --help"
 else
     success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"

@@ -28,7 +28,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-El instalador de Windows registra Anda para iniciar sesión con el usuario actual e intenta arrancar el daemon inmediatamente. Agrega `-NoAutostart` o `-NoStart` para desactivarlo.
+Los instaladores de release registran Anda para arrancar cuando inicia sesión el usuario actual e intentan arrancar el daemon inmediatamente. En PowerShell, agrega `-NoAutostart` o `-NoStart`; en el instalador shell, usa `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
 
 Después abre una terminal nueva y ejecuta:
 

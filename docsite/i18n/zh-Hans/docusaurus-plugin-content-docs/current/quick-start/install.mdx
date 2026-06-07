@@ -28,7 +28,7 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-Windows 安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。如果不想自动注册或启动，可以加 `-NoAutostart` 或 `-NoStart`。
+发布版安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 安装完成后打开一个新的终端，并运行：
 
