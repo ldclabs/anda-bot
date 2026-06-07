@@ -91,21 +91,29 @@ jobs:
 
       - name: Build Rust binary (native)
         if: ${{ !matrix.cross }}
+        shell: bash
         run: |
-          cargo build --release --locked --target ${{ matrix.rust_target }}
+          cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda
+          if [[ "${{ matrix.target }}" == windows-* || "${{ matrix.target }}" == macos-* ]]; then
+            cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda_launcher
+          fi
 
       - name: Build Rust binary (cross)
         if: ${{ matrix.cross }}
+        shell: bash
         env:
           XDG_CACHE_HOME: /tmp/anda-xdg-cache
         run: |
-          cross build --release --locked --target-dir ${{ matrix.build_dir }} --target ${{ matrix.rust_target }}
+          cross build --release --locked --target-dir ${{ matrix.build_dir }} --target ${{ matrix.rust_target }} --bin anda
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p release
           cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
+          if [[ "${{ matrix.target }}" == windows-* || "${{ matrix.target }}" == macos-* ]]; then
+            cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda_launcher${{ matrix.exe_ext }}" "release/anda_launcher-${{ matrix.target }}${{ matrix.exe_ext }}"
+          fi
 
           for file in release/*; do
             if command -v sha256sum >/dev/null 2>&1; then
@@ -152,10 +160,44 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  package-windows-installer:
+    needs:
+      - build-binary
+      - package-skills
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows-x86_64
+          path: release
+
+      - name: Download skills
+        uses: actions/download-artifact@v4
+        with:
+          name: release-skills
+          path: release
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1 -ReleaseDir release
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-installer
+          path: |
+            release/AndaBotSetup-windows-x86_64.exe
+            release/AndaBotSetup-windows-x86_64.exe.sha256
+          if-no-files-found: error
+
   release:
     needs:
       - build-binary
       - package-skills
+      - package-windows-installer
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

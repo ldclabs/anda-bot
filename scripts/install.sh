@@ -196,6 +196,28 @@ install_binary() {
     error "Could not replace ${INSTALL_PATH}"
 }
 
+install_launcher_binary() {
+    [ "$OS" = "macos" ] || return 0
+
+    LAUNCHER_INSTALL_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
+    LAUNCHER_INSTALL_TMP="${INSTALL_DIR}/.${LAUNCHER_INSTALL_NAME}.$$"
+
+    rm -f "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
+
+    if ! mv "${TMPDIR}/${LAUNCHER_ASSET_NAME}" "$LAUNCHER_INSTALL_TMP"; then
+        error "Could not stage launcher in ${INSTALL_DIR}"
+    fi
+
+    chmod +x "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
+
+    if mv -f "$LAUNCHER_INSTALL_TMP" "$LAUNCHER_INSTALL_PATH" 2>/dev/null; then
+        return 0
+    fi
+
+    rm -f "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
+    error "Could not replace ${LAUNCHER_INSTALL_PATH}"
+}
+
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -314,6 +336,11 @@ register_autostart() {
         return 0
     fi
 
+    if [ "$OS" = "macos" ] && [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ]; then
+        register_macos_launcher_autostart
+        return 0
+    fi
+
     info "Registering Anda to start when you log in..."
     if AUTOSTART_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" autostart install 2>&1); then
         success "Autostart registered."
@@ -326,8 +353,54 @@ register_autostart() {
     fi
 }
 
+register_macos_launcher_autostart() {
+    PLIST_DIR="${HOME}/Library/LaunchAgents"
+    PLIST_PATH="${PLIST_DIR}/com.ldclabs.anda-bot.launcher.plist"
+    LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
+    ESCAPED_LAUNCHER=$(printf '%s' "$LAUNCHER_PATH" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
+
+    info "Registering Anda launcher to start when you log in..."
+    mkdir -p "$PLIST_DIR" || {
+        info "Could not create ${PLIST_DIR}; skipping launcher autostart."
+        return 0
+    }
+
+    cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ldclabs.anda-bot.launcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${ESCAPED_LAUNCHER}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+EOF
+
+    launchctl bootout "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
+    success "Launcher autostart registered."
+}
+
 start_daemon() {
     if [ "${ANDA_NO_START:-0}" = "1" ]; then
+        return 0
+    fi
+
+    if [ "$OS" = "macos" ] && [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ]; then
+        info "Starting Anda launcher..."
+        nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
+        if [ "$?" -eq 0 ]; then
+            success "Anda launcher started."
+        else
+            info "Anda is installed, but the launcher did not start yet. Run:"
+            printf '    %s/%s\n' "$INSTALL_DIR" "$LAUNCHER_INSTALL_NAME"
+        fi
         return 0
     fi
 
@@ -391,6 +464,9 @@ fi
 ASSET_NAME="${BINARY_NAME}-${TARGET}${EXE_EXT}"
 CHECKSUM_NAME="${ASSET_NAME}.sha256"
 INSTALL_NAME="${BINARY_NAME}${EXE_EXT}"
+LAUNCHER_ASSET_NAME="anda_launcher-${TARGET}${EXE_EXT}"
+LAUNCHER_CHECKSUM_NAME="${LAUNCHER_ASSET_NAME}.sha256"
+LAUNCHER_INSTALL_NAME="anda_launcher${EXE_EXT}"
 
 print_banner
 
@@ -420,9 +496,25 @@ else
     info "Checksum file not found; skipping checksum verification."
 fi
 
+if [ "$OS" = "macos" ]; then
+    LAUNCHER_URL="https://github.com/${REPO}/releases/download/${VERSION}/${LAUNCHER_ASSET_NAME}"
+    LAUNCHER_CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${LAUNCHER_CHECKSUM_NAME}"
+    info "Downloading ${LAUNCHER_ASSET_NAME}..."
+    if curl -fsSL "$LAUNCHER_URL" -o "${TMPDIR}/${LAUNCHER_ASSET_NAME}"; then
+        if curl -fsSL "$LAUNCHER_CHECKSUM_URL" -o "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"; then
+            verify_checksum "${TMPDIR}/${LAUNCHER_ASSET_NAME}" "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"
+        else
+            info "Launcher checksum file not found; skipping checksum verification."
+        fi
+    else
+        error "Download failed. Launcher binary may not exist for ${TARGET}.\nCheck: https://github.com/${REPO}/releases/tag/${VERSION}"
+    fi
+fi
+
 # Install
 mkdir -p "$INSTALL_DIR" || error "Could not create install directory: ${INSTALL_DIR}"
 install_binary
+install_launcher_binary
 download_and_install_skills
 
 if [ "$OS" = "windows" ]; then
@@ -442,7 +534,12 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     echo "    ${BINARY_NAME} status"
     echo "    ${BINARY_NAME} start"
     echo "    ${BINARY_NAME} stop"
-    echo "    ${BINARY_NAME} autostart status"
+    if [ "$OS" = "macos" ]; then
+        echo "    ${LAUNCHER_INSTALL_NAME}"
+        echo "    launchctl print gui/$(id -u)/com.ldclabs.anda-bot.launcher"
+    else
+        echo "    ${BINARY_NAME} autostart status"
+    fi
     echo "    ${BINARY_NAME} --help"
 else
     success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"

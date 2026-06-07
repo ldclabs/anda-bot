@@ -22,13 +22,20 @@ macOS 和 Linux 也可以使用安装脚本：
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell：
+Windows 普通用户请从
+[latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载
+`AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到
+`%LOCALAPPDATA%\Programs\AndaBot`，安装内置 skills，创建开始菜单快捷方式，
+注册托盘 launcher 登录自启，安装完成后立即启动 launcher，并打开 GUI 向导完成
+provider/API key/model 配置。
+
+高级用户和 CI 仍可使用 PowerShell：
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-发布版安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
+macOS shell 安装器也会安装菜单栏 launcher，为 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon。Linux 和 PowerShell 脚本安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 安装完成后打开一个新的终端，并运行：
 
@@ -38,7 +45,7 @@ anda
 
 ## 准备模型 API key
 
-至少需要一个模型 provider API key。你可以先用环境变量启动：
+至少需要一个模型 provider API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以先用环境变量启动：
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda

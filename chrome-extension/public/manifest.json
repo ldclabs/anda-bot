@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "0.8.13",
+  "version": "0.9.0",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
   "minimum_chrome_version": "116",
@@ -19,7 +19,10 @@
     "webNavigation",
     "windows"
   ],
-  "host_permissions": ["<all_urls>", "file:///*"],
+  "host_permissions": [
+    "<all_urls>",
+    "file:///*"
+  ],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"

@@ -1,13 +1,17 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.8.14"
+version = "0.9.0"
 description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Brain."
 edition.workspace = true
 
 [[bin]]
 name = "anda"
 path = "src/main.rs"
+
+[[bin]]
+name = "anda_launcher"
+path = "src/bin/anda_launcher.rs"
 
 [dependencies]
 anda_brain = { workspace = true }
@@ -75,10 +79,32 @@ liteparse = { workspace = true, features = ["tesseract"] }
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true, features = [
+  "NSObject",
+  "NSNotification",
+  "NSString",
+] }
+objc2-app-kit = { workspace = true, features = [
+  "NSAlert",
+  "NSApplication",
+  "NSMenu",
+  "NSMenuItem",
+  "NSRunningApplication",
+  "NSStatusBar",
+  "NSStatusItem",
+  "objc2-core-foundation",
+] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
+  "Win32_Graphics_Gdi",
   "Win32_Foundation",
+  "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]
