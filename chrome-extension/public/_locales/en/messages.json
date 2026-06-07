@@ -30,28 +30,31 @@
     "message": "Connect Anda on this computer"
   },
   "onboardingIntro": {
-    "message": "The browser extension needs the local Anda program, a configured model provider, and a running daemon before chat is available."
+    "message": "The browser extension needs the Anda Bot tray or menu bar app, a configured model provider, and a running local daemon before chat is available."
   },
   "onboardingInstallTitle": {
-    "message": "Install Anda"
+    "message": "Install the Anda Bot launcher"
   },
   "onboardingInstallBody": {
-    "message": "Install the command-line app on this computer first."
+    "message": "Use the Windows setup installer or the macOS install script. The launcher starts after setup and keeps the local daemon available."
   },
-  "macLinux": {
-    "message": "macOS / Linux"
+  "windowsInstaller": {
+    "message": "Windows setup installer"
+  },
+  "macosInstaller": {
+    "message": "macOS menu bar app"
+  },
+  "openDownload": {
+    "message": "Open download"
   },
   "copyCommand": {
     "message": "Copy command"
   },
   "onboardingConfigureTitle": {
-    "message": "Configure and start"
+    "message": "Complete setup in the launcher"
   },
   "onboardingConfigureBody": {
-    "message": "Review ~/.anda/config.yaml for model provider settings, then start the daemon in the background so this side panel can connect."
-  },
-  "launchCommandLabel": {
-    "message": "Launch"
+    "message": "Open Anda Bot from the system tray, menu bar, or Start Menu, complete the provider/API key/model wizard, and keep the launcher running while you use the extension."
   },
   "onboardingTokenTitle": {
     "message": "Generate an extension token"

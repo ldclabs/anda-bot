@@ -30,28 +30,31 @@
     "message": "Connecter Anda sur cet ordinateur"
   },
   "onboardingIntro": {
-    "message": "L'extension de navigateur a besoin du programme local Anda, d'un fournisseur de modèle configuré et d'un daemon en cours d'exécution avant de pouvoir discuter."
+    "message": "L'extension de navigateur a besoin de l'application Anda Bot dans la zone de notification ou la barre de menus, d'un fournisseur de modèle configuré et d'un daemon local en cours d'exécution avant de pouvoir discuter."
   },
   "onboardingInstallTitle": {
-    "message": "Installer Anda"
+    "message": "Installer le launcher Anda Bot"
   },
   "onboardingInstallBody": {
-    "message": "Installez d'abord l'application en ligne de commande sur cet ordinateur."
+    "message": "Utilisez l'installateur Windows ou le script d'installation macOS. Le launcher démarre après la configuration et garde le daemon local disponible."
   },
-  "macLinux": {
-    "message": "macOS / Linux"
+  "windowsInstaller": {
+    "message": "Installateur Windows"
+  },
+  "macosInstaller": {
+    "message": "App de barre de menus macOS"
+  },
+  "openDownload": {
+    "message": "Ouvrir le téléchargement"
   },
   "copyCommand": {
     "message": "Copier la commande"
   },
   "onboardingConfigureTitle": {
-    "message": "Configurer et démarrer"
+    "message": "Terminer la configuration dans le launcher"
   },
   "onboardingConfigureBody": {
-    "message": "Vérifiez les paramètres du fournisseur de modèle dans ~/.anda/config.yaml, puis démarrez le daemon en arrière-plan afin que ce panneau latéral puisse se connecter."
-  },
-  "launchCommandLabel": {
-    "message": "Lancer"
+    "message": "Ouvrez Anda Bot depuis la zone de notification, la barre de menus ou le menu Démarrer, terminez l'assistant provider/API key/model et gardez le launcher en cours d'exécution pendant l'utilisation de l'extension."
   },
   "onboardingTokenTitle": {
     "message": "Générer un jeton d'extension"

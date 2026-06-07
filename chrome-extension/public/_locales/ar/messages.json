@@ -30,28 +30,31 @@
     "message": "وصّل Anda على هذا الكمبيوتر"
   },
   "onboardingIntro": {
-    "message": "تحتاج إضافة المتصفح إلى برنامج Anda المحلي ومزوّد نموذج مُعدّ وdaemon يعمل قبل توفر الدردشة."
+    "message": "تحتاج إضافة المتصفح إلى تطبيق Anda Bot في علبة النظام أو شريط القوائم، ومزوّد نموذج مُعدّ، وdaemon محلي قيد التشغيل قبل توفر الدردشة."
   },
   "onboardingInstallTitle": {
-    "message": "تثبيت Anda"
+    "message": "تثبيت مشغّل Anda Bot"
   },
   "onboardingInstallBody": {
-    "message": "ثبّت تطبيق سطر الأوامر على هذا الكمبيوتر أولاً."
+    "message": "استخدم مثبّت Windows أو سكربت تثبيت macOS. يبدأ المشغّل بعد الإعداد ويبقي daemon المحلي متاحًا."
   },
-  "macLinux": {
-    "message": "macOS / Linux"
+  "windowsInstaller": {
+    "message": "مثبّت Windows"
+  },
+  "macosInstaller": {
+    "message": "تطبيق شريط قوائم macOS"
+  },
+  "openDownload": {
+    "message": "فتح التنزيل"
   },
   "copyCommand": {
     "message": "نسخ الأمر"
   },
   "onboardingConfigureTitle": {
-    "message": "الإعداد والتشغيل"
+    "message": "إكمال الإعداد في المشغّل"
   },
   "onboardingConfigureBody": {
-    "message": "راجع إعدادات مزوّد النموذج في ~/.anda/config.yaml، ثم ابدأ daemon في الخلفية حتى تتمكن هذه اللوحة الجانبية من الاتصال."
-  },
-  "launchCommandLabel": {
-    "message": "تشغيل"
+    "message": "افتح Anda Bot من علبة النظام أو شريط القوائم أو قائمة Start، وأكمل معالج provider/API key/model، وأبقِ المشغّل قيد التشغيل أثناء استخدام الإضافة."
   },
   "onboardingTokenTitle": {
     "message": "إنشاء رمز للإضافة"

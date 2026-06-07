@@ -30,28 +30,31 @@
     "message": "Подключите Anda на этом компьютере"
   },
   "onboardingIntro": {
-    "message": "Расширению браузера нужны локальная программа Anda, настроенный поставщик модели и запущенный daemon, прежде чем можно будет начать чат."
+    "message": "Расширению браузера требуется приложение Anda Bot в трее или строке меню, настроенный поставщик модели и запущенный локальный daemon, прежде чем можно будет начать чат."
   },
   "onboardingInstallTitle": {
-    "message": "Установить Anda"
+    "message": "Установить лаунчер Anda Bot"
   },
   "onboardingInstallBody": {
-    "message": "Сначала установите приложение командной строки на этот компьютер."
+    "message": "Используйте установщик Windows или скрипт установки macOS. Лаунчер запускается после настройки и поддерживает локальный daemon доступным."
   },
-  "macLinux": {
-    "message": "macOS / Linux"
+  "windowsInstaller": {
+    "message": "Установщик Windows"
+  },
+  "macosInstaller": {
+    "message": "Приложение строки меню macOS"
+  },
+  "openDownload": {
+    "message": "Открыть загрузку"
   },
   "copyCommand": {
     "message": "Копировать команду"
   },
   "onboardingConfigureTitle": {
-    "message": "Настроить и запустить"
+    "message": "Завершить настройку в лаунчере"
   },
   "onboardingConfigureBody": {
-    "message": "Проверьте настройки поставщика модели в ~/.anda/config.yaml, затем запустите daemon в фоне, чтобы эта боковая панель могла подключиться."
-  },
-  "launchCommandLabel": {
-    "message": "Запуск"
+    "message": "Откройте Anda Bot из системного трея, строки меню или меню Пуск, завершите мастер provider/API key/model и держите лаунчер запущенным во время использования расширения."
   },
   "onboardingTokenTitle": {
     "message": "Создать токен расширения"

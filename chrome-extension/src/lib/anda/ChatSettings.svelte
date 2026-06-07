@@ -59,12 +59,10 @@
     Boolean(andaClient.settings.token && modelNames.length > 0 && !loadingModels && !switchingModel)
   )
 
-  const installCommand = 'brew install ldclabs/tap/anda'
   const installScriptCommand =
     'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
-  const windowsInstallCommand =
-    'irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex'
-  const launchCommand = 'anda start'
+  const windowsInstallerUrl =
+    'https://github.com/ldclabs/anda-bot/releases/latest/download/AndaBotSetup-windows-x86_64.exe'
   const tokenCommand = 'anda browser token --days 365'
 
   function markSettingsDirty() {
@@ -200,6 +198,21 @@
   </div>
 {/snippet}
 
+{#snippet downloadBlock(label: string, url: string)}
+  <div class="grid min-w-0 gap-1.5">
+    <span class="min-w-0 truncate text-[10px] font-semibold text-muted-foreground">{label}</span>
+    <a
+      class={buttonClass('outline', 'sm', 'w-full justify-between bg-background text-xs')}
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <span class="min-w-0 truncate">{chrome.i18n.getMessage('openDownload')}</span>
+      <ExternalLink class="size-3.5" />
+    </a>
+  </div>
+{/snippet}
+
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class={dialogOverlayClass()} />
@@ -283,9 +296,14 @@
                     </p>
                   </div>
                   <div class="grid gap-2">
-                    {@render commandBlock('Homebrew', installCommand)}
-                    {@render commandBlock(chrome.i18n.getMessage('macLinux'), installScriptCommand)}
-                    {@render commandBlock('Windows PowerShell', windowsInstallCommand)}
+                    {@render downloadBlock(
+                      chrome.i18n.getMessage('windowsInstaller'),
+                      windowsInstallerUrl
+                    )}
+                    {@render commandBlock(
+                      chrome.i18n.getMessage('macosInstaller'),
+                      installScriptCommand
+                    )}
                   </div>
                 </div>
               </div>
@@ -307,10 +325,6 @@
                       {chrome.i18n.getMessage('onboardingConfigureBody')}
                     </p>
                   </div>
-                  {@render commandBlock(
-                    chrome.i18n.getMessage('launchCommandLabel'),
-                    launchCommand
-                  )}
                 </div>
               </div>
 

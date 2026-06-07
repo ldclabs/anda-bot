@@ -30,28 +30,31 @@
     "message": "连接这台电脑上的 Anda"
   },
   "onboardingIntro": {
-    "message": "浏览器扩展需要先安装本机 Anda 程序、配置模型服务商，并让守护进程保持运行，之后才能开始聊天。"
+    "message": "浏览器扩展需要先安装 Anda Bot 托盘/菜单栏程序、配置模型服务商，并保持本机 daemon 运行，之后才能开始聊天。"
   },
   "onboardingInstallTitle": {
-    "message": "安装 Anda"
+    "message": "安装 Anda Bot launcher"
   },
   "onboardingInstallBody": {
-    "message": "先在这台电脑上安装命令行程序。"
+    "message": "Windows 请使用安装器；macOS 请使用安装脚本。launcher 会在安装后启动，并让本机 daemon 保持可用。"
   },
-  "macLinux": {
-    "message": "macOS / Linux"
+  "windowsInstaller": {
+    "message": "Windows 安装器"
+  },
+  "macosInstaller": {
+    "message": "macOS 菜单栏程序"
+  },
+  "openDownload": {
+    "message": "打开下载"
   },
   "copyCommand": {
     "message": "复制命令"
   },
   "onboardingConfigureTitle": {
-    "message": "配置并启动"
+    "message": "在 launcher 中完成设置"
   },
   "onboardingConfigureBody": {
-    "message": "检查 ~/.anda/config.yaml 中的模型服务商配置，然后在后台启动守护进程，让侧边栏可以连接。"
-  },
-  "launchCommandLabel": {
-    "message": "启动"
+    "message": "从系统托盘、菜单栏或开始菜单打开 Anda Bot，完成 provider/API key/model 向导，并在使用扩展时保持 launcher 运行。"
   },
   "onboardingTokenTitle": {
     "message": "生成扩展令牌"

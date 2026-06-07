@@ -1,7 +1,10 @@
 use std::process::Command;
 
+#[cfg(any(windows, test))]
+use std::{fs, path::Path};
+
 #[cfg(windows)]
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use crate::core::{
     LauncherContext, LauncherResult, WizardConfig, default_model_for_provider, provider_by_id,
@@ -13,6 +16,8 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(any(windows, test))]
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
 
 pub fn run_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
     let Some(config) = show_settings_dialog(ctx)? else {
@@ -33,18 +38,18 @@ pub fn run_initial_setup_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
 #[cfg(windows)]
 pub fn show_settings_dialog(ctx: &LauncherContext) -> LauncherResult<Option<WizardConfig>> {
     let script_path = settings_script_path(ctx, "settings.ps1")?;
-    fs::write(&script_path, windows_settings_script())?;
+    write_windows_settings_script(&script_path)?;
 
     let output = run_windows_powershell(&script_path)?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_powershell_output(&output.stderr);
         if stderr.contains("Anda setup cancelled") {
             return Ok(None);
         }
         return Err(text().settings_wizard_failed(stderr.trim()).into());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = decode_powershell_output(&output.stdout);
     parse_settings_payload(&stdout)
 }
 
@@ -115,6 +120,15 @@ fn settings_script_path(ctx: &LauncherContext, file_name: &str) -> LauncherResul
     Ok(dir.join(file_name))
 }
 
+#[cfg(any(windows, test))]
+fn write_windows_settings_script(script_path: &Path) -> std::io::Result<()> {
+    let script = windows_settings_script();
+    let mut bytes = Vec::with_capacity(UTF8_BOM.len() + script.len());
+    bytes.extend_from_slice(UTF8_BOM);
+    bytes.extend_from_slice(script.as_bytes());
+    fs::write(script_path, bytes)
+}
+
 #[cfg(windows)]
 fn run_windows_powershell(script_path: &PathBuf) -> LauncherResult<std::process::Output> {
     let mut last_err = None;
@@ -140,6 +154,37 @@ fn run_windows_powershell(script_path: &PathBuf) -> LauncherResult<std::process:
 }
 
 #[cfg(windows)]
+fn decode_powershell_output(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+
+    if let Some(text) =
+        decode_bytes_with_windows_code_page(bytes, windows_console_output_code_page())
+    {
+        return text;
+    }
+
+    anda_core::text_from_bytes(bytes)
+        .map(|text| text.into_owned())
+        .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+}
+
+#[cfg(any(windows, test))]
+fn decode_bytes_with_windows_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
+    anda_core::text_from_bytes_with_encoding(
+        bytes,
+        anda_core::windows_code_page_encoding(code_page),
+    )
+    .map(|text| text.into_owned())
+}
+
+#[cfg(windows)]
+fn windows_console_output_code_page() -> u32 {
+    unsafe { windows_sys::Win32::Globalization::GetOEMCP() }
+}
+
+#[cfg(any(windows, test))]
 fn windows_settings_script() -> String {
     let copy = text();
     let provider_items = provider_ids()
@@ -302,7 +347,7 @@ return "ANDA_PROVIDER=" & providerId & linefeed & "ANDA_MODEL=" & modelText & li
     )
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn ps_single(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -353,6 +398,31 @@ mod tests {
                 model: "gpt-5.5".to_string(),
                 api_key: String::new(),
             }
+        );
+    }
+
+    #[test]
+    fn writes_windows_settings_script_with_utf8_bom() {
+        let temp = tempfile::tempdir().unwrap();
+        let script_path = temp.path().join("settings.ps1");
+
+        write_windows_settings_script(&script_path).unwrap();
+
+        let bytes = fs::read(script_path).unwrap();
+        assert!(bytes.starts_with(UTF8_BOM));
+        assert_eq!(
+            &bytes[UTF8_BOM.len()..],
+            windows_settings_script().as_bytes()
+        );
+    }
+
+    #[test]
+    fn decodes_windows_power_shell_output_with_oem_code_page() {
+        let gbk = [0xC9, 0xE8, 0xD6, 0xC3, 0xCF, 0xF2, 0xB5, 0xBC];
+
+        assert_eq!(
+            decode_bytes_with_windows_code_page(&gbk, 936).as_deref(),
+            Some("设置向导")
         );
     }
 }
