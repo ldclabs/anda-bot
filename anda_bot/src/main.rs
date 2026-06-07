@@ -359,7 +359,7 @@ async fn build_browser_extension_token(
 }
 
 async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], BoxError> {
-    match tokio::fs::read_to_string(key_path).await {
+    match util::text::read_text_file(key_path).await {
         Ok(content) => {
             let secret = util::key::parse_ed25519_privkey(content.trim())?;
             Ok(secret)

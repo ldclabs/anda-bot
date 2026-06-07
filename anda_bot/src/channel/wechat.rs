@@ -18,7 +18,10 @@ use super::{
     Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace, SendMessage,
     file_name_for_resource, is_http_url, resource_from_bytes,
 };
-use crate::config::{self, normalize_identity, normalize_string};
+use crate::{
+    config::{self, normalize_identity, normalize_string},
+    util::text::read_text_file,
+};
 
 const WECHAT_MAX_MESSAGE_LENGTH: usize = 4000;
 const WECHAT_CONTINUATION_OVERHEAD: usize = 30;
@@ -112,7 +115,7 @@ impl WechatChannel {
 
     async fn saved_token(&self) -> Option<String> {
         let path = self.workspace.path()?.join("token.txt");
-        let token = tokio::fs::read_to_string(path).await.ok()?;
+        let token = read_text_file(path).await.ok()?;
         let token = token.trim().to_string();
         (!token.is_empty()).then_some(token)
     }
@@ -681,7 +684,7 @@ fn wechat_media_file_name(media: &MediaInfo, message_id: &str) -> String {
 
 async fn load_sync_buf_from_workspace(workspace: &Arc<ChannelWorkspace>) -> Option<String> {
     let path = workspace.path()?.join("sync_buf.json");
-    let data = tokio::fs::read_to_string(path).await.ok()?;
+    let data = read_text_file(path).await.ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&data).ok()?;
     parsed
         .get("get_updates_buf")
@@ -709,7 +712,7 @@ async fn load_context_tokens_from_workspace(
     let Some(path) = workspace.path() else {
         return HashMap::new();
     };
-    let Ok(data) = tokio::fs::read_to_string(path.join(WECHAT_CONTEXT_TOKENS_FILE)).await else {
+    let Ok(data) = read_text_file(path.join(WECHAT_CONTEXT_TOKENS_FILE)).await else {
         return HashMap::new();
     };
     serde_json::from_str(&data).unwrap_or_default()
@@ -721,8 +724,7 @@ async fn load_context_token_meta_from_workspace(
     let Some(path) = workspace.path() else {
         return HashMap::new();
     };
-    let Ok(data) = tokio::fs::read_to_string(path.join(WECHAT_CONTEXT_TOKEN_META_FILE)).await
-    else {
+    let Ok(data) = read_text_file(path.join(WECHAT_CONTEXT_TOKEN_META_FILE)).await else {
         return HashMap::new();
     };
     serde_json::from_str(&data).unwrap_or_default()
@@ -902,7 +904,7 @@ async fn save_context_token_to_workspace(
     }
 
     let mut tokens = load_context_tokens_from_workspace(workspace).await;
-    if !tokens.get(user_id).is_some_and(|current| current == token) {
+    if tokens.get(user_id).is_none_or(|current| current != token) {
         tokens.insert(user_id.to_string(), token.to_string());
         save_context_tokens_to_workspace(workspace, &tokens).await;
     }

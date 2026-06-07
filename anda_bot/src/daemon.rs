@@ -161,7 +161,7 @@ impl Daemon {
 
     pub async fn read_pid_file(&self) -> Result<Option<u32>, BoxError> {
         let pid_path = self.pid_file_path();
-        match tokio::fs::read_to_string(pid_path).await {
+        match util::text::read_text_file(&pid_path).await {
             Ok(content) => Ok(content.trim().parse::<u32>().ok()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err.into()),
@@ -397,7 +397,7 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
                 return Ok(PidFileGuard { path: pid_path });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                match tokio::fs::read_to_string(&pid_path).await {
+                match util::text::read_text_file(&pid_path).await {
                     Ok(content) => {
                         let existing_pid = content.trim().parse::<u32>().ok();
                         if let Some(pid) = existing_pid

@@ -12,6 +12,7 @@ use std::{
 use crate::{
     engine::{ConversationsTool, ConversationsToolArgs},
     gateway,
+    util::text::read_text_file,
 };
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
@@ -115,7 +116,7 @@ async fn read_prompt(
     match (prompt, prompt_file) {
         (Some(_), Some(_)) => Err("--prompt and --prompt-file cannot be used together".into()),
         (Some(prompt), None) => Ok(prompt.to_string()),
-        (None, Some(path)) => Ok(tokio::fs::read_to_string(path).await?),
+        (None, Some(path)) => Ok(read_text_file(path).await?),
         (None, None) => Err("--prompt or --prompt-file is required".into()),
     }
 }

@@ -2,6 +2,8 @@ use anda_engine::model::ModelConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::util::text::read_text_file_sync;
+
 use super::normalize_string;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -20,7 +22,7 @@ impl ModelSettings {
                 && provider.api_base == "https://chatgpt.com/backend-api/codex"
             {
                 let token_path = home.join(".codex/auth.json");
-                if let Ok(token_str) = std::fs::read_to_string(token_path)
+                if let Ok(token_str) = read_text_file_sync(token_path)
                     && let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
                     && !token.tokens.access_token.is_empty()
                 {

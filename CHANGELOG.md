@@ -15,6 +15,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Legacy text decoding**: local text files and text-like attachments now decode through the shared platform-aware text helper, allowing Windows legacy encodings such as GBK for config-adjacent files, prompt files, WeChat token caches, and text attachments instead of requiring strict UTF-8.
 - **Windows channel workspaces**: channel workspace directories now escape Windows-invalid channel id characters such as `:`, while preserving the existing non-Windows layout.
 
 ## [0.8.13] — 2026-06-06

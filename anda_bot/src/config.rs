@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::util::text::read_text_file;
+
 mod channel;
 mod model;
 mod transcription;
@@ -86,7 +88,7 @@ impl Config {
     }
 
     pub async fn from_file(path: &Path) -> Result<Self, BoxError> {
-        let content = match tokio::fs::read_to_string(path).await {
+        let content = match read_text_file(path).await {
             Ok(content) => content,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(err.into()),
@@ -158,9 +160,7 @@ impl Config {
             }
 
             let base = format!("users[{index}]");
-            if user.pubkey.trim().is_empty() {
-                issues.push(format!("{base}.pubkey"));
-            } else if user.pubkey().is_err() {
+            if user.pubkey.trim().is_empty() || user.pubkey().is_err() {
                 issues.push(format!("{base}.pubkey"));
             }
 

@@ -1,7 +1,7 @@
 use anda_core::{
     Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionFeatures,
     CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
-    Usage, inline_data_from_data_url,
+    Usage, inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
 };
 use anda_engine::{
     context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -17,7 +17,10 @@ use liteparse::{LiteParse, LiteParseConfig, types::PdfInput};
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 pub const IMAGE_UNDERSTANDING_AGENT_NAME: &str = "image_understanding";
 pub const AUDIO_UNDERSTANDING_AGENT_NAME: &str = "audio_understanding";
@@ -82,7 +85,7 @@ impl MediaKind {
                 "Understand video attachments, video file paths, or video URLs using the model labeled `video`, returning a textual summary for downstream agents."
             }
             Self::Other => {
-                "Understand non-image/audio/video attachments. UTF-8 blobs are handled as text, PDFs are parsed locally with LiteParse, and other formats are delegated to available skills or shell-assisted extraction."
+                "Understand non-image/audio/video attachments. Text blobs are handled directly, PDFs are parsed locally with LiteParse, and other formats are delegated to available skills or shell-assisted extraction."
             }
         }
     }
@@ -122,7 +125,7 @@ impl MediaKind {
 
     fn instructions(self) -> String {
         if self == Self::Other {
-            return "You are a specialized attachment understanding subagent. Prefer local, faithful extraction over guessing. For UTF-8 text, preserve the actual content when it is small and summarize it when it is large. For PDFs, use LiteParse extraction results. For other formats, look for a suitable installed skill first, then use safe shell/read-only inspection, and only research a method over the network when local options are insufficient. Return Markdown plain text for the main agent and clearly mark failures or uncertainty.".to_string();
+            return "You are a specialized attachment understanding subagent. Prefer local, faithful extraction over guessing. For text attachments, preserve the actual content when it is small and summarize it when it is large. For PDFs, use LiteParse extraction results. For other formats, look for a suitable installed skill first, then use safe shell/read-only inspection, and only research a method over the network when local options are insufficient. Return Markdown plain text for the main agent and clearly mark failures or uncertainty.".to_string();
         }
 
         format!(
@@ -535,14 +538,14 @@ impl MediaUnderstandingAgent {
                 .await;
         }
 
-        if let Some(text) = utf8_text_from_bytes(data) {
+        if let Some(text) = attachment_text_from_bytes(data, &attachment) {
             return self
                 .text_or_summary_output(
                     ctx,
                     &attachment.label,
                     &attachment.name,
-                    "UTF-8 text attachment",
-                    text,
+                    "text attachment",
+                    text.as_ref(),
                     question,
                 )
                 .await;
@@ -1146,22 +1149,147 @@ fn is_pdf_mime_type(mime_type: &str) -> bool {
     mime_type.trim().eq_ignore_ascii_case("application/pdf")
 }
 
-fn utf8_text_from_bytes(data: &[u8]) -> Option<&str> {
-    let text = std::str::from_utf8(data).ok()?;
-    looks_like_text(text).then_some(text)
-}
-
-fn looks_like_text(text: &str) -> bool {
-    let mut sampled = 0usize;
-    let mut suspicious = 0usize;
-    for ch in text.chars().take(4096) {
-        sampled += 1;
-        if ch.is_control() && !matches!(ch, '\n' | '\r' | '\t') {
-            suspicious += 1;
-        }
+fn attachment_text_from_bytes<'a>(
+    data: &'a [u8],
+    attachment: &OtherAttachment,
+) -> Option<Cow<'a, str>> {
+    if let Some(text) = utf8_text_from_bytes(data) {
+        return Some(Cow::Borrowed(text));
     }
 
-    sampled == 0 || suspicious * 100 / sampled <= 5
+    if !attachment_allows_legacy_text_fallback(attachment) {
+        return None;
+    }
+
+    text_from_bytes(data)
+}
+
+#[cfg(test)]
+fn attachment_text_from_bytes_with_windows_code_page<'a>(
+    data: &'a [u8],
+    attachment: &OtherAttachment,
+    code_page: u32,
+) -> Option<Cow<'a, str>> {
+    if let Some(text) = utf8_text_from_bytes(data) {
+        return Some(Cow::Borrowed(text));
+    }
+
+    if !attachment_allows_legacy_text_fallback(attachment) {
+        return None;
+    }
+
+    anda_core::text_from_bytes_with_encoding(data, anda_core::windows_code_page_encoding(code_page))
+}
+
+fn attachment_allows_legacy_text_fallback(attachment: &OtherAttachment) -> bool {
+    if attachment
+        .mime_type
+        .as_deref()
+        .and_then(normalize_mime_type)
+        .is_some_and(|mime_type| mime_type_allows_legacy_text_fallback(&mime_type))
+    {
+        return true;
+    }
+
+    if extension_from_name(&attachment.name).is_some_and(is_text_extension) {
+        return true;
+    }
+
+    attachment.tags.iter().any(|tag| {
+        let tag = tag.trim().trim_start_matches('.').to_ascii_lowercase();
+        matches!(
+            tag.as_str(),
+            "text"
+                | "txt"
+                | "md"
+                | "markdown"
+                | "json"
+                | "jsonl"
+                | "ndjson"
+                | "csv"
+                | "tsv"
+                | "xml"
+                | "yaml"
+                | "yml"
+                | "toml"
+                | "html"
+                | "htm"
+                | "log"
+        )
+    })
+}
+
+fn mime_type_allows_legacy_text_fallback(mime_type: &str) -> bool {
+    let essence = mime_type
+        .split(';')
+        .next()
+        .unwrap_or(mime_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    essence.is_empty()
+        || essence.starts_with("text/")
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
+        || matches!(
+            essence.as_str(),
+            "application/json"
+                | "application/xml"
+                | "application/javascript"
+                | "application/x-javascript"
+                | "application/x-ndjson"
+                | "application/yaml"
+                | "application/x-yaml"
+                | "application/toml"
+                | "application/x-www-form-urlencoded"
+        )
+}
+
+fn is_text_extension(ext: &str) -> bool {
+    matches!(
+        ext.trim().to_ascii_lowercase().as_str(),
+        "txt"
+            | "text"
+            | "md"
+            | "markdown"
+            | "json"
+            | "jsonl"
+            | "ndjson"
+            | "csv"
+            | "tsv"
+            | "xml"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "html"
+            | "htm"
+            | "js"
+            | "mjs"
+            | "cjs"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "css"
+            | "rs"
+            | "py"
+            | "go"
+            | "java"
+            | "c"
+            | "h"
+            | "cpp"
+            | "hpp"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "ps1"
+            | "bat"
+            | "cmd"
+            | "ini"
+            | "conf"
+            | "cfg"
+            | "env"
+            | "log"
+    )
 }
 
 async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
@@ -1741,9 +1869,36 @@ mod tests {
     }
 
     #[test]
-    fn utf8_text_detection_rejects_control_heavy_binary() {
-        assert_eq!(utf8_text_from_bytes(b"plain text"), Some("plain text"));
-        assert!(utf8_text_from_bytes(&[0, 0, 0, 0, 0, 0]).is_none());
+    fn text_attachment_detection_rejects_control_heavy_binary() {
+        let attachment = test_other_attachment("notes.txt", Some("text/plain"), vec![]);
+
+        assert_eq!(
+            attachment_text_from_bytes(b"plain text", &attachment).as_deref(),
+            Some("plain text")
+        );
+        assert!(attachment_text_from_bytes(&[0, 0, 0, 0, 0, 0], &attachment).is_none());
+    }
+
+    #[test]
+    fn text_attachment_detection_decodes_legacy_windows_text_when_text_like() {
+        let gbk = [0xD6, 0xD0, 0xCE, 0xC4];
+        let attachment =
+            test_other_attachment("notes.txt", Some("application/octet-stream"), vec![]);
+
+        assert_eq!(
+            attachment_text_from_bytes_with_windows_code_page(&gbk, &attachment, 936).as_deref(),
+            Some("中文")
+        );
+    }
+
+    #[test]
+    fn text_attachment_detection_rejects_legacy_fallback_for_binary_mime() {
+        let gbk = [0xD6, 0xD0, 0xCE, 0xC4];
+        let attachment = test_other_attachment("image.jpg", Some("image/jpeg"), vec![]);
+
+        assert!(
+            attachment_text_from_bytes_with_windows_code_page(&gbk, &attachment, 936).is_none()
+        );
     }
 
     #[test]
@@ -1773,6 +1928,23 @@ mod tests {
         };
 
         assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Video));
+    }
+
+    fn test_other_attachment(
+        name: &str,
+        mime_type: Option<&str>,
+        tags: Vec<&str>,
+    ) -> OtherAttachment {
+        OtherAttachment {
+            label: name.to_string(),
+            name: name.to_string(),
+            mime_type: mime_type.map(ToString::to_string),
+            uri: None,
+            size: None,
+            data: None,
+            tags: tags.into_iter().map(ToString::to_string).collect(),
+            read_error: None,
+        }
     }
 
     #[test]

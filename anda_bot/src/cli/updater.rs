@@ -766,6 +766,8 @@ mod tests {
 
     #[test]
     fn install_skills_replaces_curated_entries_and_keeps_custom_entries() {
+        use crate::util::text::read_text_file_sync;
+
         let temp = tempfile::tempdir().unwrap();
         let staging_dir = temp.path().join("staging");
         let skills_dir = temp.path().join("skills");
@@ -782,11 +784,11 @@ mod tests {
 
         assert_eq!(installed, 1);
         assert_eq!(
-            std::fs::read_to_string(skills_dir.join("codex/SKILL.md")).unwrap(),
+            read_text_file_sync(skills_dir.join("codex/SKILL.md")).unwrap(),
             "new codex"
         );
         assert_eq!(
-            std::fs::read_to_string(skills_dir.join("custom/SKILL.md")).unwrap(),
+            read_text_file_sync(skills_dir.join("custom/SKILL.md")).unwrap(),
             "custom"
         );
     }
