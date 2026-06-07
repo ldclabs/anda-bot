@@ -27,6 +27,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use tokio_util::sync::CancellationToken;
 
 mod agent;
 mod browser;
@@ -91,6 +92,12 @@ pub struct EngineConfig {
 struct AutoUpdateRouteState {
     app: AppState,
     auto_updater: Arc<AutoUpdater>,
+}
+
+#[derive(Clone)]
+struct DaemonControlRouteState {
+    app: AppState,
+    cancel_token: CancellationToken,
 }
 
 impl Engines {
@@ -359,10 +366,14 @@ impl Engines {
         })
     }
 
-    pub fn into_router(self) -> Router<()> {
+    pub fn into_router(self, cancel_token: CancellationToken) -> Router<()> {
         let auto_update_route_state = AutoUpdateRouteState {
             app: self.state.clone(),
             auto_updater: self.auto_updater.clone(),
+        };
+        let daemon_control_route_state = DaemonControlRouteState {
+            app: self.state.clone(),
+            cancel_token,
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
@@ -381,13 +392,17 @@ impl Engines {
                 routing::post(auto_update_install_and_restart),
             )
             .with_state(auto_update_route_state);
+        let daemon_control_router = Router::new()
+            .route("/daemon/shutdown", routing::post(daemon_shutdown))
+            .with_state(daemon_control_route_state);
 
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
             .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state)
             .merge(browser_ws_router)
-            .merge(auto_update_router);
+            .merge(auto_update_router)
+            .merge(daemon_control_router);
         app
     }
 }
@@ -425,7 +440,26 @@ async fn auto_update_install_and_restart(
     }
 }
 
+async fn daemon_shutdown(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
+        return *response;
+    }
+
+    state.cancel_token.cancel();
+    AxumJson(json!({ "status": "shutting_down" })).into_response()
+}
+
 fn verify_update_request(
+    app: &AppState,
+    headers: &HeaderMap,
+) -> Result<(), Box<axum::response::Response>> {
+    verify_authenticated_request(app, headers)
+}
+
+fn verify_authenticated_request(
     app: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), Box<axum::response::Response>> {

@@ -58,6 +58,10 @@ impl Client {
             .await
     }
 
+    pub async fn shutdown(&self) -> Result<Json, BoxError> {
+        self.post_json("/daemon/shutdown", &()).await
+    }
+
     #[allow(unused)]
     pub async fn execute_kip_readonly(&self, req: &KipRequest) -> Result<KipResponse, BoxError> {
         self.post_json("/v1/anda_bot/execute_kip_readonly", &req)

@@ -20,6 +20,18 @@ use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, STILL_ACTIVE},
+    System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS, GetExitCodeProcess,
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, TerminateProcess,
+    },
+};
+
 use crate::{auto_update, brain, channel, config::Config, cron, engine, gateway, logger, util};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
@@ -50,6 +62,7 @@ pub enum LaunchState {
 pub enum StopState {
     NotRunning,
     Stopped(u32),
+    StoppedUnknown,
 }
 
 impl Daemon {
@@ -234,7 +247,7 @@ impl Daemon {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub async fn stop_background(&self, timeout: Duration) -> Result<StopState, BoxError> {
         let pid_path = self.pid_file_path();
         let Some(pid) = self.read_pid_file().await? else {
@@ -253,9 +266,21 @@ impl Daemon {
         Ok(StopState::Stopped(pid))
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub async fn stop_background(&self, _timeout: Duration) -> Result<StopState, BoxError> {
-        Err("anda daemon stop/restart is only supported on unix platforms".into())
+        Err("anda daemon stop/restart is not supported on this platform".into())
+    }
+
+    pub async fn wait_for_background_exit(
+        &self,
+        pid: u32,
+        timeout: Duration,
+    ) -> Result<(), BoxError> {
+        wait_for_process_exit(pid, timeout).await
+    }
+
+    pub async fn remove_pid_file_if_exists(&self) -> Result<(), BoxError> {
+        remove_file_if_exists(&self.pid_file_path()).await
     }
 
     pub async fn serve(
@@ -441,7 +466,30 @@ fn terminate_process(pid: u32) -> Result<(), BoxError> {
     Err(err.into())
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> Result<(), BoxError> {
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if handle.is_null() {
+        if !process_exists(pid) {
+            return Ok(());
+        }
+        return Err(io::Error::last_os_error().into());
+    }
+
+    let result = unsafe { TerminateProcess(handle, 1) };
+    let err = io::Error::last_os_error();
+    unsafe {
+        CloseHandle(handle);
+    }
+
+    if result != 0 || !process_exists(pid) {
+        return Ok(());
+    }
+
+    Err(err.into())
+}
+
+#[cfg(any(unix, windows))]
 async fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), BoxError> {
     let deadline = Instant::now() + timeout;
 
@@ -460,6 +508,11 @@ async fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), BoxErr
     }
 }
 
+#[cfg(not(any(unix, windows)))]
+async fn wait_for_process_exit(_pid: u32, _timeout: Duration) -> Result<(), BoxError> {
+    Err("waiting for daemon exit is not supported on this platform".into())
+}
+
 #[cfg(unix)]
 fn configure_background_daemon_command(command: &mut Command) {
     unsafe {
@@ -472,7 +525,12 @@ fn configure_background_daemon_command(command: &mut Command) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn configure_background_daemon_command(command: &mut Command) {
+    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+}
+
+#[cfg(not(any(unix, windows)))]
 fn configure_background_daemon_command(_command: &mut Command) {}
 
 #[cfg(unix)]
@@ -488,7 +546,23 @@ pub fn process_exists(pid: u32) -> bool {
     matches!(std::io::Error::last_os_error().raw_os_error(), Some(code) if code == libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn process_exists(pid: u32) -> bool {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+
+    let mut exit_code = 0;
+    let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
+    unsafe {
+        CloseHandle(handle);
+    }
+
+    ok && exit_code == STILL_ACTIVE
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn process_exists(_pid: u32) -> bool {
     false
 }

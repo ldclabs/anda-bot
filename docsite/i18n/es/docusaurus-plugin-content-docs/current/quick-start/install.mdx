@@ -28,6 +28,8 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
+El instalador de Windows registra Anda para iniciar sesión con el usuario actual e intenta arrancar el daemon inmediatamente. Agrega `-NoAutostart` o `-NoStart` para desactivarlo.
+
 Después abre una terminal nueva y ejecuta:
 
 ```bash
@@ -91,6 +93,9 @@ anda --home /path/to/.anda
 
 ```bash
 anda update
+anda status
+anda start
 anda stop
 anda restart
+anda autostart status
 ```

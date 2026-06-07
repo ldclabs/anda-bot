@@ -58,6 +58,10 @@ On Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
+The Windows installer registers Anda to start when the current user logs in and
+tries to start the daemon immediately. Use `-NoAutostart` or `-NoStart` if you
+want to opt out.
+
 Requirements:
 
 - At least one model provider API key, either in `~/.anda/config.yaml` or in a supported environment variable.
@@ -135,11 +139,14 @@ Update an install-script release to the latest version:
 anda update
 ```
 
-Stop or restart the background daemon on Unix:
+Manage the background daemon:
 
 ```bash
+anda status
+anda start
 anda stop
 anda restart
+anda autostart status
 ```
 
 Send a one-time prompt and wait for the complete result without opening the terminal UI:

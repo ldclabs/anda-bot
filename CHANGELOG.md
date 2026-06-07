@@ -7,11 +7,15 @@ All notable changes to Anda Bot.
 ### Added
 
 - **Bundled document skills expanded**: added `doc-coauthoring`, `pptx`, and `xlsx` skills so Anda Bot can guide structured document co-authoring and handle PowerPoint and spreadsheet workflows from the built-in skill set.
+- **Windows login autostart management**: added `anda autostart install|uninstall|status`, with the Windows installer registering login autostart by default and optional `-NoAutostart` / `-NoStart` switches.
+- **Daemon status command**: added `anda status` to report whether the background daemon process and gateway are running, including pid, gateway URL, and log path when available.
 - **Multi-user channel ownership**: `config.yaml` now supports top-level trusted `users` with Ed25519 public keys, and IRC, Telegram, WeChat, Discord, and Lark/Feishu channel entries can set `user` to choose which trusted Anda caller owns conversations, resources, and memory context.
 
 ### Changed
 
 - **Bundled skill tooling refreshed**: updated `skill-creator`, `docx`, and `deep-research` guidance and helper scripts for Anda Bot skill packaging, validation, eval runs, and Office document workflows.
+- **Daemon stop/restart improved**: `anda stop` and `anda restart` now first request an authenticated graceful shutdown through the local daemon gateway before falling back to process termination, and Windows daemon background launch/stop support was added.
+- **Windows installer startup flow**: after installation, the PowerShell installer can start the daemon immediately and now prints daemon management commands instead of only the interactive UI command.
 - **Channel runtime caller selection**: incoming channel messages now run under the configured channel user when present, falling back to the local owner, and the engine/brain managers include all configured trusted user public keys.
 - **Dependencies bumped**: `anda_core` 0.12.7 → 0.12.8 and `anda_engine` 0.12.30 → 0.12.32.
 

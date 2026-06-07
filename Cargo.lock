@@ -165,6 +165,7 @@ dependencies = [
  "unicode-width",
  "webpki-roots 1.0.7",
  "weixin-agent",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

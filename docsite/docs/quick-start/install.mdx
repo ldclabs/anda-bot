@@ -28,6 +28,8 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
+The Windows installer registers Anda to start when the current user logs in and tries to start the daemon immediately. Add `-NoAutostart` or `-NoStart` to opt out.
+
 After installation, open a new terminal and run:
 
 ```bash
@@ -105,9 +107,12 @@ If installed through the install script, update with:
 anda update
 ```
 
-On Unix platforms, stop or restart the background daemon with:
+Manage the background daemon with:
 
 ```bash
+anda status
+anda start
 anda stop
 anda restart
+anda autostart status
 ```

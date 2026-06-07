@@ -4,10 +4,11 @@ use coset::cwt::Timestamp;
 use mimalloc::MiMalloc;
 use std::{
     path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod auto_update;
+mod autostart;
 mod brain;
 mod channel;
 mod cli;
@@ -56,6 +57,8 @@ pub enum Commands {
     Stop,
     /// Start the anda daemon if it's not running.
     Start,
+    /// Show whether the anda daemon is running.
+    Status,
     /// Restart the anda daemon. If the daemon is not running, this will start it.
     Restart,
     /// Equal to running `anda restart`.
@@ -71,6 +74,9 @@ pub enum Commands {
     /// Browser (chrome) extension helper commands.
     #[command(subcommand)]
     Browser(BrowserCommand),
+    /// Manage Windows login autostart for the current user.
+    #[command(subcommand)]
+    Autostart(autostart::AutostartCommand),
     /// Channel-related operations that run directly from this CLI.
     #[command(subcommand)]
     Channel(cli::channel::ChannelCommand),
@@ -176,11 +182,13 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Stop) => {
             log::info!("Starting CLI with command 'stop' at {}", daemon.base_url());
 
-            match daemon.stop_background(Duration::from_secs(10)).await? {
+            let client = build_control_client(&daemon).await?;
+            match stop_daemon(&daemon, &client, Duration::from_secs(10)).await? {
                 daemon::StopState::NotRunning => println!("anda daemon is not running"),
                 daemon::StopState::Stopped(pid) => {
                     println!("Stopped anda daemon (pid {pid})")
                 }
+                daemon::StopState::StoppedUnknown => println!("Stopped anda daemon"),
             }
         }
 
@@ -202,14 +210,24 @@ async fn run() -> Result<(), BoxError> {
             }
         }
 
+        Some(Commands::Status) => {
+            log::info!(
+                "Starting CLI with command 'status' at {}",
+                daemon.base_url()
+            );
+
+            let client = build_control_client(&daemon).await?;
+            print_daemon_status(&daemon, &client).await?;
+        }
+
         Some(Commands::Restart) | Some(Commands::Reload) => {
             log::info!(
                 "Starting CLI with command 'restart' at {}",
                 daemon.base_url()
             );
 
-            let stop_state = daemon.stop_background(Duration::from_secs(10)).await?;
             let client = build_control_client(&daemon).await?;
+            let stop_state = stop_daemon(&daemon, &client, Duration::from_secs(10)).await?;
 
             match (stop_state, client.ensure_daemon_running(&daemon).await?) {
                 (daemon::StopState::Stopped(old_pid), daemon::LaunchState::Started(child)) => {
@@ -234,6 +252,16 @@ async fn run() -> Result<(), BoxError> {
                 }
                 (daemon::StopState::NotRunning, daemon::LaunchState::AlreadyRunning) => {
                     println!("anda daemon is already running at {}", daemon.base_url());
+                }
+                (daemon::StopState::StoppedUnknown, daemon::LaunchState::Started(child)) => {
+                    println!(
+                        "Restarted anda daemon (new pid {}). Logs: {}",
+                        child.pid,
+                        child.log_path.display()
+                    );
+                }
+                (daemon::StopState::StoppedUnknown, daemon::LaunchState::AlreadyRunning) => {
+                    println!("Connected to daemon at {}", daemon.base_url());
                 }
             }
         }
@@ -281,6 +309,10 @@ async fn run() -> Result<(), BoxError> {
                 }
             }
         }
+        Some(Commands::Autostart(cmd)) => {
+            log::info!("Starting CLI with command 'autostart'");
+            run_autostart_command(&daemon, cmd).await?;
+        }
         Some(Commands::Channel(cmd)) => {
             log::info!(
                 "Starting CLI with command 'channel' at {}",
@@ -305,6 +337,135 @@ async fn run() -> Result<(), BoxError> {
             client.ensure_daemon_running(&daemon).await?;
             cli::voice::run_voice_loop(&client, &daemon.cfg, cmd).await?;
         }
+    }
+    Ok(())
+}
+
+async fn stop_daemon(
+    daemon: &daemon::Daemon,
+    client: &gateway::Client,
+    timeout: Duration,
+) -> Result<daemon::StopState, BoxError> {
+    let pid = daemon.read_pid_file().await?;
+    let gateway_running = client.status().await.is_ok();
+
+    match pid {
+        Some(pid) if daemon::process_exists(pid) => {
+            if gateway_running {
+                if let Err(err) = client.shutdown().await {
+                    log::warn!("Failed to request graceful daemon shutdown: {err}");
+                } else if let Err(err) = daemon.wait_for_background_exit(pid, timeout).await {
+                    log::warn!("Graceful daemon shutdown timed out: {err}");
+                } else {
+                    daemon.remove_pid_file_if_exists().await?;
+                    return Ok(daemon::StopState::Stopped(pid));
+                }
+            }
+
+            daemon.stop_background(timeout).await
+        }
+        Some(_) => {
+            daemon.remove_pid_file_if_exists().await?;
+            if gateway_running {
+                client.shutdown().await?;
+                wait_for_gateway_down(client, timeout).await?;
+                Ok(daemon::StopState::StoppedUnknown)
+            } else {
+                Ok(daemon::StopState::NotRunning)
+            }
+        }
+        None if gateway_running => {
+            client.shutdown().await?;
+            wait_for_gateway_down(client, timeout).await?;
+            Ok(daemon::StopState::StoppedUnknown)
+        }
+        None => Ok(daemon::StopState::NotRunning),
+    }
+}
+
+async fn wait_for_gateway_down(
+    client: &gateway::Client,
+    timeout: Duration,
+) -> Result<(), BoxError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if client.status().await.is_err() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for anda daemon gateway to stop after {timeout:?}"
+            )
+            .into());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn print_daemon_status(
+    daemon: &daemon::Daemon,
+    client: &gateway::Client,
+) -> Result<(), BoxError> {
+    let pid = daemon.read_pid_file().await?;
+    let gateway_running = client.status().await.is_ok();
+    let alive_pid = pid.filter(|pid| daemon::process_exists(*pid));
+
+    if pid.is_some() && alive_pid.is_none() {
+        daemon.remove_pid_file_if_exists().await?;
+    }
+
+    match (gateway_running, alive_pid) {
+        (true, Some(pid)) => {
+            println!("anda daemon is running (pid {pid})");
+            println!("Gateway URL: {}", daemon.base_url());
+            println!("Logs: {}", daemon.log_file_path().display());
+        }
+        (true, None) => {
+            println!("anda daemon gateway is running");
+            println!("Gateway URL: {}", daemon.base_url());
+            println!("PID file: missing");
+        }
+        (false, Some(pid)) => {
+            println!("anda daemon process exists but gateway is not responding (pid {pid})");
+            println!("Logs: {}", daemon.log_file_path().display());
+        }
+        (false, None) => println!("anda daemon is not running"),
+    }
+
+    Ok(())
+}
+
+async fn run_autostart_command(
+    daemon: &daemon::Daemon,
+    cmd: autostart::AutostartCommand,
+) -> Result<(), BoxError> {
+    match cmd {
+        autostart::AutostartCommand::Install => {
+            daemon.ensure_directories().await?;
+            daemon.ensure_config_file_exists().await?;
+            autostart::install(&daemon.home)?;
+            println!("Registered Anda to start when the current Windows user logs in.");
+        }
+        autostart::AutostartCommand::Uninstall => match autostart::uninstall()? {
+            autostart::AutostartStatus::NotInstalled => {
+                println!("Anda autostart is not registered.")
+            }
+            autostart::AutostartStatus::Installed => unreachable!(),
+            autostart::AutostartStatus::Unsupported => {
+                println!("anda autostart is only supported on Windows for now.")
+            }
+        },
+        autostart::AutostartCommand::Status => match autostart::status()? {
+            autostart::AutostartStatus::Installed => {
+                println!("Anda autostart is registered.")
+            }
+            autostart::AutostartStatus::NotInstalled => {
+                println!("Anda autostart is not registered.")
+            }
+            autostart::AutostartStatus::Unsupported => {
+                println!("anda autostart is only supported on Windows for now.")
+            }
+        },
     }
     Ok(())
 }

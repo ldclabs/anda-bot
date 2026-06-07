@@ -44,7 +44,7 @@ pub async fn serve(
     let server_cancel_token = cancel_token.clone();
     let background_cancel_token = cancel_token.clone();
     let app = Router::new()
-        .merge(engines.into_router())
+        .merge(engines.into_router(cancel_token.clone()))
         .merge(brain.into_router())
         .layer(CompressionLayer::new());
 

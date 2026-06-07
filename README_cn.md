@@ -58,6 +58,8 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
+Windows 安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。如果不想自动注册或启动，可以加 `-NoAutostart` 或 `-NoStart`。
+
 前置要求：
 
 - 至少一个可用的模型提供方 API Key，可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
@@ -135,11 +137,14 @@ anda
 anda update
 ```
 
-在 Unix 平台停止或重启后台守护进程：
+管理后台 daemon：
 
 ```bash
+anda status
+anda start
 anda stop
 anda restart
+anda autostart status
 ```
 
 不打开终端 UI，直接发起一次请求并等待完整结果：

@@ -3,7 +3,9 @@
 
 param(
     [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
-    [string]$AndaHome = $env:ANDA_HOME
+    [string]$AndaHome = $env:ANDA_HOME,
+    [switch]$NoAutostart,
+    [switch]$NoStart
 )
 
 $ErrorActionPreference = "Stop"
@@ -279,11 +281,41 @@ try {
     }
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"
+
+    if (-not $NoAutostart) {
+        Write-Info "Registering Anda to start when you log in..."
+        $autostartOutput = & $installPath --home $AndaHome autostart install 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Autostart registered."
+        } else {
+            Write-Info "Could not register autostart. You can retry with:"
+            Write-Host "    $BinaryName --home `"$AndaHome`" autostart install"
+            if ($autostartOutput) {
+                Write-Host ($autostartOutput -join "`n")
+            }
+        }
+    }
+
+    if (-not $NoStart) {
+        Write-Info "Starting Anda daemon..."
+        $startOutput = & $installPath --home $AndaHome start 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Anda daemon started."
+        } else {
+            Write-Info "Anda is installed, but the daemon did not start yet. Configure $AndaHome\config.yaml, then run:"
+            Write-Host "    $BinaryName --home `"$AndaHome`" start"
+            if ($startOutput) {
+                Write-Host ($startOutput -join "`n")
+            }
+        }
+    }
+
     Write-Host ""
-    Write-Host "  Run Anda:"
-    Write-Host '    $env:DEEPSEEK_API_KEY="****"; anda'
-    Write-Host '    # or add api_key to $env:USERPROFILE\.anda\config.yaml, then:'
-    Write-Host "    $BinaryName"
+    Write-Host "  Manage Anda:"
+    Write-Host "    $BinaryName status"
+    Write-Host "    $BinaryName start"
+    Write-Host "    $BinaryName stop"
+    Write-Host "    $BinaryName autostart status"
     Write-Host "    $BinaryName --help"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue

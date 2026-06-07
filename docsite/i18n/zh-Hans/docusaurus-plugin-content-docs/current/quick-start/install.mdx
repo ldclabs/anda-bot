@@ -28,6 +28,8 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
+Windows 安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。如果不想自动注册或启动，可以加 `-NoAutostart` 或 `-NoStart`。
+
 安装完成后打开一个新的终端，并运行：
 
 ```bash
@@ -105,9 +107,12 @@ cargo run -p anda_bot -- --home /path/to/.anda
 anda update
 ```
 
-Unix 平台可以停止或重启后台 daemon：
+可以这样管理后台 daemon：
 
 ```bash
+anda status
+anda start
 anda stop
 anda restart
+anda autostart status
 ```
