@@ -355,7 +355,7 @@ register_autostart() {
 
 register_macos_launcher_autostart() {
     PLIST_DIR="${HOME}/Library/LaunchAgents"
-    PLIST_PATH="${PLIST_DIR}/com.ldclabs.anda-bot.launcher.plist"
+    PLIST_PATH="${PLIST_DIR}/ai.anda.anda-bot.launcher.plist"
     LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
     ESCAPED_LAUNCHER=$(printf '%s' "$LAUNCHER_PATH" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
 
@@ -371,7 +371,7 @@ register_macos_launcher_autostart() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.ldclabs.anda-bot.launcher</string>
+  <string>ai.anda.anda-bot.launcher</string>
   <key>ProgramArguments</key>
   <array>
     <string>${ESCAPED_LAUNCHER}</string>
@@ -536,7 +536,7 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     echo "    ${BINARY_NAME} stop"
     if [ "$OS" = "macos" ]; then
         echo "    ${LAUNCHER_INSTALL_NAME}"
-        echo "    launchctl print gui/$(id -u)/com.ldclabs.anda-bot.launcher"
+        echo "    launchctl print gui/$(id -u)/ai.anda.anda-bot.launcher"
     else
         echo "    ${BINARY_NAME} autostart status"
     fi

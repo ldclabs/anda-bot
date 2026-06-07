@@ -916,6 +916,9 @@ fn is_wechat_context_token_error(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     error.contains("session expired")
         || error.contains("errcode=-14")
+        || error.contains("errcode=-2")
+        || error.contains("\"ret\":-2")
+        || error.contains("ret=-2")
         || error.contains("context_token")
         || error.contains("context token")
         || error.contains("invalid token")
@@ -1063,6 +1066,13 @@ mod tests {
     #[test]
     fn wechat_reply_target_trims_sender_target() {
         assert_eq!(wechat_reply_target_from(" wxid_123 "), "wxid_123");
+    }
+
+    #[test]
+    fn wechat_context_token_error_matches_ret_minus_two() {
+        assert!(is_wechat_context_token_error(
+            r#"API error: errcode=-2, errmsg={"ret":-2}"#
+        ));
     }
 
     #[tokio::test]

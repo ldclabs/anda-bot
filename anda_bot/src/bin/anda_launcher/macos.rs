@@ -17,7 +17,7 @@ use crate::{
     settings,
 };
 
-const LAUNCH_AGENT_LABEL: &str = "com.ldclabs.anda-bot.launcher";
+const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
