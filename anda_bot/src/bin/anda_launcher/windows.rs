@@ -32,7 +32,7 @@ use windows_sys::Win32::{
 };
 
 use crate::{
-    core::{self, CommandResult, LauncherContext, LauncherResult},
+    core::{self, CommandResult, LauncherContext, LauncherResult, text},
     settings,
 };
 
@@ -60,7 +60,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
 
     if core::config_needs_setup(&ctx) {
         if settings::run_initial_setup_wizard(&ctx)? {
-            show_result("Anda Bot", &core::start_daemon(&ctx)?);
+            show_result(text().app_title, &core::start_daemon(&ctx)?);
         }
     } else {
         let _ = core::start_daemon(&ctx);
@@ -82,7 +82,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
         let hwnd = CreateWindowExW(
             0,
             class_name.as_ptr(),
-            wide_null("Anda Bot Launcher").as_ptr(),
+            wide_null(text().launcher_window_title).as_ptr(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -94,7 +94,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
             ptr::null(),
         );
         if hwnd.is_null() {
-            return Err("could not create launcher window".into());
+            return Err(text().create_window_failed.into());
         }
 
         add_tray_icon(hwnd);
@@ -147,31 +147,31 @@ fn handle_command(hwnd: HWND, id: usize) {
         ID_OPEN => open_anda_terminal(ctx),
         ID_SETTINGS => match settings::run_wizard(ctx) {
             Ok(true) => show_result(
-                "Anda Bot",
+                text().app_title,
                 &core::restart_daemon(ctx).unwrap_or_else(error_result),
             ),
             Ok(false) => {}
-            Err(err) => show_error("Anda Bot Settings", &err.to_string()),
+            Err(err) => show_error(text().settings_title, &err.to_string()),
         },
         ID_STATUS => show_result(
-            "Anda Bot",
+            text().app_title,
             &core::daemon_status(ctx).unwrap_or_else(error_result),
         ),
         ID_START => show_result(
-            "Anda Bot",
+            text().app_title,
             &core::start_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_STOP => show_result(
-            "Anda Bot",
+            text().app_title,
             &core::stop_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_RESTART => show_result(
-            "Anda Bot",
+            text().app_title,
             &core::restart_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_AUTOSTART => match toggle_autostart(ctx) {
-            Ok(message) => message_box("Anda Bot", &message, MB_OK | MB_ICONINFORMATION),
-            Err(err) => show_error("Anda Bot", &err.to_string()),
+            Ok(message) => message_box(text().app_title, &message, MB_OK | MB_ICONINFORMATION),
+            Err(err) => show_error(text().app_title, &err.to_string()),
         },
         ID_LOGS => open_path(&ctx.logs_dir()),
         ID_QUIT => unsafe {
@@ -183,24 +183,25 @@ fn handle_command(hwnd: HWND, id: usize) {
 
 fn show_tray_menu(hwnd: HWND) {
     unsafe {
+        let copy = text();
         let menu = CreatePopupMenu();
-        append_item(menu, ID_OPEN, "Open Anda");
-        append_item(menu, ID_SETTINGS, "Settings...");
+        append_item(menu, ID_OPEN, copy.open_anda);
+        append_item(menu, ID_SETTINGS, copy.settings);
         append_separator(menu);
-        append_item(menu, ID_STATUS, "Status");
-        append_item(menu, ID_START, "Start daemon");
-        append_item(menu, ID_STOP, "Stop daemon");
-        append_item(menu, ID_RESTART, "Restart daemon");
+        append_item(menu, ID_STATUS, copy.status);
+        append_item(menu, ID_START, copy.start_daemon);
+        append_item(menu, ID_STOP, copy.stop_daemon);
+        append_item(menu, ID_RESTART, copy.restart_daemon);
         append_separator(menu);
         let autostart_label = if launcher_autostart_installed() {
-            "Disable launch at login"
+            copy.disable_launch_at_login
         } else {
-            "Launch at login"
+            copy.launch_at_login
         };
         append_item(menu, ID_AUTOSTART, autostart_label);
-        append_item(menu, ID_LOGS, "Open logs");
+        append_item(menu, ID_LOGS, copy.open_logs);
         append_separator(menu);
-        append_item(menu, ID_QUIT, "Quit");
+        append_item(menu, ID_QUIT, copy.quit);
 
         let mut point = POINT::default();
         GetCursorPos(&mut point);
@@ -228,7 +229,7 @@ unsafe fn add_tray_icon(hwnd: HWND) {
         hIcon: launcher_icon(),
         ..Default::default()
     };
-    copy_wide_fixed(&mut data.szTip, "Anda Bot");
+    copy_wide_fixed(&mut data.szTip, text().app_title);
     Shell_NotifyIconW(NIM_ADD, &data);
 }
 
@@ -433,7 +434,7 @@ fn error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult 
 fn toggle_autostart(ctx: &LauncherContext) -> LauncherResult<String> {
     if launcher_autostart_installed() {
         run_schtasks(&["/Delete", "/TN", AUTOSTART_TASK_NAME, "/F"])?;
-        Ok("Launch at login disabled.".to_string())
+        Ok(text().launch_at_login_disabled.to_string())
     } else {
         let command = windows_command_line(&[ctx.launcher_exe.clone()]);
         run_schtasks(&[
@@ -446,7 +447,7 @@ fn toggle_autostart(ctx: &LauncherContext) -> LauncherResult<String> {
             &command,
             "/F",
         ])?;
-        Ok("Launch at login enabled.".to_string())
+        Ok(text().launch_at_login_enabled.to_string())
     }
 }
 
@@ -470,12 +471,13 @@ fn run_schtasks(args: &[&str]) -> LauncherResult<()> {
     })
     .trim()
     .to_string();
-    Err(format!("schtasks.exe failed: {detail}").into())
+    Err(text().schtasks_failed(&detail).into())
 }
 
 fn open_anda_terminal(ctx: &LauncherContext) {
     let command = format!(
         "title Anda Bot && \"{}\" --home \"{}\"",
+        // Keep the console title ASCII-friendly for cmd.exe.
         ctx.anda_exe.display(),
         ctx.home.display()
     );

@@ -18,9 +18,17 @@ mod platform;
 mod platform;
 
 fn main() {
-    let result = core::LauncherContext::detect().and_then(platform::run);
+    let result = run();
     if let Err(err) = result {
-        platform::show_error("Anda Launcher", &err.to_string());
+        platform::show_error(core::text().launcher_title, &err.to_string());
         std::process::exit(1);
     }
+}
+
+fn run() -> core::LauncherResult<()> {
+    let ctx = core::LauncherContext::detect()?;
+    let Some(_lock) = core::acquire_launcher_instance_lock()? else {
+        return Ok(());
+    };
+    platform::run(ctx)
 }

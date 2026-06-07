@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 
 use crate::core::{
     LauncherContext, LauncherResult, WizardConfig, default_model_for_provider, provider_by_id,
-    provider_ids, write_initial_minimal_config, write_minimal_config,
+    provider_ids, text, write_initial_minimal_config, write_minimal_config,
 };
 
 #[cfg(windows)]
@@ -41,7 +41,7 @@ pub fn show_settings_dialog(ctx: &LauncherContext) -> LauncherResult<Option<Wiza
         if stderr.contains("Anda setup cancelled") {
             return Ok(None);
         }
-        return Err(format!("settings wizard failed: {}", stderr.trim()).into());
+        return Err(text().settings_wizard_failed(stderr.trim()).into());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -59,7 +59,7 @@ pub fn show_settings_dialog(_ctx: &LauncherContext) -> LauncherResult<Option<Wiz
         if stderr.contains("User canceled") || stderr.contains("-128") {
             return Ok(None);
         }
-        return Err(format!("settings wizard failed: {}", stderr.trim()).into());
+        return Err(text().settings_wizard_failed(stderr.trim()).into());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -68,7 +68,7 @@ pub fn show_settings_dialog(_ctx: &LauncherContext) -> LauncherResult<Option<Wiz
 
 #[cfg(not(any(target_os = "macos", windows)))]
 pub fn show_settings_dialog(_ctx: &LauncherContext) -> LauncherResult<Option<WizardConfig>> {
-    Err("Anda Launcher settings are not supported on this platform".into())
+    Err(text().settings_not_supported.into())
 }
 
 pub fn parse_settings_payload(payload: &str) -> LauncherResult<Option<WizardConfig>> {
@@ -90,7 +90,7 @@ pub fn parse_settings_payload(payload: &str) -> LauncherResult<Option<WizardConf
         return Ok(None);
     };
     let Some(provider) = provider_by_id(&provider_id) else {
-        return Err(format!("unsupported provider returned by wizard: {provider_id}").into());
+        return Err(text().unsupported_provider_from_wizard(&provider_id).into());
     };
     let api_key = api_key.unwrap_or_default();
     let model = model
@@ -98,7 +98,7 @@ pub fn parse_settings_payload(payload: &str) -> LauncherResult<Option<WizardConf
         .unwrap_or_else(|| provider.model.to_string());
 
     if provider.requires_api_key() && api_key.trim().is_empty() {
-        return Err(format!("{} is required", provider.env_var).into());
+        return Err(text().env_required(provider.env_var).into());
     }
 
     Ok(Some(WizardConfig {
@@ -133,17 +133,15 @@ fn run_windows_powershell(script_path: &PathBuf) -> LauncherResult<std::process:
         }
     }
 
-    Err(format!(
-        "could not launch PowerShell for settings wizard: {}",
-        last_err
-            .map(|err| err.to_string())
-            .unwrap_or_else(|| "not found".to_string())
-    )
-    .into())
+    let detail = last_err
+        .map(|err| err.to_string())
+        .unwrap_or_else(|| text().powershell_not_found.to_string());
+    Err(text().powershell_launch_failed(&detail).into())
 }
 
 #[cfg(windows)]
 fn windows_settings_script() -> String {
+    let copy = text();
     let provider_items = provider_ids()
         .into_iter()
         .map(|id| format!("'{id}'"))
@@ -165,7 +163,7 @@ $models = @{{
 }}
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'Anda Bot Setup'
+$form.Text = '{setup_title}'
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -174,7 +172,7 @@ $form.ClientSize = New-Object System.Drawing.Size(430, 230)
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
 $providerLabel = New-Object System.Windows.Forms.Label
-$providerLabel.Text = 'Provider'
+$providerLabel.Text = '{provider_label}'
 $providerLabel.Location = New-Object System.Drawing.Point(18, 24)
 $providerLabel.Size = New-Object System.Drawing.Size(110, 24)
 $form.Controls.Add($providerLabel)
@@ -188,7 +186,7 @@ $provider.SelectedIndex = 0
 $form.Controls.Add($provider)
 
 $modelLabel = New-Object System.Windows.Forms.Label
-$modelLabel.Text = 'Model'
+$modelLabel.Text = '{model_label}'
 $modelLabel.Location = New-Object System.Drawing.Point(18, 74)
 $modelLabel.Size = New-Object System.Drawing.Size(110, 24)
 $form.Controls.Add($modelLabel)
@@ -200,7 +198,7 @@ $model.Text = $models[$provider.SelectedItem]
 $form.Controls.Add($model)
 
 $apiKeyLabel = New-Object System.Windows.Forms.Label
-$apiKeyLabel.Text = 'API key'
+$apiKeyLabel.Text = '{api_key_label}'
 $apiKeyLabel.Location = New-Object System.Drawing.Point(18, 124)
 $apiKeyLabel.Size = New-Object System.Drawing.Size(110, 24)
 $form.Controls.Add($apiKeyLabel)
@@ -216,13 +214,13 @@ $provider.Add_SelectedIndexChanged({{
 }})
 
 $ok = New-Object System.Windows.Forms.Button
-$ok.Text = 'Save'
+$ok.Text = '{save_label}'
 $ok.Location = New-Object System.Drawing.Point(220, 176)
 $ok.Size = New-Object System.Drawing.Size(80, 30)
 $ok.Add_Click({{
   $apiKeyRequired = $provider.SelectedItem -ne 'codex'
   if ([string]::IsNullOrWhiteSpace($model.Text) -or ($apiKeyRequired -and [string]::IsNullOrWhiteSpace($apiKey.Text))) {{
-    [System.Windows.Forms.MessageBox]::Show('Model is required. API key is required unless Codex is selected.', 'Anda Bot Setup', 'OK', 'Warning') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show('{setup_required_message}', '{setup_title}', 'OK', 'Warning') | Out-Null
     return
   }}
   $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -232,7 +230,7 @@ $form.Controls.Add($ok)
 $form.AcceptButton = $ok
 
 $cancel = New-Object System.Windows.Forms.Button
-$cancel.Text = 'Cancel'
+$cancel.Text = '{cancel_label}'
 $cancel.Location = New-Object System.Drawing.Point(310, 176)
 $cancel.Size = New-Object System.Drawing.Size(80, 30)
 $cancel.Add_Click({{
@@ -251,12 +249,20 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {{
 Write-Output ('ANDA_PROVIDER=' + $provider.SelectedItem)
 Write-Output ('ANDA_MODEL=' + $model.Text)
 Write-Output ('ANDA_API_KEY=' + $apiKey.Text)
-"#
+"#,
+        setup_title = ps_single(copy.setup_title),
+        provider_label = ps_single(copy.provider),
+        model_label = ps_single(copy.model),
+        api_key_label = ps_single(copy.api_key),
+        save_label = ps_single(copy.save),
+        setup_required_message = ps_single(copy.setup_required_message),
+        cancel_label = ps_single(copy.cancel),
     )
 }
 
 #[cfg(target_os = "macos")]
 fn macos_settings_script() -> String {
+    let copy = text();
     let providers = provider_ids()
         .into_iter()
         .map(applescript_string)
@@ -277,18 +283,22 @@ fn macos_settings_script() -> String {
     format!(
         r#"
 set providerChoices to {{{providers}}}
-set selectedProvider to choose from list providerChoices with title "Anda Bot Setup" with prompt "Choose a model provider:" default items {{{default_provider}}}
+set selectedProvider to choose from list providerChoices with title {setup_title} with prompt {choose_provider_prompt} default items {{{default_provider}}}
 if selectedProvider is false then error number -128
 set providerId to item 1 of selectedProvider
 set defaultModel to ""
 {cases}
-set modelDialog to display dialog "Model:" default answer defaultModel with title "Anda Bot Setup"
+set modelDialog to display dialog {model_prompt} default answer defaultModel with title {setup_title}
 set modelText to text returned of modelDialog
-set keyDialog to display dialog "API key:" default answer "" with hidden answer with title "Anda Bot Setup"
+set keyDialog to display dialog {api_key_prompt} default answer "" with hidden answer with title {setup_title}
 set keyText to text returned of keyDialog
 return "ANDA_PROVIDER=" & providerId & linefeed & "ANDA_MODEL=" & modelText & linefeed & "ANDA_API_KEY=" & keyText
 "#,
         default_provider = applescript_string(provider_ids()[0]),
+        setup_title = applescript_string(copy.setup_title),
+        choose_provider_prompt = applescript_string(copy.choose_provider_prompt),
+        model_prompt = applescript_string(&format!("{}:", copy.model)),
+        api_key_prompt = applescript_string(&format!("{}:", copy.api_key)),
     )
 }
 

@@ -6,10 +6,29 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+
+#[cfg(windows)]
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
+
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE},
+    Globalization::GetUserDefaultLocaleName,
+    System::Threading::{CreateMutexW, ReleaseMutex},
+};
+
 pub type LauncherResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../../assets/config.yaml");
 const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LauncherLanguage {
+    En,
+    ZhHans,
+}
 
 #[derive(Clone, Debug)]
 pub struct LauncherContext {
@@ -46,6 +65,335 @@ pub struct WizardConfig {
 pub struct CommandResult {
     pub success: bool,
     pub message: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+pub struct LauncherText {
+    pub app_title: &'static str,
+    pub launcher_title: &'static str,
+    pub launcher_window_title: &'static str,
+    pub settings_title: &'static str,
+    pub setup_title: &'static str,
+    pub open_anda: &'static str,
+    pub settings: &'static str,
+    pub status: &'static str,
+    pub start_daemon: &'static str,
+    pub stop_daemon: &'static str,
+    pub restart_daemon: &'static str,
+    pub launch_at_login: &'static str,
+    pub disable_launch_at_login: &'static str,
+    pub open_logs: &'static str,
+    pub quit: &'static str,
+    pub ok: &'static str,
+    pub save: &'static str,
+    pub cancel: &'static str,
+    pub provider: &'static str,
+    pub model: &'static str,
+    pub api_key: &'static str,
+    pub choose_provider_prompt: &'static str,
+    pub setup_required_message: &'static str,
+    pub launch_at_login_enabled: &'static str,
+    pub launch_at_login_disabled: &'static str,
+    pub settings_not_supported: &'static str,
+    pub unsupported_platform: &'static str,
+    pub main_thread_required: &'static str,
+    pub create_window_failed: &'static str,
+    pub resolve_launch_agents_failed: &'static str,
+    pub detect_home_failed: &'static str,
+    pub command_done: &'static str,
+    pub powershell_not_found: &'static str,
+}
+
+#[allow(dead_code)]
+impl LauncherText {
+    pub fn unsupported_provider(self, provider_id: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("不支持的模型供应商：{provider_id}"),
+            LauncherLanguage::En => format!("unsupported provider: {provider_id}"),
+        }
+    }
+
+    pub fn unsupported_provider_from_wizard(self, provider_id: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("设置向导返回了不支持的模型供应商：{provider_id}"),
+            LauncherLanguage::En => {
+                format!("unsupported provider returned by wizard: {provider_id}")
+            }
+        }
+    }
+
+    pub fn env_required(self, env_var: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("必须填写 {env_var}"),
+            LauncherLanguage::En => format!("{env_var} is required"),
+        }
+    }
+
+    pub fn settings_wizard_failed(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("设置向导失败：{detail}"),
+            LauncherLanguage::En => format!("settings wizard failed: {detail}"),
+        }
+    }
+
+    pub fn powershell_launch_failed(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("无法启动 PowerShell 设置向导：{detail}"),
+            LauncherLanguage::En => {
+                format!("could not launch PowerShell for settings wizard: {detail}")
+            }
+        }
+    }
+
+    pub fn launcher_exe_detect_failed(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("无法检测 launcher 可执行文件：{detail}"),
+            LauncherLanguage::En => format!("could not detect launcher executable: {detail}"),
+        }
+    }
+
+    pub fn run_anda_failed(self, path: &str, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("无法运行 {path}：{detail}"),
+            LauncherLanguage::En => format!("could not run {path}: {detail}"),
+        }
+    }
+
+    pub fn command_exited(self, status: std::process::ExitStatus) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("命令退出状态：{status}"),
+            LauncherLanguage::En => format!("Command exited with {status}"),
+        }
+    }
+
+    pub fn command_failed(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("命令失败：{detail}"),
+            LauncherLanguage::En => format!("command failed: {detail}"),
+        }
+    }
+
+    pub fn schtasks_failed(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("schtasks.exe 执行失败：{detail}"),
+            LauncherLanguage::En => format!("schtasks.exe failed: {detail}"),
+        }
+    }
+}
+
+pub struct LauncherInstanceLock {
+    #[cfg(unix)]
+    file: fs::File,
+    #[cfg(windows)]
+    handle: HANDLE,
+    #[cfg(not(any(unix, windows)))]
+    _private: (),
+}
+
+impl Drop for LauncherInstanceLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        unsafe {
+            let _ = libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            ReleaseMutex(self.handle);
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+static LAUNCHER_LANGUAGE: std::sync::OnceLock<LauncherLanguage> = std::sync::OnceLock::new();
+
+const TEXT_EN: LauncherText = LauncherText {
+    app_title: "Anda Bot",
+    launcher_title: "Anda Launcher",
+    launcher_window_title: "Anda Bot Launcher",
+    settings_title: "Anda Bot Settings",
+    setup_title: "Anda Bot Setup",
+    open_anda: "Open Anda",
+    settings: "Settings...",
+    status: "Status",
+    start_daemon: "Start daemon",
+    stop_daemon: "Stop daemon",
+    restart_daemon: "Restart daemon",
+    launch_at_login: "Launch at login",
+    disable_launch_at_login: "Disable launch at login",
+    open_logs: "Open logs",
+    quit: "Quit",
+    ok: "OK",
+    save: "Save",
+    cancel: "Cancel",
+    provider: "Provider",
+    model: "Model",
+    api_key: "API 密钥",
+    choose_provider_prompt: "Choose a model provider:",
+    setup_required_message: "Model is required. API key is required unless Codex is selected.",
+    launch_at_login_enabled: "Launch at login enabled.",
+    launch_at_login_disabled: "Launch at login disabled.",
+    settings_not_supported: "Anda Launcher settings are not supported on this platform.",
+    unsupported_platform: "Anda Launcher currently supports Windows and macOS.",
+    main_thread_required: "Anda Launcher must run on the main thread",
+    create_window_failed: "could not create launcher window",
+    resolve_launch_agents_failed: "could not resolve LaunchAgents directory",
+    detect_home_failed: "could not detect user home directory",
+    command_done: "Done.",
+    powershell_not_found: "not found",
+};
+
+const TEXT_ZH_HANS: LauncherText = LauncherText {
+    app_title: "Anda Bot",
+    launcher_title: "Anda 启动器",
+    launcher_window_title: "Anda Bot 启动器",
+    settings_title: "Anda Bot 设置",
+    setup_title: "Anda Bot 初始设置",
+    open_anda: "打开 Anda",
+    settings: "设置...",
+    status: "状态",
+    start_daemon: "启动守护进程",
+    stop_daemon: "停止守护进程",
+    restart_daemon: "重启守护进程",
+    launch_at_login: "登录时启动",
+    disable_launch_at_login: "取消登录时启动",
+    open_logs: "打开日志",
+    quit: "退出",
+    ok: "确定",
+    save: "保存",
+    cancel: "取消",
+    provider: "供应商",
+    model: "模型",
+    api_key: "API key",
+    choose_provider_prompt: "选择模型供应商：",
+    setup_required_message: "必须填写模型。除选择 Codex 外，必须填写 API key。",
+    launch_at_login_enabled: "已启用登录时启动。",
+    launch_at_login_disabled: "已关闭登录时启动。",
+    settings_not_supported: "当前平台不支持 Anda 启动器设置。",
+    unsupported_platform: "Anda 启动器目前支持 Windows 和 macOS。",
+    main_thread_required: "Anda 启动器必须在主线程运行",
+    create_window_failed: "无法创建启动器窗口",
+    resolve_launch_agents_failed: "无法解析 LaunchAgents 目录",
+    detect_home_failed: "无法检测用户主目录",
+    command_done: "完成。",
+    powershell_not_found: "未找到",
+};
+
+pub fn text() -> &'static LauncherText {
+    match launcher_language() {
+        LauncherLanguage::En => &TEXT_EN,
+        LauncherLanguage::ZhHans => &TEXT_ZH_HANS,
+    }
+}
+
+pub fn launcher_language() -> LauncherLanguage {
+    *LAUNCHER_LANGUAGE.get_or_init(detect_launcher_language)
+}
+
+fn detect_launcher_language() -> LauncherLanguage {
+    language_from_tags(system_locale_tags().iter().map(String::as_str))
+}
+
+fn language_from_tags<'a>(tags: impl IntoIterator<Item = &'a str>) -> LauncherLanguage {
+    for tag in tags {
+        if let Some(language) = language_from_tag(tag) {
+            return language;
+        }
+    }
+    LauncherLanguage::En
+}
+
+fn language_from_tag(tag: &str) -> Option<LauncherLanguage> {
+    let normalized = tag
+        .trim()
+        .trim_matches('"')
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-")
+        .to_ascii_lowercase();
+
+    if normalized.starts_with("zh") || normalized.contains("chinese") {
+        Some(LauncherLanguage::ZhHans)
+    } else if normalized.starts_with("en") {
+        Some(LauncherLanguage::En)
+    } else {
+        None
+    }
+}
+
+fn system_locale_tags() -> Vec<String> {
+    let mut tags = platform_locale_tags();
+    tags.extend(environment_locale_tags());
+    tags
+}
+
+#[cfg(target_os = "macos")]
+fn platform_locale_tags() -> Vec<String> {
+    let mut tags = macos_defaults_languages();
+    if let Some(locale) = macos_defaults_value("AppleLocale") {
+        tags.push(locale);
+    }
+    tags
+}
+
+#[cfg(target_os = "macos")]
+fn macos_defaults_languages() -> Vec<String> {
+    let Some(output) = macos_defaults_value("AppleLanguages") else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim_end_matches(',')
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_defaults_value(key: &str) -> Option<String> {
+    let output = Command::new("defaults")
+        .arg("read")
+        .arg("-g")
+        .arg(key)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(windows)]
+fn platform_locale_tags() -> Vec<String> {
+    let mut buffer = [0u16; 85];
+    let len = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    if len <= 1 {
+        return Vec::new();
+    }
+    vec![String::from_utf16_lossy(&buffer[..(len as usize - 1)])]
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn platform_locale_tags() -> Vec<String> {
+    Vec::new()
+}
+
+fn environment_locale_tags() -> Vec<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| env::var(name).ok())
+        .filter(|value| !value.trim().is_empty())
+        .collect()
 }
 
 pub const PROVIDERS: &[ProviderPreset] = &[
@@ -117,7 +465,7 @@ pub const PROVIDERS: &[ProviderPreset] = &[
 impl LauncherContext {
     pub fn detect() -> LauncherResult<Self> {
         let launcher_exe = env::current_exe()
-            .map_err(|err| format!("could not detect launcher executable: {err}"))?;
+            .map_err(|err| text().launcher_exe_detect_failed(&err.to_string()))?;
         let anda_exe = detect_anda_exe(&launcher_exe);
         let home = detect_anda_home()?;
         Ok(Self {
@@ -154,6 +502,71 @@ pub fn default_model_for_provider(provider_id: &str) -> &'static str {
         .model
 }
 
+pub fn acquire_launcher_instance_lock() -> LauncherResult<Option<LauncherInstanceLock>> {
+    #[cfg(unix)]
+    {
+        acquire_unix_launcher_instance_lock()
+    }
+
+    #[cfg(windows)]
+    {
+        acquire_windows_launcher_instance_lock()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(Some(LauncherInstanceLock { _private: () }))
+    }
+}
+
+#[cfg(unix)]
+fn acquire_unix_launcher_instance_lock() -> LauncherResult<Option<LauncherInstanceLock>> {
+    let lock_path = env::temp_dir().join(format!("ai.anda.anda-bot.launcher.{}.lock", unsafe {
+        libc::geteuid()
+    }));
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(lock_path)?;
+
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        return Ok(Some(LauncherInstanceLock { file }));
+    }
+
+    let err = io::Error::last_os_error();
+    if matches!(err.raw_os_error(), Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN)
+    {
+        return Ok(None);
+    }
+    Err(err.into())
+}
+
+#[cfg(windows)]
+fn acquire_windows_launcher_instance_lock() -> LauncherResult<Option<LauncherInstanceLock>> {
+    let name = wide_null_os("Local\\AndaBotLauncher");
+    let handle = unsafe { CreateMutexW(ptr::null(), 1, name.as_ptr()) };
+    if handle.is_null() {
+        return Err(io::Error::last_os_error().into());
+    }
+
+    let last_error = unsafe { GetLastError() };
+    if last_error == ERROR_ALREADY_EXISTS {
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Ok(None);
+    }
+
+    Ok(Some(LauncherInstanceLock { handle }))
+}
+
+#[cfg(windows)]
+fn wide_null_os(value: &str) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(Some(0)).collect()
+}
+
 pub fn config_needs_setup(ctx: &LauncherContext) -> bool {
     if ensure_config_file_exists(ctx).is_err() {
         return false;
@@ -179,11 +592,11 @@ pub fn write_initial_minimal_config(
 
 fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> LauncherResult<()> {
     let provider = provider_by_id(&wizard.provider_id)
-        .ok_or_else(|| format!("unsupported provider: {}", wizard.provider_id))?;
+        .ok_or_else(|| text().unsupported_provider(&wizard.provider_id))?;
     let model = normalize_non_empty(&wizard.model).unwrap_or_else(|| provider.model.to_string());
     let api_key = normalize_non_empty(&wizard.api_key);
     if provider.requires_api_key() && api_key.is_none() {
-        return Err(format!("{} is required", provider.env_var).into());
+        return Err(text().env_required(provider.env_var).into());
     }
 
     ensure_config_file_exists(ctx)?;
@@ -231,7 +644,7 @@ pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandR
     command.args(args);
     let output = command
         .output()
-        .map_err(|err| format!("could not run {}: {err}", ctx.anda_exe.to_string_lossy()))?;
+        .map_err(|err| text().run_anda_failed(&ctx.anda_exe.to_string_lossy(), &err.to_string()))?;
     Ok(command_result(output))
 }
 
@@ -243,9 +656,9 @@ pub fn command_result(output: Output) -> CommandResult {
     } else if !stderr.is_empty() {
         stderr
     } else if output.status.success() {
-        "Done.".to_string()
+        text().command_done.to_string()
     } else {
-        format!("Command exited with {}", output.status)
+        text().command_exited(output.status)
     };
     CommandResult {
         success: output.status.success(),
@@ -270,7 +683,7 @@ fn detect_anda_home() -> LauncherResult<PathBuf> {
     }
     let user_home = env::var_os("USERPROFILE")
         .or_else(|| env::var_os("HOME"))
-        .ok_or("could not detect user home directory")?;
+        .ok_or_else(|| text().detect_home_failed.to_string())?;
     Ok(PathBuf::from(user_home).join(".anda"))
 }
 
@@ -867,6 +1280,24 @@ fn push_candidate(candidates: &mut Vec<&'static str>, name: &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_language_detects_chinese_tags() {
+        assert_eq!(
+            language_from_tags(["fr-FR", "zh-Hans-CN", "en-US"]),
+            LauncherLanguage::ZhHans
+        );
+        assert_eq!(
+            language_from_tags(["zh_CN.UTF-8"]),
+            LauncherLanguage::ZhHans
+        );
+    }
+
+    #[test]
+    fn launcher_language_falls_back_to_english() {
+        assert_eq!(language_from_tags(["fr-FR", "es-ES"]), LauncherLanguage::En);
+        assert_eq!(language_from_tags(["en-US"]), LauncherLanguage::En);
+    }
 
     #[test]
     fn minimal_config_is_setup_complete() {

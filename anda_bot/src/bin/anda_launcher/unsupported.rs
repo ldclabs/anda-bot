@@ -1,7 +1,7 @@
-use crate::core::{LauncherContext, LauncherResult};
+use crate::core::{LauncherContext, LauncherResult, text};
 
 pub fn run(_ctx: LauncherContext) -> LauncherResult<()> {
-    Err("Anda Launcher currently supports Windows and macOS.".into())
+    Err(text().unsupported_platform.into())
 }
 
 pub fn show_error(title: &str, message: &str) {

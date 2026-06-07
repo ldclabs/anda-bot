@@ -13,12 +13,12 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
 use crate::{
-    core::{self, CommandResult, LauncherContext, LauncherResult},
+    core::{self, CommandResult, LauncherContext, LauncherResult, text},
     settings,
 };
 
 const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
-const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
+const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo-tray.png");
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -47,9 +47,12 @@ define_class!(
         fn settings(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 match settings::run_wizard(ctx) {
-                    Ok(true) => show_result("Anda Bot", &core::restart_daemon(ctx).unwrap_or_else(error_result)),
+                    Ok(true) => show_result(
+                        text().app_title,
+                        &core::restart_daemon(ctx).unwrap_or_else(error_result),
+                    ),
                     Ok(false) => {}
-                    Err(err) => show_error("Anda Bot Settings", &err.to_string()),
+                    Err(err) => show_error(text().settings_title, &err.to_string()),
                 }
             }
         }
@@ -57,28 +60,40 @@ define_class!(
         #[unsafe(method(startDaemon:))]
         fn start_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_result("Anda Bot", &core::start_daemon(ctx).unwrap_or_else(error_result));
+                show_result(
+                    text().app_title,
+                    &core::start_daemon(ctx).unwrap_or_else(error_result),
+                );
             }
         }
 
         #[unsafe(method(showStatus:))]
         fn show_status(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_result("Anda Bot", &core::daemon_status(ctx).unwrap_or_else(error_result));
+                show_result(
+                    text().app_title,
+                    &core::daemon_status(ctx).unwrap_or_else(error_result),
+                );
             }
         }
 
         #[unsafe(method(stopDaemon:))]
         fn stop_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_result("Anda Bot", &core::stop_daemon(ctx).unwrap_or_else(error_result));
+                show_result(
+                    text().app_title,
+                    &core::stop_daemon(ctx).unwrap_or_else(error_result),
+                );
             }
         }
 
         #[unsafe(method(restartDaemon:))]
         fn restart_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_result("Anda Bot", &core::restart_daemon(ctx).unwrap_or_else(error_result));
+                show_result(
+                    text().app_title,
+                    &core::restart_daemon(ctx).unwrap_or_else(error_result),
+                );
             }
         }
 
@@ -86,8 +101,8 @@ define_class!(
         fn toggle_launch_at_login(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 match toggle_launch_at_login(ctx) {
-                    Ok(message) => show_info("Anda Bot", &message),
-                    Err(err) => show_error("Anda Bot", &err.to_string()),
+                    Ok(message) => show_info(text().app_title, &message),
+                    Err(err) => show_error(text().app_title, &err.to_string()),
                 }
             }
         }
@@ -124,7 +139,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
         let _ = core::start_daemon(&ctx);
     }
 
-    let mtm = MainThreadMarker::new().ok_or("Anda Launcher must run on the main thread")?;
+    let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required.to_string())?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
@@ -152,19 +167,26 @@ pub fn show_error(title: &str, message: &str) {
 }
 
 fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
-    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring("Anda Bot").as_ref());
-    add_item(&menu, mtm, "Open Anda", sel!(openAnda:), delegate);
-    add_item(&menu, mtm, "Settings...", sel!(settings:), delegate);
+    let copy = text();
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(copy.app_title).as_ref());
+    add_item(&menu, mtm, copy.open_anda, sel!(openAnda:), delegate);
+    add_item(&menu, mtm, copy.settings, sel!(settings:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, "Status", sel!(showStatus:), delegate);
-    add_item(&menu, mtm, "Start daemon", sel!(startDaemon:), delegate);
-    add_item(&menu, mtm, "Stop daemon", sel!(stopDaemon:), delegate);
-    add_item(&menu, mtm, "Restart daemon", sel!(restartDaemon:), delegate);
+    add_item(&menu, mtm, copy.status, sel!(showStatus:), delegate);
+    add_item(&menu, mtm, copy.start_daemon, sel!(startDaemon:), delegate);
+    add_item(&menu, mtm, copy.stop_daemon, sel!(stopDaemon:), delegate);
+    add_item(
+        &menu,
+        mtm,
+        copy.restart_daemon,
+        sel!(restartDaemon:),
+        delegate,
+    );
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let launch_title = if launch_agent_installed() {
-        "Disable launch at login"
+        copy.disable_launch_at_login
     } else {
-        "Launch at login"
+        copy.launch_at_login
     };
     add_item(
         &menu,
@@ -173,9 +195,9 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
         sel!(toggleLaunchAtLogin:),
         delegate,
     );
-    add_item(&menu, mtm, "Open logs", sel!(openLogs:), delegate);
+    add_item(&menu, mtm, copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, "Quit", sel!(quit:), delegate);
+    add_item(&menu, mtm, copy.quit, sel!(quit:), delegate);
     menu
 }
 
@@ -221,7 +243,7 @@ fn show_alert(title: &str, message: &str) {
         let alert = NSAlert::init(NSAlert::alloc(mtm));
         alert.setMessageText(nsstring(title).as_ref());
         alert.setInformativeText(nsstring(message).as_ref());
-        alert.addButtonWithTitle(nsstring("OK").as_ref());
+        alert.addButtonWithTitle(nsstring(text().ok).as_ref());
         alert.runModal();
     } else {
         eprintln!("{title}: {message}");
@@ -244,17 +266,17 @@ fn toggle_launch_at_login(ctx: &LauncherContext) -> LauncherResult<String> {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
-        Ok("Launch at login disabled.".to_string())
+        Ok(text().launch_at_login_disabled.to_string())
     } else {
         let path = launch_agent_path()?;
         let parent = path
             .parent()
-            .ok_or("could not resolve LaunchAgents directory")?;
+            .ok_or_else(|| text().resolve_launch_agents_failed.to_string())?;
         fs::create_dir_all(parent)?;
         fs::write(&path, launch_agent_plist(ctx))?;
         let _ = launchctl_bootout(&path);
         let _ = launchctl_bootstrap(&path);
-        Ok("Launch at login enabled.".to_string())
+        Ok(text().launch_at_login_enabled.to_string())
     }
 }
 
@@ -263,7 +285,7 @@ fn launch_agent_installed() -> bool {
 }
 
 fn launch_agent_path() -> LauncherResult<std::path::PathBuf> {
-    let home = std::env::home_dir().ok_or("could not detect user home directory")?;
+    let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed.to_string())?;
     Ok(home
         .join("Library")
         .join("LaunchAgents")
@@ -322,7 +344,7 @@ fn run_command(command: &mut Command) -> LauncherResult<()> {
     })
     .trim()
     .to_string();
-    Err(format!("command failed: {detail}").into())
+    Err(text().command_failed(&detail).into())
 }
 
 fn open_anda_terminal(ctx: &LauncherContext) {
