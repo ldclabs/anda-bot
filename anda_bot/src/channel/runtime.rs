@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -132,6 +132,10 @@ struct ChannelRuntimeInner {
     work_dir: PathBuf,
 }
 
+fn channel_workspace_path(work_dir: &Path, channel_id: &str) -> PathBuf {
+    work_dir.join(channel_workspace_dir_name(channel_id))
+}
+
 impl ChannelRuntime {
     pub async fn connect(
         db: Arc<AndaDB>,
@@ -172,7 +176,7 @@ impl ChannelRuntime {
             .unwrap_or_default();
         let conversation_routes = build_conversation_routes(&channels_conversation);
         for (channel_name, channel) in &channels {
-            let path = work_dir.join(channel_name);
+            let path = channel_workspace_path(&work_dir, channel_name);
             if let Err(err) = tokio::fs::create_dir_all(&path).await {
                 log::warn!("failed to create workspace for {}: {err}", channel_name);
             }
@@ -248,9 +252,7 @@ impl ChannelRuntime {
                         extra.insert("conversation".to_string(), conv_id.into());
                         extra.insert(
                             "workspace".to_string(),
-                            self.inner
-                                .work_dir
-                                .join(&message.channel)
+                            channel_workspace_path(&self.inner.work_dir, &message.channel)
                                 .to_string_lossy()
                                 .into(),
                         );

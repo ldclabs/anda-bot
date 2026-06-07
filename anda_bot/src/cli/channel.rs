@@ -82,7 +82,11 @@ async fn init_channels(
 
     for target_id in target_ids {
         let (channel_id, channel) = build_configured_channel(cfg, &target_id, http_client.clone())?;
-        channel.set_workspace(daemon.channels_dir_path().join(&channel_id));
+        channel.set_workspace(
+            daemon
+                .channels_dir_path()
+                .join(channel_runtime::channel_workspace_dir_name(&channel_id)),
+        );
         let result = channel.init(options).await?;
         let status = if result.changed { "initialized" } else { "ok" };
         println!("{channel_id}: {status} - {}", result.message);

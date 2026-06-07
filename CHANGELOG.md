@@ -13,6 +13,10 @@ All notable changes to Anda Bot.
 - **Channel runtime caller selection**: incoming channel messages now run under the configured channel user when present, falling back to the local owner, and the engine/brain managers include all configured trusted user public keys.
 - **Dependencies bumped**: `anda_core` 0.12.7 → 0.12.8 and `anda_engine` 0.12.30 → 0.12.32.
 
+### Fixed
+
+- **Windows channel workspaces**: channel workspace directories now escape Windows-invalid channel id characters such as `:`, while preserving the existing non-Windows layout.
+
 ## [0.8.13] — 2026-06-06
 
 ### Added

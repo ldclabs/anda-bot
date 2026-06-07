@@ -117,6 +117,96 @@ impl ChannelInitResult {
     }
 }
 
+/// Returns the filesystem directory name for a channel workspace.
+///
+/// Channel ids are stable metadata and routing keys, so they may contain
+/// separators like `:`. Windows rejects those characters in directory names.
+pub fn channel_workspace_dir_name(channel_id: &str) -> String {
+    if cfg!(windows) {
+        windows_safe_path_component(channel_id)
+    } else {
+        channel_id.to_string()
+    }
+}
+
+fn windows_safe_path_component(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "channel".to_string();
+    }
+
+    let mut encoded = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if is_windows_safe_path_char(ch) {
+            encoded.push(ch);
+        } else {
+            push_percent_encoded_char(&mut encoded, ch);
+        }
+    }
+
+    while matches!(encoded.as_bytes().last(), Some(b'.' | b' ')) {
+        let ch = encoded.pop().expect("path component is not empty");
+        push_percent_encoded_char(&mut encoded, ch);
+    }
+
+    if is_reserved_windows_name(&encoded) {
+        encoded.insert(0, '_');
+    }
+
+    encoded
+}
+
+fn is_windows_safe_path_char(ch: char) -> bool {
+    !ch.is_control()
+        && !matches!(
+            ch,
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '%'
+        )
+}
+
+fn push_percent_encoded_char(output: &mut String, ch: char) {
+    let mut buf = [0_u8; 4];
+    for byte in ch.encode_utf8(&mut buf).as_bytes() {
+        push_percent_encoded_byte(output, *byte);
+    }
+}
+
+fn push_percent_encoded_byte(output: &mut String, byte: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    output.push('%');
+    output.push(HEX[(byte >> 4) as usize] as char);
+    output.push(HEX[(byte & 0x0F) as usize] as char);
+}
+
+fn is_reserved_windows_name(value: &str) -> bool {
+    let stem = value.split('.').next().unwrap_or(value);
+    matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
 /// Core channel trait — implement for any messaging platform
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -343,5 +433,39 @@ mod tests {
         let unchanged = ChannelInitResult::unchanged("already configured");
         assert!(!unchanged.changed);
         assert_eq!(unchanged.message, "already configured");
+    }
+
+    #[test]
+    fn workspace_dir_name_preserves_existing_non_windows_layout() {
+        if !cfg!(windows) {
+            assert_eq!(
+                channel_workspace_dir_name("wechat:personal"),
+                "wechat:personal"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_workspace_dir_name_escapes_invalid_path_characters() {
+        assert_eq!(
+            windows_safe_path_component("wechat:personal"),
+            "wechat%3Apersonal"
+        );
+        assert_eq!(
+            windows_safe_path_component("irc:libera/chat?ops*"),
+            "irc%3Alibera%2Fchat%3Fops%2A"
+        );
+        assert_eq!(
+            windows_safe_path_component("discord%prod"),
+            "discord%25prod"
+        );
+    }
+
+    #[test]
+    fn windows_workspace_dir_name_handles_reserved_and_trailing_names() {
+        assert_eq!(windows_safe_path_component("con"), "_con");
+        assert_eq!(windows_safe_path_component("LPT1.log"), "_LPT1.log");
+        assert_eq!(windows_safe_path_component("wechat."), "wechat%2E");
+        assert_eq!(windows_safe_path_component("  "), "channel");
     }
 }
