@@ -122,8 +122,16 @@ Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
 $iexpress = Join-Path $env:WINDIR "System32\iexpress.exe"
 if (!(Test-Path $iexpress)) { Fail "iexpress.exe not found" }
 
-& $iexpress /N /Q $sedPath
-if ($LASTEXITCODE -ne 0) { Fail "iexpress.exe failed with exit code $LASTEXITCODE" }
+$process = Start-Process -FilePath $iexpress -ArgumentList @("/N", "/Q", $sedPath) -Wait -PassThru
+$exitCode = $process.ExitCode
+if ($null -ne $exitCode -and $exitCode -ne 0) {
+    Fail "iexpress.exe failed with exit code $exitCode"
+}
+
+for ($i = 0; $i -lt 10 -and !(Test-Path $outputPath); $i++) {
+    Start-Sleep -Milliseconds 500
+}
+
 if (!(Test-Path $outputPath)) { Fail "Installer was not created: $outputPath" }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputPath).Hash.ToLowerInvariant()
