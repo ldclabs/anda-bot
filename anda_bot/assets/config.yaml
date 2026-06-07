@@ -242,21 +242,6 @@ transcription:
   #   timeout_secs: 300
 
 channels:
-  # irc:
-  #   - id: libera
-  #     # Optional. Defaults to the local owner in ~/.anda/keys/user.key.
-  #     user: alice
-  #     server: irc.libera.chat
-  #     port: 6697
-  #     nickname: anda-bot
-  #     username: anda
-  #     channels:
-  #       - "#anda"
-  #     allowed_users:
-  #       - "*"
-  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
-  #     allow_external_users: false
-  #     verify_tls: true
   # telegram:
   #   - id: personal
   #     # Optional. Bind this bot to a configured user id.

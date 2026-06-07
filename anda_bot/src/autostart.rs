@@ -8,7 +8,7 @@ use std::{
 #[cfg(windows)]
 const TASK_NAME: &str = "Anda Bot";
 #[cfg(any(target_os = "macos", test))]
-const MACOS_LAUNCH_AGENT_LABEL: &str = "com.ldclabs.anda-bot";
+const MACOS_LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot";
 #[cfg(target_os = "linux")]
 const LINUX_SYSTEMD_SERVICE: &str = "anda-bot.service";
 #[cfg(target_os = "linux")]

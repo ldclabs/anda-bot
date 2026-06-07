@@ -71,7 +71,7 @@ const copies: Record<string, HomeCopy> = {
       items: [
         ['terminal', 'commands, files, logs, and local workspaces'],
         ['memory', 'projects, preferences, decisions, and timelines'],
-        ['channels', 'IRC, Telegram, WeChat, Discord, and Feishu'],
+        ['channels', 'Telegram, WeChat, Discord, and Feishu'],
         ['voice', 'transcription, TTS, and spoken input'],
       ],
     },
@@ -129,7 +129,7 @@ const copies: Record<string, HomeCopy> = {
       items: [
         ['terminal', '命令、文件、日志和本地工作区'],
         ['memory', '项目、偏好、决策和时间线'],
-        ['channels', 'IRC、Telegram、WeChat、Discord、飞书'],
+        ['channels', 'Telegram、WeChat、Discord、飞书'],
         ['voice', '转写、TTS 和语音输入'],
       ],
     },
@@ -141,7 +141,7 @@ const copies: Record<string, HomeCopy> = {
     phases: [{index: '01', title: 'Instalar y configurar', body: 'Inicia Anda desde una versión publicada o desde el código fuente y conecta el daemon local con la UI terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Memoria duradera', body: 'Aprende cómo Brain forma, recupera y mantiene un grafo de conocimiento.', to: '/docs/memory/brain'}, {index: '03', title: 'Trabajo de largo alcance', body: 'Usa /goal, subagentes, skills, shell y herramientas externas para lograr progreso verificable.', to: '/docs/workflows/long-horizon'}],
     signals: [['goal://active', 'el objetivo sigue activo'], ['anda://memory', 'Brain forma y recupera'], ['tools://local', 'shell, archivos, skills, subagentes']],
     docs: {badge: 'Mapa de documentación', title: 'Convierte una ejecución local en un agente que sigue trabajando.', body: 'Empieza con la instalación y continúa con terminal, modelos, memoria, subagentes, canales y límites de datos locales.'},
-    routes: {badge: 'Donde nace el contexto', title: 'Terminal, herramientas, archivos, canales y voz pueden entrar en el mismo hilo de memoria.', items: [['terminal', 'comandos, archivos, registros y workspaces'], ['memory', 'proyectos, preferencias, decisiones y líneas de tiempo'], ['channels', 'IRC, Telegram, WeChat, Discord y Feishu'], ['voice', 'transcripción, TTS y entrada hablada']]},
+    routes: {badge: 'Donde nace el contexto', title: 'Terminal, herramientas, archivos, canales y voz pueden entrar en el mismo hilo de memoria.', items: [['terminal', 'comandos, archivos, registros y workspaces'], ['memory', 'proyectos, preferencias, decisiones y líneas de tiempo'], ['channels', 'Telegram, WeChat, Discord y Feishu'], ['voice', 'transcripción, TTS y entrada hablada']]},
   },
   fr: {
     meta: {title: 'Documentation Anda Bot', description: 'Documentation officielle d\'Anda Bot pour installer, configurer la mémoire graphe et connecter outils, sous-agents et canaux.'},
@@ -150,7 +150,7 @@ const copies: Record<string, HomeCopy> = {
     phases: [{index: '01', title: 'Installer et configurer', body: 'Démarre Anda depuis une version publiée ou le code source, puis connecte le daemon local à l\'interface terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Mémoire durable', body: 'Comprends comment Brain forme, rappelle et maintient un graphe de connaissances.', to: '/docs/memory/brain'}, {index: '03', title: 'Travail longue durée', body: 'Utilise /goal, les sous-agents, skills, shell et outils externes pour obtenir un progrès vérifié.', to: '/docs/workflows/long-horizon'}],
     signals: [['goal://active', 'l\'objectif reste actif'], ['anda://memory', 'Brain forme et rappelle'], ['tools://local', 'shell, fichiers, skills, sous-agents']],
     docs: {badge: 'Carte documentaire', title: 'Transforme un lancement local en agent capable de continuer le travail.', body: 'Commence par l\'installation, puis explore terminal, modèles, mémoire, sous-agents, canaux et limites des données locales.'},
-    routes: {badge: 'Où naît le contexte', title: 'Terminal, outils, fichiers, canaux et voix peuvent entrer dans le même fil de mémoire.', items: [['terminal', 'commandes, fichiers, journaux et espaces locaux'], ['memory', 'projets, préférences, décisions et chronologies'], ['channels', 'IRC, Telegram, WeChat, Discord et Feishu'], ['voice', 'transcription, TTS et entrée vocale']]},
+    routes: {badge: 'Où naît le contexte', title: 'Terminal, outils, fichiers, canaux et voix peuvent entrer dans le même fil de mémoire.', items: [['terminal', 'commandes, fichiers, journaux et espaces locaux'], ['memory', 'projets, préférences, décisions et chronologies'], ['channels', 'Telegram, WeChat, Discord et Feishu'], ['voice', 'transcription, TTS et entrée vocale']]},
   },
   ru: {
     meta: {title: 'Документация Anda Bot', description: 'Официальная документация Anda Bot: установка, графовая память, инструменты, сабагенты и каналы команды.'},
@@ -159,7 +159,7 @@ const copies: Record<string, HomeCopy> = {
     phases: [{index: '01', title: 'Установка и настройка', body: 'Запустите Anda из релиза или исходников и подключите локальный daemon к терминальному UI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Долгая память', body: 'Узнайте, как Brain формирует, извлекает и поддерживает граф знаний.', to: '/docs/memory/brain'}, {index: '03', title: 'Длинные задачи', body: 'Используйте /goal, сабагентов, skills, shell и внешние инструменты для проверяемого прогресса.', to: '/docs/workflows/long-horizon'}],
     signals: [['goal://active', 'цель остается активной'], ['anda://memory', 'Brain формирует и вспоминает'], ['tools://local', 'shell, файлы, skills, сабагенты']],
     docs: {badge: 'Карта документации', title: 'Превратите один запуск в локального агента, который продолжает работу.', body: 'Начните с установки, затем изучите терминал, модели, память, сабагентов, каналы и локальные границы данных.'},
-    routes: {badge: 'Где рождается контекст', title: 'Терминал, инструменты, файлы, каналы и голос могут войти в одну линию памяти.', items: [['terminal', 'команды, файлы, логи и локальные рабочие области'], ['memory', 'проекты, предпочтения, решения и временные линии'], ['channels', 'IRC, Telegram, WeChat, Discord и Feishu'], ['voice', 'транскрипция, TTS и голосовой ввод']]},
+    routes: {badge: 'Где рождается контекст', title: 'Терминал, инструменты, файлы, каналы и голос могут войти в одну линию памяти.', items: [['terminal', 'команды, файлы, логи и локальные рабочие области'], ['memory', 'проекты, предпочтения, решения и временные линии'], ['channels', 'Telegram, WeChat, Discord и Feishu'], ['voice', 'транскрипция, TTS и голосовой ввод']]},
   },
   ar: {
     meta: {title: 'وثائق Anda Bot', description: 'وثائق Anda Bot الرسمية للتثبيت، وذاكرة الرسم البياني، والأدوات، والوكلاء الفرعيين، وقنوات الفريق.'},
@@ -168,7 +168,7 @@ const copies: Record<string, HomeCopy> = {
     phases: [{index: '01', title: 'التثبيت والإعداد', body: 'شغّل Anda من إصدار جاهز أو من المصدر، ثم صِل daemon المحلي بواجهة الطرفية.', to: '/docs/quick-start/install'}, {index: '02', title: 'ذاكرة طويلة المدى', body: 'تعرّف على كيفية تكوين Brain واسترجاعه وصيانته لرسم معرفي.', to: '/docs/memory/brain'}, {index: '03', title: 'عمل طويل المدى', body: 'استخدم /goal والوكلاء الفرعيين والمهارات و shell والأدوات الخارجية للوصول إلى تقدم قابل للتحقق.', to: '/docs/workflows/long-horizon'}],
     signals: [['goal://active', 'يبقى الهدف نشطًا'], ['anda://memory', 'Brain يكوّن ويسترجع'], ['tools://local', 'shell وملفات ومهارات ووكلاء فرعيون']],
     docs: {badge: 'خريطة الوثائق', title: 'حوّل تشغيلًا واحدًا إلى وكيل محلي يواصل العمل.', body: 'ابدأ بالتثبيت، ثم انتقل إلى الطرفية، والنماذج، والذاكرة، والوكلاء الفرعيين، والقنوات، وحدود البيانات المحلية.'},
-    routes: {badge: 'حيث يولد السياق', title: 'يمكن للطرفية والأدوات والملفات والقنوات والصوت أن تدخل خيط الذاكرة نفسه.', items: [['terminal', 'أوامر وملفات وسجلات ومساحات عمل محلية'], ['memory', 'مشاريع وتفضيلات وقرارات وجداول زمنية'], ['channels', 'IRC وTelegram وWeChat وDiscord وFeishu'], ['voice', 'تفريغ صوتي وTTS وإدخال منطوق']]},
+    routes: {badge: 'حيث يولد السياق', title: 'يمكن للطرفية والأدوات والملفات والقنوات والصوت أن تدخل خيط الذاكرة نفسه.', items: [['terminal', 'أوامر وملفات وسجلات ومساحات عمل محلية'], ['memory', 'مشاريع وتفضيلات وقرارات وجداول زمنية'], ['channels', 'Telegram وWeChat وDiscord وFeishu'], ['voice', 'تفريغ صوتي وTTS وإدخال منطوق']]},
   },
 };
 

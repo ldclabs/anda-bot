@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     channel::{self as channel_runtime, Channel, ChannelInitOptions},
-    config::{self, Config},
+    config::Config,
     daemon::Daemon,
     util::http_client::build_http_client,
 };
@@ -97,15 +97,6 @@ async fn init_channels(
 
 fn configured_channel_rows(cfg: &Config) -> Vec<ChannelRow> {
     let mut rows = Vec::new();
-
-    for item in cfg.channels.irc.iter().filter(|item| !item.is_empty()) {
-        rows.push(ChannelRow {
-            id: format!("irc:{}", item.channel_id()),
-            name: "irc",
-            username: config::normalize_optional(&item.username)
-                .unwrap_or_else(|| item.nickname.clone()),
-        });
-    }
 
     for item in cfg.channels.telegram.iter().filter(|item| !item.is_empty()) {
         rows.push(ChannelRow {
@@ -227,16 +218,6 @@ fn build_configured_channel(
     };
 
     match kind {
-        "irc" => {
-            let settings = cfg
-                .channels
-                .irc
-                .iter()
-                .filter(|item| !item.is_empty() && item.channel_id() == local_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            single_built_channel(channel_runtime::irc::build_irc_channels(&settings)?, id)
-        }
         "telegram" => {
             let settings = cfg
                 .channels

@@ -16,9 +16,6 @@ pub const DEFAULT_FEISHU_WS_BASE: &str = "https://open.feishu.cn";
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ChannelSettings {
     #[serde(default)]
-    pub irc: Vec<IrcChannelSettings>,
-
-    #[serde(default)]
     pub telegram: Vec<TelegramChannelSettings>,
 
     #[serde(default)]
@@ -34,11 +31,6 @@ pub struct ChannelSettings {
 impl ChannelSettings {
     pub fn user_refs(&self) -> Vec<String> {
         let mut refs = Vec::new();
-        refs.extend(
-            self.irc
-                .iter()
-                .filter_map(|channel| channel_user_ref(&channel.user)),
-        );
         refs.extend(
             self.telegram
                 .iter()
@@ -67,14 +59,6 @@ impl ChannelSettings {
         users: &UserRegistry,
     ) -> Result<HashMap<String, Principal>, BoxError> {
         let mut bindings = HashMap::new();
-        for irc in self.irc.iter().filter(|channel| !channel.is_empty()) {
-            insert_user_binding(
-                &mut bindings,
-                format!("irc:{}", irc.channel_id()),
-                &irc.user,
-                users,
-            )?;
-        }
         for telegram in self.telegram.iter().filter(|channel| !channel.is_empty()) {
             insert_user_binding(
                 &mut bindings,
@@ -485,108 +469,6 @@ impl WechatChannelSettings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct IrcChannelSettings {
-    #[serde(default)]
-    pub id: Option<String>,
-
-    #[serde(default)]
-    pub user: Option<String>,
-
-    #[serde(default)]
-    pub server: String,
-
-    #[serde(default = "default_port")]
-    pub port: u16,
-
-    #[serde(default)]
-    pub nickname: String,
-
-    #[serde(default)]
-    pub username: Option<String>,
-
-    #[serde(default)]
-    pub channels: Vec<String>,
-
-    #[serde(default)]
-    pub allowed_users: Vec<String>,
-
-    #[serde(default)]
-    pub allow_external_users: bool,
-
-    #[serde(default)]
-    pub server_password: Option<String>,
-
-    #[serde(default)]
-    pub nickserv_password: Option<String>,
-
-    #[serde(default)]
-    pub sasl_password: Option<String>,
-
-    #[serde(default = "default_true")]
-    pub verify_tls: bool,
-}
-
-impl Default for IrcChannelSettings {
-    fn default() -> Self {
-        Self {
-            id: None,
-            user: None,
-            server: String::new(),
-            port: default_port(),
-            nickname: String::new(),
-            username: None,
-            channels: Vec::new(),
-            allowed_users: Vec::new(),
-            allow_external_users: false,
-            server_password: None,
-            nickserv_password: None,
-            sasl_password: None,
-            verify_tls: true,
-        }
-    }
-}
-
-impl IrcChannelSettings {
-    pub fn channel_id(&self) -> String {
-        self.id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| self.server.trim())
-            .to_string()
-    }
-
-    pub fn label(&self, index: usize) -> String {
-        let channel_id = self.channel_id();
-        if !channel_id.is_empty() {
-            channel_id
-        } else {
-            format!("#{}", index + 1)
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        normalize_string(self.id.as_deref().unwrap_or("")).is_none()
-            && self.server.trim().is_empty()
-            && normalize_optional(&self.user).is_none()
-            && self.nickname.trim().is_empty()
-            && normalize_optional(&self.username).is_none()
-            && normalize_list(&self.channels).is_empty()
-            && normalize_list(&self.allowed_users).is_empty()
-            && !self.allow_external_users
-            && normalize_optional(&self.server_password).is_none()
-            && normalize_optional(&self.nickserv_password).is_none()
-            && normalize_optional(&self.sasl_password).is_none()
-            && self.port == default_port()
-            && self.verify_tls
-    }
-}
-
-fn default_port() -> u16 {
-    6697
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,13 +516,6 @@ mod tests {
         };
         assert_eq!(wechat.channel_id(), "wx");
         assert_eq!(WechatChannelSettings::default().channel_id(), "default");
-
-        let irc = IrcChannelSettings {
-            server: "  irc.libera.chat  ".to_string(),
-            ..Default::default()
-        };
-        assert_eq!(irc.channel_id(), "irc.libera.chat");
-        assert_eq!(IrcChannelSettings::default().label(2), "#3");
     }
 
     #[test]
@@ -649,7 +524,6 @@ mod tests {
         assert!(DiscordChannelSettings::default().is_empty());
         assert!(TelegramChannelSettings::default().is_empty());
         assert!(WechatChannelSettings::default().is_empty());
-        assert!(IrcChannelSettings::default().is_empty());
 
         assert!(
             !LarkChannelSettings {
@@ -679,22 +553,14 @@ mod tests {
             }
             .is_empty()
         );
-        assert!(
-            !IrcChannelSettings {
-                verify_tls: false,
-                ..Default::default()
-            }
-            .is_empty()
-        );
     }
 
     #[test]
-    fn serde_defaults_preserve_ack_and_irc_port_defaults() {
+    fn serde_defaults_preserve_channel_defaults() {
         let settings: ChannelSettings = serde_json::from_value(json!({
             "lark": [{}],
             "discord": [{}],
             "telegram": [{}],
-            "irc": [{}],
             "wechat": [{}]
         }))
         .unwrap();
@@ -702,8 +568,6 @@ mod tests {
         assert!(settings.lark[0].ack_reactions);
         assert!(settings.discord[0].ack_reactions);
         assert!(settings.telegram[0].ack_reactions);
-        assert_eq!(settings.irc[0].port, 6697);
-        assert!(settings.irc[0].verify_tls);
         assert_eq!(settings.wechat[0].route_tag, None);
     }
 }

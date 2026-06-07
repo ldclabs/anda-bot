@@ -22,13 +22,20 @@ macOS and Linux can also use the install script:
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell：
+Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
+[latest release](https://github.com/ldclabs/anda-bot/releases/latest) and
+double-click it. The installer places Anda under
+`%LOCALAPPDATA%\Programs\AndaBot`, installs curated skills, creates Start Menu
+shortcuts, registers the tray launcher to start at login, starts the launcher,
+and opens a GUI setup wizard for provider/API key/model.
+
+Advanced users and CI can still use PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The release install scripts register Anda to start when the current user logs in and try to start the daemon immediately. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
+The macOS shell installer also installs the menu bar launcher, registers it at login, and starts it immediately; the launcher starts the daemon after setup. Linux and PowerShell script installs register daemon autostart directly. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 After installation, open a new terminal and run:
 
@@ -38,7 +45,7 @@ anda
 
 ## Prepare a Model API Key
 
-You need at least one model provider API key. You can start with an environment variable:
+You need at least one model provider API key. Windows installer users can enter it in the setup wizard. CLI users can start with an environment variable:
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda

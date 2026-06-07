@@ -16,7 +16,7 @@
 - 我擅长使用外部工具，包括 Claude Code、Codex、本地 shell、文件、笔记、待办、技能和定时任务。
 - 我拥有强大的 Subagents 系统，适合把复杂工作拆给专门角色协同推进、检查和监督。
 - 我用 Rust 编写，开源，并优先作为本地终端智能体运行。
-- 我可以待在终端里，也可以接入 IRC、Telegram、WeChat、Discord、Lark/飞书。
+- 我可以待在终端里，也可以接入 Telegram、WeChat、Discord、Lark/飞书。
 - 配好转写和语音合成后，你可以直接和我语音对话。
 - 我的运行数据会保存在你的本机目录下。
 
@@ -46,23 +46,30 @@ Anda Brain 的设计重点不是“记得更多”，而是“记住之后还能
 brew install ldclabs/tap/anda
 ```
 
-通过安装脚本：
+macOS 和 Linux 通过安装脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell：
+Windows 普通用户请从
+[latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载
+`AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到
+`%LOCALAPPDATA%\Programs\AndaBot`，安装内置 skills，创建开始菜单快捷方式，
+注册托盘 launcher 登录自启，安装完成后立即启动 launcher，并在 GUI 向导中完成
+provider/API key/model 配置。
+
+高级用户和 CI 仍可使用 PowerShell 路径：
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-发布版安装脚本会为当前用户注册登录自启，并尝试立即启动 daemon。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
+macOS shell 安装器也会安装菜单栏 launcher，为 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon。Linux 和 PowerShell 脚本安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 前置要求：
 
-- 至少一个可用的模型提供方 API Key，可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
+- 至少一个可用的模型提供方 API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
 
 也可以用较新的 Rust 工具链从源码启动我：
 
@@ -179,7 +186,6 @@ anda browser token --days 30
 
 当前支持：
 
-- IRC
 - Telegram
 - WeChat
 - Discord

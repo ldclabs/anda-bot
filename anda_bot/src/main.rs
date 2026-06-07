@@ -444,7 +444,7 @@ async fn run_autostart_command(
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
             autostart::install(&daemon.home)?;
-            println!("Registered Anda to start when the current Windows user logs in.");
+            println!("Registered Anda to start when the current user logs in.");
         }
         autostart::AutostartCommand::Uninstall => match autostart::uninstall()? {
             autostart::AutostartStatus::NotInstalled => {

@@ -311,7 +311,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: 'Where I work',
 			title: 'Bring long memory to the terminal, tools, and team channels.',
-			body: 'I run as an open-source Rust terminal agent, join IM surfaces such as WeChat, Feishu/Lark, Telegram, Discord, and IRC, and keep the same memory thread moving through tools and subagents.',
+			body: 'I run as an open-source Rust terminal agent, join IM surfaces such as WeChat, Feishu/Lark, Telegram, and Discord, and keep the same memory thread moving through tools and subagents.',
 			surfaces: [
 				{
 					label: 'terminal',
@@ -330,7 +330,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					label: 'IM channels',
 					detail:
-						'WeChat, Feishu/Lark, Telegram, Discord, and IRC can share the same memory thread.'
+						'WeChat, Feishu/Lark, Telegram, and Discord can share the same memory thread.'
 				}
 			],
 			cards: [
@@ -523,7 +523,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: '工作场景',
 			title: '把长记忆带到终端、工具和团队频道。',
-			body: '我作为开源 Rust 终端 Agent 运行，也可以接入微信、飞书/Lark、Telegram、Discord、IRC 等 IM，并让同一条记忆线索贯穿工具调用和子智能体。',
+			body: '我作为开源 Rust 终端 Agent 运行，也可以接入微信、飞书/Lark、Telegram、Discord 等 IM，并让同一条记忆线索贯穿工具调用和子智能体。',
 			surfaces: [
 				{ label: '终端', detail: '本地 Rust 运行时让命令、文件和 Agent 工作靠近你的机器。' },
 				{
@@ -533,7 +533,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{ label: '子智能体', detail: '专门角色可以研究、实现、审查，并继续推进复杂任务。' },
 				{
 					label: 'IM 频道',
-					detail: '微信、飞书/Lark、Telegram、Discord、IRC 可以共享同一条记忆线索。'
+					detail: '微信、飞书/Lark、Telegram、Discord 可以共享同一条记忆线索。'
 				}
 			],
 			cards: [
@@ -725,7 +725,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: 'Dónde trabajo',
 			title: 'Lleva memoria larga a la terminal, herramientas y canales de equipo.',
-			body: 'Me ejecuto como agente Rust open source en la terminal, me uno a WeChat, Feishu/Lark, Telegram, Discord e IRC, y mantengo el mismo hilo de memoria entre herramientas y subagents.',
+			body: 'Me ejecuto como agente Rust open source en la terminal, me uno a WeChat, Feishu/Lark, Telegram y Discord, y mantengo el mismo hilo de memoria entre herramientas y subagents.',
 			surfaces: [
 				{
 					label: 'terminal',
@@ -743,7 +743,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				},
 				{
 					label: 'canales IM',
-					detail: 'WeChat, Feishu/Lark, Telegram, Discord e IRC comparten el mismo hilo de memoria.'
+					detail: 'WeChat, Feishu/Lark, Telegram y Discord comparten el mismo hilo de memoria.'
 				}
 			],
 			cards: [
@@ -940,7 +940,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: 'Où je travaille',
 			title: 'Apportez la mémoire longue au terminal, aux outils et aux canaux.',
-			body: 'Je fonctionne comme agent terminal Rust open source, rejoins WeChat, Feishu/Lark, Telegram, Discord et IRC, et garde le même fil mémoire entre outils et subagents.',
+			body: 'Je fonctionne comme agent terminal Rust open source, rejoins WeChat, Feishu/Lark, Telegram et Discord, et garde le même fil mémoire entre outils et subagents.',
 			surfaces: [
 				{
 					label: 'terminal',
@@ -958,7 +958,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				},
 				{
 					label: 'canaux IM',
-					detail: 'WeChat, Feishu/Lark, Telegram, Discord et IRC partagent le même fil mémoire.'
+					detail: 'WeChat, Feishu/Lark, Telegram et Discord partagent le même fil mémoire.'
 				}
 			],
 			cards: [
@@ -1155,7 +1155,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: 'Где я работаю',
 			title: 'Принесите долгую память в терминал, инструменты и каналы команды.',
-			body: 'Я работаю как open-source Rust-агент в терминале, подключаюсь к WeChat, Feishu/Lark, Telegram, Discord и IRC и сохраняю одну нить памяти между инструментами и subagents.',
+			body: 'Я работаю как open-source Rust-агент в терминале, подключаюсь к WeChat, Feishu/Lark, Telegram и Discord и сохраняю одну нить памяти между инструментами и subagents.',
 			surfaces: [
 				{
 					label: 'терминал',
@@ -1171,7 +1171,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				},
 				{
 					label: 'IM-каналы',
-					detail: 'WeChat, Feishu/Lark, Telegram, Discord и IRC разделяют одну нить памяти.'
+					detail: 'WeChat, Feishu/Lark, Telegram и Discord разделяют одну нить памяти.'
 				}
 			],
 			cards: [
@@ -1367,7 +1367,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			memoryRoute: 'anda://memory',
 			badge: 'أين أعمل',
 			title: 'اجلب الذاكرة الطويلة إلى الطرفية والأدوات وقنوات الفريق.',
-			body: 'أعمل كوكيل Rust مفتوح المصدر في الطرفية، وأتصل بـ WeChat و Feishu/Lark و Telegram و Discord و IRC، وأحافظ على خيط ذاكرة واحد بين الأدوات و subagents.',
+			body: 'أعمل كوكيل Rust مفتوح المصدر في الطرفية، وأتصل بـ WeChat و Feishu/Lark و Telegram و Discord، وأحافظ على خيط ذاكرة واحد بين الأدوات و subagents.',
 			surfaces: [
 				{
 					label: 'الطرفية',
@@ -1383,7 +1383,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				},
 				{
 					label: 'قنوات IM',
-					detail: 'تشارك WeChat و Feishu/Lark و Telegram و Discord و IRC خيط الذاكرة نفسه.'
+					detail: 'تشارك WeChat و Feishu/Lark و Telegram و Discord خيط الذاكرة نفسه.'
 				}
 			],
 			cards: [

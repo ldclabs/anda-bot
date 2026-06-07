@@ -6,7 +6,7 @@ Anda Bot is designed for everyday computer work that is too long, too scattered,
 
 The extension is a bridge. The thinking and tool orchestration come from the local Anda Bot program running on your machine. The Chrome extension connects to that local daemon through a Gateway URL and Bearer token that you generate with Anda. This keeps the browser experience convenient while still letting the agent use the local runtime, shell tools, files, Skills, and long-term memory that make Anda useful.
 
-Anda can also be connected to IM tools such as WeChat, Telegram, Discord, Lark, or IRC through its channel settings. When those channels are configured, you can reach the same local agent remotely from a chat app while the daemon keeps running on the computer you control.
+Anda can also be connected to IM tools such as WeChat, Telegram, Discord, or Lark through its channel settings. When those channels are configured, you can reach the same local agent remotely from a chat app while the daemon keeps running on the computer you control.
 
 Why install it
 
