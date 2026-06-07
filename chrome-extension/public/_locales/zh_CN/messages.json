@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "在 Chrome 连接本机 Anda：会使用浏览器、命令行工具和 AI 技能，并用图谱记忆持续学习与推进任务。"
+    "message": "在浏览器中连接本机 Anda 智能体：会使用浏览器、命令行工具和 AI 技能，并用图谱记忆持续学习与推进任务。"
   },
   "actionTitle": {
     "message": "打开 Anda Bot"
@@ -30,7 +30,7 @@
     "message": "连接这台电脑上的 Anda"
   },
   "onboardingIntro": {
-    "message": "Chrome 扩展需要先安装本机 Anda 程序、配置模型服务商，并让守护进程保持运行，之后才能开始聊天。"
+    "message": "浏览器扩展需要先安装本机 Anda 程序、配置模型服务商，并让守护进程保持运行，之后才能开始聊天。"
   },
   "onboardingInstallTitle": {
     "message": "安装 Anda"
@@ -221,14 +221,17 @@
   "startRecording": {
     "message": "开始录音"
   },
-  "useChromeVoice": {
-    "message": "使用 Chrome 内置语音服务"
+  "browserVoiceProviderLabel": {
+    "message": "浏览器"
+  },
+  "useBrowserVoice": {
+    "message": "使用浏览器内置语音服务"
   },
   "useAndaVoice": {
     "message": "使用 Anda 语音服务"
   },
-  "chromeVoiceService": {
-    "message": "Chrome 内置语音服务"
+  "browserVoiceService": {
+    "message": "浏览器内置语音服务"
   },
   "andaVoiceService": {
     "message": "Anda 语音服务"

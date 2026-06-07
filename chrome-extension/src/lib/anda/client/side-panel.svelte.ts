@@ -375,7 +375,7 @@ export class AndaSidePanelClient extends EventTarget {
           const service =
             recording.voiceProvider === 'anda'
               ? chrome.i18n.getMessage('andaVoiceService')
-              : chrome.i18n.getMessage('chromeVoiceService')
+              : chrome.i18n.getMessage('browserVoiceService')
           this.updateStatus('playback failed', {
             kind: 'error',
             text: chrome.i18n.getMessage('playbackUnavailable') + `: ${service}`

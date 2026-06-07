@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "Connect Chrome to local Anda: an agent that uses browser and command-line tools, Skills, long reasoning, and graph memory."
+    "message": "Connect to local Anda in your browser: an agent that uses browser and command-line tools, Skills, long reasoning, and graph memory."
   },
   "actionTitle": {
     "message": "Open Anda Bot"
@@ -30,7 +30,7 @@
     "message": "Connect Anda on this computer"
   },
   "onboardingIntro": {
-    "message": "The Chrome extension needs the local Anda program, a configured model provider, and a running daemon before chat is available."
+    "message": "The browser extension needs the local Anda program, a configured model provider, and a running daemon before chat is available."
   },
   "onboardingInstallTitle": {
     "message": "Install Anda"
@@ -221,14 +221,17 @@
   "startRecording": {
     "message": "Start recording"
   },
-  "useChromeVoice": {
-    "message": "Use Chrome built-in voice service"
+  "browserVoiceProviderLabel": {
+    "message": "Browser"
+  },
+  "useBrowserVoice": {
+    "message": "Use browser built-in voice service"
   },
   "useAndaVoice": {
     "message": "Use Anda voice service"
   },
-  "chromeVoiceService": {
-    "message": "Chrome built-in voice service"
+  "browserVoiceService": {
+    "message": "Browser built-in voice service"
   },
   "andaVoiceService": {
     "message": "Anda voice service"

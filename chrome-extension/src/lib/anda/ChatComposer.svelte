@@ -193,10 +193,12 @@
       !preparingAttachments &&
       voiceStage !== 'processing'
   )
-  const voiceProviderLabel = $derived(voiceProvider === 'chrome' ? 'Chrome' : 'Anda')
+  const voiceProviderLabel = $derived(
+    voiceProvider === 'chrome' ? chrome.i18n.getMessage('browserVoiceProviderLabel') : 'Anda'
+  )
   const voiceProviderTitle = $derived(
     voiceProvider === 'chrome'
-      ? chrome.i18n.getMessage('useChromeVoice')
+      ? chrome.i18n.getMessage('useBrowserVoice')
       : chrome.i18n.getMessage('useAndaVoice')
   )
   const voiceStatus = $derived(

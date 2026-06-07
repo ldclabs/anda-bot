@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "صِل Chrome بـ Anda المحلي: وكيل يستخدم المتصفح وسطر الأوامر وSkills والتفكير الطويل وذاكرة الرسم البياني."
+    "message": "صِل Anda المحلي في المتصفح: وكيل يستخدم المتصفح وسطر الأوامر وSkills والتفكير الطويل وذاكرة الرسم البياني."
   },
   "actionTitle": {
     "message": "افتح Anda Bot"
@@ -30,7 +30,7 @@
     "message": "وصّل Anda على هذا الكمبيوتر"
   },
   "onboardingIntro": {
-    "message": "تحتاج إضافة Chrome إلى برنامج Anda المحلي ومزوّد نموذج مُعدّ وdaemon يعمل قبل توفر الدردشة."
+    "message": "تحتاج إضافة المتصفح إلى برنامج Anda المحلي ومزوّد نموذج مُعدّ وdaemon يعمل قبل توفر الدردشة."
   },
   "onboardingInstallTitle": {
     "message": "تثبيت Anda"
@@ -221,14 +221,17 @@
   "startRecording": {
     "message": "بدء التسجيل"
   },
-  "useChromeVoice": {
-    "message": "استخدام خدمة الصوت المدمجة في Chrome"
+  "browserVoiceProviderLabel": {
+    "message": "المتصفح"
+  },
+  "useBrowserVoice": {
+    "message": "استخدام خدمة الصوت المدمجة في المتصفح"
   },
   "useAndaVoice": {
     "message": "استخدام خدمة صوت Anda"
   },
-  "chromeVoiceService": {
-    "message": "خدمة الصوت المدمجة في Chrome"
+  "browserVoiceService": {
+    "message": "خدمة الصوت المدمجة في المتصفح"
   },
   "andaVoiceService": {
     "message": "خدمة صوت Anda"

@@ -96,10 +96,10 @@
           }`
         )}
         disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
-        title={chrome.i18n.getMessage('useChromeVoice')}
+        title={chrome.i18n.getMessage('useBrowserVoice')}
         onclick={() => onSelectVoiceProvider('chrome')}
       >
-        Chrome
+        {chrome.i18n.getMessage('browserVoiceProviderLabel')}
       </button>
       <button
         type="button"
@@ -121,7 +121,7 @@
     </div>
     <span class="voice-service-label"
       >{voiceProvider === 'chrome'
-        ? chrome.i18n.getMessage('chromeVoiceService')
+        ? chrome.i18n.getMessage('browserVoiceService')
         : chrome.i18n.getMessage('andaVoiceService')}</span
     >
   </div>

@@ -3,7 +3,7 @@
     "message": "Anda Bot"
   },
   "extDescription": {
-    "message": "Connectez Chrome à Anda local : agent utilisant navigateur, ligne de commande, Skills, raisonnement long et mémoire en graphe."
+    "message": "Connectez Anda local dans le navigateur : agent utilisant navigateur, ligne de commande, Skills, raisonnement long et mémoire en graphe."
   },
   "actionTitle": {
     "message": "Ouvrir Anda Bot"
@@ -30,7 +30,7 @@
     "message": "Connecter Anda sur cet ordinateur"
   },
   "onboardingIntro": {
-    "message": "L'extension Chrome a besoin du programme local Anda, d'un fournisseur de modèle configuré et d'un daemon en cours d'exécution avant de pouvoir discuter."
+    "message": "L'extension de navigateur a besoin du programme local Anda, d'un fournisseur de modèle configuré et d'un daemon en cours d'exécution avant de pouvoir discuter."
   },
   "onboardingInstallTitle": {
     "message": "Installer Anda"
@@ -221,14 +221,17 @@
   "startRecording": {
     "message": "Démarrer l'enregistrement"
   },
-  "useChromeVoice": {
-    "message": "Utiliser le service vocal intégré de Chrome"
+  "browserVoiceProviderLabel": {
+    "message": "Navigateur"
+  },
+  "useBrowserVoice": {
+    "message": "Utiliser le service vocal intégré du navigateur"
   },
   "useAndaVoice": {
     "message": "Utiliser le service vocal d'Anda"
   },
-  "chromeVoiceService": {
-    "message": "Service vocal intégré de Chrome"
+  "browserVoiceService": {
+    "message": "Service vocal intégré du navigateur"
   },
   "andaVoiceService": {
     "message": "Service vocal d'Anda"
