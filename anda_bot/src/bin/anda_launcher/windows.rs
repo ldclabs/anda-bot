@@ -6,8 +6,10 @@ use std::{
     process::Command,
     ptr,
     sync::OnceLock,
+    thread,
 };
 
+use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO};
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HWND, LPARAM, LRESULT, POINT, WPARAM},
     Graphics::Gdi::{
@@ -61,7 +63,8 @@ const ID_STOP: usize = 1005;
 const ID_RESTART: usize = 1006;
 const ID_AUTOSTART: usize = 1007;
 const ID_LOGS: usize = 1008;
-const ID_QUIT: usize = 1009;
+const ID_CHECK_UPDATE: usize = 1009;
+const ID_QUIT: usize = 1010;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
@@ -76,6 +79,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     } else {
         let _ = core::start_daemon(&ctx);
     }
+    start_auto_update_loop(ctx.clone());
 
     unsafe {
         let class_name = wide_null(CLASS_NAME);
@@ -180,6 +184,7 @@ fn handle_command(hwnd: HWND, id: usize) {
             text().app_title,
             &core::restart_daemon(ctx).unwrap_or_else(error_result),
         ),
+        ID_CHECK_UPDATE => run_manual_update_check(ctx.clone()),
         ID_AUTOSTART => match toggle_autostart(ctx) {
             Ok(message) => message_box(text().app_title, &message, MB_OK | MB_ICONINFORMATION),
             Err(err) => show_error(text().app_title, &err.to_string()),
@@ -203,6 +208,8 @@ fn show_tray_menu(hwnd: HWND) {
         append_item(menu, ID_START, copy.start_daemon);
         append_item(menu, ID_STOP, copy.stop_daemon);
         append_item(menu, ID_RESTART, copy.restart_daemon);
+        append_separator(menu);
+        append_item(menu, ID_CHECK_UPDATE, copy.check_update);
         append_separator(menu);
         let autostart_label = if launcher_autostart_installed() {
             copy.disable_launch_at_login
@@ -435,6 +442,71 @@ fn show_result(title: &str, result: &CommandResult) {
     message_box(title, &result.message, style);
 }
 
+fn start_auto_update_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        let mut prompted_tag: Option<String> = None;
+        loop {
+            match core::check_update_if_due(&ctx) {
+                Ok(state) if state.downloaded_update_available() => {
+                    let tag = state.latest_tag.clone();
+                    if tag != prompted_tag {
+                        prompted_tag = tag;
+                        prompt_update_ready(ctx.clone(), state);
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
+            }
+            thread::sleep(core::auto_update_poll_interval());
+        }
+    });
+}
+
+fn run_manual_update_check(ctx: LauncherContext) {
+    thread::spawn(move || match core::check_update_now(&ctx) {
+        Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
+        Ok(state) => message_box(
+            text().update_check_result_title,
+            &state.check_message(),
+            MB_OK | MB_ICONINFORMATION,
+        ),
+        Err(err) => message_box(
+            text().update_check_failed_title,
+            &text().update_check_failed_message(&err.to_string()),
+            MB_OK | MB_ICONERROR,
+        ),
+    });
+}
+
+fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
+    let latest = state.latest_tag_label().to_string();
+    if !confirm_update_restart(&latest) {
+        return;
+    }
+
+    let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
+    if result.success {
+        message_box(
+            text().update_restart_title,
+            &result.message,
+            MB_OK | MB_ICONINFORMATION,
+        );
+    } else {
+        message_box(
+            text().update_restart_title,
+            &text().update_restart_failed_message(&result.message),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+fn confirm_update_restart(latest_tag: &str) -> bool {
+    message_box_yes_no(
+        text().update_ready_title,
+        &text().update_restart_confirm(latest_tag),
+    )
+}
+
 fn error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
     CommandResult {
         success: false,
@@ -625,6 +697,17 @@ fn message_box(title: &str, message: &str, style: u32) {
             wide_null(title).as_ptr(),
             style,
         );
+    }
+}
+
+fn message_box_yes_no(title: &str, message: &str) -> bool {
+    unsafe {
+        MessageBoxW(
+            ptr::null_mut(),
+            wide_null(message).as_ptr(),
+            wide_null(title).as_ptr(),
+            MB_YESNO | MB_ICONQUESTION,
+        ) == IDYES
     }
 }
 

@@ -24,6 +24,15 @@ pub struct UpdateCommand {
     /// Only update curated skills in the Anda home directory.
     #[arg(long)]
     skills: bool,
+    /// Check for a new release and download it without installing.
+    #[arg(long)]
+    check: bool,
+    /// Check only when the persisted auto-update interval is due.
+    #[arg(long, hide = true)]
+    check_if_due: bool,
+    /// Emit machine-readable update state for launcher integrations.
+    #[arg(long, hide = true)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +152,13 @@ pub async fn run(
     let home_dir = &daemon.home;
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
 
+    validate_update_command(cmd)?;
+
+    if cmd.check || cmd.check_if_due {
+        run_update_check(client, daemon, cmd).await?;
+        return Ok(());
+    }
+
     println!("Detecting latest version...");
     let latest_tag = fetch_latest_version(client).await?;
     println!("Latest version: {latest_tag}");
@@ -219,6 +235,67 @@ pub async fn run(
     print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
 
     Ok(())
+}
+
+fn validate_update_command(cmd: &UpdateCommand) -> Result<(), BoxError> {
+    if cmd.check && cmd.check_if_due {
+        return Err("use either --check or --check-if-due, not both".into());
+    }
+    if cmd.skills && (cmd.check || cmd.check_if_due) {
+        return Err("--skills cannot be combined with update check flags".into());
+    }
+    if cmd.json && !(cmd.check || cmd.check_if_due) {
+        return Err("--json is only supported with update check flags".into());
+    }
+    Ok(())
+}
+
+async fn run_update_check(
+    client: &reqwest::Client,
+    daemon: &Daemon,
+    cmd: &UpdateCommand,
+) -> Result<(), BoxError> {
+    let db = daemon.open_bot_db().await?;
+    let updater = auto_update::AutoUpdater::new(db, daemon.home.clone(), client.clone());
+    let state = if cmd.check {
+        updater.check_now().await
+    } else {
+        updater.check_if_due().await
+    };
+
+    if cmd.json {
+        println!("{}", serde_json::to_string(&state)?);
+    } else {
+        print_update_check_state(&state);
+    }
+    Ok(())
+}
+
+fn print_update_check_state(state: &auto_update::AutoUpdateState) {
+    match state.status {
+        auto_update::AutoUpdateStatus::Downloaded if state.downloaded_update_available() => {
+            let latest = state.latest_tag.as_deref().unwrap_or("the latest release");
+            println!(
+                "Anda {latest} has been downloaded. Run `anda update`, then `anda restart` to use it."
+            );
+        }
+        auto_update::AutoUpdateStatus::Failed => {
+            let detail = state.error.as_deref().unwrap_or("unknown error");
+            println!("Update check failed: {detail}");
+        }
+        auto_update::AutoUpdateStatus::Checking | auto_update::AutoUpdateStatus::Downloading => {
+            println!("Update check is still running.");
+        }
+        auto_update::AutoUpdateStatus::Idle => {
+            println!("No update check has run yet.");
+        }
+        auto_update::AutoUpdateStatus::Current | auto_update::AutoUpdateStatus::Installed => {
+            println!("anda is already up to date ({}).", state.current_tag);
+        }
+        auto_update::AutoUpdateStatus::Downloaded => {
+            println!("Downloaded update state is stale; run `anda update --check` again.");
+        }
+    }
 }
 
 fn print_update_finish(current_tag: &str, latest_tag: &str, finish: UpdateFinish) {

@@ -5,7 +5,8 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -69,6 +70,56 @@ pub struct CommandResult {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LauncherAutoUpdateState {
+    pub status: String,
+    pub current_tag: String,
+    pub latest_tag: Option<String>,
+    pub downloaded_path: Option<String>,
+    pub error: Option<String>,
+}
+
+impl LauncherAutoUpdateState {
+    pub fn downloaded_update_available(&self) -> bool {
+        self.status == "downloaded"
+            && self
+                .latest_tag
+                .as_deref()
+                .is_some_and(|latest| latest != self.current_tag)
+            && self
+                .downloaded_path
+                .as_deref()
+                .is_some_and(|path| !path.is_empty())
+    }
+
+    pub fn latest_tag_label(&self) -> &str {
+        self.latest_tag
+            .as_deref()
+            .filter(|tag| !tag.trim().is_empty())
+            .unwrap_or("the latest release")
+    }
+
+    pub fn check_message(&self) -> String {
+        let copy = text();
+        if self.downloaded_update_available() {
+            return copy.update_ready_message(self.latest_tag_label());
+        }
+
+        match self.status.as_str() {
+            "failed" => copy.update_check_failed_message(
+                self.error
+                    .as_deref()
+                    .filter(|err| !err.trim().is_empty())
+                    .unwrap_or("unknown error"),
+            ),
+            "checking" | "downloading" => copy.checking_update.to_string(),
+            "idle" => copy.update_not_checked.to_string(),
+            _ => copy.update_current_message(&self.current_tag),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct LauncherText {
@@ -83,6 +134,7 @@ pub struct LauncherText {
     pub start_daemon: &'static str,
     pub stop_daemon: &'static str,
     pub restart_daemon: &'static str,
+    pub check_update: &'static str,
     pub launch_at_login: &'static str,
     pub disable_launch_at_login: &'static str,
     pub open_logs: &'static str,
@@ -105,6 +157,14 @@ pub struct LauncherText {
     pub detect_home_failed: &'static str,
     pub command_done: &'static str,
     pub powershell_not_found: &'static str,
+    pub checking_update: &'static str,
+    pub update_ready_title: &'static str,
+    pub install_restart_update: &'static str,
+    pub update_check_result_title: &'static str,
+    pub update_check_failed_title: &'static str,
+    pub update_restart_title: &'static str,
+    pub update_restart_started: &'static str,
+    pub update_not_checked: &'static str,
 }
 
 #[allow(dead_code)]
@@ -182,6 +242,45 @@ impl LauncherText {
             LauncherLanguage::En => format!("schtasks.exe failed: {detail}"),
         }
     }
+
+    pub fn update_ready_message(self, latest_tag: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => {
+                format!("已下载 Anda {latest_tag}。安装并重启后生效。")
+            }
+            LauncherLanguage::En => {
+                format!("Anda {latest_tag} has been downloaded. Install and restart to use it.")
+            }
+        }
+    }
+
+    pub fn update_restart_confirm(self, latest_tag: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("现在安装 Anda {latest_tag} 并重启？"),
+            LauncherLanguage::En => format!("Install Anda {latest_tag} and restart now?"),
+        }
+    }
+
+    pub fn update_current_message(self, current_tag: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("Anda 已是最新版本（{current_tag}）。"),
+            LauncherLanguage::En => format!("Anda is already up to date ({current_tag})."),
+        }
+    }
+
+    pub fn update_check_failed_message(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("检查更新失败：{detail}"),
+            LauncherLanguage::En => format!("Update check failed: {detail}"),
+        }
+    }
+
+    pub fn update_restart_failed_message(self, detail: &str) -> String {
+        match launcher_language() {
+            LauncherLanguage::ZhHans => format!("安装更新或重启失败：{detail}"),
+            LauncherLanguage::En => format!("Update install or restart failed: {detail}"),
+        }
+    }
 }
 
 pub struct LauncherInstanceLock {
@@ -222,6 +321,7 @@ const TEXT_EN: LauncherText = LauncherText {
     start_daemon: "Start daemon",
     stop_daemon: "Stop daemon",
     restart_daemon: "Restart daemon",
+    check_update: "Check for updates...",
     launch_at_login: "Launch at login",
     disable_launch_at_login: "Disable launch at login",
     open_logs: "Open logs",
@@ -244,6 +344,14 @@ const TEXT_EN: LauncherText = LauncherText {
     detect_home_failed: "could not detect user home directory",
     command_done: "Done.",
     powershell_not_found: "not found",
+    checking_update: "Checking for updates...",
+    update_ready_title: "Update ready",
+    install_restart_update: "Install and restart",
+    update_check_result_title: "Update check",
+    update_check_failed_title: "Update check failed",
+    update_restart_title: "Anda update",
+    update_restart_started: "Installing update and restarting Anda...",
+    update_not_checked: "No update check has run yet.",
 };
 
 const TEXT_ZH_HANS: LauncherText = LauncherText {
@@ -258,6 +366,7 @@ const TEXT_ZH_HANS: LauncherText = LauncherText {
     start_daemon: "启动守护进程",
     stop_daemon: "停止守护进程",
     restart_daemon: "重启守护进程",
+    check_update: "检查更新...",
     launch_at_login: "登录时启动",
     disable_launch_at_login: "取消登录时启动",
     open_logs: "打开日志",
@@ -280,6 +389,14 @@ const TEXT_ZH_HANS: LauncherText = LauncherText {
     detect_home_failed: "无法检测用户主目录",
     command_done: "完成。",
     powershell_not_found: "未找到",
+    checking_update: "正在检查更新...",
+    update_ready_title: "更新已就绪",
+    install_restart_update: "安装并重启",
+    update_check_result_title: "检查更新",
+    update_check_failed_title: "检查更新失败",
+    update_restart_title: "Anda 更新",
+    update_restart_started: "正在安装更新并重启 Anda...",
+    update_not_checked: "尚未执行更新检查。",
 };
 
 pub fn text() -> &'static LauncherText {
@@ -526,6 +643,7 @@ fn acquire_unix_launcher_instance_lock() -> LauncherResult<Option<LauncherInstan
     let lock_path = env::temp_dir().join(format!("ai.anda.anda-bot.launcher.{}.lock", unsafe {
         libc::geteuid()
     }));
+    #[allow(clippy::suspicious_open_options)]
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -640,6 +758,44 @@ pub fn daemon_status(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["status"])
 }
 
+pub fn check_update_now(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
+    run_update_check(ctx, true)
+}
+
+pub fn check_update_if_due(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
+    run_update_check(ctx, false)
+}
+
+pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
+    let stop = stop_daemon(ctx)?;
+    if !stop.success {
+        return Ok(stop);
+    }
+
+    let update = run_anda(ctx, &["update"])?;
+    if !update.success {
+        let recovery = start_daemon(ctx).unwrap_or_else(|err| CommandResult {
+            success: false,
+            message: err.to_string(),
+        });
+        return Ok(combine_command_results(
+            update,
+            CommandResult {
+                success: false,
+                message: format!("Restart recovery: {}", recovery.message),
+            },
+        ));
+    }
+
+    thread::sleep(Duration::from_secs(2));
+    let start = start_daemon(ctx)?;
+    Ok(combine_command_results(update, start))
+}
+
+pub fn auto_update_poll_interval() -> Duration {
+    Duration::from_secs(6 * 60 * 60)
+}
+
 pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandResult> {
     let mut command = Command::new(&ctx.anda_exe);
     command.arg("--home").arg(&ctx.home);
@@ -648,6 +804,23 @@ pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandR
         .output()
         .map_err(|err| text().run_anda_failed(&ctx.anda_exe.to_string_lossy(), &err.to_string()))?;
     Ok(command_result(output))
+}
+
+fn run_update_check(ctx: &LauncherContext, force: bool) -> LauncherResult<LauncherAutoUpdateState> {
+    let args = if force {
+        ["update", "--check", "--json"]
+    } else {
+        ["update", "--check-if-due", "--json"]
+    };
+    let result = run_anda(ctx, &args)?;
+    if !result.success {
+        return Err(result.message.into());
+    }
+    serde_json::from_str::<LauncherAutoUpdateState>(&result.message).map_err(|err| {
+        text()
+            .command_failed(&format!("invalid update state JSON: {err}"))
+            .into()
+    })
 }
 
 pub fn command_result(output: Output) -> CommandResult {
@@ -664,6 +837,22 @@ pub fn command_result(output: Output) -> CommandResult {
     };
     CommandResult {
         success: output.status.success(),
+        message,
+    }
+}
+
+fn combine_command_results(first: CommandResult, second: CommandResult) -> CommandResult {
+    let message = match (
+        first.message.trim().is_empty(),
+        second.message.trim().is_empty(),
+    ) {
+        (true, true) => text().command_done.to_string(),
+        (false, true) => first.message,
+        (true, false) => second.message,
+        (false, false) => format!("{}\n{}", first.message, second.message),
+    };
+    CommandResult {
+        success: first.success && second.success,
         message,
     }
 }
@@ -1354,7 +1543,7 @@ model:
       api_key: ""
 "#;
 
-        assert!(parsed_config_needs_setup(&config));
+        assert!(parsed_config_needs_setup(config));
     }
 
     #[test]

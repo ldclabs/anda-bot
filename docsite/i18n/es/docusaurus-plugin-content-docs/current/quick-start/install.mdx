@@ -28,7 +28,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-Los instaladores de release registran Anda para arrancar cuando inicia sesión el usuario actual e intentan arrancar el daemon inmediatamente. En PowerShell, agrega `-NoAutostart` o `-NoStart`; en el instalador shell, usa `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
+Los instaladores de release registran Anda para arrancar cuando inicia sesión el usuario actual e intentan arrancar el daemon inmediatamente. En Windows y macOS, el launcher de bandeja o barra de menús también puede buscar actualizaciones, descargarlas y pedir reiniciar para instalarlas. En PowerShell, agrega `-NoAutostart` o `-NoStart`; en el instalador shell, usa `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
 
 Después abre una terminal nueva y ejecuta:
 

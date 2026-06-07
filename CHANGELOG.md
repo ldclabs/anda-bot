@@ -6,7 +6,7 @@ All notable changes to Anda Bot.
 
 ### Added
 
-- **Desktop launcher for first-run setup and daemon control**: added an `anda_launcher` companion binary for Windows and macOS. It starts the daemon after setup, provides tray/menu-bar actions for opening Anda, editing provider/API key/model settings, checking status, starting/stopping/restarting the daemon, opening logs, and toggling launch-at-login.
+- **Desktop launcher for first-run setup, daemon control, and updates**: added an `anda_launcher` companion binary for Windows and macOS. It starts the daemon after setup, provides tray/menu-bar actions for opening Anda, editing provider/API key/model settings, checking status, starting/stopping/restarting the daemon, checking for updates, opening logs, and toggling launch-at-login. The launcher also checks for updates automatically, downloads release assets through the shared auto-updater, and prompts to install and restart when an update is ready.
 - **Windows graphical installer**: added a GitHub Release packaging job and `scripts/build-windows-installer.ps1` to produce `AndaBotSetup-windows-x86_64.exe`, bundling `anda.exe`, `anda_launcher.exe`, curated skills, Start Menu shortcuts, login autostart, uninstall support, and a GUI setup wizard.
 - **macOS launcher install flow**: the shell installer now downloads, verifies, installs, registers, and starts `anda_launcher` on macOS so release installs provide a menu-bar launcher by default.
 

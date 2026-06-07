@@ -27,7 +27,8 @@ Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
 double-click it. The installer places Anda under
 `%LOCALAPPDATA%\Programs\AndaBot`, installs curated skills, creates Start Menu
 shortcuts, registers the tray launcher to start at login, starts the launcher,
-and opens a GUI setup wizard for provider/API key/model.
+opens a GUI setup wizard for provider/API key/model, and checks for downloaded
+updates that can be installed with a restart prompt.
 
 Advanced users and CI can still use PowerShell:
 
@@ -35,7 +36,7 @@ Advanced users and CI can still use PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The macOS shell installer also installs the menu bar launcher, registers it at login, and starts it immediately; the launcher starts the daemon after setup. Linux and PowerShell script installs register daemon autostart directly. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
+The macOS shell installer also installs the menu bar launcher, registers it at login, and starts it immediately; the launcher starts the daemon after setup, can check for updates from the menu bar, and prompts to install and restart after an update is downloaded. Linux and PowerShell script installs register daemon autostart directly. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 After installation, open a new terminal and run:
 

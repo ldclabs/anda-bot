@@ -57,7 +57,8 @@ Windows 普通用户请从
 `AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到
 `%LOCALAPPDATA%\Programs\AndaBot`，安装内置 skills，创建开始菜单快捷方式，
 注册托盘 launcher 登录自启，安装完成后立即启动 launcher，并在 GUI 向导中完成
-provider/API key/model 配置。
+provider/API key/model 配置；launcher 还会自动检查并下载更新，下载完成后提示安装
+并重启。
 
 高级用户和 CI 仍可使用 PowerShell 路径：
 
@@ -65,7 +66,7 @@ provider/API key/model 配置。
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-macOS shell 安装器也会安装菜单栏 launcher，为 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon。Linux 和 PowerShell 脚本安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
+macOS shell 安装器也会安装菜单栏 launcher，为 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon，也可以从菜单栏检查更新，并在更新下载完成后提示安装并重启。Linux 和 PowerShell 脚本安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 前置要求：
 

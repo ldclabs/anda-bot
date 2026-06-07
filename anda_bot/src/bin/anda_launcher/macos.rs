@@ -1,4 +1,4 @@
-use std::{fs, process::Command, sync::OnceLock};
+use std::{fs, process::Command, sync::OnceLock, thread};
 
 use objc2::{
     AnyThread, MainThreadOnly, define_class, msg_send,
@@ -97,6 +97,13 @@ define_class!(
             }
         }
 
+        #[unsafe(method(checkUpdate:))]
+        fn check_update(&self, _sender: &AnyObject) {
+            if let Some(ctx) = CTX.get() {
+                run_manual_update_check(ctx.clone());
+            }
+        }
+
         #[unsafe(method(toggleLaunchAtLogin:))]
         fn toggle_launch_at_login(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
@@ -138,6 +145,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     } else {
         let _ = core::start_daemon(&ctx);
     }
+    start_auto_update_loop(ctx.clone());
 
     let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required.to_string())?;
     let app = NSApplication::sharedApplication(mtm);
@@ -182,6 +190,8 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
         sel!(restartDaemon:),
         delegate,
     );
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    add_item(&menu, mtm, copy.check_update, sel!(checkUpdate:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let launch_title = if launch_agent_installed() {
         copy.disable_launch_at_login
@@ -236,6 +246,101 @@ fn show_result(title: &str, result: &CommandResult) {
 
 fn show_info(title: &str, message: &str) {
     show_alert(title, message);
+}
+
+fn start_auto_update_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        let mut prompted_tag: Option<String> = None;
+        loop {
+            match core::check_update_if_due(&ctx) {
+                Ok(state) if state.downloaded_update_available() => {
+                    let tag = state.latest_tag.clone();
+                    if tag != prompted_tag {
+                        prompted_tag = tag;
+                        prompt_update_ready(ctx.clone(), state);
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
+            }
+            thread::sleep(core::auto_update_poll_interval());
+        }
+    });
+}
+
+fn run_manual_update_check(ctx: LauncherContext) {
+    thread::spawn(move || match core::check_update_now(&ctx) {
+        Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
+        Ok(state) => {
+            show_background_dialog(text().update_check_result_title, &state.check_message())
+        }
+        Err(err) => show_background_dialog(
+            text().update_check_failed_title,
+            &text().update_check_failed_message(&err.to_string()),
+        ),
+    });
+}
+
+fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
+    let latest = state.latest_tag_label().to_string();
+    if !confirm_update_restart(&latest) {
+        return;
+    }
+
+    show_background_notification(text().update_restart_title, text().update_restart_started);
+    let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
+    if result.success {
+        show_background_dialog(text().update_restart_title, &result.message);
+    } else {
+        show_background_dialog(
+            text().update_restart_title,
+            &text().update_restart_failed_message(&result.message),
+        );
+    }
+}
+
+fn confirm_update_restart(latest_tag: &str) -> bool {
+    let script = format!(
+        "display dialog {} with title {} buttons {{{}, {}}} default button {} cancel button {} with icon note",
+        applescript_string(&text().update_restart_confirm(latest_tag)),
+        applescript_string(text().update_ready_title),
+        applescript_string(text().cancel),
+        applescript_string(text().install_restart_update),
+        applescript_string(text().install_restart_update),
+        applescript_string(text().cancel),
+    );
+    Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn show_background_dialog(title: &str, message: &str) {
+    let script = format!(
+        "display dialog {} with title {} buttons {{{}}} default button {} with icon note",
+        applescript_string(message),
+        applescript_string(title),
+        applescript_string(text().ok),
+        applescript_string(text().ok),
+    );
+    if Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .is_err()
+    {
+        eprintln!("{title}: {message}");
+    }
+}
+
+fn show_background_notification(title: &str, message: &str) {
+    let script = format!(
+        "display notification {} with title {}",
+        applescript_string(message),
+        applescript_string(title),
+    );
+    let _ = Command::new("osascript").arg("-e").arg(script).status();
 }
 
 fn show_alert(title: &str, message: &str) {

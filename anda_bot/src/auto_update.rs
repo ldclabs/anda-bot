@@ -118,7 +118,15 @@ impl AutoUpdater {
 
     pub async fn check_if_due(&self) -> AutoUpdateState {
         let _guard = self.lock.lock().await;
-        match self.run_check_if_due().await {
+        match self.run_check(false).await {
+            Ok(state) => state,
+            Err(err) => self.record_failure(err.to_string()).await,
+        }
+    }
+
+    pub async fn check_now(&self) -> AutoUpdateState {
+        let _guard = self.lock.lock().await;
+        match self.run_check(true).await {
             Ok(state) => state,
             Err(err) => self.record_failure(err.to_string()).await,
         }
@@ -142,10 +150,10 @@ impl AutoUpdater {
         Err("automatic install and restart is only supported on unix platforms; run `anda update` and restart manually".into())
     }
 
-    async fn run_check_if_due(&self) -> Result<AutoUpdateState, BoxError> {
+    async fn run_check(&self, force: bool) -> Result<AutoUpdateState, BoxError> {
         let mut state = self.state();
         let now_ms = unix_ms();
-        if !check_due(&state, now_ms) {
+        if !force && !check_due(&state, now_ms) {
             return Ok(state);
         }
 

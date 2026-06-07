@@ -28,7 +28,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-Установщики релизов регистрируют Anda для запуска при входе текущего пользователя и пытаются сразу запустить daemon. В PowerShell добавьте `-NoAutostart` или `-NoStart`; в shell-установщике используйте `ANDA_NO_AUTOSTART=1` или `ANDA_NO_START=1`.
+Установщики релизов регистрируют Anda для запуска при входе текущего пользователя и пытаются сразу запустить daemon. В Windows и macOS launcher в трее или строке меню также может проверять обновления, скачивать их и предлагать перезапуск для установки. В PowerShell добавьте `-NoAutostart` или `-NoStart`; в shell-установщике используйте `ANDA_NO_AUTOSTART=1` или `ANDA_NO_START=1`.
 
 Затем откройте новый терминал:
 
