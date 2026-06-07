@@ -6,7 +6,7 @@ Anda Bot est conçu pour le travail informatique quotidien qui est trop long, tr
 
 L'extension est un pont. La réflexion et l'orchestration des outils proviennent du programme local Anda Bot s'exécutant sur votre machine. L'extension Chrome se connecte à ce démon local via une URL de passerelle (Gateway URL) et un jeton Bearer que vous générez avec Anda. Cela permet de conserver le confort de l'expérience de navigation tout en laissant l'agent utiliser l'environnement d'exécution local, les outils shell, les fichiers, les compétences et la mémoire à long terme qui font l'utilité d'Anda.
 
-Anda peut également être connecté à des outils de messagerie instantanée tels que WeChat, Telegram, Discord, Lark ou IRC via ses paramètres de canal. Lorsque ces canaux sont configurés, vous pouvez joindre le même agent local à distance depuis une application de chat pendant que le démon continue de s'exécuter sur l'ordinateur que vous contrôlez.
+Anda peut également être connecté à des outils de messagerie instantanée tels que WeChat, Telegram, Discord ou Lark via ses paramètres de canal. Lorsque ces canaux sont configurés, vous pouvez joindre le même agent local à distance depuis une application de chat pendant que le démon continue de s'exécuter sur l'ordinateur que vous contrôlez.
 
 Pourquoi l'installer
 

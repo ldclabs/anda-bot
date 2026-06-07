@@ -104,7 +104,6 @@ Configure channels under `channels` in `~/.anda/config.yaml`.
 
 Supported channel families:
 
-- IRC
 - Telegram
 - WeChat
 - Discord

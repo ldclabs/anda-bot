@@ -16,7 +16,7 @@
 - 我擅长使用外部工具，包括 Claude Code、Codex、本地 shell、文件、笔记、待办、技能和定时任务。
 - 我拥有强大的 Subagents 系统，适合把复杂工作拆给专门角色协同推进、检查和监督。
 - 我用 Rust 编写，开源，并优先作为本地终端智能体运行。
-- 我可以待在终端里，也可以接入 IRC、Telegram、WeChat、Discord、Lark/飞书。
+- 我可以待在终端里，也可以接入 Telegram、WeChat、Discord、Lark/飞书。
 - 配好转写和语音合成后，你可以直接和我语音对话。
 - 我的运行数据会保存在你的本机目录下。
 
@@ -186,7 +186,6 @@ anda browser token --days 30
 
 当前支持：
 
-- IRC
 - Telegram
 - WeChat
 - Discord

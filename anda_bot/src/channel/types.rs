@@ -215,7 +215,7 @@ pub trait Channel: Send + Sync {
 
     fn username(&self) -> &str;
 
-    /// Unique channel identifier for message metadata (e.g. "irc:irc.libera.chat").
+    /// Unique channel identifier for message metadata (e.g. "wechat:personal").
     fn id(&self) -> String;
 
     /// Set the channel-specific workspace directory managed by ChannelRuntime.
@@ -452,8 +452,8 @@ mod tests {
             "wechat%3Apersonal"
         );
         assert_eq!(
-            windows_safe_path_component("irc:libera/chat?ops*"),
-            "irc%3Alibera%2Fchat%3Fops%2A"
+            windows_safe_path_component("telegram:ops/chat?prod*"),
+            "telegram%3Aops%2Fchat%3Fprod%2A"
         );
         assert_eq!(
             windows_safe_path_component("discord%prod"),

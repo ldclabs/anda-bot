@@ -160,13 +160,11 @@ dependencies = [
  "structured-logger",
  "tempfile",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
  "tower-http",
  "unicode-segmentation",
  "unicode-width",
- "webpki-roots 1.0.7",
  "weixin-agent",
  "windows-sys 0.61.2",
  "zip",
@@ -174,9 +172,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.6.9"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "199dc6b47dd88f4d51802bf2372f1f87d8ef35e52abb70d5e598b7a523df3518"
+checksum = "c1dcdb2cb8a7122eda77bd98d293f2eb2781a738d58472c986b8ad2a8a166014"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",

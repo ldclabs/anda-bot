@@ -1,5 +1,4 @@
 pub mod discord;
-pub mod irc;
 pub mod lark;
 pub mod telegram;
 pub mod wechat;
@@ -22,7 +21,7 @@ pub fn build_channels(
     cfg: &config::ChannelSettings,
     client: Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
-    let mut channels = irc::build_irc_channels(&cfg.irc)?;
+    let mut channels = HashMap::new();
 
     for (channel_id, channel) in telegram::build_telegram_channels(&cfg.telegram, client.clone())? {
         if channels.insert(channel_id.clone(), channel).is_some() {

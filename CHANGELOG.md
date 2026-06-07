@@ -23,7 +23,7 @@ All notable changes to Anda Bot.
 - **Bundled document skills expanded**: added `doc-coauthoring`, `pptx`, and `xlsx` skills so Anda Bot can guide structured document co-authoring and handle PowerPoint and spreadsheet workflows from the built-in skill set.
 - **Cross-platform login autostart management**: added `anda autostart install|uninstall|status` for Windows Task Scheduler, macOS Launch Agents, and Linux user systemd/XDG autostart, with release installers registering login autostart by default and opt-out switches for PowerShell and shell installs.
 - **Daemon status command**: added `anda status` to report whether the background daemon process and gateway are running, including pid, gateway URL, and log path when available.
-- **Multi-user channel ownership**: `config.yaml` now supports top-level trusted `users` with Ed25519 public keys, and IRC, Telegram, WeChat, Discord, and Lark/Feishu channel entries can set `user` to choose which trusted Anda caller owns conversations, resources, and memory context.
+- **Multi-user channel ownership**: `config.yaml` now supports top-level trusted `users` with Ed25519 public keys, and Telegram, WeChat, Discord, and Lark/Feishu channel entries can set `user` to choose which trusted Anda caller owns conversations, resources, and memory context.
 
 ### Changed
 
@@ -653,7 +653,7 @@ The Chrome Extension release — Anda Bot now lives in your browser.
 
 ### Added
 
-- **External user support with trust boundaries**: new `allow_external_users` config field for all 5 channel types (Discord, Telegram, IRC, Lark, WeChat). When enabled, messages from non-allowlisted senders are tagged as `external_user: true` and wrapped with `[$external_user: channel="...", sender="..."]` prefix, allowing the agent to distinguish untrusted guests from the owner/partner. A comprehensive Trust Boundaries section in `SelfInstructions.md` governs how the agent handles external user data.
+- **External user support with trust boundaries**: new `allow_external_users` config field for supported channel types (Discord, Telegram, Lark, WeChat). When enabled, messages from non-allowlisted senders are tagged as `external_user: true` and wrapped with `[$external_user: channel="...", sender="..."]` prefix, allowing the agent to distinguish untrusted guests from the owner/partner. A comprehensive Trust Boundaries section in `SelfInstructions.md` governs how the agent handles external user data.
 - **Cron job origin context**: new `CronJobOrigin` struct captures the full request context (user, source, reply_target, thread, workspace, conversation_id, external_user) when a cron job is created. Origin is persisted in the job record (schema v2) and round-tripped back into `RequestMeta` on each execution, so scheduled jobs "remember" which channel and conversation they came from.
 - **Shell cron result notification**: when a scheduled shell job completes, the result (stdout or error) is fed back to the agent via `system_runtime_prompt("cron shell job result")`, enabling the agent to incorporate the outcome and notify the originating user in-channel.
 - **Channel route recovery from RequestMeta**: `on_completion` hook now falls back to `route_from_meta()` when `route_for_conversation()` misses, reconstructing the channel route from persisted `RequestMeta` extras. New bindings are persisted for future lookups.

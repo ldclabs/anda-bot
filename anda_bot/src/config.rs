@@ -171,29 +171,6 @@ impl Config {
             }
         }
 
-        let mut seen_ids = BTreeSet::new();
-        for (index, irc) in self.channels.irc.iter().enumerate() {
-            if irc.is_empty() {
-                continue;
-            }
-
-            let base = format!("channels.irc[{index}]");
-            if irc.server.trim().is_empty() {
-                issues.push(format!("{base}.server"));
-            }
-            if irc.nickname.trim().is_empty() {
-                issues.push(format!("{base}.nickname"));
-            }
-
-            let channel_id = irc.channel_id();
-            if !channel_id.is_empty() && !seen_ids.insert(channel_id) {
-                issues.push(format!("{base}.id"));
-            }
-            if !self.is_valid_user_ref(irc.user.as_deref(), &user_ids) {
-                issues.push(format!("{base}.user"));
-            }
-        }
-
         let mut seen_telegram_ids = BTreeSet::new();
         for (index, telegram) in self.channels.telegram.iter().enumerate() {
             if telegram.is_empty() {
@@ -341,7 +318,7 @@ mod tests {
     use anda_engine::model::ModelConfig;
 
     #[test]
-    fn config_contents_read_selected_provider_and_irc_channels() {
+    fn config_contents_read_selected_provider_and_channels() {
         let config = Config::from_contents(
             r##"
 addr: 127.0.0.1:9000
@@ -359,7 +336,6 @@ model:
       api_base: https://api.openai.com/v1
       api_key: sk-openai
 channels:
- irc: [{id: libera, server: irc.libera.chat, port: 6697, nickname: anda-bot, username: anda, channels: ["#anda", "#ops"], allowed_users: [alice, bob], allow_external_users: true, server_password: serverpass, nickserv_password: nickservpass, sasl_password: saslpass, verify_tls: false}]
  telegram: [{id: personal, bot_token: "123456:ABC", username: anda_bot, allowed_users: [alice, "123456789"], allow_external_users: true, mention_only: true, api_base: https://api.telegram.org, ack_reactions: false}]
  wechat: [{id: personal, bot_token: "wx-token", username: anda-wechat, allowed_users: [wx_alice], allow_external_users: true, base_url: https://ilinkai.weixin.qq.com/, cdn_base_url: https://novac2c.cdn.weixin.qq.com/c2c, route_tag: 42}]
  discord: [{id: server, bot_token: "discord-token", username: anda-discord, guild_id: "987654321", allowed_users: ["111", "222"], allow_external_users: true, listen_to_bots: true, mention_only: true, api_base: https://discord.com/api/v10, ack_reactions: false}]
@@ -379,15 +355,6 @@ channels:
         assert_eq!(model.api_base, "https://api.anthropic.com/v1");
         assert_eq!(model.api_key, "sk-test");
 
-        assert_eq!(config.channels.irc.len(), 1);
-        assert_eq!(config.channels.irc[0].id.as_deref(), Some("libera"));
-        assert_eq!(config.channels.irc[0].server, "irc.libera.chat");
-        assert_eq!(config.channels.irc[0].nickname, "anda-bot");
-        assert_eq!(config.channels.irc[0].username.as_deref(), Some("anda"));
-        assert_eq!(config.channels.irc[0].channels, vec!["#anda", "#ops"]);
-        assert_eq!(config.channels.irc[0].allowed_users, vec!["alice", "bob"]);
-        assert!(config.channels.irc[0].allow_external_users);
-        assert!(!config.channels.irc[0].verify_tls);
         assert_eq!(config.channels.telegram.len(), 1);
         assert_eq!(config.channels.telegram[0].id.as_deref(), Some("personal"));
         assert_eq!(config.channels.telegram[0].bot_token, "123456:ABC");
@@ -537,7 +504,6 @@ channels:
         assert!(template.contains("GOOGLE_API_KEY"));
         assert!(template.contains("users:"));
         assert!(template.contains("channels:"));
-        assert!(template.contains("irc:"));
         assert!(template.contains("wechat:"));
         assert!(template.contains("discord:"));
         assert!(template.contains("lark:"));

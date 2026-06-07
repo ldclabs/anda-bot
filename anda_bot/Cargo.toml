@@ -65,8 +65,6 @@ crossterm = { workspace = true, features = ["event-stream"] }
 markdown = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
-tokio-rustls = { workspace = true }
-webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
 zip = { workspace = true }
 

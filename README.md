@@ -16,7 +16,7 @@ My most important difference is [Anda Brain](https://github.com/ldclabs/anda-bra
 - I am good at using external tools, including Claude Code, Codex, shell commands, files, notes, todos, skills, and scheduled jobs.
 - I have a powerful subagents system for delegating, auditing, and coordinating complex work.
 - I am written in Rust, open source, and built to run locally in your terminal.
-- I can live in your terminal, and optionally in IRC, Telegram, WeChat, Discord, or Lark/Feishu.
+- I can live in your terminal, and optionally in Telegram, WeChat, Discord, or Lark/Feishu.
 - I can support voice conversations when transcription and speech output are configured.
 - I keep my runtime state under your local home directory.
 
@@ -192,7 +192,6 @@ Then load [chrome_extension](chrome_extension) from `chrome://extensions` with D
 
 Supported channel families:
 
-- IRC
 - Telegram
 - WeChat
 - Discord
