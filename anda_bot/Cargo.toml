@@ -66,10 +66,10 @@ webpki-roots = { workspace = true }
 weixin-agent = { workspace = true }
 zip = { workspace = true }
 
-[target.'cfg(target_env = "musl")'.dependencies]
+[target.'cfg(any(target_env = "musl", target_os = "windows"))'.dependencies]
 liteparse = { workspace = true }
 
-[target.'cfg(not(target_env = "musl"))'.dependencies]
+[target.'cfg(all(not(target_env = "musl"), not(target_os = "windows")))'.dependencies]
 liteparse = { workspace = true, features = ["tesseract"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]

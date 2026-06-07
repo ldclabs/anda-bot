@@ -1295,7 +1295,7 @@ fn is_text_extension(ext: &str) -> bool {
 async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
     let mut config = LiteParseConfig {
         quiet: true,
-        ocr_enabled: !cfg!(target_env = "musl"),
+        ocr_enabled: cfg!(all(not(target_env = "musl"), not(target_os = "windows"))),
         ..Default::default()
     };
     let parser = LiteParse::new(config.clone());
