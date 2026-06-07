@@ -559,7 +559,7 @@ pub fn process_exists(pid: u32) -> bool {
         CloseHandle(handle);
     }
 
-    ok && exit_code == STILL_ACTIVE
+    ok && exit_code == STILL_ACTIVE as u32
 }
 
 #[cfg(not(any(unix, windows)))]

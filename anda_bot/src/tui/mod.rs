@@ -20,9 +20,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
+#[cfg(unix)]
+use std::io::IsTerminal;
 use std::{
     borrow::Cow,
-    io::{self, IsTerminal},
+    io,
     path::PathBuf,
     time::{Duration, Instant},
 };
