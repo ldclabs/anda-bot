@@ -1516,10 +1516,16 @@ fn path_from_file_url(url: &str) -> Result<PathBuf, BoxError> {
     let decoded = percent_decode_url_path(payload)?;
     #[cfg(windows)]
     {
-        let decoded = decoded
-            .strip_prefix('/')
-            .unwrap_or(&decoded)
-            .replace('/', "\\");
+        let decoded = if decoded.starts_with("//?/") || decoded.starts_with("//./") {
+            decoded.replace('/', "\\")
+        } else if decoded.starts_with("//") {
+            decoded.replace('/', "\\")
+        } else {
+            decoded
+                .strip_prefix('/')
+                .unwrap_or(&decoded)
+                .replace('/', "\\")
+        };
         Ok(PathBuf::from(decoded))
     }
     #[cfg(not(windows))]
@@ -2049,6 +2055,15 @@ mod tests {
 
         assert!(url.starts_with("file://"));
         assert!(url.contains("hello%20world.html"));
+        assert_eq!(path_from_file_url(&url).unwrap(), path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_extended_file_url_round_trips() {
+        let path = PathBuf::from(r"\\?\C:\Users\runneradmin\AppData\Local\Temp\report.html");
+        let url = file_url_for_path(&path).unwrap();
+
         assert_eq!(path_from_file_url(&url).unwrap(), path);
     }
 

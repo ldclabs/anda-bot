@@ -732,12 +732,15 @@ fn percent_decode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::normalize_selected_workspace_path;
-    use std::path::PathBuf;
+    use std::{env, path::MAIN_SEPARATOR};
 
     #[test]
     fn normalize_selected_workspace_path_trims_and_drops_trailing_separator() {
-        let path = normalize_selected_workspace_path("  /tmp/anda/workspace/  ").unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/anda/workspace"));
+        let expected = env::temp_dir().join("anda").join("workspace");
+        let selected = format!("  {}{}  ", expected.display(), MAIN_SEPARATOR);
+        let path = normalize_selected_workspace_path(&selected).unwrap();
+
+        assert_eq!(path, expected);
     }
 
     #[test]
