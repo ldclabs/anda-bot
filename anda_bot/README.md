@@ -24,6 +24,79 @@ Use a different home directory for a separate identity, profile, or test environ
 cargo run -p anda_bot -- --home /path/to/.anda
 ```
 
+## Local Launcher Development
+
+For local launcher testing on macOS, build both binaries, install them side by
+side, copy the bundled skills, and register the menu bar launcher as a user
+LaunchAgent:
+
+```bash
+cargo build -p anda_bot --release --locked --bin anda --bin anda_launcher
+
+mkdir -p "$HOME/.local/bin" "$HOME/.anda/skills"
+install -m 755 target/release/anda "$HOME/.local/bin/anda"
+install -m 755 target/release/anda_launcher "$HOME/.local/bin/anda_launcher"
+cp -R skills/. "$HOME/.anda/skills/"
+
+mkdir -p "$HOME/Library/LaunchAgents"
+cat > "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.anda.anda-bot.launcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$HOME/.local/bin/anda_launcher</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+EOF
+
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist"
+launchctl kickstart -k "gui/$(id -u)/ai.anda.anda-bot.launcher"
+```
+
+Verify the installed launcher and daemon state with:
+
+```bash
+launchctl print "gui/$(id -u)/ai.anda.anda-bot.launcher"
+"$HOME/.local/bin/anda" --home "$HOME/.anda" status
+```
+
+For a throwaway development profile, run the debug launcher directly. The
+launcher first looks for `anda` next to itself, so build both binaries before
+starting it:
+
+```bash
+cargo build -p anda_bot --bin anda --bin anda_launcher
+ANDA_HOME="$PWD/.dev/anda-home" target/debug/anda_launcher
+```
+
+To build a Windows installer locally, run the packaging step on Windows because
+it depends on `iexpress.exe`:
+
+```powershell
+cargo build --release --locked --target x86_64-pc-windows-msvc --bin anda --bin anda_launcher
+
+New-Item -ItemType Directory -Force release | Out-Null
+Copy-Item target\x86_64-pc-windows-msvc\release\anda.exe release\anda-windows-x86_64.exe -Force
+Copy-Item target\x86_64-pc-windows-msvc\release\anda_launcher.exe release\anda_launcher-windows-x86_64.exe -Force
+
+if (Test-Path release\anda-skills.zip) { Remove-Item release\anda-skills.zip -Force }
+Compress-Archive -Path skills\* -DestinationPath release\anda-skills.zip -Force
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows-installer.ps1 -ReleaseDir release
+.\release\AndaBotSetup-windows-x86_64.exe
+```
+
+The release install script downloads published artifacts. For local launcher
+debugging, use the manual install flow above or the generated Windows installer.
+
 ## Configure A Model
 
 The generated template is [assets/config.yaml](assets/config.yaml). The active provider must include `family`, `model`, and `api_base`. Set `api_key` in the file, or leave it empty and export a matching environment variable before starting Anda.

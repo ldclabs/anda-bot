@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, c_void},
     os::windows::{ffi::OsStrExt, process::CommandExt},
     path::Path,
     process::Command,
@@ -9,6 +9,10 @@ use std::{
 
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Graphics::Gdi::{
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
+        DeleteObject, HBITMAP, HGDIOBJ,
+    },
     System::{LibraryLoader::GetModuleHandleW, Threading::CREATE_NEW_CONSOLE},
     UI::{
         Shell::{
@@ -16,13 +20,13 @@ use windows_sys::Win32::{
             Shell_NotifyIconW, ShellExecuteW,
         },
         WindowsAndMessaging::{
-            AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
-            DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos,
-            GetMessageW, HMENU, IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION,
-            MB_OK, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
-            SW_SHOWNORMAL, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
-            WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
-            WS_OVERLAPPEDWINDOW,
+            AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconIndirect,
+            CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
+            DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON, HMENU, ICONINFO,
+            IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MF_SEPARATOR,
+            MF_STRING, MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOWNORMAL,
+            SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
+            WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -33,6 +37,7 @@ use crate::{
 };
 
 const CLASS_NAME: &str = "AndaBotLauncherWindow";
+const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
 const TRAY_ID: u32 = 1;
 const WM_TRAY: u32 = WM_APP + 1;
 const AUTOSTART_TASK_NAME: &str = "Anda Bot Launcher";
@@ -48,12 +53,13 @@ const ID_LOGS: usize = 1008;
 const ID_QUIT: usize = 1009;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
+static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
 
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     CTX.set(ctx.clone()).ok();
 
     if core::config_needs_setup(&ctx) {
-        if settings::run_wizard(&ctx)? {
+        if settings::run_initial_setup_wizard(&ctx)? {
             show_result("Anda Bot", &core::start_daemon(&ctx)?);
         }
     } else {
@@ -68,7 +74,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
             lpfnWndProc: Some(wnd_proc),
             hInstance: hinstance,
             lpszClassName: class_name.as_ptr(),
-            hIcon: LoadIconW(ptr::null_mut(), IDI_APPLICATION),
+            hIcon: launcher_icon(),
             ..Default::default()
         };
         RegisterClassW(&wndclass);
@@ -124,6 +130,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_DESTROY => {
             delete_tray_icon(hwnd);
+            destroy_launcher_icon();
             PostQuitMessage(0);
             0
         }
@@ -218,11 +225,175 @@ unsafe fn add_tray_icon(hwnd: HWND) {
         uID: TRAY_ID,
         uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
         uCallbackMessage: WM_TRAY,
-        hIcon: LoadIconW(ptr::null_mut(), IDI_APPLICATION),
+        hIcon: launcher_icon(),
         ..Default::default()
     };
     copy_wide_fixed(&mut data.szTip, "Anda Bot");
     Shell_NotifyIconW(NIM_ADD, &data);
+}
+
+fn launcher_icon() -> HICON {
+    let (icon, _) = LAUNCHER_ICON.get_or_init(|| match create_launcher_icon() {
+        Some(icon) => (icon as usize, true),
+        None => unsafe { (LoadIconW(ptr::null_mut(), IDI_APPLICATION) as usize, false) },
+    });
+    *icon as HICON
+}
+
+fn destroy_launcher_icon() {
+    let Some((icon, owned)) = LAUNCHER_ICON.get() else {
+        return;
+    };
+    if *owned && *icon != 0 {
+        unsafe {
+            DestroyIcon(*icon as HICON);
+        }
+    }
+}
+
+fn create_launcher_icon() -> Option<HICON> {
+    let pixels = decode_launcher_icon_pixels()?;
+    let width = i32::try_from(pixels.width).ok()?;
+    let height = i32::try_from(pixels.height).ok()?;
+
+    let color_bitmap = unsafe { create_color_bitmap(width, height, &pixels.bgra)? };
+    let mask_bitmap = unsafe { create_mask_bitmap(width, height, &pixels.mask) };
+    if mask_bitmap.is_null() {
+        unsafe {
+            DeleteObject(color_bitmap as HGDIOBJ);
+        }
+        return None;
+    }
+
+    let icon_info = ICONINFO {
+        fIcon: 1,
+        xHotspot: 0,
+        yHotspot: 0,
+        hbmMask: mask_bitmap,
+        hbmColor: color_bitmap,
+    };
+    let icon = unsafe { CreateIconIndirect(&icon_info) };
+    unsafe {
+        DeleteObject(color_bitmap as HGDIOBJ);
+        DeleteObject(mask_bitmap as HGDIOBJ);
+    }
+
+    if icon.is_null() { None } else { Some(icon) }
+}
+
+struct IconPixels {
+    width: u32,
+    height: u32,
+    bgra: Vec<u8>,
+    mask: Vec<u8>,
+}
+
+fn decode_launcher_icon_pixels() -> Option<IconPixels> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(LAUNCHER_ICON_PNG));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut frame = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut frame).ok()?;
+    let frame = &frame[..info.buffer_size()];
+
+    let width = usize::try_from(info.width).ok()?;
+    let height = usize::try_from(info.height).ok()?;
+    let mask_stride = width.div_ceil(16) * 2;
+    let mut bgra = Vec::with_capacity(width.checked_mul(height)?.checked_mul(4)?);
+    let mut mask = vec![0u8; mask_stride.checked_mul(height)?];
+
+    for y in 0..height {
+        let row_start = y.checked_mul(info.line_size)?;
+        let row = frame.get(row_start..row_start.checked_add(info.line_size)?)?;
+        for x in 0..width {
+            let (red, green, blue, alpha) = match info.color_type {
+                png::ColorType::Grayscale => {
+                    let gray = *row.get(x)?;
+                    (gray, gray, gray, 255)
+                }
+                png::ColorType::Rgb => {
+                    let start = x.checked_mul(3)?;
+                    (
+                        *row.get(start)?,
+                        *row.get(start + 1)?,
+                        *row.get(start + 2)?,
+                        255,
+                    )
+                }
+                png::ColorType::GrayscaleAlpha => {
+                    let start = x.checked_mul(2)?;
+                    let gray = *row.get(start)?;
+                    (gray, gray, gray, *row.get(start + 1)?)
+                }
+                png::ColorType::Rgba => {
+                    let start = x.checked_mul(4)?;
+                    (
+                        *row.get(start)?,
+                        *row.get(start + 1)?,
+                        *row.get(start + 2)?,
+                        *row.get(start + 3)?,
+                    )
+                }
+                png::ColorType::Indexed => return None,
+            };
+            bgra.extend_from_slice(&[blue, green, red, alpha]);
+            if alpha < 128 {
+                let mask_index = y.checked_mul(mask_stride)?.checked_add(x / 8)?;
+                mask[mask_index] |= 0x80 >> (x % 8);
+            }
+        }
+    }
+
+    Some(IconPixels {
+        width: info.width,
+        height: info.height,
+        bgra,
+        mask,
+    })
+}
+
+unsafe fn create_color_bitmap(width: i32, height: i32, bgra: &[u8]) -> Option<HBITMAP> {
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: bgra.len() as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut c_void = ptr::null_mut();
+    let bitmap = unsafe {
+        CreateDIBSection(
+            ptr::null_mut(),
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if bitmap.is_null() || bits.is_null() {
+        if !bitmap.is_null() {
+            unsafe {
+                DeleteObject(bitmap as HGDIOBJ);
+            }
+        }
+        return None;
+    }
+
+    unsafe {
+        ptr::copy_nonoverlapping(bgra.as_ptr(), bits.cast::<u8>(), bgra.len());
+    }
+    Some(bitmap)
+}
+
+unsafe fn create_mask_bitmap(width: i32, height: i32, mask: &[u8]) -> HBITMAP {
+    unsafe { CreateBitmap(width, height, 1, 1, mask.as_ptr().cast()) }
 }
 
 unsafe fn delete_tray_icon(hwnd: HWND) {

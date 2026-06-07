@@ -148,6 +148,7 @@ dependencies = [
  "objc2-foundation",
  "object_store",
  "parking_lot",
+ "png",
  "prost",
  "rand 0.10.1",
  "ratatui",

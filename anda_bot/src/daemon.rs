@@ -78,10 +78,6 @@ impl Daemon {
         Config::file_path(&self.home)
     }
 
-    pub fn default_config_template() -> &'static str {
-        Config::default_template()
-    }
-
     pub fn pid_file_path(&self) -> PathBuf {
         self.home.join(DAEMON_PID_FILE)
     }
@@ -193,16 +189,7 @@ impl Daemon {
     }
 
     pub async fn ensure_config_file_exists(&self) -> Result<bool, BoxError> {
-        let config_path = self.config_file_path();
-        match tokio::fs::metadata(&config_path).await {
-            Ok(_) => Ok(false),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::create_dir_all(&self.home).await?;
-                tokio::fs::write(&config_path, Self::default_config_template()).await?;
-                Ok(true)
-            }
-            Err(err) => Err(err.into()),
-        }
+        Config::ensure_file_exists(&self.home).await
     }
 
     pub async fn load_config_from_disk(&self) -> Result<Config, BoxError> {

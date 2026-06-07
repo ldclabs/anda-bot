@@ -87,6 +87,19 @@ impl Config {
         include_str!("../assets/config.yaml")
     }
 
+    pub async fn ensure_file_exists(home: &Path) -> Result<bool, BoxError> {
+        let config_path = Self::file_path(home);
+        match tokio::fs::metadata(&config_path).await {
+            Ok(_) => Ok(false),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir_all(home).await?;
+                tokio::fs::write(&config_path, Self::default_template()).await?;
+                Ok(true)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
     pub async fn from_file(path: &Path) -> Result<Self, BoxError> {
         let content = match read_text_file(path).await {
             Ok(content) => content,
@@ -507,5 +520,20 @@ channels:
         assert!(template.contains("wechat:"));
         assert!(template.contains("discord:"));
         assert!(template.contains("lark:"));
+    }
+
+    #[tokio::test]
+    async fn ensure_file_exists_copies_default_template() {
+        let home = tempfile::tempdir().unwrap();
+        let created = Config::ensure_file_exists(home.path()).await.unwrap();
+
+        assert!(created);
+        let content = tokio::fs::read_to_string(Config::file_path(home.path()))
+            .await
+            .unwrap();
+        assert_eq!(content, Config::default_template());
+
+        let created_again = Config::ensure_file_exists(home.path()).await.unwrap();
+        assert!(!created_again);
     }
 }

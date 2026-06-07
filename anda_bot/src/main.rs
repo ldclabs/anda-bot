@@ -477,6 +477,7 @@ fn default_home() -> PathBuf {
 }
 
 async fn load_daemon(home: PathBuf) -> Result<daemon::Daemon, BoxError> {
+    config::Config::ensure_file_exists(&home).await?;
     let config_path = config::Config::file_path(&home);
     let config = config::Config::from_file(&config_path).await?;
     Ok(daemon::Daemon::new(home, config))

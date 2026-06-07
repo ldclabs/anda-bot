@@ -55,6 +55,7 @@ http = "1.3"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 parking_lot = "0.12"
+png = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 serde-saphyr = "0.0"

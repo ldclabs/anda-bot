@@ -80,11 +80,14 @@ cpal = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { workspace = true }
 objc2-foundation = { workspace = true, features = [
+  "NSData",
   "NSObject",
   "NSNotification",
   "NSString",
+  "objc2-core-foundation",
 ] }
 objc2-app-kit = { workspace = true, features = [
+  "NSImage",
   "NSAlert",
   "NSApplication",
   "NSMenu",
@@ -96,6 +99,7 @@ objc2-app-kit = { workspace = true, features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
+png = { workspace = true }
 windows-sys = { workspace = true, features = [
   "Win32_Graphics_Gdi",
   "Win32_Foundation",

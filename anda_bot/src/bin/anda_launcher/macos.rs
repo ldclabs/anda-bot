@@ -1,16 +1,16 @@
 use std::{fs, process::Command, sync::OnceLock};
 
 use objc2::{
-    MainThreadOnly, define_class, msg_send,
+    AnyThread, MainThreadOnly, define_class, msg_send,
     rc::Retained,
     runtime::{AnyObject, ProtocolObject},
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu,
+    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
     NSMenuItem, NSStatusBar,
 };
-use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
 use crate::{
     core::{self, CommandResult, LauncherContext, LauncherResult},
@@ -18,6 +18,7 @@ use crate::{
 };
 
 const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
+const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -116,7 +117,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     CTX.set(ctx.clone()).ok();
 
     if core::config_needs_setup(&ctx) {
-        if settings::run_wizard(&ctx)? {
+        if settings::run_initial_setup_wizard(&ctx)? {
             let _ = core::start_daemon(&ctx);
         }
     } else {
@@ -132,8 +133,13 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
 
     let menu = build_menu(mtm, &delegate);
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(32.0);
-    #[allow(deprecated)]
-    status_item.setTitle(Some(nsstring("Anda").as_ref()));
+    if let Some(image) = status_bar_icon() {
+        #[allow(deprecated)]
+        status_item.setImage(Some(&image));
+    } else {
+        #[allow(deprecated)]
+        status_item.setTitle(Some(nsstring("Anda").as_ref()));
+    }
     status_item.setMenu(Some(&menu));
 
     let _keep_alive = (delegate, menu, status_item);
@@ -171,6 +177,14 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(&menu, mtm, "Quit", sel!(quit:), delegate);
     menu
+}
+
+fn status_bar_icon() -> Option<Retained<NSImage>> {
+    let data = NSData::with_bytes(LAUNCHER_ICON_PNG);
+    let image = NSImage::initWithData(NSImage::alloc(), &data)?;
+    image.setSize(NSSize::new(18.0, 18.0));
+    image.setTemplate(true);
+    Some(image)
 }
 
 fn add_item(
@@ -360,5 +374,10 @@ mod tests {
         let plist = launch_agent_plist(&ctx);
         assert!(plist.contains("/Applications/Anda &amp; Bot/anda_launcher"));
         assert!(plist.contains(LAUNCH_AGENT_LABEL));
+    }
+
+    #[test]
+    fn launcher_icon_is_embedded_png() {
+        assert!(LAUNCHER_ICON_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }

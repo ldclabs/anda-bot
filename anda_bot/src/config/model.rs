@@ -6,6 +6,8 @@ use crate::util::text::read_text_file_sync;
 
 use super::normalize_string;
 
+pub const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelSettings {
     #[serde(default)]
@@ -18,9 +20,7 @@ pub struct ModelSettings {
 impl ModelSettings {
     pub fn try_load_codex_token(&mut self, home: &Path) {
         for provider in &mut self.providers {
-            if provider.api_key.trim().is_empty()
-                && provider.api_base == "https://chatgpt.com/backend-api/codex"
-            {
+            if provider.api_key.trim().is_empty() && Self::uses_codex_auth(provider) {
                 let token_path = home.join(".codex/auth.json");
                 if let Ok(token_str) = read_text_file_sync(token_path)
                     && let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
@@ -30,6 +30,10 @@ impl ModelSettings {
                 }
             }
         }
+    }
+
+    pub fn uses_codex_auth(provider: &ModelConfig) -> bool {
+        provider.api_base.trim() == CODEX_API_BASE
     }
 
     pub fn providers_with_env_api_keys(&self) -> Vec<ModelConfig> {
@@ -293,5 +297,33 @@ mod tests {
             settings.providers_with_env_api_keys()[0].api_key,
             "from-google"
         );
+    }
+
+    #[test]
+    fn codex_provider_loads_api_key_from_auth_json() {
+        let home = tempfile::tempdir().unwrap();
+        let codex_dir = home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        std::fs::write(
+            codex_dir.join("auth.json"),
+            r#"{"tokens":{"access_token":"codex-token"}}"#,
+        )
+        .unwrap();
+
+        let mut settings = ModelSettings {
+            active: "gpt-5.5".to_string(),
+            providers: vec![ModelConfig {
+                family: "openai".to_string(),
+                model: "gpt-5.5".to_string(),
+                api_base: CODEX_API_BASE.to_string(),
+                api_key: String::new(),
+                ..Default::default()
+            }],
+        };
+
+        settings.try_load_codex_token(home.path());
+
+        assert_eq!(settings.providers[0].api_key, "codex-token");
+        assert!(ModelSettings::uses_codex_auth(&settings.providers[0]));
     }
 }

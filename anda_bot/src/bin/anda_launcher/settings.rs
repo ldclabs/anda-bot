@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf};
 
 use crate::core::{
     LauncherContext, LauncherResult, WizardConfig, default_model_for_provider, provider_by_id,
-    provider_ids, write_minimal_config,
+    provider_ids, write_initial_minimal_config, write_minimal_config,
 };
 
 #[cfg(windows)]
@@ -19,6 +19,14 @@ pub fn run_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
         return Ok(false);
     };
     write_minimal_config(ctx, &config)?;
+    Ok(true)
+}
+
+pub fn run_initial_setup_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
+    let Some(config) = show_settings_dialog(ctx)? else {
+        return Ok(false);
+    };
+    write_initial_minimal_config(ctx, &config)?;
     Ok(true)
 }
 
@@ -89,7 +97,7 @@ pub fn parse_settings_payload(payload: &str) -> LauncherResult<Option<WizardConf
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| provider.model.to_string());
 
-    if api_key.trim().is_empty() {
+    if provider.requires_api_key() && api_key.trim().is_empty() {
         return Err(format!("{} is required", provider.env_var).into());
     }
 
@@ -212,8 +220,9 @@ $ok.Text = 'Save'
 $ok.Location = New-Object System.Drawing.Point(220, 176)
 $ok.Size = New-Object System.Drawing.Size(80, 30)
 $ok.Add_Click({{
-  if ([string]::IsNullOrWhiteSpace($apiKey.Text) -or [string]::IsNullOrWhiteSpace($model.Text)) {{
-    [System.Windows.Forms.MessageBox]::Show('Model and API key are required.', 'Anda Bot Setup', 'OK', 'Warning') | Out-Null
+  $apiKeyRequired = $provider.SelectedItem -ne 'codex'
+  if ([string]::IsNullOrWhiteSpace($model.Text) -or ($apiKeyRequired -and [string]::IsNullOrWhiteSpace($apiKey.Text))) {{
+    [System.Windows.Forms.MessageBox]::Show('Model is required. API key is required unless Codex is selected.', 'Anda Bot Setup', 'OK', 'Warning') | Out-Null
     return
   }}
   $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -318,5 +327,22 @@ mod tests {
     #[test]
     fn rejects_empty_api_key() {
         assert!(parse_settings_payload("ANDA_PROVIDER=openai\nANDA_API_KEY=\n").is_err());
+    }
+
+    #[test]
+    fn allows_empty_api_key_for_codex_auth_provider() {
+        let parsed =
+            parse_settings_payload("ANDA_PROVIDER=codex\nANDA_MODEL=gpt-5.5\nANDA_API_KEY=\n")
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(
+            parsed,
+            WizardConfig {
+                provider_id: "codex".to_string(),
+                model: "gpt-5.5".to_string(),
+                api_key: String::new(),
+            }
+        );
     }
 }
