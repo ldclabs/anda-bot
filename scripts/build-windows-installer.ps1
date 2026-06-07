@@ -143,6 +143,7 @@ set "UNINSTALL=%INSTALL_DIR%\uninstall.cmd"
   echo set "INSTALL_DIR=%%LOCALAPPDATA%%\Programs\AndaBot"
   echo set "ANDA_HOME=%%USERPROFILE%%\.anda"
   echo set "START_MENU_DIR=%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\Anda Bot"
+  echo reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "AndaBotLauncher" /F ^>nul 2^>nul
   echo schtasks.exe /Delete /TN "Anda Bot" /F ^>nul 2^>nul
   echo schtasks.exe /Delete /TN "Anda Bot Launcher" /F ^>nul 2^>nul
   echo if exist "%%INSTALL_DIR%%\anda.exe" "%%INSTALL_DIR%%\anda.exe" --home "%%ANDA_HOME%%" stop ^>nul 2^>nul
@@ -159,7 +160,9 @@ set "UNINSTALL=%INSTALL_DIR%\uninstall.cmd"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$w = New-Object -ComObject WScript.Shell; $dir = [Environment]::GetFolderPath('Programs') + '\Anda Bot'; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $s = $w.CreateShortcut((Join-Path $dir 'Anda Bot.lnk')); $s.TargetPath = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda_launcher.exe'; $s.WorkingDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $s.IconLocation = $s.TargetPath; $s.Save(); $u = $w.CreateShortcut((Join-Path $dir 'Uninstall Anda Bot.lnk')); $u.TargetPath = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\uninstall.cmd'; $u.WorkingDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $u.Save()"
 
 schtasks.exe /Delete /TN "Anda Bot" /F >nul 2>nul
-schtasks.exe /Create /TN "Anda Bot Launcher" /SC ONLOGON /TR "\"%INSTALL_DIR%\anda_launcher.exe\"" /F >nul
+schtasks.exe /Delete /TN "Anda Bot Launcher" /F >nul 2>nul
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $launcher = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda_launcher.exe'; $andaHome = Join-Path $env:USERPROFILE '.anda'; $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run'); if (-not $key) { throw 'Could not open HKCU Run registry key' }; try { $key.SetValue('AndaBotLauncher', (([char]34) + $launcher + ([char]34) + ' --home ' + ([char]34) + $andaHome + ([char]34)), [Microsoft.Win32.RegistryValueKind]::String) } finally { $key.Close() } } catch { Write-Host $_; exit 1 }"
+if errorlevel 1 exit /b 1
 
 start "" "%INSTALL_DIR%\anda_launcher.exe"
 

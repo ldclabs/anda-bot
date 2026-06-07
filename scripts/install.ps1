@@ -17,6 +17,8 @@ $LauncherBinaryName = "anda_launcher"
 $LauncherInstallName = "$LauncherBinaryName.exe"
 $DaemonTaskName = "Anda Bot"
 $LauncherTaskName = "Anda Bot Launcher"
+$RunKeyPath = "Software\Microsoft\Windows\CurrentVersion\Run"
+$LauncherRunValueName = "AndaBotLauncher"
 $SkillsArchiveName = "anda-skills.zip"
 $BannerArt = @(
     '      _     _   _   ____      _      '
@@ -254,19 +256,31 @@ function Stop-ExistingAndaInstall($Directory, $HomeDir) {
     }
 }
 
-function Remove-LegacyDaemonAutostart {
+function Remove-LegacyScheduledTasks {
     try {
         & schtasks.exe /Delete /TN $DaemonTaskName /F 2>$null | Out-Null
     } catch {
     }
+    try {
+        & schtasks.exe /Delete /TN $LauncherTaskName /F 2>$null | Out-Null
+    } catch {
+    }
 }
 
-function Register-LauncherAutostart($LauncherPath) {
-    Remove-LegacyDaemonAutostart
-    $taskCommand = '"' + $LauncherPath + '"'
-    $output = & schtasks.exe /Create /TN $LauncherTaskName /SC ONLOGON /TR $taskCommand /F 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Could not register launcher autostart.`n$($output -join "`n")"
+function Register-LauncherAutostart($LauncherPath, $HomeDir) {
+    Remove-LegacyScheduledTasks
+    $runCommand = '"' + $LauncherPath + '" --home "' + $HomeDir + '"'
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RunKeyPath)
+    if (-not $key) {
+        Fail "Could not open HKCU Run registry key."
+    }
+
+    try {
+        $key.SetValue($LauncherRunValueName, $runCommand, [Microsoft.Win32.RegistryValueKind]::String)
+    } catch {
+        Fail "Could not register launcher autostart. $($_.Exception.Message)"
+    } finally {
+        $key.Close()
     }
 }
 
@@ -407,11 +421,11 @@ try {
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"
 
-    Remove-LegacyDaemonAutostart
+    Remove-LegacyScheduledTasks
 
     if (-not $NoAutostart) {
         Write-Info "Registering Anda launcher to start when you log in..."
-        Register-LauncherAutostart $launcherInstallPath
+        Register-LauncherAutostart $launcherInstallPath $AndaHome
         Write-Success "Launcher autostart registered."
     }
 
@@ -427,7 +441,7 @@ try {
     Write-Host "    $BinaryName start"
     Write-Host "    $BinaryName stop"
     Write-Host "    $LauncherInstallName"
-    Write-Host "    schtasks.exe /Query /TN `"$LauncherTaskName`""
+    Write-Host "    reg.exe query HKCU\$RunKeyPath /v $LauncherRunValueName"
     Write-Host "    $BinaryName --help"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue

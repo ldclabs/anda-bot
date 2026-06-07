@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::{
-    env, fs, io,
+    env,
+    ffi::{OsStr, OsString},
+    fs, io,
     path::{Path, PathBuf},
     process::{Command, Output},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,7 +12,7 @@ use std::{
 use std::os::fd::AsRawFd;
 
 #[cfg(windows)]
-use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
+use std::{os::windows::ffi::OsStrExt, ptr};
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -678,6 +680,9 @@ fn detect_anda_exe(launcher_exe: &Path) -> PathBuf {
 }
 
 fn detect_anda_home() -> LauncherResult<PathBuf> {
+    if let Some(home) = home_arg_from_args(env::args_os().skip(1))? {
+        return Ok(home);
+    }
     if let Some(home) = env::var_os("ANDA_HOME") {
         return Ok(PathBuf::from(home));
     }
@@ -685,6 +690,33 @@ fn detect_anda_home() -> LauncherResult<PathBuf> {
         .or_else(|| env::var_os("HOME"))
         .ok_or_else(|| text().detect_home_failed.to_string())?;
     Ok(PathBuf::from(user_home).join(".anda"))
+}
+
+fn home_arg_from_args<I>(args: I) -> LauncherResult<Option<PathBuf>>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == OsStr::new("--home") {
+            let Some(home) = args.next() else {
+                return Err("missing value for --home".into());
+            };
+            if home.as_os_str().is_empty() {
+                return Err("missing value for --home".into());
+            }
+            return Ok(Some(PathBuf::from(home)));
+        }
+
+        if let Some(home) = arg.to_str().and_then(|value| value.strip_prefix("--home=")) {
+            if home.is_empty() {
+                return Err("missing value for --home".into());
+            }
+            return Ok(Some(PathBuf::from(home)));
+        }
+    }
+
+    Ok(None)
 }
 
 fn ensure_config_file_exists(ctx: &LauncherContext) -> LauncherResult<bool> {
@@ -1419,6 +1451,23 @@ tts:
             default_provider().model
         );
         assert!(provider_ids().contains(&"deepseek"));
+    }
+
+    #[test]
+    fn launcher_home_arg_overrides_default_detection() {
+        assert_eq!(
+            home_arg_from_args([
+                OsString::from("--home"),
+                OsString::from("C:\\Users\\test\\.anda-custom"),
+            ])
+            .unwrap(),
+            Some(PathBuf::from("C:\\Users\\test\\.anda-custom"))
+        );
+        assert_eq!(
+            home_arg_from_args([OsString::from("--home=C:\\Users\\test\\.anda-inline")]).unwrap(),
+            Some(PathBuf::from("C:\\Users\\test\\.anda-inline"))
+        );
+        assert!(home_arg_from_args([OsString::from("--home")]).is_err());
     }
 
     fn launcher_context(home: &Path) -> LauncherContext {

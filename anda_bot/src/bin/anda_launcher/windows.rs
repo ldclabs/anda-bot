@@ -1,5 +1,6 @@
 use std::{
     ffi::{OsStr, c_void},
+    mem::size_of,
     os::windows::{ffi::OsStrExt, process::CommandExt},
     path::Path,
     process::Command,
@@ -8,12 +9,19 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HWND, LPARAM, LRESULT, POINT, WPARAM},
     Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
         DeleteObject, HBITMAP, HGDIOBJ,
     },
-    System::{LibraryLoader::GetModuleHandleW, Threading::CREATE_NEW_CONSOLE},
+    System::{
+        LibraryLoader::GetModuleHandleW,
+        Registry::{
+            HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_SZ, RegCloseKey,
+            RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+        },
+        Threading::CREATE_NEW_CONSOLE,
+    },
     UI::{
         Shell::{
             NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -40,7 +48,10 @@ const CLASS_NAME: &str = "AndaBotLauncherWindow";
 const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
 const TRAY_ID: u32 = 1;
 const WM_TRAY: u32 = WM_APP + 1;
-const AUTOSTART_TASK_NAME: &str = "Anda Bot Launcher";
+const AUTOSTART_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const AUTOSTART_RUN_VALUE: &str = "AndaBotLauncher";
+const LEGACY_DAEMON_TASK_NAME: &str = "Anda Bot";
+const LEGACY_LAUNCHER_TASK_NAME: &str = "Anda Bot Launcher";
 
 const ID_OPEN: usize = 1001;
 const ID_SETTINGS: usize = 1002;
@@ -433,45 +444,152 @@ fn error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult 
 
 fn toggle_autostart(ctx: &LauncherContext) -> LauncherResult<String> {
     if launcher_autostart_installed() {
-        run_schtasks(&["/Delete", "/TN", AUTOSTART_TASK_NAME, "/F"])?;
+        delete_run_autostart()?;
+        delete_legacy_scheduled_tasks();
         Ok(text().launch_at_login_disabled.to_string())
     } else {
-        let command = windows_command_line(&[ctx.launcher_exe.clone()]);
-        run_schtasks(&[
-            "/Create",
-            "/TN",
-            AUTOSTART_TASK_NAME,
-            "/SC",
-            "ONLOGON",
-            "/TR",
-            &command,
-            "/F",
-        ])?;
+        set_run_autostart(ctx)?;
+        delete_legacy_scheduled_tasks();
         Ok(text().launch_at_login_enabled.to_string())
     }
 }
 
 fn launcher_autostart_installed() -> bool {
-    run_schtasks(&["/Query", "/TN", AUTOSTART_TASK_NAME]).is_ok()
+    run_autostart_exists()
 }
 
-fn run_schtasks(args: &[&str]) -> LauncherResult<()> {
-    let output = Command::new("schtasks.exe")
-        .args(args)
-        .creation_flags(0x08000000)
-        .output()?;
-    if output.status.success() {
+fn set_run_autostart(ctx: &LauncherContext) -> LauncherResult<()> {
+    let command = windows_command_line([
+        ctx.launcher_exe.as_os_str(),
+        OsStr::new("--home"),
+        ctx.home.as_os_str(),
+    ]);
+    let value = wide_null(&command);
+    let value_name = wide_null(AUTOSTART_RUN_VALUE);
+    let key = RegistryKey::create(AUTOSTART_RUN_KEY, KEY_SET_VALUE)?;
+    let status = unsafe {
+        RegSetValueExW(
+            key.raw(),
+            value_name.as_ptr(),
+            0,
+            REG_SZ,
+            value.as_ptr().cast::<u8>(),
+            (value.len() * size_of::<u16>()) as u32,
+        )
+    };
+    if status == ERROR_SUCCESS {
         return Ok(());
     }
 
-    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
-    Err(text().schtasks_failed(&detail).into())
+    Err(win32_registry_error("set launch-at-login value", status).into())
+}
+
+fn delete_run_autostart() -> LauncherResult<()> {
+    let value_name = wide_null(AUTOSTART_RUN_VALUE);
+    let Some(key) = RegistryKey::open_optional(AUTOSTART_RUN_KEY, KEY_SET_VALUE)? else {
+        return Ok(());
+    };
+    let status = unsafe { RegDeleteValueW(key.raw(), value_name.as_ptr()) };
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+
+    Err(win32_registry_error("delete launch-at-login value", status).into())
+}
+
+fn run_autostart_exists() -> bool {
+    let value_name = wide_null(AUTOSTART_RUN_VALUE);
+    let Ok(Some(key)) = RegistryKey::open_optional(AUTOSTART_RUN_KEY, KEY_QUERY_VALUE) else {
+        return false;
+    };
+    let mut value_type = 0;
+    let mut value_len = 0;
+    let status = unsafe {
+        RegQueryValueExW(
+            key.raw(),
+            value_name.as_ptr(),
+            ptr::null(),
+            &mut value_type,
+            ptr::null_mut(),
+            &mut value_len,
+        )
+    };
+
+    status == ERROR_SUCCESS && value_type == REG_SZ && value_len > 0
+}
+
+fn delete_legacy_scheduled_tasks() {
+    let _ = Command::new("schtasks.exe")
+        .args(["/Delete", "/TN", LEGACY_DAEMON_TASK_NAME, "/F"])
+        .creation_flags(0x08000000)
+        .status();
+    let _ = Command::new("schtasks.exe")
+        .args(["/Delete", "/TN", LEGACY_LAUNCHER_TASK_NAME, "/F"])
+        .creation_flags(0x08000000)
+        .status();
+}
+
+struct RegistryKey(HKEY);
+
+impl RegistryKey {
+    fn create(path: &str, access: u32) -> Result<Self, std::io::Error> {
+        let mut key = ptr::null_mut();
+        let path = wide_null(path);
+        let status = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                path.as_ptr(),
+                0,
+                ptr::null(),
+                0,
+                access,
+                ptr::null(),
+                &mut key,
+                ptr::null_mut(),
+            )
+        };
+        if status == ERROR_SUCCESS {
+            Ok(Self(key))
+        } else {
+            Err(win32_registry_error("open HKCU Run key", status))
+        }
+    }
+
+    fn open_optional(path: &str, access: u32) -> Result<Option<Self>, std::io::Error> {
+        let mut key = ptr::null_mut();
+        let path = wide_null(path);
+        let status =
+            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, access, &mut key) };
+        if status == ERROR_SUCCESS {
+            Ok(Some(Self(key)))
+        } else if status == ERROR_FILE_NOT_FOUND {
+            Ok(None)
+        } else {
+            Err(win32_registry_error("open HKCU Run key", status))
+        }
+    }
+
+    fn raw(&self) -> HKEY {
+        self.0
+    }
+}
+
+impl Drop for RegistryKey {
+    fn drop(&mut self) {
+        unsafe {
+            RegCloseKey(self.0);
+        }
+    }
+}
+
+fn win32_registry_error(action: &str, code: u32) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!(
+            "Windows registry error while trying to {action}: {code} ({})",
+            std::io::Error::from_raw_os_error(code as i32)
+        ),
+    )
 }
 
 fn open_anda_terminal(ctx: &LauncherContext) {
@@ -510,8 +628,8 @@ fn message_box(title: &str, message: &str, style: u32) {
     }
 }
 
-fn windows_command_line(args: &[std::path::PathBuf]) -> String {
-    args.iter()
+fn windows_command_line<'a>(args: impl IntoIterator<Item = &'a OsStr>) -> String {
+    args.into_iter()
         .map(|arg| quote_windows_arg(&arg.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
