@@ -7,6 +7,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+rust_i18n::i18n!("locales", fallback = "en");
+
 mod auto_update;
 mod autostart;
 mod brain;

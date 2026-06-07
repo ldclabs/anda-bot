@@ -74,7 +74,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
 
     if core::config_needs_setup(&ctx) {
         if settings::run_initial_setup_wizard(&ctx)? {
-            show_result(text().app_title, &core::start_daemon(&ctx)?);
+            show_result(&text().app_title, &core::start_daemon(&ctx)?);
         }
     } else {
         let _ = core::start_daemon(&ctx);
@@ -97,7 +97,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
         let hwnd = CreateWindowExW(
             0,
             class_name.as_ptr(),
-            wide_null(text().launcher_window_title).as_ptr(),
+            wide_null(&text().launcher_window_title).as_ptr(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -162,32 +162,32 @@ fn handle_command(hwnd: HWND, id: usize) {
         ID_OPEN => open_anda_terminal(ctx),
         ID_SETTINGS => match settings::run_wizard(ctx) {
             Ok(true) => show_result(
-                text().app_title,
+                &text().app_title,
                 &core::restart_daemon(ctx).unwrap_or_else(error_result),
             ),
             Ok(false) => {}
-            Err(err) => show_error(text().settings_title, &err.to_string()),
+            Err(err) => show_error(&text().settings_title, &err.to_string()),
         },
         ID_STATUS => show_result(
-            text().app_title,
+            &text().app_title,
             &core::daemon_status(ctx).unwrap_or_else(error_result),
         ),
         ID_START => show_result(
-            text().app_title,
+            &text().app_title,
             &core::start_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_STOP => show_result(
-            text().app_title,
+            &text().app_title,
             &core::stop_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_RESTART => show_result(
-            text().app_title,
+            &text().app_title,
             &core::restart_daemon(ctx).unwrap_or_else(error_result),
         ),
         ID_CHECK_UPDATE => run_manual_update_check(ctx.clone()),
         ID_AUTOSTART => match toggle_autostart(ctx) {
-            Ok(message) => message_box(text().app_title, &message, MB_OK | MB_ICONINFORMATION),
-            Err(err) => show_error(text().app_title, &err.to_string()),
+            Ok(message) => message_box(&text().app_title, &message, MB_OK | MB_ICONINFORMATION),
+            Err(err) => show_error(&text().app_title, &err.to_string()),
         },
         ID_LOGS => open_path(&ctx.logs_dir()),
         ID_QUIT => unsafe {
@@ -201,25 +201,25 @@ fn show_tray_menu(hwnd: HWND) {
     unsafe {
         let copy = text();
         let menu = CreatePopupMenu();
-        append_item(menu, ID_OPEN, copy.open_anda);
-        append_item(menu, ID_SETTINGS, copy.settings);
+        append_item(menu, ID_OPEN, &copy.open_anda);
+        append_item(menu, ID_SETTINGS, &copy.settings);
         append_separator(menu);
-        append_item(menu, ID_STATUS, copy.status);
-        append_item(menu, ID_START, copy.start_daemon);
-        append_item(menu, ID_STOP, copy.stop_daemon);
-        append_item(menu, ID_RESTART, copy.restart_daemon);
+        append_item(menu, ID_STATUS, &copy.status);
+        append_item(menu, ID_START, &copy.start_daemon);
+        append_item(menu, ID_STOP, &copy.stop_daemon);
+        append_item(menu, ID_RESTART, &copy.restart_daemon);
         append_separator(menu);
-        append_item(menu, ID_CHECK_UPDATE, copy.check_update);
+        append_item(menu, ID_CHECK_UPDATE, &copy.check_update);
         append_separator(menu);
         let autostart_label = if launcher_autostart_installed() {
-            copy.disable_launch_at_login
+            &copy.disable_launch_at_login
         } else {
-            copy.launch_at_login
+            &copy.launch_at_login
         };
         append_item(menu, ID_AUTOSTART, autostart_label);
-        append_item(menu, ID_LOGS, copy.open_logs);
+        append_item(menu, ID_LOGS, &copy.open_logs);
         append_separator(menu);
-        append_item(menu, ID_QUIT, copy.quit);
+        append_item(menu, ID_QUIT, &copy.quit);
 
         let mut point = POINT::default();
         GetCursorPos(&mut point);
@@ -247,7 +247,7 @@ unsafe fn add_tray_icon(hwnd: HWND) {
         hIcon: launcher_icon(),
         ..Default::default()
     };
-    copy_wide_fixed(&mut data.szTip, text().app_title);
+    copy_wide_fixed(&mut data.szTip, &text().app_title);
     Shell_NotifyIconW(NIM_ADD, &data);
 }
 
@@ -466,12 +466,12 @@ fn run_manual_update_check(ctx: LauncherContext) {
     thread::spawn(move || match core::check_update_now(&ctx) {
         Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
         Ok(state) => message_box(
-            text().update_check_result_title,
+            &text().update_check_result_title,
             &state.check_message(),
             MB_OK | MB_ICONINFORMATION,
         ),
         Err(err) => message_box(
-            text().update_check_failed_title,
+            &text().update_check_failed_title,
             &text().update_check_failed_message(&err.to_string()),
             MB_OK | MB_ICONERROR,
         ),
@@ -479,7 +479,7 @@ fn run_manual_update_check(ctx: LauncherContext) {
 }
 
 fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
-    let latest = state.latest_tag_label().to_string();
+    let latest = state.latest_tag_label();
     if !confirm_update_restart(&latest) {
         return;
     }
@@ -487,13 +487,13 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
         message_box(
-            text().update_restart_title,
+            &text().update_restart_title,
             &result.message,
             MB_OK | MB_ICONINFORMATION,
         );
     } else {
         message_box(
-            text().update_restart_title,
+            &text().update_restart_title,
             &text().update_restart_failed_message(&result.message),
             MB_OK | MB_ICONERROR,
         );
@@ -502,7 +502,7 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
 
 fn confirm_update_restart(latest_tag: &str) -> bool {
     message_box_yes_no(
-        text().update_ready_title,
+        &text().update_ready_title,
         &text().update_restart_confirm(latest_tag),
     )
 }
@@ -518,11 +518,11 @@ fn toggle_autostart(ctx: &LauncherContext) -> LauncherResult<String> {
     if launcher_autostart_installed() {
         delete_run_autostart()?;
         delete_legacy_scheduled_tasks();
-        Ok(text().launch_at_login_disabled.to_string())
+        Ok(text().launch_at_login_disabled)
     } else {
         set_run_autostart(ctx)?;
         delete_legacy_scheduled_tasks();
-        Ok(text().launch_at_login_enabled.to_string())
+        Ok(text().launch_at_login_enabled)
     }
 }
 

@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use serde::Deserialize;
 use std::{
     env,
@@ -93,17 +94,19 @@ impl LauncherAutoUpdateState {
                 .is_some_and(|path| !path.is_empty())
     }
 
-    pub fn latest_tag_label(&self) -> &str {
+    pub fn latest_tag_label(&self) -> String {
         self.latest_tag
             .as_deref()
             .filter(|tag| !tag.trim().is_empty())
-            .unwrap_or("the latest release")
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| text().latest_release)
     }
 
     pub fn check_message(&self) -> String {
         let copy = text();
         if self.downloaded_update_available() {
-            return copy.update_ready_message(self.latest_tag_label());
+            let latest_tag = self.latest_tag_label();
+            return copy.update_ready_message(&latest_tag);
         }
 
         match self.status.as_str() {
@@ -111,175 +114,231 @@ impl LauncherAutoUpdateState {
                 self.error
                     .as_deref()
                     .filter(|err| !err.trim().is_empty())
-                    .unwrap_or("unknown error"),
+                    .unwrap_or(&copy.unknown_error),
             ),
-            "checking" | "downloading" => copy.checking_update.to_string(),
-            "idle" => copy.update_not_checked.to_string(),
+            "checking" | "downloading" => copy.checking_update,
+            "idle" => copy.update_not_checked,
             _ => copy.update_current_message(&self.current_tag),
         }
     }
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LauncherText {
-    pub app_title: &'static str,
-    pub launcher_title: &'static str,
-    pub launcher_window_title: &'static str,
-    pub settings_title: &'static str,
-    pub setup_title: &'static str,
-    pub open_anda: &'static str,
-    pub settings: &'static str,
-    pub status: &'static str,
-    pub start_daemon: &'static str,
-    pub stop_daemon: &'static str,
-    pub restart_daemon: &'static str,
-    pub check_update: &'static str,
-    pub launch_at_login: &'static str,
-    pub disable_launch_at_login: &'static str,
-    pub open_logs: &'static str,
-    pub quit: &'static str,
-    pub ok: &'static str,
-    pub save: &'static str,
-    pub cancel: &'static str,
-    pub provider: &'static str,
-    pub model: &'static str,
-    pub api_key: &'static str,
-    pub choose_provider_prompt: &'static str,
-    pub setup_required_message: &'static str,
-    pub launch_at_login_enabled: &'static str,
-    pub launch_at_login_disabled: &'static str,
-    pub settings_not_supported: &'static str,
-    pub unsupported_platform: &'static str,
-    pub main_thread_required: &'static str,
-    pub create_window_failed: &'static str,
-    pub resolve_launch_agents_failed: &'static str,
-    pub detect_home_failed: &'static str,
-    pub command_done: &'static str,
-    pub powershell_not_found: &'static str,
-    pub checking_update: &'static str,
-    pub update_ready_title: &'static str,
-    pub install_restart_update: &'static str,
-    pub update_check_result_title: &'static str,
-    pub update_check_failed_title: &'static str,
-    pub update_restart_title: &'static str,
-    pub update_restart_started: &'static str,
-    pub update_not_checked: &'static str,
+    locale: &'static str,
+    latest_release: String,
+    unknown_error: String,
+    pub app_title: String,
+    pub launcher_title: String,
+    pub launcher_window_title: String,
+    pub settings_title: String,
+    pub setup_title: String,
+    pub open_anda: String,
+    pub settings: String,
+    pub status: String,
+    pub start_daemon: String,
+    pub stop_daemon: String,
+    pub restart_daemon: String,
+    pub check_update: String,
+    pub launch_at_login: String,
+    pub disable_launch_at_login: String,
+    pub open_logs: String,
+    pub quit: String,
+    pub ok: String,
+    pub save: String,
+    pub cancel: String,
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
+    pub choose_provider_prompt: String,
+    pub setup_required_message: String,
+    pub launch_at_login_enabled: String,
+    pub launch_at_login_disabled: String,
+    pub settings_not_supported: String,
+    pub unsupported_platform: String,
+    pub main_thread_required: String,
+    pub create_window_failed: String,
+    pub resolve_launch_agents_failed: String,
+    pub detect_home_failed: String,
+    pub command_done: String,
+    pub powershell_not_found: String,
+    pub checking_update: String,
+    pub update_ready_title: String,
+    pub install_restart_update: String,
+    pub update_check_result_title: String,
+    pub update_check_failed_title: String,
+    pub update_restart_title: String,
+    pub update_restart_started: String,
+    pub update_not_checked: String,
 }
 
 #[allow(dead_code)]
 impl LauncherText {
-    pub fn unsupported_provider(self, provider_id: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("不支持的模型供应商：{provider_id}"),
-            LauncherLanguage::En => format!("unsupported provider: {provider_id}"),
-        }
+    pub fn unsupported_provider(&self, provider_id: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.unsupported_provider",
+            locale = locale,
+            provider_id = provider_id
+        )
+        .into_owned()
     }
 
-    pub fn unsupported_provider_from_wizard(self, provider_id: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("设置向导返回了不支持的模型供应商：{provider_id}"),
-            LauncherLanguage::En => {
-                format!("unsupported provider returned by wizard: {provider_id}")
-            }
-        }
+    pub fn unsupported_provider_from_wizard(&self, provider_id: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.unsupported_provider_from_wizard",
+            locale = locale,
+            provider_id = provider_id
+        )
+        .into_owned()
     }
 
-    pub fn env_required(self, env_var: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("必须填写 {env_var}"),
-            LauncherLanguage::En => format!("{env_var} is required"),
-        }
+    pub fn env_required(&self, env_var: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.env_required",
+            locale = locale,
+            env_var = env_var
+        )
+        .into_owned()
     }
 
-    pub fn settings_wizard_failed(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("设置向导失败：{detail}"),
-            LauncherLanguage::En => format!("settings wizard failed: {detail}"),
-        }
+    pub fn settings_wizard_failed(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.settings_wizard_failed",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn powershell_launch_failed(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("无法启动 PowerShell 设置向导：{detail}"),
-            LauncherLanguage::En => {
-                format!("could not launch PowerShell for settings wizard: {detail}")
-            }
-        }
+    pub fn powershell_launch_failed(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.powershell_launch_failed",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn launcher_exe_detect_failed(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("无法检测 launcher 可执行文件：{detail}"),
-            LauncherLanguage::En => format!("could not detect launcher executable: {detail}"),
-        }
+    pub fn launcher_exe_detect_failed(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.launcher_exe_detect_failed",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn run_anda_failed(self, path: &str, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("无法运行 {path}：{detail}"),
-            LauncherLanguage::En => format!("could not run {path}: {detail}"),
-        }
+    pub fn run_anda_failed(&self, path: &str, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.run_anda_failed",
+            locale = locale,
+            path = path,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn command_exited(self, status: std::process::ExitStatus) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("命令退出状态：{status}"),
-            LauncherLanguage::En => format!("Command exited with {status}"),
-        }
+    pub fn command_exited(&self, status: std::process::ExitStatus) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.command_exited",
+            locale = locale,
+            status = status.to_string()
+        )
+        .into_owned()
     }
 
-    pub fn command_failed(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("命令失败：{detail}"),
-            LauncherLanguage::En => format!("command failed: {detail}"),
-        }
+    pub fn command_failed(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.command_failed",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn schtasks_failed(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("schtasks.exe 执行失败：{detail}"),
-            LauncherLanguage::En => format!("schtasks.exe failed: {detail}"),
-        }
+    pub fn schtasks_failed(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.error.schtasks_failed",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn update_ready_message(self, latest_tag: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => {
-                format!("已下载 Anda {latest_tag}。安装并重启后生效。")
-            }
-            LauncherLanguage::En => {
-                format!("Anda {latest_tag} has been downloaded. Install and restart to use it.")
-            }
-        }
+    pub fn update_ready_message(&self, latest_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_ready_message",
+            locale = locale,
+            latest_tag = latest_tag
+        )
+        .into_owned()
     }
 
-    pub fn update_restart_confirm(self, latest_tag: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("现在安装 Anda {latest_tag} 并重启？"),
-            LauncherLanguage::En => format!("Install Anda {latest_tag} and restart now?"),
-        }
+    pub fn update_restart_confirm(&self, latest_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_restart_confirm",
+            locale = locale,
+            latest_tag = latest_tag
+        )
+        .into_owned()
     }
 
-    pub fn update_current_message(self, current_tag: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("Anda 已是最新版本（{current_tag}）。"),
-            LauncherLanguage::En => format!("Anda is already up to date ({current_tag})."),
-        }
+    pub fn update_current_message(&self, current_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_current_message",
+            locale = locale,
+            current_tag = current_tag
+        )
+        .into_owned()
     }
 
-    pub fn update_check_failed_message(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("检查更新失败：{detail}"),
-            LauncherLanguage::En => format!("Update check failed: {detail}"),
-        }
+    pub fn update_check_failed_message(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_check_failed_message",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
     }
 
-    pub fn update_restart_failed_message(self, detail: &str) -> String {
-        match launcher_language() {
-            LauncherLanguage::ZhHans => format!("安装更新或重启失败：{detail}"),
-            LauncherLanguage::En => format!("Update install or restart failed: {detail}"),
-        }
+    pub fn update_restart_failed_message(&self, detail: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_restart_failed_message",
+            locale = locale,
+            detail = detail
+        )
+        .into_owned()
+    }
+
+    pub fn restart_recovery(&self, message: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.restart_recovery",
+            locale = locale,
+            message = message
+        )
+        .into_owned()
+    }
+
+    pub fn missing_home_arg(&self) -> String {
+        let locale = self.locale;
+        t!("launcher.missing_home_arg", locale = locale).into_owned()
     }
 }
 
@@ -309,100 +368,73 @@ impl Drop for LauncherInstanceLock {
 
 static LAUNCHER_LANGUAGE: std::sync::OnceLock<LauncherLanguage> = std::sync::OnceLock::new();
 
-const TEXT_EN: LauncherText = LauncherText {
-    app_title: "Anda Bot",
-    launcher_title: "Anda Launcher",
-    launcher_window_title: "Anda Bot Launcher",
-    settings_title: "Anda Bot Settings",
-    setup_title: "Anda Bot Setup",
-    open_anda: "Open Anda",
-    settings: "Settings...",
-    status: "Status",
-    start_daemon: "Start daemon",
-    stop_daemon: "Stop daemon",
-    restart_daemon: "Restart daemon",
-    check_update: "Check for updates...",
-    launch_at_login: "Launch at login",
-    disable_launch_at_login: "Disable launch at login",
-    open_logs: "Open logs",
-    quit: "Quit",
-    ok: "OK",
-    save: "Save",
-    cancel: "Cancel",
-    provider: "Provider",
-    model: "Model",
-    api_key: "API 密钥",
-    choose_provider_prompt: "Choose a model provider:",
-    setup_required_message: "Model is required. API key is required unless Codex is selected.",
-    launch_at_login_enabled: "Launch at login enabled.",
-    launch_at_login_disabled: "Launch at login disabled.",
-    settings_not_supported: "Anda Launcher settings are not supported on this platform.",
-    unsupported_platform: "Anda Launcher currently supports Windows and macOS.",
-    main_thread_required: "Anda Launcher must run on the main thread",
-    create_window_failed: "could not create launcher window",
-    resolve_launch_agents_failed: "could not resolve LaunchAgents directory",
-    detect_home_failed: "could not detect user home directory",
-    command_done: "Done.",
-    powershell_not_found: "not found",
-    checking_update: "Checking for updates...",
-    update_ready_title: "Update ready",
-    install_restart_update: "Install and restart",
-    update_check_result_title: "Update check",
-    update_check_failed_title: "Update check failed",
-    update_restart_title: "Anda update",
-    update_restart_started: "Installing update and restarting Anda...",
-    update_not_checked: "No update check has run yet.",
-};
+impl LauncherLanguage {
+    fn locale(self) -> &'static str {
+        match self {
+            LauncherLanguage::En => "en",
+            LauncherLanguage::ZhHans => "zh-Hans",
+        }
+    }
+}
 
-const TEXT_ZH_HANS: LauncherText = LauncherText {
-    app_title: "Anda Bot",
-    launcher_title: "Anda 启动器",
-    launcher_window_title: "Anda Bot 启动器",
-    settings_title: "Anda Bot 设置",
-    setup_title: "Anda Bot 初始设置",
-    open_anda: "打开 Anda",
-    settings: "设置...",
-    status: "状态",
-    start_daemon: "启动守护进程",
-    stop_daemon: "停止守护进程",
-    restart_daemon: "重启守护进程",
-    check_update: "检查更新...",
-    launch_at_login: "登录时启动",
-    disable_launch_at_login: "取消登录时启动",
-    open_logs: "打开日志",
-    quit: "退出",
-    ok: "确定",
-    save: "保存",
-    cancel: "取消",
-    provider: "供应商",
-    model: "模型",
-    api_key: "API key",
-    choose_provider_prompt: "选择模型供应商：",
-    setup_required_message: "必须填写模型。除选择 Codex 外，必须填写 API key。",
-    launch_at_login_enabled: "已启用登录时启动。",
-    launch_at_login_disabled: "已关闭登录时启动。",
-    settings_not_supported: "当前平台不支持 Anda 启动器设置。",
-    unsupported_platform: "Anda 启动器目前支持 Windows 和 macOS。",
-    main_thread_required: "Anda 启动器必须在主线程运行",
-    create_window_failed: "无法创建启动器窗口",
-    resolve_launch_agents_failed: "无法解析 LaunchAgents 目录",
-    detect_home_failed: "无法检测用户主目录",
-    command_done: "完成。",
-    powershell_not_found: "未找到",
-    checking_update: "正在检查更新...",
-    update_ready_title: "更新已就绪",
-    install_restart_update: "安装并重启",
-    update_check_result_title: "检查更新",
-    update_check_failed_title: "检查更新失败",
-    update_restart_title: "Anda 更新",
-    update_restart_started: "正在安装更新并重启 Anda...",
-    update_not_checked: "尚未执行更新检查。",
-};
+pub fn text() -> LauncherText {
+    text_for_language(launcher_language())
+}
 
-pub fn text() -> &'static LauncherText {
-    match launcher_language() {
-        LauncherLanguage::En => &TEXT_EN,
-        LauncherLanguage::ZhHans => &TEXT_ZH_HANS,
+fn text_for_language(language: LauncherLanguage) -> LauncherText {
+    let locale = language.locale();
+    LauncherText {
+        locale,
+        latest_release: t!("launcher.latest_release", locale = locale).into_owned(),
+        unknown_error: t!("launcher.unknown_error", locale = locale).into_owned(),
+        app_title: t!("launcher.app_title", locale = locale).into_owned(),
+        launcher_title: t!("launcher.launcher_title", locale = locale).into_owned(),
+        launcher_window_title: t!("launcher.launcher_window_title", locale = locale).into_owned(),
+        settings_title: t!("launcher.settings_title", locale = locale).into_owned(),
+        setup_title: t!("launcher.setup_title", locale = locale).into_owned(),
+        open_anda: t!("launcher.open_anda", locale = locale).into_owned(),
+        settings: t!("launcher.settings", locale = locale).into_owned(),
+        status: t!("launcher.status", locale = locale).into_owned(),
+        start_daemon: t!("launcher.start_daemon", locale = locale).into_owned(),
+        stop_daemon: t!("launcher.stop_daemon", locale = locale).into_owned(),
+        restart_daemon: t!("launcher.restart_daemon", locale = locale).into_owned(),
+        check_update: t!("launcher.check_update", locale = locale).into_owned(),
+        launch_at_login: t!("launcher.launch_at_login", locale = locale).into_owned(),
+        disable_launch_at_login: t!("launcher.disable_launch_at_login", locale = locale)
+            .into_owned(),
+        open_logs: t!("launcher.open_logs", locale = locale).into_owned(),
+        quit: t!("launcher.quit", locale = locale).into_owned(),
+        ok: t!("launcher.ok", locale = locale).into_owned(),
+        save: t!("launcher.save", locale = locale).into_owned(),
+        cancel: t!("launcher.cancel", locale = locale).into_owned(),
+        provider: t!("launcher.provider", locale = locale).into_owned(),
+        model: t!("launcher.model", locale = locale).into_owned(),
+        api_key: t!("launcher.api_key", locale = locale).into_owned(),
+        choose_provider_prompt: t!("launcher.choose_provider_prompt", locale = locale).into_owned(),
+        setup_required_message: t!("launcher.setup_required_message", locale = locale).into_owned(),
+        launch_at_login_enabled: t!("launcher.launch_at_login_enabled", locale = locale)
+            .into_owned(),
+        launch_at_login_disabled: t!("launcher.launch_at_login_disabled", locale = locale)
+            .into_owned(),
+        settings_not_supported: t!("launcher.settings_not_supported", locale = locale).into_owned(),
+        unsupported_platform: t!("launcher.unsupported_platform", locale = locale).into_owned(),
+        main_thread_required: t!("launcher.main_thread_required", locale = locale).into_owned(),
+        create_window_failed: t!("launcher.create_window_failed", locale = locale).into_owned(),
+        resolve_launch_agents_failed: t!("launcher.resolve_launch_agents_failed", locale = locale)
+            .into_owned(),
+        detect_home_failed: t!("launcher.detect_home_failed", locale = locale).into_owned(),
+        command_done: t!("launcher.command_done", locale = locale).into_owned(),
+        powershell_not_found: t!("launcher.powershell_not_found", locale = locale).into_owned(),
+        checking_update: t!("launcher.checking_update", locale = locale).into_owned(),
+        update_ready_title: t!("launcher.update_ready_title", locale = locale).into_owned(),
+        install_restart_update: t!("launcher.install_restart_update", locale = locale).into_owned(),
+        update_check_result_title: t!("launcher.update_check_result_title", locale = locale)
+            .into_owned(),
+        update_check_failed_title: t!("launcher.update_check_failed_title", locale = locale)
+            .into_owned(),
+        update_restart_title: t!("launcher.update_restart_title", locale = locale).into_owned(),
+        update_restart_started: t!("launcher.update_restart_started", locale = locale).into_owned(),
+        update_not_checked: t!("launcher.update_not_checked", locale = locale).into_owned(),
     }
 }
 
@@ -782,7 +814,7 @@ pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<Comma
             update,
             CommandResult {
                 success: false,
-                message: format!("Restart recovery: {}", recovery.message),
+                message: text().restart_recovery(&recovery.message),
             },
         ));
     }
@@ -831,7 +863,7 @@ pub fn command_result(output: Output) -> CommandResult {
     } else if !stderr.is_empty() {
         stderr
     } else if output.status.success() {
-        text().command_done.to_string()
+        text().command_done
     } else {
         text().command_exited(output.status)
     };
@@ -846,7 +878,7 @@ fn combine_command_results(first: CommandResult, second: CommandResult) -> Comma
         first.message.trim().is_empty(),
         second.message.trim().is_empty(),
     ) {
-        (true, true) => text().command_done.to_string(),
+        (true, true) => text().command_done,
         (false, true) => first.message,
         (true, false) => second.message,
         (false, false) => format!("{}\n{}", first.message, second.message),
@@ -877,7 +909,7 @@ fn detect_anda_home() -> LauncherResult<PathBuf> {
     }
     let user_home = env::var_os("USERPROFILE")
         .or_else(|| env::var_os("HOME"))
-        .ok_or_else(|| text().detect_home_failed.to_string())?;
+        .ok_or_else(|| text().detect_home_failed)?;
     Ok(PathBuf::from(user_home).join(".anda"))
 }
 
@@ -889,17 +921,17 @@ where
     while let Some(arg) = args.next() {
         if arg == OsStr::new("--home") {
             let Some(home) = args.next() else {
-                return Err("missing value for --home".into());
+                return Err(text().missing_home_arg().into());
             };
             if home.as_os_str().is_empty() {
-                return Err("missing value for --home".into());
+                return Err(text().missing_home_arg().into());
             }
             return Ok(Some(PathBuf::from(home)));
         }
 
         if let Some(home) = arg.to_str().and_then(|value| value.strip_prefix("--home=")) {
             if home.is_empty() {
-                return Err("missing value for --home".into());
+                return Err(text().missing_home_arg().into());
             }
             return Ok(Some(PathBuf::from(home)));
         }
@@ -1518,6 +1550,31 @@ mod tests {
     fn launcher_language_falls_back_to_english() {
         assert_eq!(language_from_tags(["fr-FR", "es-ES"]), LauncherLanguage::En);
         assert_eq!(language_from_tags(["en-US"]), LauncherLanguage::En);
+    }
+
+    #[test]
+    fn launcher_text_uses_locale_files() {
+        let en = text_for_language(LauncherLanguage::En);
+        assert_eq!(en.api_key, "API key");
+        assert_eq!(
+            en.unsupported_provider("custom"),
+            "unsupported provider: custom"
+        );
+        assert_eq!(
+            en.update_ready_message("v1.2.3"),
+            "Anda v1.2.3 has been downloaded. Install and restart to use it."
+        );
+
+        let zh = text_for_language(LauncherLanguage::ZhHans);
+        assert_eq!(zh.api_key, "API 密钥");
+        assert_eq!(
+            zh.unsupported_provider("custom"),
+            "不支持的模型供应商：custom"
+        );
+        assert_eq!(
+            zh.update_ready_message("v1.2.3"),
+            "已下载 Anda v1.2.3。安装并重启后生效。"
+        );
     }
 
     #[test]

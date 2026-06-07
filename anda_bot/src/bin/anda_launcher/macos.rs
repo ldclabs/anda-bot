@@ -48,11 +48,11 @@ define_class!(
             if let Some(ctx) = CTX.get() {
                 match settings::run_wizard(ctx) {
                     Ok(true) => show_result(
-                        text().app_title,
+                        &text().app_title,
                         &core::restart_daemon(ctx).unwrap_or_else(error_result),
                     ),
                     Ok(false) => {}
-                    Err(err) => show_error(text().settings_title, &err.to_string()),
+                    Err(err) => show_error(&text().settings_title, &err.to_string()),
                 }
             }
         }
@@ -61,7 +61,7 @@ define_class!(
         fn start_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 show_result(
-                    text().app_title,
+                    &text().app_title,
                     &core::start_daemon(ctx).unwrap_or_else(error_result),
                 );
             }
@@ -71,7 +71,7 @@ define_class!(
         fn show_status(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 show_result(
-                    text().app_title,
+                    &text().app_title,
                     &core::daemon_status(ctx).unwrap_or_else(error_result),
                 );
             }
@@ -81,7 +81,7 @@ define_class!(
         fn stop_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 show_result(
-                    text().app_title,
+                    &text().app_title,
                     &core::stop_daemon(ctx).unwrap_or_else(error_result),
                 );
             }
@@ -91,7 +91,7 @@ define_class!(
         fn restart_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 show_result(
-                    text().app_title,
+                    &text().app_title,
                     &core::restart_daemon(ctx).unwrap_or_else(error_result),
                 );
             }
@@ -108,8 +108,8 @@ define_class!(
         fn toggle_launch_at_login(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 match toggle_launch_at_login(ctx) {
-                    Ok(message) => show_info(text().app_title, &message),
-                    Err(err) => show_error(text().app_title, &err.to_string()),
+                    Ok(message) => show_info(&text().app_title, &message),
+                    Err(err) => show_error(&text().app_title, &err.to_string()),
                 }
             }
         }
@@ -147,7 +147,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     }
     start_auto_update_loop(ctx.clone());
 
-    let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required.to_string())?;
+    let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required)?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
@@ -176,27 +176,27 @@ pub fn show_error(title: &str, message: &str) {
 
 fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     let copy = text();
-    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(copy.app_title).as_ref());
-    add_item(&menu, mtm, copy.open_anda, sel!(openAnda:), delegate);
-    add_item(&menu, mtm, copy.settings, sel!(settings:), delegate);
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.app_title).as_ref());
+    add_item(&menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
+    add_item(&menu, mtm, &copy.settings, sel!(settings:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, copy.status, sel!(showStatus:), delegate);
-    add_item(&menu, mtm, copy.start_daemon, sel!(startDaemon:), delegate);
-    add_item(&menu, mtm, copy.stop_daemon, sel!(stopDaemon:), delegate);
+    add_item(&menu, mtm, &copy.status, sel!(showStatus:), delegate);
+    add_item(&menu, mtm, &copy.start_daemon, sel!(startDaemon:), delegate);
+    add_item(&menu, mtm, &copy.stop_daemon, sel!(stopDaemon:), delegate);
     add_item(
         &menu,
         mtm,
-        copy.restart_daemon,
+        &copy.restart_daemon,
         sel!(restartDaemon:),
         delegate,
     );
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, copy.check_update, sel!(checkUpdate:), delegate);
+    add_item(&menu, mtm, &copy.check_update, sel!(checkUpdate:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let launch_title = if launch_agent_installed() {
-        copy.disable_launch_at_login
+        &copy.disable_launch_at_login
     } else {
-        copy.launch_at_login
+        &copy.launch_at_login
     };
     add_item(
         &menu,
@@ -205,9 +205,9 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
         sel!(toggleLaunchAtLogin:),
         delegate,
     );
-    add_item(&menu, mtm, copy.open_logs, sel!(openLogs:), delegate);
+    add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, copy.quit, sel!(quit:), delegate);
+    add_item(&menu, mtm, &copy.quit, sel!(quit:), delegate);
     menu
 }
 
@@ -272,28 +272,28 @@ fn run_manual_update_check(ctx: LauncherContext) {
     thread::spawn(move || match core::check_update_now(&ctx) {
         Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
         Ok(state) => {
-            show_background_dialog(text().update_check_result_title, &state.check_message())
+            show_background_dialog(&text().update_check_result_title, &state.check_message())
         }
         Err(err) => show_background_dialog(
-            text().update_check_failed_title,
+            &text().update_check_failed_title,
             &text().update_check_failed_message(&err.to_string()),
         ),
     });
 }
 
 fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
-    let latest = state.latest_tag_label().to_string();
+    let latest = state.latest_tag_label();
     if !confirm_update_restart(&latest) {
         return;
     }
 
-    show_background_notification(text().update_restart_title, text().update_restart_started);
+    show_background_notification(&text().update_restart_title, &text().update_restart_started);
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
-        show_background_dialog(text().update_restart_title, &result.message);
+        show_background_dialog(&text().update_restart_title, &result.message);
     } else {
         show_background_dialog(
-            text().update_restart_title,
+            &text().update_restart_title,
             &text().update_restart_failed_message(&result.message),
         );
     }
@@ -303,11 +303,11 @@ fn confirm_update_restart(latest_tag: &str) -> bool {
     let script = format!(
         "display dialog {} with title {} buttons {{{}, {}}} default button {} cancel button {} with icon note",
         applescript_string(&text().update_restart_confirm(latest_tag)),
-        applescript_string(text().update_ready_title),
-        applescript_string(text().cancel),
-        applescript_string(text().install_restart_update),
-        applescript_string(text().install_restart_update),
-        applescript_string(text().cancel),
+        applescript_string(&text().update_ready_title),
+        applescript_string(&text().cancel),
+        applescript_string(&text().install_restart_update),
+        applescript_string(&text().install_restart_update),
+        applescript_string(&text().cancel),
     );
     Command::new("osascript")
         .arg("-e")
@@ -321,8 +321,8 @@ fn show_background_dialog(title: &str, message: &str) {
         "display dialog {} with title {} buttons {{{}}} default button {} with icon note",
         applescript_string(message),
         applescript_string(title),
-        applescript_string(text().ok),
-        applescript_string(text().ok),
+        applescript_string(&text().ok),
+        applescript_string(&text().ok),
     );
     if Command::new("osascript")
         .arg("-e")
@@ -348,7 +348,7 @@ fn show_alert(title: &str, message: &str) {
         let alert = NSAlert::init(NSAlert::alloc(mtm));
         alert.setMessageText(nsstring(title).as_ref());
         alert.setInformativeText(nsstring(message).as_ref());
-        alert.addButtonWithTitle(nsstring(text().ok).as_ref());
+        alert.addButtonWithTitle(nsstring(&text().ok).as_ref());
         alert.runModal();
     } else {
         eprintln!("{title}: {message}");
@@ -371,17 +371,17 @@ fn toggle_launch_at_login(ctx: &LauncherContext) -> LauncherResult<String> {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
-        Ok(text().launch_at_login_disabled.to_string())
+        Ok(text().launch_at_login_disabled)
     } else {
         let path = launch_agent_path()?;
         let parent = path
             .parent()
-            .ok_or_else(|| text().resolve_launch_agents_failed.to_string())?;
+            .ok_or_else(|| text().resolve_launch_agents_failed)?;
         fs::create_dir_all(parent)?;
         fs::write(&path, launch_agent_plist(ctx))?;
         let _ = launchctl_bootout(&path);
         let _ = launchctl_bootstrap(&path);
-        Ok(text().launch_at_login_enabled.to_string())
+        Ok(text().launch_at_login_enabled)
     }
 }
 
@@ -390,7 +390,7 @@ fn launch_agent_installed() -> bool {
 }
 
 fn launch_agent_path() -> LauncherResult<std::path::PathBuf> {
-    let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed.to_string())?;
+    let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
     Ok(home
         .join("Library")
         .join("LaunchAgents")

@@ -1,5 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+rust_i18n::i18n!("locales", fallback = "en");
+
 #[path = "anda_launcher/core.rs"]
 mod core;
 #[path = "anda_launcher/settings.rs"]
@@ -20,7 +22,7 @@ mod platform;
 fn main() {
     let result = run();
     if let Err(err) = result {
-        platform::show_error(core::text().launcher_title, &err.to_string());
+        platform::show_error(&core::text().launcher_title, &err.to_string());
         std::process::exit(1);
     }
 }

@@ -5,6 +5,11 @@ version = "0.9.0"
 description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Brain."
 edition.workspace = true
 
+[package.metadata.i18n]
+available-locales = ["en", "zh-Hans"]
+default-locale = "en"
+load-path = "locales"
+
 [[bin]]
 name = "anda"
 path = "src/main.rs"
@@ -41,6 +46,7 @@ infer2 = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }
+rust-i18n = { workspace = true }
 tokio-util = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }

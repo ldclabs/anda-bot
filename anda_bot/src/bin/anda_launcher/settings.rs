@@ -135,7 +135,7 @@ fn run_windows_powershell(script_path: &PathBuf) -> LauncherResult<std::process:
 
     let detail = last_err
         .map(|err| err.to_string())
-        .unwrap_or_else(|| text().powershell_not_found.to_string());
+        .unwrap_or_else(|| text().powershell_not_found);
     Err(text().powershell_launch_failed(&detail).into())
 }
 
@@ -250,13 +250,13 @@ Write-Output ('ANDA_PROVIDER=' + $provider.SelectedItem)
 Write-Output ('ANDA_MODEL=' + $model.Text)
 Write-Output ('ANDA_API_KEY=' + $apiKey.Text)
 "#,
-        setup_title = ps_single(copy.setup_title),
-        provider_label = ps_single(copy.provider),
-        model_label = ps_single(copy.model),
-        api_key_label = ps_single(copy.api_key),
-        save_label = ps_single(copy.save),
-        setup_required_message = ps_single(copy.setup_required_message),
-        cancel_label = ps_single(copy.cancel),
+        setup_title = ps_single(&copy.setup_title),
+        provider_label = ps_single(&copy.provider),
+        model_label = ps_single(&copy.model),
+        api_key_label = ps_single(&copy.api_key),
+        save_label = ps_single(&copy.save),
+        setup_required_message = ps_single(&copy.setup_required_message),
+        cancel_label = ps_single(&copy.cancel),
     )
 }
 
@@ -295,8 +295,8 @@ set keyText to text returned of keyDialog
 return "ANDA_PROVIDER=" & providerId & linefeed & "ANDA_MODEL=" & modelText & linefeed & "ANDA_API_KEY=" & keyText
 "#,
         default_provider = applescript_string(provider_ids()[0]),
-        setup_title = applescript_string(copy.setup_title),
-        choose_provider_prompt = applescript_string(copy.choose_provider_prompt),
+        setup_title = applescript_string(&copy.setup_title),
+        choose_provider_prompt = applescript_string(&copy.choose_provider_prompt),
         model_prompt = applescript_string(&format!("{}:", copy.model)),
         api_key_prompt = applescript_string(&format!("{}:", copy.api_key)),
     )

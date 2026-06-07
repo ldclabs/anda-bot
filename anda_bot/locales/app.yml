@@ -1,0 +1,186 @@
+_version: 2
+
+launcher.app_title:
+  en: Anda Bot
+  zh-Hans: Anda Bot
+launcher.launcher_title:
+  en: Anda Launcher
+  zh-Hans: Anda 启动器
+launcher.launcher_window_title:
+  en: Anda Bot Launcher
+  zh-Hans: Anda Bot 启动器
+launcher.settings_title:
+  en: Anda Bot Settings
+  zh-Hans: Anda Bot 设置
+launcher.setup_title:
+  en: Anda Bot Setup
+  zh-Hans: Anda Bot 初始设置
+launcher.open_anda:
+  en: Open Anda
+  zh-Hans: 打开 Anda
+launcher.settings:
+  en: Settings...
+  zh-Hans: 设置...
+launcher.status:
+  en: Status
+  zh-Hans: 状态
+launcher.start_daemon:
+  en: Start daemon
+  zh-Hans: 启动守护进程
+launcher.stop_daemon:
+  en: Stop daemon
+  zh-Hans: 停止守护进程
+launcher.restart_daemon:
+  en: Restart daemon
+  zh-Hans: 重启守护进程
+launcher.check_update:
+  en: Check for updates...
+  zh-Hans: 检查更新...
+launcher.launch_at_login:
+  en: Launch at login
+  zh-Hans: 登录时启动
+launcher.disable_launch_at_login:
+  en: Disable launch at login
+  zh-Hans: 取消登录时启动
+launcher.open_logs:
+  en: Open logs
+  zh-Hans: 打开日志
+launcher.quit:
+  en: Quit
+  zh-Hans: 退出
+launcher.ok:
+  en: OK
+  zh-Hans: 确定
+launcher.save:
+  en: Save
+  zh-Hans: 保存
+launcher.cancel:
+  en: Cancel
+  zh-Hans: 取消
+launcher.provider:
+  en: Provider
+  zh-Hans: 供应商
+launcher.model:
+  en: Model
+  zh-Hans: 模型
+launcher.api_key:
+  en: API key
+  zh-Hans: API 密钥
+launcher.choose_provider_prompt:
+  en: "Choose a model provider:"
+  zh-Hans: 选择模型供应商：
+launcher.setup_required_message:
+  en: Model is required. API key is required unless Codex is selected.
+  zh-Hans: 必须填写模型。除选择 Codex 外，必须填写 API key。
+launcher.launch_at_login_enabled:
+  en: Launch at login enabled.
+  zh-Hans: 已启用登录时启动。
+launcher.launch_at_login_disabled:
+  en: Launch at login disabled.
+  zh-Hans: 已关闭登录时启动。
+launcher.settings_not_supported:
+  en: Anda Launcher settings are not supported on this platform.
+  zh-Hans: 当前平台不支持 Anda 启动器设置。
+launcher.unsupported_platform:
+  en: Anda Launcher currently supports Windows and macOS.
+  zh-Hans: Anda 启动器目前支持 Windows 和 macOS。
+launcher.main_thread_required:
+  en: Anda Launcher must run on the main thread
+  zh-Hans: Anda 启动器必须在主线程运行
+launcher.create_window_failed:
+  en: could not create launcher window
+  zh-Hans: 无法创建启动器窗口
+launcher.resolve_launch_agents_failed:
+  en: could not resolve LaunchAgents directory
+  zh-Hans: 无法解析 LaunchAgents 目录
+launcher.detect_home_failed:
+  en: could not detect user home directory
+  zh-Hans: 无法检测用户主目录
+launcher.command_done:
+  en: Done.
+  zh-Hans: 完成。
+launcher.powershell_not_found:
+  en: not found
+  zh-Hans: 未找到
+launcher.checking_update:
+  en: Checking for updates...
+  zh-Hans: 正在检查更新...
+launcher.update_ready_title:
+  en: Update ready
+  zh-Hans: 更新已就绪
+launcher.install_restart_update:
+  en: Install and restart
+  zh-Hans: 安装并重启
+launcher.update_check_result_title:
+  en: Update check
+  zh-Hans: 检查更新
+launcher.update_check_failed_title:
+  en: Update check failed
+  zh-Hans: 检查更新失败
+launcher.update_restart_title:
+  en: Anda update
+  zh-Hans: Anda 更新
+launcher.update_restart_started:
+  en: Installing update and restarting Anda...
+  zh-Hans: 正在安装更新并重启 Anda...
+launcher.update_not_checked:
+  en: No update check has run yet.
+  zh-Hans: 尚未执行更新检查。
+launcher.latest_release:
+  en: the latest release
+  zh-Hans: 最新版本
+launcher.unknown_error:
+  en: unknown error
+  zh-Hans: 未知错误
+
+launcher.error.unsupported_provider:
+  en: "unsupported provider: %{provider_id}"
+  zh-Hans: 不支持的模型供应商：%{provider_id}
+launcher.error.unsupported_provider_from_wizard:
+  en: "unsupported provider returned by wizard: %{provider_id}"
+  zh-Hans: 设置向导返回了不支持的模型供应商：%{provider_id}
+launcher.error.env_required:
+  en: "%{env_var} is required"
+  zh-Hans: 必须填写 %{env_var}
+launcher.error.settings_wizard_failed:
+  en: "settings wizard failed: %{detail}"
+  zh-Hans: 设置向导失败：%{detail}
+launcher.error.powershell_launch_failed:
+  en: "could not launch PowerShell for settings wizard: %{detail}"
+  zh-Hans: 无法启动 PowerShell 设置向导：%{detail}
+launcher.error.launcher_exe_detect_failed:
+  en: "could not detect launcher executable: %{detail}"
+  zh-Hans: 无法检测 launcher 可执行文件：%{detail}
+launcher.error.run_anda_failed:
+  en: "could not run %{path}: %{detail}"
+  zh-Hans: 无法运行 %{path}：%{detail}
+launcher.command_exited:
+  en: "Command exited with %{status}"
+  zh-Hans: 命令退出状态：%{status}
+launcher.error.command_failed:
+  en: "command failed: %{detail}"
+  zh-Hans: 命令失败：%{detail}
+launcher.error.schtasks_failed:
+  en: "schtasks.exe failed: %{detail}"
+  zh-Hans: schtasks.exe 执行失败：%{detail}
+launcher.update_ready_message:
+  en: Anda %{latest_tag} has been downloaded. Install and restart to use it.
+  zh-Hans: 已下载 Anda %{latest_tag}。安装并重启后生效。
+launcher.update_restart_confirm:
+  en: Install Anda %{latest_tag} and restart now?
+  zh-Hans: 现在安装 Anda %{latest_tag} 并重启？
+launcher.update_current_message:
+  en: Anda is already up to date (%{current_tag}).
+  zh-Hans: Anda 已是最新版本（%{current_tag}）。
+launcher.update_check_failed_message:
+  en: "Update check failed: %{detail}"
+  zh-Hans: 检查更新失败：%{detail}
+launcher.update_restart_failed_message:
+  en: "Update install or restart failed: %{detail}"
+  zh-Hans: 安装更新或重启失败：%{detail}
+launcher.restart_recovery:
+  en: "Restart recovery: %{message}"
+  zh-Hans: 重启恢复：%{message}
+launcher.missing_home_arg:
+  en: missing value for --home
+  zh-Hans: 缺少 --home 的值
