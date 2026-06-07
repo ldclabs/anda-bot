@@ -3,11 +3,76 @@
 Quick validation script for skills - minimal version
 """
 
-import sys
-import os
+import json
 import re
-import yaml
+import sys
 from pathlib import Path
+
+
+ALLOWED_PROPERTIES = {
+    "name",
+    "description",
+    "license",
+    "allowed-tools",
+    "metadata",
+    "compatibility",
+}
+
+
+def _strip_yaml_scalar(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def parse_frontmatter(frontmatter_text):
+    """Parse the small subset of YAML frontmatter needed for validation."""
+    result = {}
+    lines = frontmatter_text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or line.startswith((" ", "\t")):
+            i += 1
+            continue
+
+        if ":" not in line:
+            raise ValueError(f"Invalid frontmatter line: {line}")
+
+        key, raw_value = line.split(":", 1)
+        key = key.strip()
+        value = raw_value.strip()
+
+        if key not in ALLOWED_PROPERTIES:
+            result[key] = _strip_yaml_scalar(value)
+            i += 1
+            continue
+
+        if value in (">", "|", ">-", "|-"):
+            block = []
+            i += 1
+            while i < len(lines) and (
+                lines[i].startswith((" ", "\t")) or not lines[i].strip()
+            ):
+                block.append(lines[i].strip())
+                i += 1
+            result[key] = "\n".join(block).strip()
+            continue
+
+        if value == "":
+            result[key] = ""
+        else:
+            result[key] = _strip_yaml_scalar(value)
+        i += 1
+
+    return result
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
@@ -30,17 +95,16 @@ def validate_skill(skill_path):
 
     frontmatter_text = match.group(1)
 
-    # Parse YAML frontmatter
+    # Parse frontmatter. This intentionally avoids external dependencies so
+    # packaging works in a fresh Anda Bot runtime.
     try:
-        frontmatter = yaml.safe_load(frontmatter_text)
+        frontmatter = parse_frontmatter(frontmatter_text)
         if not isinstance(frontmatter, dict):
-            return False, "Frontmatter must be a YAML dictionary"
-    except yaml.YAMLError as e:
+            return False, "Frontmatter must be a dictionary"
+    except ValueError as e:
         return False, f"Invalid YAML in frontmatter: {e}"
 
     # Define allowed properties
-    ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
-
     # Check for unexpected properties (excluding nested keys under metadata)
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES
     if unexpected_keys:

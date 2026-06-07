@@ -15,9 +15,12 @@ import time
 import webbrowser
 from pathlib import Path
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
-from scripts.run_eval import find_project_root, run_eval
+from scripts.run_eval import run_eval
 from scripts.utils import parse_skill_md
 
 
@@ -54,13 +57,18 @@ def run_loop(
     runs_per_query: int,
     trigger_threshold: float,
     holdout: float,
-    model: str,
     verbose: bool,
+    anda_command: str | None = None,
+    home: Path | None = None,
+    config_from: Path | None = None,
+    keep_home: bool = False,
+    workspace: Path | None = None,
+    force_skill: bool = False,
+    improve_timeout: int = 180,
     live_report_path: Path | None = None,
     log_dir: Path | None = None,
 ) -> dict:
     """Run the eval + improvement loop."""
-    project_root = find_project_root()
     name, original_description, content = parse_skill_md(skill_path)
     current_description = description_override or original_description
 
@@ -92,10 +100,15 @@ def run_loop(
             description=current_description,
             num_workers=num_workers,
             timeout=timeout,
-            project_root=project_root,
+            skill_path=skill_path,
             runs_per_query=runs_per_query,
             trigger_threshold=trigger_threshold,
-            model=model,
+            anda_command=anda_command,
+            home=home,
+            config_from=config_from,
+            keep_home=keep_home,
+            workspace=workspace,
+            force_skill=force_skill,
         )
         eval_elapsed = time.time() - t0
 
@@ -202,7 +215,9 @@ def run_loop(
             current_description=current_description,
             eval_results=train_results,
             history=blinded_history,
-            model=model,
+            anda_command=anda_command,
+            home=home,
+            timeout=improve_timeout,
             log_dir=log_dir,
             iteration=iteration,
         )
@@ -252,10 +267,16 @@ def main():
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable)")
-    parser.add_argument("--model", required=True, help="Model for improvement")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for temp file, 'none' to disable)")
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
+    parser.add_argument("--anda-command", default=None, help="Command used to invoke Anda (default: anda or ANDA_COMMAND)")
+    parser.add_argument("--home", default=None, help="Anda home to use. Defaults to an isolated temporary home for eval runs")
+    parser.add_argument("--config-from", default=None, help="Config file copied into temporary eval homes")
+    parser.add_argument("--workspace", default=None, help="Workspace passed to anda agent run")
+    parser.add_argument("--keep-home", action="store_true", help="Keep temporary eval homes after runs")
+    parser.add_argument("--force-skill", action="store_true", help="Prefix trigger eval queries with /skill skill-name")
+    parser.add_argument("--improve-timeout", type=int, default=180, help="Timeout for each description improvement prompt")
     args = parser.parse_args()
 
     eval_set = json.loads(Path(args.eval_set).read_text())
@@ -300,8 +321,14 @@ def main():
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
         holdout=args.holdout,
-        model=args.model,
         verbose=args.verbose,
+        anda_command=args.anda_command,
+        home=Path(args.home).expanduser().resolve() if args.home else None,
+        config_from=Path(args.config_from).expanduser().resolve() if args.config_from else None,
+        keep_home=args.keep_home,
+        workspace=Path(args.workspace).expanduser().resolve() if args.workspace else None,
+        force_skill=args.force_skill,
+        improve_timeout=args.improve_timeout,
         live_report_path=live_report_path,
         log_dir=log_dir,
     )

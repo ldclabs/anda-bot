@@ -6,10 +6,12 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Bundled document skills expanded**: added `doc-coauthoring`, `pptx`, and `xlsx` skills so Anda Bot can guide structured document co-authoring and handle PowerPoint and spreadsheet workflows from the built-in skill set.
 - **Multi-user channel ownership**: `config.yaml` now supports top-level trusted `users` with Ed25519 public keys, and IRC, Telegram, WeChat, Discord, and Lark/Feishu channel entries can set `user` to choose which trusted Anda caller owns conversations, resources, and memory context.
 
 ### Changed
 
+- **Bundled skill tooling refreshed**: updated `skill-creator`, `docx`, and `deep-research` guidance and helper scripts for Anda Bot skill packaging, validation, eval runs, and Office document workflows.
 - **Channel runtime caller selection**: incoming channel messages now run under the configured channel user when present, falling back to the local owner, and the engine/brain managers include all configured trusted user public keys.
 - **Dependencies bumped**: `anda_core` 0.12.7 → 0.12.8 and `anda_engine` 0.12.30 → 0.12.32.
 
