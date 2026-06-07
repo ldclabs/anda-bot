@@ -156,7 +156,7 @@
   }
 
   function lastPathPart(value: string): string {
-    return value.split('/').filter(Boolean).pop() || ''
+    return value.split(/[\\/]/).filter(Boolean).pop() || ''
   }
 </script>
 

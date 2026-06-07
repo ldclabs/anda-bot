@@ -25,6 +25,8 @@ use tokio::{
 };
 
 use crate::util::request_meta::request_meta_extra_as;
+#[cfg(target_os = "windows")]
+use crate::util::windows_process::suppress_console_window;
 
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
@@ -812,7 +814,7 @@ impl ChromeBrowserTool {
         }
         let path = path.canonicalize()?;
         let mime_type = browser_file_mime_type(&path);
-        let path_string = path.to_string_lossy().to_string();
+        let path_string = user_path_string_for_path(&path);
         Ok(LocalBrowserFile {
             path,
             path_string,
@@ -1500,11 +1502,63 @@ fn file_url_for_path(path: &Path) -> Result<String, BoxError> {
     } else {
         std::env::current_dir()?.join(path)
     };
-    let mut path = absolute.to_string_lossy().replace('\\', "/");
-    if cfg!(windows) && !path.starts_with('/') {
-        path = format!("/{path}");
+    Ok(file_url_for_absolute_path_string(
+        &absolute.to_string_lossy(),
+    ))
+}
+
+fn file_url_for_absolute_path_string(path: &str) -> String {
+    let path = file_url_path_from_absolute_path_string(path);
+    format!("file://{}", percent_encode_url_path(&path))
+}
+
+fn file_url_path_from_absolute_path_string(path: &str) -> String {
+    let mut path = strip_windows_verbatim_url_path_prefix(&path.replace('\\', "/"));
+    if windows_drive_url_path_needs_leading_slash(&path) {
+        path.insert(0, '/');
     }
-    Ok(format!("file://{}", percent_encode_url_path(&path)))
+    path
+}
+
+fn strip_windows_verbatim_url_path_prefix(path: &str) -> String {
+    if let Some(rest) = path
+        .strip_prefix("//?/UNC/")
+        .or_else(|| path.strip_prefix("//./UNC/"))
+    {
+        return format!("//{rest}");
+    }
+    if let Some(rest) = path
+        .strip_prefix("//?/")
+        .or_else(|| path.strip_prefix("//./"))
+    {
+        return rest.to_string();
+    }
+    path.to_string()
+}
+
+fn windows_drive_url_path_needs_leading_slash(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+}
+
+fn user_path_string_for_path(path: &Path) -> String {
+    user_path_string_from_local_path_string(&path.to_string_lossy())
+}
+
+fn user_path_string_from_local_path_string(path: &str) -> String {
+    if let Some(rest) = path
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| path.strip_prefix(r"\\.\UNC\"))
+    {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = path
+        .strip_prefix(r"\\?\")
+        .or_else(|| path.strip_prefix(r"\\.\"))
+    {
+        return rest.to_string();
+    }
+    path.to_string()
 }
 
 fn path_from_file_url(url: &str) -> Result<PathBuf, BoxError> {
@@ -1764,6 +1818,7 @@ fn launch_browser_with_preferred_scope(
         if let Some(url) = url {
             command.arg(url);
         }
+        suppress_console_window(&mut command);
         command
             .status()
             .map_err(|err| format!("failed to launch {browser}: {err}"))?;
@@ -2058,13 +2113,35 @@ mod tests {
         assert_eq!(path_from_file_url(&url).unwrap(), path);
     }
 
-    #[cfg(windows)]
     #[test]
-    fn windows_extended_file_url_round_trips() {
-        let path = PathBuf::from(r"\\?\C:\Users\runneradmin\AppData\Local\Temp\report.html");
-        let url = file_url_for_path(&path).unwrap();
+    fn windows_extended_drive_path_uses_browser_file_url() {
+        let url = file_url_for_absolute_path_string(r"\\?\D:\test\少有人走的路.pdf");
 
-        assert_eq!(path_from_file_url(&url).unwrap(), path);
+        assert_eq!(
+            url,
+            "file:///D:/test/%E5%B0%91%E6%9C%89%E4%BA%BA%E8%B5%B0%E7%9A%84%E8%B7%AF.pdf"
+        );
+        assert!(!url.contains("%3F"));
+    }
+
+    #[test]
+    fn windows_extended_unc_path_keeps_network_share_url_path() {
+        let url = file_url_for_absolute_path_string(r"\\?\UNC\server\share\中文.txt");
+
+        assert_eq!(url, "file:////server/share/%E4%B8%AD%E6%96%87.txt");
+        assert!(!url.contains("%3F"));
+    }
+
+    #[test]
+    fn windows_extended_path_string_is_user_visible() {
+        assert_eq!(
+            user_path_string_from_local_path_string(r"\\?\D:\test\少有人走的路.pdf"),
+            r"D:\test\少有人走的路.pdf"
+        );
+        assert_eq!(
+            user_path_string_from_local_path_string(r"\\?\UNC\server\share\中文.txt"),
+            r"\\server\share\中文.txt"
+        );
     }
 
     #[tokio::test]

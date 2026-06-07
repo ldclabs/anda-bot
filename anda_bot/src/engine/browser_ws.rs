@@ -23,6 +23,8 @@ use tokio_tungstenite::{
 };
 
 use super::browser::{BrowserActionResult, BrowserBridge, BrowserCommand};
+#[cfg(target_os = "windows")]
+use crate::util::windows_process::suppress_tokio_console_window;
 use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
 
 const SEC_WEBSOCKET_ACCEPT: &str = "sec-websocket-accept";
@@ -397,14 +399,19 @@ async fn pick_workspace_path_macos() -> Result<Option<PathBuf>, String> {
 #[cfg(target_os = "windows")]
 async fn pick_workspace_path_windows() -> Result<Option<PathBuf>, String> {
     let script = concat!(
+        "$utf8 = [System.Text.UTF8Encoding]::new($false); ",
+        "try { [Console]::OutputEncoding = $utf8 } catch { }; ",
+        "$OutputEncoding = $utf8; ",
         "Add-Type -AssemblyName System.Windows.Forms > $null; ",
         "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ",
         "$dialog.Description = 'Open a workspace folder for Anda'; ",
         "$dialog.UseDescriptionForTitle = $true; ",
         "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }"
     );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-STA", "-Command", script])
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-STA", "-Command", script]);
+    suppress_tokio_console_window(&mut command);
+    let output = command
         .output()
         .await
         .map_err(|err| format!("failed to launch Windows folder picker: {err}"))?;
@@ -471,8 +478,44 @@ async fn pick_workspace_path_linux() -> Result<Option<PathBuf>, String> {
 }
 
 fn parse_selected_workspace_path(stdout: &[u8]) -> Result<Option<PathBuf>, String> {
-    let selected = String::from_utf8_lossy(stdout);
+    let selected = decode_selected_workspace_stdout(stdout)
+        .ok_or_else(|| "folder picker returned a non-text workspace path".to_string())?;
     Ok(normalize_selected_workspace_path(&selected))
+}
+
+fn decode_selected_workspace_stdout(stdout: &[u8]) -> Option<String> {
+    if let Ok(text) = std::str::from_utf8(stdout) {
+        return Some(text.to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(text) =
+            decode_bytes_with_windows_code_page(stdout, windows_console_output_code_page())
+        {
+            return Some(text);
+        }
+        return anda_core::text_from_bytes(stdout).map(|text| text.into_owned());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn decode_bytes_with_windows_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
+    anda_core::text_from_bytes_with_encoding(
+        bytes,
+        anda_core::windows_code_page_encoding(code_page),
+    )
+    .map(|text| text.into_owned())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_console_output_code_page() -> u32 {
+    unsafe { windows_sys::Win32::Globalization::GetOEMCP() }
 }
 
 fn normalize_selected_workspace_path(selected: &str) -> Option<PathBuf> {
@@ -731,7 +774,7 @@ fn percent_decode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_selected_workspace_path;
+    use super::{decode_bytes_with_windows_code_page, normalize_selected_workspace_path};
     use std::{env, path::MAIN_SEPARATOR};
 
     #[test]
@@ -747,5 +790,15 @@ mod tests {
     fn normalize_selected_workspace_path_rejects_empty_or_relative_values() {
         assert_eq!(normalize_selected_workspace_path("   "), None);
         assert_eq!(normalize_selected_workspace_path("workspace/project"), None);
+    }
+
+    #[test]
+    fn selected_workspace_stdout_decodes_legacy_chinese_windows_bytes() {
+        let gbk_path = [b'E', b':', b'\\', 0xD6, 0xD0, 0xCE, 0xC4, b'\r', b'\n'];
+
+        assert_eq!(
+            decode_bytes_with_windows_code_page(&gbk_path, 936).as_deref(),
+            Some("E:\\中文\r\n")
+        );
     }
 }
