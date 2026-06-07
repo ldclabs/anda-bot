@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     config::{self, normalize_identity, normalize_string},
-    util::text::read_text_file,
+    util::{file_uri::path_from_file_uri_or_path, text::read_text_file},
 };
 
 const WECHAT_MAX_MESSAGE_LENGTH: usize = 4000;
@@ -243,11 +243,9 @@ impl WechatChannel {
                 return Ok(());
             }
 
-            let path = uri.strip_prefix("file://").unwrap_or(uri);
-            if Path::new(path).exists() {
-                client
-                    .send_media(recipient, Path::new(path), context_token)
-                    .await?;
+            let path = path_from_file_uri_or_path(uri)?;
+            if path.exists() {
+                client.send_media(recipient, &path, context_token).await?;
                 return Ok(());
             }
         }

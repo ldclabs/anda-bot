@@ -24,9 +24,17 @@ use tokio::{
     time::Instant,
 };
 
-use crate::util::request_meta::request_meta_extra_as;
 #[cfg(target_os = "windows")]
 use crate::util::windows_process::suppress_console_window;
+use crate::util::{
+    file_uri::{
+        file_uri_for_absolute_path_string as file_url_for_absolute_path_string,
+        file_uri_for_path as file_url_for_path, is_file_uri,
+        path_from_file_uri as path_from_file_url, user_path_string_for_path,
+        user_path_string_from_local_path_string,
+    },
+    request_meta::request_meta_extra_as,
+};
 
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
@@ -1478,11 +1486,7 @@ fn local_path_from_reference(
     reference: &str,
     workspace: Option<&Path>,
 ) -> Result<PathBuf, BoxError> {
-    let path = if reference
-        .trim_start()
-        .to_ascii_lowercase()
-        .starts_with("file://")
-    {
+    let path = if is_file_uri(reference) {
         path_from_file_url(reference)?
     } else {
         PathBuf::from(reference.trim())
@@ -1493,141 +1497,6 @@ fn local_path_from_reference(
         Ok(workspace.join(path))
     } else {
         Ok(std::env::current_dir()?.join(path))
-    }
-}
-
-fn file_url_for_path(path: &Path) -> Result<String, BoxError> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    Ok(file_url_for_absolute_path_string(
-        &absolute.to_string_lossy(),
-    ))
-}
-
-fn file_url_for_absolute_path_string(path: &str) -> String {
-    let path = file_url_path_from_absolute_path_string(path);
-    format!("file://{}", percent_encode_url_path(&path))
-}
-
-fn file_url_path_from_absolute_path_string(path: &str) -> String {
-    let mut path = strip_windows_verbatim_url_path_prefix(&path.replace('\\', "/"));
-    if windows_drive_url_path_needs_leading_slash(&path) {
-        path.insert(0, '/');
-    }
-    path
-}
-
-fn strip_windows_verbatim_url_path_prefix(path: &str) -> String {
-    if let Some(rest) = path
-        .strip_prefix("//?/UNC/")
-        .or_else(|| path.strip_prefix("//./UNC/"))
-    {
-        return format!("//{rest}");
-    }
-    if let Some(rest) = path
-        .strip_prefix("//?/")
-        .or_else(|| path.strip_prefix("//./"))
-    {
-        return rest.to_string();
-    }
-    path.to_string()
-}
-
-fn windows_drive_url_path_needs_leading_slash(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
-}
-
-fn user_path_string_for_path(path: &Path) -> String {
-    user_path_string_from_local_path_string(&path.to_string_lossy())
-}
-
-fn user_path_string_from_local_path_string(path: &str) -> String {
-    if let Some(rest) = path
-        .strip_prefix(r"\\?\UNC\")
-        .or_else(|| path.strip_prefix(r"\\.\UNC\"))
-    {
-        return format!(r"\\{rest}");
-    }
-    if let Some(rest) = path
-        .strip_prefix(r"\\?\")
-        .or_else(|| path.strip_prefix(r"\\.\"))
-    {
-        return rest.to_string();
-    }
-    path.to_string()
-}
-
-fn path_from_file_url(url: &str) -> Result<PathBuf, BoxError> {
-    let trimmed = url.trim();
-    let Some(payload) = trimmed.strip_prefix("file://") else {
-        return Err("local file URL must start with file://".into());
-    };
-    let payload = payload.strip_prefix("localhost/").unwrap_or(payload);
-    let decoded = percent_decode_url_path(payload)?;
-    #[cfg(windows)]
-    {
-        let decoded = if decoded.starts_with("//?/") || decoded.starts_with("//./") {
-            decoded.replace('/', "\\")
-        } else if decoded.starts_with("//") {
-            decoded.replace('/', "\\")
-        } else {
-            decoded
-                .strip_prefix('/')
-                .unwrap_or(&decoded)
-                .replace('/', "\\")
-        };
-        Ok(PathBuf::from(decoded))
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(PathBuf::from(decoded))
-    }
-}
-
-fn percent_encode_url_path(path: &str) -> String {
-    let mut encoded = String::with_capacity(path.len());
-    for byte in path.as_bytes() {
-        match *byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
-                encoded.push(*byte as char)
-            }
-            byte => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
-}
-
-fn percent_decode_url_path(path: &str) -> Result<String, BoxError> {
-    let bytes = path.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return Err("file URL has an incomplete percent escape".into());
-            }
-            let hi = hex_value(bytes[index + 1])?;
-            let lo = hex_value(bytes[index + 2])?;
-            decoded.push((hi << 4) | lo);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(decoded).map_err(|_| "file URL path is not valid UTF-8".into())
-}
-
-fn hex_value(byte: u8) -> Result<u8, BoxError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err("file URL has an invalid percent escape".into()),
     }
 }
 
@@ -1710,11 +1579,12 @@ fn materialize_screenshot_data_url(
     ));
     fs::write(&path, &bytes)?;
 
+    let file_uri = file_url_for_path(&path)?;
     let path = path.to_string_lossy().to_string();
     value.remove("data_url");
     value.insert("path".to_string(), json!(path));
     value.insert("file_path".to_string(), json!(path));
-    value.insert("file_uri".to_string(), json!(format!("file://{path}")));
+    value.insert("file_uri".to_string(), json!(file_uri));
     value.insert("mime_type".to_string(), json!(mime_type));
     value.insert("size".to_string(), json!(bytes.len()));
     value.insert("data_url_saved".to_string(), json!(true));
@@ -2177,7 +2047,11 @@ mod tests {
         let open_command = receiver.recv().await.unwrap();
         assert_eq!(open_command.args.action, BrowserAction::OpenTab);
         let file_url = open_command.args.url.as_deref().unwrap();
-        assert_eq!(path_from_file_url(file_url).unwrap(), canonical_report_path);
+        let expected_report_path = user_path_string_for_path(&canonical_report_path);
+        assert_eq!(
+            user_path_string_for_path(&path_from_file_url(file_url).unwrap()),
+            expected_report_path
+        );
         bridge
             .complete(
                 "chrome:tab:1".to_string(),
@@ -2201,7 +2075,7 @@ mod tests {
         assert_eq!(result.value["opened_file"], true);
         assert_eq!(
             result.value["file_path"].as_str().unwrap(),
-            canonical_report_path.to_string_lossy()
+            expected_report_path
         );
         assert_eq!(result.value["file_url"].as_str().unwrap(), file_url);
         assert_eq!(result.value["mime_type"], "text/html");
@@ -2300,7 +2174,10 @@ mod tests {
 
         let path = value["path"].as_str().unwrap();
         assert_eq!(value["file_path"], path);
-        assert_eq!(value["file_uri"], format!("file://{path}"));
+        assert_eq!(
+            value["file_uri"],
+            file_url_for_path(Path::new(path)).unwrap()
+        );
         assert!(Path::new(path).starts_with(temp_dir.path()));
         assert_eq!(fs::read(path).unwrap(), b"image-bytes");
     }

@@ -6,6 +6,8 @@ use std::{
     sync::RwLock,
 };
 
+use crate::util::file_uri::file_uri_for_path;
+
 pub type InferType = infer2::Type;
 
 #[derive(Debug, Default)]
@@ -45,7 +47,7 @@ impl ChannelWorkspace {
         let path = unique_attachment_path(&dir, &stored_name).await?;
         tokio::fs::write(&path, &blob.0).await?;
 
-        resource.uri = Some(local_file_uri(&path));
+        resource.uri = Some(file_uri_for_path(&path)?);
         if resource.size.is_none() {
             resource.size = Some(blob.0.len() as u64);
         }
@@ -200,10 +202,6 @@ async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, 
     .into())
 }
 
-fn local_file_uri(path: &Path) -> String {
-    format!("file://{}", path.to_string_lossy())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,7 +317,7 @@ mod tests {
     #[test]
     fn local_file_uri_prefixes_path_losslessly() {
         assert_eq!(
-            local_file_uri(Path::new("/tmp/voice.mp3")),
+            file_uri_for_path(Path::new("/tmp/voice.mp3")).unwrap(),
             "file:///tmp/voice.mp3"
         );
     }

@@ -6,13 +6,7 @@ use reqwest::{
     multipart::{Form, Part},
 };
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    fmt::Write as _,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +14,10 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config::{self, normalize_identity};
+use crate::{
+    config::{self, normalize_identity},
+    util::file_uri::path_from_file_uri_or_path,
+};
 
 const TELEGRAM_MAX_MESSAGE_LENGTH: usize = 4096;
 const TELEGRAM_CONTINUATION_OVERHEAD: usize = 30;
@@ -798,8 +795,8 @@ impl TelegramChannel {
                     .await;
             }
 
-            let path = uri.strip_prefix("file://").unwrap_or(uri);
-            if Path::new(path).exists() {
+            let path = path_from_file_uri_or_path(uri)?;
+            if path.exists() {
                 let bytes = tokio::fs::read(path).await?;
                 return self
                     .send_resource_bytes(chat_id, thread_id, resource, bytes)

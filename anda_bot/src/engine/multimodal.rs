@@ -22,6 +22,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::util::file_uri::{
+    file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
+};
+
 pub const IMAGE_UNDERSTANDING_AGENT_NAME: &str = "image_understanding";
 pub const AUDIO_UNDERSTANDING_AGENT_NAME: &str = "audio_understanding";
 pub const VIDEO_UNDERSTANDING_AGENT_NAME: &str = "video_understanding";
@@ -438,7 +442,7 @@ impl MediaUnderstandingAgent {
             label: name.clone(),
             name,
             mime_type: Some(mime_type),
-            uri: Some(format!("file://{}", resolved.display())),
+            uri: Some(file_uri_for_path(&resolved)?),
             size: Some(metadata.len()),
             data: Some(data),
             tags: Vec::new(),
@@ -1093,8 +1097,13 @@ impl OtherAttachment {
         }
         if let Some(uri) = self.uri.as_deref().filter(|value| !value.trim().is_empty()) {
             lines.push(format!("- uri: {}", uri.trim()));
-            if let Some(path) = uri.strip_prefix("file://") {
-                lines.push(format!("- local_path: {path}"));
+            if is_file_uri(uri)
+                && let Ok(path) = path_from_file_uri(uri)
+            {
+                lines.push(format!(
+                    "- local_path: {}",
+                    user_path_string_for_path(&path)
+                ));
             }
         }
         if let Some(size) = self.size {
@@ -1507,7 +1516,12 @@ async fn resolve_media_path(
     defaults: &[PathBuf],
     user_path: &str,
 ) -> Result<PathBuf, BoxError> {
-    let requested = PathBuf::from(strip_file_uri(user_path.trim()));
+    let user_path = user_path.trim();
+    let requested = if is_file_uri(user_path) {
+        path_from_file_uri(user_path)?
+    } else {
+        PathBuf::from(user_path)
+    };
     if requested.as_os_str().is_empty() {
         return Err("media path cannot be empty".into());
     }
@@ -1583,10 +1597,6 @@ fn push_workspace(workspaces: &mut Vec<PathBuf>, workspace: PathBuf) {
     if !workspaces.iter().any(|existing| existing == &workspace) {
         workspaces.push(workspace);
     }
-}
-
-fn strip_file_uri(path: &str) -> &str {
-    path.strip_prefix("file://").unwrap_or(path)
 }
 
 fn strip_data_url_scheme(url: &str) -> Option<&str> {
@@ -2153,7 +2163,7 @@ mod tests {
         let resolved = resolve_media_path(
             &RequestMeta::default(),
             &[dir.path().to_path_buf()],
-            &format!("file://{}", file.display()),
+            &file_uri_for_path(&file).expect("file URI should be generated"),
         )
         .await
         .expect("file uri inside workspace should resolve");

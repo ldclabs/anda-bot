@@ -20,7 +20,10 @@ use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
     resource_from_bytes,
 };
-use crate::config::{self, normalize_identity};
+use crate::{
+    config::{self, normalize_identity},
+    util::file_uri::path_from_file_uri_or_path,
+};
 
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
 const DISCORD_MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
@@ -597,7 +600,7 @@ impl DiscordChannel {
                     continue;
                 }
 
-                let path = uri.strip_prefix("file://").unwrap_or(uri);
+                let path = path_from_file_uri_or_path(uri)?;
                 let bytes = tokio::fs::read(path).await?;
                 if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
                     return Err(format!(
