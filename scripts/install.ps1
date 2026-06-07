@@ -2,7 +2,7 @@
 # Usage: irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 
 param(
-    [string]$InstallDir = (Join-Path $env:USERPROFILE "bin"),
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\AndaBot"),
     [string]$AndaHome = $env:ANDA_HOME,
     [switch]$NoAutostart,
     [switch]$NoStart
@@ -13,6 +13,10 @@ $ProgressPreference = "SilentlyContinue"
 $Repo = "ldclabs/anda-bot"
 $BinaryName = "anda"
 $InstallName = "$BinaryName.exe"
+$LauncherBinaryName = "anda_launcher"
+$LauncherInstallName = "$LauncherBinaryName.exe"
+$DaemonTaskName = "Anda Bot"
+$LauncherTaskName = "Anda Bot Launcher"
 $SkillsArchiveName = "anda-skills.zip"
 $BannerArt = @(
     '      _     _   _   ____      _      '
@@ -82,44 +86,79 @@ function Get-TargetArch {
     }
 }
 
-function Test-PathEntry($PathValue, $Directory) {
-    if ([string]::IsNullOrWhiteSpace($PathValue)) {
-        return $false
-    }
-
+function Add-PathPrefix($PathValue, $Directory) {
     $normalizedDirectory = [Environment]::ExpandEnvironmentVariables($Directory).TrimEnd("\")
-    foreach ($entry in ($PathValue -split ";")) {
-        if ([string]::IsNullOrWhiteSpace($entry)) {
-            continue
-        }
+    $entries = @()
+    if (-not [string]::IsNullOrWhiteSpace($PathValue)) {
+        foreach ($entry in ($PathValue -split ";")) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
 
-        $normalizedEntry = [Environment]::ExpandEnvironmentVariables($entry).TrimEnd("\")
-        if ([string]::Equals($normalizedEntry, $normalizedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
-            return $true
+            $normalizedEntry = [Environment]::ExpandEnvironmentVariables($entry).TrimEnd("\")
+            if ([string]::Equals($normalizedEntry, $normalizedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+
+            $entries += $entry
         }
     }
 
-    return $false
+    return (@($Directory) + $entries) -join ";"
 }
 
 function Ensure-UserPath($Directory) {
     $processPath = [Environment]::GetEnvironmentVariable("Path", "Process")
-    if (-not (Test-PathEntry $processPath $Directory)) {
-        [Environment]::SetEnvironmentVariable("Path", "$Directory;$processPath", "Process")
+    $updatedProcessPath = Add-PathPrefix $processPath $Directory
+    if ($updatedProcessPath -ne $processPath) {
+        [Environment]::SetEnvironmentVariable("Path", $updatedProcessPath, "Process")
     }
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if (Test-PathEntry $userPath $Directory) {
+    $updatedUserPath = Add-PathPrefix $userPath $Directory
+    if ($updatedUserPath -eq $userPath) {
         return $false
     }
 
-    if ([string]::IsNullOrWhiteSpace($userPath)) {
-        [Environment]::SetEnvironmentVariable("Path", $Directory, "User")
-    } else {
-        [Environment]::SetEnvironmentVariable("Path", "$userPath;$Directory", "User")
-    }
-
+    [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
     return $true
+}
+
+function Send-EnvironmentChanged {
+    try {
+        if (-not ("AndaBot.NativeMethods" -as [type])) {
+            $signature = @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace AndaBot {
+    public static class NativeMethods {
+        [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd,
+            UInt32 Msg,
+            IntPtr wParam,
+            string lParam,
+            UInt32 fuFlags,
+            UInt32 uTimeout,
+            out IntPtr lpdwResult);
+    }
+}
+"@
+            Add-Type -TypeDefinition $signature | Out-Null
+        }
+
+        $result = [IntPtr]::Zero
+        [AndaBot.NativeMethods]::SendMessageTimeout(
+            [IntPtr]0xffff,
+            0x1a,
+            [IntPtr]::Zero,
+            "Environment",
+            0x0002,
+            5000,
+            [ref]$result) | Out-Null
+    } catch {
+    }
 }
 
 function Install-Binary($SourcePath, $Directory, $Name) {
@@ -185,6 +224,65 @@ function Install-Skills($ArchivePath, $HomeDir, $TempRoot) {
     Write-Success "Installed curated skills to $skillsDir"
 }
 
+function Stop-ExistingAndaInstall($Directory, $HomeDir) {
+    Stop-Process -Name $LauncherBinaryName -Force -ErrorAction SilentlyContinue
+
+    $candidatePaths = New-Object 'System.Collections.Generic.List[string]'
+    $candidatePaths.Add((Join-Path $Directory $InstallName))
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $candidatePaths.Add((Join-Path $env:USERPROFILE "bin\$InstallName"))
+    }
+
+    $seen = @{}
+    foreach ($candidatePath in $candidatePaths) {
+        if ([string]::IsNullOrWhiteSpace($candidatePath)) {
+            continue
+        }
+
+        $normalizedPath = [Environment]::ExpandEnvironmentVariables($candidatePath)
+        if ($seen.ContainsKey($normalizedPath.ToLowerInvariant())) {
+            continue
+        }
+        $seen[$normalizedPath.ToLowerInvariant()] = $true
+
+        if (Test-Path -LiteralPath $normalizedPath) {
+            try {
+                & $normalizedPath --home $HomeDir stop 2>$null | Out-Null
+            } catch {
+            }
+        }
+    }
+}
+
+function Remove-LegacyDaemonAutostart {
+    try {
+        & schtasks.exe /Delete /TN $DaemonTaskName /F 2>$null | Out-Null
+    } catch {
+    }
+}
+
+function Register-LauncherAutostart($LauncherPath) {
+    Remove-LegacyDaemonAutostart
+    $taskCommand = '"' + $LauncherPath + '"'
+    $output = & schtasks.exe /Create /TN $LauncherTaskName /SC ONLOGON /TR $taskCommand /F 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Could not register launcher autostart.`n$($output -join "`n")"
+    }
+}
+
+function Create-StartMenuShortcuts($InstallDir, $LauncherPath) {
+    $shell = New-Object -ComObject WScript.Shell
+    $programsDir = [Environment]::GetFolderPath("Programs")
+    $shortcutDir = Join-Path $programsDir "Anda Bot"
+    New-Item -ItemType Directory -Force -Path $shortcutDir | Out-Null
+
+    $launcherShortcut = $shell.CreateShortcut((Join-Path $shortcutDir "Anda Bot.lnk"))
+    $launcherShortcut.TargetPath = $LauncherPath
+    $launcherShortcut.WorkingDirectory = $InstallDir
+    $launcherShortcut.IconLocation = $LauncherPath
+    $launcherShortcut.Save()
+}
+
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 } catch {
@@ -204,6 +302,8 @@ if ($target -ne "windows-x86_64") {
 
 $assetName = "$BinaryName-$target.exe"
 $checksumName = "$assetName.sha256"
+$launcherAssetName = "$LauncherBinaryName-$target.exe"
+$launcherChecksumName = "$launcherAssetName.sha256"
 
 Write-Banner
 
@@ -213,6 +313,8 @@ Write-Info "Latest version: $version"
 
 $url = "https://github.com/$Repo/releases/download/$version/$assetName"
 $checksumUrl = "https://github.com/$Repo/releases/download/$version/$checksumName"
+$launcherUrl = "https://github.com/$Repo/releases/download/$version/$launcherAssetName"
+$launcherChecksumUrl = "https://github.com/$Repo/releases/download/$version/$launcherChecksumName"
 $skillsUrl = "https://github.com/$Repo/releases/download/$version/$SkillsArchiveName"
 $skillsChecksumName = "$SkillsArchiveName.sha256"
 $skillsChecksumUrl = "https://github.com/$Repo/releases/download/$version/$skillsChecksumName"
@@ -223,6 +325,8 @@ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 try {
     $downloadPath = Join-Path $tempDir $assetName
     $checksumPath = Join-Path $tempDir $checksumName
+    $launcherDownloadPath = Join-Path $tempDir $launcherAssetName
+    $launcherChecksumPath = Join-Path $tempDir $launcherChecksumName
     $skillsArchivePath = Join-Path $tempDir $SkillsArchiveName
     $skillsChecksumPath = Join-Path $tempDir $skillsChecksumName
 
@@ -243,7 +347,27 @@ try {
         Write-Info "Checksum file not found; skipping checksum verification."
     }
 
+    Write-Info "Downloading $launcherAssetName..."
+    try {
+        Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherDownloadPath -UseBasicParsing
+    } catch {
+        Fail "Download failed. Launcher binary may not exist for $target.`nCheck: https://github.com/$Repo/releases/tag/$version"
+    }
+
+    try {
+        Invoke-WebRequest -Uri $launcherChecksumUrl -OutFile $launcherChecksumPath -UseBasicParsing
+        Verify-Checksum $launcherDownloadPath $launcherChecksumPath
+    } catch {
+        if ($_.Exception.Message -like "Checksum verification failed*") {
+            throw
+        }
+        Write-Info "Launcher checksum file not found; skipping checksum verification."
+    }
+
+    Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
+    $launcherInstallPath = Install-Binary $launcherDownloadPath $InstallDir $LauncherInstallName
+    Create-StartMenuShortcuts $InstallDir $launcherInstallPath
 
     Write-Info "Downloading $SkillsArchiveName..."
     $skillsDownloaded = $false
@@ -270,6 +394,7 @@ try {
 
     $pathChanged = Ensure-UserPath $InstallDir
     if ($pathChanged) {
+        Send-EnvironmentChanged
         Write-Success "Added $InstallDir to your Windows user PATH."
         Write-Info "Open a new terminal for the PATH change to take effect."
     }
@@ -282,32 +407,18 @@ try {
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"
 
+    Remove-LegacyDaemonAutostart
+
     if (-not $NoAutostart) {
-        Write-Info "Registering Anda to start when you log in..."
-        $autostartOutput = & $installPath --home $AndaHome autostart install 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Autostart registered."
-        } else {
-            Write-Info "Could not register autostart. You can retry with:"
-            Write-Host "    $BinaryName --home `"$AndaHome`" autostart install"
-            if ($autostartOutput) {
-                Write-Host ($autostartOutput -join "`n")
-            }
-        }
+        Write-Info "Registering Anda launcher to start when you log in..."
+        Register-LauncherAutostart $launcherInstallPath
+        Write-Success "Launcher autostart registered."
     }
 
     if (-not $NoStart) {
-        Write-Info "Starting Anda daemon..."
-        $startOutput = & $installPath --home $AndaHome start 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Anda daemon started."
-        } else {
-            Write-Info "Anda is installed, but the daemon did not start yet. Configure $AndaHome\config.yaml, then run:"
-            Write-Host "    $BinaryName --home `"$AndaHome`" start"
-            if ($startOutput) {
-                Write-Host ($startOutput -join "`n")
-            }
-        }
+        Write-Info "Starting Anda launcher..."
+        Start-Process -FilePath $launcherInstallPath -WorkingDirectory $InstallDir
+        Write-Success "Anda launcher started."
     }
 
     Write-Host ""
@@ -315,7 +426,8 @@ try {
     Write-Host "    $BinaryName status"
     Write-Host "    $BinaryName start"
     Write-Host "    $BinaryName stop"
-    Write-Host "    $BinaryName autostart status"
+    Write-Host "    $LauncherInstallName"
+    Write-Host "    schtasks.exe /Query /TN `"$LauncherTaskName`""
     Write-Host "    $BinaryName --help"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue

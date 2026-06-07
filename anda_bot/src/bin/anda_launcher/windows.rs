@@ -475,15 +475,12 @@ fn run_schtasks(args: &[&str]) -> LauncherResult<()> {
 }
 
 fn open_anda_terminal(ctx: &LauncherContext) {
-    let command = format!(
-        "title Anda Bot && \"{}\" --home \"{}\"",
-        // Keep the console title ASCII-friendly for cmd.exe.
-        ctx.anda_exe.display(),
-        ctx.home.display()
-    );
     let _ = Command::new("cmd.exe")
+        .arg("/D")
         .arg("/K")
-        .arg(command)
+        .arg(&ctx.anda_exe)
+        .arg("--home")
+        .arg(&ctx.home)
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn();
 }

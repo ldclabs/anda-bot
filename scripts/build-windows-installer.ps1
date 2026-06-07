@@ -28,6 +28,88 @@ Copy-Item $andaAsset (Join-Path $staging "anda.exe")
 Copy-Item $launcherAsset (Join-Path $staging "anda_launcher.exe")
 Copy-Item $skillsAsset (Join-Path $staging "anda-skills.zip")
 
+$pathScript = @'
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$InstallDir
+)
+
+$ErrorActionPreference = "Stop"
+
+function Add-PathPrefix($PathValue, $Directory) {
+    $normalizedDirectory = [Environment]::ExpandEnvironmentVariables($Directory).TrimEnd("\")
+    $entries = @()
+    if (-not [string]::IsNullOrWhiteSpace($PathValue)) {
+        foreach ($entry in ($PathValue -split ";")) {
+            if ([string]::IsNullOrWhiteSpace($entry)) {
+                continue
+            }
+
+            $normalizedEntry = [Environment]::ExpandEnvironmentVariables($entry).TrimEnd("\")
+            if ([string]::Equals($normalizedEntry, $normalizedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+
+            $entries += $entry
+        }
+    }
+
+    return (@($Directory) + $entries) -join ";"
+}
+
+function Send-EnvironmentChanged {
+    try {
+        if (-not ("AndaBot.NativeMethods" -as [type])) {
+            $signature = @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace AndaBot {
+    public static class NativeMethods {
+        [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd,
+            UInt32 Msg,
+            IntPtr wParam,
+            string lParam,
+            UInt32 fuFlags,
+            UInt32 uTimeout,
+            out IntPtr lpdwResult);
+    }
+}
+"@
+            Add-Type -TypeDefinition $signature | Out-Null
+        }
+
+        $result = [IntPtr]::Zero
+        [AndaBot.NativeMethods]::SendMessageTimeout(
+            [IntPtr]0xffff,
+            0x1a,
+            [IntPtr]::Zero,
+            "Environment",
+            0x0002,
+            5000,
+            [ref]$result) | Out-Null
+    } catch {
+    }
+}
+
+$processPath = [Environment]::GetEnvironmentVariable("Path", "Process")
+$updatedProcessPath = Add-PathPrefix $processPath $InstallDir
+if ($updatedProcessPath -ne $processPath) {
+    [Environment]::SetEnvironmentVariable("Path", $updatedProcessPath, "Process")
+}
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$updatedUserPath = Add-PathPrefix $userPath $InstallDir
+if ($updatedUserPath -ne $userPath) {
+    [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
+    Send-EnvironmentChanged
+}
+'@
+
+Set-Content -Path (Join-Path $staging "set-user-path.ps1") -Value $pathScript -Encoding ASCII
+
 $installCmd = @'
 @echo off
 setlocal EnableExtensions
@@ -40,8 +122,17 @@ if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%ANDA_HOME%" mkdir "%ANDA_HOME%"
 if not exist "%START_MENU_DIR%" mkdir "%START_MENU_DIR%"
 
+taskkill.exe /IM anda_launcher.exe /F >nul 2>nul
+if exist "%INSTALL_DIR%\anda.exe" "%INSTALL_DIR%\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul
+if exist "%USERPROFILE%\bin\anda.exe" "%USERPROFILE%\bin\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul
+
 copy /Y "%~dp0anda.exe" "%INSTALL_DIR%\anda.exe" >nul
+if errorlevel 1 exit /b 1
 copy /Y "%~dp0anda_launcher.exe" "%INSTALL_DIR%\anda_launcher.exe" >nul
+if errorlevel 1 exit /b 1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0set-user-path.ps1" -InstallDir "%INSTALL_DIR%"
+if errorlevel 1 exit /b 1
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $skillsZip = '%~dp0anda-skills.zip'; $dest = Join-Path $env:USERPROFILE '.anda\skills'; New-Item -ItemType Directory -Force -Path $dest | Out-Null; $tmp = Join-Path $env:TEMP ('anda-skills-' + [guid]::NewGuid().ToString('N')); Expand-Archive -LiteralPath $skillsZip -DestinationPath $tmp -Force; Copy-Item -Path (Join-Path $tmp '*') -Destination $dest -Recurse -Force; Remove-Item -LiteralPath $tmp -Recurse -Force } catch { Write-Host $_; exit 1 }"
 
@@ -52,6 +143,7 @@ set "UNINSTALL=%INSTALL_DIR%\uninstall.cmd"
   echo set "INSTALL_DIR=%%LOCALAPPDATA%%\Programs\AndaBot"
   echo set "ANDA_HOME=%%USERPROFILE%%\.anda"
   echo set "START_MENU_DIR=%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\Anda Bot"
+  echo schtasks.exe /Delete /TN "Anda Bot" /F ^>nul 2^>nul
   echo schtasks.exe /Delete /TN "Anda Bot Launcher" /F ^>nul 2^>nul
   echo if exist "%%INSTALL_DIR%%\anda.exe" "%%INSTALL_DIR%%\anda.exe" --home "%%ANDA_HOME%%" stop ^>nul 2^>nul
   echo taskkill.exe /IM anda_launcher.exe /F ^>nul 2^>nul
@@ -66,6 +158,7 @@ set "UNINSTALL=%INSTALL_DIR%\uninstall.cmd"
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$w = New-Object -ComObject WScript.Shell; $dir = [Environment]::GetFolderPath('Programs') + '\Anda Bot'; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $s = $w.CreateShortcut((Join-Path $dir 'Anda Bot.lnk')); $s.TargetPath = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda_launcher.exe'; $s.WorkingDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $s.IconLocation = $s.TargetPath; $s.Save(); $u = $w.CreateShortcut((Join-Path $dir 'Uninstall Anda Bot.lnk')); $u.TargetPath = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\uninstall.cmd'; $u.WorkingDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $u.Save()"
 
+schtasks.exe /Delete /TN "Anda Bot" /F >nul 2>nul
 schtasks.exe /Create /TN "Anda Bot Launcher" /SC ONLOGON /TR "\"%INSTALL_DIR%\anda_launcher.exe\"" /F >nul
 
 start "" "%INSTALL_DIR%\anda_launcher.exe"
@@ -107,6 +200,7 @@ FILE0=anda.exe
 FILE1=anda_launcher.exe
 FILE2=anda-skills.zip
 FILE3=install.cmd
+FILE4=set-user-path.ps1
 [SourceFiles]
 SourceFiles0=$staging
 [SourceFiles0]
@@ -114,6 +208,7 @@ SourceFiles0=$staging
 %FILE1%=
 %FILE2%=
 %FILE3%=
+%FILE4%=
 "@
 
 Set-Content -Path $sedPath -Value $sed -Encoding ASCII
