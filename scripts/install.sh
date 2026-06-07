@@ -218,6 +218,63 @@ install_launcher_binary() {
     error "Could not replace ${LAUNCHER_INSTALL_PATH}"
 }
 
+shell_single_quote() {
+    printf "'"
+    printf '%s' "$1" | sed "s/'/'\\\\''/g"
+    printf "'"
+}
+
+macos_launcher_app_path() {
+    printf '%s/Applications/Anda Bot.app\n' "$HOME"
+}
+
+install_macos_launcher_app() {
+    [ "$OS" = "macos" ] || return 0
+    [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
+
+    APP_DIR=$(macos_launcher_app_path)
+    APP_CONTENTS="${APP_DIR}/Contents"
+    APP_MACOS="${APP_CONTENTS}/MacOS"
+    APP_RESOURCES="${APP_CONTENTS}/Resources"
+    APP_EXECUTABLE="${APP_MACOS}/Anda Bot"
+    LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
+    QUOTED_LAUNCHER=$(shell_single_quote "$LAUNCHER_PATH")
+
+    mkdir -p "$APP_MACOS" || {
+        info "Could not create ${APP_DIR}; skipping macOS app launcher."
+        return 0
+    }
+    mkdir -p "$APP_RESOURCES" 2>/dev/null || true
+
+    cat > "${APP_CONTENTS}/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>Anda Bot</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.anda.anda-bot.launcher</string>
+  <key>CFBundleName</key>
+  <string>Anda Bot</string>
+  <key>CFBundleIconFile</key>
+  <string>AndaBot</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+EOF
+
+    cat > "$APP_EXECUTABLE" <<EOF
+#!/bin/sh
+exec ${QUOTED_LAUNCHER} "\$@"
+EOF
+    chmod +x "$APP_EXECUTABLE" 2>/dev/null || true
+    success "Installed macOS app launcher to ${APP_DIR}"
+}
+
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -394,12 +451,19 @@ start_daemon() {
 
     if [ "$OS" = "macos" ] && [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ]; then
         info "Starting Anda launcher..."
-        nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
-        if [ "$?" -eq 0 ]; then
+        APP_DIR=$(macos_launcher_app_path)
+        if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
+            open -gj "$APP_DIR" >/dev/null 2>&1
+            START_STATUS=$?
+        else
+            nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
+            START_STATUS=$?
+        fi
+        if [ "$START_STATUS" -eq 0 ]; then
             success "Anda launcher started."
         else
             info "Anda is installed, but the launcher did not start yet. Run:"
-            printf '    %s/%s\n' "$INSTALL_DIR" "$LAUNCHER_INSTALL_NAME"
+            printf '    open "%s"\n' "$APP_DIR"
         fi
         return 0
     fi
@@ -515,6 +579,7 @@ fi
 mkdir -p "$INSTALL_DIR" || error "Could not create install directory: ${INSTALL_DIR}"
 install_binary
 install_launcher_binary
+install_macos_launcher_app
 download_and_install_skills
 
 if [ "$OS" = "windows" ]; then
@@ -535,6 +600,7 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     echo "    ${BINARY_NAME} start"
     echo "    ${BINARY_NAME} stop"
     if [ "$OS" = "macos" ]; then
+        echo "    open \"$(macos_launcher_app_path)\""
         echo "    ${LAUNCHER_INSTALL_NAME}"
         echo "    launchctl print gui/$(id -u)/ai.anda.anda-bot.launcher"
     else

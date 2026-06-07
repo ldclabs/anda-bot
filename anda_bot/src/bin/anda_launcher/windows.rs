@@ -1,8 +1,9 @@
 use std::{
+    env,
     ffi::{OsStr, c_void},
     mem::size_of,
     os::windows::{ffi::OsStrExt, process::CommandExt},
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     ptr,
     sync::OnceLock,
@@ -48,8 +49,10 @@ use crate::{
 
 const CLASS_NAME: &str = "AndaBotLauncherWindow";
 const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
+const LAUNCHER_ICON_FILE: &str = "anda.ico";
 const TRAY_ID: u32 = 1;
 const WM_TRAY: u32 = WM_APP + 1;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTOSTART_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const AUTOSTART_RUN_VALUE: &str = "AndaBotLauncher";
 const LEGACY_DAEMON_TASK_NAME: &str = "Anda Bot";
@@ -71,15 +74,6 @@ static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
 
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     CTX.set(ctx.clone()).ok();
-
-    if core::config_needs_setup(&ctx) {
-        if settings::run_initial_setup_wizard(&ctx)? {
-            show_result(&text().app_title, &core::start_daemon(&ctx)?);
-        }
-    } else {
-        let _ = core::start_daemon(&ctx);
-    }
-    start_auto_update_loop(ctx.clone());
 
     unsafe {
         let class_name = wide_null(CLASS_NAME);
@@ -113,6 +107,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
         }
 
         add_tray_icon(hwnd);
+        start_startup_tasks(ctx.clone());
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {
@@ -442,6 +437,29 @@ fn show_result(title: &str, result: &CommandResult) {
     message_box(title, &result.message, style);
 }
 
+fn start_startup_tasks(ctx: LauncherContext) {
+    thread::spawn(move || {
+        if let Err(err) = ensure_launch_entrypoints(&ctx) {
+            eprintln!("failed to ensure Windows launch entrypoints: {err}");
+        }
+        if let Err(err) = run_startup_setup(&ctx) {
+            show_error(&text().app_title, &err.to_string());
+        }
+        start_auto_update_loop(ctx);
+    });
+}
+
+fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
+    if core::config_needs_setup(ctx) {
+        if settings::run_initial_setup_wizard(ctx)? {
+            show_result(&text().app_title, &core::start_daemon(ctx)?);
+        }
+    } else {
+        let _ = core::start_daemon(ctx);
+    }
+    Ok(())
+}
+
 fn start_auto_update_loop(ctx: LauncherContext) {
     thread::spawn(move || {
         let mut prompted_tag: Option<String> = None;
@@ -530,12 +548,113 @@ fn launcher_autostart_installed() -> bool {
     run_autostart_exists()
 }
 
+fn ensure_launch_entrypoints(ctx: &LauncherContext) -> LauncherResult<()> {
+    if !is_default_windows_install(&ctx.launcher_exe) {
+        return Ok(());
+    }
+
+    let icon_path = ensure_launcher_icon_file(ctx)?;
+    let script = windows_shortcut_script(ctx, &icon_path)?;
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
+        .arg(script)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .trim()
+    .to_string();
+    Err(text().command_failed(&detail).into())
+}
+
+fn is_default_windows_install(launcher_exe: &Path) -> bool {
+    let Some(install_dir) = launcher_exe.parent() else {
+        return false;
+    };
+    let Some(default_dir) = default_windows_install_dir() else {
+        return false;
+    };
+    same_windows_path(install_dir, &default_dir)
+}
+
+fn default_windows_install_dir() -> Option<PathBuf> {
+    env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("Programs").join("AndaBot"))
+}
+
+fn same_windows_path(left: &Path, right: &Path) -> bool {
+    normalize_windows_path(left).eq_ignore_ascii_case(&normalize_windows_path(right))
+}
+
+fn normalize_windows_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .trim_end_matches(|ch| ch == '\\' || ch == '/')
+        .to_string()
+}
+
+fn ensure_launcher_icon_file(ctx: &LauncherContext) -> LauncherResult<PathBuf> {
+    let Some(install_dir) = ctx.launcher_exe.parent() else {
+        return Err("could not resolve launcher install directory".into());
+    };
+    let icon_path = install_dir.join(LAUNCHER_ICON_FILE);
+    std::fs::write(&icon_path, launcher_icon_ico())?;
+    Ok(icon_path)
+}
+
+fn launcher_icon_ico() -> Vec<u8> {
+    let mut icon = Vec::with_capacity(22 + LAUNCHER_ICON_PNG.len());
+    icon.extend_from_slice(&0u16.to_le_bytes());
+    icon.extend_from_slice(&1u16.to_le_bytes());
+    icon.extend_from_slice(&1u16.to_le_bytes());
+    icon.extend_from_slice(&[32, 32, 0, 0]);
+    icon.extend_from_slice(&1u16.to_le_bytes());
+    icon.extend_from_slice(&32u16.to_le_bytes());
+    icon.extend_from_slice(&(LAUNCHER_ICON_PNG.len() as u32).to_le_bytes());
+    icon.extend_from_slice(&22u32.to_le_bytes());
+    icon.extend_from_slice(LAUNCHER_ICON_PNG);
+    icon
+}
+
+fn windows_shortcut_script(ctx: &LauncherContext, icon_path: &Path) -> LauncherResult<String> {
+    let Some(install_dir) = ctx.launcher_exe.parent() else {
+        return Err("could not resolve launcher install directory".into());
+    };
+    let launcher = ps_single(&ctx.launcher_exe.to_string_lossy());
+    let icon = ps_single(&icon_path.to_string_lossy());
+    let working_directory = ps_single(&install_dir.to_string_lossy());
+
+    Ok(format!(
+        r#"$ErrorActionPreference = 'Stop'
+$launcher = '{launcher}'
+$icon = '{icon}'
+$workingDirectory = '{working_directory}'
+$shell = New-Object -ComObject WScript.Shell
+$targets = @(
+  @{{ Directory = (Join-Path ([Environment]::GetFolderPath('Programs')) 'Anda Bot'); Name = 'Anda Bot.lnk' }},
+  @{{ Directory = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory); Name = 'Anda Bot.lnk' }}
+)
+foreach ($target in $targets) {{
+  if ([string]::IsNullOrWhiteSpace($target.Directory)) {{ continue }}
+  New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null
+  $shortcut = $shell.CreateShortcut((Join-Path $target.Directory $target.Name))
+  $shortcut.TargetPath = $launcher
+  $shortcut.Arguments = ''
+  $shortcut.WorkingDirectory = $workingDirectory
+  $shortcut.IconLocation = $icon
+  $shortcut.Save()
+}}
+"#
+    ))
+}
+
 fn set_run_autostart(ctx: &LauncherContext) -> LauncherResult<()> {
-    let command = windows_command_line([
-        ctx.launcher_exe.as_os_str(),
-        OsStr::new("--home"),
-        ctx.home.as_os_str(),
-    ]);
+    let command = windows_command_line([ctx.launcher_exe.as_os_str()]);
     let value = wide_null(&command);
     let value_name = wide_null(AUTOSTART_RUN_VALUE);
     let key = RegistryKey::create(AUTOSTART_RUN_KEY, KEY_SET_VALUE)?;
@@ -593,11 +712,11 @@ fn run_autostart_exists() -> bool {
 fn delete_legacy_scheduled_tasks() {
     let _ = Command::new("schtasks.exe")
         .args(["/Delete", "/TN", LEGACY_DAEMON_TASK_NAME, "/F"])
-        .creation_flags(0x08000000)
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
     let _ = Command::new("schtasks.exe")
         .args(["/Delete", "/TN", LEGACY_LAUNCHER_TASK_NAME, "/F"])
-        .creation_flags(0x08000000)
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
 }
 
@@ -746,6 +865,10 @@ fn quote_windows_arg(value: &str) -> String {
     quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
     quoted.push('"');
     quoted
+}
+
+fn ps_single(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn copy_wide_fixed<const N: usize>(dest: &mut [u16; N], value: &str) {

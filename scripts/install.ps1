@@ -267,9 +267,9 @@ function Remove-LegacyScheduledTasks {
     }
 }
 
-function Register-LauncherAutostart($LauncherPath, $HomeDir) {
+function Register-LauncherAutostart($LauncherPath) {
     Remove-LegacyScheduledTasks
-    $runCommand = '"' + $LauncherPath + '" --home "' + $HomeDir + '"'
+    $runCommand = '"' + $LauncherPath + '"'
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RunKeyPath)
     if (-not $key) {
         Fail "Could not open HKCU Run registry key."
@@ -284,17 +284,29 @@ function Register-LauncherAutostart($LauncherPath, $HomeDir) {
     }
 }
 
-function Create-StartMenuShortcuts($InstallDir, $LauncherPath) {
+function Create-StartMenuShortcuts($InstallDir, $LauncherPath, $IconPath) {
     $shell = New-Object -ComObject WScript.Shell
     $programsDir = [Environment]::GetFolderPath("Programs")
     $shortcutDir = Join-Path $programsDir "Anda Bot"
-    New-Item -ItemType Directory -Force -Path $shortcutDir | Out-Null
+    $desktopDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+    $shortcutTargets = @(
+        @{ Directory = $shortcutDir; Name = "Anda Bot.lnk" },
+        @{ Directory = $desktopDir; Name = "Anda Bot.lnk" }
+    )
 
-    $launcherShortcut = $shell.CreateShortcut((Join-Path $shortcutDir "Anda Bot.lnk"))
-    $launcherShortcut.TargetPath = $LauncherPath
-    $launcherShortcut.WorkingDirectory = $InstallDir
-    $launcherShortcut.IconLocation = $LauncherPath
-    $launcherShortcut.Save()
+    foreach ($target in $shortcutTargets) {
+        if ([string]::IsNullOrWhiteSpace($target.Directory)) {
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null
+
+        $launcherShortcut = $shell.CreateShortcut((Join-Path $target.Directory $target.Name))
+        $launcherShortcut.TargetPath = $LauncherPath
+        $launcherShortcut.Arguments = ""
+        $launcherShortcut.WorkingDirectory = $InstallDir
+        $launcherShortcut.IconLocation = $IconPath
+        $launcherShortcut.Save()
+    }
 }
 
 try {
@@ -381,7 +393,8 @@ try {
     Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
     $launcherInstallPath = Install-Binary $launcherDownloadPath $InstallDir $LauncherInstallName
-    Create-StartMenuShortcuts $InstallDir $launcherInstallPath
+    $launcherIconPath = Join-Path $InstallDir "anda.ico"
+    Create-StartMenuShortcuts $InstallDir $launcherInstallPath $launcherIconPath
 
     Write-Info "Downloading $SkillsArchiveName..."
     $skillsDownloaded = $false
@@ -425,7 +438,7 @@ try {
 
     if (-not $NoAutostart) {
         Write-Info "Registering Anda launcher to start when you log in..."
-        Register-LauncherAutostart $launcherInstallPath $AndaHome
+        Register-LauncherAutostart $launcherInstallPath
         Write-Success "Launcher autostart registered."
     }
 

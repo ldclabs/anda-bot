@@ -1,4 +1,6 @@
-use std::{fs, process::Command, sync::OnceLock, thread};
+use std::{
+    fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command, sync::OnceLock, thread,
+};
 
 use objc2::{
     AnyThread, MainThreadOnly, define_class, msg_send,
@@ -19,6 +21,10 @@ use crate::{
 
 const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
 const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo-tray.png");
+const LAUNCHER_APP_NAME: &str = "Anda Bot.app";
+const LAUNCHER_APP_EXECUTABLE: &str = "Anda Bot";
+const LAUNCHER_APP_ICON: &str = "AndaBot";
+const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -138,15 +144,6 @@ impl Delegate {
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     CTX.set(ctx.clone()).ok();
 
-    if core::config_needs_setup(&ctx) {
-        if settings::run_initial_setup_wizard(&ctx)? {
-            let _ = core::start_daemon(&ctx);
-        }
-    } else {
-        let _ = core::start_daemon(&ctx);
-    }
-    start_auto_update_loop(ctx.clone());
-
     let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required)?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -166,6 +163,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     status_item.setMenu(Some(&menu));
 
     let _keep_alive = (delegate, menu, status_item);
+    start_startup_tasks(ctx.clone());
     app.run();
     Ok(())
 }
@@ -246,6 +244,29 @@ fn show_result(title: &str, result: &CommandResult) {
 
 fn show_info(title: &str, message: &str) {
     show_alert(title, message);
+}
+
+fn start_startup_tasks(ctx: LauncherContext) {
+    thread::spawn(move || {
+        if let Err(err) = ensure_application_entrypoint(&ctx) {
+            eprintln!("failed to ensure macOS application entrypoint: {err}");
+        }
+        if let Err(err) = run_startup_setup(&ctx) {
+            show_background_dialog(&text().app_title, &err.to_string());
+        }
+        start_auto_update_loop(ctx);
+    });
+}
+
+fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
+    if core::config_needs_setup(ctx) {
+        if settings::run_initial_setup_wizard(ctx)? {
+            let _ = core::start_daemon(ctx);
+        }
+    } else {
+        let _ = core::start_daemon(ctx);
+    }
+    Ok(())
 }
 
 fn start_auto_update_loop(ctx: LauncherContext) {
@@ -389,7 +410,80 @@ fn launch_agent_installed() -> bool {
     launch_agent_path().is_ok_and(|path| path.exists())
 }
 
-fn launch_agent_path() -> LauncherResult<std::path::PathBuf> {
+fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
+    let app_path = launcher_app_path()?;
+    let contents = app_path.join("Contents");
+    let macos_dir = contents.join("MacOS");
+    let resources_dir = contents.join("Resources");
+    let executable = macos_dir.join(LAUNCHER_APP_EXECUTABLE);
+
+    fs::create_dir_all(&macos_dir)?;
+    fs::create_dir_all(&resources_dir)?;
+    fs::write(contents.join("Info.plist"), launcher_app_info_plist())?;
+    fs::write(
+        resources_dir.join(LAUNCHER_APP_ICON_FILE),
+        launcher_icon_icns(),
+    )?;
+    fs::write(&executable, launcher_app_script(ctx))?;
+
+    let mut permissions = fs::metadata(&executable)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(executable, permissions)?;
+    Ok(())
+}
+
+fn launcher_app_path() -> LauncherResult<PathBuf> {
+    let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
+    Ok(home.join("Applications").join(LAUNCHER_APP_NAME))
+}
+
+fn launcher_app_info_plist() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>{executable}</string>
+  <key>CFBundleIdentifier</key>
+  <string>{label}</string>
+  <key>CFBundleName</key>
+  <string>Anda Bot</string>
+  <key>CFBundleIconFile</key>
+  <string>{icon}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+"#,
+        executable = xml_escape(LAUNCHER_APP_EXECUTABLE),
+        icon = xml_escape(LAUNCHER_APP_ICON),
+        label = LAUNCH_AGENT_LABEL,
+    )
+}
+
+fn launcher_icon_icns() -> Vec<u8> {
+    let chunk_len = 8 + LAUNCHER_ICON_PNG.len() as u32;
+    let total_len = 8 + chunk_len;
+    let mut icon = Vec::with_capacity(total_len as usize);
+    icon.extend_from_slice(b"icns");
+    icon.extend_from_slice(&total_len.to_be_bytes());
+    icon.extend_from_slice(b"icp5");
+    icon.extend_from_slice(&chunk_len.to_be_bytes());
+    icon.extend_from_slice(LAUNCHER_ICON_PNG);
+    icon
+}
+
+fn launcher_app_script(ctx: &LauncherContext) -> String {
+    format!(
+        "#!/bin/sh\nexec {} \"$@\"\n",
+        shell_single_quote(&ctx.launcher_exe.to_string_lossy()),
+    )
+}
+
+fn launch_agent_path() -> LauncherResult<PathBuf> {
     let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
     Ok(home
         .join("Library")
@@ -482,6 +576,10 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 fn applescript_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -501,10 +599,50 @@ mod tests {
         let plist = launch_agent_plist(&ctx);
         assert!(plist.contains("/Applications/Anda &amp; Bot/anda_launcher"));
         assert!(plist.contains(LAUNCH_AGENT_LABEL));
+        assert!(!plist.contains("--home"));
+        assert!(!plist.contains("/Users/me/.anda"));
     }
 
     #[test]
     fn launcher_icon_is_embedded_png() {
         assert!(LAUNCHER_ICON_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn launcher_app_script_execs_launcher_without_home_override() {
+        let ctx = LauncherContext {
+            launcher_exe: "/Users/me/bin/anda launcher".into(),
+            anda_exe: "/Users/me/bin/anda".into(),
+            home: "/Users/me/.anda-custom".into(),
+        };
+
+        let script = launcher_app_script(&ctx);
+        assert!(script.contains("'/Users/me/bin/anda launcher'"));
+        assert!(!script.contains("--home"));
+    }
+
+    #[test]
+    fn launcher_app_info_plist_references_icon() {
+        let plist = launcher_app_info_plist();
+
+        assert!(plist.contains("<key>CFBundleIconFile</key>"));
+        assert!(plist.contains("<string>AndaBot</string>"));
+    }
+
+    #[test]
+    fn launcher_icon_icns_wraps_embedded_png() {
+        let icon = launcher_icon_icns();
+
+        assert_eq!(&icon[..4], b"icns");
+        assert_eq!(&icon[8..12], b"icp5");
+        assert_eq!(&icon[16..24], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn shell_single_quote_handles_apostrophes() {
+        assert_eq!(
+            shell_single_quote("/tmp/a b/it's/anda_launcher"),
+            "'/tmp/a b/it'\\''s/anda_launcher'"
+        );
     }
 }

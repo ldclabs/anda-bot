@@ -56,9 +56,9 @@ Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) and
 double-click it. The installer places Anda under
 `%LOCALAPPDATA%\Programs\AndaBot`, installs curated skills, creates Start Menu
-shortcuts, registers the tray launcher to start at login, starts the launcher,
-lets you configure provider/API key/model in a GUI wizard, and checks for
-downloaded updates that can be installed with a restart prompt.
+and desktop shortcuts, registers the tray launcher to start at login, starts
+the launcher, lets you configure provider/API key/model in a GUI wizard, and
+checks for downloaded updates that can be installed with a restart prompt.
 
 Advanced users and CI can still use the PowerShell path:
 
@@ -66,13 +66,13 @@ Advanced users and CI can still use the PowerShell path:
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The macOS shell installer also installs the menu bar launcher, registers it at
-login, and starts it immediately; the launcher starts the daemon after setup.
-It can also check for updates from the menu bar and prompt to install and
-restart after an update is downloaded.
-Linux and PowerShell script installs register daemon autostart directly. For
-PowerShell, use `-NoAutostart` or `-NoStart` to opt out; for the shell
-installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
+The macOS shell installer also installs `~/Applications/Anda Bot.app`,
+registers the menu bar launcher at login, and starts it immediately; the
+launcher starts the daemon after setup. It can also check for updates from the
+menu bar and prompt to install and restart after an update is downloaded. Linux
+shell installs register daemon autostart directly. For PowerShell, use
+`-NoAutostart` or `-NoStart` to opt out; for the shell installer, set
+`ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 Requirements:
 
