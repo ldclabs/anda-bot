@@ -180,12 +180,23 @@ anda browser token --days 30
 - Discord
 - Lark / 飞书
 
+多个可信用户可以共享同一个 daemon 和同一个 Anda agent。把这些用户的 Ed25519 公钥添加到顶层 `users`，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以 `~/.anda/keys/user.key` 对应的本地 owner 身份运行。
+
+```yaml
+users:
+  - id: alice
+    pubkey: "ALICE_ED25519_PUBLIC_KEY"
+  - id: ops
+    pubkey: "OPS_ED25519_PUBLIC_KEY"
+```
+
 Telegram 最小示例：
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
@@ -200,6 +211,7 @@ channels:
 channels:
   wechat:
     - id: personal
+      user: alice
       # 可选，留空时可通过运行 anda channel init wechat 命令初始化，扫码登录获得 token
       bot_token: ""
       username: anda-wechat
@@ -208,6 +220,8 @@ channels:
       allow_external_users: false
       route_tag:
 ```
+
+`allowed_users` 仍然用于校验平台发送者，例如 Telegram 账号、微信 `wxid`、Discord 用户 id 或 Lark open id。`user` 决定这条 channel 消息以哪个可信 Anda caller 身份创建会话、资源和记忆上下文。
 
 设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
 

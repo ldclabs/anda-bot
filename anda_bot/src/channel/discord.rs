@@ -1236,6 +1236,7 @@ mod tests {
     fn test_config() -> config::DiscordChannelSettings {
         config::DiscordChannelSettings {
             id: Some("test".to_string()),
+            user: None,
             bot_token: "MTIzNDU2.fake.hmac".to_string(),
             username: Some("anda-discord".to_string()),
             guild_id: Some("987".to_string()),

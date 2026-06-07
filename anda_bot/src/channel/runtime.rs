@@ -122,7 +122,8 @@ pub struct ChannelRuntime {
 
 struct ChannelRuntimeInner {
     engine: Arc<EngineRef>,
-    user: Principal,
+    default_user: Principal,
+    channel_users: HashMap<String, Principal>,
     tx: tokio::sync::mpsc::Sender<ChannelMessage>,
     channels: HashMap<String, Arc<dyn Channel>>,
     channels_conversation: RwLock<ChannelConversationMap>, // (channel, reply_target, thread) -> conversation_id
@@ -135,7 +136,8 @@ impl ChannelRuntime {
     pub async fn connect(
         db: Arc<AndaDB>,
         engine: Arc<EngineRef>,
-        user: Principal,
+        default_user: Principal,
+        channel_users: HashMap<String, Principal>,
         channels: HashMap<String, Arc<dyn Channel>>,
         work_dir: PathBuf,
     ) -> Result<Self, BoxError> {
@@ -179,7 +181,8 @@ impl ChannelRuntime {
 
         let inner = Arc::new(ChannelRuntimeInner {
             engine,
-            user,
+            default_user,
+            channel_users,
             tx,
             channels,
             channels_conversation: RwLock::new(channels_conversation),
@@ -264,9 +267,11 @@ impl ChannelRuntime {
 
                         extra.insert("external_user".to_string(), message.external_user.into());
                         let prompt = agent_prompt_from_message(&message);
+                        let channel_user = self.inner.user_for_channel(&message.channel);
+                        extra.insert("channel_user".to_string(), channel_user.to_text().into());
                         match engine
                             .agent_run(
-                                self.inner.user,
+                                channel_user,
                                 AgentInput {
                                     name: String::new(),
                                     prompt,
@@ -355,6 +360,13 @@ impl ChannelRuntime {
 }
 
 impl ChannelRuntimeInner {
+    fn user_for_channel(&self, channel: &str) -> Principal {
+        self.channel_users
+            .get(channel)
+            .copied()
+            .unwrap_or(self.default_user)
+    }
+
     fn bind_conversation(
         &self,
         route: ChannelRoute,
@@ -800,7 +812,11 @@ mod tests {
         }
     }
 
-    async fn test_runtime(channel: Arc<TestChannel>) -> ChannelRuntime {
+    async fn test_runtime_with_users(
+        channel: Arc<TestChannel>,
+        default_user: Principal,
+        channel_users: HashMap<String, Principal>,
+    ) -> ChannelRuntime {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let db = AndaDB::connect(
             object_store,
@@ -828,12 +844,17 @@ mod tests {
         ChannelRuntime::connect(
             Arc::new(db),
             Arc::new(EngineRef::new()),
-            Principal::management_canister(),
+            default_user,
+            channel_users,
             channels,
             std::env::temp_dir(),
         )
         .await
         .unwrap()
+    }
+
+    async fn test_runtime(channel: Arc<TestChannel>) -> ChannelRuntime {
+        test_runtime_with_users(channel, Principal::management_canister(), HashMap::new()).await
     }
 
     #[tokio::test]
@@ -857,6 +878,19 @@ mod tests {
             Some(&42)
         );
         assert_eq!(runtime.inner.route_for_conversation(42), Some(route));
+    }
+
+    #[tokio::test]
+    async fn user_for_channel_uses_channel_binding_or_default() {
+        let channel = Arc::new(TestChannel::new("test:owned", false));
+        let default_user = Principal::from_slice(&[1, 2, 3]);
+        let channel_user = Principal::from_slice(&[4, 5, 6]);
+        let mut channel_users = HashMap::new();
+        channel_users.insert(channel.id(), channel_user);
+        let runtime = test_runtime_with_users(channel.clone(), default_user, channel_users).await;
+
+        assert_eq!(runtime.inner.user_for_channel(&channel.id()), channel_user);
+        assert_eq!(runtime.inner.user_for_channel("test:unbound"), default_user);
     }
 
     #[tokio::test]

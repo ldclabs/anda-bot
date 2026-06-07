@@ -180,12 +180,23 @@ Supported channel families:
 - Discord
 - Lark / Feishu
 
+Multiple trusted users can share one daemon and the same Anda agent. Add their Ed25519 public keys under top-level `users`, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner from `~/.anda/keys/user.key`.
+
+```yaml
+users:
+  - id: alice
+    pubkey: "ALICE_ED25519_PUBLIC_KEY"
+  - id: ops
+    pubkey: "OPS_ED25519_PUBLIC_KEY"
+```
+
 Minimal Telegram example:
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
@@ -200,6 +211,7 @@ Minimal Wechat example:
 channels:
   wechat:
     - id: personal
+      user: alice
       # Optional. When empty, you can run `anda channel init wechat` to initialize, scan QR code, and obtain a token.
       bot_token: ""
       username: anda-wechat
@@ -208,6 +220,8 @@ channels:
       allow_external_users: false
       route_tag:
 ```
+
+`allowed_users` still checks the platform sender, such as a Telegram account, WeChat `wxid`, Discord user id, or Lark open id. `user` chooses the trusted Anda caller that owns the resulting conversations, resources, and memory context.
 
 Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
 

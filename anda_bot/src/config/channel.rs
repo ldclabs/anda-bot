@@ -1,6 +1,8 @@
+use anda_core::{BoxError, Principal};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use super::{default_true, normalize_list, normalize_optional, normalize_string};
+use super::{UserRegistry, default_true, normalize_list, normalize_optional, normalize_string};
 
 pub const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
 pub const DEFAULT_DISCORD_API_BASE: &str = "https://discord.com/api/v10";
@@ -27,6 +29,106 @@ pub struct ChannelSettings {
 
     #[serde(default)]
     pub lark: Vec<LarkChannelSettings>,
+}
+
+impl ChannelSettings {
+    pub fn user_refs(&self) -> Vec<String> {
+        let mut refs = Vec::new();
+        refs.extend(
+            self.irc
+                .iter()
+                .filter_map(|channel| channel_user_ref(&channel.user)),
+        );
+        refs.extend(
+            self.telegram
+                .iter()
+                .filter_map(|channel| channel_user_ref(&channel.user)),
+        );
+        refs.extend(
+            self.wechat
+                .iter()
+                .filter_map(|channel| channel_user_ref(&channel.user)),
+        );
+        refs.extend(
+            self.discord
+                .iter()
+                .filter_map(|channel| channel_user_ref(&channel.user)),
+        );
+        refs.extend(
+            self.lark
+                .iter()
+                .filter_map(|channel| channel_user_ref(&channel.user)),
+        );
+        refs
+    }
+
+    pub fn user_bindings(
+        &self,
+        users: &UserRegistry,
+    ) -> Result<HashMap<String, Principal>, BoxError> {
+        let mut bindings = HashMap::new();
+        for irc in self.irc.iter().filter(|channel| !channel.is_empty()) {
+            insert_user_binding(
+                &mut bindings,
+                format!("irc:{}", irc.channel_id()),
+                &irc.user,
+                users,
+            )?;
+        }
+        for telegram in self.telegram.iter().filter(|channel| !channel.is_empty()) {
+            insert_user_binding(
+                &mut bindings,
+                format!("telegram:{}", telegram.channel_id()),
+                &telegram.user,
+                users,
+            )?;
+        }
+        for wechat in self.wechat.iter().filter(|channel| !channel.is_empty()) {
+            insert_user_binding(
+                &mut bindings,
+                format!("wechat:{}", wechat.channel_id()),
+                &wechat.user,
+                users,
+            )?;
+        }
+        for discord in self.discord.iter().filter(|channel| !channel.is_empty()) {
+            insert_user_binding(
+                &mut bindings,
+                format!("discord:{}", discord.channel_id()),
+                &discord.user,
+                users,
+            )?;
+        }
+        for lark in self.lark.iter().filter(|channel| !channel.is_empty()) {
+            insert_user_binding(
+                &mut bindings,
+                format!("{}:{}", lark.platform.channel_name(), lark.channel_id()),
+                &lark.user,
+                users,
+            )?;
+        }
+        Ok(bindings)
+    }
+}
+
+fn channel_user_ref(user: &Option<String>) -> Option<String> {
+    normalize_optional(user)
+}
+
+fn insert_user_binding(
+    bindings: &mut HashMap<String, Principal>,
+    channel_id: String,
+    user: &Option<String>,
+    users: &UserRegistry,
+) -> Result<(), BoxError> {
+    if channel_id.ends_with(':') {
+        return Ok(());
+    }
+
+    if let Some(user) = channel_user_ref(user) {
+        bindings.insert(channel_id, users.resolve(Some(&user))?);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -81,6 +183,9 @@ pub struct LarkChannelSettings {
     pub id: Option<String>,
 
     #[serde(default)]
+    pub user: Option<String>,
+
+    #[serde(default)]
     pub app_id: String,
 
     #[serde(default)]
@@ -118,6 +223,7 @@ impl Default for LarkChannelSettings {
     fn default() -> Self {
         Self {
             id: None,
+            user: None,
             app_id: String::new(),
             app_secret: String::new(),
             username: None,
@@ -155,6 +261,7 @@ impl LarkChannelSettings {
     pub fn is_empty(&self) -> bool {
         normalize_string(self.id.as_deref().unwrap_or("")).is_none()
             && self.app_id.trim().is_empty()
+            && normalize_optional(&self.user).is_none()
             && self.app_secret.trim().is_empty()
             && normalize_optional(&self.username).is_none()
             && normalize_optional(&self.verification_token).is_none()
@@ -172,6 +279,9 @@ impl LarkChannelSettings {
 pub struct DiscordChannelSettings {
     #[serde(default)]
     pub id: Option<String>,
+
+    #[serde(default)]
+    pub user: Option<String>,
 
     #[serde(default)]
     pub bot_token: String,
@@ -202,6 +312,7 @@ impl Default for DiscordChannelSettings {
     fn default() -> Self {
         Self {
             id: None,
+            user: None,
             bot_token: String::new(),
             username: None,
             guild_id: None,
@@ -236,6 +347,7 @@ impl DiscordChannelSettings {
     pub fn is_empty(&self) -> bool {
         normalize_string(self.id.as_deref().unwrap_or("")).is_none()
             && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.user).is_none()
             && normalize_optional(&self.username).is_none()
             && normalize_optional(&self.guild_id).is_none()
             && normalize_list(&self.allowed_users).is_empty()
@@ -250,6 +362,9 @@ impl DiscordChannelSettings {
 pub struct TelegramChannelSettings {
     #[serde(default)]
     pub id: Option<String>,
+
+    #[serde(default)]
+    pub user: Option<String>,
 
     #[serde(default)]
     pub bot_token: String,
@@ -274,6 +389,7 @@ impl Default for TelegramChannelSettings {
     fn default() -> Self {
         Self {
             id: None,
+            user: None,
             bot_token: String::new(),
             username: None,
             allowed_users: Vec::new(),
@@ -306,6 +422,7 @@ impl TelegramChannelSettings {
     pub fn is_empty(&self) -> bool {
         normalize_string(self.id.as_deref().unwrap_or("")).is_none()
             && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.user).is_none()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
             && !self.allow_external_users
@@ -318,6 +435,9 @@ impl TelegramChannelSettings {
 pub struct WechatChannelSettings {
     #[serde(default)]
     pub id: Option<String>,
+
+    #[serde(default)]
+    pub user: Option<String>,
 
     #[serde(default)]
     pub bot_token: String,
@@ -357,6 +477,7 @@ impl WechatChannelSettings {
     pub fn is_empty(&self) -> bool {
         normalize_string(self.id.as_deref().unwrap_or("")).is_none()
             && self.bot_token.trim().is_empty()
+            && normalize_optional(&self.user).is_none()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.allowed_users).is_empty()
             && !self.allow_external_users
@@ -368,6 +489,9 @@ impl WechatChannelSettings {
 pub struct IrcChannelSettings {
     #[serde(default)]
     pub id: Option<String>,
+
+    #[serde(default)]
+    pub user: Option<String>,
 
     #[serde(default)]
     pub server: String,
@@ -407,6 +531,7 @@ impl Default for IrcChannelSettings {
     fn default() -> Self {
         Self {
             id: None,
+            user: None,
             server: String::new(),
             port: default_port(),
             nickname: String::new(),
@@ -444,6 +569,7 @@ impl IrcChannelSettings {
     pub fn is_empty(&self) -> bool {
         normalize_string(self.id.as_deref().unwrap_or("")).is_none()
             && self.server.trim().is_empty()
+            && normalize_optional(&self.user).is_none()
             && self.nickname.trim().is_empty()
             && normalize_optional(&self.username).is_none()
             && normalize_list(&self.channels).is_empty()

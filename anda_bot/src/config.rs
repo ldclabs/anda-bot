@@ -1,4 +1,5 @@
 use anda_core::BoxError;
+use anda_core::Principal;
 use anda_engine::model::Models;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,11 +12,13 @@ mod channel;
 mod model;
 mod transcription;
 mod tts;
+mod user;
 
 pub use channel::*;
 pub use model::*;
 pub use transcription::*;
 pub use tts::*;
+pub use user::*;
 
 pub const ANDA_BOT_SPACE_ID: &str = "anda_bot";
 pub const CONFIG_FILE_NAME: &str = "config.yaml";
@@ -47,6 +50,9 @@ pub struct Config {
     pub transcription: TranscriptionConfig,
 
     #[serde(default)]
+    pub users: Vec<UserSettings>,
+
+    #[serde(default)]
     pub channels: ChannelSettings,
 }
 
@@ -58,6 +64,7 @@ impl Default for Config {
             https_proxy: None,
             workspaces: Vec::new(),
             model: ModelSettings::default(),
+            users: Vec::new(),
             channels: ChannelSettings::default(),
             tts: TtsConfig::default(),
             transcription: TranscriptionConfig::default(),
@@ -144,6 +151,26 @@ impl Config {
             issues.push(format!("model.providers: no {active}"));
         }
 
+        let mut user_ids = BTreeSet::new();
+        for (index, user) in self.users.iter().enumerate() {
+            if user.is_empty() {
+                continue;
+            }
+
+            let base = format!("users[{index}]");
+            if user.pubkey.trim().is_empty() {
+                issues.push(format!("{base}.pubkey"));
+            } else if user.pubkey().is_err() {
+                issues.push(format!("{base}.pubkey"));
+            }
+
+            if let Some(id) = user.id()
+                && !user_ids.insert(id)
+            {
+                issues.push(format!("{base}.id"));
+            }
+        }
+
         let mut seen_ids = BTreeSet::new();
         for (index, irc) in self.channels.irc.iter().enumerate() {
             if irc.is_empty() {
@@ -162,6 +189,9 @@ impl Config {
             if !channel_id.is_empty() && !seen_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
             }
+            if !self.is_valid_user_ref(irc.user.as_deref(), &user_ids) {
+                issues.push(format!("{base}.user"));
+            }
         }
 
         let mut seen_telegram_ids = BTreeSet::new();
@@ -179,6 +209,9 @@ impl Config {
             if !channel_id.is_empty() && !seen_telegram_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
             }
+            if !self.is_valid_user_ref(telegram.user.as_deref(), &user_ids) {
+                issues.push(format!("{base}.user"));
+            }
         }
 
         let mut seen_wechat_ids = BTreeSet::new();
@@ -191,6 +224,9 @@ impl Config {
             let channel_id = wechat.channel_id();
             if !channel_id.is_empty() && !seen_wechat_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
+            }
+            if !self.is_valid_user_ref(wechat.user.as_deref(), &user_ids) {
+                issues.push(format!("{base}.user"));
             }
         }
 
@@ -208,6 +244,9 @@ impl Config {
             let channel_id = discord.channel_id();
             if !channel_id.is_empty() && !seen_discord_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
+            }
+            if !self.is_valid_user_ref(discord.user.as_deref(), &user_ids) {
+                issues.push(format!("{base}.user"));
             }
         }
 
@@ -232,9 +271,24 @@ impl Config {
             if !channel_id.is_empty() && !seen_lark_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
             }
+            if !self.is_valid_user_ref(lark.user.as_deref(), &user_ids) {
+                issues.push(format!("{base}.user"));
+            }
         }
 
         issues
+    }
+
+    fn is_valid_user_ref(&self, user_ref: Option<&str>, user_ids: &BTreeSet<String>) -> bool {
+        let Some(user_ref) = user_ref.and_then(normalize_string) else {
+            return true;
+        };
+
+        user_ref == DEFAULT_USER_ID
+            || user_ref == OWNER_USER_ID
+            || user_ids.contains(&user_ref)
+            || Principal::from_text(&user_ref).is_ok()
+            || UserSettings::pubkey_from_str(&user_ref).is_ok()
     }
 
     pub fn models(&self, http_client: reqwest::Client) -> Models {
@@ -441,6 +495,35 @@ channels:
     }
 
     #[test]
+    fn setup_issues_validate_configured_users_and_channel_bindings() {
+        let config = Config::from_contents(
+            r#"
+model:
+  active: test-model
+  providers:
+    - family: openai
+      model: test-model
+      api_base: https://api.example.test/v1
+      api_key: sk-test
+users:
+  - id: alice
+    pubkey: invalid-key
+channels:
+  wechat:
+    - id: personal
+      user: bob
+      bot_token: token
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.setup_issues(),
+            vec!["users[0].pubkey", "channels.wechat[0].user"]
+        );
+    }
+
+    #[test]
     fn default_template_contains_setup_guidance() {
         let template = Config::default_template();
 
@@ -452,6 +535,7 @@ channels:
         assert!(template.contains("ANTHROPIC_API_KEY"));
         assert!(template.contains("GEMINI_API_KEY"));
         assert!(template.contains("GOOGLE_API_KEY"));
+        assert!(template.contains("users:"));
         assert!(template.contains("channels:"));
         assert!(template.contains("irc:"));
         assert!(template.contains("wechat:"));

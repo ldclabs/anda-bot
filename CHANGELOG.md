@@ -2,6 +2,17 @@
 
 All notable changes to Anda Bot.
 
+## [0.8.14] — 2026-06-07
+
+### Added
+
+- **Multi-user channel ownership**: `config.yaml` now supports top-level trusted `users` with Ed25519 public keys, and IRC, Telegram, WeChat, Discord, and Lark/Feishu channel entries can set `user` to choose which trusted Anda caller owns conversations, resources, and memory context.
+
+### Changed
+
+- **Channel runtime caller selection**: incoming channel messages now run under the configured channel user when present, falling back to the local owner, and the engine/brain managers include all configured trusted user public keys.
+- **Dependencies bumped**: `anda_core` 0.12.7 → 0.12.8 and `anda_engine` 0.12.30 → 0.12.32.
+
 ## [0.8.13] — 2026-06-06
 
 ### Added

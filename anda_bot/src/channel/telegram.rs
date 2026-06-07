@@ -1299,6 +1299,7 @@ mod tests {
     fn test_config() -> config::TelegramChannelSettings {
         config::TelegramChannelSettings {
             id: Some("test".to_string()),
+            user: None,
             bot_token: "123:ABC".to_string(),
             username: Some("anda_bot".to_string()),
             allowed_users: vec!["@Alice".to_string(), "12345".to_string()],

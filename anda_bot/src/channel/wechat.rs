@@ -999,6 +999,7 @@ mod tests {
     fn test_config() -> config::WechatChannelSettings {
         config::WechatChannelSettings {
             id: Some("test".to_string()),
+            user: None,
             bot_token: "token".to_string(),
             username: Some("anda-wechat".to_string()),
             allowed_users: vec!["alice".to_string(), "wxid_123".to_string()],

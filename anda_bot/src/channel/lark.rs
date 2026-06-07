@@ -1866,6 +1866,7 @@ mod tests {
     fn test_config() -> config::LarkChannelSettings {
         config::LarkChannelSettings {
             id: Some("test".to_string()),
+            user: None,
             app_id: "cli_test_app_id".to_string(),
             app_secret: "test_app_secret".to_string(),
             username: Some("anda-lark".to_string()),

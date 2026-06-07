@@ -22,6 +22,15 @@ log_level: warn
 # The first configured workspace becomes the default workspace for file and shell tools.
 # workspaces: [/path/to/project]
 
+# Optional trusted users that can share this daemon and the same Anda agent.
+# Each pubkey is an Ed25519 public key. Channel entries can set `user:` to one
+# of these ids; HTTP/browser clients can authenticate with the matching private key.
+# users:
+#   - id: alice
+#     pubkey: ""
+#   - id: team-ops
+#     pubkey: ""
+
 model:
   active: "deepseek-v4-pro"
   providers:
@@ -235,6 +244,8 @@ transcription:
 channels:
   # irc:
   #   - id: libera
+  #     # Optional. Defaults to the local owner in ~/.anda/keys/user.key.
+  #     user: alice
   #     server: irc.libera.chat
   #     port: 6697
   #     nickname: anda-bot
@@ -248,6 +259,8 @@ channels:
   #     verify_tls: true
   # telegram:
   #   - id: personal
+  #     # Optional. Bind this bot to a configured user id.
+  #     user: alice
   #     bot_token: ""
   #     username: anda_bot
   #     allowed_users:
@@ -258,6 +271,8 @@ channels:
   #     ack_reactions: true
   # wechat:
   #   - id: personal
+  #     # Optional. Bind this WeChat bot to a configured user id.
+  #     user: alice
   #     # Optional. When empty, anda_bot will start QR login and save token.txt
   #     # in the channel workspace for later restarts.
   #     bot_token: ""
@@ -269,6 +284,8 @@ channels:
   #     route_tag:
   # discord:
   #   - id: server
+  #     # Optional. Bind this Discord bot to a configured user id.
+  #     user: team-ops
   #     bot_token: ""
   #     username: anda-discord
   #     guild_id:
@@ -281,6 +298,8 @@ channels:
   #     ack_reactions: true
   # lark:
   #   - id: work
+  #     # Optional. Bind this Lark/Feishu app to a configured user id.
+  #     user: team-ops
   #     app_id: ""
   #     app_secret: ""
   #     username: anda-lark

@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.8.13"
+version = "0.8.14"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -244,9 +244,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.12.7"
+version = "0.12.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2c90576afccf16ad106d34f99640212aab44e08add4596aaf1b625c24b2a9b"
+checksum = "eb1b341096952999ce15c140cca5de9a9977e800ba68e899417bef30eda9fd8d"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -254,6 +254,7 @@ dependencies = [
  "candid",
  "chrono",
  "ciborium",
+ "encoding_rs",
  "futures",
  "http",
  "ic-oss-types",
@@ -268,6 +269,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio-util",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -398,9 +400,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.12.30"
+version = "0.12.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b861aa13ab82dd1d66b06ad702537b42db62a9cc55dc5c0e855021b5340d2c90"
+checksum = "a06a1beb90a6b911d9218d28039375456a417293a0041ffaa971258d673d29a5"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -443,6 +445,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

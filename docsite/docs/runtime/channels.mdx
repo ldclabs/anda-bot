@@ -18,12 +18,25 @@ Anda can stay in the terminal, or it can join team channels. Channels bring cont
 
 Channel configuration lives under `channels` in `~/.anda/config.yaml`.
 
+## Multiple Users
+
+One daemon can serve multiple trusted users through the same Anda agent. Add each user's Ed25519 public key under top-level `users`, then set a channel entry's `user` to that id. If `user` is omitted, the channel uses the local owner from `~/.anda/keys/user.key`.
+
+```yaml
+users:
+  - id: alice
+    pubkey: "ALICE_ED25519_PUBLIC_KEY"
+  - id: ops
+    pubkey: "OPS_ED25519_PUBLIC_KEY"
+```
+
 ## Telegram Example
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
@@ -37,6 +50,7 @@ channels:
 channels:
   wechat:
     - id: personal
+      user: alice
       # Leave empty to run anda channel init wechat, scan the QR code, and get a token.
       bot_token: ""
       username: anda-wechat
@@ -50,6 +64,7 @@ channels:
 channels:
   lark:
     - id: work
+      user: ops
       app_id: "cli_xxx"
       app_secret: "YOUR_APP_SECRET"
       platform: feishu
@@ -60,6 +75,7 @@ channels:
 ## Channel Safety Checks
 
 - `allowed_users` decides who can trigger Anda; use `"*"` only when open access is acceptable.
+- `user` decides which trusted Anda caller owns conversations, resources, and memory for this channel entry.
 - Telegram and Discord usually require `bot_token`.
 - WeChat can use a saved token, or QR login when `bot_token` is empty.
 - Lark / Feishu needs `app_id` and `app_secret`; Feishu endpoints use `platform: feishu`.

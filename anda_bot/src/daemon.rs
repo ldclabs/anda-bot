@@ -280,9 +280,15 @@ impl Daemon {
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
         let models = self.cfg.models(outer_http_client.clone());
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
-        let user_id = user_pubkey.id();
+        let user_registry = self.cfg.user_registry(user_pubkey.clone())?;
+        let default_user = user_registry.default_user();
+        let user_pubkeys = user_registry.pubkeys();
+        let channel_users = self.cfg.channels.user_bindings(&user_registry)?;
+        let mut brain_managers = Vec::with_capacity(user_pubkeys.len() + 1);
+        brain_managers.push(id_key.pubkey());
+        brain_managers.extend(user_pubkeys.clone());
         let brain_cfg = brain::BrainConfig {
-            managers: vec![id_key.pubkey(), user_pubkey.clone()],
+            managers: brain_managers,
             model: models
                 .get("brain")
                 .or_else(|| models.get("memory"))
@@ -298,7 +304,7 @@ impl Daemon {
         ));
         let engine_cfg = engine::EngineConfig {
             id_key,
-            managers: vec![user_pubkey],
+            managers: user_pubkeys,
             models,
             brain_base_url: self.cfg.brain_base_url(),
             home_dir: self.home.clone(),
@@ -321,7 +327,8 @@ impl Daemon {
         let channel_runtime = channel::ChannelRuntime::connect(
             bot_db.clone(),
             engine_ref.clone(),
-            user_id,
+            default_user,
+            channel_users,
             channel::build_channels(&self.cfg.channels, outer_http_client)?,
             self.channels_dir_path(),
         )
