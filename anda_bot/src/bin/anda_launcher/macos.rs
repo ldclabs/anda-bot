@@ -10,7 +10,7 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
-    NSMenuItem, NSStatusBar,
+    NSMenuItem, NSStatusBar, NSVariableStatusItemLength,
 };
 use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
@@ -153,17 +153,27 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
     let menu = build_menu(mtm, &delegate);
-    let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(32.0);
-    if let Some(image) = status_bar_icon() {
+    let status_item =
+        NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+    let status_button = status_item.button(mtm);
+    let status_image = status_bar_icon();
+    if let Some(button) = status_button.as_ref() {
+        if let Some(image) = status_image.as_ref() {
+            button.setImage(Some(image));
+        } else {
+            button.setTitle(nsstring("Anda").as_ref());
+        }
+    } else if let Some(image) = status_image.as_ref() {
         #[allow(deprecated)]
-        status_item.setImage(Some(&image));
+        status_item.setImage(Some(image));
     } else {
         #[allow(deprecated)]
         status_item.setTitle(Some(nsstring("Anda").as_ref()));
     }
     status_item.setMenu(Some(&menu));
+    status_item.setVisible(true);
 
-    let _keep_alive = (delegate, menu, status_item);
+    let _keep_alive = (delegate, menu, status_item, status_button, status_image);
     start_startup_tasks(ctx.clone());
     app.run();
     Ok(())

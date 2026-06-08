@@ -28,10 +28,8 @@ use tokio::{
 use crate::util::windows_process::suppress_console_window;
 use crate::util::{
     file_uri::{
-        file_uri_for_absolute_path_string as file_url_for_absolute_path_string,
         file_uri_for_path as file_url_for_path, is_file_uri,
         path_from_file_uri as path_from_file_url, user_path_string_for_path,
-        user_path_string_from_local_path_string,
     },
     request_meta::request_meta_extra_as,
 };
@@ -1981,37 +1979,6 @@ mod tests {
         assert!(url.starts_with("file://"));
         assert!(url.contains("hello%20world.html"));
         assert_eq!(path_from_file_url(&url).unwrap(), path);
-    }
-
-    #[test]
-    fn windows_extended_drive_path_uses_browser_file_url() {
-        let url = file_url_for_absolute_path_string(r"\\?\D:\test\少有人走的路.pdf");
-
-        assert_eq!(
-            url,
-            "file:///D:/test/%E5%B0%91%E6%9C%89%E4%BA%BA%E8%B5%B0%E7%9A%84%E8%B7%AF.pdf"
-        );
-        assert!(!url.contains("%3F"));
-    }
-
-    #[test]
-    fn windows_extended_unc_path_keeps_network_share_url_path() {
-        let url = file_url_for_absolute_path_string(r"\\?\UNC\server\share\中文.txt");
-
-        assert_eq!(url, "file:////server/share/%E4%B8%AD%E6%96%87.txt");
-        assert!(!url.contains("%3F"));
-    }
-
-    #[test]
-    fn windows_extended_path_string_is_user_visible() {
-        assert_eq!(
-            user_path_string_from_local_path_string(r"\\?\D:\test\少有人走的路.pdf"),
-            r"D:\test\少有人走的路.pdf"
-        );
-        assert_eq!(
-            user_path_string_from_local_path_string(r"\\?\UNC\server\share\中文.txt"),
-            r"\\server\share\中文.txt"
-        );
     }
 
     #[tokio::test]

@@ -96,11 +96,16 @@ objc2-app-kit = { workspace = true, features = [
   "NSImage",
   "NSAlert",
   "NSApplication",
+  "NSButton",
+  "NSControl",
   "NSMenu",
   "NSMenuItem",
+  "NSResponder",
   "NSRunningApplication",
   "NSStatusBar",
+  "NSStatusBarButton",
   "NSStatusItem",
+  "NSView",
   "objc2-core-foundation",
 ] }
 

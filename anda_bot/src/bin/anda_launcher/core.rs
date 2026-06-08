@@ -601,24 +601,6 @@ pub const PROVIDERS: &[ProviderPreset] = &[
         env_var: "GEMINI_API_KEY",
         bearer_auth: false,
     },
-    ProviderPreset {
-        id: "minimax",
-        label: "MiniMax",
-        family: "anthropic",
-        model: "MiniMax-M3",
-        api_base: "https://api.minimaxi.com/anthropic/v1",
-        env_var: "MINIMAX_API_KEY",
-        bearer_auth: false,
-    },
-    ProviderPreset {
-        id: "mimo",
-        label: "MiMo",
-        family: "anthropic",
-        model: "mimo-v2.5-pro",
-        api_base: "https://api.xiaomimimo.com/anthropic/v1",
-        env_var: "MIMO_API_KEY",
-        bearer_auth: true,
-    },
 ];
 
 impl LauncherContext {
