@@ -21,6 +21,7 @@ All notable changes to Anda Bot.
 - **Installer and desktop entrypoint UX improved**: Windows installers wait for child process output, register launcher autostart through the registry, improve browser launching and onboarding paths, and create more reliable desktop/start-menu entrypoints. macOS installs refresh application entrypoints so Finder notices updated icons and labels.
 - **Installation docs refreshed for desktop installers**: README and docsite installation pages now recommend the Windows graphical installer for normal users and describe the macOS menu-bar launcher behavior.
 - **Browser extension labels generalized**: user-facing extension copy now uses browser-generic wording instead of Chrome-specific labels where the extension can run in multiple Chromium-based browsers.
+- **Website landing page repositioned**: refreshed the landing page around Anda Bot's memory-first local assistant thesis, clarifying how it differs from focused coding agents and broad tool-platform agents.
 
 ### Fixed
 
