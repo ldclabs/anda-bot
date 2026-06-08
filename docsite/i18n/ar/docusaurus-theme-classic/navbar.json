@@ -15,9 +15,9 @@
     "message": "البدء السريع",
     "description": "Navbar item with label Quick Start"
   },
-  "item.label.Chrome Extension": {
-    "message": "امتداد Chrome",
-    "description": "Navbar item with label Chrome Extension"
+  "item.label.Browser Extension": {
+    "message": "امتداد المتصفح",
+    "description": "Navbar item with label Browser Extension"
   },
   "item.label.Main Site": {
     "message": "الموقع الرئيسي",

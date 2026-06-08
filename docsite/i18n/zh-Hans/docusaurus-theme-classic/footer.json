@@ -23,9 +23,9 @@
     "message": "终端使用",
     "description": "The label of footer link with label=Terminal linking to /docs/quick-start/terminal"
   },
-  "link.item.label.Chrome Extension": {
-    "message": "Chrome 扩展",
-    "description": "The label of footer link with label=Chrome Extension linking to /docs/quick-start/browser-extension"
+  "link.item.label.Browser Extension": {
+    "message": "浏览器扩展",
+    "description": "The label of footer link with label=Browser Extension linking to /docs/quick-start/browser-extension"
   },
   "link.item.label.Brain Memory": {
     "message": "Brain 记忆",

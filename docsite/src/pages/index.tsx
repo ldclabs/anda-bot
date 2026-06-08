@@ -1,7 +1,6 @@
 import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
-import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 
 import styles from './index.module.css';
@@ -11,7 +10,6 @@ type HomeCopy = {
   hero: {badge: string; title: string; body: string; primary: string; secondary: string};
   proofs: Array<{label: string; detail: string}>;
   phases: Array<{index: string; title: string; body: string; to: string}>;
-  signals: Array<[string, string]>;
   docs: {badge: string; title: string; body: string};
   routes: {badge: string; title: string; items: Array<[string, string]>};
 };
@@ -19,162 +17,147 @@ type HomeCopy = {
 const copies: Record<string, HomeCopy> = {
   en: {
     meta: {
-      title: 'Anda Bot Docs',
+      title: 'Anda Bot Docs - Local memory-first AI assistant',
       description:
-        'Official Anda Bot documentation for installing the open-source Rust agent, configuring graph memory, and connecting tools, subagents, and team channels.',
+        'Official docs for installing the Anda Bot launcher, pairing the browser side panel, configuring the local daemon, and running long-term Brain graph memory.',
     },
     hero: {
-      badge: 'docs.anda.bot',
-      title: 'Anda Bot Docs',
-      body: 'I am the local Rust agent that keeps learning while we work. These docs show how to install me, configure models, connect channels, use Brain graph memory, and hand long-horizon goals to subagents and local tools.',
-      primary: 'Start installing',
-      secondary: 'Meet the memory brain',
+      badge: 'Memory-first local AI assistant',
+      title: 'Build around memory you own',
+      body: 'Use these docs to install the app that owns the memory, connect the browser side panel, configure providers, and keep one local Brain across terminal, tools, channels, cron, and subagents.',
+      primary: 'Install app',
+      secondary: 'Pair browser',
     },
     proofs: [
-      {label: 'Rust', detail: 'open-source terminal runtime'},
-      {label: 'Graph', detail: 'long-term memory'},
-      {label: 'Goal', detail: 'long-horizon loops'},
+      {label: 'memory-first', detail: 'local graph memory, not one model account'},
+      {label: 'portable', detail: 'swap models without rebuilding context'},
+      {label: 'daily surfaces', detail: 'browser, launcher, terminal, cron, skills, and IM share one Brain'},
     ],
     phases: [
       {
         index: '01',
-        title: 'Install and configure',
-        body: 'Start Anda from a release or source, add a model provider, and connect the local daemon to the terminal UI.',
+        title: 'Install the app',
+        body: 'Use the launcher, release installers, or CLI paths to set up the daemon, provider, model, and local home directory.',
         to: '/docs/quick-start/install',
       },
       {
         index: '02',
-        title: 'Long-term memory',
-        body: 'Learn how Brain forms, recalls, and maintains a knowledge graph instead of stretching one chat log forever.',
-        to: '/docs/memory/brain',
+        title: 'Pair the browser',
+        body: 'Generate a gateway URL and bearer token, then connect the side panel to the same local runtime and Brain.',
+        to: '/docs/quick-start/browser-extension',
       },
       {
         index: '03',
-        title: 'Long-horizon work',
-        body: 'Use /goal, subagents, skills, shell, and external coding tools to turn one request into verified progress.',
-        to: '/docs/workflows/long-horizon',
+        title: 'Understand Brain',
+        body: 'Learn how Brain forms, recalls, and maintains a Cognitive Nexus for projects, preferences, relationships, and decisions.',
+        to: '/docs/memory/brain',
       },
-    ],
-    signals: [
-      ['goal://active', 'long-horizon goal stays active'],
-      ['anda://memory', 'Brain forms and recalls'],
-      ['tools://local', 'shell, files, skills, subagents'],
     ],
     docs: {
       badge: 'Documentation map',
-      title: 'Turn one launch into a local agent that can keep working.',
-      body: 'Start with installation, then move through the terminal UI, model configuration, memory, subagents, channels, and local data boundaries.',
+      title: 'Start with the local app, then connect every surface to the same Brain.',
+      body: 'Move from install and provider setup into browser pairing, terminal workflows, memory, subagents, channels, voice, and local data boundaries.',
     },
     routes: {
-      badge: 'Where context is born',
-      title: 'Terminal, tools, files, channels, and voice can enter the same memory thread.',
+      badge: 'One local runtime',
+      title: 'Browser, launcher, terminal, files, cron, skills, and IM channels can feed one memory thread.',
       items: [
-        ['terminal', 'commands, files, logs, and local workspaces'],
-        ['memory', 'projects, preferences, decisions, and timelines'],
-        ['channels', 'Telegram, WeChat, Discord, and Feishu'],
-        ['voice', 'transcription, TTS, and spoken input'],
+        ['launcher', 'setup, status, pairing, logs, restart, and updates'],
+        ['browser', 'page context, screenshots, downloads, and approved actions'],
+        ['terminal', 'commands, files, skills, subagents, and local workspaces'],
+        ['channels', 'Telegram, WeChat, Discord, Lark/Feishu, and voice'],
       ],
     },
   },
   'zh-Hans': {
     meta: {
-      title: 'Anda Bot 文档',
-      description: 'Anda Bot 官方文档：安装开源 Rust Agent，配置模型和长期记忆，连接终端、工具、Subagents 与团队频道。',
+      title: 'Anda Bot 文档 - 记忆优先的本地 AI 助手',
+      description: 'Anda Bot 官方文档：安装桌面启动器，连接浏览器侧边栏，配置本地 daemon，并运行长期 Brain 知识图谱记忆。',
     },
     hero: {
-      badge: 'docs.anda.bot',
-      title: 'Anda Bot 文档',
-      body: '我是会记忆的本地 Rust Agent。这里记录如何安装我、配置模型、连接频道、使用 Brain 长期记忆，并把长程目标交给 Subagents 和本地工具持续推进。',
-      primary: '开始安装',
-      secondary: '了解记忆大脑',
+      badge: '记忆优先的本地 AI 助手',
+      title: '围绕你真正拥有的记忆构建',
+      body: '这套文档会帮助你安装真正掌握记忆的本地应用，连接浏览器侧边栏，配置模型服务商，并让终端、工具、频道、定时任务和 Subagents 共享同一个 Brain。',
+      primary: '获取应用',
+      secondary: '连接浏览器',
     },
     proofs: [
-      {label: 'Rust', detail: '开源终端运行时'},
-      {label: 'Graph', detail: '长期记忆'},
-      {label: 'Goal', detail: '长程目标循环'},
+      {label: '记忆优先', detail: '以本地图谱为核心，而不是绑定单一模型账号'},
+      {label: '可迁移', detail: '自由切换模型，无需重建上下文和偏好'},
+      {label: '日常入口', detail: '浏览器、启动器、终端、Cron、Skills 和消息频道共享 Brain'},
     ],
     phases: [
       {
         index: '01',
-        title: '安装和配置',
-        body: '从发布版或源码启动 Anda，填好模型 provider，让本地 daemon 和终端 UI 连起来。',
+        title: '安装本地应用',
+        body: '通过启动器、发布版安装器或命令行路径，完成 daemon、模型服务商、模型和本地目录配置。',
         to: '/docs/quick-start/install',
       },
       {
         index: '02',
-        title: '长期记忆',
-        body: '理解 Brain 如何形成、召回、维护知识图谱，而不是堆一份越来越长的聊天记录。',
-        to: '/docs/memory/brain',
+        title: '连接浏览器',
+        body: '生成 Gateway URL 和 Bearer token，把侧边栏连接到同一个本地运行时和 Brain。',
+        to: '/docs/quick-start/browser-extension',
       },
       {
         index: '03',
-        title: '长程工作流',
-        body: '用 /goal、Subagents、Skills、shell 和外部编码工具，把一次回答变成可验证的连续推进。',
-        to: '/docs/workflows/long-horizon',
+        title: '理解 Brain',
+        body: '了解 Brain 如何形成、召回和维护关于项目、偏好、关系与决策的 Cognitive Nexus。',
+        to: '/docs/memory/brain',
       },
     ],
-    signals: [
-      ['goal://active', '长程目标保持活跃'],
-      ['anda://memory', 'Brain 形成和召回'],
-      ['tools://local', 'shell、文件、Skills、Subagents'],
-    ],
     docs: {
-      badge: 'Documentation map',
-      title: '把一次启动，变成能长期工作的本地智能体。',
-      body: '文档从安装路径开始，逐步展开到终端 UI、模型配置、记忆机制、Subagents、频道和本地数据边界。',
+      badge: '文档地图',
+      title: '先安装本地应用，再把每个入口连接到同一个 Brain。',
+      body: '文档从安装和模型配置开始，继续覆盖浏览器配对、终端工作流、记忆机制、Subagents、频道、语音和本地数据边界。',
     },
     routes: {
-      badge: 'Where context is born',
-      title: '终端、工具、文件、频道和语音，都可以进入同一条记忆线索。',
+      badge: '同一个本地运行时',
+      title: '浏览器、启动器、终端、文件、Cron、Skills 和消息频道，都可以进入同一条记忆线索。',
       items: [
-        ['terminal', '命令、文件、日志和本地工作区'],
-        ['memory', '项目、偏好、决策和时间线'],
-        ['channels', 'Telegram、WeChat、Discord、飞书'],
-        ['voice', '转写、TTS 和语音输入'],
+        ['launcher', '设置、状态、配对、日志、重启和更新'],
+        ['browser', '页面上下文、截图、下载和授权操作'],
+        ['terminal', '命令、文件、Skills、Subagents 和本地工作区'],
+        ['channels', 'Telegram、WeChat、Discord、Lark/飞书和语音'],
       ],
     },
   },
   es: {
-    meta: {title: 'Documentación de Anda Bot', description: 'Documentación oficial de Anda Bot para instalar, configurar memoria gráfica y conectar herramientas, subagentes y canales.'},
-    hero: {badge: 'docs.anda.bot', title: 'Documentación de Anda Bot', body: 'Soy el agente local en Rust que aprende mientras trabajamos. Esta documentación cubre instalación, modelos, canales, memoria Brain y objetivos largos con subagentes y herramientas locales.', primary: 'Instalar', secondary: 'Ver la memoria'},
-    proofs: [{label: 'Rust', detail: 'runtime terminal abierto'}, {label: 'Graph', detail: 'memoria a largo plazo'}, {label: 'Goal', detail: 'bucles de objetivos'}],
-    phases: [{index: '01', title: 'Instalar y configurar', body: 'Inicia Anda desde una versión publicada o desde el código fuente y conecta el daemon local con la UI terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Memoria duradera', body: 'Aprende cómo Brain forma, recupera y mantiene un grafo de conocimiento.', to: '/docs/memory/brain'}, {index: '03', title: 'Trabajo de largo alcance', body: 'Usa /goal, subagentes, skills, shell y herramientas externas para lograr progreso verificable.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'el objetivo sigue activo'], ['anda://memory', 'Brain forma y recupera'], ['tools://local', 'shell, archivos, skills, subagentes']],
-    docs: {badge: 'Mapa de documentación', title: 'Convierte una ejecución local en un agente que sigue trabajando.', body: 'Empieza con la instalación y continúa con terminal, modelos, memoria, subagentes, canales y límites de datos locales.'},
-    routes: {badge: 'Donde nace el contexto', title: 'Terminal, herramientas, archivos, canales y voz pueden entrar en el mismo hilo de memoria.', items: [['terminal', 'comandos, archivos, registros y workspaces'], ['memory', 'proyectos, preferencias, decisiones y líneas de tiempo'], ['channels', 'Telegram, WeChat, Discord y Feishu'], ['voice', 'transcripción, TTS y entrada hablada']]},
+    meta: {title: 'Docs de Anda Bot - Asistente local con memoria primero', description: 'Documentación oficial para instalar el launcher, conectar el panel lateral del navegador, configurar el daemon local y usar memoria Brain.'},
+    hero: {badge: 'Asistente local con memoria primero', title: 'Construye sobre memoria propia', body: 'Usa estos documentos para instalar la app que posee la memoria, conectar el navegador, configurar proveedores y mantener un Brain local entre terminal, herramientas, canales, cron y subagentes.', primary: 'Instalar app', secondary: 'Conectar navegador'},
+    proofs: [{label: 'memory-first', detail: 'memoria local, no una cuenta de modelo'}, {label: 'portable', detail: 'cambia modelos sin reconstruir contexto'}, {label: 'superficies', detail: 'navegador, launcher, terminal, cron, skills e IM comparten Brain'}],
+    phases: [{index: '01', title: 'Instalar la app', body: 'Configura launcher, daemon, proveedor, modelo y directorio local desde instaladores o CLI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Conectar navegador', body: 'Genera Gateway URL y Bearer token para unir el panel lateral al mismo runtime local.', to: '/docs/quick-start/browser-extension'}, {index: '03', title: 'Entender Brain', body: 'Aprende cómo Brain forma, recuerda y mantiene proyectos, preferencias, relaciones y decisiones.', to: '/docs/memory/brain'}],
+    docs: {badge: 'Mapa de documentación', title: 'Empieza con la app local y conecta cada superficie al mismo Brain.', body: 'Avanza desde instalación y modelos hacia navegador, terminal, memoria, subagentes, canales, voz y límites de datos locales.'},
+    routes: {badge: 'Un runtime local', title: 'Navegador, launcher, terminal, archivos, cron, skills y canales IM pueden alimentar el mismo hilo de memoria.', items: [['launcher', 'setup, estado, pairing, logs, reinicio y updates'], ['browser', 'contexto de página, capturas, descargas y acciones aprobadas'], ['terminal', 'comandos, archivos, skills, subagentes y workspaces'], ['channels', 'Telegram, WeChat, Discord, Lark/Feishu y voz']]},
   },
   fr: {
-    meta: {title: 'Documentation Anda Bot', description: 'Documentation officielle d\'Anda Bot pour installer, configurer la mémoire graphe et connecter outils, sous-agents et canaux.'},
-    hero: {badge: 'docs.anda.bot', title: 'Documentation Anda Bot', body: 'Je suis l\'agent Rust local qui apprend pendant le travail. Ces documents couvrent l\'installation, les modèles, les canaux, la mémoire Brain et les objectifs longs avec sous-agents et outils locaux.', primary: 'Installer', secondary: 'Voir la mémoire'},
-    proofs: [{label: 'Rust', detail: 'runtime terminal open source'}, {label: 'Graph', detail: 'mémoire long terme'}, {label: 'Goal', detail: 'boucles d\'objectifs'}],
-    phases: [{index: '01', title: 'Installer et configurer', body: 'Démarre Anda depuis une version publiée ou le code source, puis connecte le daemon local à l\'interface terminal.', to: '/docs/quick-start/install'}, {index: '02', title: 'Mémoire durable', body: 'Comprends comment Brain forme, rappelle et maintient un graphe de connaissances.', to: '/docs/memory/brain'}, {index: '03', title: 'Travail longue durée', body: 'Utilise /goal, les sous-agents, skills, shell et outils externes pour obtenir un progrès vérifié.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'l\'objectif reste actif'], ['anda://memory', 'Brain forme et rappelle'], ['tools://local', 'shell, fichiers, skills, sous-agents']],
-    docs: {badge: 'Carte documentaire', title: 'Transforme un lancement local en agent capable de continuer le travail.', body: 'Commence par l\'installation, puis explore terminal, modèles, mémoire, sous-agents, canaux et limites des données locales.'},
-    routes: {badge: 'Où naît le contexte', title: 'Terminal, outils, fichiers, canaux et voix peuvent entrer dans le même fil de mémoire.', items: [['terminal', 'commandes, fichiers, journaux et espaces locaux'], ['memory', 'projets, préférences, décisions et chronologies'], ['channels', 'Telegram, WeChat, Discord et Feishu'], ['voice', 'transcription, TTS et entrée vocale']]},
+    meta: {title: 'Docs Anda Bot - Assistant local centré mémoire', description: 'Documentation officielle pour installer le lanceur, connecter le panneau navigateur, configurer le daemon local et utiliser Brain.'},
+    hero: {badge: 'Assistant local centré mémoire', title: 'Construire autour d’une mémoire qui vous appartient', body: 'Utilisez ces docs pour installer l’app qui possède la mémoire, connecter le navigateur, configurer les providers et garder un Brain local entre terminal, outils, canaux, cron et sous-agents.', primary: 'Installer l’app', secondary: 'Connecter le navigateur'},
+    proofs: [{label: 'memory-first', detail: 'mémoire locale, pas un compte modèle'}, {label: 'portable', detail: 'changez de modèle sans reconstruire le contexte'}, {label: 'surfaces', detail: 'navigateur, lanceur, terminal, cron, skills et IM partagent Brain'}],
+    phases: [{index: '01', title: 'Installer l’app', body: 'Configurez lanceur, daemon, provider, modèle et dossier local depuis les installateurs ou la CLI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Connecter le navigateur', body: 'Générez Gateway URL et Bearer token pour relier le panneau au même runtime local.', to: '/docs/quick-start/browser-extension'}, {index: '03', title: 'Comprendre Brain', body: 'Découvrez comment Brain forme, rappelle et maintient projets, préférences, relations et décisions.', to: '/docs/memory/brain'}],
+    docs: {badge: 'Carte documentaire', title: 'Commencez par l’app locale, puis reliez chaque surface au même Brain.', body: 'Passez de l’installation et des modèles au navigateur, terminal, mémoire, sous-agents, canaux, voix et limites locales.'},
+    routes: {badge: 'Un runtime local', title: 'Navigateur, lanceur, terminal, fichiers, cron, skills et canaux IM peuvent nourrir le même fil de mémoire.', items: [['launcher', 'setup, statut, pairing, logs, redémarrage et mises à jour'], ['browser', 'contexte page, captures, téléchargements et actions approuvées'], ['terminal', 'commandes, fichiers, skills, sous-agents et workspaces'], ['channels', 'Telegram, WeChat, Discord, Lark/Feishu et voix']]},
   },
   ru: {
-    meta: {title: 'Документация Anda Bot', description: 'Официальная документация Anda Bot: установка, графовая память, инструменты, сабагенты и каналы команды.'},
-    hero: {badge: 'docs.anda.bot', title: 'Документация Anda Bot', body: 'Я локальный Rust-агент, который учится во время работы. Здесь описаны установка, модели, каналы, память Brain и долгие цели с сабагентами и локальными инструментами.', primary: 'Установить', secondary: 'Открыть память'},
-    proofs: [{label: 'Rust', detail: 'открытый терминальный runtime'}, {label: 'Graph', detail: 'долговременная память'}, {label: 'Goal', detail: 'циклы долгих целей'}],
-    phases: [{index: '01', title: 'Установка и настройка', body: 'Запустите Anda из релиза или исходников и подключите локальный daemon к терминальному UI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Долгая память', body: 'Узнайте, как Brain формирует, извлекает и поддерживает граф знаний.', to: '/docs/memory/brain'}, {index: '03', title: 'Длинные задачи', body: 'Используйте /goal, сабагентов, skills, shell и внешние инструменты для проверяемого прогресса.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'цель остается активной'], ['anda://memory', 'Brain формирует и вспоминает'], ['tools://local', 'shell, файлы, skills, сабагенты']],
-    docs: {badge: 'Карта документации', title: 'Превратите один запуск в локального агента, который продолжает работу.', body: 'Начните с установки, затем изучите терминал, модели, память, сабагентов, каналы и локальные границы данных.'},
-    routes: {badge: 'Где рождается контекст', title: 'Терминал, инструменты, файлы, каналы и голос могут войти в одну линию памяти.', items: [['terminal', 'команды, файлы, логи и локальные рабочие области'], ['memory', 'проекты, предпочтения, решения и временные линии'], ['channels', 'Telegram, WeChat, Discord и Feishu'], ['voice', 'транскрипция, TTS и голосовой ввод']]},
+    meta: {title: 'Документация Anda Bot - локальный AI с памятью', description: 'Официальные docs для установки launcher, подключения browser side panel, настройки local daemon и работы с Brain memory.'},
+    hero: {badge: 'Локальный помощник с memory-first подходом', title: 'Стройте вокруг памяти, которой владеете', body: 'Эти docs помогают установить app, владеющую памятью, подключить браузер, настроить providers и держать один local Brain для terminal, tools, channels, cron и subagents.', primary: 'Установить app', secondary: 'Подключить браузер'},
+    proofs: [{label: 'memory-first', detail: 'локальная graph memory, не аккаунт модели'}, {label: 'portable', detail: 'меняйте модели без пересборки контекста'}, {label: 'surfaces', detail: 'browser, launcher, terminal, cron, skills и IM делят Brain'}],
+    phases: [{index: '01', title: 'Установить app', body: 'Настройте launcher, daemon, provider, model и local home через installer или CLI.', to: '/docs/quick-start/install'}, {index: '02', title: 'Подключить браузер', body: 'Создайте Gateway URL и Bearer token, чтобы side panel вошла в тот же local runtime.', to: '/docs/quick-start/browser-extension'}, {index: '03', title: 'Понять Brain', body: 'Узнайте, как Brain формирует, вспоминает и поддерживает projects, preferences, relationships и decisions.', to: '/docs/memory/brain'}],
+    docs: {badge: 'Карта документации', title: 'Начните с local app, затем подключите каждую поверхность к одному Brain.', body: 'Дальше идут установка, модели, браузер, terminal workflows, memory, subagents, channels, voice и local data boundaries.'},
+    routes: {badge: 'Один local runtime', title: 'Browser, launcher, terminal, files, cron, skills и IM channels могут питать одну memory thread.', items: [['launcher', 'setup, status, pairing, logs, restart и updates'], ['browser', 'page context, screenshots, downloads и approved actions'], ['terminal', 'commands, files, skills, subagents и workspaces'], ['channels', 'Telegram, WeChat, Discord, Lark/Feishu и voice']]},
   },
   ar: {
-    meta: {title: 'وثائق Anda Bot', description: 'وثائق Anda Bot الرسمية للتثبيت، وذاكرة الرسم البياني، والأدوات، والوكلاء الفرعيين، وقنوات الفريق.'},
-    hero: {badge: 'docs.anda.bot', title: 'وثائق Anda Bot', body: 'أنا وكيل Rust محلي يتعلم أثناء العمل. تشرح هذه الوثائق التثبيت، والنماذج، والقنوات، وذاكرة Brain، والأهداف طويلة المدى مع الوكلاء الفرعيين والأدوات المحلية.', primary: 'ابدأ التثبيت', secondary: 'تعرّف على الذاكرة'},
-    proofs: [{label: 'Rust', detail: 'تشغيل طرفية مفتوح المصدر'}, {label: 'Graph', detail: 'ذاكرة طويلة المدى'}, {label: 'Goal', detail: 'حلقات أهداف طويلة'}],
-    phases: [{index: '01', title: 'التثبيت والإعداد', body: 'شغّل Anda من إصدار جاهز أو من المصدر، ثم صِل daemon المحلي بواجهة الطرفية.', to: '/docs/quick-start/install'}, {index: '02', title: 'ذاكرة طويلة المدى', body: 'تعرّف على كيفية تكوين Brain واسترجاعه وصيانته لرسم معرفي.', to: '/docs/memory/brain'}, {index: '03', title: 'عمل طويل المدى', body: 'استخدم /goal والوكلاء الفرعيين والمهارات و shell والأدوات الخارجية للوصول إلى تقدم قابل للتحقق.', to: '/docs/workflows/long-horizon'}],
-    signals: [['goal://active', 'يبقى الهدف نشطًا'], ['anda://memory', 'Brain يكوّن ويسترجع'], ['tools://local', 'shell وملفات ومهارات ووكلاء فرعيون']],
-    docs: {badge: 'خريطة الوثائق', title: 'حوّل تشغيلًا واحدًا إلى وكيل محلي يواصل العمل.', body: 'ابدأ بالتثبيت، ثم انتقل إلى الطرفية، والنماذج، والذاكرة، والوكلاء الفرعيين، والقنوات، وحدود البيانات المحلية.'},
-    routes: {badge: 'حيث يولد السياق', title: 'يمكن للطرفية والأدوات والملفات والقنوات والصوت أن تدخل خيط الذاكرة نفسه.', items: [['terminal', 'أوامر وملفات وسجلات ومساحات عمل محلية'], ['memory', 'مشاريع وتفضيلات وقرارات وجداول زمنية'], ['channels', 'Telegram وWeChat وDiscord وFeishu'], ['voice', 'تفريغ صوتي وTTS وإدخال منطوق']]},
+    meta: {title: 'وثائق Anda Bot - مساعد محلي يبدأ من الذاكرة', description: 'وثائق رسمية لتثبيت launcher، وصل لوحة المتصفح، إعداد daemon المحلي، وتشغيل ذاكرة Brain الرسومية.'},
+    hero: {badge: 'مساعد محلي يبدأ من الذاكرة', title: 'ابن حول ذاكرة تملكها أنت', body: 'استخدم هذه الوثائق لتثبيت التطبيق الذي يملك الذاكرة، وصل المتصفح، إعداد مزودي النماذج، وإبقاء Brain محلي واحد بين الطرفية والأدوات والقنوات و cron و subagents.', primary: 'ثبّت التطبيق', secondary: 'وصل المتصفح'},
+    proofs: [{label: 'memory-first', detail: 'ذاكرة رسومية محلية، لا حساب نموذج واحد'}, {label: 'portable', detail: 'غيّر النماذج دون إعادة بناء السياق'}, {label: 'surfaces', detail: 'المتصفح و launcher والطرفية و cron و skills و IM تشارك Brain'}],
+    phases: [{index: '01', title: 'ثبّت التطبيق', body: 'أعد launcher و daemon والمزوّد والنموذج والدليل المحلي عبر المثبتات أو CLI.', to: '/docs/quick-start/install'}, {index: '02', title: 'وصل المتصفح', body: 'أنشئ Gateway URL و Bearer token لوصل اللوحة الجانبية بنفس runtime المحلي.', to: '/docs/quick-start/browser-extension'}, {index: '03', title: 'افهم Brain', body: 'تعلّم كيف يشكل Brain ويسترجع ويحافظ على المشاريع والتفضيلات والعلاقات والقرارات.', to: '/docs/memory/brain'}],
+    docs: {badge: 'خريطة الوثائق', title: 'ابدأ بالتطبيق المحلي، ثم صل كل سطح بنفس Brain.', body: 'انتقل من التثبيت والنماذج إلى المتصفح والطرفية والذاكرة و subagents والقنوات والصوت وحدود البيانات المحلية.'},
+    routes: {badge: 'runtime محلي واحد', title: 'يمكن للمتصفح و launcher والطرفية والملفات و cron و skills وقنوات IM تغذية خيط ذاكرة واحد.', items: [['launcher', 'الإعداد والحالة والربط والسجلات وإعادة التشغيل والتحديثات'], ['browser', 'سياق الصفحة واللقطات والتنزيلات والأفعال المصرح بها'], ['terminal', 'أوامر وملفات و skills و subagents ومساحات عمل'], ['channels', 'Telegram وWeChat وDiscord وLark/Feishu والصوت']]},
   },
 };
 
 export default function Home(): ReactNode {
   const {i18n} = useDocusaurusContext();
-  const heroImage = useBaseUrl('/img/anda_bot.webp');
   const copy = copies[i18n.currentLocale] ?? copies.en;
 
   return (
@@ -194,36 +177,19 @@ export default function Home(): ReactNode {
                 <Link className={`${styles.cta} ${styles.ctaPrimary}`} to="/docs/quick-start/install">
                   {copy.hero.primary}
                 </Link>
-                <Link className={`${styles.cta} ${styles.ctaSecondary}`} to="/docs/memory/brain">
+                <Link className={`${styles.cta} ${styles.ctaSecondary}`} to="/docs/quick-start/browser-extension">
                   {copy.hero.secondary}
                 </Link>
               </div>
-              <div className={styles.proofGrid}>
-                {copy.proofs.map((proof) => (
-                  <span key={proof.label}>
-                    <strong>{proof.label}</strong>
-                    {proof.detail}
-                  </span>
-                ))}
-              </div>
             </div>
 
-            <div className={styles.observatory}>
-              <div className={styles.imageFrame}>
-                <img src={heroImage} alt="Anda Bot terminal interface" />
-              </div>
-              <div className={styles.signalPanel}>
-                <div className={styles.signalHeader}>
-                  <span>brain.live</span>
-                  <span>goal://active</span>
-                </div>
-                {copy.signals.map(([label, detail]) => (
-                  <div className={styles.signalRow} key={label}>
-                    <span>{label}</span>
-                    <small>{detail}</small>
-                  </div>
-                ))}
-              </div>
+            <div className={styles.proofGrid}>
+              {copy.proofs.map((proof) => (
+                <span key={proof.label}>
+                  <strong>{proof.label}</strong>
+                  {proof.detail}
+                </span>
+              ))}
             </div>
           </div>
         </section>

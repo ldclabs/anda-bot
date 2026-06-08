@@ -29,8 +29,8 @@ This generates static content into `build/`.
 The docs use the same locale set as the main `website/`: English, Chinese, Spanish, French, Russian, and Arabic. English is the fallback locale. All non-English locales have localized docs under `i18n/<locale>/docusaurus-plugin-content-docs/current/`.
 
 ```bash
-pnpm start -- --locale zh-Hans
-pnpm write-translations -- --locale zh-Hans
+pnpm start --locale zh-Hans
+pnpm write-translations --locale zh-Hans
 ```
 
 When adding a new locale, keep `docusaurus.config.ts`, homepage copy, and `i18n/<locale>/` translation files aligned.

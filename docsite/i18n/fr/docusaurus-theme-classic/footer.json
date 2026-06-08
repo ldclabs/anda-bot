@@ -23,9 +23,9 @@
     "message": "Terminal",
     "description": "The label of footer link with label=Terminal linking to /docs/quick-start/terminal"
   },
-  "link.item.label.Chrome Extension": {
-    "message": "Extension Chrome",
-    "description": "The label of footer link with label=Chrome Extension linking to /docs/quick-start/browser-extension"
+  "link.item.label.Browser Extension": {
+    "message": "Extension navigateur",
+    "description": "The label of footer link with label=Browser Extension linking to /docs/quick-start/browser-extension"
   },
   "link.item.label.Brain Memory": {
     "message": "Mémoire Brain",

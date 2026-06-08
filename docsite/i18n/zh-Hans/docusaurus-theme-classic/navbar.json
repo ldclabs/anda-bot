@@ -15,9 +15,9 @@
     "message": "快速开始",
     "description": "Navbar item with label Quick Start"
   },
-  "item.label.Chrome Extension": {
-    "message": "Chrome 扩展",
-    "description": "Navbar item with label Chrome Extension"
+  "item.label.Browser Extension": {
+    "message": "浏览器扩展",
+    "description": "Navbar item with label Browser Extension"
   },
   "item.label.Main Site": {
     "message": "主站",
