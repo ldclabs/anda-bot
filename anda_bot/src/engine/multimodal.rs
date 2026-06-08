@@ -40,6 +40,8 @@ const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_MEDIA_UNDERSTANDING_CONCURRENCY: usize = 8;
 const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
 const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 256 * 1024;
+#[cfg(windows)]
+const PDFIUM_DLL_NAME: &str = "pdfium.dll";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaKind {
@@ -1302,26 +1304,115 @@ fn is_text_extension(ext: &str) -> bool {
 }
 
 async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
+    #[cfg(windows)]
+    ensure_pdfium_library_available()?;
+
     let mut config = LiteParseConfig {
         quiet: true,
         ocr_enabled: cfg!(all(not(target_env = "musl"), not(target_os = "windows"))),
         ..Default::default()
     };
-    let parser = LiteParse::new(config.clone());
-    match parser.parse_input(PdfInput::Bytes(data.to_vec())).await {
-        Ok(result) => Ok(result.text),
-        Err(first_err) => {
+    let first_ocr_enabled = config.ocr_enabled;
+    match parse_pdf_text_once(data, config.clone()).await {
+        Ok(text) => Ok(text),
+        Err(first_err) if first_ocr_enabled => {
             config.ocr_enabled = false;
-            let parser = LiteParse::new(config);
-            parser
-                .parse_input(PdfInput::Bytes(data.to_vec()))
+            parse_pdf_text_once(data, config)
                 .await
-                .map(|result| result.text)
                 .map_err(|second_err| {
                     format!("with OCR enabled: {first_err}; with OCR disabled: {second_err}").into()
                 })
         }
+        Err(err) => Err(err),
     }
+}
+
+async fn parse_pdf_text_once(data: &[u8], config: LiteParseConfig) -> Result<String, BoxError> {
+    let parser = LiteParse::new(config);
+    parser
+        .parse_input(PdfInput::Bytes(data.to_vec()))
+        .await
+        .map(|result| result.text)
+        .map_err(Into::into)
+}
+
+#[cfg(windows)]
+fn ensure_pdfium_library_available() -> Result<(), BoxError> {
+    let mut load_errors = Vec::new();
+    for candidate in pdfium_library_candidates() {
+        if !candidate.is_file() && candidate != Path::new(PDFIUM_DLL_NAME) {
+            continue;
+        }
+        match try_load_pdfium_library(&candidate) {
+            Ok(()) => return Ok(()),
+            Err(err) => load_errors.push(format!("{}: {err}", candidate.display())),
+        }
+    }
+
+    let detail = if load_errors.is_empty() {
+        "searched PDFIUM_LIB_PATH, the anda.exe directory, the current directory, and PATH"
+            .to_string()
+    } else {
+        format!(
+            "could not load any pdfium.dll candidate: {}",
+            load_errors.join("; ")
+        )
+    };
+    Err(format!(
+        "{PDFIUM_DLL_NAME} is not available for LiteParse PDF extraction ({detail}). Set PDFIUM_LIB_PATH to the directory containing {PDFIUM_DLL_NAME}."
+    )
+    .into())
+}
+
+#[cfg(windows)]
+fn pdfium_library_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) =
+        std::env::var_os("PDFIUM_LIB_PATH").filter(|path| !path.as_os_str().is_empty())
+    {
+        push_pdfium_candidate(&mut candidates, PathBuf::from(path));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        push_pdfium_candidate(&mut candidates, dir.to_path_buf());
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        push_pdfium_candidate(&mut candidates, dir);
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            push_pdfium_candidate(&mut candidates, dir);
+        }
+    }
+    push_pdfium_candidate(&mut candidates, PathBuf::from(PDFIUM_DLL_NAME));
+    candidates
+}
+
+#[cfg(windows)]
+fn push_pdfium_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
+    let candidate = pdfium_library_candidate_for_path(&path);
+    if !candidates.iter().any(|existing| existing == &candidate) {
+        candidates.push(candidate);
+    }
+}
+
+#[cfg(windows)]
+fn pdfium_library_candidate_for_path(path: &Path) -> PathBuf {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(PDFIUM_DLL_NAME))
+    {
+        path.to_path_buf()
+    } else {
+        path.join(PDFIUM_DLL_NAME)
+    }
+}
+
+#[cfg(windows)]
+fn try_load_pdfium_library(path: &Path) -> Result<(), String> {
+    liteparse_pdfium_sys::dynamic::load(path)
 }
 
 fn fenced_text(language: &str, text: &str) -> String {

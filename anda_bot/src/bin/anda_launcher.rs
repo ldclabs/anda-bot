@@ -29,8 +29,29 @@ fn main() {
 
 fn run() -> core::LauncherResult<()> {
     let ctx = core::LauncherContext::detect()?;
-    let Some(_lock) = core::acquire_launcher_instance_lock()? else {
+    #[cfg(windows)]
+    if platform::activate_existing_instance()? {
         return Ok(());
+    }
+
+    let _lock = match core::acquire_launcher_instance_lock()? {
+        Some(lock) => Some(lock),
+        None => {
+            #[cfg(windows)]
+            {
+                // A hung old launcher can keep the mutex while no longer handling tray messages.
+                // Let a new instance take over when no responsive launcher window exists.
+                if platform::wait_for_existing_instance()? {
+                    return Ok(());
+                }
+                None
+            }
+
+            #[cfg(not(windows))]
+            {
+                return Ok(());
+            }
+        }
     };
     platform::run(ctx)
 }

@@ -91,6 +91,7 @@ rand = "0.10"
 prost = { version = "0.14", default-features = false, features = ["derive"] }
 libc = "0.2"
 liteparse = { version = "2", default-features = false }
+liteparse-pdfium-sys = { version = "1", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
@@ -115,4 +116,4 @@ lto = true
 strip = true
 opt-level = 'z'
 codegen-units = 1
-panic = "abort"
+panic = "unwind"

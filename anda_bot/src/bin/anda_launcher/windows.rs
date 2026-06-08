@@ -9,6 +9,7 @@ use std::{
     ptr,
     sync::OnceLock,
     thread,
+    time::{Duration, Instant},
 };
 
 use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO};
@@ -34,11 +35,12 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{
             AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconIndirect,
             CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-            DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON, HMENU, ICONINFO,
-            IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MF_POPUP,
-            MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
-            SW_SHOWNORMAL, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
-            WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+            DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, HICON,
+            HMENU, ICONINFO, IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+            MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage,
+            RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_SHOWNORMAL, SendMessageTimeoutW,
+            SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
+            WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
             WS_OVERLAPPEDWINDOW,
         },
     },
@@ -54,6 +56,10 @@ const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo.png");
 const LAUNCHER_ICON_FILE: &str = "anda.ico";
 const TRAY_ID: u32 = 1;
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_LAUNCHER_ACTIVATE: u32 = WM_APP + 2;
+const EXISTING_WINDOW_PING_TIMEOUT_MS: u32 = 1500;
+const EXISTING_WINDOW_STARTUP_WAIT_MS: u64 = 3000;
+const EXISTING_WINDOW_POLL_MS: u64 = 100;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTOSTART_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const AUTOSTART_RUN_VALUE: &str = "AndaBotLauncher";
@@ -120,6 +126,23 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     Ok(())
 }
 
+pub fn activate_existing_instance() -> LauncherResult<bool> {
+    Ok(activate_existing_window())
+}
+
+pub fn wait_for_existing_instance() -> LauncherResult<bool> {
+    let deadline = Instant::now() + Duration::from_millis(EXISTING_WINDOW_STARTUP_WAIT_MS);
+    loop {
+        if activate_existing_window() {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(EXISTING_WINDOW_POLL_MS));
+    }
+}
+
 pub fn show_error(title: &str, message: &str) {
     message_box(title, message, MB_OK | MB_ICONERROR);
 }
@@ -131,6 +154,10 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_LAUNCHER_ACTIVATE => {
+            show_tray_menu(hwnd);
+            0
+        }
         WM_TRAY if lparam as u32 == WM_RBUTTONUP || lparam as u32 == WM_LBUTTONUP => {
             show_tray_menu(hwnd);
             0
@@ -155,36 +182,61 @@ fn handle_command(hwnd: HWND, id: usize) {
     };
 
     match id {
-        ID_OPEN => open_anda_terminal(ctx),
-        ID_SETTINGS => match settings::run_wizard(ctx) {
-            Ok(true) => show_result(
-                &text().app_title,
-                &core::restart_daemon(ctx).unwrap_or_else(error_result),
-            ),
-            Ok(false) => {}
-            Err(err) => show_error(&text().settings_title, &err.to_string()),
-        },
-        ID_STATUS => show_result(
-            &text().app_title,
-            &core::daemon_status(ctx).unwrap_or_else(error_result),
-        ),
-        ID_RESTART => show_result(
-            &text().app_title,
-            &core::restart_daemon(ctx).unwrap_or_else(error_result),
-        ),
-        ID_BROWSER_TOKEN => show_browser_extension_token_result(
-            &core::generate_browser_extension_token(ctx).unwrap_or_else(error_result),
-        ),
+        ID_OPEN => open_anda_terminal_async(ctx.clone()),
+        ID_SETTINGS => run_settings_wizard_async(ctx.clone()),
+        ID_STATUS => show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
+            core::daemon_status(ctx)
+        }),
+        ID_RESTART => show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
+            core::restart_daemon(ctx)
+        }),
+        ID_BROWSER_TOKEN => show_browser_extension_token_result_async(ctx.clone()),
         ID_CHECK_UPDATE => run_manual_update_check(ctx.clone()),
-        ID_AUTOSTART => match toggle_autostart(ctx) {
-            Ok(message) => message_box(&text().app_title, &message, MB_OK | MB_ICONINFORMATION),
-            Err(err) => show_error(&text().app_title, &err.to_string()),
-        },
-        ID_LOGS => open_path(&ctx.logs_dir()),
+        ID_AUTOSTART => toggle_autostart_async(ctx.clone()),
+        ID_LOGS => open_logs_async(ctx.clone()),
         ID_QUIT => unsafe {
             DestroyWindow(hwnd);
         },
         _ => {}
+    }
+}
+
+fn activate_existing_window() -> bool {
+    let Some(hwnd) = responsive_launcher_window() else {
+        return false;
+    };
+
+    unsafe { PostMessageW(hwnd, WM_LAUNCHER_ACTIVATE, 0, 0) != 0 }
+}
+
+fn responsive_launcher_window() -> Option<HWND> {
+    let class_name = wide_null(CLASS_NAME);
+    let mut previous = ptr::null_mut();
+    loop {
+        let hwnd =
+            unsafe { FindWindowExW(ptr::null_mut(), previous, class_name.as_ptr(), ptr::null()) };
+        if hwnd.is_null() {
+            return None;
+        }
+        if window_responds(hwnd) {
+            return Some(hwnd);
+        }
+        previous = hwnd;
+    }
+}
+
+fn window_responds(hwnd: HWND) -> bool {
+    let mut result = 0;
+    unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_NULL,
+            0,
+            0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            EXISTING_WINDOW_PING_TIMEOUT_MS,
+            &mut result,
+        ) != 0
     }
 }
 
@@ -457,6 +509,54 @@ fn show_browser_extension_token_result(result: &CommandResult) {
     } else {
         show_result(&text().browser_extension_token_title, result);
     }
+}
+
+fn open_anda_terminal_async(ctx: LauncherContext) {
+    thread::spawn(move || {
+        open_anda_terminal(&ctx);
+    });
+}
+
+fn run_settings_wizard_async(ctx: LauncherContext) {
+    thread::spawn(move || match settings::run_wizard(&ctx) {
+        Ok(true) => show_result(
+            &text().app_title,
+            &core::restart_daemon(&ctx).unwrap_or_else(error_result),
+        ),
+        Ok(false) => {}
+        Err(err) => show_error(&text().settings_title, &err.to_string()),
+    });
+}
+
+fn show_command_result_async<F>(title: String, ctx: LauncherContext, command: F)
+where
+    F: FnOnce(&LauncherContext) -> LauncherResult<CommandResult> + Send + 'static,
+{
+    thread::spawn(move || {
+        let result = command(&ctx).unwrap_or_else(error_result);
+        show_result(&title, &result);
+    });
+}
+
+fn show_browser_extension_token_result_async(ctx: LauncherContext) {
+    thread::spawn(move || {
+        show_browser_extension_token_result(
+            &core::generate_browser_extension_token(&ctx).unwrap_or_else(error_result),
+        );
+    });
+}
+
+fn toggle_autostart_async(ctx: LauncherContext) {
+    thread::spawn(move || match toggle_autostart(&ctx) {
+        Ok(message) => message_box(&text().app_title, &message, MB_OK | MB_ICONINFORMATION),
+        Err(err) => show_error(&text().app_title, &err.to_string()),
+    });
+}
+
+fn open_logs_async(ctx: LauncherContext) {
+    thread::spawn(move || {
+        open_path(&ctx.logs_dir());
+    });
 }
 
 fn copy_to_clipboard(value: &str) -> LauncherResult<()> {
