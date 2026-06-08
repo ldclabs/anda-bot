@@ -200,12 +200,14 @@ function Verify-Checksum($FilePath, $ChecksumPath) {
 
 function Write-IcoFromPng($PngPath, $IcoPath) {
     [byte[]]$png = [System.IO.File]::ReadAllBytes($PngPath)
+    $width = [System.BitConverter]::ToUInt32([byte[]]@($png[19], $png[18], $png[17], $png[16]), 0)
+    $height = [System.BitConverter]::ToUInt32([byte[]]@($png[23], $png[22], $png[21], $png[20]), 0)
     [byte[]]$ico = New-Object byte[] (22 + $png.Length)
     [BitConverter]::GetBytes([UInt16]0).CopyTo($ico, 0)
     [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 2)
     [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 4)
-    $ico[6] = 32
-    $ico[7] = 32
+    $ico[6] = if ($width -eq 256) { 0 } else { [byte]$width }
+    $ico[7] = if ($height -eq 256) { 0 } else { [byte]$height }
     $ico[8] = 0
     $ico[9] = 0
     [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 10)

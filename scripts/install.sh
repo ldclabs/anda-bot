@@ -233,16 +233,24 @@ install_macos_launcher_icon() {
     [ -n "${TMPDIR:-}" ] || return 0
 
     RESOURCES_DIR="$1"
+    ICON_DIRECT="${TMPDIR}/AndaBot.icns"
     ICON_SOURCE="${TMPDIR}/anda-logo.png"
     ICONSET="${TMPDIR}/AndaBot.iconset"
-    ICON_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.png"
+    ICNS_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.icns"
+    PNG_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.png"
+
+    if curl -fsSL "$ICNS_URL" -o "$ICON_DIRECT" &&
+        [ "$(dd if="$ICON_DIRECT" bs=4 count=1 2>/dev/null)" = "icns" ] &&
+        mv "$ICON_DIRECT" "${RESOURCES_DIR}/AndaBot.icns"; then
+        return 0
+    fi
 
     if ! command -v sips >/dev/null 2>&1 || ! command -v iconutil >/dev/null 2>&1; then
         info "Could not find sips/iconutil; the launcher will repair its app icon after startup."
         return 0
     fi
 
-    if ! curl -fsSL "$ICON_URL" -o "$ICON_SOURCE"; then
+    if ! curl -fsSL "$PNG_URL" -o "$ICON_SOURCE"; then
         info "Could not download launcher icon; the launcher will repair its app icon after startup."
         return 0
     fi

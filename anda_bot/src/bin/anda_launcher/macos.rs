@@ -21,6 +21,7 @@ use crate::{
 
 const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
 const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo-tray.png");
+const LAUNCHER_APP_ICON_ICNS: &[u8] = include_bytes!("../../../assets/logo.icns");
 const LAUNCHER_APP_NAME: &str = "Anda Bot.app";
 const LAUNCHER_APP_EXECUTABLE: &str = "Anda Bot";
 const LAUNCHER_APP_ICON: &str = "AndaBot";
@@ -429,6 +430,7 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
     let mut permissions = fs::metadata(&executable)?.permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(executable, permissions)?;
+    let _ = Command::new("touch").arg(app_path).status();
     Ok(())
 }
 
@@ -465,15 +467,7 @@ fn launcher_app_info_plist() -> String {
 }
 
 fn launcher_icon_icns() -> Vec<u8> {
-    let chunk_len = 8 + LAUNCHER_ICON_PNG.len() as u32;
-    let total_len = 8 + chunk_len;
-    let mut icon = Vec::with_capacity(total_len as usize);
-    icon.extend_from_slice(b"icns");
-    icon.extend_from_slice(&total_len.to_be_bytes());
-    icon.extend_from_slice(b"icp5");
-    icon.extend_from_slice(&chunk_len.to_be_bytes());
-    icon.extend_from_slice(LAUNCHER_ICON_PNG);
-    icon
+    LAUNCHER_APP_ICON_ICNS.to_vec()
 }
 
 fn launcher_app_script(ctx: &LauncherContext) -> String {
@@ -656,12 +650,15 @@ mod tests {
     }
 
     #[test]
-    fn launcher_icon_icns_wraps_embedded_png() {
+    fn launcher_icon_icns_uses_embedded_asset() {
         let icon = launcher_icon_icns();
 
         assert_eq!(&icon[..4], b"icns");
-        assert_eq!(&icon[8..12], b"icp5");
-        assert_eq!(&icon[16..24], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(
+            u32::from_be_bytes(icon[4..8].try_into().unwrap()) as usize,
+            icon.len()
+        );
+        assert_eq!(icon, LAUNCHER_APP_ICON_ICNS);
     }
 
     #[test]

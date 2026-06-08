@@ -608,17 +608,35 @@ fn ensure_launcher_icon_file(ctx: &LauncherContext) -> LauncherResult<PathBuf> {
 }
 
 fn launcher_icon_ico() -> Vec<u8> {
+    let (width, height) = png_ico_dimensions(LAUNCHER_ICON_PNG).unwrap_or((128, 128));
     let mut icon = Vec::with_capacity(22 + LAUNCHER_ICON_PNG.len());
     icon.extend_from_slice(&0u16.to_le_bytes());
     icon.extend_from_slice(&1u16.to_le_bytes());
     icon.extend_from_slice(&1u16.to_le_bytes());
-    icon.extend_from_slice(&[32, 32, 0, 0]);
+    icon.extend_from_slice(&[width, height, 0, 0]);
     icon.extend_from_slice(&1u16.to_le_bytes());
     icon.extend_from_slice(&32u16.to_le_bytes());
     icon.extend_from_slice(&(LAUNCHER_ICON_PNG.len() as u32).to_le_bytes());
     icon.extend_from_slice(&22u32.to_le_bytes());
     icon.extend_from_slice(LAUNCHER_ICON_PNG);
     icon
+}
+
+fn png_ico_dimensions(png: &[u8]) -> Option<(u8, u8)> {
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let width = u32::from_be_bytes(png.get(16..20)?.try_into().ok()?);
+    let height = u32::from_be_bytes(png.get(20..24)?.try_into().ok()?);
+    Some((ico_dimension_byte(width)?, ico_dimension_byte(height)?))
+}
+
+fn ico_dimension_byte(value: u32) -> Option<u8> {
+    match value {
+        1..=255 => Some(value as u8),
+        256 => Some(0),
+        _ => None,
+    }
 }
 
 fn windows_shortcut_script(ctx: &LauncherContext, icon_path: &Path) -> LauncherResult<String> {
