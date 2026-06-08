@@ -2,19 +2,41 @@
 
 All notable changes to Anda Bot.
 
-## [0.9.0] — 2026-06-07
+## [0.9.0] — 2026-06-08
 
 ### Added
 
-- **Desktop launcher for first-run setup, daemon control, and updates**: added an `anda_launcher` companion binary for Windows and macOS. It starts the daemon after setup, provides tray/menu-bar actions for opening Anda, editing provider/API key/model settings, checking status, starting/stopping/restarting the daemon, checking for updates, opening logs, and toggling launch-at-login. The launcher also checks for updates automatically, downloads release assets through the shared auto-updater, and prompts to install and restart when an update is ready.
+- **Desktop launcher for first-run setup, daemon control, browser pairing, and updates**: added an `anda_launcher` companion binary for Windows and macOS. It starts the daemon after setup, provides tray/menu-bar actions for opening Anda, checking status, restarting the daemon, generating a browser extension Gateway URL/Bearer token and copying it to the clipboard, opening logs, editing model settings, toggling launch-at-login, and checking for updates. The launcher also checks for updates automatically, downloads release assets through the shared auto-updater, and prompts to install and restart when an update is ready.
 - **Windows graphical installer**: added a GitHub Release packaging job and `scripts/build-windows-installer.ps1` to produce `AndaBotSetup-windows-x86_64.exe`, bundling `anda.exe`, `anda_launcher.exe`, curated skills, Start Menu shortcuts, login autostart, uninstall support, and a GUI setup wizard.
 - **macOS launcher install flow**: the shell installer now downloads, verifies, installs, registers, and starts `anda_launcher` on macOS so release installs provide a menu-bar launcher by default.
+- **Localized launcher and workspace picker UI**: added English and Simplified Chinese launcher strings through `rust-i18n`, plus localized native workspace picker titles that follow system locale tags across macOS, Windows, and Linux.
+- **Optional Windows artifact signing**: GitHub Release builds can now sign Windows binaries and installers through Microsoft Artifact Signing / Authenticode when signing configuration is present, while continuing to publish unsigned artifacts when it is not configured.
+- **Edge store listing copy**: added Edge-specific localized store descriptions alongside the Chrome Web Store copy.
 
 ### Changed
 
-- **Version bumped for 0.9.0 development**: updated the `anda_bot` package, Cargo lock metadata, and Chrome extension package/manifests to advertise `0.9.0`.
-- **Release artifacts now include launcher binaries**: native Windows and macOS release builds produce checksummed `anda_launcher` artifacts alongside the CLI binary, while Linux releases continue shipping only the CLI binary.
+- **Version synchronized for the 0.9.0 release**: updated the `anda_bot` package, Cargo lock metadata, and Chrome extension package/manifests to advertise `0.9.0`.
+- **Release artifacts now include launcher binaries and app icons**: native Windows and macOS release builds produce checksummed `anda_launcher` artifacts alongside the CLI binary, embed proper launcher icons (`.icns` on macOS and real-dimension ICO data on Windows), and generate checksums after signing so hashes match final release assets. Linux releases continue shipping only the CLI binary.
+- **Launcher menus refined**: desktop menus now promote logs, group model settings and launch-at-login under a Settings submenu, keep status/restart actions focused, expose browser extension token generation, and retain tray/menu-bar image resources so status icons stay visible.
+- **Installer and desktop entrypoint UX improved**: Windows installers wait for child process output, register launcher autostart through the registry, improve browser launching and onboarding paths, and create more reliable desktop/start-menu entrypoints. macOS installs refresh application entrypoints so Finder notices updated icons and labels.
 - **Installation docs refreshed for desktop installers**: README and docsite installation pages now recommend the Windows graphical installer for normal users and describe the macOS menu-bar launcher behavior.
+- **Browser extension labels generalized**: user-facing extension copy now uses browser-generic wording instead of Chrome-specific labels where the extension can run in multiple Chromium-based browsers.
+
+### Fixed
+
+- **macOS launcher status icon and app icons**: fixed the menu-bar status item to use the status button image path, stay visible, and fall back to text when the icon is unavailable. Release installers now prefer the real `.icns` asset and only fall back to PNG conversion when needed.
+- **Windows launcher and installer reliability**: fixed launcher installation, registry autostart handling, browser integration, setup onboarding, and ICO generation from PNG headers instead of hardcoded icon dimensions.
+- **Native workspace picker behavior**: escaped localized picker prompts for AppleScript and PowerShell, added a top-most owner window for the Windows folder picker, and kept Linux picker titles localized for both `zenity` and `kdialog`.
+- **Local file URI handling**: normalized file URI parsing across channel attachments, browser operations, multimodal handling, and document skill helpers so local file paths are handled consistently.
+- **WeChat cached context token recovery**: stale cached context tokens expire after two hours, send failures clear the cached token and retry without it, and context token metadata refreshes whenever a token is observed.
+
+### Removed
+
+- **IRC channel support**: removed the IRC channel implementation, configuration paths, CLI wiring, docs, and extension/store references so the runtime focuses on the actively supported channel set.
+
+### Dependencies
+
+- Added launcher/localization support dependencies including `rust-i18n`, `objc2`, `objc2-app-kit`, `objc2-foundation`, and `png`; removed no-longer-used workspace TLS dependencies from the launcher-era code path.
 
 ## [0.8.14] — 2026-06-07
 

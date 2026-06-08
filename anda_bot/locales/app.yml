@@ -19,8 +19,11 @@ launcher.open_anda:
   en: Open Anda
   zh-Hans: 打开 Anda
 launcher.settings:
-  en: Settings...
-  zh-Hans: 设置...
+  en: Settings
+  zh-Hans: 设置
+launcher.model_settings:
+  en: Model settings...
+  zh-Hans: 大模型配置...
 launcher.status:
   en: Status
   zh-Hans: 状态
@@ -33,6 +36,15 @@ launcher.stop_daemon:
 launcher.restart_daemon:
   en: Restart daemon
   zh-Hans: 重启守护进程
+launcher.browser_extension_token:
+  en: Generate browser extension token
+  zh-Hans: 生成浏览器扩展应用 token
+launcher.browser_extension_token_title:
+  en: Browser extension token
+  zh-Hans: 浏览器扩展应用 token
+launcher.browser_extension_token_copied:
+  en: Copied Gateway URL and Bearer token to the clipboard.
+  zh-Hans: 已将 Gateway URL 和 Bearer token 复制到剪贴板。
 launcher.check_update:
   en: Check for updates...
   zh-Hans: 检查更新...
@@ -132,6 +144,10 @@ launcher.latest_release:
 launcher.unknown_error:
   en: unknown error
   zh-Hans: 未知错误
+
+browser.workspace_picker_title:
+  en: Open a workspace folder for Anda
+  zh-Hans: 选择 Anda 工作空间目录
 
 launcher.error.unsupported_provider:
   en: "unsupported provider: %{provider_id}"

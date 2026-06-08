@@ -13,9 +13,14 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use hyper::upgrade;
 use hyper_util::rt::TokioIo;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    env,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 use tokio::{process::Command, sync::mpsc};
 use tokio_tungstenite::{
     WebSocketStream,
@@ -354,6 +359,148 @@ async fn handle_pick_workspace() -> Result<Value, String> {
     }))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkspacePickerLanguage {
+    En,
+    ZhHans,
+}
+
+impl WorkspacePickerLanguage {
+    fn locale(self) -> &'static str {
+        match self {
+            WorkspacePickerLanguage::En => "en",
+            WorkspacePickerLanguage::ZhHans => "zh-Hans",
+        }
+    }
+}
+
+static WORKSPACE_PICKER_LANGUAGE: OnceLock<WorkspacePickerLanguage> = OnceLock::new();
+
+fn workspace_picker_title() -> String {
+    workspace_picker_title_for_language(workspace_picker_language())
+}
+
+fn workspace_picker_title_for_language(language: WorkspacePickerLanguage) -> String {
+    t!("browser.workspace_picker_title", locale = language.locale()).into_owned()
+}
+
+fn workspace_picker_language() -> WorkspacePickerLanguage {
+    *WORKSPACE_PICKER_LANGUAGE.get_or_init(detect_workspace_picker_language)
+}
+
+fn detect_workspace_picker_language() -> WorkspacePickerLanguage {
+    language_from_tags(system_locale_tags())
+}
+
+fn language_from_tags<T>(tags: impl IntoIterator<Item = T>) -> WorkspacePickerLanguage
+where
+    T: AsRef<str>,
+{
+    for tag in tags {
+        if let Some(language) = language_from_tag(tag.as_ref()) {
+            return language;
+        }
+    }
+    WorkspacePickerLanguage::En
+}
+
+fn language_from_tag(tag: &str) -> Option<WorkspacePickerLanguage> {
+    let normalized = tag
+        .trim()
+        .trim_matches('"')
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-")
+        .to_ascii_lowercase();
+
+    if normalized.starts_with("zh") || normalized.contains("chinese") {
+        Some(WorkspacePickerLanguage::ZhHans)
+    } else if normalized.starts_with("en") {
+        Some(WorkspacePickerLanguage::En)
+    } else {
+        None
+    }
+}
+
+fn system_locale_tags() -> Vec<String> {
+    let mut tags = platform_locale_tags();
+    tags.extend(environment_locale_tags());
+    tags
+}
+
+#[cfg(target_os = "macos")]
+fn platform_locale_tags() -> Vec<String> {
+    let mut tags = macos_defaults_languages();
+    if let Some(locale) = macos_defaults_value("AppleLocale") {
+        tags.push(locale);
+    }
+    tags
+}
+
+#[cfg(target_os = "macos")]
+fn macos_defaults_languages() -> Vec<String> {
+    let Some(output) = macos_defaults_value("AppleLanguages") else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim_end_matches(',')
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_defaults_value(key: &str) -> Option<String> {
+    let output = std::process::Command::new("defaults")
+        .arg("read")
+        .arg("-g")
+        .arg(key)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn platform_locale_tags() -> Vec<String> {
+    let mut buffer = [0u16; 85];
+    let len = unsafe {
+        windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
+            buffer.as_mut_ptr(),
+            buffer.len() as i32,
+        )
+    };
+    if len <= 1 {
+        return Vec::new();
+    }
+    vec![String::from_utf16_lossy(&buffer[..(len as usize - 1)])]
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn platform_locale_tags() -> Vec<String> {
+    Vec::new()
+}
+
+fn environment_locale_tags() -> Vec<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|name| env::var(name).ok())
+        .filter(|value| !value.trim().is_empty())
+        .collect()
+}
+
 async fn select_workspace_path() -> Result<Option<PathBuf>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -373,11 +520,10 @@ async fn select_workspace_path() -> Result<Option<PathBuf>, String> {
 
 #[cfg(target_os = "macos")]
 async fn pick_workspace_path_macos() -> Result<Option<PathBuf>, String> {
+    let prompt = workspace_picker_title();
+    let script = workspace_picker_macos_script(&prompt);
     let output = Command::new("osascript")
-        .args([
-            "-e",
-            "POSIX path of (choose folder with prompt \"Open a workspace folder for Anda\")",
-        ])
+        .args(["-e", script.as_str()])
         .output()
         .await
         .map_err(|err| format!("failed to launch macOS folder picker: {err}"))?;
@@ -396,20 +542,29 @@ async fn pick_workspace_path_macos() -> Result<Option<PathBuf>, String> {
     parse_selected_workspace_path(&output.stdout)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn workspace_picker_macos_script(prompt: &str) -> String {
+    format!(
+        "POSIX path of (choose folder with prompt {})",
+        applescript_string(prompt)
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn applescript_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 #[cfg(target_os = "windows")]
 async fn pick_workspace_path_windows() -> Result<Option<PathBuf>, String> {
-    let script = concat!(
-        "$utf8 = [System.Text.UTF8Encoding]::new($false); ",
-        "try { [Console]::OutputEncoding = $utf8 } catch { }; ",
-        "$OutputEncoding = $utf8; ",
-        "Add-Type -AssemblyName System.Windows.Forms > $null; ",
-        "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ",
-        "$dialog.Description = 'Open a workspace folder for Anda'; ",
-        "$dialog.UseDescriptionForTitle = $true; ",
-        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }"
-    );
+    let title = workspace_picker_title();
+    let script = workspace_picker_windows_script(&title);
     let mut command = Command::new("powershell.exe");
-    command.args(["-NoProfile", "-STA", "-Command", script]);
+    command
+        .arg("-NoProfile")
+        .arg("-STA")
+        .arg("-Command")
+        .arg(&script);
     suppress_tokio_console_window(&mut command);
     let output = command
         .output()
@@ -427,25 +582,63 @@ async fn pick_workspace_path_windows() -> Result<Option<PathBuf>, String> {
     parse_selected_workspace_path(&output.stdout)
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn workspace_picker_windows_script(title: &str) -> String {
+    format!(
+        concat!(
+            "$utf8 = [System.Text.UTF8Encoding]::new($false); ",
+            "try {{ [Console]::OutputEncoding = $utf8 }} catch {{ }}; ",
+            "$OutputEncoding = $utf8; ",
+            "$title = {title}; ",
+            "Add-Type -AssemblyName System.Windows.Forms > $null; ",
+            "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ",
+            "$dialog.Description = $title; ",
+            "$dialog.UseDescriptionForTitle = $true; ",
+            "$owner = New-Object System.Windows.Forms.Form; ",
+            "$owner.Text = 'Anda Bot'; ",
+            "$owner.StartPosition = 'CenterScreen'; ",
+            "$owner.ShowInTaskbar = $false; ",
+            "$owner.TopMost = $true; ",
+            "$owner.Width = 1; ",
+            "$owner.Height = 1; ",
+            "$owner.Opacity = 0; ",
+            "try {{ ",
+            "$owner.Show(); ",
+            "$owner.Activate(); ",
+            "[void]$owner.Focus(); ",
+            "$result = $dialog.ShowDialog($owner); ",
+            "if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $dialog.SelectedPath }} ",
+            "}} finally {{ $owner.Close(); $owner.Dispose(); $dialog.Dispose(); }}"
+        ),
+        title = powershell_single_quoted_string(title)
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn powershell_single_quoted_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 async fn pick_workspace_path_linux() -> Result<Option<PathBuf>, String> {
     let mut errors = Vec::new();
+    let title = workspace_picker_title();
 
     for (program, args) in [
         (
             "zenity",
             vec![
-                "--file-selection",
-                "--directory",
-                "--title=Open a workspace folder for Anda",
+                "--file-selection".to_string(),
+                "--directory".to_string(),
+                format!("--title={title}"),
             ],
         ),
         (
             "kdialog",
             vec![
-                "--getexistingdirectory",
-                ".",
-                "Open a workspace folder for Anda",
+                "--getexistingdirectory".to_string(),
+                ".".to_string(),
+                title.clone(),
             ],
         ),
     ] {
@@ -774,8 +967,75 @@ fn percent_decode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_bytes_with_windows_code_page, normalize_selected_workspace_path};
+    use super::{
+        WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tag,
+        language_from_tags, normalize_selected_workspace_path, powershell_single_quoted_string,
+        workspace_picker_macos_script, workspace_picker_title_for_language,
+        workspace_picker_windows_script,
+    };
     use std::{env, path::MAIN_SEPARATOR};
+
+    #[test]
+    fn workspace_picker_language_prefers_chinese_system_tags() {
+        assert_eq!(
+            language_from_tag("zh_CN.UTF-8"),
+            Some(WorkspacePickerLanguage::ZhHans)
+        );
+        assert_eq!(
+            language_from_tag("Chinese (Simplified)"),
+            Some(WorkspacePickerLanguage::ZhHans)
+        );
+        assert_eq!(
+            language_from_tag("en-US"),
+            Some(WorkspacePickerLanguage::En)
+        );
+        assert_eq!(
+            language_from_tags(["fr-FR", "zh-Hans"]),
+            WorkspacePickerLanguage::ZhHans
+        );
+        assert_eq!(
+            language_from_tags(["fr-FR", "de-DE"]),
+            WorkspacePickerLanguage::En
+        );
+    }
+
+    #[test]
+    fn workspace_picker_title_uses_locale_resources() {
+        let en = workspace_picker_title_for_language(WorkspacePickerLanguage::En);
+        let zh = workspace_picker_title_for_language(WorkspacePickerLanguage::ZhHans);
+
+        assert_eq!(en, "Open a workspace folder for Anda");
+        assert_ne!(zh, en);
+        assert!(zh.contains("Anda"));
+    }
+
+    #[test]
+    fn macos_workspace_picker_script_escapes_prompt_text() {
+        let script = workspace_picker_macos_script("Choose \"Anda\" \\ folder");
+
+        assert_eq!(
+            script,
+            "POSIX path of (choose folder with prompt \"Choose \\\"Anda\\\" \\\\ folder\")"
+        );
+    }
+
+    #[test]
+    fn windows_workspace_picker_script_uses_localized_title_and_owner() {
+        let script = workspace_picker_windows_script("Choose Anda's workspace");
+
+        assert!(script.contains("$title = 'Choose Anda''s workspace';"));
+        assert!(script.contains("$dialog.Description = $title;"));
+        assert!(script.contains("$owner.TopMost = $true;"));
+        assert!(script.contains("$dialog.ShowDialog($owner);"));
+    }
+
+    #[test]
+    fn powershell_single_quoted_string_escapes_quotes() {
+        assert_eq!(
+            powershell_single_quoted_string("Anda's workspace"),
+            "'Anda''s workspace'"
+        );
+    }
 
     #[test]
     fn normalize_selected_workspace_path_trims_and_drops_trailing_separator() {

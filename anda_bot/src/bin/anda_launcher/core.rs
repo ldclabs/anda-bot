@@ -35,6 +35,7 @@ const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../../assets/config.yaml"
 const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const ANDA_EXE_ENV: &str = "ANDA_EXE";
 const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
+const BROWSER_EXTENSION_TOKEN_DAYS: &str = "365";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherLanguage {
@@ -144,10 +145,14 @@ pub struct LauncherText {
     pub setup_title: String,
     pub open_anda: String,
     pub settings: String,
+    pub model_settings: String,
     pub status: String,
     pub start_daemon: String,
     pub stop_daemon: String,
     pub restart_daemon: String,
+    pub browser_extension_token: String,
+    pub browser_extension_token_title: String,
+    pub browser_extension_token_copied: String,
     pub check_update: String,
     pub launch_at_login: String,
     pub disable_launch_at_login: String,
@@ -402,10 +407,23 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         setup_title: t!("launcher.setup_title", locale = locale).into_owned(),
         open_anda: t!("launcher.open_anda", locale = locale).into_owned(),
         settings: t!("launcher.settings", locale = locale).into_owned(),
+        model_settings: t!("launcher.model_settings", locale = locale).into_owned(),
         status: t!("launcher.status", locale = locale).into_owned(),
         start_daemon: t!("launcher.start_daemon", locale = locale).into_owned(),
         stop_daemon: t!("launcher.stop_daemon", locale = locale).into_owned(),
         restart_daemon: t!("launcher.restart_daemon", locale = locale).into_owned(),
+        browser_extension_token: t!("launcher.browser_extension_token", locale = locale)
+            .into_owned(),
+        browser_extension_token_title: t!(
+            "launcher.browser_extension_token_title",
+            locale = locale
+        )
+        .into_owned(),
+        browser_extension_token_copied: t!(
+            "launcher.browser_extension_token_copied",
+            locale = locale
+        )
+        .into_owned(),
         check_update: t!("launcher.check_update", locale = locale).into_owned(),
         launch_at_login: t!("launcher.launch_at_login", locale = locale).into_owned(),
         disable_launch_at_login: t!("launcher.disable_launch_at_login", locale = locale)
@@ -782,6 +800,14 @@ pub fn restart_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
 
 pub fn daemon_status(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["status"])
+}
+
+pub fn generate_browser_extension_token(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
+    run_anda(ctx, &browser_extension_token_args())
+}
+
+fn browser_extension_token_args() -> [&'static str; 4] {
+    ["browser", "token", "--days", BROWSER_EXTENSION_TOKEN_DAYS]
 }
 
 pub fn check_update_now(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
@@ -1584,6 +1610,8 @@ mod tests {
     fn launcher_text_uses_locale_files() {
         let en = text_for_language(LauncherLanguage::En);
         assert_eq!(en.api_key, "API key");
+        assert_eq!(en.settings, "Settings");
+        assert_eq!(en.model_settings, "Model settings...");
         assert_eq!(
             en.unsupported_provider("custom"),
             "unsupported provider: custom"
@@ -1595,6 +1623,8 @@ mod tests {
 
         let zh = text_for_language(LauncherLanguage::ZhHans);
         assert_eq!(zh.api_key, "API 密钥");
+        assert_eq!(zh.settings, "设置");
+        assert_eq!(zh.model_settings, "大模型配置...");
         assert_eq!(
             zh.unsupported_provider("custom"),
             "不支持的模型供应商：custom"
@@ -1725,6 +1755,14 @@ tts:
             default_provider().model
         );
         assert!(provider_ids().contains(&"deepseek"));
+    }
+
+    #[test]
+    fn browser_extension_token_command_defaults_to_one_year() {
+        assert_eq!(
+            browser_extension_token_args(),
+            ["browser", "token", "--days", "365"]
+        );
     }
 
     #[test]

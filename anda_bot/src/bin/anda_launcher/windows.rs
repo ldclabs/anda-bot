@@ -1,10 +1,11 @@
 use std::{
     env,
     ffi::{OsStr, c_void},
+    io::Write,
     mem::size_of,
     os::windows::{ffi::OsStrExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     ptr,
     sync::OnceLock,
     thread,
@@ -34,10 +35,11 @@ use windows_sys::Win32::{
             AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconIndirect,
             CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
             DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON, HMENU, ICONINFO,
-            IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MF_SEPARATOR,
-            MF_STRING, MSG, MessageBoxW, PostQuitMessage, RegisterClassW, SW_SHOWNORMAL,
-            SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
-            WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+            IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MF_POPUP,
+            MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostQuitMessage, RegisterClassW,
+            SW_SHOWNORMAL, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+            WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
+            WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -61,13 +63,12 @@ const LEGACY_LAUNCHER_TASK_NAME: &str = "Anda Bot Launcher";
 const ID_OPEN: usize = 1001;
 const ID_SETTINGS: usize = 1002;
 const ID_STATUS: usize = 1003;
-const ID_START: usize = 1004;
-const ID_STOP: usize = 1005;
 const ID_RESTART: usize = 1006;
 const ID_AUTOSTART: usize = 1007;
 const ID_LOGS: usize = 1008;
 const ID_CHECK_UPDATE: usize = 1009;
 const ID_QUIT: usize = 1010;
+const ID_BROWSER_TOKEN: usize = 1011;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
@@ -167,17 +168,12 @@ fn handle_command(hwnd: HWND, id: usize) {
             &text().app_title,
             &core::daemon_status(ctx).unwrap_or_else(error_result),
         ),
-        ID_START => show_result(
-            &text().app_title,
-            &core::start_daemon(ctx).unwrap_or_else(error_result),
-        ),
-        ID_STOP => show_result(
-            &text().app_title,
-            &core::stop_daemon(ctx).unwrap_or_else(error_result),
-        ),
         ID_RESTART => show_result(
             &text().app_title,
             &core::restart_daemon(ctx).unwrap_or_else(error_result),
+        ),
+        ID_BROWSER_TOKEN => show_browser_extension_token_result(
+            &core::generate_browser_extension_token(ctx).unwrap_or_else(error_result),
         ),
         ID_CHECK_UPDATE => run_manual_update_check(ctx.clone()),
         ID_AUTOSTART => match toggle_autostart(ctx) {
@@ -197,22 +193,23 @@ fn show_tray_menu(hwnd: HWND) {
         let copy = text();
         let menu = CreatePopupMenu();
         append_item(menu, ID_OPEN, &copy.open_anda);
-        append_item(menu, ID_SETTINGS, &copy.settings);
+        append_item(menu, ID_LOGS, &copy.open_logs);
         append_separator(menu);
         append_item(menu, ID_STATUS, &copy.status);
-        append_item(menu, ID_START, &copy.start_daemon);
-        append_item(menu, ID_STOP, &copy.stop_daemon);
         append_item(menu, ID_RESTART, &copy.restart_daemon);
+        append_item(menu, ID_BROWSER_TOKEN, &copy.browser_extension_token);
         append_separator(menu);
-        append_item(menu, ID_CHECK_UPDATE, &copy.check_update);
-        append_separator(menu);
+        let settings_menu = CreatePopupMenu();
+        append_item(settings_menu, ID_SETTINGS, &copy.model_settings);
         let autostart_label = if launcher_autostart_installed() {
             &copy.disable_launch_at_login
         } else {
             &copy.launch_at_login
         };
-        append_item(menu, ID_AUTOSTART, autostart_label);
-        append_item(menu, ID_LOGS, &copy.open_logs);
+        append_item(settings_menu, ID_AUTOSTART, autostart_label);
+        append_submenu(menu, settings_menu, &copy.settings);
+        append_separator(menu);
+        append_item(menu, ID_CHECK_UPDATE, &copy.check_update);
         append_separator(menu);
         append_item(menu, ID_QUIT, &copy.quit);
 
@@ -424,6 +421,15 @@ unsafe fn append_item(menu: HMENU, id: usize, text: &str) {
     AppendMenuW(menu, MF_STRING, id, wide_null(text).as_ptr());
 }
 
+unsafe fn append_submenu(menu: HMENU, submenu: HMENU, text: &str) {
+    AppendMenuW(
+        menu,
+        MF_POPUP | MF_STRING,
+        submenu as usize,
+        wide_null(text).as_ptr(),
+    );
+}
+
 unsafe fn append_separator(menu: HMENU) {
     AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
 }
@@ -435,6 +441,44 @@ fn show_result(title: &str, result: &CommandResult) {
         MB_OK | MB_ICONERROR
     };
     message_box(title, &result.message, style);
+}
+
+fn show_browser_extension_token_result(result: &CommandResult) {
+    if result.success && copy_to_clipboard(&result.message).is_ok() {
+        let copied = CommandResult {
+            success: result.success,
+            message: format!(
+                "{}\r\n\r\n{}",
+                text().browser_extension_token_copied,
+                result.message
+            ),
+        };
+        show_result(&text().browser_extension_token_title, &copied);
+    } else {
+        show_result(&text().browser_extension_token_title, result);
+    }
+}
+
+fn copy_to_clipboard(value: &str) -> LauncherResult<()> {
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+        ])
+        .stdin(Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()?;
+    let mut stdin = child.stdin.take().ok_or("failed to open clipboard stdin")?;
+    stdin.write_all(value.as_bytes())?;
+    drop(stdin);
+
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(text().command_exited(status).into())
+    }
 }
 
 fn start_startup_tasks(ctx: LauncherContext) {

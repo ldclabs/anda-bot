@@ -1,5 +1,11 @@
 use std::{
-    fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command, sync::OnceLock, thread,
+    fs,
+    io::Write,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::OnceLock,
+    thread,
 };
 
 use objc2::{
@@ -64,16 +70,6 @@ define_class!(
             }
         }
 
-        #[unsafe(method(startDaemon:))]
-        fn start_daemon(&self, _sender: &AnyObject) {
-            if let Some(ctx) = CTX.get() {
-                show_result(
-                    &text().app_title,
-                    &core::start_daemon(ctx).unwrap_or_else(error_result),
-                );
-            }
-        }
-
         #[unsafe(method(showStatus:))]
         fn show_status(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
@@ -84,22 +80,21 @@ define_class!(
             }
         }
 
-        #[unsafe(method(stopDaemon:))]
-        fn stop_daemon(&self, _sender: &AnyObject) {
-            if let Some(ctx) = CTX.get() {
-                show_result(
-                    &text().app_title,
-                    &core::stop_daemon(ctx).unwrap_or_else(error_result),
-                );
-            }
-        }
-
         #[unsafe(method(restartDaemon:))]
         fn restart_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
                 show_result(
                     &text().app_title,
                     &core::restart_daemon(ctx).unwrap_or_else(error_result),
+                );
+            }
+        }
+
+        #[unsafe(method(generateBrowserExtensionToken:))]
+        fn generate_browser_extension_token(&self, _sender: &AnyObject) {
+            if let Some(ctx) = CTX.get() {
+                show_browser_extension_token_result(
+                    &core::generate_browser_extension_token(ctx).unwrap_or_else(error_result),
                 );
             }
         }
@@ -187,11 +182,9 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     let copy = text();
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.app_title).as_ref());
     add_item(&menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
-    add_item(&menu, mtm, &copy.settings, sel!(settings:), delegate);
+    add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(&menu, mtm, &copy.status, sel!(showStatus:), delegate);
-    add_item(&menu, mtm, &copy.start_daemon, sel!(startDaemon:), delegate);
-    add_item(&menu, mtm, &copy.stop_daemon, sel!(stopDaemon:), delegate);
     add_item(
         &menu,
         mtm,
@@ -199,25 +192,58 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
         sel!(restartDaemon:),
         delegate,
     );
+    add_item(
+        &menu,
+        mtm,
+        &copy.browser_extension_token,
+        sel!(generateBrowserExtensionToken:),
+        delegate,
+    );
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    add_settings_submenu(&menu, mtm, delegate, &copy);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(&menu, mtm, &copy.check_update, sel!(checkUpdate:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
+    add_item(&menu, mtm, &copy.quit, sel!(quit:), delegate);
+    menu
+}
+
+fn add_settings_submenu(
+    menu: &NSMenu,
+    mtm: MainThreadMarker,
+    delegate: &Delegate,
+    copy: &core::LauncherText,
+) {
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            nsstring(&copy.settings).as_ref(),
+            None,
+            nsstring("").as_ref(),
+        )
+    };
+    let submenu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.settings).as_ref());
+    add_item(
+        &submenu,
+        mtm,
+        &copy.model_settings,
+        sel!(settings:),
+        delegate,
+    );
     let launch_title = if launch_agent_installed() {
         &copy.disable_launch_at_login
     } else {
         &copy.launch_at_login
     };
     add_item(
-        &menu,
+        &submenu,
         mtm,
         launch_title,
         sel!(toggleLaunchAtLogin:),
         delegate,
     );
-    add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, &copy.quit, sel!(quit:), delegate);
-    menu
+    item.setSubmenu(Some(&submenu));
+    menu.addItem(&item);
 }
 
 fn status_bar_icon() -> Option<Retained<NSImage>> {
@@ -255,6 +281,36 @@ fn show_result(title: &str, result: &CommandResult) {
 
 fn show_info(title: &str, message: &str) {
     show_alert(title, message);
+}
+
+fn show_browser_extension_token_result(result: &CommandResult) {
+    if result.success && copy_to_clipboard(&result.message).is_ok() {
+        let copied = CommandResult {
+            success: result.success,
+            message: format!(
+                "{}\n\n{}",
+                text().browser_extension_token_copied,
+                result.message
+            ),
+        };
+        show_result(&text().browser_extension_token_title, &copied);
+    } else {
+        show_result(&text().browser_extension_token_title, result);
+    }
+}
+
+fn copy_to_clipboard(value: &str) -> LauncherResult<()> {
+    let mut child = Command::new("pbcopy").stdin(Stdio::piped()).spawn()?;
+    let mut stdin = child.stdin.take().ok_or("failed to open clipboard stdin")?;
+    stdin.write_all(value.as_bytes())?;
+    drop(stdin);
+
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(text().command_exited(status).into())
+    }
 }
 
 fn start_startup_tasks(ctx: LauncherContext) {
