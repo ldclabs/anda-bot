@@ -94,6 +94,31 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows-installer.ps
 .\release\AndaBotSetup-windows-x86_64.exe
 ```
 
+Windows Authenticode signing is optional. When Microsoft Artifact Signing is
+configured, the GitHub workflow signs Windows binaries and the generated
+installer before checksums are generated. When it is not configured, the
+workflow still publishes unsigned Windows artifacts. To enable signing, create
+an Azure Artifact Signing account, complete identity validation, create a
+certificate profile, grant the app registration's service principal the
+Certificate Profile Signer role, and add a federated credential for this
+repository. Configure these GitHub secrets:
+
+- `AZURE_CLIENT_ID`: app registration client ID.
+- `AZURE_TENANT_ID`: Microsoft Entra tenant ID.
+- `AZURE_SUBSCRIPTION_ID`: Azure subscription ID.
+
+Configure these GitHub repository variables:
+
+- `AZURE_ARTIFACT_SIGNING_ENDPOINT`: signing account endpoint, such as
+  `https://eus.codesigning.azure.net/`.
+- `AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`: Artifact Signing account name.
+- `AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME`: certificate profile name.
+
+SmartScreen reputation is tied to both the file hash and the signing identity;
+keep the publisher identity stable across releases so reputation can
+accumulate. Unsigned Windows artifacts may still show the SmartScreen
+unrecognized-app warning.
+
 The release install script downloads published artifacts. For local launcher
 debugging, use the manual install flow above or the generated Windows installer.
 

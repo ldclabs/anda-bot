@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-binary:
@@ -58,7 +59,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -115,6 +116,76 @@ jobs:
             cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda_launcher${{ matrix.exe_ext }}" "release/anda_launcher-${{ matrix.target }}${{ matrix.exe_ext }}"
           fi
 
+          ls -lah release
+
+      - name: Check Artifact Signing configuration
+        if: ${{ runner.os == 'Windows' }}
+        id: artifact-signing-config
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $missing = @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
+            "AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME",
+            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME"
+          ) | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+
+          if ($missing.Count -gt 0) {
+            Write-Host "Azure Artifact Signing is not fully configured; skipping Windows Authenticode signing. Missing: $($missing -join ', ')"
+            "configured=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          "configured=true" >> $env:GITHUB_OUTPUT
+
+      - name: Azure login for Artifact Signing
+        if: ${{ runner.os == 'Windows' && steps.artifact-signing-config.outputs.configured == 'true' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows binaries
+        if: ${{ runner.os == 'Windows' && steps.artifact-signing-config.outputs.configured == 'true' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\release
+          files-folder-filter: exe,dll,msi,msix,msixbundle,appx,appxbundle,cab
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Anda Bot
+          description-url: https://github.com/ldclabs/anda-bot
+
+      - name: Verify Windows binary signatures
+        if: ${{ runner.os == 'Windows' && steps.artifact-signing-config.outputs.configured == 'true' }}
+        shell: pwsh
+        run: |
+          $extensions = @(".exe", ".dll", ".msi", ".msix", ".msixbundle", ".appx", ".appxbundle", ".cab")
+          foreach ($file in Get-ChildItem -LiteralPath release -File | Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() }) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature for $($file.FullName): $($signature.Status) $($signature.StatusMessage)"
+            }
+            Write-Host "Verified Authenticode signature for $($file.Name)"
+          }
+
+      - name: Generate checksums
+        shell: bash
+        run: |
           for file in release/*; do
             if command -v sha256sum >/dev/null 2>&1; then
               hash="$(sha256sum "$file" | awk '{print $1}')"
@@ -180,9 +251,78 @@ jobs:
           name: release-skills
           path: release
 
+      - name: Check Artifact Signing configuration
+        id: artifact-signing-config
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $missing = @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
+            "AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME",
+            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME"
+          ) | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+
+          if ($missing.Count -gt 0) {
+            Write-Host "Azure Artifact Signing is not fully configured; building an unsigned Windows installer. Missing: $($missing -join ', ')"
+            "configured=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          "configured=true" >> $env:GITHUB_OUTPUT
+
       - name: Build Windows installer
         shell: pwsh
-        run: ./scripts/build-windows-installer.ps1 -ReleaseDir release
+        run: |
+          ./scripts/build-windows-installer.ps1 -ReleaseDir release
+
+      - name: Azure login for Artifact Signing
+        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows installer
+        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files: ${{ github.workspace }}\release\AndaBotSetup-windows-x86_64.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Anda Bot Setup
+          description-url: https://github.com/ldclabs/anda-bot
+
+      - name: Verify Windows installer signature
+        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "release\AndaBotSetup-windows-x86_64.exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $path
+          if ($signature.Status -ne "Valid") {
+            throw "Invalid Authenticode signature for ${path}: $($signature.Status) $($signature.StatusMessage)"
+          }
+          Write-Host "Verified Authenticode signature for AndaBotSetup-windows-x86_64.exe"
+
+      - name: Generate Windows installer checksum
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "release\AndaBotSetup-windows-x86_64.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+          Set-Content -Path "$path.sha256" -Value "$hash  AndaBotSetup-windows-x86_64.exe" -Encoding ASCII
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
