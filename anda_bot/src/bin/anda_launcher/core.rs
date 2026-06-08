@@ -14,7 +14,10 @@ use std::{
 use std::os::fd::AsRawFd;
 
 #[cfg(windows)]
-use std::{os::windows::ffi::OsStrExt, ptr};
+use std::{
+    os::windows::{ffi::OsStrExt, process::CommandExt},
+    ptr,
+};
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -23,10 +26,15 @@ use windows_sys::Win32::{
     System::Threading::{CreateMutexW, ReleaseMutex},
 };
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 pub type LauncherResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../../assets/config.yaml");
 const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
+const ANDA_EXE_ENV: &str = "ANDA_EXE";
+const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherLanguage {
@@ -615,8 +623,12 @@ pub const PROVIDERS: &[ProviderPreset] = &[
 
 impl LauncherContext {
     pub fn detect() -> LauncherResult<Self> {
-        let launcher_exe = env::current_exe()
+        let detected_launcher_exe = env::current_exe()
             .map_err(|err| text().launcher_exe_detect_failed(&err.to_string()))?;
+        let launcher_exe = env::var_os(ANDA_LAUNCHER_EXE_ENV)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or(detected_launcher_exe);
         let anda_exe = detect_anda_exe(&launcher_exe);
         let home = detect_anda_home()?;
         Ok(Self {
@@ -830,6 +842,8 @@ pub fn auto_update_poll_interval() -> Duration {
 
 pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandResult> {
     let mut command = Command::new(&ctx.anda_exe);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     command.arg("--home").arg(&ctx.home);
     command.args(args);
     let output = command
@@ -890,6 +904,20 @@ fn combine_command_results(first: CommandResult, second: CommandResult) -> Comma
 }
 
 fn detect_anda_exe(launcher_exe: &Path) -> PathBuf {
+    if let Some(anda_exe) = env::var_os(ANDA_EXE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+    {
+        return anda_exe;
+    }
+    detect_anda_exe_from_candidates(launcher_exe, fallback_anda_exe_candidates())
+}
+
+fn detect_anda_exe_from_candidates(
+    launcher_exe: &Path,
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> PathBuf {
     let exe_name = if cfg!(windows) { "anda.exe" } else { "anda" };
     if let Some(parent) = launcher_exe.parent() {
         let sibling = parent.join(exe_name);
@@ -897,7 +925,25 @@ fn detect_anda_exe(launcher_exe: &Path) -> PathBuf {
             return sibling;
         }
     }
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
     PathBuf::from(exe_name)
+}
+
+fn fallback_anda_exe_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = env::var_os("HOME") {
+            candidates.push(PathBuf::from(home).join(".local/bin/anda"));
+        }
+        candidates.push(PathBuf::from("/opt/homebrew/bin/anda"));
+        candidates.push(PathBuf::from("/usr/local/bin/anda"));
+    }
+    candidates
 }
 
 fn detect_anda_home() -> LauncherResult<PathBuf> {
@@ -1714,6 +1760,37 @@ tts:
             Some(PathBuf::from("C:\\Users\\test\\.anda-inline"))
         );
         assert!(home_arg_from_args([OsString::from("--home")]).is_err());
+    }
+
+    #[test]
+    fn detect_anda_exe_uses_existing_sibling_first() {
+        let home = tempfile::tempdir().unwrap();
+        let launcher = home.path().join("anda_launcher");
+        let sibling = home
+            .path()
+            .join(if cfg!(windows) { "anda.exe" } else { "anda" });
+        fs::write(&sibling, "").unwrap();
+        let fallback = home.path().join("other").join("anda");
+
+        assert_eq!(
+            detect_anda_exe_from_candidates(&launcher, [fallback]),
+            sibling
+        );
+    }
+
+    #[test]
+    fn detect_anda_exe_uses_existing_fallback_when_sibling_missing() {
+        let home = tempfile::tempdir().unwrap();
+        let launcher = home.path().join("app/Contents/MacOS/Anda Bot");
+        let fallback_dir = home.path().join("bin");
+        fs::create_dir_all(&fallback_dir).unwrap();
+        let fallback = fallback_dir.join("anda");
+        fs::write(&fallback, "").unwrap();
+
+        assert_eq!(
+            detect_anda_exe_from_candidates(&launcher, [fallback.clone()]),
+            fallback
+        );
     }
 
     fn launcher_context(home: &Path) -> LauncherContext {

@@ -205,6 +205,7 @@ async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::file_uri::path_from_file_uri;
 
     #[test]
     fn sanitize_path_component_keeps_safe_ascii_and_collapses_separators() {
@@ -316,9 +317,12 @@ mod tests {
 
     #[test]
     fn local_file_uri_prefixes_path_losslessly() {
-        assert_eq!(
-            file_uri_for_path(Path::new("/tmp/voice.mp3")).unwrap(),
-            "file:///tmp/voice.mp3"
-        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("voice file.mp3");
+        let uri = file_uri_for_path(&path).unwrap();
+
+        assert!(uri.starts_with("file://"));
+        assert!(uri.ends_with("/voice%20file.mp3"));
+        assert_eq!(path_from_file_uri(&uri).unwrap(), path);
     }
 }

@@ -198,6 +198,39 @@ function Verify-Checksum($FilePath, $ChecksumPath) {
     Write-Success "Checksum verified."
 }
 
+function Write-IcoFromPng($PngPath, $IcoPath) {
+    [byte[]]$png = [System.IO.File]::ReadAllBytes($PngPath)
+    [byte[]]$ico = New-Object byte[] (22 + $png.Length)
+    [BitConverter]::GetBytes([UInt16]0).CopyTo($ico, 0)
+    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 2)
+    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 4)
+    $ico[6] = 32
+    $ico[7] = 32
+    $ico[8] = 0
+    $ico[9] = 0
+    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 10)
+    [BitConverter]::GetBytes([UInt16]32).CopyTo($ico, 12)
+    [BitConverter]::GetBytes([UInt32]$png.Length).CopyTo($ico, 14)
+    [BitConverter]::GetBytes([UInt32]22).CopyTo($ico, 18)
+    [Array]::Copy($png, 0, $ico, 22, $png.Length)
+    [System.IO.File]::WriteAllBytes($IcoPath, $ico)
+}
+
+function Install-LauncherIcon($Version, $Directory, $TempRoot) {
+    $iconPath = Join-Path $Directory "anda.ico"
+    $logoPath = Join-Path $TempRoot "anda-logo.png"
+    $logoUrl = "https://raw.githubusercontent.com/$Repo/$Version/anda_bot/assets/logo.png"
+
+    try {
+        Invoke-WebRequest -Uri $logoUrl -OutFile $logoPath -UseBasicParsing
+        Write-IcoFromPng $logoPath $iconPath
+    } catch {
+        Write-Info "Launcher icon could not be installed; shortcuts may use the default Windows icon."
+    }
+
+    return $iconPath
+}
+
 function Install-Skills($ArchivePath, $HomeDir, $TempRoot) {
     $skillsDir = Join-Path $HomeDir "skills"
     $stagingDir = Join-Path $TempRoot "skills-staging"
@@ -304,7 +337,10 @@ function Create-StartMenuShortcuts($InstallDir, $LauncherPath, $IconPath) {
         $launcherShortcut.TargetPath = $LauncherPath
         $launcherShortcut.Arguments = ""
         $launcherShortcut.WorkingDirectory = $InstallDir
-        $launcherShortcut.IconLocation = $IconPath
+        if (Test-Path -LiteralPath $IconPath) {
+            $launcherShortcut.IconLocation = $IconPath
+        }
+        $launcherShortcut.WindowStyle = 7
         $launcherShortcut.Save()
     }
 }
@@ -393,7 +429,7 @@ try {
     Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
     $launcherInstallPath = Install-Binary $launcherDownloadPath $InstallDir $LauncherInstallName
-    $launcherIconPath = Join-Path $InstallDir "anda.ico"
+    $launcherIconPath = Install-LauncherIcon $version $InstallDir $tempDir
     Create-StartMenuShortcuts $InstallDir $launcherInstallPath $launcherIconPath
 
     Write-Info "Downloading $SkillsArchiveName..."
@@ -444,7 +480,7 @@ try {
 
     if (-not $NoStart) {
         Write-Info "Starting Anda launcher..."
-        Start-Process -FilePath $launcherInstallPath -WorkingDirectory $InstallDir
+        Start-Process -FilePath $launcherInstallPath -WorkingDirectory $InstallDir -WindowStyle Hidden
         Write-Success "Anda launcher started."
     }
 

@@ -477,9 +477,32 @@ fn launcher_icon_icns() -> Vec<u8> {
 }
 
 fn launcher_app_script(ctx: &LauncherContext) -> String {
+    let install_dir = ctx
+        .launcher_exe
+        .parent()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".to_string());
     format!(
-        "#!/bin/sh\nexec {} \"$@\"\n",
-        shell_single_quote(&ctx.launcher_exe.to_string_lossy()),
+        r#"#!/bin/sh
+INSTALL_DIR={install_dir}
+PATH="$INSTALL_DIR:${{HOME:-}}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH
+
+for LAUNCHER in "$INSTALL_DIR/anda_launcher" "${{HOME:-}}/.local/bin/anda_launcher" "/opt/homebrew/bin/anda_launcher" "/usr/local/bin/anda_launcher"; do
+  if [ -x "$LAUNCHER" ]; then
+    export ANDA_LAUNCHER_EXE="$LAUNCHER"
+    ANDA_CANDIDATE="$(dirname "$LAUNCHER")/anda"
+    if [ -x "$ANDA_CANDIDATE" ]; then
+      export ANDA_EXE="$ANDA_CANDIDATE"
+    fi
+    exec "$LAUNCHER" "$@"
+  fi
+done
+
+osascript -e 'display dialog "Anda launcher could not be found. Reinstall Anda Bot." with title "Anda Bot" buttons {{"OK"}} default button "OK" with icon caution' >/dev/null 2>&1
+exit 127
+"#,
+        install_dir = shell_single_quote(&install_dir),
     )
 }
 
@@ -617,7 +640,10 @@ mod tests {
         };
 
         let script = launcher_app_script(&ctx);
-        assert!(script.contains("'/Users/me/bin/anda launcher'"));
+        assert!(script.contains("INSTALL_DIR='/Users/me/bin'"));
+        assert!(script.contains("ANDA_LAUNCHER_EXE"));
+        assert!(script.contains("ANDA_EXE"));
+        assert!(script.contains("/opt/homebrew/bin/anda_launcher"));
         assert!(!script.contains("--home"));
     }
 

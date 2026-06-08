@@ -228,6 +228,41 @@ macos_launcher_app_path() {
     printf '%s/Applications/Anda Bot.app\n' "$HOME"
 }
 
+install_macos_launcher_icon() {
+    [ "$OS" = "macos" ] || return 0
+    [ -n "${TMPDIR:-}" ] || return 0
+
+    RESOURCES_DIR="$1"
+    ICON_SOURCE="${TMPDIR}/anda-logo.png"
+    ICONSET="${TMPDIR}/AndaBot.iconset"
+    ICON_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.png"
+
+    if ! command -v sips >/dev/null 2>&1 || ! command -v iconutil >/dev/null 2>&1; then
+        info "Could not find sips/iconutil; the launcher will repair its app icon after startup."
+        return 0
+    fi
+
+    if ! curl -fsSL "$ICON_URL" -o "$ICON_SOURCE"; then
+        info "Could not download launcher icon; the launcher will repair its app icon after startup."
+        return 0
+    fi
+
+    rm -rf "$ICONSET" 2>/dev/null || true
+    mkdir -p "$ICONSET" || return 0
+
+    for SIZE in 16 32 128 256 512; do
+        DOUBLE_SIZE=$((SIZE * 2))
+        sips -z "$SIZE" "$SIZE" "$ICON_SOURCE" --out "${ICONSET}/icon_${SIZE}x${SIZE}.png" >/dev/null 2>&1 || true
+        sips -z "$DOUBLE_SIZE" "$DOUBLE_SIZE" "$ICON_SOURCE" --out "${ICONSET}/icon_${SIZE}x${SIZE}@2x.png" >/dev/null 2>&1 || true
+    done
+
+    if iconutil -c icns "$ICONSET" -o "${RESOURCES_DIR}/AndaBot.icns" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    info "Could not build launcher icon; the launcher will repair its app icon after startup."
+}
+
 install_macos_launcher_app() {
     [ "$OS" = "macos" ] || return 0
     [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
@@ -238,13 +273,15 @@ install_macos_launcher_app() {
     APP_RESOURCES="${APP_CONTENTS}/Resources"
     APP_EXECUTABLE="${APP_MACOS}/Anda Bot"
     LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
-    QUOTED_LAUNCHER=$(shell_single_quote "$LAUNCHER_PATH")
+    LAUNCHER_DIR=$(dirname "$LAUNCHER_PATH")
+    QUOTED_LAUNCHER_DIR=$(shell_single_quote "$LAUNCHER_DIR")
 
     mkdir -p "$APP_MACOS" || {
         info "Could not create ${APP_DIR}; skipping macOS app launcher."
         return 0
     }
     mkdir -p "$APP_RESOURCES" 2>/dev/null || true
+    install_macos_launcher_icon "$APP_RESOURCES"
 
     cat > "${APP_CONTENTS}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -269,7 +306,23 @@ EOF
 
     cat > "$APP_EXECUTABLE" <<EOF
 #!/bin/sh
-exec ${QUOTED_LAUNCHER} "\$@"
+INSTALL_DIR=${QUOTED_LAUNCHER_DIR}
+PATH="\$INSTALL_DIR:\${HOME:-}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
+export PATH
+
+for LAUNCHER in "\$INSTALL_DIR/anda_launcher" "\${HOME:-}/.local/bin/anda_launcher" "/opt/homebrew/bin/anda_launcher" "/usr/local/bin/anda_launcher"; do
+  if [ -x "\$LAUNCHER" ]; then
+    export ANDA_LAUNCHER_EXE="\$LAUNCHER"
+    ANDA_CANDIDATE="\$(dirname "\$LAUNCHER")/anda"
+    if [ -x "\$ANDA_CANDIDATE" ]; then
+      export ANDA_EXE="\$ANDA_CANDIDATE"
+    fi
+    exec "\$LAUNCHER" "\$@"
+  fi
+done
+
+osascript -e 'display dialog "Anda launcher could not be found. Reinstall Anda Bot." with title "Anda Bot" buttons {"OK"} default button "OK" with icon caution' >/dev/null 2>&1
+exit 127
 EOF
     chmod +x "$APP_EXECUTABLE" 2>/dev/null || true
     success "Installed macOS app launcher to ${APP_DIR}"

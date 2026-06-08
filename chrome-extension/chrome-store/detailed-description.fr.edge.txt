@@ -1,0 +1,49 @@
+Anda Bot apporte votre agent Anda local dans Edge, afin que vous puissiez demander de l'aide pendant que vous naviguez et laisser l'agent travailler avec les pages, les onglets, les fichiers, les outils de ligne de commande et les compétences (Skills) sur votre propre ordinateur.
+
+À quoi cela sert
+
+Anda Bot est conçu pour le travail informatique quotidien qui est trop long, trop dispersé ou trop répétitif pour une fenêtre de chat normale. Vous pouvez garder le panneau latéral de Edge ouvert à côté de la page que vous lisez, demander à Anda de comprendre l'onglet actuel, de recueillir des informations, de résumer le contexte, de comparer les sources, de gérer les onglets du navigateur, de préparer des commandes ou de poursuivre un objectif plus large nécessitant plusieurs étapes.
+
+L'extension est un pont. La réflexion et l'orchestration des outils proviennent du programme local Anda Bot s'exécutant sur votre machine. L'extension Edge se connecte à ce démon local via une URL de passerelle (Gateway URL) et un jeton Bearer que vous générez avec Anda. Cela permet de conserver le confort de l'expérience de navigation tout en laissant l'agent utiliser l'environnement d'exécution local, les outils shell, les fichiers, les compétences et la mémoire à long terme qui font l'utilité d'Anda.
+
+Anda peut également être connecté à des outils de messagerie instantanée tels que WeChat, Telegram, Discord ou Lark via ses paramètres de canal. Lorsque ces canaux sont configurés, vous pouvez joindre le même agent local à distance depuis une application de chat pendant que le démon continue de s'exécuter sur l'ordinateur que vous contrôlez.
+
+Pourquoi l'installer
+
+1. Travaillez à partir de la page que vous consultez déjà
+Anda peut recevoir le titre et l'URL de l'onglet actuel comme contexte et, lorsque vous l'y autorisez, utiliser des actions du navigateur telles que l'énumération des onglets, l'ouverture de pages, le changement d'onglet, la navigation, la lecture du contenu de la page, le remplissage de champs, le clic sur des éléments, le défilement et la prise de captures d'écran. Cela le rend utile pour la recherche, la documentation, les flux de travail riches en formulaires, les vérifications d'applications Web et les tâches où le navigateur fait partie du travail.
+
+2. Combinez le travail sur navigateur avec la puissance de la ligne de commande
+De nombreuses tâches ne se limitent pas au navigateur. Anda est particulièrement utile lorsque le contexte Web doit rencontrer vos outils locaux : programmes en ligne de commande, fichiers de projet, journaux, scripts, outils de développement et automatisation. L'extension vous offre un panneau latéral Edge pour parler au même agent local qui peut également fonctionner dans votre terminal.
+
+3. Faites progresser les tâches longues
+Anda Bot est conçu pour le raisonnement à long terme. Au lieu de traiter chaque demande comme une réponse isolée, Anda peut maintenir un objectif actif, compacter le contexte, appeler des outils, coordonner des sous-agents et continuer jusqu'à ce qu'il soit prouvé que le travail est réellement terminé. C'est utile pour la recherche, le débogage, la configuration en plusieurs étapes, la préparation de documents et les tâches opérationnelles récurrentes.
+
+4. Évoluez avec les compétences
+Les compétences (Skills) permettent à Anda d'apprendre des flux de travail spécialisés. Vous pouvez ajouter des compétences pour des domaines spécifiques, des formats de fichiers, des outils ou des processus d'équipe, puis les utiliser à partir de la même conversation Edge. Cela signifie que l'extension peut passer d'un assistant généraliste à un collaborateur local plus performant qui sait comment gérer le travail que vous effectuez réellement.
+
+5. Apprenez grâce à la mémoire graphique
+Anda Hippocampus transforme les conversations utiles en une mémoire à long terme basée sur des graphes : projets, personnes, préférences, décisions, événements, relations et chronologies. Cette mémoire est destinée à aider Anda à s'améliorer au fil du temps, à se souvenir du contexte approprié pour les tâches futures et à évoluer avec votre travail au lieu de repartir de zéro à chaque session.
+
+6. Utilisez Anda à distance via des outils de messagerie instantanée
+Edge est un endroit idéal pour travailler avec des pages, mais vous pourriez également vouloir demander quelque chose à Anda lorsque vous n'êtes pas devant votre navigateur. Anda prend en charge l'intégration de canaux pour les outils de messagerie instantanée et de chat d'équipe, y compris WeChat et Telegram. Une fois ces canaux configurés, les messages peuvent atteindre le même démon local s'exécutant en continu, de sorte qu'Anda puisse continuer à vous aider avec des rappels, des recherches, des questions de suivi ou des tâches opérationnelles à partir d'une interface de chat distante.
+
+Configuration locale requise
+
+Cette extension nécessite le programme local Anda Bot. Après avoir installé l'extension, installez Anda sur votre ordinateur, configurez au moins une clé API de fournisseur de modèle, lancez le démon en arrière-plan, puis générez un jeton d'extension :
+
+anda start
+
+anda browser token --days 365
+
+Copiez l'URL de passerelle et le jeton Bearer affichés dans les paramètres de l'extension. Une fois connecté, vous pouvez discuter avec Anda depuis le panneau latéral de Edge.
+
+Confidentialité et autorisations en langage clair
+
+L'extension stocke votre URL de passerelle, votre jeton Bearer et votre identifiant de session de navigateur dans le stockage local de Edge. Elle envoie des instructions, des pièces jointes sélectionnées, des métadonnées de session de navigateur et des informations sur les onglets pertinents au démon Anda local auquel vous vous connectez. Elle peut accéder aux onglets, à la page active, aux captures d'écran, aux scripts de page, à la synthèse vocale et à des fonctions facultatives d'enregistrement vocal pour permettre à l'agent d'aider aux tâches du navigateur. L'environnement d'exécution Anda local et les fournisseurs de modèles que vous configurez peuvent traiter vos instructions et les données des tâches. Consultez la politique de confidentialité avant de publier ou d'utiliser l'extension dans des environnements sensibles.
+
+Elle utilise aussi l'autorisation downloads pour la gestion des fichiers lancés depuis le navigateur, l'autorisation cookies pour l'inspection et la mise à jour des cookies à la demande de l'utilisateur, l'autorisation browsingData pour effacer le cache et les données de site associées lors de la réinitialisation de l'état d'une page, l'autorisation debugger pour une automatisation plus fiable des pages et pour produire des résultats comme des captures d'écran ou des exportations PDF, ainsi que l'autorisation webNavigation pour observer la navigation et la fin du chargement des pages afin que l'agent puisse attendre qu'un onglet soit prêt.
+
+À qui s'adresse-t-elle
+
+Anda Bot est destiné aux personnes qui utilisent un ordinateur pour réfléchir, naviguer, écrire, construire, rechercher, dépanner et coordonner le travail. Vous n'avez pas besoin d'être un développeur pour en bénéficier, mais il est particulièrement puissant si vous voulez un assistant capable de comprendre le contexte du navigateur, d'utiliser des outils en ligne de commande, de se souvenir d'informations utiles et de continuer à travailler sur des objectifs qui demandent du temps.

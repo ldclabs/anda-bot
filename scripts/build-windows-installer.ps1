@@ -129,70 +129,279 @@ if ($updatedUserPath -ne $userPath) {
 
 Set-Content -Path (Join-Path $staging "set-user-path.ps1") -Value $pathScript -Encoding ASCII
 
-$installCmd = @'
-@echo off
-setlocal EnableExtensions
+$installScript = @'
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
-set "INSTALL_DIR=%LOCALAPPDATA%\Programs\AndaBot"
-set "ANDA_HOME=%USERPROFILE%\.anda"
-set "START_MENU_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Anda Bot"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
-if not exist "%ANDA_HOME%" mkdir "%ANDA_HOME%"
-if not exist "%START_MENU_DIR%" mkdir "%START_MENU_DIR%"
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$InstallDir = Join-Path $env:LOCALAPPDATA "Programs\AndaBot"
+$AndaHome = Join-Path $env:USERPROFILE ".anda"
+$StartMenuDir = Join-Path ([Environment]::GetFolderPath("Programs")) "Anda Bot"
+$DesktopDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+$PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (!(Test-Path -LiteralPath $PowerShellExe)) {
+    $PowerShellExe = "powershell.exe"
+}
 
-taskkill.exe /IM anda_launcher.exe /F >nul 2>nul
-if exist "%INSTALL_DIR%\anda.exe" "%INSTALL_DIR%\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul
-if exist "%USERPROFILE%\bin\anda.exe" "%USERPROFILE%\bin\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul
+function New-InstallerForm {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Anda Bot Setup"
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.ClientSize = New-Object System.Drawing.Size(460, 132)
 
-copy /Y "%~dp0anda.exe" "%INSTALL_DIR%\anda.exe" >nul
-if errorlevel 1 exit /b 1
-copy /Y "%~dp0anda_launcher.exe" "%INSTALL_DIR%\anda_launcher.exe" >nul
-if errorlevel 1 exit /b 1
-copy /Y "%~dp0anda.ico" "%INSTALL_DIR%\anda.ico" >nul
-if errorlevel 1 exit /b 1
+    $iconPath = Join-Path $ScriptRoot "anda.ico"
+    if (Test-Path -LiteralPath $iconPath) {
+        try {
+            $form.Icon = New-Object System.Drawing.Icon($iconPath)
+        } catch {
+        }
+    }
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0set-user-path.ps1" -InstallDir "%INSTALL_DIR%"
-if errorlevel 1 exit /b 1
+    $label = New-Object System.Windows.Forms.Label
+    $label.AutoSize = $false
+    $label.Left = 18
+    $label.Top = 18
+    $label.Width = 424
+    $label.Height = 42
+    $label.Text = "Preparing Anda Bot..."
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $skillsZip = '%~dp0anda-skills.zip'; $dest = Join-Path $env:USERPROFILE '.anda\skills'; New-Item -ItemType Directory -Force -Path $dest | Out-Null; $tmp = Join-Path $env:TEMP ('anda-skills-' + [guid]::NewGuid().ToString('N')); Expand-Archive -LiteralPath $skillsZip -DestinationPath $tmp -Force; Copy-Item -Path (Join-Path $tmp '*') -Destination $dest -Recurse -Force; Remove-Item -LiteralPath $tmp -Recurse -Force } catch { Write-Host $_; exit 1 }"
+    $progress = New-Object System.Windows.Forms.ProgressBar
+    $progress.Left = 18
+    $progress.Top = 72
+    $progress.Width = 424
+    $progress.Height = 22
+    $progress.Minimum = 0
+    $progress.Maximum = 100
+    $progress.Style = "Continuous"
 
-set "UNINSTALL=%INSTALL_DIR%\uninstall.cmd"
-(
-  echo @echo off
-  echo setlocal EnableExtensions
-  echo set "INSTALL_DIR=%%LOCALAPPDATA%%\Programs\AndaBot"
-  echo set "ANDA_HOME=%%USERPROFILE%%\.anda"
-  echo set "START_MENU_DIR=%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\Anda Bot"
-  echo reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "AndaBotLauncher" /F ^>nul 2^>nul
-  echo schtasks.exe /Delete /TN "Anda Bot" /F ^>nul 2^>nul
-  echo schtasks.exe /Delete /TN "Anda Bot Launcher" /F ^>nul 2^>nul
-  echo if exist "%%INSTALL_DIR%%\anda.exe" "%%INSTALL_DIR%%\anda.exe" --home "%%ANDA_HOME%%" stop ^>nul 2^>nul
-  echo taskkill.exe /IM anda_launcher.exe /F ^>nul 2^>nul
-  echo if exist "%%START_MENU_DIR%%" rmdir /S /Q "%%START_MENU_DIR%%"
-  echo if exist "%%USERPROFILE%%\Desktop\Anda Bot.lnk" del /F /Q "%%USERPROFILE%%\Desktop\Anda Bot.lnk" ^>nul 2^>nul
-  echo choice.exe /M "Delete Anda data in %%ANDA_HOME%%?"
-  echo if errorlevel 2 goto keep_data
-  echo if exist "%%ANDA_HOME%%" rmdir /S /Q "%%ANDA_HOME%%"
-  echo :keep_data
-  echo cd /D "%%TEMP%%"
-  echo rmdir /S /Q "%%INSTALL_DIR%%"
-) > "%UNINSTALL%"
+    $form.Controls.Add($label)
+    $form.Controls.Add($progress)
+    $form.Show()
+    [System.Windows.Forms.Application]::DoEvents()
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$w = New-Object -ComObject WScript.Shell; $launcher = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda_launcher.exe'; $icon = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda.ico'; $installDir = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $targets = @(@{ Directory = ([Environment]::GetFolderPath('Programs') + '\Anda Bot'); Name = 'Anda Bot.lnk' }, @{ Directory = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory); Name = 'Anda Bot.lnk' }); foreach ($target in $targets) { if ([string]::IsNullOrWhiteSpace($target.Directory)) { continue }; New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null; $s = $w.CreateShortcut((Join-Path $target.Directory $target.Name)); $s.TargetPath = $launcher; $s.Arguments = ''; $s.WorkingDirectory = $installDir; $s.IconLocation = $icon; $s.Save() }; $dir = [Environment]::GetFolderPath('Programs') + '\Anda Bot'; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $u = $w.CreateShortcut((Join-Path $dir 'Uninstall Anda Bot.lnk')); $u.TargetPath = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\uninstall.cmd'; $u.WorkingDirectory = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot'; $u.Save()"
+    return @{
+        Form = $form
+        Label = $label
+        Progress = $progress
+    }
+}
 
-schtasks.exe /Delete /TN "Anda Bot" /F >nul 2>nul
-schtasks.exe /Delete /TN "Anda Bot Launcher" /F >nul 2>nul
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $launcher = Join-Path $env:LOCALAPPDATA 'Programs\AndaBot\anda_launcher.exe'; $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run'); if (-not $key) { throw 'Could not open HKCU Run registry key' }; try { $key.SetValue('AndaBotLauncher', (([char]34) + $launcher + ([char]34)), [Microsoft.Win32.RegistryValueKind]::String) } finally { $key.Close() } } catch { Write-Host $_; exit 1 }"
-if errorlevel 1 exit /b 1
+function Set-InstallProgress($Value, $Message) {
+    $value = [Math]::Max(0, [Math]::Min(100, [int]$Value))
+    $script:InstallUi.Progress.Value = $value
+    $script:InstallUi.Label.Text = $Message
+    [System.Windows.Forms.Application]::DoEvents()
+}
 
-start "" "%INSTALL_DIR%\anda_launcher.exe"
+function Quote-ProcessArgument($Value) {
+    $text = [string]$Value
+    if ($text.Length -eq 0) {
+        return '""'
+    }
+    if ($text -notmatch '[\s"]') {
+        return $text
+    }
 
-echo Anda Bot has been installed.
-endlocal
+    $quoted = '"'
+    $backslashes = 0
+    foreach ($ch in $text.ToCharArray()) {
+        if ($ch -eq '\') {
+            $backslashes += 1
+            continue
+        }
+        if ($ch -eq '"') {
+            $quoted += ('\' * ($backslashes * 2 + 1))
+            $quoted += '"'
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            $quoted += ('\' * $backslashes)
+            $backslashes = 0
+        }
+        $quoted += $ch
+    }
+    if ($backslashes -gt 0) {
+        $quoted += ('\' * ($backslashes * 2))
+    }
+    $quoted += '"'
+    return $quoted
+}
+
+function Start-HiddenProcess($FilePath, [string[]]$ArgumentList = @(), [switch]$NoWait, [switch]$IgnoreExitCode) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = ($ArgumentList | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+
+    $process = [System.Diagnostics.Process]::Start($psi)
+    if ($NoWait) {
+        return
+    }
+
+    $process.WaitForExit()
+    if (!$IgnoreExitCode -and $process.ExitCode -ne 0) {
+        throw "$FilePath failed with exit code $($process.ExitCode)."
+    }
+}
+
+function Stop-ExistingAndaInstall {
+    Stop-Process -Name "anda_launcher" -Force -ErrorAction SilentlyContinue
+    $candidatePaths = @(
+        (Join-Path $InstallDir "anda.exe"),
+        (Join-Path $env:USERPROFILE "bin\anda.exe")
+    )
+    foreach ($candidatePath in $candidatePaths) {
+        if (Test-Path -LiteralPath $candidatePath) {
+            Start-HiddenProcess $candidatePath @("--home", $AndaHome, "stop") -IgnoreExitCode
+        }
+    }
+}
+
+function Install-Skills($ArchivePath) {
+    $skillsDir = Join-Path $AndaHome "skills"
+    $tmp = Join-Path $env:TEMP ("anda-skills-" + [guid]::NewGuid().ToString("N"))
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    try {
+        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $tmp -Force
+        New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+        Copy-Item -Path (Join-Path $tmp "*") -Destination $skillsDir -Recurse -Force
+    } finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Write-Uninstaller {
+    $uninstall = Join-Path $InstallDir "uninstall.cmd"
+    $lines = @(
+        '@echo off',
+        'setlocal EnableExtensions',
+        'set "INSTALL_DIR=%LOCALAPPDATA%\Programs\AndaBot"',
+        'set "ANDA_HOME=%USERPROFILE%\.anda"',
+        'set "START_MENU_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Anda Bot"',
+        'reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "AndaBotLauncher" /F >nul 2>nul',
+        'schtasks.exe /Delete /TN "Anda Bot" /F >nul 2>nul',
+        'schtasks.exe /Delete /TN "Anda Bot Launcher" /F >nul 2>nul',
+        'if exist "%INSTALL_DIR%\anda.exe" "%INSTALL_DIR%\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul',
+        'taskkill.exe /IM anda_launcher.exe /F >nul 2>nul',
+        'if exist "%START_MENU_DIR%" rmdir /S /Q "%START_MENU_DIR%"',
+        'if exist "%USERPROFILE%\Desktop\Anda Bot.lnk" del /F /Q "%USERPROFILE%\Desktop\Anda Bot.lnk" >nul 2>nul',
+        'choice.exe /M "Delete Anda data in %ANDA_HOME%?"',
+        'if errorlevel 2 goto keep_data',
+        'if exist "%ANDA_HOME%" rmdir /S /Q "%ANDA_HOME%"',
+        ':keep_data',
+        'cd /D "%TEMP%"',
+        'rmdir /S /Q "%INSTALL_DIR%"'
+    )
+    Set-Content -Path $uninstall -Value $lines -Encoding ASCII
+    return $uninstall
+}
+
+function Create-Shortcut($Path, $TargetPath, $WorkingDirectory, $IconPath, $Arguments = "") {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($Path)
+    $shortcut.TargetPath = $TargetPath
+    $shortcut.Arguments = $Arguments
+    $shortcut.WorkingDirectory = $WorkingDirectory
+    if (Test-Path -LiteralPath $IconPath) {
+        $shortcut.IconLocation = $IconPath
+    }
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+}
+
+function Create-Shortcuts {
+    New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
+    $launcher = Join-Path $InstallDir "anda_launcher.exe"
+    $icon = Join-Path $InstallDir "anda.ico"
+    $uninstall = Write-Uninstaller
+
+    $targets = @(
+        (Join-Path $StartMenuDir "Anda Bot.lnk"),
+        (Join-Path $DesktopDir "Anda Bot.lnk")
+    )
+    foreach ($target in $targets) {
+        $directory = Split-Path -Parent $target
+        if ([string]::IsNullOrWhiteSpace($directory)) {
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        Create-Shortcut $target $launcher $InstallDir $icon
+    }
+    Create-Shortcut (Join-Path $StartMenuDir "Uninstall Anda Bot.lnk") $uninstall $InstallDir $icon
+}
+
+function Remove-LegacyScheduledTasks {
+    Start-HiddenProcess "schtasks.exe" @("/Delete", "/TN", "Anda Bot", "/F") -IgnoreExitCode
+    Start-HiddenProcess "schtasks.exe" @("/Delete", "/TN", "Anda Bot Launcher", "/F") -IgnoreExitCode
+}
+
+function Register-LauncherAutostart {
+    $launcher = Join-Path $InstallDir "anda_launcher.exe"
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Microsoft\Windows\CurrentVersion\Run")
+    if (-not $key) {
+        throw "Could not open HKCU Run registry key."
+    }
+    try {
+        $key.SetValue("AndaBotLauncher", ('"' + $launcher + '"'), [Microsoft.Win32.RegistryValueKind]::String)
+    } finally {
+        $key.Close()
+    }
+}
+
+$script:InstallUi = New-InstallerForm
+
+try {
+    Set-InstallProgress 8 "Preparing folders..."
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $AndaHome | Out-Null
+
+    Set-InstallProgress 18 "Stopping any running Anda Bot processes..."
+    Stop-ExistingAndaInstall
+
+    Set-InstallProgress 34 "Installing program files..."
+    Copy-Item -Force -LiteralPath (Join-Path $ScriptRoot "anda.exe") -Destination (Join-Path $InstallDir "anda.exe")
+    Copy-Item -Force -LiteralPath (Join-Path $ScriptRoot "anda_launcher.exe") -Destination (Join-Path $InstallDir "anda_launcher.exe")
+    Copy-Item -Force -LiteralPath (Join-Path $ScriptRoot "anda.ico") -Destination (Join-Path $InstallDir "anda.ico")
+
+    Set-InstallProgress 48 "Updating PATH..."
+    Start-HiddenProcess $PowerShellExe @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $ScriptRoot "set-user-path.ps1"), "-InstallDir", $InstallDir)
+
+    Set-InstallProgress 62 "Installing bundled skills..."
+    Install-Skills (Join-Path $ScriptRoot "anda-skills.zip")
+
+    Set-InstallProgress 76 "Creating shortcuts..."
+    Create-Shortcuts
+
+    Set-InstallProgress 84 "Registering launch at login..."
+    Remove-LegacyScheduledTasks
+    Register-LauncherAutostart
+
+    Set-InstallProgress 94 "Starting Anda Bot..."
+    Start-HiddenProcess (Join-Path $InstallDir "anda_launcher.exe") @() -NoWait
+
+    Set-InstallProgress 100 "Anda Bot has been installed."
+    [System.Windows.Forms.MessageBox]::Show("Anda Bot has been installed and started in the system tray.", "Anda Bot Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $script:InstallUi.Form.Close()
+    exit 0
+} catch {
+    Set-InstallProgress 100 "Installation failed."
+    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Anda Bot Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    $script:InstallUi.Form.Close()
+    exit 1
+}
 '@
 
-Set-Content -Path (Join-Path $staging "install.cmd") -Value $installCmd -Encoding ASCII
+Set-Content -Path (Join-Path $staging "install.ps1") -Value $installScript -Encoding ASCII
 
 $sedPath = Join-Path $staging "anda-bot.sed"
 $cabPath = Join-Path $staging "anda-bot.cab"
@@ -204,7 +413,7 @@ SEDVersion=3
 [Options]
 PackagePurpose=InstallApp
 ShowInstallProgramWindow=0
-HideExtractAnimation=1
+HideExtractAnimation=0
 UseLongFileName=1
 InsideCompressed=0
 CAB_FixedSize=0
@@ -212,10 +421,10 @@ CAB_ResvCodeSigning=0
 RebootMode=N
 InstallPrompt=
 DisplayLicense=
-FinishMessage=Anda Bot has been installed.
+FinishMessage=
 TargetName=$outputPath
 FriendlyName=Anda Bot Installer
-AppLaunched=install.cmd
+AppLaunched=powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File install.ps1
 PostInstallCmd=<None>
 AdminQuietInstCmd=
 UserQuietInstCmd=
@@ -224,7 +433,7 @@ SourceFiles=SourceFiles
 FILE0=anda.exe
 FILE1=anda_launcher.exe
 FILE2=anda-skills.zip
-FILE3=install.cmd
+FILE3=install.ps1
 FILE4=set-user-path.ps1
 FILE5=anda.ico
 [SourceFiles]

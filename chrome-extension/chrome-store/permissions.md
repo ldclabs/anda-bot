@@ -29,3 +29,9 @@
 11. `tts`: Reads assistant responses aloud when the user wants speech playback.
 12. `webNavigation`: Observes navigation and page-load completion so Anda can refresh page context and wait for tabs to become ready after opening, switching, or navigating.
 13. Host permissions: Allows the extension to read content and perform browser actions on user-requested webpages, so the local agent can work across different sites.
+
+windows justification:
+Anda uses the Chrome windows API only for user-requested browser automation, such as focusing the window that contains a selected tab before clicking, typing, taking screenshots, or coordinating multi-tab workflows. It does not create hidden windows or track window activity in the background.
+
+file:///* justification:
+Anda supports local-first browser workflows where users ask the assistant to inspect or automate local HTML, PDF, image, text, and other files they open in Chrome. The file:///* host permission lets the extension read page context and run requested actions on local file tabs only when Chrome users have also enabled "Allow access to file URLs" for the extension. Local file content is sent only to the connected local Anda daemon as part of a user-requested task.

@@ -647,6 +647,7 @@ foreach ($target in $targets) {{
   $shortcut.Arguments = ''
   $shortcut.WorkingDirectory = $workingDirectory
   $shortcut.IconLocation = $icon
+  $shortcut.WindowStyle = 7
   $shortcut.Save()
 }}
 "#
