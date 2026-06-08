@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum FileUriPlatform {
     Unix,

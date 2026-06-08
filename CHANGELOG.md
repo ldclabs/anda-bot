@@ -2,6 +2,22 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.1] — 2026-06-08
+
+### Changed
+
+- **Website and documentation positioning refreshed**: updated the website landing page and multilingual docsite home pages around Anda Bot's memory-first local assistant experience, added a browser/side-panel product preview, generalized Chrome-specific wording to Browser Extension, and refreshed installation and quick-start copy.
+- **Version synchronized for the 0.9.1 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.1`, and changed release builds to use `panic = "unwind"`.
+
+### Fixed
+
+- **Windows launcher responsiveness and single-instance behavior**: launching `anda_launcher` now activates a responsive existing tray instance, waits briefly for a starting instance, can continue when an old mutex holder has no responsive launcher window, and runs tray commands off the Windows message thread so the tray UI stays responsive.
+- **Windows PDF attachment extraction**: PDF parsing on Windows now explicitly locates and loads `pdfium.dll` from `PDFIUM_LIB_PATH`, the `anda.exe` directory, the current directory, or `PATH`, and returns actionable setup guidance when PDFium is unavailable.
+
+### Dependencies
+
+- Added `liteparse-pdfium-sys` for Windows PDFium dynamic loading and refreshed lockfile dependencies including `http` 1.4.2 and `prost`/`prost-derive` 0.14.4.
+
 ## [0.9.0] — 2026-06-08
 
 ### Added
