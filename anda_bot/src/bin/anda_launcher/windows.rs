@@ -247,6 +247,9 @@ fn show_tray_menu(hwnd: HWND) {
         append_disabled_item(menu, &copy.status);
         append_disabled_item(menu, &status_pid_title(&status));
         append_disabled_item(menu, &status_gateway_title(&status));
+        append_disabled_item(menu, &status_conversations_title(&status));
+        append_disabled_item(menu, &status_memory_nodes_title(&status));
+        append_disabled_item(menu, &status_memory_links_title(&status));
         append_separator(menu);
         append_item(menu, ID_RESTART, &copy.restart_daemon);
         append_item(menu, ID_BROWSER_TOKEN, &copy.browser_extension_token);
@@ -515,23 +518,51 @@ fn show_result(title: &str, result: &CommandResult) {
 
 fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
     let copy = text();
-    format!(
-        "{}: {}",
-        copy.status_pid,
-        status.pid.as_deref().unwrap_or(&copy.status_unavailable)
+    status_value_title(
+        &copy.status_pid,
+        status.pid.as_deref(),
+        &copy.status_unavailable,
     )
 }
 
 fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
     let copy = text();
-    format!(
-        "{}: {}",
-        copy.status_gateway_url,
-        status
-            .gateway_url
-            .as_deref()
-            .unwrap_or(&copy.status_unavailable)
+    status_value_title(
+        &copy.status_gateway_url,
+        status.gateway_url.as_deref(),
+        &copy.status_unavailable,
     )
+}
+
+fn status_conversations_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_conversations,
+        status.conversations.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_memory_nodes_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_nodes,
+        status.memory_nodes.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_memory_links_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_links,
+        status.memory_links.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
+    format!("{}: {}", label, value.unwrap_or(unavailable))
 }
 
 fn show_browser_extension_token_result(result: &CommandResult) {

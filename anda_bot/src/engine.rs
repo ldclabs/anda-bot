@@ -52,7 +52,9 @@ use crate::{
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
-pub use agent::{AndaBot, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary};
+pub use agent::{
+    AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,
+};
 pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
@@ -66,6 +68,7 @@ const ACTIVE_MODEL_LABEL: &str = "";
 
 pub struct Engines {
     state: AppState,
+    bot: Arc<AndaBot>,
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
@@ -99,6 +102,7 @@ struct AutoUpdateRouteState {
 #[derive(Clone)]
 struct DaemonControlRouteState {
     app: AppState,
+    bot: Arc<AndaBot>,
     cancel_token: CancellationToken,
 }
 
@@ -363,6 +367,7 @@ impl Engines {
         };
         Ok(Self {
             state,
+            bot,
             browser_bridge,
             voice_capabilities,
             auto_updater: cfg.auto_updater,
@@ -376,6 +381,7 @@ impl Engines {
         };
         let daemon_control_route_state = DaemonControlRouteState {
             app: self.state.clone(),
+            bot: self.bot.clone(),
             cancel_token,
         };
         let browser_ws_state = BrowserWebSocketState {
@@ -396,6 +402,7 @@ impl Engines {
             )
             .with_state(auto_update_route_state);
         let daemon_control_router = Router::new()
+            .route("/daemon/status", routing::get(get_status))
             .route("/daemon/shutdown", routing::post(daemon_shutdown))
             .with_state(daemon_control_route_state);
 
@@ -453,6 +460,14 @@ async fn daemon_shutdown(
 
     state.cancel_token.cancel();
     AxumJson(json!({ "status": "shutting_down" })).into_response()
+}
+
+async fn get_status(State(state): State<DaemonControlRouteState>) -> impl IntoResponse {
+    if let Ok(status) = state.bot.status().await {
+        AxumJson(status).into_response()
+    } else {
+        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get status").into_response()
+    }
 }
 
 fn verify_update_request(

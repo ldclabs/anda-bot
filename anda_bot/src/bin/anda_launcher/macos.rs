@@ -36,6 +36,9 @@ const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
 const CHECK_UPDATE_MENU_TAG: isize = 1009;
 const STATUS_PID_MENU_TAG: isize = 1012;
 const STATUS_GATEWAY_MENU_TAG: isize = 1013;
+const STATUS_CONVERSATIONS_MENU_TAG: isize = 1014;
+const STATUS_MEMORY_NODES_MENU_TAG: isize = 1015;
+const STATUS_MEMORY_LINKS_MENU_TAG: isize = 1016;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -209,6 +212,12 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     status_pid.setTag(STATUS_PID_MENU_TAG);
     let status_gateway = add_disabled_item(&menu, mtm, &status_gateway_title(&status));
     status_gateway.setTag(STATUS_GATEWAY_MENU_TAG);
+    let status_conversations = add_disabled_item(&menu, mtm, &status_conversations_title(&status));
+    status_conversations.setTag(STATUS_CONVERSATIONS_MENU_TAG);
+    let status_memory_nodes = add_disabled_item(&menu, mtm, &status_memory_nodes_title(&status));
+    status_memory_nodes.setTag(STATUS_MEMORY_NODES_MENU_TAG);
+    let status_memory_links = add_disabled_item(&menu, mtm, &status_memory_links_title(&status));
+    status_memory_links.setTag(STATUS_MEMORY_LINKS_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(
         &menu,
@@ -248,6 +257,15 @@ fn refresh_status_menu_items(menu: &NSMenu) {
     if let Some(item) = menu.itemWithTag(STATUS_GATEWAY_MENU_TAG) {
         item.setTitle(nsstring(&status_gateway_title(&status)).as_ref());
     }
+    if let Some(item) = menu.itemWithTag(STATUS_CONVERSATIONS_MENU_TAG) {
+        item.setTitle(nsstring(&status_conversations_title(&status)).as_ref());
+    }
+    if let Some(item) = menu.itemWithTag(STATUS_MEMORY_NODES_MENU_TAG) {
+        item.setTitle(nsstring(&status_memory_nodes_title(&status)).as_ref());
+    }
+    if let Some(item) = menu.itemWithTag(STATUS_MEMORY_LINKS_MENU_TAG) {
+        item.setTitle(nsstring(&status_memory_links_title(&status)).as_ref());
+    }
 }
 
 fn refresh_update_menu_item(menu: &NSMenu) {
@@ -258,23 +276,51 @@ fn refresh_update_menu_item(menu: &NSMenu) {
 
 fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
     let copy = text();
-    format!(
-        "{}: {}",
-        copy.status_pid,
-        status.pid.as_deref().unwrap_or(&copy.status_unavailable)
+    status_value_title(
+        &copy.status_pid,
+        status.pid.as_deref(),
+        &copy.status_unavailable,
     )
 }
 
 fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
     let copy = text();
-    format!(
-        "{}: {}",
-        copy.status_gateway_url,
-        status
-            .gateway_url
-            .as_deref()
-            .unwrap_or(&copy.status_unavailable)
+    status_value_title(
+        &copy.status_gateway_url,
+        status.gateway_url.as_deref(),
+        &copy.status_unavailable,
     )
+}
+
+fn status_conversations_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_conversations,
+        status.conversations.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_memory_nodes_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_nodes,
+        status.memory_nodes.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_memory_links_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_links,
+        status.memory_links.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
+    format!("{}: {}", label, value.unwrap_or(unavailable))
 }
 
 fn add_settings_submenu(

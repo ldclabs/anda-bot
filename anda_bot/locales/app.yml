@@ -33,6 +33,15 @@ launcher.status_pid:
 launcher.status_gateway_url:
   en: Gateway URL
   zh-Hans: Gateway URL
+launcher.status_conversations:
+  en: Conversations
+  zh-Hans: 对话数量
+launcher.status_memory_nodes:
+  en: Memory nodes
+  zh-Hans: 记忆节点数量
+launcher.status_memory_links:
+  en: Memory links
+  zh-Hans: 记忆链接数量
 launcher.status_checking:
   en: Checking status...
   zh-Hans: 正在检查状态...

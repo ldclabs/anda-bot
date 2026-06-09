@@ -1,7 +1,8 @@
 use anda_core::{BoxError, Json, ToolInput};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use coset::cwt::Timestamp;
 use mimalloc::MiMalloc;
+use serde::Serialize;
 use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -60,7 +61,7 @@ pub enum Commands {
     /// Start the anda daemon if it's not running.
     Start,
     /// Show whether the anda daemon is running.
-    Status,
+    Status(StatusCommand),
     /// Restart the anda daemon. If the daemon is not running, this will start it.
     Restart,
     /// Equal to running `anda restart`.
@@ -112,6 +113,35 @@ pub enum BrowserCommand {
         #[arg(long, default_value_t = 30)]
         days: u64,
     },
+}
+
+#[derive(Args)]
+pub struct StatusCommand {
+    /// Print daemon status as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DaemonStatusReport {
+    state: DaemonStatusState,
+    summary: String,
+    pid: Option<u32>,
+    pid_file: Option<String>,
+    gateway_url: Option<String>,
+    log_file: Option<String>,
+    conversations: Option<u64>,
+    memory_nodes: Option<u64>,
+    memory_links: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DaemonStatusState {
+    Running,
+    GatewayRunning,
+    ProcessUnresponsive,
+    NotRunning,
 }
 
 /// ```bash
@@ -212,14 +242,14 @@ async fn run() -> Result<(), BoxError> {
             }
         }
 
-        Some(Commands::Status) => {
+        Some(Commands::Status(cmd)) => {
             log::info!(
                 "Starting CLI with command 'status' at {}",
                 daemon.base_url()
             );
 
             let client = build_control_client(&daemon).await?;
-            print_daemon_status(&daemon, &client).await?;
+            print_daemon_status(&daemon, &client, cmd.json).await?;
         }
 
         Some(Commands::Restart) | Some(Commands::Reload) => {
@@ -407,34 +437,100 @@ async fn wait_for_gateway_down(
 async fn print_daemon_status(
     daemon: &daemon::Daemon,
     client: &gateway::Client,
+    json: bool,
 ) -> Result<(), BoxError> {
+    let report = daemon_status_report(daemon, client).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_daemon_status_text(&report);
+    }
+
+    Ok(())
+}
+
+async fn daemon_status_report(
+    daemon: &daemon::Daemon,
+    client: &gateway::Client,
+) -> Result<DaemonStatusReport, BoxError> {
     let pid = daemon.read_pid_file().await?;
-    let gateway_running = client.status().await.is_ok();
+    let status = client.status().await.ok();
     let alive_pid = pid.filter(|pid| daemon::process_exists(*pid));
 
     if pid.is_some() && alive_pid.is_none() {
         daemon.remove_pid_file_if_exists().await?;
     }
 
-    match (gateway_running, alive_pid) {
-        (true, Some(pid)) => {
-            println!("anda daemon is running (pid {pid})");
-            println!("Gateway URL: {}", daemon.base_url());
-            println!("Logs: {}", daemon.log_file_path().display());
-        }
-        (true, None) => {
-            println!("anda daemon gateway is running");
-            println!("Gateway URL: {}", daemon.base_url());
-            println!("PID file: missing");
-        }
-        (false, Some(pid)) => {
-            println!("anda daemon process exists but gateway is not responding (pid {pid})");
-            println!("Logs: {}", daemon.log_file_path().display());
-        }
-        (false, None) => println!("anda daemon is not running"),
-    }
+    Ok(match (status, alive_pid) {
+        (Some(status), Some(pid)) => DaemonStatusReport {
+            state: DaemonStatusState::Running,
+            summary: format!("anda daemon is running (pid {pid})"),
+            pid: Some(pid),
+            pid_file: None,
+            gateway_url: Some(daemon.base_url().to_string()),
+            log_file: Some(daemon.log_file_path().display().to_string()),
+            conversations: Some(status.conversations),
+            memory_nodes: Some(status.memory_nodes),
+            memory_links: Some(status.memory_links),
+        },
+        (Some(status), None) => DaemonStatusReport {
+            state: DaemonStatusState::GatewayRunning,
+            summary: "anda daemon gateway is running".to_string(),
+            pid: None,
+            pid_file: Some("missing".to_string()),
+            gateway_url: Some(daemon.base_url().to_string()),
+            log_file: None,
+            conversations: Some(status.conversations),
+            memory_nodes: Some(status.memory_nodes),
+            memory_links: Some(status.memory_links),
+        },
+        (None, Some(pid)) => DaemonStatusReport {
+            state: DaemonStatusState::ProcessUnresponsive,
+            summary: format!(
+                "anda daemon process exists but gateway is not responding (pid {pid})"
+            ),
+            pid: Some(pid),
+            pid_file: None,
+            gateway_url: None,
+            log_file: Some(daemon.log_file_path().display().to_string()),
+            conversations: None,
+            memory_nodes: None,
+            memory_links: None,
+        },
+        (None, None) => DaemonStatusReport {
+            state: DaemonStatusState::NotRunning,
+            summary: "anda daemon is not running".to_string(),
+            pid: None,
+            pid_file: None,
+            gateway_url: None,
+            log_file: None,
+            conversations: None,
+            memory_nodes: None,
+            memory_links: None,
+        },
+    })
+}
 
-    Ok(())
+fn print_daemon_status_text(report: &DaemonStatusReport) {
+    println!("{}", report.summary);
+    if let Some(url) = report.gateway_url.as_deref() {
+        println!("Gateway URL: {url}");
+    }
+    if let Some(log_file) = report.log_file.as_deref() {
+        println!("Logs: {log_file}");
+    }
+    if let Some(pid_file) = report.pid_file.as_deref() {
+        println!("PID file: {pid_file}");
+    }
+    if let Some(conversations) = report.conversations {
+        println!("Conversations: {conversations}");
+    }
+    if let Some(memory_nodes) = report.memory_nodes {
+        println!("Memory nodes: {memory_nodes}");
+    }
+    if let Some(memory_links) = report.memory_links {
+        println!("Memory links: {memory_links}");
+    }
 }
 
 async fn run_autostart_command(
@@ -542,5 +638,60 @@ async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], Box
             tokio::fs::write(key_path, encoded).await?;
             Ok(secret)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_command_accepts_json_flag() {
+        let cli = Cli::try_parse_from(["anda", "status", "--json"]).unwrap();
+        let Some(Commands::Status(cmd)) = cli.command else {
+            panic!("expected status command");
+        };
+
+        assert!(cmd.json);
+    }
+
+    #[test]
+    fn status_command_defaults_to_text_output() {
+        let cli = Cli::try_parse_from(["anda", "status"]).unwrap();
+        let Some(Commands::Status(cmd)) = cli.command else {
+            panic!("expected status command");
+        };
+
+        assert!(!cmd.json);
+    }
+
+    #[test]
+    fn daemon_status_report_serializes_stable_json() {
+        let report = DaemonStatusReport {
+            state: DaemonStatusState::Running,
+            summary: "anda daemon is running (pid 12345)".to_string(),
+            pid: Some(12345),
+            pid_file: None,
+            gateway_url: Some("http://127.0.0.1:8042".to_string()),
+            log_file: Some("/tmp/anda.log".to_string()),
+            conversations: Some(7),
+            memory_nodes: Some(11),
+            memory_links: Some(13),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&report).unwrap(),
+            serde_json::json!({
+                "state": "running",
+                "summary": "anda daemon is running (pid 12345)",
+                "pid": 12345,
+                "pid_file": null,
+                "gateway_url": "http://127.0.0.1:8042",
+                "log_file": "/tmp/anda.log",
+                "conversations": 7,
+                "memory_nodes": 11,
+                "memory_links": 13
+            })
+        );
     }
 }

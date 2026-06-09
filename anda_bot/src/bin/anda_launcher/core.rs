@@ -99,10 +99,9 @@ impl LauncherAutoUpdateState {
 
     pub fn downloaded_update_available(&self) -> bool {
         if self.status != "downloaded"
-            || !self
+            || self
                 .downloaded_path
-                .as_deref()
-                .is_some_and(|path| !path.is_empty())
+                .as_deref().is_none_or(|path| path.is_empty())
         {
             return false;
         }
@@ -152,6 +151,20 @@ pub struct LauncherDaemonStatus {
     pub summary: String,
     pub pid: Option<String>,
     pub gateway_url: Option<String>,
+    pub conversations: Option<String>,
+    pub memory_nodes: Option<String>,
+    pub memory_links: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct LauncherDaemonStatusJson {
+    summary: Option<String>,
+    pid: Option<serde_json::Value>,
+    pid_file: Option<String>,
+    gateway_url: Option<String>,
+    conversations: Option<serde_json::Value>,
+    memory_nodes: Option<serde_json::Value>,
+    memory_links: Option<serde_json::Value>,
 }
 
 #[allow(dead_code)]
@@ -171,6 +184,9 @@ pub struct LauncherText {
     pub status: String,
     pub status_pid: String,
     pub status_gateway_url: String,
+    pub status_conversations: String,
+    pub status_memory_nodes: String,
+    pub status_memory_links: String,
     pub status_checking: String,
     pub status_unavailable: String,
     pub start_daemon: String,
@@ -472,6 +488,9 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         status: t!("launcher.status", locale = locale).into_owned(),
         status_pid: t!("launcher.status_pid", locale = locale).into_owned(),
         status_gateway_url: t!("launcher.status_gateway_url", locale = locale).into_owned(),
+        status_conversations: t!("launcher.status_conversations", locale = locale).into_owned(),
+        status_memory_nodes: t!("launcher.status_memory_nodes", locale = locale).into_owned(),
+        status_memory_links: t!("launcher.status_memory_links", locale = locale).into_owned(),
         status_checking: t!("launcher.status_checking", locale = locale).into_owned(),
         status_unavailable: t!("launcher.status_unavailable", locale = locale).into_owned(),
         start_daemon: t!("launcher.start_daemon", locale = locale).into_owned(),
@@ -877,6 +896,10 @@ pub fn daemon_status(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["status"])
 }
 
+pub fn daemon_status_json(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
+    run_anda(ctx, &["status", "--json"])
+}
+
 pub fn cached_daemon_status() -> LauncherDaemonStatus {
     lock_daemon_status_cache()
         .clone()
@@ -884,14 +907,14 @@ pub fn cached_daemon_status() -> LauncherDaemonStatus {
             summary: text().status_checking,
             pid: None,
             gateway_url: None,
+            conversations: None,
+            memory_nodes: None,
+            memory_links: None,
         })
 }
 
 pub fn refresh_daemon_status_cache(ctx: &LauncherContext) -> LauncherDaemonStatus {
-    let result = daemon_status(ctx).unwrap_or_else(|err| CommandResult {
-        success: false,
-        message: err.to_string(),
-    });
+    let result = daemon_status_for_launcher(ctx);
     let status = launcher_daemon_status_from_command_result(&result);
     *lock_daemon_status_cache() = Some(status.clone());
     status
@@ -1009,7 +1032,6 @@ pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandR
     let mut command = Command::new(&ctx.anda_exe);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
-    command.arg("--home").arg(&ctx.home);
     command.args(args);
     let output = command
         .output()
@@ -1082,8 +1104,25 @@ fn lock_daemon_status_cache() -> std::sync::MutexGuard<'static, Option<LauncherD
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn daemon_status_for_launcher(ctx: &LauncherContext) -> CommandResult {
+    match daemon_status_json(ctx) {
+        Ok(result) if result.success => result,
+        Ok(result) => daemon_status(ctx).unwrap_or(result),
+        Err(err) => CommandResult {
+            success: false,
+            message: err.to_string(),
+        },
+    }
+}
+
 fn launcher_daemon_status_from_command_result(result: &CommandResult) -> LauncherDaemonStatus {
     let message = result.message.trim();
+    if result.success
+        && let Some(status) = launcher_daemon_status_from_json(message)
+    {
+        return status;
+    }
+
     let summary = message
         .lines()
         .find_map(|line| {
@@ -1098,6 +1137,9 @@ fn launcher_daemon_status_from_command_result(result: &CommandResult) -> Launche
             summary,
             pid: None,
             gateway_url: None,
+            conversations: None,
+            memory_nodes: None,
+            memory_links: None,
         };
     }
 
@@ -1105,7 +1147,54 @@ fn launcher_daemon_status_from_command_result(result: &CommandResult) -> Launche
         summary,
         pid: parse_daemon_status_pid(message),
         gateway_url: parse_daemon_status_gateway_url(message),
+        conversations: parse_daemon_status_value(message, "Conversations:"),
+        memory_nodes: parse_daemon_status_value(message, "Memory nodes:"),
+        memory_links: parse_daemon_status_value(message, "Memory links:"),
     }
+}
+
+fn launcher_daemon_status_from_json(message: &str) -> Option<LauncherDaemonStatus> {
+    let status = serde_json::from_str::<LauncherDaemonStatusJson>(message).ok()?;
+    let summary = status
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| text().status_unavailable);
+    let pid = json_status_value(status.pid).or_else(|| {
+        status
+            .pid_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|pid_file| !pid_file.is_empty())
+            .map(ToOwned::to_owned)
+    });
+
+    Some(LauncherDaemonStatus {
+        summary,
+        pid,
+        gateway_url: non_empty_json_string(status.gateway_url),
+        conversations: json_status_value(status.conversations),
+        memory_nodes: json_status_value(status.memory_nodes),
+        memory_links: json_status_value(status.memory_links),
+    })
+}
+
+fn json_status_value(value: Option<serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        serde_json::Value::String(value) => non_empty_json_string(Some(value)),
+        _ => None,
+    }
+}
+
+fn non_empty_json_string(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn parse_daemon_status_pid(message: &str) -> Option<String> {
@@ -1132,11 +1221,15 @@ fn parse_daemon_status_pid(message: &str) -> Option<String> {
 }
 
 fn parse_daemon_status_gateway_url(message: &str) -> Option<String> {
+    parse_daemon_status_value(message, "Gateway URL:")
+}
+
+fn parse_daemon_status_value(message: &str, label: &str) -> Option<String> {
     message.lines().find_map(|line| {
         line.trim()
-            .strip_prefix("Gateway URL:")
+            .strip_prefix(label)
             .map(str::trim)
-            .filter(|url| !url.is_empty())
+            .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
     })
 }
@@ -1863,6 +1956,9 @@ mod tests {
         assert_eq!(en.model_settings, "Model settings...");
         assert_eq!(en.status_pid, "PID");
         assert_eq!(en.status_gateway_url, "Gateway URL");
+        assert_eq!(en.status_conversations, "Conversations");
+        assert_eq!(en.status_memory_nodes, "Memory nodes");
+        assert_eq!(en.status_memory_links, "Memory links");
         assert_eq!(
             en.unsupported_provider("custom"),
             "unsupported provider: custom"
@@ -1895,6 +1991,9 @@ mod tests {
         assert_eq!(zh.model_settings, "大模型配置...");
         assert_eq!(zh.status_pid, "PID");
         assert_eq!(zh.status_gateway_url, "Gateway URL");
+        assert_eq!(zh.status_conversations, "对话数量");
+        assert_eq!(zh.status_memory_nodes, "记忆节点数量");
+        assert_eq!(zh.status_memory_links, "记忆链接数量");
         assert_eq!(
             zh.unsupported_provider("custom"),
             "不支持的模型供应商：custom"
@@ -2083,6 +2182,9 @@ Extension directory: chrome_extension
 anda daemon is running (pid 12345)
 Gateway URL: http://127.0.0.1:8042
 Logs: /tmp/anda.log
+Conversations: 7
+Memory nodes: 11
+Memory links: 13
 "
             .to_string(),
         };
@@ -2092,6 +2194,65 @@ Logs: /tmp/anda.log
         assert_eq!(status.summary, "anda daemon is running (pid 12345)");
         assert_eq!(status.pid.as_deref(), Some("12345"));
         assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+        assert_eq!(status.conversations.as_deref(), Some("7"));
+        assert_eq!(status.memory_nodes.as_deref(), Some("11"));
+        assert_eq!(status.memory_links.as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn launcher_daemon_status_extracts_json_status() {
+        let result = CommandResult {
+            success: true,
+            message: r#"{
+  "state": "running",
+  "summary": "anda daemon is running (pid 12345)",
+  "pid": 12345,
+  "pid_file": null,
+  "gateway_url": "http://127.0.0.1:8042",
+  "log_file": "/tmp/anda.log",
+  "conversations": 7,
+  "memory_nodes": 11,
+  "memory_links": 13
+}"#
+            .to_string(),
+        };
+
+        let status = launcher_daemon_status_from_command_result(&result);
+
+        assert_eq!(status.summary, "anda daemon is running (pid 12345)");
+        assert_eq!(status.pid.as_deref(), Some("12345"));
+        assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+        assert_eq!(status.conversations.as_deref(), Some("7"));
+        assert_eq!(status.memory_nodes.as_deref(), Some("11"));
+        assert_eq!(status.memory_links.as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn launcher_daemon_status_uses_json_pid_file_when_pid_is_missing() {
+        let result = CommandResult {
+            success: true,
+            message: r#"{
+  "state": "gateway_running",
+  "summary": "anda daemon gateway is running",
+  "pid": null,
+  "pid_file": "missing",
+  "gateway_url": "http://127.0.0.1:8042",
+  "log_file": null,
+  "conversations": 3,
+  "memory_nodes": 5,
+  "memory_links": 8
+}"#
+            .to_string(),
+        };
+
+        let status = launcher_daemon_status_from_command_result(&result);
+
+        assert_eq!(status.summary, "anda daemon gateway is running");
+        assert_eq!(status.pid.as_deref(), Some("missing"));
+        assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+        assert_eq!(status.conversations.as_deref(), Some("3"));
+        assert_eq!(status.memory_nodes.as_deref(), Some("5"));
+        assert_eq!(status.memory_links.as_deref(), Some("8"));
     }
 
     #[test]
@@ -2102,6 +2263,9 @@ Logs: /tmp/anda.log
 anda daemon gateway is running
 Gateway URL: http://127.0.0.1:8042
 PID file: missing
+Conversations: 3
+Memory nodes: 5
+Memory links: 8
 "
             .to_string(),
         };
@@ -2111,6 +2275,9 @@ PID file: missing
         assert_eq!(status.summary, "anda daemon gateway is running");
         assert_eq!(status.pid.as_deref(), Some("missing"));
         assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+        assert_eq!(status.conversations.as_deref(), Some("3"));
+        assert_eq!(status.memory_nodes.as_deref(), Some("5"));
+        assert_eq!(status.memory_links.as_deref(), Some("8"));
     }
 
     #[test]
@@ -2132,6 +2299,9 @@ Logs: /tmp/anda.log
         );
         assert_eq!(status.pid.as_deref(), Some("12345"));
         assert_eq!(status.gateway_url, None);
+        assert_eq!(status.conversations, None);
+        assert_eq!(status.memory_nodes, None);
+        assert_eq!(status.memory_links, None);
     }
 
     #[test]

@@ -13,6 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
+    engine::AndaBotStatus,
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
@@ -44,8 +45,8 @@ impl Client {
         client
     }
 
-    pub async fn status(&self) -> Result<Json, BoxError> {
-        self.get_json("").await
+    pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
+        self.get_json("/daemon/status").await
     }
 
     pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {

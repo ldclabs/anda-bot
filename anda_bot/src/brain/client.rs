@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub use anda_brain::{
     payload::RpcResponse,
-    types::{FormationInputRef, GetOrInitUserInput, RecallInput, RecallInputRef},
+    types::{FormationInputRef, FormationStatus, GetOrInitUserInput, RecallInput, RecallInputRef},
 };
 
 #[derive(Clone)]
@@ -84,6 +84,19 @@ impl Client {
         Ok(rt)
     }
 
+    pub async fn brain_status(&self) -> Result<FormationStatus, BoxError> {
+        let rt: RpcResponse<FormationStatus> = self.get("/formation_status").await?;
+        if let Some(result) = rt.result {
+            Ok(result)
+        } else {
+            Err(serde_json::to_string(&rt)
+                .unwrap_or_else(|_| {
+                    "[BrainClient] brain_state failed with unknown error".to_string()
+                })
+                .into())
+        }
+    }
+
     async fn post<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>
     where
         I: serde::Serialize,
@@ -92,6 +105,16 @@ impl Client {
         let req = self.request(reqwest::Method::POST, path);
         let response = req.json(&input).send().await?;
         self.decode_response(reqwest::Method::POST, path, response)
+            .await
+    }
+
+    async fn get<O>(&self, path: &str) -> Result<O, BoxError>
+    where
+        O: serde::de::DeserializeOwned,
+    {
+        let req = self.request(reqwest::Method::GET, path);
+        let response = req.send().await?;
+        self.decode_response(reqwest::Method::GET, path, response)
             .await
     }
 

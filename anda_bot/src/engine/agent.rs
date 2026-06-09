@@ -139,6 +139,13 @@ struct AndaBotInner {
 
 type ActiveSessions = RwLock<HashMap<Xid, Arc<Session>>>;
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AndaBotStatus {
+    pub conversations: u64,
+    pub memory_nodes: u64,
+    pub memory_links: u64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum AndaBotToolArgs {
@@ -160,7 +167,7 @@ pub struct SessionSummary {
     pub active_at: u64,
     pub idle_ms: u64,
     pub has_goal: bool,
-    pub background_task_count: usize,
+    pub background_task_count: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -294,6 +301,16 @@ impl AndaBot {
                 session_creation_lock: tokio::sync::Mutex::new(()),
             }),
         }
+    }
+
+    pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
+        let conversations = self.inner.conversations.conversations.conversations.len() as u64;
+        let bs = self.inner.brain.brain_status().await?;
+        Ok(AndaBotStatus {
+            conversations,
+            memory_nodes: bs.concepts as u64,
+            memory_links: bs.propositions as u64,
+        })
     }
 
     fn insert_session(&self, task: Arc<Session>) {
@@ -2142,7 +2159,7 @@ impl Session {
             active_at,
             idle_ms: now_ms.saturating_sub(active_at),
             has_goal: self.goal.read().is_some(),
-            background_task_count: self.background_tasks.read().len(),
+            background_task_count: self.background_tasks.read().len() as u64,
         }
     }
 
