@@ -24,7 +24,6 @@ use crate::{
     gateway, transcription, tts, util,
 };
 
-const AUDIO_EVENT_BUFFER: usize = 16;
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 const VOICE_STATUS_INTERVAL: Duration = Duration::from_millis(120);
 const VOICE_TTS_CHUNK_CHARS: usize = 800;
@@ -667,7 +666,7 @@ impl VoiceChannel {
             return Err("voice recording duration must be greater than zero".into());
         }
 
-        let (audio_tx, mut audio_rx) = mpsc::channel::<AudioInputEvent>(AUDIO_EVENT_BUFFER);
+        let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<AudioInputEvent>();
         let input = open_default_input_stream(audio_tx)?;
 
         log::debug!(
@@ -756,7 +755,7 @@ enum AudioInputEvent {
 }
 
 fn open_default_input_stream(
-    audio_tx: mpsc::Sender<AudioInputEvent>,
+    audio_tx: mpsc::UnboundedSender<AudioInputEvent>,
 ) -> Result<AudioInput, BoxError> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -790,7 +789,7 @@ fn build_input_stream_for_format(
     device: &cpal::Device,
     stream_config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
-    audio_tx: mpsc::Sender<AudioInputEvent>,
+    audio_tx: mpsc::UnboundedSender<AudioInputEvent>,
 ) -> Result<cpal::Stream, BoxError> {
     match sample_format {
         cpal::SampleFormat::I8 => build_typed_input_stream::<i8>(device, stream_config, audio_tx),
@@ -819,7 +818,7 @@ fn build_input_stream_for_format(
 fn build_typed_input_stream<T>(
     device: &cpal::Device,
     stream_config: &cpal::StreamConfig,
-    audio_tx: mpsc::Sender<AudioInputEvent>,
+    audio_tx: mpsc::UnboundedSender<AudioInputEvent>,
 ) -> Result<cpal::Stream, BoxError>
 where
     T: cpal::Sample + cpal::SizedSample + Copy + Send + 'static,
@@ -841,11 +840,11 @@ where
                 .copied()
                 .map(|sample| sample.to_sample::<f32>())
                 .collect();
-            let _ = data_tx.try_send(AudioInputEvent::Samples(samples));
+            let _ = data_tx.send(AudioInputEvent::Samples(samples));
         },
         move |err| {
             log::warn!(name = "channel"; "voice audio stream error: {err}");
-            let _ = err_tx.try_send(AudioInputEvent::StreamError(err.to_string()));
+            let _ = err_tx.send(AudioInputEvent::StreamError(err.to_string()));
         },
         None,
     )?;
@@ -877,7 +876,12 @@ pub fn encode_wav_from_f32(samples: &[f32], sample_rate: u32, channels: u16) -> 
     buf.extend_from_slice(&data_len.to_le_bytes());
 
     for &sample in samples {
-        let pcm16 = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+        let sample = sample.clamp(-1.0, 1.0);
+        let pcm16 = if sample < 0.0 {
+            (sample * 32768.0) as i16
+        } else {
+            (sample * 32767.0) as i16
+        };
         buf.extend_from_slice(&pcm16.to_le_bytes());
     }
 
@@ -974,7 +978,12 @@ async fn run_process(mut command: tokio::process::Command, label: &str) -> Resul
 }
 
 fn command_available(command: &str) -> bool {
-    std::process::Command::new("which")
+    let checker = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    std::process::Command::new(checker)
         .arg(command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1038,7 +1047,7 @@ mod tests {
         let second = i16::from_le_bytes(wav[46..48].try_into().unwrap());
         let third = i16::from_le_bytes(wav[48..50].try_into().unwrap());
 
-        assert_eq!(first, -32767);
+        assert_eq!(first, -32768);
         assert_eq!(second, 32767);
         assert_eq!(third, 0);
     }

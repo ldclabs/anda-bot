@@ -1,14 +1,25 @@
 import { getPlainText } from '$lib/utils/markdown'
 import type { Resource, VoiceRecordingInput } from './types'
 
-export const voiceTtsChunkChars = 800
+export const voiceTtsChunkChars = 320
 const voiceTtsShortChunkChars = 80
-const voiceTtsMaxShortLines = 4
+const voiceTtsPreferredChunkChars = 120
+const voiceTtsMaxShortLines = 3
 
 type NormalizedVoiceRecording = {
   audioBase64: string
   fileName: string
 }
+
+export type VoiceTtsSynthesizer<TArtifact> = (
+  chunk: string,
+  index: number
+) => Promise<TArtifact>
+
+export type VoiceTtsPlayer<TArtifact> = (
+  artifact: TArtifact,
+  index: number
+) => Promise<void>
 
 export function normalizeCapabilityFormats(
   value: boolean | string[] | undefined,
@@ -25,14 +36,27 @@ export async function normalizeVoiceRecordingAudio(
   acceptedFormats: string[]
 ): Promise<NormalizedVoiceRecording> {
   const audioBase64 = recording.audioBase64 || ''
-  const fileName = recording.fileName || 'chrome_voice.webm'
+  const fileName = recording.fileName?.trim() || 'chrome_voice.webm'
   if (!audioBase64.trim()) {
     throw new Error(chrome.i18n.getMessage('audioCaptureMissingData'))
   }
   const accepted = normalizeAudioFormats(acceptedFormats)
   const sourceFormat = recordingAudioFormat(fileName, recording.mimeType)
-  if (!sourceFormat || accepted.includes(sourceFormat)) {
-    return { audioBase64, fileName }
+  if (!sourceFormat) {
+    throw new Error(
+      chrome.i18n.getMessage('audioFormatNotSupported', [
+        'unknown',
+        accepted.join(', ') || 'none'
+      ])
+    )
+  }
+
+  const acceptedFormat = acceptedAudioFormat(sourceFormat, accepted)
+  if (acceptedFormat) {
+    return {
+      audioBase64,
+      fileName: ensureAudioFileExtension(fileName, acceptedFormat)
+    }
   }
   if (!accepted.includes('wav')) {
     throw new Error(
@@ -64,6 +88,27 @@ function normalizeAudioFormats(formats: string[]): string[] {
     }
   }
   return normalized
+}
+
+function acceptedAudioFormat(sourceFormat: string, acceptedFormats: string[]): string {
+  for (const alias of audioFormatAliases(sourceFormat)) {
+    if (acceptedFormats.includes(alias)) {
+      return alias
+    }
+  }
+  return ''
+}
+
+function audioFormatAliases(format: string): string[] {
+  switch (format) {
+    case 'm4a':
+    case 'mp4':
+      return ['mp4', 'm4a']
+    case 'mp3':
+      return ['mp3', 'mpeg', 'mpga']
+    default:
+      return [format]
+  }
 }
 
 function recordingAudioFormat(fileName: string, mimeType?: string): string {
@@ -109,6 +154,29 @@ function normalizeAudioFormat(format: string): string {
       return 'pcm'
     default:
       return ''
+  }
+}
+
+function ensureAudioFileExtension(fileName: string, format: string): string {
+  const extension = normalizeAudioFormat(fileExtension(fileName))
+  if (extension === format) {
+    return fileName
+  }
+
+  return `${fileStem(fileName) || 'chrome_voice'}.${preferredAudioExtension(format)}`
+}
+
+function preferredAudioExtension(format: string): string {
+  switch (format) {
+    case 'mpeg':
+    case 'mpga':
+      return 'mp3'
+    case 'mp4':
+      return 'mp4'
+    case 'm4a':
+      return 'm4a'
+    default:
+      return format
   }
 }
 
@@ -366,6 +434,29 @@ export function splitVoiceTtsText(text: string, maxChars: number): string[] {
   return chunks
 }
 
+export async function playVoiceTtsPipeline<TArtifact>(
+  chunks: string[],
+  synthesize: VoiceTtsSynthesizer<TArtifact>,
+  play: VoiceTtsPlayer<TArtifact>
+): Promise<void> {
+  if (!chunks.length) {
+    return
+  }
+
+  let current = await synthesize(chunks[0], 0)
+  for (let index = 1; index < chunks.length; index += 1) {
+    const next = synthesize(chunks[index], index)
+    next.catch(() => undefined)
+    try {
+      await play(current, index - 1)
+    } catch (error) {
+      throw error
+    }
+    current = await next
+  }
+  await play(current, chunks.length - 1)
+}
+
 function pushVoiceTtsLines(chunks: string[], lines: string[]): void {
   if (lines.length) {
     chunks.push(lines.join('\n'))
@@ -375,13 +466,14 @@ function pushVoiceTtsLines(chunks: string[], lines: string[]): void {
 function splitLongVoiceTtsLine(line: string, maxChars: number): string[] {
   const chunks: string[] = []
   let current = ''
+  const boundaryThreshold = Math.min(voiceTtsPreferredChunkChars, Math.ceil(maxChars / 2))
   for (const character of Array.from(line)) {
     if (Array.from(current).length >= maxChars) {
       chunks.push(current.trim())
       current = ''
     }
     current += character
-    if (isTtsSentenceBoundary(character) && Array.from(current).length >= maxChars / 2) {
+    if (isTtsSentenceBoundary(character) && Array.from(current).length >= boundaryThreshold) {
       chunks.push(current.trim())
       current = ''
     }

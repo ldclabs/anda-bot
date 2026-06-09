@@ -96,6 +96,10 @@ export function pageSpeechRecognitionDispatcher(
     if (state.stopTimer !== null) {
       clearTimeout(state.stopTimer)
     }
+    const recognition = state.recognition
+    if (recognition) {
+      detachRecognition(recognition)
+    }
     const resolver = state.stopResolver
     state.recognition = null
     state.finalTranscript = ''
@@ -232,14 +236,20 @@ export function pageSpeechRecognitionDispatcher(
     }
 
     try {
-      recognition.start()
       startTimer = window.setTimeout(() => {
         state.error = 'permission-timeout'
+        const result = {
+          available: true,
+          started: false,
+          error: pageSpeechErrorMessage(state.error)
+        }
         try {
           recognition.abort?.()
         } catch (_error) {}
-        settle({ available: true, started: false, error: pageSpeechErrorMessage(state.error) })
+        deactivate(result)
+        settle(result)
       }, 8000)
+      recognition.start()
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error)
       deactivate()
@@ -250,14 +260,14 @@ export function pageSpeechRecognitionDispatcher(
   function pageSpeechErrorMessage(error: string): string {
     const normalized = error.toLowerCase()
     if (normalized.includes('permission dismissed')) {
-      return 'Chrome speech permission was dismissed.'
+      return 'Browser speech permission was dismissed.'
     }
     switch (error) {
       case 'not-allowed':
       case 'service-not-allowed':
         return 'Microphone access was blocked for the current page.'
       case 'permission-timeout':
-        return 'Chrome speech permission was not accepted.'
+        return 'Browser speech permission was not accepted.'
       case 'audio-capture':
         return 'No microphone was found.'
       case 'network':

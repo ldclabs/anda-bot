@@ -41,6 +41,7 @@ import {
   normalizeCapabilityFormats,
   normalizeVoiceRecordingAudio,
   playAudioArtifact,
+  playVoiceTtsPipeline,
   prepareVoiceTtsText,
   splitVoiceTtsText,
   voiceTtsChunkChars
@@ -770,17 +771,21 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     try {
-      for (const [index, chunk] of chunks.entries()) {
-        const result = await this.toolCall<TtsToolOutput>('synthesize_speech', {
-          text: chunk,
-          artifact_name: `anda_chrome_voice_${Date.now()}_${index + 1}`
-        })
-        const artifact = result.artifacts?.find(isAudioResource)
-        if (!artifact?.blob) {
-          throw new Error('Anda TTS did not return playable audio.')
-        }
-        await playAudioArtifact(artifact)
-      }
+      await playVoiceTtsPipeline(
+        chunks,
+        async (chunk, index) => {
+          const result = await this.toolCall<TtsToolOutput>('synthesize_speech', {
+            text: chunk,
+            artifact_name: `anda_chrome_voice_${Date.now()}_${index + 1}`
+          })
+          const artifact = result.artifacts?.find(isAudioResource)
+          if (!artifact?.blob) {
+            throw new Error('Anda TTS did not return playable audio.')
+          }
+          return artifact
+        },
+        (artifact) => playAudioArtifact(artifact)
+      )
       return true
     } catch (_error) {
       return false

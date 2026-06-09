@@ -28,15 +28,15 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
 export function chromeSpeechErrorMessage(error: string): string {
   const normalized = error.toLowerCase()
   if (normalized.includes('permission dismissed')) {
-    return 'Chrome speech permission was dismissed.'
+    return 'Browser speech permission was dismissed.'
   }
   if (normalized.includes('permission was not accepted')) {
-    return 'Chrome speech permission was not accepted.'
+    return 'Browser speech permission was not accepted.'
   }
   if (normalized.includes('microphone access was blocked') || normalized.includes('not-allowed')) {
-    return 'Chrome speech microphone access was blocked.'
+    return 'Browser speech microphone access was blocked.'
   }
-  return error || 'Chrome speech recognition did not start.'
+  return error || 'Browser speech recognition did not start.'
 }
 
 export function audioCaptureErrorMessage(error: string): string {
