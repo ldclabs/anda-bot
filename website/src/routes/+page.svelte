@@ -452,7 +452,13 @@
 
 					<div class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
 						{#if activeInstall.href}
-							<Button href={activeInstall.href} target="_blank" rel="noreferrer" size="lg">
+							<Button
+								href={activeInstall.href}
+								target={activeInstall.download ? undefined : '_blank'}
+								rel={activeInstall.download ? undefined : 'noreferrer'}
+								download={activeInstall.download}
+								size="lg"
+							>
 								<ArrowRight class="size-4" />
 								{activeInstall.primaryLabel}
 							</Button>

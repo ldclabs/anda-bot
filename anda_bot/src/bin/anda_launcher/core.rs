@@ -6,8 +6,9 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::{Mutex, OnceLock},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -36,6 +37,7 @@ const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const ANDA_EXE_ENV: &str = "ANDA_EXE";
 const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
 const BROWSER_EXTENSION_TOKEN_DAYS: &str = "365";
+const UPDATE_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherLanguage {
@@ -91,23 +93,30 @@ pub struct LauncherAutoUpdateState {
 }
 
 impl LauncherAutoUpdateState {
+    pub fn current_tag_label(&self) -> String {
+        normalize_version_tag(&self.current_tag).unwrap_or_else(current_version_tag)
+    }
+
     pub fn downloaded_update_available(&self) -> bool {
-        self.status == "downloaded"
-            && self
-                .latest_tag
-                .as_deref()
-                .is_some_and(|latest| latest != self.current_tag)
-            && self
+        if self.status != "downloaded"
+            || !self
                 .downloaded_path
                 .as_deref()
                 .is_some_and(|path| !path.is_empty())
+        {
+            return false;
+        }
+
+        self.latest_tag
+            .as_deref()
+            .and_then(normalize_version_tag)
+            .is_some_and(|latest| latest != self.current_tag_label())
     }
 
     pub fn latest_tag_label(&self) -> String {
         self.latest_tag
             .as_deref()
-            .filter(|tag| !tag.trim().is_empty())
-            .map(ToOwned::to_owned)
+            .and_then(normalize_version_tag)
             .unwrap_or_else(|| text().latest_release)
     }
 
@@ -127,9 +136,15 @@ impl LauncherAutoUpdateState {
             ),
             "checking" | "downloading" => copy.checking_update,
             "idle" => copy.update_not_checked,
-            _ => copy.update_current_message(&self.current_tag),
+            _ => copy.update_current_message(&self.current_tag_label()),
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LauncherUpdateUiState {
+    checking_since: Option<Instant>,
+    last_state: Option<LauncherAutoUpdateState>,
 }
 
 #[allow(dead_code)]
@@ -289,6 +304,37 @@ impl LauncherText {
         .into_owned()
     }
 
+    pub fn check_update_label(&self, current_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.check_update_versioned",
+            locale = locale,
+            current_tag = current_tag
+        )
+        .into_owned()
+    }
+
+    pub fn checking_update_label(&self, spinner: &str, current_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.checking_update_versioned",
+            locale = locale,
+            spinner = spinner,
+            current_tag = current_tag
+        )
+        .into_owned()
+    }
+
+    pub fn update_downloaded_restart_message(&self, latest_tag: &str) -> String {
+        let locale = self.locale;
+        t!(
+            "launcher.update_downloaded_restart_message",
+            locale = locale,
+            latest_tag = latest_tag
+        )
+        .into_owned()
+    }
+
     pub fn update_ready_message(&self, latest_tag: &str) -> String {
         let locale = self.locale;
         t!(
@@ -379,7 +425,8 @@ impl Drop for LauncherInstanceLock {
     }
 }
 
-static LAUNCHER_LANGUAGE: std::sync::OnceLock<LauncherLanguage> = std::sync::OnceLock::new();
+static LAUNCHER_LANGUAGE: OnceLock<LauncherLanguage> = OnceLock::new();
+static UPDATE_UI_STATE: OnceLock<Mutex<LauncherUpdateUiState>> = OnceLock::new();
 
 impl LauncherLanguage {
     fn locale(self) -> &'static str {
@@ -810,6 +857,54 @@ fn browser_extension_token_args() -> [&'static str; 4] {
     ["browser", "token", "--days", BROWSER_EXTENSION_TOKEN_DAYS]
 }
 
+pub fn current_version_tag() -> String {
+    normalize_version_tag(env!("CARGO_PKG_VERSION")).unwrap_or_else(|| "v0.0.0".to_string())
+}
+
+pub fn check_update_menu_label() -> String {
+    let state = lock_update_ui_state().clone();
+    let current_tag = state
+        .last_state
+        .as_ref()
+        .map(LauncherAutoUpdateState::current_tag_label)
+        .unwrap_or_else(current_version_tag);
+
+    if let Some(checking_since) = state.checking_since {
+        return text().checking_update_label(spinner_frame(checking_since), &current_tag);
+    }
+
+    if let Some(update_state) = state
+        .last_state
+        .as_ref()
+        .filter(|state| state.downloaded_update_available())
+    {
+        return text().update_downloaded_restart_message(&update_state.latest_tag_label());
+    }
+
+    text().check_update_label(&current_tag)
+}
+
+pub fn begin_update_check() -> bool {
+    let mut state = lock_update_ui_state();
+    if state.checking_since.is_some() {
+        return false;
+    }
+    state.checking_since = Some(Instant::now());
+    true
+}
+
+pub fn finish_update_check(state: Option<LauncherAutoUpdateState>) {
+    let mut ui_state = lock_update_ui_state();
+    ui_state.checking_since = None;
+    if let Some(state) = state {
+        ui_state.last_state = Some(state);
+    }
+}
+
+pub fn record_update_state(state: &LauncherAutoUpdateState) {
+    lock_update_ui_state().last_state = Some(state.clone());
+}
+
 pub fn check_update_now(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
     run_update_check(ctx, true)
 }
@@ -909,6 +1004,32 @@ fn combine_command_results(first: CommandResult, second: CommandResult) -> Comma
         success: first.success && second.success,
         message,
     }
+}
+
+fn lock_update_ui_state() -> std::sync::MutexGuard<'static, LauncherUpdateUiState> {
+    UPDATE_UI_STATE
+        .get_or_init(|| Mutex::new(LauncherUpdateUiState::default()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn normalize_version_tag(tag: &str) -> Option<String> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        None
+    } else if tag.starts_with('v') || tag.starts_with('V') {
+        Some(format!(
+            "v{}",
+            tag[1..].trim_start_matches('v').trim_start_matches('V')
+        ))
+    } else {
+        Some(format!("v{tag}"))
+    }
+}
+
+fn spinner_frame(since: Instant) -> &'static str {
+    let frame = (since.elapsed().as_millis() / 200) as usize % UPDATE_SPINNER_FRAMES.len();
+    UPDATE_SPINNER_FRAMES[frame]
 }
 
 fn detect_anda_exe(launcher_exe: &Path) -> PathBuf {
@@ -1618,7 +1739,19 @@ mod tests {
         );
         assert_eq!(
             en.update_ready_message("v1.2.3"),
-            "Anda v1.2.3 has been downloaded. Install and restart to use it."
+            "Downloaded v1.2.3. Restart to apply."
+        );
+        assert_eq!(
+            en.check_update_label("v1.2.3"),
+            "Check for updates (v1.2.3)"
+        );
+        assert_eq!(
+            en.checking_update_label("/", "v1.2.3"),
+            "/ Checking for updates (v1.2.3)"
+        );
+        assert_eq!(
+            en.update_downloaded_restart_message("v1.2.3"),
+            "Downloaded v1.2.3; restart to apply"
         );
 
         let zh = text_for_language(LauncherLanguage::ZhHans);
@@ -1631,7 +1764,24 @@ mod tests {
         );
         assert_eq!(
             zh.update_ready_message("v1.2.3"),
-            "已下载 Anda v1.2.3。安装并重启后生效。"
+            "已下载 v1.2.3，重启生效。"
+        );
+        assert_eq!(zh.check_update_label("v1.2.3"), "检查更新（v1.2.3）");
+        assert_eq!(
+            zh.checking_update_label("/", "v1.2.3"),
+            "/ 正在检查更新（v1.2.3）"
+        );
+        assert_eq!(
+            zh.update_downloaded_restart_message("v1.2.3"),
+            "已下载 v1.2.3，重启生效"
+        );
+    }
+
+    #[test]
+    fn current_version_tag_uses_package_version() {
+        assert_eq!(
+            current_version_tag(),
+            format!("v{}", env!("CARGO_PKG_VERSION"))
         );
     }
 

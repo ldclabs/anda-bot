@@ -48,6 +48,9 @@ launcher.browser_extension_token_copied:
 launcher.check_update:
   en: Check for updates...
   zh-Hans: 检查更新...
+launcher.check_update_versioned:
+  en: Check for updates (%{current_tag})
+  zh-Hans: 检查更新（%{current_tag}）
 launcher.launch_at_login:
   en: Launch at login
   zh-Hans: 登录时启动
@@ -117,6 +120,9 @@ launcher.powershell_not_found:
 launcher.checking_update:
   en: Checking for updates...
   zh-Hans: 正在检查更新...
+launcher.checking_update_versioned:
+  en: "%{spinner} Checking for updates (%{current_tag})"
+  zh-Hans: "%{spinner} 正在检查更新（%{current_tag}）"
 launcher.update_ready_title:
   en: Update ready
   zh-Hans: 更新已就绪
@@ -180,11 +186,14 @@ launcher.error.schtasks_failed:
   en: "schtasks.exe failed: %{detail}"
   zh-Hans: schtasks.exe 执行失败：%{detail}
 launcher.update_ready_message:
-  en: Anda %{latest_tag} has been downloaded. Install and restart to use it.
-  zh-Hans: 已下载 Anda %{latest_tag}。安装并重启后生效。
+  en: Downloaded %{latest_tag}. Restart to apply.
+  zh-Hans: 已下载 %{latest_tag}，重启生效。
+launcher.update_downloaded_restart_message:
+  en: Downloaded %{latest_tag}; restart to apply
+  zh-Hans: 已下载 %{latest_tag}，重启生效
 launcher.update_restart_confirm:
-  en: Install Anda %{latest_tag} and restart now?
-  zh-Hans: 现在安装 Anda %{latest_tag} 并重启？
+  en: Downloaded %{latest_tag}. Install and restart now to apply it?
+  zh-Hans: 已下载 %{latest_tag}，重启生效。现在安装并重启？
 launcher.update_current_message:
   en: Anda is already up to date (%{current_tag}).
   zh-Hans: Anda 已是最新版本（%{current_tag}）。

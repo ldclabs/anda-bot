@@ -2,6 +2,18 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.2] — 2026-06-09
+
+### Changed
+
+- **Launcher update UX refined**: desktop launcher update menus now show the current version, display a localized checking state with spinner feedback, remember the latest update state, prevent duplicate manual update checks, and make downloaded updates clearer with "restart to apply" wording across Windows and macOS.
+- **Windows installer download streamlined**: the website install page now links Windows users directly to the latest `AndaBotSetup-windows-x86_64.exe` release asset and marks it as a download instead of sending them to the generic releases page.
+- **Version synchronized for the 0.9.2 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.2`.
+
+### Fixed
+
+- **Launcher update version comparison**: update-state handling now normalizes version tags before comparing current and latest versions, avoiding mismatches between bare versions and `v`-prefixed release tags.
+
 ## [0.9.1] — 2026-06-08
 
 ### Changed

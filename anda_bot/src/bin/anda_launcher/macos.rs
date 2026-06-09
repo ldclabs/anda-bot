@@ -16,7 +16,7 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
-    NSMenuItem, NSStatusBar, NSVariableStatusItemLength,
+    NSMenuDelegate, NSMenuItem, NSStatusBar, NSVariableStatusItemLength,
 };
 use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
@@ -32,6 +32,7 @@ const LAUNCHER_APP_NAME: &str = "Anda Bot.app";
 const LAUNCHER_APP_EXECUTABLE: &str = "Anda Bot";
 const LAUNCHER_APP_ICON: &str = "AndaBot";
 const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
+const CHECK_UPDATE_MENU_TAG: isize = 1009;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -47,6 +48,8 @@ define_class!(
     unsafe impl NSObjectProtocol for Delegate {}
 
     unsafe impl NSApplicationDelegate for Delegate {}
+
+    unsafe impl NSMenuDelegate for Delegate {}
 
     impl Delegate {
         #[unsafe(method(openAnda:))]
@@ -127,6 +130,16 @@ define_class!(
         fn quit(&self, _sender: &AnyObject) {
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
+
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, menu: &NSMenu) {
+            refresh_update_menu_item(menu);
+        }
+
+        #[unsafe(method(menuWillOpen:))]
+        fn menu_will_open(&self, menu: &NSMenu) {
+            refresh_update_menu_item(menu);
+        }
     }
 );
 
@@ -181,6 +194,7 @@ pub fn show_error(title: &str, message: &str) {
 fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     let copy = text();
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.app_title).as_ref());
+    menu.setDelegate(Some(ProtocolObject::from_ref(delegate)));
     add_item(&menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
     add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
@@ -202,10 +216,23 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_settings_submenu(&menu, mtm, delegate, &copy);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, &copy.check_update, sel!(checkUpdate:), delegate);
+    let check_update = add_item(
+        &menu,
+        mtm,
+        &core::check_update_menu_label(),
+        sel!(checkUpdate:),
+        delegate,
+    );
+    check_update.setTag(CHECK_UPDATE_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(&menu, mtm, &copy.quit, sel!(quit:), delegate);
     menu
+}
+
+fn refresh_update_menu_item(menu: &NSMenu) {
+    if let Some(item) = menu.itemWithTag(CHECK_UPDATE_MENU_TAG) {
+        item.setTitle(nsstring(&core::check_update_menu_label()).as_ref());
+    }
 }
 
 fn add_settings_submenu(
@@ -260,7 +287,7 @@ fn add_item(
     title: &str,
     action: objc2::runtime::Sel,
     delegate: &Delegate,
-) {
+) -> Retained<NSMenuItem> {
     let item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -273,6 +300,7 @@ fn add_item(
         item.setTarget(Some(delegate.as_ref()));
     }
     menu.addItem(&item);
+    item
 }
 
 fn show_result(title: &str, result: &CommandResult) {
@@ -341,14 +369,16 @@ fn start_auto_update_loop(ctx: LauncherContext) {
         let mut prompted_tag: Option<String> = None;
         loop {
             match core::check_update_if_due(&ctx) {
-                Ok(state) if state.downloaded_update_available() => {
-                    let tag = state.latest_tag.clone();
-                    if tag != prompted_tag {
-                        prompted_tag = tag;
-                        prompt_update_ready(ctx.clone(), state);
+                Ok(state) => {
+                    core::record_update_state(&state);
+                    if state.downloaded_update_available() {
+                        let tag = state.latest_tag.clone();
+                        if tag != prompted_tag {
+                            prompted_tag = tag;
+                            prompt_update_ready(ctx.clone(), state);
+                        }
                     }
                 }
-                Ok(_) => {}
                 Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
             }
             thread::sleep(core::auto_update_poll_interval());
@@ -357,15 +387,34 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 }
 
 fn run_manual_update_check(ctx: LauncherContext) {
+    if !core::begin_update_check() {
+        show_background_notification(
+            &text().update_check_result_title,
+            &core::check_update_menu_label(),
+        );
+        return;
+    }
+
+    show_background_notification(
+        &text().update_check_result_title,
+        &core::check_update_menu_label(),
+    );
     thread::spawn(move || match core::check_update_now(&ctx) {
-        Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
-        Ok(state) => {
-            show_background_dialog(&text().update_check_result_title, &state.check_message())
+        Ok(state) if state.downloaded_update_available() => {
+            core::finish_update_check(Some(state.clone()));
+            prompt_update_ready(ctx, state);
         }
-        Err(err) => show_background_dialog(
-            &text().update_check_failed_title,
-            &text().update_check_failed_message(&err.to_string()),
-        ),
+        Ok(state) => {
+            core::finish_update_check(Some(state.clone()));
+            show_background_dialog(&text().update_check_result_title, &state.check_message());
+        }
+        Err(err) => {
+            core::finish_update_check(None);
+            show_background_dialog(
+                &text().update_check_failed_title,
+                &text().update_check_failed_message(&err.to_string()),
+            );
+        }
     });
 }
 

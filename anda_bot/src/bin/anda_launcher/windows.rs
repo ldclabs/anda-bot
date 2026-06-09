@@ -29,8 +29,8 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::{
-            NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
-            Shell_NotifyIconW, ShellExecuteW,
+            NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+            NOTIFYICONDATAW, Shell_NotifyIconW, ShellExecuteW,
         },
         WindowsAndMessaging::{
             AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconIndirect,
@@ -191,7 +191,7 @@ fn handle_command(hwnd: HWND, id: usize) {
             core::restart_daemon(ctx)
         }),
         ID_BROWSER_TOKEN => show_browser_extension_token_result_async(ctx.clone()),
-        ID_CHECK_UPDATE => run_manual_update_check(ctx.clone()),
+        ID_CHECK_UPDATE => run_manual_update_check(hwnd, ctx.clone()),
         ID_AUTOSTART => toggle_autostart_async(ctx.clone()),
         ID_LOGS => open_logs_async(ctx.clone()),
         ID_QUIT => unsafe {
@@ -261,7 +261,7 @@ fn show_tray_menu(hwnd: HWND) {
         append_item(settings_menu, ID_AUTOSTART, autostart_label);
         append_submenu(menu, settings_menu, &copy.settings);
         append_separator(menu);
-        append_item(menu, ID_CHECK_UPDATE, &copy.check_update);
+        append_item(menu, ID_CHECK_UPDATE, &core::check_update_menu_label());
         append_separator(menu);
         append_item(menu, ID_QUIT, &copy.quit);
 
@@ -293,6 +293,20 @@ unsafe fn add_tray_icon(hwnd: HWND) {
     };
     copy_wide_fixed(&mut data.szTip, &text().app_title);
     Shell_NotifyIconW(NIM_ADD, &data);
+}
+
+unsafe fn show_tray_notification(hwnd: HWND, title: &str, message: &str) {
+    let mut data = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: TRAY_ID,
+        uFlags: NIF_INFO,
+        dwInfoFlags: NIIF_INFO,
+        ..Default::default()
+    };
+    copy_wide_fixed(&mut data.szInfoTitle, title);
+    copy_wide_fixed(&mut data.szInfo, message);
+    Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
 fn launcher_icon() -> HICON {
@@ -609,14 +623,16 @@ fn start_auto_update_loop(ctx: LauncherContext) {
         let mut prompted_tag: Option<String> = None;
         loop {
             match core::check_update_if_due(&ctx) {
-                Ok(state) if state.downloaded_update_available() => {
-                    let tag = state.latest_tag.clone();
-                    if tag != prompted_tag {
-                        prompted_tag = tag;
-                        prompt_update_ready(ctx.clone(), state);
+                Ok(state) => {
+                    core::record_update_state(&state);
+                    if state.downloaded_update_available() {
+                        let tag = state.latest_tag.clone();
+                        if tag != prompted_tag {
+                            prompted_tag = tag;
+                            prompt_update_ready(ctx.clone(), state);
+                        }
                     }
                 }
-                Ok(_) => {}
                 Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
             }
             thread::sleep(core::auto_update_poll_interval());
@@ -624,19 +640,47 @@ fn start_auto_update_loop(ctx: LauncherContext) {
     });
 }
 
-fn run_manual_update_check(ctx: LauncherContext) {
-    thread::spawn(move || match core::check_update_now(&ctx) {
-        Ok(state) if state.downloaded_update_available() => prompt_update_ready(ctx, state),
-        Ok(state) => message_box(
+fn run_manual_update_check(hwnd: HWND, ctx: LauncherContext) {
+    if !core::begin_update_check() {
+        unsafe {
+            show_tray_notification(
+                hwnd,
+                &text().update_check_result_title,
+                &core::check_update_menu_label(),
+            );
+        }
+        return;
+    }
+
+    unsafe {
+        show_tray_notification(
+            hwnd,
             &text().update_check_result_title,
-            &state.check_message(),
-            MB_OK | MB_ICONINFORMATION,
-        ),
-        Err(err) => message_box(
-            &text().update_check_failed_title,
-            &text().update_check_failed_message(&err.to_string()),
-            MB_OK | MB_ICONERROR,
-        ),
+            &core::check_update_menu_label(),
+        );
+    }
+
+    thread::spawn(move || match core::check_update_now(&ctx) {
+        Ok(state) if state.downloaded_update_available() => {
+            core::finish_update_check(Some(state.clone()));
+            prompt_update_ready(ctx, state);
+        }
+        Ok(state) => {
+            core::finish_update_check(Some(state.clone()));
+            message_box(
+                &text().update_check_result_title,
+                &state.check_message(),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+        Err(err) => {
+            core::finish_update_check(None);
+            message_box(
+                &text().update_check_failed_title,
+                &text().update_check_failed_message(&err.to_string()),
+                MB_OK | MB_ICONERROR,
+            );
+        }
     });
 }
 

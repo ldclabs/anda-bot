@@ -13,6 +13,7 @@ type InstallOptionCopy = {
 	body: string;
 	primaryLabel: string;
 	href?: string;
+	download?: string;
 	command?: string;
 	commandLabel?: string;
 	note: string;
@@ -133,7 +134,8 @@ export const localeMeta: Record<
 	es: { label: 'Spanish', nativeName: 'Español', htmlLang: 'es', dir: 'ltr' }
 };
 
-const latestReleaseUrl = 'https://github.com/ldclabs/anda-bot/releases/latest';
+const windowsInstallerFileName = 'AndaBotSetup-windows-x86_64.exe';
+const windowsInstallerUrl = `https://github.com/ldclabs/anda-bot/releases/latest/download/${windowsInstallerFileName}`;
 const extensionStoreUrl =
 	'https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd';
 const browserDocsUrl = 'https://docs.anda.bot/docs/quick-start/browser-extension';
@@ -227,7 +229,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: 'Graphical installer',
 					body: 'Download the latest setup app. It installs the launcher, Start Menu entry, desktop shortcut, curated skills, and setup wizard.',
 					primaryLabel: 'Download installer',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: 'The tray launcher starts at login, manages model settings, controls the daemon, and prompts when updates are ready.',
 					steps: ['Run setup', 'Use the wizard', 'Pair browser']
 				},
@@ -441,7 +444,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: '图形化安装程序',
 					body: '下载最新的安装程序。它会自动布置启动器、开始菜单、桌面快捷方式、精选技能以及设置向导。',
 					primaryLabel: '下载安装程序',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: '系统托盘启动器会随开机自动运行，方便你管理模型设置、控制守护进程，并接收更新推送。',
 					steps: ['运行安装', '跟随向导', '连接浏览器']
 				},
@@ -653,7 +657,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: 'Instalador gráfico',
 					body: 'Descarga la app de setup. Instala launcher, accesos, skills seleccionadas y asistente de configuración.',
 					primaryLabel: 'Descargar instalador',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: 'El launcher de bandeja arranca con la sesión, controla el daemon y avisa cuando una actualización está lista.',
 					steps: ['Ejecutar setup', 'Usar asistente', 'Conectar navegador']
 				},
@@ -869,7 +874,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: 'Installateur graphique',
 					body: 'Téléchargez le setup. Il installe lanceur, raccourcis, skills sélectionnées et assistant de configuration.',
 					primaryLabel: 'Télécharger',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: 'Le lanceur de barre système démarre au login, contrôle le daemon et signale les mises à jour prêtes.',
 					steps: ['Lancer setup', 'Utiliser assistant', 'Connecter navigateur']
 				},
@@ -1079,7 +1085,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: 'Графический установщик',
 					body: 'Скачайте setup app. Он устанавливает launcher, shortcuts, curated skills и мастер настройки.',
 					primaryLabel: 'Скачать установщик',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: 'Tray launcher стартует при входе, управляет daemon и сообщает, когда обновление готово.',
 					steps: ['Запустить setup', 'Пройти мастер', 'Подключить браузер']
 				},
@@ -1290,7 +1297,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					title: 'مثبت رسومي',
 					body: 'نزّل تطبيق setup الأحدث. يثبت launcher والاختصارات و curated skills ومعالج الإعداد.',
 					primaryLabel: 'تنزيل المثبت',
-					href: latestReleaseUrl,
+					href: windowsInstallerUrl,
+					download: windowsInstallerFileName,
 					note: 'يبدأ tray launcher عند تسجيل الدخول، ويدير daemon، ويخبرك عندما يصبح التحديث جاهزاً.',
 					steps: ['تشغيل setup', 'استخدام المعالج', 'وصل المتصفح']
 				},
