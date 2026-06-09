@@ -46,6 +46,9 @@ Anda Brain 的设计重点不是“记得更多”，而是“记住之后还能
 brew install ldclabs/tap/anda
 ```
 
+在 macOS 上，Homebrew formula 会同时安装 `anda` 和 `anda_launcher`。运行一次
+`anda_launcher` 即可启动菜单栏 launcher，并刷新 `~/Applications/Anda Bot.app`。
+
 macOS 和 Linux 通过安装脚本：
 
 ```bash

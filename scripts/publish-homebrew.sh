@@ -65,9 +65,19 @@ class ${FORMULA_CLASS} < Formula
     if Hardware::CPU.arm?
       url "${BASE_URL}/anda-macos-arm64", using: :nounzip
       sha256 "${MACOS_ARM64_SHA}"
+
+      resource "anda_launcher" do
+        url "${BASE_URL}/anda_launcher-macos-arm64", using: :nounzip
+        sha256 "${LAUNCHER_MACOS_ARM64_SHA}"
+      end
     else
       url "${BASE_URL}/anda-macos-x86_64", using: :nounzip
       sha256 "${MACOS_X86_64_SHA}"
+
+      resource "anda_launcher" do
+        url "${BASE_URL}/anda_launcher-macos-x86_64", using: :nounzip
+        sha256 "${LAUNCHER_MACOS_X86_64_SHA}"
+      end
     end
   end
 
@@ -85,18 +95,38 @@ class ${FORMULA_CLASS} < Formula
     binary = Dir["anda-*"].first
     chmod 0755, binary
     bin.install binary => "anda"
+
+    if OS.mac?
+      resource("anda_launcher").stage do
+        launcher = Dir["anda_launcher-*"].first
+        chmod 0755, launcher
+        bin.install launcher => "anda_launcher"
+      end
+    end
   end
 
   def caveats
-    <<~EOS
-      Homebrew does not write runtime files into ~/.anda during install.
-      To install or refresh curated skills, run:
-        anda update --skills
-    EOS
+    lines = [
+      "Homebrew does not write runtime files into ~/.anda during install.",
+      "To install or refresh curated skills, run:",
+      "  anda update --skills",
+    ]
+
+    if OS.mac?
+      lines += [
+        "",
+        "The macOS formula also installs the menu bar launcher:",
+        "  anda_launcher",
+        "Run it once to create or refresh ~/Applications/Anda Bot.app.",
+      ]
+    end
+
+    lines.join("\n")
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/anda --version")
+    assert (bin/"anda_launcher").exist? if OS.mac?
   end
 end
 EOF
@@ -114,6 +144,8 @@ info "Generating Homebrew formula for ${REPO} ${TAG}..."
 
 MACOS_ARM64_SHA=$(fetch_checksum "anda-macos-arm64")
 MACOS_X86_64_SHA=$(fetch_checksum "anda-macos-x86_64")
+LAUNCHER_MACOS_ARM64_SHA=$(fetch_checksum "anda_launcher-macos-arm64")
+LAUNCHER_MACOS_X86_64_SHA=$(fetch_checksum "anda_launcher-macos-x86_64")
 LINUX_ARM64_SHA=$(fetch_checksum "anda-linux-arm64")
 LINUX_X86_64_SHA=$(fetch_checksum "anda-linux-x86_64")
 

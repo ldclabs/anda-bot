@@ -2,6 +2,14 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.3] — 2026-06-09
+
+### Changed
+
+- **Homebrew macOS launcher packaging improved**: the Homebrew formula generator now publishes and installs the macOS `anda_launcher` resource alongside `anda`, validates launcher presence in formula tests, and adds caveats that explain how to start the menu bar launcher and refresh `~/Applications/Anda Bot.app`.
+- **Installation docs synchronized for Homebrew launcher installs**: README and docsite install pages now clarify that Homebrew installs both `anda` and `anda_launcher` on macOS and that running `anda_launcher` refreshes the application entrypoint.
+- **Version synchronized for the 0.9.3 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.3`.
+
 ## [0.9.2] — 2026-06-09
 
 ### Changed

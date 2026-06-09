@@ -46,6 +46,10 @@ With Homebrew:
 brew install ldclabs/tap/anda
 ```
 
+On macOS, the Homebrew formula installs both `anda` and `anda_launcher`. Run
+`anda_launcher` once to start the menu bar launcher and refresh
+`~/Applications/Anda Bot.app`.
+
 macOS and Linux with the install script:
 
 ```bash
