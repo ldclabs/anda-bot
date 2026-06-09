@@ -34,6 +34,7 @@ mod browser;
 mod browser_ws;
 mod conversation;
 mod goal;
+mod model_retry;
 mod multimodal;
 mod prompt;
 mod resources;

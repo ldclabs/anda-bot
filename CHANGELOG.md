@@ -12,6 +12,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Model completion retry handling**: retryable model provider errors now wait for the advertised retry-after delay (or a safe default) before retrying session turns, compaction, and multimodal understanding requests, improving recovery from transient rate limits and provider failures.
 - **Launcher update version comparison**: update-state handling now normalizes version tags before comparing current and latest versions, avoiding mismatches between bare versions and `v`-prefixed release tags.
 
 ## [0.9.1] — 2026-06-08

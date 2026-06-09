@@ -1,7 +1,7 @@
 use anda_core::{
-    Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionFeatures,
-    CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
-    Usage, inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
+    Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionRequest,
+    ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures, Usage,
+    inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
 };
 use anda_engine::{
     context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -22,6 +22,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::model_retry;
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
@@ -621,27 +622,28 @@ impl MediaUnderstandingAgent {
         }
 
         let (summary_input, truncated) = bounded_text_for_summary(text);
-        let mut output = ctx
-            .completion(
-                CompletionRequest {
-                    instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
-                    prompt: format!(
-                        "Summarize {source} from {label}. Original text length: {} bytes.{}\n\nCaller question or focus:\n{question}",
-                        text.len(),
-                        if truncated {
-                            " The supplied text is a bounded head/tail excerpt because the attachment is very large; say when conclusions may be incomplete."
-                        } else {
-                            ""
-                        }
-                    ),
-                    content: vec![ContentPart::Text {
-                        text: summary_input,
-                    }],
-                    ..Default::default()
-                },
-                Vec::new(),
-            )
-            .await?;
+        let mut output = model_retry::completion_with_retry(
+            ctx,
+            CompletionRequest {
+                instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
+                prompt: format!(
+                    "Summarize {source} from {label}. Original text length: {} bytes.{}\n\nCaller question or focus:\n{question}",
+                    text.len(),
+                    if truncated {
+                        " The supplied text is a bounded head/tail excerpt because the attachment is very large; say when conclusions may be incomplete."
+                    } else {
+                        ""
+                    }
+                ),
+                content: vec![ContentPart::Text {
+                    text: summary_input,
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+            "attachment text summary",
+        )
+        .await?;
 
         let summary = output.content.trim();
         output.content = format!(
@@ -671,20 +673,21 @@ impl MediaUnderstandingAgent {
         let tools = ctx
             .definitions(Some(&other_understanding_tool_names()))
             .await;
-        let mut output = ctx
-            .completion(
-                CompletionRequest {
-                    instructions: self.kind.instructions(),
-                    prompt: format!(
-                        "Understand this non-image/audio/video attachment for the main agent.\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. If no skill fits, use safe shell or read-only file inspection to extract text or metadata when the attachment has an accessible local path or URL.\n3. If local tools are insufficient, use network-capable tools or shell commands to research a practical extraction method, then report the best next action.\n\nDo not invent attachment contents. If extraction is impossible, explain what was tried or what capability is missing.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
-                    ),
-                    model: Some("".to_string()), // ACTIVE_MODEL_LABEL
-                    tools,
-                    ..Default::default()
-                },
-                vec![attachment.to_resource()],
-            )
-            .await?;
+        let mut output = model_retry::completion_with_retry(
+            ctx,
+            CompletionRequest {
+                instructions: self.kind.instructions(),
+                prompt: format!(
+                    "Understand this non-image/audio/video attachment for the main agent.\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. If no skill fits, use safe shell or read-only file inspection to extract text or metadata when the attachment has an accessible local path or URL.\n3. If local tools are insufficient, use network-capable tools or shell commands to research a practical extraction method, then report the best next action.\n\nDo not invent attachment contents. If extraction is impossible, explain what was tried or what capability is missing.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
+                ),
+                model: Some("".to_string()), // ACTIVE_MODEL_LABEL
+                tools,
+                ..Default::default()
+            },
+            vec![attachment.to_resource()],
+            "attachment fallback understanding",
+        )
+        .await?;
 
         if output.content.trim().is_empty() {
             output.content = format!(
@@ -987,7 +990,8 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             .into());
         }
 
-        ctx.completion(
+        model_retry::completion_with_retry(
+            &ctx,
             CompletionRequest {
                 instructions: self.kind.instructions(),
                 prompt: self.completion_prompt(&args, resources_len, locations_len),
@@ -995,6 +999,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
                 ..Default::default()
             },
             Vec::new(),
+            self.kind.agent_name(),
         )
         .await
     }

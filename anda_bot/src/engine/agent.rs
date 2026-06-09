@@ -43,7 +43,7 @@ use super::{
     browser::ChromeBrowserTool,
     conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalStateSnapshot, GoalTool, GoalToolState},
-    multimodal,
+    model_retry, multimodal,
     prompt::{PromptCommand, skill_subagent},
     resources::ResourceStore,
     side,
@@ -1643,7 +1643,7 @@ impl SessionRunner {
             self.runner.implicit_context(extra_user_context);
         }
 
-        match self.runner.next().await {
+        match model_retry::runner_next_with_retry(&mut self.runner, "session runner").await {
             Ok(None) => {
                 let now_ms = unix_ms();
 
@@ -1691,10 +1691,12 @@ impl SessionRunner {
 
                 if needs_compaction(&self.runner) {
                     // 上下文过长，先进行一次压缩总结，更新conversation状态和历史消息，再继续后续的处理
-                    let mut output = self
-                        .runner
-                        .finalize(Some(COMPACTION_PROMPT.to_string()))
-                        .await?;
+                    let mut output = model_retry::runner_finalize_with_retry(
+                        &mut self.runner,
+                        Some(COMPACTION_PROMPT.to_string()),
+                        "session compaction",
+                    )
+                    .await?;
                     mark_special_user_messages(&mut output.chat_history);
 
                     let now_ms = unix_ms();
