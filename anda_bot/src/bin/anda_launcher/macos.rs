@@ -15,8 +15,9 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSVariableStatusItemLength,
+    NSAlert, NSAlertSecondButtonReturn, NSApplication, NSApplicationActivationPolicy,
+    NSApplicationDelegate, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar,
+    NSVariableStatusItemLength,
 };
 use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
 
@@ -33,6 +34,8 @@ const LAUNCHER_APP_EXECUTABLE: &str = "Anda Bot";
 const LAUNCHER_APP_ICON: &str = "AndaBot";
 const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
 const CHECK_UPDATE_MENU_TAG: isize = 1009;
+const STATUS_PID_MENU_TAG: isize = 1012;
+const STATUS_GATEWAY_MENU_TAG: isize = 1013;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -133,11 +136,13 @@ define_class!(
 
         #[unsafe(method(menuNeedsUpdate:))]
         fn menu_needs_update(&self, menu: &NSMenu) {
+            refresh_status_menu_items(menu);
             refresh_update_menu_item(menu);
         }
 
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, menu: &NSMenu) {
+            refresh_status_menu_items(menu);
             refresh_update_menu_item(menu);
         }
     }
@@ -198,7 +203,13 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     add_item(&menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
     add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, &copy.status, sel!(showStatus:), delegate);
+    add_disabled_item(&menu, mtm, &copy.status);
+    let status = core::cached_daemon_status();
+    let status_pid = add_disabled_item(&menu, mtm, &status_pid_title(&status));
+    status_pid.setTag(STATUS_PID_MENU_TAG);
+    let status_gateway = add_disabled_item(&menu, mtm, &status_gateway_title(&status));
+    status_gateway.setTag(STATUS_GATEWAY_MENU_TAG);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(
         &menu,
         mtm,
@@ -229,10 +240,41 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     menu
 }
 
+fn refresh_status_menu_items(menu: &NSMenu) {
+    let status = core::cached_daemon_status();
+    if let Some(item) = menu.itemWithTag(STATUS_PID_MENU_TAG) {
+        item.setTitle(nsstring(&status_pid_title(&status)).as_ref());
+    }
+    if let Some(item) = menu.itemWithTag(STATUS_GATEWAY_MENU_TAG) {
+        item.setTitle(nsstring(&status_gateway_title(&status)).as_ref());
+    }
+}
+
 fn refresh_update_menu_item(menu: &NSMenu) {
     if let Some(item) = menu.itemWithTag(CHECK_UPDATE_MENU_TAG) {
         item.setTitle(nsstring(&core::check_update_menu_label()).as_ref());
     }
+}
+
+fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    format!(
+        "{}: {}",
+        copy.status_pid,
+        status.pid.as_deref().unwrap_or(&copy.status_unavailable)
+    )
+}
+
+fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    format!(
+        "{}: {}",
+        copy.status_gateway_url,
+        status
+            .gateway_url
+            .as_deref()
+            .unwrap_or(&copy.status_unavailable)
+    )
 }
 
 fn add_settings_submenu(
@@ -303,6 +345,20 @@ fn add_item(
     item
 }
 
+fn add_disabled_item(menu: &NSMenu, mtm: MainThreadMarker, title: &str) -> Retained<NSMenuItem> {
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            nsstring(title).as_ref(),
+            None,
+            nsstring("").as_ref(),
+        )
+    };
+    item.setEnabled(false);
+    menu.addItem(&item);
+    item
+}
+
 fn show_result(title: &str, result: &CommandResult) {
     show_alert(title, &result.message);
 }
@@ -313,6 +369,7 @@ fn show_info(title: &str, message: &str) {
 
 fn show_browser_extension_token_result(result: &CommandResult) {
     if result.success && copy_to_clipboard(&result.message).is_ok() {
+        let token = core::browser_extension_bearer_token(&result.message);
         let copied = CommandResult {
             success: result.success,
             message: format!(
@@ -321,9 +378,38 @@ fn show_browser_extension_token_result(result: &CommandResult) {
                 result.message
             ),
         };
-        show_result(&text().browser_extension_token_title, &copied);
+        show_browser_extension_token_alert(&copied.message, token.as_deref());
     } else {
         show_result(&text().browser_extension_token_title, result);
+    }
+}
+
+fn show_browser_extension_token_alert(message: &str, token: Option<&str>) {
+    if let Some(mtm) = MainThreadMarker::new() {
+        let alert = NSAlert::init(NSAlert::alloc(mtm));
+        alert.setMessageText(nsstring(&text().browser_extension_token_title).as_ref());
+        alert.setInformativeText(nsstring(message).as_ref());
+        alert.addButtonWithTitle(nsstring(&text().ok).as_ref());
+        if token.is_some() {
+            alert
+                .addButtonWithTitle(nsstring(&text().browser_extension_token_copy_button).as_ref());
+        }
+
+        let response = alert.runModal();
+        if response == NSAlertSecondButtonReturn
+            && let Some(token) = token
+        {
+            if let Err(err) = copy_to_clipboard(token) {
+                show_error(&text().browser_extension_token_title, &err.to_string());
+            } else {
+                show_info(
+                    &text().browser_extension_token_title,
+                    &text().browser_extension_token_only_copied,
+                );
+            }
+        }
+    } else {
+        eprintln!("{}: {message}", text().browser_extension_token_title);
     }
 }
 
@@ -349,6 +435,7 @@ fn start_startup_tasks(ctx: LauncherContext) {
         if let Err(err) = run_startup_setup(&ctx) {
             show_background_dialog(&text().app_title, &err.to_string());
         }
+        start_status_loop(ctx.clone());
         start_auto_update_loop(ctx);
     });
 }
@@ -362,6 +449,15 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
         let _ = core::start_daemon(ctx);
     }
     Ok(())
+}
+
+fn start_status_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        loop {
+            core::refresh_daemon_status_cache(&ctx);
+            thread::sleep(core::daemon_status_poll_interval());
+        }
+    });
 }
 
 fn start_auto_update_loop(ctx: LauncherContext) {

@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- **Launcher daemon status and token UX improved**: desktop launcher menus now show cached daemon PID and Gateway URL details, refresh status in the background, and provide a dedicated Browser Extension token copy action while still copying the full pairing output for setup.
 - **Launcher update UX refined**: desktop launcher update menus now show the current version, display a localized checking state with spinner feedback, remember the latest update state, prevent duplicate manual update checks, and make downloaded updates clearer with "restart to apply" wording across Windows and macOS.
 - **Windows installer download streamlined**: the website install page now links Windows users directly to the latest `AndaBotSetup-windows-x86_64.exe` release asset and marks it as a download instead of sending them to the generic releases page.
 - **Version synchronized for the 0.9.2 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.2`.

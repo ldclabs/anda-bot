@@ -37,11 +37,11 @@ use windows_sys::Win32::{
             CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
             DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, HICON,
             HMENU, ICONINFO, IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
-            MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage,
-            RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_SHOWNORMAL, SendMessageTimeoutW,
-            SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
-            WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
-            WS_OVERLAPPEDWINDOW,
+            MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW,
+            PostQuitMessage, RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_SHOWNORMAL,
+            SendMessageTimeoutW, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu,
+            TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
+            WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -68,7 +68,6 @@ const LEGACY_LAUNCHER_TASK_NAME: &str = "Anda Bot Launcher";
 
 const ID_OPEN: usize = 1001;
 const ID_SETTINGS: usize = 1002;
-const ID_STATUS: usize = 1003;
 const ID_RESTART: usize = 1006;
 const ID_AUTOSTART: usize = 1007;
 const ID_LOGS: usize = 1008;
@@ -184,9 +183,6 @@ fn handle_command(hwnd: HWND, id: usize) {
     match id {
         ID_OPEN => open_anda_terminal_async(ctx.clone()),
         ID_SETTINGS => run_settings_wizard_async(ctx.clone()),
-        ID_STATUS => show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
-            core::daemon_status(ctx)
-        }),
         ID_RESTART => show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
             core::restart_daemon(ctx)
         }),
@@ -247,7 +243,11 @@ fn show_tray_menu(hwnd: HWND) {
         append_item(menu, ID_OPEN, &copy.open_anda);
         append_item(menu, ID_LOGS, &copy.open_logs);
         append_separator(menu);
-        append_item(menu, ID_STATUS, &copy.status);
+        let status = core::cached_daemon_status();
+        append_disabled_item(menu, &copy.status);
+        append_disabled_item(menu, &status_pid_title(&status));
+        append_disabled_item(menu, &status_gateway_title(&status));
+        append_separator(menu);
         append_item(menu, ID_RESTART, &copy.restart_daemon);
         append_item(menu, ID_BROWSER_TOKEN, &copy.browser_extension_token);
         append_separator(menu);
@@ -487,6 +487,10 @@ unsafe fn append_item(menu: HMENU, id: usize, text: &str) {
     AppendMenuW(menu, MF_STRING, id, wide_null(text).as_ptr());
 }
 
+unsafe fn append_disabled_item(menu: HMENU, text: &str) {
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, wide_null(text).as_ptr());
+}
+
 unsafe fn append_submenu(menu: HMENU, submenu: HMENU, text: &str) {
     AppendMenuW(
         menu,
@@ -509,8 +513,30 @@ fn show_result(title: &str, result: &CommandResult) {
     message_box(title, &result.message, style);
 }
 
+fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    format!(
+        "{}: {}",
+        copy.status_pid,
+        status.pid.as_deref().unwrap_or(&copy.status_unavailable)
+    )
+}
+
+fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
+    let copy = text();
+    format!(
+        "{}: {}",
+        copy.status_gateway_url,
+        status
+            .gateway_url
+            .as_deref()
+            .unwrap_or(&copy.status_unavailable)
+    )
+}
+
 fn show_browser_extension_token_result(result: &CommandResult) {
     if result.success && copy_to_clipboard(&result.message).is_ok() {
+        let token = core::browser_extension_bearer_token(&result.message);
         let copied = CommandResult {
             success: result.success,
             message: format!(
@@ -519,10 +545,105 @@ fn show_browser_extension_token_result(result: &CommandResult) {
                 result.message
             ),
         };
-        show_result(&text().browser_extension_token_title, &copied);
+        if show_browser_extension_token_dialog(&copied.message, token.as_deref()).is_err() {
+            show_result(&text().browser_extension_token_title, &copied);
+        }
     } else {
         show_result(&text().browser_extension_token_title, result);
     }
+}
+
+fn show_browser_extension_token_dialog(message: &str, token: Option<&str>) -> LauncherResult<()> {
+    let script = browser_extension_token_dialog_script(message, token);
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+        ])
+        .arg(script)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .trim()
+    .to_string();
+    Err(text().command_failed(&detail).into())
+}
+
+fn browser_extension_token_dialog_script(message: &str, token: Option<&str>) -> String {
+    let copy_button_visible = if token.is_some() { "$true" } else { "$false" };
+    format!(
+        r#"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = '{title}'
+$form.StartPosition = 'CenterScreen'
+$form.ClientSize = New-Object System.Drawing.Size(680, 400)
+$form.MinimizeBox = $false
+$form.MaximizeBox = $false
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+
+$text = New-Object System.Windows.Forms.TextBox
+$text.Multiline = $true
+$text.ReadOnly = $true
+$text.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$text.WordWrap = $true
+$text.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$text.BackColor = $form.BackColor
+$text.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+$text.Location = New-Object System.Drawing.Point(20, 20)
+$text.Size = New-Object System.Drawing.Size(640, 300)
+$text.Text = '{message}'
+$form.Controls.Add($text)
+
+$ok = New-Object System.Windows.Forms.Button
+$ok.Text = '{ok}'
+$ok.Size = New-Object System.Drawing.Size(96, 32)
+$ok.Location = New-Object System.Drawing.Point(564, 344)
+$ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.Controls.Add($ok)
+$form.AcceptButton = $ok
+
+if ({copy_button_visible}) {{
+  $copy = New-Object System.Windows.Forms.Button
+  $copy.Text = '{copy_token}'
+  $copy.Size = New-Object System.Drawing.Size(120, 32)
+  $copy.Location = New-Object System.Drawing.Point(430, 344)
+  $copy.Add_Click({{
+    [System.Windows.Forms.Clipboard]::SetText('{token}')
+    [System.Windows.Forms.MessageBox]::Show('{token_copied}', '{title}', 'OK', 'Information') | Out-Null
+    $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Close()
+  }})
+  $form.Controls.Add($copy)
+}}
+
+$form.TopMost = $true
+[void]$form.ShowDialog()
+"#,
+        title = ps_single(&text().browser_extension_token_title),
+        message = ps_single(message),
+        ok = ps_single(&text().ok),
+        copy_token = ps_single(&text().browser_extension_token_copy_button),
+        token_copied = ps_single(&text().browser_extension_token_only_copied),
+        token = ps_single(token.unwrap_or_default()),
+        copy_button_visible = copy_button_visible,
+    )
 }
 
 fn open_anda_terminal_async(ctx: LauncherContext) {
@@ -603,6 +724,7 @@ fn start_startup_tasks(ctx: LauncherContext) {
         if let Err(err) = run_startup_setup(&ctx) {
             show_error(&text().app_title, &err.to_string());
         }
+        start_status_loop(ctx.clone());
         start_auto_update_loop(ctx);
     });
 }
@@ -616,6 +738,15 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
         let _ = core::start_daemon(ctx);
     }
     Ok(())
+}
+
+fn start_status_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        loop {
+            core::refresh_daemon_status_cache(&ctx);
+            thread::sleep(core::daemon_status_poll_interval());
+        }
+    });
 }
 
 fn start_auto_update_loop(ctx: LauncherContext) {

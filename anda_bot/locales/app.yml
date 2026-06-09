@@ -27,6 +27,18 @@ launcher.model_settings:
 launcher.status:
   en: Status
   zh-Hans: 状态
+launcher.status_pid:
+  en: PID
+  zh-Hans: PID
+launcher.status_gateway_url:
+  en: Gateway URL
+  zh-Hans: Gateway URL
+launcher.status_checking:
+  en: Checking status...
+  zh-Hans: 正在检查状态...
+launcher.status_unavailable:
+  en: unavailable
+  zh-Hans: 不可用
 launcher.start_daemon:
   en: Start daemon
   zh-Hans: 启动守护进程
@@ -45,6 +57,12 @@ launcher.browser_extension_token_title:
 launcher.browser_extension_token_copied:
   en: Copied Gateway URL and Bearer token to the clipboard.
   zh-Hans: 已将 Gateway URL 和 Bearer token 复制到剪贴板。
+launcher.browser_extension_token_copy_button:
+  en: Copy Token
+  zh-Hans: 复制 Token
+launcher.browser_extension_token_only_copied:
+  en: Copied Bearer token to the clipboard.
+  zh-Hans: 已将 Bearer token 复制到剪贴板。
 launcher.check_update:
   en: Check for updates...
   zh-Hans: 检查更新...

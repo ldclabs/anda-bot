@@ -147,6 +147,13 @@ struct LauncherUpdateUiState {
     last_state: Option<LauncherAutoUpdateState>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LauncherDaemonStatus {
+    pub summary: String,
+    pub pid: Option<String>,
+    pub gateway_url: Option<String>,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LauncherText {
@@ -162,12 +169,18 @@ pub struct LauncherText {
     pub settings: String,
     pub model_settings: String,
     pub status: String,
+    pub status_pid: String,
+    pub status_gateway_url: String,
+    pub status_checking: String,
+    pub status_unavailable: String,
     pub start_daemon: String,
     pub stop_daemon: String,
     pub restart_daemon: String,
     pub browser_extension_token: String,
     pub browser_extension_token_title: String,
     pub browser_extension_token_copied: String,
+    pub browser_extension_token_copy_button: String,
+    pub browser_extension_token_only_copied: String,
     pub check_update: String,
     pub launch_at_login: String,
     pub disable_launch_at_login: String,
@@ -427,6 +440,7 @@ impl Drop for LauncherInstanceLock {
 
 static LAUNCHER_LANGUAGE: OnceLock<LauncherLanguage> = OnceLock::new();
 static UPDATE_UI_STATE: OnceLock<Mutex<LauncherUpdateUiState>> = OnceLock::new();
+static DAEMON_STATUS_CACHE: OnceLock<Mutex<Option<LauncherDaemonStatus>>> = OnceLock::new();
 
 impl LauncherLanguage {
     fn locale(self) -> &'static str {
@@ -456,6 +470,10 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         settings: t!("launcher.settings", locale = locale).into_owned(),
         model_settings: t!("launcher.model_settings", locale = locale).into_owned(),
         status: t!("launcher.status", locale = locale).into_owned(),
+        status_pid: t!("launcher.status_pid", locale = locale).into_owned(),
+        status_gateway_url: t!("launcher.status_gateway_url", locale = locale).into_owned(),
+        status_checking: t!("launcher.status_checking", locale = locale).into_owned(),
+        status_unavailable: t!("launcher.status_unavailable", locale = locale).into_owned(),
         start_daemon: t!("launcher.start_daemon", locale = locale).into_owned(),
         stop_daemon: t!("launcher.stop_daemon", locale = locale).into_owned(),
         restart_daemon: t!("launcher.restart_daemon", locale = locale).into_owned(),
@@ -468,6 +486,16 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         .into_owned(),
         browser_extension_token_copied: t!(
             "launcher.browser_extension_token_copied",
+            locale = locale
+        )
+        .into_owned(),
+        browser_extension_token_copy_button: t!(
+            "launcher.browser_extension_token_copy_button",
+            locale = locale
+        )
+        .into_owned(),
+        browser_extension_token_only_copied: t!(
+            "launcher.browser_extension_token_only_copied",
             locale = locale
         )
         .into_owned(),
@@ -849,12 +877,46 @@ pub fn daemon_status(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["status"])
 }
 
+pub fn cached_daemon_status() -> LauncherDaemonStatus {
+    lock_daemon_status_cache()
+        .clone()
+        .unwrap_or_else(|| LauncherDaemonStatus {
+            summary: text().status_checking,
+            pid: None,
+            gateway_url: None,
+        })
+}
+
+pub fn refresh_daemon_status_cache(ctx: &LauncherContext) -> LauncherDaemonStatus {
+    let result = daemon_status(ctx).unwrap_or_else(|err| CommandResult {
+        success: false,
+        message: err.to_string(),
+    });
+    let status = launcher_daemon_status_from_command_result(&result);
+    *lock_daemon_status_cache() = Some(status.clone());
+    status
+}
+
+pub fn daemon_status_poll_interval() -> Duration {
+    Duration::from_secs(15)
+}
+
 pub fn generate_browser_extension_token(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &browser_extension_token_args())
 }
 
 fn browser_extension_token_args() -> [&'static str; 4] {
     ["browser", "token", "--days", BROWSER_EXTENSION_TOKEN_DAYS]
+}
+
+pub fn browser_extension_bearer_token(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Bearer token:")
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 pub fn current_version_tag() -> String {
@@ -1011,6 +1073,72 @@ fn lock_update_ui_state() -> std::sync::MutexGuard<'static, LauncherUpdateUiStat
         .get_or_init(|| Mutex::new(LauncherUpdateUiState::default()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn lock_daemon_status_cache() -> std::sync::MutexGuard<'static, Option<LauncherDaemonStatus>> {
+    DAEMON_STATUS_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn launcher_daemon_status_from_command_result(result: &CommandResult) -> LauncherDaemonStatus {
+    let message = result.message.trim();
+    let summary = message
+        .lines()
+        .find_map(|line| {
+            let line = line.trim();
+            (!line.is_empty()).then_some(line.to_string())
+        })
+        .filter(|line| !line.is_empty())
+        .unwrap_or_else(|| text().status_unavailable);
+
+    if !result.success {
+        return LauncherDaemonStatus {
+            summary,
+            pid: None,
+            gateway_url: None,
+        };
+    }
+
+    LauncherDaemonStatus {
+        summary,
+        pid: parse_daemon_status_pid(message),
+        gateway_url: parse_daemon_status_gateway_url(message),
+    }
+}
+
+fn parse_daemon_status_pid(message: &str) -> Option<String> {
+    for line in message.lines().map(str::trim) {
+        if let Some(pid) = line
+            .split_once("(pid ")
+            .and_then(|(_, rest)| rest.split(')').next())
+            .map(str::trim)
+            .filter(|pid| pid.chars().all(|ch| ch.is_ascii_digit()))
+            .filter(|pid| !pid.is_empty())
+        {
+            return Some(pid.to_string());
+        }
+
+        if let Some(pid_file) = line
+            .strip_prefix("PID file:")
+            .map(str::trim)
+            .filter(|pid| !pid.is_empty())
+        {
+            return Some(pid_file.to_string());
+        }
+    }
+    None
+}
+
+fn parse_daemon_status_gateway_url(message: &str) -> Option<String> {
+    message.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Gateway URL:")
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn normalize_version_tag(tag: &str) -> Option<String> {
@@ -1733,6 +1861,8 @@ mod tests {
         assert_eq!(en.api_key, "API key");
         assert_eq!(en.settings, "Settings");
         assert_eq!(en.model_settings, "Model settings...");
+        assert_eq!(en.status_pid, "PID");
+        assert_eq!(en.status_gateway_url, "Gateway URL");
         assert_eq!(
             en.unsupported_provider("custom"),
             "unsupported provider: custom"
@@ -1753,11 +1883,18 @@ mod tests {
             en.update_downloaded_restart_message("v1.2.3"),
             "Downloaded v1.2.3; restart to apply"
         );
+        assert_eq!(en.browser_extension_token_copy_button, "Copy Token");
+        assert_eq!(
+            en.browser_extension_token_only_copied,
+            "Copied Bearer token to the clipboard."
+        );
 
         let zh = text_for_language(LauncherLanguage::ZhHans);
         assert_eq!(zh.api_key, "API 密钥");
         assert_eq!(zh.settings, "设置");
         assert_eq!(zh.model_settings, "大模型配置...");
+        assert_eq!(zh.status_pid, "PID");
+        assert_eq!(zh.status_gateway_url, "Gateway URL");
         assert_eq!(
             zh.unsupported_provider("custom"),
             "不支持的模型供应商：custom"
@@ -1774,6 +1911,11 @@ mod tests {
         assert_eq!(
             zh.update_downloaded_restart_message("v1.2.3"),
             "已下载 v1.2.3，重启生效"
+        );
+        assert_eq!(zh.browser_extension_token_copy_button, "复制 Token");
+        assert_eq!(
+            zh.browser_extension_token_only_copied,
+            "已将 Bearer token 复制到剪贴板。"
         );
     }
 
@@ -1913,6 +2055,83 @@ tts:
             browser_extension_token_args(),
             ["browser", "token", "--days", "365"]
         );
+    }
+
+    #[test]
+    fn browser_extension_bearer_token_extracts_only_token_value() {
+        let output = "\
+Gateway URL: http://127.0.0.1:8042
+Bearer token: hEOhASegWGqIAng_c3NhaHUtZTR1YXctMzRtNXEtZXpnamEtZW
+Extension directory: chrome_extension
+";
+
+        assert_eq!(
+            browser_extension_bearer_token(output),
+            Some("hEOhASegWGqIAng_c3NhaHUtZTR1YXctMzRtNXEtZXpnamEtZW".to_string())
+        );
+        assert_eq!(
+            browser_extension_bearer_token("Gateway URL: http://127.0.0.1:8042"),
+            None
+        );
+    }
+
+    #[test]
+    fn launcher_daemon_status_extracts_pid_and_gateway_url() {
+        let result = CommandResult {
+            success: true,
+            message: "\
+anda daemon is running (pid 12345)
+Gateway URL: http://127.0.0.1:8042
+Logs: /tmp/anda.log
+"
+            .to_string(),
+        };
+
+        let status = launcher_daemon_status_from_command_result(&result);
+
+        assert_eq!(status.summary, "anda daemon is running (pid 12345)");
+        assert_eq!(status.pid.as_deref(), Some("12345"));
+        assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+    }
+
+    #[test]
+    fn launcher_daemon_status_handles_gateway_without_pid() {
+        let result = CommandResult {
+            success: true,
+            message: "\
+anda daemon gateway is running
+Gateway URL: http://127.0.0.1:8042
+PID file: missing
+"
+            .to_string(),
+        };
+
+        let status = launcher_daemon_status_from_command_result(&result);
+
+        assert_eq!(status.summary, "anda daemon gateway is running");
+        assert_eq!(status.pid.as_deref(), Some("missing"));
+        assert_eq!(status.gateway_url.as_deref(), Some("http://127.0.0.1:8042"));
+    }
+
+    #[test]
+    fn launcher_daemon_status_handles_process_without_gateway() {
+        let result = CommandResult {
+            success: true,
+            message: "\
+anda daemon process exists but gateway is not responding (pid 12345)
+Logs: /tmp/anda.log
+"
+            .to_string(),
+        };
+
+        let status = launcher_daemon_status_from_command_result(&result);
+
+        assert_eq!(
+            status.summary,
+            "anda daemon process exists but gateway is not responding (pid 12345)"
+        );
+        assert_eq!(status.pid.as_deref(), Some("12345"));
+        assert_eq!(status.gateway_url, None);
     }
 
     #[test]
