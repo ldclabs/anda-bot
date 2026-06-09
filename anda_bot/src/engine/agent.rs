@@ -869,9 +869,10 @@ impl AndaBot {
                 extra_user_context: extra_user_context.clone(),
                 last_extra_user_context: extra_user_context,
             };
+            let mut pending_inputs = Vec::new();
 
             loop {
-                let mut inputs = Vec::new();
+                let mut inputs = std::mem::take(&mut pending_inputs);
 
                 while let Ok(input) = rx.try_recv() {
                     inputs.push(input);
@@ -880,6 +881,19 @@ impl AndaBot {
                 match sess_runner.run(inputs, &mut tools_usage_snapshot).await {
                     Ok(continue_active) => {
                         if !continue_active {
+                            while let Ok(input) = rx.try_recv() {
+                                pending_inputs.push(input);
+                            }
+
+                            let has_background_tasks = !session.background_tasks.read().is_empty();
+                            if should_continue_session_runner_after_stop(
+                                &sess_runner.conversation.status,
+                                !pending_inputs.is_empty(),
+                                has_background_tasks,
+                            ) {
+                                continue;
+                            }
+
                             break;
                         }
                     }
@@ -1476,6 +1490,29 @@ impl SessionRunner {
         }
     }
 
+    fn rebuild_runner_after_model_error(&mut self) {
+        let mut chat_history = self.runner.chat_history().clone();
+        while let Some(last) = chat_history.last() {
+            if last.tool_calls().is_empty() {
+                break;
+            }
+            chat_history.pop();
+        }
+        mark_special_user_messages(&mut chat_history);
+
+        self.runner = self
+            .ctx
+            .clone()
+            .completion_iter(
+                CompletionRequest {
+                    chat_history,
+                    ..self.req.clone()
+                },
+                Vec::new(),
+            )
+            .unbound();
+    }
+
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
         let mut messages = chat_history
             .iter()
@@ -1936,11 +1973,27 @@ impl SessionRunner {
                 );
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
+                self.rebuild_runner_after_model_error();
                 self.submit_pending_formation(
                     self.runner.chat_history(),
                     self.conversation.updated_at,
                 )
                 .await;
+
+                let has_background_tasks = !self.session.background_tasks.read().is_empty();
+                if has_background_tasks {
+                    log::warn!(
+                        "Session {} hit a model error while background tasks are running; keeping the session alive to receive background results",
+                        self.session.id
+                    );
+                    self.conversation.failed_reason = None;
+                    self.conversation.status = ConversationStatus::Idle;
+                    self.conversation.usage = self.runner.total_usage().clone();
+                    self.conversation.updated_at = unix_ms();
+                    self.persist_conversation_state().await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    return Ok(true);
+                }
 
                 self.conversation.failed_reason = Some(failed_reason.clone());
                 self.conversation.status = ConversationStatus::Failed;
@@ -2093,6 +2146,14 @@ fn should_auto_resume_conversation(status: &ConversationStatus) -> bool {
         status,
         ConversationStatus::Submitted | ConversationStatus::Working
     )
+}
+
+fn should_continue_session_runner_after_stop(
+    status: &ConversationStatus,
+    has_pending_inputs: bool,
+    has_background_tasks: bool,
+) -> bool {
+    !matches!(status, ConversationStatus::Cancelled) && (has_pending_inputs || has_background_tasks)
 }
 
 fn should_continue_conversation(status: &ConversationStatus) -> bool {
@@ -2618,6 +2679,30 @@ mod tests {
         ));
         assert!(!should_startup_greet_conversation(
             &ConversationStatus::Cancelled
+        ));
+    }
+
+    #[test]
+    fn session_runner_stop_policy_keeps_background_work() {
+        assert!(should_continue_session_runner_after_stop(
+            &ConversationStatus::Failed,
+            true,
+            false,
+        ));
+        assert!(should_continue_session_runner_after_stop(
+            &ConversationStatus::Completed,
+            false,
+            true,
+        ));
+        assert!(!should_continue_session_runner_after_stop(
+            &ConversationStatus::Failed,
+            false,
+            false,
+        ));
+        assert!(!should_continue_session_runner_after_stop(
+            &ConversationStatus::Cancelled,
+            true,
+            true,
         ));
     }
 

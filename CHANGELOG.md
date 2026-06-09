@@ -6,16 +6,22 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- **Default model streaming enabled**: bundled model configuration now enables streaming for the default provider entries so supported model replies can start returning output sooner.
 - **Voice reply playback feels faster and more natural**: browser extension voice replies now use shorter sentence-aware TTS chunks and synthesize the next segment while the current segment is playing, reducing pauses in long spoken replies.
 - **Browser voice recording format handling improved**: voice recording normalization now validates audio formats before daemon upload, derives missing filename extensions from MIME types, accepts MP4/M4A browser recording aliases, and uses browser-neutral speech permission wording.
 - **Homebrew macOS launcher packaging improved**: the Homebrew formula generator now publishes and installs the macOS `anda_launcher` resource alongside `anda`, validates launcher presence in formula tests, and adds caveats that explain how to start the menu bar launcher and refresh `~/Applications/Anda Bot.app`.
 - **Installation docs synchronized for Homebrew launcher installs**: README and docsite install pages now clarify that Homebrew installs both `anda` and `anda_launcher` on macOS and that running `anda_launcher` refreshes the application entrypoint.
-- **Version synchronized for the 0.9.3 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.3`.
+- **Version synchronized for the 0.9.3 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.3`.
 
 ### Fixed
 
+- **Session recovery around background tasks improved**: sessions now keep listening for queued inputs and background task results after a runner stop or model error instead of prematurely ending work while asynchronous tool results are still pending.
 - **Voice capture reliability improved**: browser page speech recognition now cleans up timed-out permission prompts and stopped sessions without unexpectedly restarting after delayed `onend` events.
 - **CLI voice recording robustness improved**: CLI voice capture no longer drops input events when audio callbacks outpace processing, encodes negative full-scale WAV samples correctly, and checks command availability with `where` on Windows.
+
+### Dependencies
+
+- Refreshed lockfile dependencies, including `anda_engine` 0.12.33 and related Rust/Wasm package updates.
 
 ## [0.9.2] — 2026-06-09
 

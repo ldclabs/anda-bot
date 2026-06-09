@@ -42,6 +42,7 @@ model:
       context_window: 400000
       max_output: 384000
       labels: ["memory"]
+      stream: true
       disabled: false
 
     - family: anthropic
@@ -52,6 +53,7 @@ model:
       context_window: 400000
       max_output: 130000
       labels: ["flash", "memory", "image", "video"]
+      stream: true
       disabled: false
 
     - family: openai
@@ -62,6 +64,7 @@ model:
       context_window: 400000
       max_output: 128000
       labels: ["memory", "image", "audio", "video"]
+      stream: true
       disabled: false
 
     - family: openai
@@ -72,6 +75,7 @@ model:
       context_window: 400000
       max_output: 128000
       labels: ["flash", "memory", "image", "audio", "video"]
+      stream: true
       disabled: false
 
     - family: anthropic
@@ -82,6 +86,7 @@ model:
       context_window: 400000
       max_output: 128000
       labels: ["memory", "image", "audio", "video"]
+      stream: true
       disabled: false
 
     - family: anthropic
@@ -92,6 +97,7 @@ model:
       context_window: 200000
       max_output: 64000
       labels: ["flash", "memory"]
+      stream: true
       disabled: false
 
     - family: gemini
@@ -102,6 +108,7 @@ model:
       context_window: 400000
       max_output: 64000
       labels: ["memory", "image", "audio", "video"]
+      stream: true
       disabled: false
 
     - family: gemini
@@ -112,6 +119,7 @@ model:
       context_window: 400000
       max_output: 64000
       labels: ["flash", "memory", "image", "audio", "video"]
+      stream: true
       disabled: false
 
     - family: gemini
@@ -122,6 +130,7 @@ model:
       context_window: 400000
       max_output: 64000
       labels: ["lite"]
+      stream: true
       disabled: false
 
     - family: anthropic
@@ -132,6 +141,7 @@ model:
       context_window: 400000
       max_output: 128000
       labels: []
+      stream: true
       disabled: false
       bearer_auth: true
 
@@ -143,6 +153,7 @@ model:
       context_window: 400000
       max_output: 128000
       labels: ["flash", "image", "audio", "video"]
+      stream: true
       disabled: false
       bearer_auth: true
 
@@ -154,6 +165,7 @@ model:
       context_window: 256000
       max_output: 32000
       labels: []
+      stream: true
       disabled: false
 
     - family: anthropic
@@ -164,6 +176,7 @@ model:
       context_window: 200000
       max_output: 128000
       labels: ["memory"]
+      stream: true
       disabled: false
 
     - family: openai
@@ -174,6 +187,7 @@ model:
       context_window: 256000
       max_output: 32000
       labels: ["flash", "image", "video"]
+      stream: true
       disabled: false
 
 tts:
