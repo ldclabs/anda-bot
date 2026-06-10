@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "Ouvrez Anda Bot depuis la zone de notification, la barre de menus ou le menu Démarrer, terminez l'assistant provider/API key/model et gardez le launcher en cours d'exécution pendant l'utilisation de l'extension."
   },
+  "openConfigEditor": {
+    "message": "Ouvrir l'éditeur config.yaml"
+  },
+  "configEditorTitle": {
+    "message": "config.yaml complet"
+  },
+  "configEditorBody": {
+    "message": "Utilisez la page dédiée pour les fournisseurs de modèles, la voix, la transcription, les canaux, les utilisateurs et les autres options du daemon."
+  },
   "onboardingTokenTitle": {
     "message": "Générer un jeton d'extension"
   },

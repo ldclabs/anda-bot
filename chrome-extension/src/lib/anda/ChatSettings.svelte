@@ -73,6 +73,7 @@
   const windowsInstallerUrl =
     'https://github.com/ldclabs/anda-bot/releases/latest/download/AndaBotSetup-windows-x86_64.exe'
   const tokenCommand = 'anda browser token --days 365'
+  const configPageUrl = chrome.runtime.getURL('config.html')
 
   function markSettingsDirty() {
     settingsDirty = true
@@ -357,6 +358,21 @@
                       {chrome.i18n.getMessage('onboardingConfigureBody')}
                     </p>
                   </div>
+                  <a
+                    class={buttonClass(
+                      'outline',
+                      'sm',
+                      'w-full justify-between bg-background text-xs'
+                    )}
+                    href={configPageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <span class="min-w-0 truncate"
+                      >{chrome.i18n.getMessage('openConfigEditor')}</span
+                    >
+                    <ExternalLink class="size-3.5" />
+                  </a>
                 </div>
               </div>
 
@@ -382,6 +398,35 @@
               </div>
             </div>
           {/if}
+        </div>
+
+        <div class="rounded-lg border bg-background p-3 shadow-xs">
+          <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+            <div
+              class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
+            >
+              <FileCog class="size-3.5" />
+            </div>
+            <div class="grid min-w-0 gap-2">
+              <div class="grid gap-0.5">
+                <h3 class="text-xs font-bold text-foreground">
+                  {chrome.i18n.getMessage('configEditorTitle')}
+                </h3>
+                <p class="text-xs leading-relaxed text-muted-foreground">
+                  {chrome.i18n.getMessage('configEditorBody')}
+                </p>
+              </div>
+              <a
+                class={buttonClass('outline', 'sm', 'w-full justify-between bg-background text-xs')}
+                href={configPageUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span class="min-w-0 truncate">{chrome.i18n.getMessage('openConfigEditor')}</span>
+                <ExternalLink class="size-3.5" />
+              </a>
+            </div>
+          </div>
         </div>
 
         <div data-slot="field-group" class={fieldGroupClass('gap-4')}>

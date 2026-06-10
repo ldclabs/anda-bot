@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "从系统托盘、菜单栏或开始菜单打开 Anda Bot，完成 provider/API key/model 向导，并在使用扩展时保持 launcher 运行。"
   },
+  "openConfigEditor": {
+    "message": "打开 config.yaml 编辑器"
+  },
+  "configEditorTitle": {
+    "message": "完整 config.yaml"
+  },
+  "configEditorBody": {
+    "message": "模型服务商、语音、转录、频道、用户和其他 daemon 选项，请在专用配置页中编辑。"
+  },
   "onboardingTokenTitle": {
     "message": "生成扩展令牌"
   },

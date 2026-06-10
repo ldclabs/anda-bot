@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "Откройте Anda Bot из системного трея, строки меню или меню Пуск, завершите мастер provider/API key/model и держите лаунчер запущенным во время использования расширения."
   },
+  "openConfigEditor": {
+    "message": "Открыть редактор config.yaml"
+  },
+  "configEditorTitle": {
+    "message": "Полный config.yaml"
+  },
+  "configEditorBody": {
+    "message": "Используйте отдельную страницу для провайдеров моделей, голоса, транскрибации, каналов, пользователей и других параметров daemon."
+  },
   "onboardingTokenTitle": {
     "message": "Создать токен расширения"
   },

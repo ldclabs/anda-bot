@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "افتح Anda Bot من علبة النظام أو شريط القوائم أو قائمة Start، وأكمل معالج provider/API key/model، وأبقِ المشغّل قيد التشغيل أثناء استخدام الإضافة."
   },
+  "openConfigEditor": {
+    "message": "فتح محرر config.yaml"
+  },
+  "configEditorTitle": {
+    "message": "config.yaml الكامل"
+  },
+  "configEditorBody": {
+    "message": "استخدم الصفحة المخصصة لموفري النماذج والصوت والتفريغ والقنوات والمستخدمين وخيارات daemon الأخرى."
+  },
   "onboardingTokenTitle": {
     "message": "إنشاء رمز للإضافة"
   },

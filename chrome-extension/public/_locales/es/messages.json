@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "Abre Anda Bot desde la bandeja del sistema, la barra de menús o el menú Inicio, completa el asistente de provider/API key/model y mantén el lanzador en ejecución mientras usas la extensión."
   },
+  "openConfigEditor": {
+    "message": "Abrir editor de config.yaml"
+  },
+  "configEditorTitle": {
+    "message": "config.yaml completo"
+  },
+  "configEditorBody": {
+    "message": "Usa la página dedicada para proveedores de modelos, voz, transcripción, canales, usuarios y otras opciones del daemon."
+  },
   "onboardingTokenTitle": {
     "message": "Generar un token para la extensión"
   },

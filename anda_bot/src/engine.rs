@@ -20,11 +20,12 @@ use axum::{
     response::IntoResponse,
     routing,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha3::{Digest, Sha3_384};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio_util::sync::CancellationToken;
@@ -73,6 +74,7 @@ pub struct Engines {
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
+    config_path: PathBuf,
 }
 
 #[async_trait]
@@ -105,6 +107,19 @@ struct DaemonControlRouteState {
     app: AppState,
     bot: Arc<AndaBot>,
     cancel_token: CancellationToken,
+    config_path: PathBuf,
+}
+
+#[derive(Serialize)]
+struct DaemonConfigResponse {
+    path: String,
+    content: String,
+    config: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct DaemonConfigUpdateRequest {
+    content: String,
 }
 
 impl Engines {
@@ -116,6 +131,7 @@ impl Engines {
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         active_im_channels: Vec<String>,
     ) -> Result<Self, BoxError> {
+        let config_path = config::Config::file_path(&cfg.home_dir);
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
             hasher.update(cfg.id_key.as_bytes());
@@ -373,6 +389,7 @@ impl Engines {
             browser_bridge,
             voice_capabilities,
             auto_updater: cfg.auto_updater,
+            config_path,
         })
     }
 
@@ -385,6 +402,7 @@ impl Engines {
             app: self.state.clone(),
             bot: self.bot.clone(),
             cancel_token,
+            config_path: self.config_path.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
@@ -406,6 +424,10 @@ impl Engines {
             .with_state(auto_update_route_state);
         let daemon_control_router = Router::new()
             .route("/daemon/status", routing::get(get_status))
+            .route(
+                "/daemon/config",
+                routing::get(get_daemon_config).put(update_daemon_config),
+            )
             .route("/daemon/shutdown", routing::post(daemon_shutdown))
             .with_state(daemon_control_route_state);
 
@@ -473,6 +495,126 @@ async fn get_status(State(state): State<DaemonControlRouteState>) -> impl IntoRe
     }
 }
 
+async fn get_daemon_config(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
+        return *response;
+    }
+
+    let content = match crate::util::text::read_text_file(&state.config_path).await {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            config::Config::default_template().to_string()
+        }
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    };
+
+    match daemon_config_response(&state.config_path, content) {
+        Ok(response) => AxumJson(response).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
+}
+
+async fn update_daemon_config(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+    AxumJson(request): AxumJson<DaemonConfigUpdateRequest>,
+) -> impl IntoResponse {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
+        return *response;
+    }
+
+    let content = normalize_config_file_content(request.content);
+    let response = match daemon_config_response(&state.config_path, content.clone()) {
+        Ok(response) => response,
+        Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    };
+
+    if let Some(parent) = state.config_path.parent()
+        && let Err(err) = tokio::fs::create_dir_all(parent).await
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+    }
+
+    match daemon_config_needs_backup(&state.config_path, content.as_bytes()).await {
+        Ok(true) => {
+            if let Err(err) = backup_daemon_config(&state.config_path).await {
+                return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+            }
+        }
+        Ok(false) => {}
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+
+    if let Err(err) = tokio::fs::write(&state.config_path, content).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+    }
+
+    AxumJson(response).into_response()
+}
+
+fn daemon_config_response(
+    path: &std::path::Path,
+    content: String,
+) -> Result<DaemonConfigResponse, BoxError> {
+    let config = config::Config::from_contents(&content)?;
+    let config = serde_json::to_value(config)?;
+    Ok(DaemonConfigResponse {
+        path: path.to_string_lossy().to_string(),
+        content,
+        config,
+    })
+}
+
+fn normalize_config_file_content(mut content: String) -> String {
+    content = content.replace("\r\n", "\n").replace('\r', "\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content
+}
+
+async fn daemon_config_needs_backup(path: &Path, next_content: &[u8]) -> Result<bool, BoxError> {
+    match tokio::fs::read(path).await {
+        Ok(existing) => Ok(existing != next_content),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+async fn backup_daemon_config(path: &Path) -> Result<PathBuf, BoxError> {
+    let backup_path = unique_daemon_config_backup_path(path).await?;
+    tokio::fs::copy(path, &backup_path).await?;
+    Ok(backup_path)
+}
+
+async fn unique_daemon_config_backup_path(path: &Path) -> Result<PathBuf, BoxError> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(config::CONFIG_FILE_NAME);
+    let backup_path = path.with_file_name(format!("{file_name}.bak"));
+    match tokio::fs::metadata(&backup_path).await {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(backup_path),
+        Err(err) => return Err(err.into()),
+        Ok(_) => {}
+    }
+
+    let stamp = unix_ms();
+    for attempt in 1..=1000 {
+        let backup_path = path.with_file_name(format!("{file_name}.{stamp}.{attempt}.bak"));
+        match tokio::fs::metadata(&backup_path).await {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(backup_path),
+            Err(err) => return Err(err.into()),
+            Ok(_) => {}
+        }
+    }
+
+    Err(format!("could not allocate backup path for {}", path.display()).into())
+}
+
 fn verify_update_request(
     app: &AppState,
     headers: &HeaderMap,
@@ -500,4 +642,46 @@ pub async fn get_version() -> impl IntoResponse {
 
     });
     axum::Json(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_config_file_content_uses_lf_and_final_newline() {
+        assert_eq!(
+            normalize_config_file_content("addr: 127.0.0.1:8042\r\nlog_level: warn".to_string()),
+            "addr: 127.0.0.1:8042\nlog_level: warn\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn daemon_config_backup_copies_existing_file_when_content_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join(config::CONFIG_FILE_NAME);
+        let existing = b"addr: 127.0.0.1:8042\n";
+        tokio::fs::write(&config_path, existing).await.unwrap();
+
+        assert!(
+            !daemon_config_needs_backup(&config_path, existing)
+                .await
+                .unwrap()
+        );
+        assert!(
+            daemon_config_needs_backup(&config_path, b"addr: 127.0.0.1:9000\n")
+                .await
+                .unwrap()
+        );
+
+        let backup_path = backup_daemon_config(&config_path).await.unwrap();
+        assert_eq!(tokio::fs::read(&backup_path).await.unwrap(), existing);
+
+        let second_backup_path = backup_daemon_config(&config_path).await.unwrap();
+        assert_ne!(backup_path, second_backup_path);
+        assert_eq!(
+            tokio::fs::read(&second_backup_path).await.unwrap(),
+            existing
+        );
+    }
 }

@@ -28,6 +28,7 @@ export default defineConfig({
       input: {
         index: path.resolve('index.html'),
         brain: path.resolve('brain.html'),
+        config: path.resolve('config.html'),
         service_worker: path.resolve('src/service_worker.ts')
       },
       output: {

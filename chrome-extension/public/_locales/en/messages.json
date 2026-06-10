@@ -56,6 +56,15 @@
   "onboardingConfigureBody": {
     "message": "Open Anda Bot from the system tray, menu bar, or Start Menu, complete the provider/API key/model wizard, and keep the launcher running while you use the extension."
   },
+  "openConfigEditor": {
+    "message": "Open config.yaml editor"
+  },
+  "configEditorTitle": {
+    "message": "Full config.yaml"
+  },
+  "configEditorBody": {
+    "message": "Use the dedicated page for model providers, voice, transcription, channels, users, and other daemon options."
+  },
   "onboardingTokenTitle": {
     "message": "Generate an extension token"
   },
