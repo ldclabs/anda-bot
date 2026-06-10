@@ -2,6 +2,18 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.5] — 2026-06-10
+
+### Changed
+
+- **Version synchronized for the 0.9.5 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.5`.
+
+### Fixed
+
+- **macOS launcher menu bar item stays alive reliably**: the macOS launcher now installs its status item from the application launch callback and retains the menu, status item, button, and icon for the delegate lifetime so the menu bar entry is not dropped prematurely.
+- **Launcher update checks avoid duplicate work and prompts**: automatic update polling now shares the manual update-check gate, tracks downloaded update state, and suppresses duplicate restart prompts while one is already active.
+- **Downloaded updates are easier to apply from the launcher**: manual update checks now immediately offer to restart and apply a previously downloaded update instead of starting another check.
+
 ## [0.9.4] — 2026-06-10
 
 ### Changed

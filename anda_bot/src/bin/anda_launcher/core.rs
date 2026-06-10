@@ -101,7 +101,8 @@ impl LauncherAutoUpdateState {
         if self.status != "downloaded"
             || self
                 .downloaded_path
-                .as_deref().is_none_or(|path| path.is_empty())
+                .as_deref()
+                .is_none_or(|path| path.is_empty())
         {
             return false;
         }
@@ -144,6 +145,7 @@ impl LauncherAutoUpdateState {
 struct LauncherUpdateUiState {
     checking_since: Option<Instant>,
     last_state: Option<LauncherAutoUpdateState>,
+    prompting_restart_tag: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -986,8 +988,29 @@ pub fn finish_update_check(state: Option<LauncherAutoUpdateState>) {
     }
 }
 
-pub fn record_update_state(state: &LauncherAutoUpdateState) {
-    lock_update_ui_state().last_state = Some(state.clone());
+pub fn downloaded_update_state() -> Option<LauncherAutoUpdateState> {
+    lock_update_ui_state()
+        .last_state
+        .as_ref()
+        .filter(|state| state.downloaded_update_available())
+        .cloned()
+}
+
+pub fn begin_update_restart_prompt(state: &LauncherAutoUpdateState) -> bool {
+    let mut ui_state = lock_update_ui_state();
+    if ui_state.prompting_restart_tag.is_some() {
+        return false;
+    }
+    ui_state.prompting_restart_tag = Some(state.latest_tag_label());
+    true
+}
+
+pub fn finish_update_restart_prompt(state: &LauncherAutoUpdateState) {
+    let tag = state.latest_tag_label();
+    let mut ui_state = lock_update_ui_state();
+    if ui_state.prompting_restart_tag.as_deref() == Some(tag.as_str()) {
+        ui_state.prompting_restart_tag = None;
+    }
 }
 
 pub fn check_update_now(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
@@ -1930,6 +1953,22 @@ fn push_candidate(candidates: &mut Vec<&'static str>, name: &'static str) {
 mod tests {
     use super::*;
 
+    static UPDATE_UI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn reset_update_ui_state_for_test() {
+        *lock_update_ui_state() = LauncherUpdateUiState::default();
+    }
+
+    fn downloaded_test_update_state() -> LauncherAutoUpdateState {
+        LauncherAutoUpdateState {
+            status: "downloaded".to_string(),
+            current_tag: "v1.0.0".to_string(),
+            latest_tag: Some("v1.2.3".to_string()),
+            downloaded_path: Some("/tmp/anda-update".to_string()),
+            error: None,
+        }
+    }
+
     #[test]
     fn launcher_language_detects_chinese_tags() {
         assert_eq!(
@@ -2024,6 +2063,57 @@ mod tests {
             current_version_tag(),
             format!("v{}", env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[test]
+    fn update_check_gate_blocks_concurrent_checks() {
+        let _guard = UPDATE_UI_TEST_LOCK.lock().unwrap();
+        reset_update_ui_state_for_test();
+
+        assert!(begin_update_check());
+        assert!(!begin_update_check());
+        finish_update_check(None);
+        assert!(begin_update_check());
+        finish_update_check(None);
+
+        reset_update_ui_state_for_test();
+    }
+
+    #[test]
+    fn downloaded_update_state_returns_only_pending_downloads() {
+        let _guard = UPDATE_UI_TEST_LOCK.lock().unwrap();
+        reset_update_ui_state_for_test();
+
+        assert!(downloaded_update_state().is_none());
+        finish_update_check(Some(LauncherAutoUpdateState {
+            status: "idle".to_string(),
+            current_tag: "v1.0.0".to_string(),
+            latest_tag: Some("v1.0.0".to_string()),
+            downloaded_path: None,
+            error: None,
+        }));
+        assert!(downloaded_update_state().is_none());
+
+        let downloaded = downloaded_test_update_state();
+        finish_update_check(Some(downloaded.clone()));
+        assert_eq!(downloaded_update_state(), Some(downloaded));
+
+        reset_update_ui_state_for_test();
+    }
+
+    #[test]
+    fn update_restart_prompt_gate_blocks_duplicate_prompts() {
+        let _guard = UPDATE_UI_TEST_LOCK.lock().unwrap();
+        reset_update_ui_state_for_test();
+        let state = downloaded_test_update_state();
+
+        assert!(begin_update_restart_prompt(&state));
+        assert!(!begin_update_restart_prompt(&state));
+        finish_update_restart_prompt(&state);
+        assert!(begin_update_restart_prompt(&state));
+        finish_update_restart_prompt(&state);
+
+        reset_update_ui_state_for_test();
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -9,7 +10,7 @@ use std::{
 };
 
 use objc2::{
-    AnyThread, MainThreadOnly, define_class, msg_send,
+    AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send,
     rc::Retained,
     runtime::{AnyObject, ProtocolObject},
     sel,
@@ -17,9 +18,11 @@ use objc2::{
 use objc2_app_kit::{
     NSAlert, NSAlertSecondButtonReturn, NSApplication, NSApplicationActivationPolicy,
     NSApplicationDelegate, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar,
-    NSVariableStatusItemLength,
+    NSStatusBarButton, NSStatusItem, NSVariableStatusItemLength,
 };
-use objc2_foundation::{MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
+use objc2_foundation::{
+    MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
+};
 
 use crate::{
     core::{self, CommandResult, LauncherContext, LauncherResult, text},
@@ -43,7 +46,17 @@ const STATUS_MEMORY_LINKS_MENU_TAG: isize = 1016;
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
 #[derive(Debug, Default)]
-struct DelegateIvars;
+struct DelegateIvars {
+    status_bar: OnceCell<StatusBarState>,
+}
+
+#[derive(Debug)]
+struct StatusBarState {
+    _menu: Retained<NSMenu>,
+    _status_item: Retained<NSStatusItem>,
+    _status_button: Option<Retained<NSStatusBarButton>>,
+    _status_image: Option<Retained<NSImage>>,
+}
 
 define_class!(
     #[unsafe(super = NSObject)]
@@ -53,7 +66,12 @@ define_class!(
 
     unsafe impl NSObjectProtocol for Delegate {}
 
-    unsafe impl NSApplicationDelegate for Delegate {}
+    unsafe impl NSApplicationDelegate for Delegate {
+        #[unsafe(method(applicationDidFinishLaunching:))]
+        fn did_finish_launching(&self, _notification: &NSNotification) {
+            self.install_status_bar();
+        }
+    }
 
     unsafe impl NSMenuDelegate for Delegate {}
 
@@ -153,8 +171,32 @@ define_class!(
 
 impl Delegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(DelegateIvars);
+        let this = Self::alloc(mtm).set_ivars(DelegateIvars::default());
         unsafe { msg_send![super(this), init] }
+    }
+
+    fn install_status_bar(&self) {
+        if self.ivars().status_bar.get().is_some() {
+            return;
+        }
+
+        let mtm = self.mtm();
+        let menu = build_menu(mtm, self);
+        let status_item =
+            NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+        let status_button = status_item.button(mtm);
+        let status_image = status_bar_icon();
+
+        configure_status_item(&status_item, status_button.as_ref(), status_image.as_ref());
+        status_item.setMenu(Some(&menu));
+        status_item.setVisible(true);
+
+        let _ = self.ivars().status_bar.set(StatusBarState {
+            _menu: menu,
+            _status_item: status_item,
+            _status_button: status_button,
+            _status_image: status_image,
+        });
     }
 }
 
@@ -168,31 +210,30 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     let delegate = Delegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
-    let menu = build_menu(mtm, &delegate);
-    let status_item =
-        NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-    let status_button = status_item.button(mtm);
-    let status_image = status_bar_icon();
-    if let Some(button) = status_button.as_ref() {
-        if let Some(image) = status_image.as_ref() {
+    let _keep_alive = delegate;
+    start_startup_tasks(ctx.clone());
+    app.run();
+    Ok(())
+}
+
+fn configure_status_item(
+    status_item: &NSStatusItem,
+    status_button: Option<&Retained<NSStatusBarButton>>,
+    status_image: Option<&Retained<NSImage>>,
+) {
+    if let Some(button) = status_button {
+        if let Some(image) = status_image {
             button.setImage(Some(image));
         } else {
             button.setTitle(nsstring("Anda").as_ref());
         }
-    } else if let Some(image) = status_image.as_ref() {
+    } else if let Some(image) = status_image {
         #[allow(deprecated)]
         status_item.setImage(Some(image));
     } else {
         #[allow(deprecated)]
         status_item.setTitle(Some(nsstring("Anda").as_ref()));
     }
-    status_item.setMenu(Some(&menu));
-    status_item.setVisible(true);
-
-    let _keep_alive = (delegate, menu, status_item, status_button, status_image);
-    start_startup_tasks(ctx.clone());
-    app.run();
-    Ok(())
 }
 
 pub fn show_error(title: &str, message: &str) {
@@ -510,9 +551,14 @@ fn start_auto_update_loop(ctx: LauncherContext) {
     thread::spawn(move || {
         let mut prompted_tag: Option<String> = None;
         loop {
+            if !core::begin_update_check() {
+                thread::sleep(core::auto_update_poll_interval());
+                continue;
+            }
+
             match core::check_update_if_due(&ctx) {
                 Ok(state) => {
-                    core::record_update_state(&state);
+                    core::finish_update_check(Some(state.clone()));
                     if state.downloaded_update_available() {
                         let tag = state.latest_tag.clone();
                         if tag != prompted_tag {
@@ -521,7 +567,10 @@ fn start_auto_update_loop(ctx: LauncherContext) {
                         }
                     }
                 }
-                Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
+                Err(err) => {
+                    core::finish_update_check(None);
+                    eprintln!("{}: {err}", text().update_check_failed_title);
+                }
             }
             thread::sleep(core::auto_update_poll_interval());
         }
@@ -529,6 +578,11 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 }
 
 fn run_manual_update_check(ctx: LauncherContext) {
+    if let Some(state) = core::downloaded_update_state() {
+        prompt_update_ready(ctx, state);
+        return;
+    }
+
     if !core::begin_update_check() {
         show_background_notification(
             &text().update_check_result_title,
@@ -561,8 +615,13 @@ fn run_manual_update_check(ctx: LauncherContext) {
 }
 
 fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
+    if !core::begin_update_restart_prompt(&state) {
+        return;
+    }
+
     let latest = state.latest_tag_label();
     if !confirm_update_restart(&latest) {
+        core::finish_update_restart_prompt(&state);
         return;
     }
 
@@ -576,6 +635,7 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
             &text().update_restart_failed_message(&result.message),
         );
     }
+    core::finish_update_restart_prompt(&state);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {

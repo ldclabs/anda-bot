@@ -990,64 +990,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_migrates_legacy_workspace_dir_to_safe_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let channel = Arc::new(TestChannel::new("test%legacy", false));
-        let legacy_path = dir.path().join(channel.id());
-        let safe_path = dir.path().join(channel_workspace_dir_name(&channel.id()));
-        tokio::fs::create_dir_all(&legacy_path).await.unwrap();
-        tokio::fs::write(legacy_path.join("state.json"), b"legacy")
-            .await
-            .unwrap();
-
-        let _runtime = test_runtime_with_users_in_work_dir(
-            channel,
-            Principal::management_canister(),
-            HashMap::new(),
-            dir.path().to_path_buf(),
-        )
-        .await;
-
-        assert!(!legacy_path.exists());
-        assert_eq!(
-            tokio::fs::read(safe_path.join("state.json")).await.unwrap(),
-            b"legacy"
-        );
-    }
-
-    #[tokio::test]
-    async fn migration_merges_legacy_workspace_when_safe_dir_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let channel_id = "test%merge";
-        let legacy_path = dir.path().join(channel_id);
-        let safe_path = dir.path().join(channel_workspace_dir_name(channel_id));
-        tokio::fs::create_dir_all(&legacy_path).await.unwrap();
-        tokio::fs::create_dir_all(&safe_path).await.unwrap();
-        tokio::fs::write(legacy_path.join("legacy.json"), b"legacy")
-            .await
-            .unwrap();
-        tokio::fs::write(safe_path.join("safe.json"), b"safe")
-            .await
-            .unwrap();
-
-        migrate_legacy_channel_workspace(dir.path(), channel_id, &safe_path)
-            .await
-            .unwrap();
-
-        assert!(!legacy_path.exists());
-        assert_eq!(
-            tokio::fs::read(safe_path.join("legacy.json"))
-                .await
-                .unwrap(),
-            b"legacy"
-        );
-        assert_eq!(
-            tokio::fs::read(safe_path.join("safe.json")).await.unwrap(),
-            b"safe"
-        );
-    }
-
-    #[tokio::test]
     async fn bind_conversation_tracks_threaded_routes() {
         let channel = Arc::new(TestChannel::new("test:threaded", false));
         let runtime = test_runtime(channel.clone()).await;

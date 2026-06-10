@@ -784,9 +784,14 @@ fn start_auto_update_loop(ctx: LauncherContext) {
     thread::spawn(move || {
         let mut prompted_tag: Option<String> = None;
         loop {
+            if !core::begin_update_check() {
+                thread::sleep(core::auto_update_poll_interval());
+                continue;
+            }
+
             match core::check_update_if_due(&ctx) {
                 Ok(state) => {
-                    core::record_update_state(&state);
+                    core::finish_update_check(Some(state.clone()));
                     if state.downloaded_update_available() {
                         let tag = state.latest_tag.clone();
                         if tag != prompted_tag {
@@ -795,7 +800,10 @@ fn start_auto_update_loop(ctx: LauncherContext) {
                         }
                     }
                 }
-                Err(err) => eprintln!("{}: {err}", text().update_check_failed_title),
+                Err(err) => {
+                    core::finish_update_check(None);
+                    eprintln!("{}: {err}", text().update_check_failed_title);
+                }
             }
             thread::sleep(core::auto_update_poll_interval());
         }
@@ -803,6 +811,11 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 }
 
 fn run_manual_update_check(hwnd: HWND, ctx: LauncherContext) {
+    if let Some(state) = core::downloaded_update_state() {
+        prompt_update_ready(ctx, state);
+        return;
+    }
+
     if !core::begin_update_check() {
         unsafe {
             show_tray_notification(
@@ -847,8 +860,13 @@ fn run_manual_update_check(hwnd: HWND, ctx: LauncherContext) {
 }
 
 fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateState) {
+    if !core::begin_update_restart_prompt(&state) {
+        return;
+    }
+
     let latest = state.latest_tag_label();
     if !confirm_update_restart(&latest) {
+        core::finish_update_restart_prompt(&state);
         return;
     }
 
@@ -866,6 +884,7 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
             MB_OK | MB_ICONERROR,
         );
     }
+    core::finish_update_restart_prompt(&state);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {
