@@ -20,6 +20,8 @@
     Trash2
   } from '@lucide/svelte'
   import { AlertDialog } from 'bits-ui'
+  import { cubicOut } from 'svelte/easing'
+  import { fly } from 'svelte/transition'
   import type { Channel } from './client/channel.svelte'
 
   type Props = {
@@ -41,6 +43,7 @@
   }: Props = $props()
   let viewportWidth = $state(0)
   let collapsedOverride = $state<boolean | null>(null)
+  let flyoutOpen = $state(false)
   let deleteDialogOpen = $state(false)
   let pendingDeleteSource = $state<string | null>(null)
 
@@ -57,13 +60,35 @@
 
   function toggleCollapsed() {
     collapsedOverride = !collapsed
+    flyoutOpen = false
+  }
+
+  function openFlyout() {
+    if (collapsed) {
+      flyoutOpen = true
+    }
+  }
+
+  function closeFlyout() {
+    flyoutOpen = false
+  }
+
+  function handleSidebarFocusOut(event: FocusEvent) {
+    const current = event.currentTarget
+    const next = event.relatedTarget
+    if (current instanceof HTMLElement && next instanceof Node && current.contains(next)) {
+      return
+    }
+    closeFlyout()
   }
 
   async function selectChannel(source: string) {
-    if (source === activeSource) {
-      return
+    if (source !== activeSource) {
+      await onSelect?.(source)
     }
-    await onSelect?.(source)
+    if (collapsed) {
+      closeFlyout()
+    }
   }
 
   async function openFolder() {
@@ -162,14 +187,50 @@
 
 <svelte:window bind:innerWidth={viewportWidth} />
 
-<aside
-  class={`h-full shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
-    collapsed ? 'w-12' : 'w-64'
-  }`}
-  aria-label={chrome.i18n.getMessage('channelsLabel')}
->
-  <div class="flex h-full min-h-0 flex-col">
-    <div class="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-1.5">
+{#snippet channelsHeader(expanded: boolean, floating: boolean)}
+  <div
+    class={`flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-1.5 ${
+      expanded ? '' : 'justify-center'
+    } ${floating ? 'rounded-tr-md bg-sidebar/95' : ''}`}
+  >
+    <button
+      type="button"
+      class={buttonClass(
+        'ghost',
+        'icon-sm',
+        'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
+      )}
+      aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+      aria-expanded={!collapsed || flyoutOpen}
+      title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+      onclick={toggleCollapsed}
+    >
+      <History class="size-4" />
+    </button>
+
+    {#if expanded}
+      <div class="min-w-0 flex-1">
+        <div class="truncate text-xs font-bold text-sidebar-foreground">
+          {chrome.i18n.getMessage('channelsLabel')}
+          <span class={badgeClass('outline')}>
+            {channels.length}
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        class={buttonClass(
+          'ghost',
+          'icon-sm',
+          'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
+        )}
+        aria-label={chrome.i18n.getMessage('openFolder')}
+        title={chrome.i18n.getMessage('openFolder')}
+        disabled={sending}
+        onclick={openFolder}
+      >
+        <FolderOpen class="size-4" />
+      </button>
       <button
         type="button"
         class={buttonClass(
@@ -178,167 +239,151 @@
           'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
         )}
         aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+        aria-expanded={!collapsed || flyoutOpen}
         title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         onclick={toggleCollapsed}
       >
-        <History class="size-4" />
+        <ChevronDown class="size-4 shrink-0 rotate-90 text-muted-foreground" />
       </button>
+    {/if}
+  </div>
+{/snippet}
 
-      {#if !collapsed}
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-xs font-bold text-sidebar-foreground">
-            {chrome.i18n.getMessage('channelsLabel')}
-            <span class={badgeClass('outline')}>
-              {channels.length}
-            </span>
-          </div>
-        </div>
+{#snippet channelsList(expanded: boolean)}
+  <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5">
+    {#each channels as channel (channel.source)}
+      {@const active = channel.source === activeSource}
+      {@const icon = statusIcon(channel)}
+      <div
+        data-slot="item"
+        data-variant={active ? 'outline' : 'default'}
+        data-size="xs"
+        class={itemClass(
+          active ? 'outline' : 'default',
+          'xs',
+          `group relative flex-nowrap p-0 text-left ${
+            active
+              ? 'border-sidebar-border bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          } ${expanded ? '' : 'h-9 justify-center px-0'}`
+        )}
+      >
         <button
           type="button"
-          class={buttonClass(
-            'ghost',
-            'icon-sm',
-            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
-          )}
-          aria-label={chrome.i18n.getMessage('openFolder')}
-          title={chrome.i18n.getMessage('openFolder')}
-          disabled={sending}
-          onclick={openFolder}
+          class={`flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left ${
+            expanded ? '' : 'h-9 justify-center px-0'
+          }`}
+          aria-current={active ? 'page' : undefined}
+          aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}
+          title={`${channelTitle(channel.source)}\n${channel.source}`}
+          onclick={() => selectChannel(channel.source)}
         >
-          <FolderOpen class="size-4" />
-        </button>
-        <button
-          type="button"
-          class={buttonClass(
-            'ghost',
-            'icon-sm',
-            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
-          )}
-          aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
-          title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
-          onclick={toggleCollapsed}
-        >
-          <ChevronDown class="size-4 shrink-0 rotate-90 text-muted-foreground" />
-        </button>
-      {:else}
-        <button
-          type="button"
-          class={buttonClass(
-            'ghost',
-            'icon-sm',
-            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
-          )}
-          aria-label={chrome.i18n.getMessage('openFolder')}
-          title={chrome.i18n.getMessage('openFolder')}
-          disabled={sending}
-          onclick={openFolder}
-        >
-          <FolderOpen class="size-4" />
-        </button>
-      {/if}
-    </div>
-    <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5">
-      {#each channels as channel (channel.source)}
-        {@const active = channel.source === activeSource}
-        {@const icon = statusIcon(channel)}
-        <div
-          data-slot="item"
-          data-variant={active ? 'outline' : 'default'}
-          data-size="xs"
-          class={itemClass(
-            active ? 'outline' : 'default',
-            'xs',
-            `group relative flex-nowrap p-0 text-left ${
-              active
-                ? 'border-sidebar-border bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-            } ${collapsed ? 'h-9 justify-center px-0' : ''}`
-          )}
-        >
-          <button
-            type="button"
-            class={`flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left ${
-              collapsed ? 'h-9 justify-center px-0' : ''
-            }`}
-            aria-current={active ? 'page' : undefined}
-            aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}
-            title={`${channelTitle(channel.source)}\n${channel.source}`}
-            onclick={() => selectChannel(channel.source)}
+          <span
+            data-slot="item-media"
+            data-variant="icon"
+            class={itemMediaClass(
+              'icon',
+              `relative grid size-6 place-items-center rounded-md border ${
+                active
+                  ? 'border-sidebar-border bg-sidebar-accent text-emerald-700 dark:text-emerald-300'
+                  : 'border-sidebar-border bg-background/75 text-muted-foreground'
+              }`
+            )}
           >
+            {#if icon === 'loader'}
+              <LoaderCircle class="size-3.5 animate-spin" />
+            {:else if icon === 'warning'}
+              <CircleAlert class="size-3.5 text-amber-700" />
+            {:else}
+              <Radio class="size-3.5" />
+            {/if}
             <span
-              data-slot="item-media"
-              data-variant="icon"
-              class={itemMediaClass(
-                'icon',
-                `relative grid size-6 place-items-center rounded-md border ${
-                  active
-                    ? 'border-sidebar-border bg-sidebar-accent text-emerald-700 dark:text-emerald-300'
-                    : 'border-sidebar-border bg-background/75 text-muted-foreground'
-                }`
-              )}
-            >
-              {#if icon === 'loader'}
-                <LoaderCircle class="size-3.5 animate-spin" />
-              {:else if icon === 'warning'}
-                <CircleAlert class="size-3.5 text-amber-700" />
-              {:else}
-                <Radio class="size-3.5" />
-              {/if}
-              <span
-                class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
-              ></span>
-            </span>
+              class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
+            ></span>
+          </span>
 
-            {#if !collapsed}
-              <div data-slot="item-content" class={itemContentClass('min-w-0 gap-0')}>
-                <div class="flex min-w-0 items-center gap-2">
-                  <div class="flex min-w-0 flex-1 items-center gap-2">
-                    <div
-                      data-slot="item-title"
-                      class={itemTitleClass('min-w-0 flex-1 text-xs font-bold')}
-                    >
-                      <span class="truncate">{channelTitle(channel.source)}</span>
-                    </div>
-                    {#if active && sending}
-                      <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
-                    {/if}
+          {#if expanded}
+            <div data-slot="item-content" class={itemContentClass('min-w-0 gap-0')}>
+              <div class="flex min-w-0 items-center gap-2">
+                <div class="flex min-w-0 flex-1 items-center gap-2">
+                  <div
+                    data-slot="item-title"
+                    class={itemTitleClass('min-w-0 flex-1 text-xs font-bold')}
+                  >
+                    <span class="truncate">{channelTitle(channel.source)}</span>
                   </div>
-                  {#if channelMeta(channel)}
-                    <span class={badgeClass('secondary', 'h-4 rounded-full px-1.5 text-[10px]')}>
-                      {channelMeta(channel)}
-                    </span>
+                  {#if active && sending}
+                    <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
                   {/if}
                 </div>
-                <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span class="shrink-0">{statusLabel(channel)}</span>
-                  <span class="min-w-0 truncate text-muted-foreground opacity-70"
-                    >{channelSubtitle(channel.source)}</span
-                  >
-                </div>
+                {#if channelMeta(channel)}
+                  <span class={badgeClass('secondary', 'h-4 rounded-full px-1.5 text-[10px]')}>
+                    {channelMeta(channel)}
+                  </span>
+                {/if}
               </div>
-            {/if}
-          </button>
-
-          {#if !collapsed}
-            <button
-              type="button"
-              class={buttonClass(
-                'outline',
-                'icon-xs',
-                'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
-              )}
-              aria-label={chrome.i18n.getMessage('deleteChannel')}
-              title={chrome.i18n.getMessage('deleteChannel')}
-              disabled={sending || channel.sending}
-              onclick={() => requestDeleteChannel(channel.source)}
-            >
-              <Trash2 class="size-3.5" />
-            </button>
+              <div
+                class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground"
+              >
+                <span class="shrink-0">{statusLabel(channel)}</span>
+                <span class="min-w-0 truncate text-muted-foreground opacity-70"
+                  >{channelSubtitle(channel.source)}</span
+                >
+              </div>
+            </div>
           {/if}
-        </div>
-      {/each}
-    </div>
+        </button>
+
+        {#if expanded}
+          <button
+            type="button"
+            class={buttonClass(
+              'outline',
+              'icon-xs',
+              'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
+            )}
+            aria-label={chrome.i18n.getMessage('deleteChannel')}
+            title={chrome.i18n.getMessage('deleteChannel')}
+            disabled={sending || channel.sending}
+            onclick={() => requestDeleteChannel(channel.source)}
+          >
+            <Trash2 class="size-3.5" />
+          </button>
+        {/if}
+      </div>
+    {/each}
   </div>
+{/snippet}
+
+<aside
+  class={`group/sidebar relative z-20 h-full shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
+    collapsed ? 'w-12 overflow-visible' : 'w-64 overflow-hidden'
+  }`}
+  aria-label={chrome.i18n.getMessage('channelsLabel')}
+  onpointerenter={openFlyout}
+  onpointerleave={closeFlyout}
+  onfocusin={openFlyout}
+  onfocusout={handleSidebarFocusOut}
+>
+  <div class="flex h-full min-h-0 flex-col">
+    {@render channelsHeader(!collapsed, false)}
+    {@render channelsList(!collapsed)}
+  </div>
+
+  {#if collapsed && flyoutOpen}
+    <div
+      class="absolute inset-y-0 left-0 z-50 w-64"
+      aria-label={chrome.i18n.getMessage('channelsLabel')}
+    >
+      <div
+        class="flex h-full min-h-0 flex-col overflow-hidden rounded-r-md border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-sidebar-border/70 backdrop-blur-xl will-change-transform dark:shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
+        transition:fly={{ x: -18, duration: 160, easing: cubicOut, opacity: 0.92 }}
+      >
+        {@render channelsHeader(true, true)}
+        {@render channelsList(true)}
+      </div>
+    </div>
+  {/if}
 </aside>
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
