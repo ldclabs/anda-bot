@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- **Browser tool names are browser-neutral**: renamed the split browser tools from `chrome_tabs`, `chrome_page`, `chrome_input`, and `chrome_script` to `browser_tabs`, `browser_page`, `browser_input`, and `browser_script` because the same extension bridge can run in Chromium-family browsers beyond Chrome.
 - **Version synchronized for the 0.9.4 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.4`.
 
 ### Fixed

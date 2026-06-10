@@ -565,10 +565,10 @@ impl BrowserBridge {
 }
 
 impl ChromeBrowserTool {
-    pub const TABS_NAME: &'static str = "chrome_tabs";
-    pub const PAGE_NAME: &'static str = "chrome_page";
-    pub const INPUT_NAME: &'static str = "chrome_input";
-    pub const SCRIPT_NAME: &'static str = "chrome_script";
+    pub const TABS_NAME: &'static str = "browser_tabs";
+    pub const PAGE_NAME: &'static str = "browser_page";
+    pub const INPUT_NAME: &'static str = "browser_input";
+    pub const SCRIPT_NAME: &'static str = "browser_script";
 
     pub fn tabs(bridge: Arc<BrowserBridge>) -> Self {
         Self::for_kind(bridge, ChromeBrowserToolKind::Tabs)
@@ -650,25 +650,25 @@ impl ChromeBrowserToolKind {
     fn description(self) -> String {
         let body = match self {
             Self::Tabs => concat!(
-                "Manage Chrome tabs, local files, navigation, and downloads through the Anda browser extension. ",
+                "Manage browser tabs, local files, navigation, and downloads through the Anda browser extension. ",
                 "Use list_tabs or get_current_tab to inspect tabs, switch_tab before using page/input/script tools on another tab, ",
                 "and open_tab, open_file, close_tab, navigate, go_back, go_forward, reload, download, list_downloads, cancel_download, or open_download as needed. ",
                 "Navigation and page-changing actions wait until the resulting page is usable before returning. Inspect page_ready in the action result instead of issuing a separate navigation wait."
             ),
             Self::Page => concat!(
-                "Inspect the active Chrome tab through the Anda browser extension. ",
-                "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first if another tab is needed. ",
+                "Inspect the active browser tab through the Anda browser extension. ",
+                "This tool intentionally targets the active tab; use browser_tabs.switch_tab first if another tab is needed. ",
                 "Use snapshot, extract_text, screenshot, print_to_pdf, read_selection, get_full_page_html, get_structured_data, get_element_info, get_accessibility_tree, get_viewport_size, find_in_page, wait_for_element, annotate_viewport, clear_annotations, or handle_dialog."
             ),
             Self::Input => concat!(
-                "Interact with the active Chrome tab through the Anda browser extension. ",
-                "This tool intentionally targets the active tab; use chrome_tabs.switch_tab first to act on another tab. ",
+                "Interact with the active browser tab through the Anda browser extension. ",
+                "This tool intentionally targets the active tab; use browser_tabs.switch_tab first to act on another tab. ",
                 "Use click, type_text, press_key, scroll, scroll_to, hover, drag_and_drop, select_dropdown, upload_file, or copy_to_clipboard. Native input is preferred by default when available."
             ),
             Self::Script => concat!(
-                "Run JavaScript in the active Chrome tab through the Anda browser extension. ",
+                "Run JavaScript in the active browser tab through the Anda browser extension. ",
                 "Pass code directly; execute_javascript is the implicit action. Use this only when the smaller page/input tools cannot express the operation, and keep returned data structured and compact. ",
-                "Use chrome_tabs.switch_tab first if another tab is needed."
+                "Use browser_tabs.switch_tab first if another tab is needed."
             ),
         };
         body.to_string()
@@ -813,7 +813,7 @@ impl ChromeBrowserTool {
             .or(args.url.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or("chrome_browser local file actions require path or file:// url")?;
+            .ok_or("browser local file actions require path or file:// url")?;
         let path = local_path_from_reference(reference, self.workspace_root())?;
         if !path.exists() {
             return Err(format!("local browser file does not exist: {}", path.display()).into());
@@ -904,11 +904,11 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "tab_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome tab id. Required for switch_tab, close_tab, and get_frames on another tab."
+                    "description": "Browser tab id. Required for switch_tab, close_tab, and get_frames on another tab."
                 },
                 "window_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome window id for list_tabs filtering or open_tab placement."
+                    "description": "Browser window id for list_tabs filtering or open_tab placement."
                 },
                 "active": {
                     "type": ["boolean", "null"],
@@ -924,11 +924,11 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "save_as": {
                     "type": ["boolean", "null"],
-                    "description": "Whether download should show Chrome's Save As dialog."
+                    "description": "Whether download should show the browser's Save As dialog."
                 },
                 "download_id": {
                     "type": ["integer", "null"],
-                    "description": "Chrome download id for cancel_download or open_download."
+                    "description": "Browser download id for cancel_download or open_download."
                 },
                 "amount": {
                     "type": ["integer", "null"],
@@ -949,7 +949,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "action": {
                     "type": "string",
                     "enum": ["snapshot", "extract_text", "screenshot", "read_selection", "get_full_page_html", "get_structured_data", "get_accessibility_tree", "print_to_pdf", "annotate_viewport", "clear_annotations", "get_element_info", "get_viewport_size", "find_in_page", "wait_for_element", "handle_dialog"],
-                    "description": "Inspection, capture, annotation, and dialog action for the active tab. Use chrome_tabs.switch_tab first to inspect another tab."
+                    "description": "Inspection, capture, annotation, and dialog action for the active tab. Use browser_tabs.switch_tab first to inspect another tab."
                 },
                 "selector": {
                     "type": ["string", "null"],
@@ -1005,7 +1005,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 "action": {
                     "type": "string",
                     "enum": ["click", "type_text", "press_key", "scroll", "scroll_to", "hover", "drag_and_drop", "select_dropdown", "upload_file", "copy_to_clipboard"],
-                    "description": "Input action for the active tab. Use chrome_tabs.switch_tab first to act on another tab."
+                    "description": "Input action for the active tab. Use browser_tabs.switch_tab first to act on another tab."
                 },
                 "selector": {
                     "type": ["string", "null"],
@@ -1181,10 +1181,7 @@ fn validate_browser_action_for_tool(
             {
                 Ok(())
             } else {
-                Err(
-                    "chrome_browser action \"drag_and_drop\" requires to_selector or to_x/to_y"
-                        .into(),
-                )
+                Err("browser action \"drag_and_drop\" requires to_selector or to_x/to_y".into())
             }
         }
         BrowserAction::SelectDropdown => {
@@ -1298,7 +1295,7 @@ fn require_field(value: &Option<String>, field: &str, action: &str) -> Result<()
     if value.as_ref().is_some_and(|value| !value.trim().is_empty()) {
         Ok(())
     } else {
-        Err(format!("chrome_browser action {action:?} requires {field}").into())
+        Err(format!("browser action {action:?} requires {field}").into())
     }
 }
 
@@ -1306,7 +1303,7 @@ fn require_present(value: &Option<String>, field: &str, action: &str) -> Result<
     if value.is_some() {
         Ok(())
     } else {
-        Err(format!("chrome_browser action {action:?} requires {field}").into())
+        Err(format!("browser action {action:?} requires {field}").into())
     }
 }
 
@@ -1317,7 +1314,7 @@ fn require_files(value: &Option<Vec<String>>, action: &str) -> Result<(), BoxErr
     {
         Ok(())
     } else {
-        Err(format!("chrome_browser action {action:?} requires files").into())
+        Err(format!("browser action {action:?} requires files").into())
     }
 }
 
@@ -1325,7 +1322,7 @@ fn require_i64(value: &Option<i64>, field: &str, action: &str) -> Result<(), Box
     if value.is_some() {
         Ok(())
     } else {
-        Err(format!("chrome_browser action {action:?} requires {field}").into())
+        Err(format!("browser action {action:?} requires {field}").into())
     }
 }
 
@@ -1342,7 +1339,7 @@ fn require_path_or_url(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
         Ok(())
     } else {
         Err(format!(
-            "chrome_browser action {:?} requires path or file:// url",
+            "browser action {:?} requires path or file:// url",
             args.action
         )
         .into())
@@ -1352,19 +1349,19 @@ fn require_path_or_url(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
 fn validate_viewport_options(args: &ChromeBrowserToolArgs) -> Result<(), BoxError> {
     if args.viewport_width.is_some() || args.viewport_height.is_some() {
         let width = args.viewport_width.ok_or(
-            "chrome_browser viewport capture requires viewport_width when viewport_height is used",
+            "browser viewport capture requires viewport_width when viewport_height is used",
         )?;
         let height = args.viewport_height.ok_or(
-            "chrome_browser viewport capture requires viewport_height when viewport_width is used",
+            "browser viewport capture requires viewport_height when viewport_width is used",
         )?;
         if !(1..=10_000).contains(&width) || !(1..=10_000).contains(&height) {
-            return Err("chrome_browser viewport dimensions must be between 1 and 10000".into());
+            return Err("browser viewport dimensions must be between 1 and 10000".into());
         }
     }
     if let Some(scale) = args.device_scale_factor
         && (!scale.is_finite() || !(0.1..=5.0).contains(&scale))
     {
-        return Err("chrome_browser device_scale_factor must be between 0.1 and 5".into());
+        return Err("browser device_scale_factor must be between 0.1 and 5".into());
     }
     Ok(())
 }
@@ -1379,7 +1376,7 @@ fn require_selector_or_coordinates(args: &ChromeBrowserToolArgs) -> Result<(), B
         Ok(())
     } else {
         Err(format!(
-            "chrome_browser action {:?} requires selector or x/y coordinates",
+            "browser action {:?} requires selector or x/y coordinates",
             args.action
         )
         .into())
@@ -1393,7 +1390,7 @@ fn validate_script_world(value: &Option<String>) -> Result<(), BoxError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "" | "debugger" | "isolated" | "main" => Ok(()),
         world => Err(format!(
-            "chrome_browser action \"execute_javascript\" has unsupported world {world:?}"
+            "browser action \"execute_javascript\" has unsupported world {world:?}"
         )
         .into()),
     }
@@ -1406,7 +1403,7 @@ fn validate_same_site(value: &Option<String>) -> Result<(), BoxError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "" | "no_restriction" | "lax" | "strict" => Ok(()),
         same_site => Err(format!(
-            "chrome_browser action \"set_cookie\" has unsupported same_site {same_site:?}"
+            "browser action \"set_cookie\" has unsupported same_site {same_site:?}"
         )
         .into()),
     }
@@ -1774,6 +1771,38 @@ mod tests {
 
     fn schema_has_action(actions: &[Value], action: &str) -> bool {
         actions.iter().any(|value| value.as_str() == Some(action))
+    }
+
+    #[test]
+    fn browser_tool_names_are_browser_neutral() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let tools = [
+            ChromeBrowserTool::tabs(bridge.clone()),
+            ChromeBrowserTool::page(bridge.clone()),
+            ChromeBrowserTool::input(bridge.clone()),
+            ChromeBrowserTool::script(bridge),
+        ];
+        let names: Vec<_> = tools.iter().map(Tool::name).collect();
+
+        assert_eq!(
+            names,
+            [
+                "browser_tabs",
+                "browser_page",
+                "browser_input",
+                "browser_script"
+            ]
+        );
+
+        for tool in tools {
+            let definition = tool.definition();
+            let parameters = serde_json::to_string(&definition.parameters).unwrap();
+            assert!(!definition.name.starts_with("chrome_"));
+            assert!(!definition.description.contains("chrome_"));
+            assert!(!parameters.contains("chrome_"));
+            assert!(!definition.description.contains("Chrome "));
+            assert!(!parameters.contains("Chrome "));
+        }
     }
 
     #[test]

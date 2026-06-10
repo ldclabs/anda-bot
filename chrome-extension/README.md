@@ -1,6 +1,6 @@
 # Anda Bot Chrome Extension
 
-This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a single WebSocket RPC connection per browser profile and exposes browser tabs to the agent through the split Chrome browser tools.
+This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot. It talks to the local Anda daemon through a single WebSocket RPC connection per browser profile and exposes browser tabs to the agent through the split browser tools.
 
 ## Setup
 
@@ -32,9 +32,9 @@ Chrome 116 or newer is required because the extension keeps its Manifest V3 serv
 
 When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, and title are sent as metadata. The service worker refreshes that metadata as tabs are activated, updated, or navigated through `webNavigation` events.
 
-The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `chrome_tabs.switch_tab` first when another tab is needed. The public schemas expose the common browser actions while keeping lower-level browser-state handlers such as cookies and cache internal for compatibility.
+The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `browser_tabs.switch_tab` first when another tab is needed. The public schemas expose the common browser actions while keeping lower-level browser-state handlers such as cookies and cache internal for compatibility.
 
-`chrome_tabs` actions:
+`browser_tabs` actions:
 
 - `get_current_tab`
 - `list_tabs`
@@ -43,8 +43,6 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `open_file`
 - `close_tab`
 - `navigate`
-- `wait_for_navigation`
-- `wait_for_history_change`
 - `get_frames`
 - `go_back`
 - `go_forward`
@@ -55,7 +53,7 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `cancel_download`
 - `open_download`
 
-`chrome_page` actions:
+`browser_page` actions:
 
 - `snapshot`
 - `extract_text`
@@ -73,7 +71,7 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `wait_for_element`
 - `handle_dialog`
 
-`chrome_input` actions:
+`browser_input` actions:
 
 - `click`
 - `type_text`
@@ -86,7 +84,7 @@ The agent can use the split browser tools below. Page, input, and script tools i
 - `upload_file`
 - `copy_to_clipboard`
 
-`chrome_script` actions:
+`browser_script` actions:
 
 - `execute_javascript`
 

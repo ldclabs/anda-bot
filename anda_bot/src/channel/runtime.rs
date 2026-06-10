@@ -143,14 +143,13 @@ fn legacy_channel_workspace_path(work_dir: &Path, channel_id: &str) -> PathBuf {
 
 async fn prepare_channel_workspace(work_dir: &Path, channel_id: &str) -> PathBuf {
     let path = channel_workspace_path(work_dir, channel_id);
-    if !cfg!(windows) {
-        if let Err(err) = migrate_legacy_channel_workspace(work_dir, channel_id, &path).await {
+    if !cfg!(windows)
+        && let Err(err) = migrate_legacy_channel_workspace(work_dir, channel_id, &path).await {
             log::warn!(
                 "failed to migrate legacy workspace for channel {}: {err}",
                 channel_id
             );
         }
-    }
     if let Err(err) = tokio::fs::create_dir_all(&path).await {
         log::warn!("failed to create workspace for {}: {err}", channel_id);
     }
