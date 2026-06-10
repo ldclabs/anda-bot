@@ -1,9 +1,11 @@
 export type SubmitKeyMode = 'enter' | 'modifier-enter'
+export type AppearanceTheme = 'system' | 'light' | 'dark'
 
 export interface SettingsState {
   baseUrl: string
   token: string
   submitKeyMode: SubmitKeyMode
+  appearanceTheme: AppearanceTheme
 }
 
 export type StorageState = Partial<SettingsState> & {

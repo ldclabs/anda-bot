@@ -2,6 +2,17 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.6] — 2026-06-10
+
+### Added
+
+- **Browser extension appearance theme control**: added a localized settings control for System, Light, and Dark themes, persists the preference, applies it to the side panel root, and follows system color-scheme changes when System is selected.
+
+### Changed
+
+- **Browser extension dark-mode styling is explicit**: message and channel UI styles now rely on the applied `.dark` theme class instead of implicit media-query overrides, so manual Light/Dark choices override the operating system preference.
+- **Version synchronized for the 0.9.6 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.6`.
+
 ## [0.9.5] — 2026-06-10
 
 ### Changed

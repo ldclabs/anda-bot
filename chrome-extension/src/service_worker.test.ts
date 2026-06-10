@@ -72,7 +72,8 @@ function createChromeApi(options: { development?: boolean } = {}) {
         get: vi.fn(async () => ({
           baseUrl: 'http://127.0.0.1:8042',
           token: '',
-          submitKeyMode: 'enter'
+          submitKeyMode: 'enter',
+          appearanceTheme: 'system'
         })),
         set: vi.fn(async () => undefined)
       }
@@ -149,7 +150,8 @@ describe('service worker development logging', () => {
         settings: {
           baseUrl: 'http://127.0.0.1:8042',
           token: 'secret-token',
-          submitKeyMode: 'enter'
+          submitKeyMode: 'enter',
+          appearanceTheme: 'system'
         },
         text: 'private prompt'
       },

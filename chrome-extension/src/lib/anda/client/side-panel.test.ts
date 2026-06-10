@@ -38,6 +38,7 @@ function createChromeApi(
     baseUrl: 'http://127.0.0.1:8042',
     token: '',
     submitKeyMode: 'enter' as const,
+    appearanceTheme: 'system' as const,
     browserSessionId: options.browserSessionId || '1700000000000',
     workspaceChannelSources: options.workspaceChannelSources || [],
     ...options.settings
@@ -147,6 +148,40 @@ afterEach(() => {
   vi.resetModules()
 })
 
+describe('AndaSidePanelClient.saveAppearanceTheme', () => {
+  it('persists the appearance theme without saving unrelated draft fields', async () => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token', appearanceTheme: 'system' }
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    client.settings = {
+      baseUrl: 'http://127.0.0.1:8042',
+      token: 'token',
+      submitKeyMode: 'enter',
+      appearanceTheme: 'system'
+    }
+
+    await client.saveAppearanceTheme('dark')
+
+    expect(client.settings.appearanceTheme).toBe('dark')
+    expect(chromeApi.storage.local.set).toHaveBeenCalledWith({ appearanceTheme: 'dark' })
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'anda_settings_changed',
+        settings: expect.objectContaining({
+          baseUrl: 'http://127.0.0.1:8042',
+          token: 'token',
+          submitKeyMode: 'enter',
+          appearanceTheme: 'dark'
+        })
+      })
+    )
+  })
+})
+
 describe('AndaSidePanelClient.sendVoiceTurn', () => {
   it('continues playback polling after non-spoken assistant messages', async () => {
     const chromeApi = createChromeApi({
@@ -163,7 +198,8 @@ describe('AndaSidePanelClient.sendVoiceTurn', () => {
     client.settings = {
       baseUrl: 'http://127.0.0.1:8042',
       token: 'token',
-      submitKeyMode: 'enter'
+      submitKeyMode: 'enter',
+      appearanceTheme: 'system'
     }
     client.activeChannel = {
       sendPrompt: vi.fn().mockResolvedValue(poller)
@@ -195,7 +231,8 @@ describe('AndaSidePanelClient.stopActiveTask', () => {
     client.settings = {
       baseUrl: 'http://127.0.0.1:8042',
       token: 'token',
-      submitKeyMode: 'enter'
+      submitKeyMode: 'enter',
+      appearanceTheme: 'system'
     }
     client.sending = true
     client.activeChannel = {
@@ -224,7 +261,8 @@ describe('AndaSidePanelClient.sendPrompt', () => {
     client.settings = {
       baseUrl: 'http://127.0.0.1:8042',
       token: 'token',
-      submitKeyMode: 'enter'
+      submitKeyMode: 'enter',
+      appearanceTheme: 'system'
     }
     client.sending = true
     client.activeChannel = {
@@ -314,7 +352,8 @@ describe('AndaSidePanelClient.openWorkspaceChannel', () => {
     client.settings = {
       baseUrl: 'http://127.0.0.1:8042',
       token: 'token',
-      submitKeyMode: 'enter'
+      submitKeyMode: 'enter',
+      appearanceTheme: 'system'
     }
 
     vi.spyOn(client, 'rpc').mockImplementation(async (method) => {

@@ -134,7 +134,7 @@
     if (['sending', 'submitted', 'working', 'syncing'].includes(status)) {
       return 'animate-pulse bg-emerald-600 shadow-[0_0_0_3px_rgba(5,150,105,0.14)]'
     }
-    return 'bg-stone-300'
+    return 'bg-stone-300 dark:bg-stone-600'
   }
 
   function statusIcon(channel: Channel): 'loader' | 'warning' | 'radio' {
@@ -163,19 +163,19 @@
 <svelte:window bind:innerWidth={viewportWidth} />
 
 <aside
-  class={`h-full shrink-0 overflow-hidden border-r border-emerald-900/10 bg-emerald-50/70 backdrop-blur transition-[width] duration-200 ${
+  class={`h-full shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
     collapsed ? 'w-12' : 'w-64'
   }`}
   aria-label={chrome.i18n.getMessage('channelsLabel')}
 >
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex h-12 shrink-0 items-center gap-2 border-b border-emerald-900/10 px-1.5">
+    <div class="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-1.5">
       <button
         type="button"
         class={buttonClass(
           'ghost',
           'icon-sm',
-          'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+          'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
         )}
         aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
@@ -186,7 +186,7 @@
 
       {#if !collapsed}
         <div class="min-w-0 flex-1">
-          <div class="truncate text-xs font-bold text-stone-800">
+          <div class="truncate text-xs font-bold text-sidebar-foreground">
             {chrome.i18n.getMessage('channelsLabel')}
             <span class={badgeClass('outline')}>
               {channels.length}
@@ -198,7 +198,7 @@
           class={buttonClass(
             'ghost',
             'icon-sm',
-            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
           )}
           aria-label={chrome.i18n.getMessage('openFolder')}
           title={chrome.i18n.getMessage('openFolder')}
@@ -212,13 +212,13 @@
           class={buttonClass(
             'ghost',
             'icon-sm',
-            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
           )}
           aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
           onclick={toggleCollapsed}
         >
-          <ChevronDown class="size-4 shrink-0 rotate-90 text-stone-400" />
+          <ChevronDown class="size-4 shrink-0 rotate-90 text-muted-foreground" />
         </button>
       {:else}
         <button
@@ -226,7 +226,7 @@
           class={buttonClass(
             'ghost',
             'icon-sm',
-            'grid place-items-center bg-white/50 text-emerald-900 hover:bg-white/80'
+            'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
           )}
           aria-label={chrome.i18n.getMessage('openFolder')}
           title={chrome.i18n.getMessage('openFolder')}
@@ -250,8 +250,8 @@
             'xs',
             `group relative flex-nowrap p-0 text-left ${
               active
-                ? 'border-emerald-900/15 bg-background text-stone-950 shadow-sm'
-                : 'text-stone-600 hover:border-emerald-900/10 hover:bg-background/60 hover:text-stone-900'
+                ? 'border-sidebar-border bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
             } ${collapsed ? 'h-9 justify-center px-0' : ''}`
           )}
         >
@@ -272,8 +272,8 @@
                 'icon',
                 `relative grid size-6 place-items-center rounded-md border ${
                   active
-                    ? 'border-emerald-900/10 bg-emerald-50 text-emerald-800'
-                    : 'border-stone-200 bg-white/75 text-stone-500'
+                    ? 'border-sidebar-border bg-sidebar-accent text-emerald-700 dark:text-emerald-300'
+                    : 'border-sidebar-border bg-background/75 text-muted-foreground'
                 }`
               )}
             >
@@ -309,9 +309,9 @@
                     </span>
                   {/if}
                 </div>
-                <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-stone-500">
+                <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
                   <span class="shrink-0">{statusLabel(channel)}</span>
-                  <span class="min-w-0 truncate text-stone-400"
+                  <span class="min-w-0 truncate text-muted-foreground opacity-70"
                     >{channelSubtitle(channel.source)}</span
                   >
                 </div>
@@ -325,7 +325,7 @@
               class={buttonClass(
                 'outline',
                 'icon-xs',
-                'pointer-events-none absolute bottom-1 right-1 z-10 text-stone-400 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100'
+                'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
               )}
               aria-label={chrome.i18n.getMessage('deleteChannel')}
               title={chrome.i18n.getMessage('deleteChannel')}

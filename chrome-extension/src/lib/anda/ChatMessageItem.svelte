@@ -806,32 +806,6 @@
     border-color: var(--message-border, #e6e6e6);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .chat-message-card-external {
-      border-color: rgba(45, 212, 191, 0.22);
-      background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #0f766e);
-      color: #ccfbf1;
-    }
-
-    .chat-message-card-system {
-      border-color: rgba(251, 191, 36, 0.24);
-      background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #92400e);
-      color: #fde68a;
-    }
-
-    .chat-external-sender {
-      color: #99f6e4;
-    }
-
-    .chat-external-dot {
-      background: #2dd4bf;
-    }
-
-    .chat-external-context {
-      color: rgba(153, 246, 228, 0.68);
-    }
-  }
-
   :global(.dark) .chat-message-card-external {
     border-color: rgba(45, 212, 191, 0.22);
     background: color-mix(in srgb, var(--message-bg, #2a2a2a) 82%, #0f766e);

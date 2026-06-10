@@ -13,6 +13,7 @@
     type PageAudioResult,
     type PromptSkill
   } from '$lib/anda/client/types'
+  import { applyAppearanceTheme } from '$lib/anda/theme'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
   import { scrollIntoView } from '$lib/utils/document'
@@ -69,6 +70,8 @@
   const updateReady = $derived(
     updateState?.status === 'downloaded' && Boolean(updateState.latest_tag)
   )
+
+  $effect(() => applyAppearanceTheme(andaClient.settings.appearanceTheme))
 
   onMount(() => {
     andaClient
@@ -350,7 +353,7 @@
   <title>Anda Bot</title>
 </svelte:head>
 
-<div class="flex h-screen min-w-80 overflow-hidden bg-white text-neutral-950">
+<div class="flex h-screen min-w-80 overflow-hidden bg-background text-foreground">
   <ChatChannelsSidebar
     {channels}
     {activeSource}
@@ -663,23 +666,6 @@
 
   .message-side-body {
     border-color: var(--message-border);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .message-panel {
-      --message-bg: #2a2a2a;
-      --message-user-bubble: #343434;
-      --message-surface: #303030;
-      --message-surface-strong: #343434;
-      --message-surface-hover: #3a3a3a;
-      --message-border: #424242;
-      --message-border-soft: #3a3a3a;
-      --message-text: #f4f4f4;
-      --message-muted: #adadad;
-      --message-muted-soft: #858585;
-
-      color-scheme: dark;
-    }
   }
 
   :global(.dark) .message-panel {

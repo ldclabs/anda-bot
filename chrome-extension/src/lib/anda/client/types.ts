@@ -1,6 +1,11 @@
-import type { ChromeApi, SettingsState, SubmitKeyMode } from '$lib/service-worker/types'
+import type {
+  AppearanceTheme,
+  ChromeApi,
+  SettingsState,
+  SubmitKeyMode
+} from '$lib/service-worker/types'
 
-export type { ChromeApi, SettingsState, SubmitKeyMode }
+export type { AppearanceTheme, ChromeApi, SettingsState, SubmitKeyMode }
 
 export type Principal = string
 export type Xid = string

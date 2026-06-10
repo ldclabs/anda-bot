@@ -11,6 +11,7 @@ import { getChromeApi } from './chrome'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import { normalizePromptSkills } from './helper'
 import type {
+  AppearanceTheme,
   ChatAttachment,
   ChromeApi,
   ChromeTabChangeInfo,
@@ -265,6 +266,16 @@ export class AndaSidePanelClient extends EventTarget {
       this.updateState = null
     }
     await this.refreshVoiceCapabilities().catch(() => undefined)
+  }
+
+  async saveAppearanceTheme(appearanceTheme: AppearanceTheme): Promise<void> {
+    const previousTheme = this.settings.appearanceTheme
+    this.settings = normalizeSettings({ ...this.settings, appearanceTheme })
+    if (this.settings.appearanceTheme === previousTheme) {
+      return
+    }
+    await this.chrome.storage.local.set({ appearanceTheme: this.settings.appearanceTheme })
+    this.syncServiceWorker().catch(() => undefined)
   }
 
   async testConnection(settings: SettingsState): Promise<void> {
@@ -642,11 +653,17 @@ export class AndaSidePanelClient extends EventTarget {
   }
 
   private async loadSettings(): Promise<void> {
-    const saved = await this.chrome.storage.local.get(['baseUrl', 'token', 'submitKeyMode'])
+    const saved = await this.chrome.storage.local.get([
+      'baseUrl',
+      'token',
+      'submitKeyMode',
+      'appearanceTheme'
+    ])
     this.settings = normalizeSettings({
       baseUrl: saved.baseUrl || defaultSettings.baseUrl,
       token: saved.token || '',
-      submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode
+      submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
+      appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
     })
   }
 

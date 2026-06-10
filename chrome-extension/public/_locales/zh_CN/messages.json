@@ -107,6 +107,18 @@
   "enterNewLineModifierSends": {
     "message": "Enter 换行"
   },
+  "appearanceTheme": {
+    "message": "外观"
+  },
+  "appearanceLight": {
+    "message": "浅色"
+  },
+  "appearanceDark": {
+    "message": "深色"
+  },
+  "appearanceSystem": {
+    "message": "跟随系统"
+  },
   "save": {
     "message": "保存"
   },

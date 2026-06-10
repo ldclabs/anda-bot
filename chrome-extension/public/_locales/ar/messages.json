@@ -107,6 +107,18 @@
   "enterNewLineModifierSends": {
     "message": "Enter سطر جديد"
   },
+  "appearanceTheme": {
+    "message": "المظهر"
+  },
+  "appearanceLight": {
+    "message": "فاتح"
+  },
+  "appearanceDark": {
+    "message": "داكن"
+  },
+  "appearanceSystem": {
+    "message": "النظام"
+  },
   "save": {
     "message": "حفظ"
   },

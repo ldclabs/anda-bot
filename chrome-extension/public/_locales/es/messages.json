@@ -107,6 +107,18 @@
   "enterNewLineModifierSends": {
     "message": "Enter nueva línea"
   },
+  "appearanceTheme": {
+    "message": "Apariencia"
+  },
+  "appearanceLight": {
+    "message": "Claro"
+  },
+  "appearanceDark": {
+    "message": "Oscuro"
+  },
+  "appearanceSystem": {
+    "message": "Sistema"
+  },
   "save": {
     "message": "Guardar"
   },

@@ -1,20 +1,27 @@
-import type { ChromeApi, SettingsState, SubmitKeyMode } from './types'
+import type { AppearanceTheme, ChromeApi, SettingsState, SubmitKeyMode } from './types'
 import { getCurrentBrowser } from './chrome'
 
 export const defaultSettings: SettingsState = {
   baseUrl: 'http://127.0.0.1:8042',
   token: '',
-  submitKeyMode: 'enter'
+  submitKeyMode: 'enter',
+  appearanceTheme: 'system'
 }
 
 const browserSessionStorageKey = 'browserSessionId'
 
 export async function loadSettings(chromeApi: ChromeApi): Promise<SettingsState> {
-  const saved = await chromeApi.storage.local.get(['baseUrl', 'token', 'submitKeyMode'])
+  const saved = await chromeApi.storage.local.get([
+    'baseUrl',
+    'token',
+    'submitKeyMode',
+    'appearanceTheme'
+  ])
   return normalizeSettings({
     baseUrl: saved.baseUrl || defaultSettings.baseUrl,
     token: saved.token || '',
-    submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode
+    submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
+    appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
   })
 }
 
@@ -48,12 +55,17 @@ export function normalizeSettings(settings: SettingsState): SettingsState {
   return {
     baseUrl: trimTrailingSlash(settings.baseUrl.trim() || defaultSettings.baseUrl),
     token: settings.token.trim(),
-    submitKeyMode: normalizeSubmitKeyMode(settings.submitKeyMode)
+    submitKeyMode: normalizeSubmitKeyMode(settings.submitKeyMode),
+    appearanceTheme: normalizeAppearanceTheme(settings.appearanceTheme)
   }
 }
 
 function normalizeSubmitKeyMode(value: unknown): SubmitKeyMode {
   return value === 'modifier-enter' ? 'modifier-enter' : 'enter'
+}
+
+export function normalizeAppearanceTheme(value: unknown): AppearanceTheme {
+  return value === 'light' || value === 'dark' ? value : 'system'
 }
 
 function trimTrailingSlash(value: string): string {

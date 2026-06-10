@@ -107,6 +107,18 @@
   "enterNewLineModifierSends": {
     "message": "Enter: новая строка"
   },
+  "appearanceTheme": {
+    "message": "Внешний вид"
+  },
+  "appearanceLight": {
+    "message": "Светлая"
+  },
+  "appearanceDark": {
+    "message": "Темная"
+  },
+  "appearanceSystem": {
+    "message": "Системная"
+  },
   "save": {
     "message": "Сохранить"
   },

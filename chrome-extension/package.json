@@ -1,7 +1,7 @@
 {
   "name": "anda-bot",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.9.6",
   "type": "module",
   "scripts": {
     "dev": "vite",

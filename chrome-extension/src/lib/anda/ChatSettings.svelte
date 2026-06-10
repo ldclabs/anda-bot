@@ -1,6 +1,10 @@
 <script lang="ts">
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
-  import { type SettingsState, type SubmitKeyMode } from '$lib/anda/client/types'
+  import {
+    type AppearanceTheme,
+    type SettingsState,
+    type SubmitKeyMode
+  } from '$lib/anda/client/types'
   import {
     buttonClass,
     dialogContentClass,
@@ -26,10 +30,13 @@
     KeyRound,
     Keyboard,
     LoaderCircle,
+    Monitor,
+    Moon,
     Play,
     PlugZap,
     RefreshCw,
     Save,
+    Sun,
     Terminal,
     X
   } from '@lucide/svelte'
@@ -44,13 +51,15 @@
   let draftSettings = $state<SettingsState>({
     baseUrl: 'http://127.0.0.1:8042',
     token: '',
-    submitKeyMode: 'enter'
+    submitKeyMode: 'enter',
+    appearanceTheme: 'system'
   })
   let settingsDirty = $state(false)
   let savingSettings = $state(false)
   let testingConnection = $state(false)
   let loadingModels = $state(false)
   let switchingModel = $state(false)
+  let savingAppearanceTheme = $state(false)
   let copiedCommand = $state('')
 
   const modelNames = $derived(andaClient.modelState.modelNames)
@@ -77,9 +86,32 @@
     markSettingsDirty()
   }
 
+  async function updateAppearanceTheme(appearanceTheme: AppearanceTheme) {
+    if (draftSettings.appearanceTheme === appearanceTheme) {
+      return
+    }
+    draftSettings = { ...draftSettings, appearanceTheme }
+    savingAppearanceTheme = true
+    try {
+      await andaClient.saveAppearanceTheme(appearanceTheme)
+      draftSettings = { ...draftSettings, appearanceTheme: andaClient.settings.appearanceTheme }
+    } catch (error) {
+      console.warn('Failed to save appearance theme', error)
+    } finally {
+      savingAppearanceTheme = false
+    }
+  }
+
   function submitKeyModeButtonClass(submitKeyMode: SubmitKeyMode): string {
     const base = 'h-auto min-w-0 justify-start rounded-sm px-2 py-1.5 text-left transition'
     return draftSettings.submitKeyMode === submitKeyMode
+      ? `${base} bg-background text-foreground shadow-xs ring-1 ring-border hover:bg-background`
+      : `${base} text-muted-foreground hover:bg-background/80 hover:text-foreground`
+  }
+
+  function appearanceThemeButtonClass(appearanceTheme: AppearanceTheme): string {
+    const base = 'h-8 min-w-0 justify-center rounded-sm px-1.5 text-xs transition'
+    return draftSettings.appearanceTheme === appearanceTheme
       ? `${base} bg-background text-foreground shadow-xs ring-1 ring-border hover:bg-background`
       : `${base} text-muted-foreground hover:bg-background/80 hover:text-foreground`
   }
@@ -448,6 +480,52 @@
                 <RefreshCw
                   class={`size-4 ${loadingModels || switchingModel ? 'animate-spin text-emerald-700' : ''}`}
                 />
+              </button>
+            </div>
+          </div>
+
+          <div data-slot="field" class={fieldClass('gap-1.5')}>
+            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
+              <Monitor class="size-3" />
+              {chrome.i18n.getMessage('appearanceTheme')}
+            </label>
+            <div
+              class="grid grid-cols-3 gap-1 rounded-md border bg-muted/45 p-1"
+              role="radiogroup"
+              aria-label={chrome.i18n.getMessage('appearanceTheme')}
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draftSettings.appearanceTheme === 'light'}
+                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('light'))}
+                disabled={savingAppearanceTheme}
+                onclick={() => updateAppearanceTheme('light')}
+              >
+                <Sun class="size-3.5 shrink-0" />
+                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceLight')}</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draftSettings.appearanceTheme === 'dark'}
+                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('dark'))}
+                disabled={savingAppearanceTheme}
+                onclick={() => updateAppearanceTheme('dark')}
+              >
+                <Moon class="size-3.5 shrink-0" />
+                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceDark')}</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draftSettings.appearanceTheme === 'system'}
+                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('system'))}
+                disabled={savingAppearanceTheme}
+                onclick={() => updateAppearanceTheme('system')}
+              >
+                <Monitor class="size-3.5 shrink-0" />
+                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceSystem')}</span>
               </button>
             </div>
           </div>
