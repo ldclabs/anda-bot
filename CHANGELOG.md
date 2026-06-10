@@ -2,6 +2,22 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.4] — 2026-06-10
+
+### Changed
+
+- **Version synchronized for the 0.9.4 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.4`.
+
+### Fixed
+
+- **Channel workspace names are portable across platforms**: channel workspaces now use the same percent-encoded safe directory layout on every platform, preventing macOS Finder from displaying channel ids containing `:` as nested paths.
+- **Existing channel workspaces migrate to the safe layout**: non-Windows startup now moves or merges legacy channel workspace directories into their safe names so existing state is preserved after the layout change.
+- **Notes primer compatibility restored**: system instruction rendering now reads the current notes payload shape and falls back to legacy note storage when needed.
+
+### Dependencies
+
+- Refreshed lockfile dependencies, including `anda_brain` 0.6.11, `anda_engine` 0.12.35, `regex` 1.12.4, and `zerocopy` 0.8.52.
+
 ## [0.9.3] — 2026-06-09
 
 ### Changed

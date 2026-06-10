@@ -120,13 +120,10 @@ impl ChannelInitResult {
 /// Returns the filesystem directory name for a channel workspace.
 ///
 /// Channel ids are stable metadata and routing keys, so they may contain
-/// separators like `:`. Windows rejects those characters in directory names.
+/// separators like `:`. Use one safe layout on every platform so macOS Finder
+/// does not display `:` as `/`, and channel workspaces remain portable.
 pub fn channel_workspace_dir_name(channel_id: &str) -> String {
-    if cfg!(windows) {
-        windows_safe_path_component(channel_id)
-    } else {
-        channel_id.to_string()
-    }
+    windows_safe_path_component(channel_id)
 }
 
 fn windows_safe_path_component(value: &str) -> String {
@@ -436,13 +433,11 @@ mod tests {
     }
 
     #[test]
-    fn workspace_dir_name_preserves_existing_non_windows_layout() {
-        if !cfg!(windows) {
-            assert_eq!(
-                channel_workspace_dir_name("wechat:personal"),
-                "wechat:personal"
-            );
-        }
+    fn workspace_dir_name_uses_safe_layout_on_all_platforms() {
+        assert_eq!(
+            channel_workspace_dir_name("wechat:personal"),
+            "wechat%3Apersonal"
+        );
     }
 
     #[test]

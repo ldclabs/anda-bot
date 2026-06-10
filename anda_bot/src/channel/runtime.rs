@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
+    io,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -136,6 +137,124 @@ fn channel_workspace_path(work_dir: &Path, channel_id: &str) -> PathBuf {
     work_dir.join(channel_workspace_dir_name(channel_id))
 }
 
+fn legacy_channel_workspace_path(work_dir: &Path, channel_id: &str) -> PathBuf {
+    work_dir.join(channel_id)
+}
+
+async fn prepare_channel_workspace(work_dir: &Path, channel_id: &str) -> PathBuf {
+    let path = channel_workspace_path(work_dir, channel_id);
+    if !cfg!(windows) {
+        if let Err(err) = migrate_legacy_channel_workspace(work_dir, channel_id, &path).await {
+            log::warn!(
+                "failed to migrate legacy workspace for channel {}: {err}",
+                channel_id
+            );
+        }
+    }
+    if let Err(err) = tokio::fs::create_dir_all(&path).await {
+        log::warn!("failed to create workspace for {}: {err}", channel_id);
+    }
+    path
+}
+
+async fn migrate_legacy_channel_workspace(
+    work_dir: &Path,
+    channel_id: &str,
+    safe_path: &Path,
+) -> io::Result<()> {
+    let legacy_path = legacy_channel_workspace_path(work_dir, channel_id);
+    if legacy_path == safe_path {
+        return Ok(());
+    }
+
+    let legacy_meta = match tokio::fs::symlink_metadata(&legacy_path).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if !legacy_meta.is_dir() {
+        log::warn!(
+            "legacy workspace for channel {} is not a directory: {}",
+            channel_id,
+            legacy_path.display()
+        );
+        return Ok(());
+    }
+
+    match tokio::fs::symlink_metadata(safe_path).await {
+        Ok(meta) if meta.is_dir() => {
+            merge_workspace_dirs(&legacy_path, safe_path).await?;
+        }
+        Ok(_) => {
+            log::warn!(
+                "safe workspace for channel {} exists but is not a directory: {}",
+                channel_id,
+                safe_path.display()
+            );
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            tokio::fs::rename(&legacy_path, safe_path).await?;
+        }
+        Err(err) => return Err(err),
+    }
+
+    Ok(())
+}
+
+async fn merge_workspace_dirs(source: &Path, destination: &Path) -> io::Result<()> {
+    enum Pending {
+        Merge(PathBuf, PathBuf),
+        Cleanup(PathBuf),
+    }
+
+    let mut pending = vec![Pending::Merge(
+        source.to_path_buf(),
+        destination.to_path_buf(),
+    )];
+    while let Some(item) = pending.pop() {
+        match item {
+            Pending::Merge(source_dir, destination_dir) => {
+                tokio::fs::create_dir_all(&destination_dir).await?;
+                pending.push(Pending::Cleanup(source_dir.clone()));
+                let mut entries = tokio::fs::read_dir(&source_dir).await?;
+                while let Some(entry) = entries.next_entry().await? {
+                    let source_path = entry.path();
+                    let destination_path = destination_dir.join(entry.file_name());
+                    let source_type = entry.file_type().await?;
+                    match tokio::fs::symlink_metadata(&destination_path).await {
+                        Ok(destination_meta)
+                            if source_type.is_dir() && destination_meta.is_dir() =>
+                        {
+                            pending.push(Pending::Merge(source_path, destination_path));
+                        }
+                        Ok(_) => {
+                            log::warn!(
+                                "leaving legacy channel workspace entry in place because destination exists: {}",
+                                destination_path.display()
+                            );
+                        }
+                        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                            tokio::fs::rename(&source_path, &destination_path).await?;
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+            }
+            Pending::Cleanup(source_dir) => match tokio::fs::remove_dir(&source_dir).await {
+                Ok(()) => {}
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(err) => return Err(err),
+            },
+        }
+    }
+
+    Ok(())
+}
+
 impl ChannelRuntime {
     pub async fn connect(
         db: Arc<AndaDB>,
@@ -176,10 +295,7 @@ impl ChannelRuntime {
             .unwrap_or_default();
         let conversation_routes = build_conversation_routes(&channels_conversation);
         for (channel_name, channel) in &channels {
-            let path = channel_workspace_path(&work_dir, channel_name);
-            if let Err(err) = tokio::fs::create_dir_all(&path).await {
-                log::warn!("failed to create workspace for {}: {err}", channel_name);
-            }
+            let path = prepare_channel_workspace(&work_dir, channel_name).await;
             channel.set_workspace(path);
         }
 
@@ -819,6 +935,21 @@ mod tests {
         default_user: Principal,
         channel_users: HashMap<String, Principal>,
     ) -> ChannelRuntime {
+        test_runtime_with_users_in_work_dir(
+            channel,
+            default_user,
+            channel_users,
+            std::env::temp_dir(),
+        )
+        .await
+    }
+
+    async fn test_runtime_with_users_in_work_dir(
+        channel: Arc<TestChannel>,
+        default_user: Principal,
+        channel_users: HashMap<String, Principal>,
+        work_dir: PathBuf,
+    ) -> ChannelRuntime {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let db = AndaDB::connect(
             object_store,
@@ -849,7 +980,7 @@ mod tests {
             default_user,
             channel_users,
             channels,
-            std::env::temp_dir(),
+            work_dir,
         )
         .await
         .unwrap()
@@ -857,6 +988,64 @@ mod tests {
 
     async fn test_runtime(channel: Arc<TestChannel>) -> ChannelRuntime {
         test_runtime_with_users(channel, Principal::management_canister(), HashMap::new()).await
+    }
+
+    #[tokio::test]
+    async fn connect_migrates_legacy_workspace_dir_to_safe_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel = Arc::new(TestChannel::new("test%legacy", false));
+        let legacy_path = dir.path().join(channel.id());
+        let safe_path = dir.path().join(channel_workspace_dir_name(&channel.id()));
+        tokio::fs::create_dir_all(&legacy_path).await.unwrap();
+        tokio::fs::write(legacy_path.join("state.json"), b"legacy")
+            .await
+            .unwrap();
+
+        let _runtime = test_runtime_with_users_in_work_dir(
+            channel,
+            Principal::management_canister(),
+            HashMap::new(),
+            dir.path().to_path_buf(),
+        )
+        .await;
+
+        assert!(!legacy_path.exists());
+        assert_eq!(
+            tokio::fs::read(safe_path.join("state.json")).await.unwrap(),
+            b"legacy"
+        );
+    }
+
+    #[tokio::test]
+    async fn migration_merges_legacy_workspace_when_safe_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel_id = "test%merge";
+        let legacy_path = dir.path().join(channel_id);
+        let safe_path = dir.path().join(channel_workspace_dir_name(channel_id));
+        tokio::fs::create_dir_all(&legacy_path).await.unwrap();
+        tokio::fs::create_dir_all(&safe_path).await.unwrap();
+        tokio::fs::write(legacy_path.join("legacy.json"), b"legacy")
+            .await
+            .unwrap();
+        tokio::fs::write(safe_path.join("safe.json"), b"safe")
+            .await
+            .unwrap();
+
+        migrate_legacy_channel_workspace(dir.path(), channel_id, &safe_path)
+            .await
+            .unwrap();
+
+        assert!(!legacy_path.exists());
+        assert_eq!(
+            tokio::fs::read(safe_path.join("legacy.json"))
+                .await
+                .unwrap(),
+            b"legacy"
+        );
+        assert_eq!(
+            tokio::fs::read(safe_path.join("safe.json")).await.unwrap(),
+            b"safe"
+        );
     }
 
     #[tokio::test]

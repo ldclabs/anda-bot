@@ -10,7 +10,7 @@ use anda_engine::{
     context::{AgentCtx, BaseCtx, CompletionRunner, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
-        note::{NoteTool, load_notes},
+        note::{NoteTool, load_notes, load_notes_from_legacy},
         shell::{ExecArgs, ExecOutput, ShellTool, ShellToolHook},
         skill::{SkillFrontmatter, SkillManager},
         todo::TodoTool,
@@ -395,10 +395,13 @@ impl AndaBot {
     ) -> Result<String, BoxError> {
         let primer = self.inner.brain.describe_primer().await?;
         let user_profile = self.inner.brain.user_info(user.to_string(), None).await?;
-        let notes = load_notes(ctx).await.unwrap_or_default();
+        let notes = match load_notes(ctx).await {
+            Some(notes) => notes,
+            None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
+        };
         let local_date = format_local_date(now_ms);
         let self_knowledge = serde_json::to_string(primer.get("identity").unwrap_or(&primer))?;
-        let notes = serde_json::to_string(&notes.notes)?;
+        let notes = serde_json::to_string(&notes.items)?;
         let user_profile = serde_json::to_string(&user_profile)?;
 
         Ok(render_system_instructions(SystemInstructionSections {
