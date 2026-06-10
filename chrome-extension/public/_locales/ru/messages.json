@@ -140,9 +140,6 @@
   "sideTasksLabel": {
     "message": "Побочные задачи"
   },
-  "queuedFollowUps": {
-    "message": "Последующие запросы в очереди"
-  },
   "expandSideTasks": {
     "message": "Развернуть побочные задачи"
   },

@@ -11,6 +11,7 @@ All notable changes to Anda Bot.
 ### Changed
 
 - **Browser extension dark-mode styling is explicit**: message and channel UI styles now rely on the applied `.dark` theme class instead of implicit media-query overrides, so manual Light/Dark choices override the operating system preference.
+- **Browser extension follow-ups appear inline**: follow-up prompts sent while a conversation is working now render as pending user messages inside the active conversation instead of a separate queued follow-ups panel, then merge with accepted server history when it returns.
 - **Version synchronized for the 0.9.6 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.6`.
 
 ## [0.9.5] — 2026-06-10

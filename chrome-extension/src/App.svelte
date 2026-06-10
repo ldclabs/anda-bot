@@ -61,7 +61,6 @@
     displayMessageGroups(andaClient.activeChannel?.messageGroups || [])
   )
   const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
-  const pendingFollowUps = $derived(andaClient.activeChannel?.pendingFollowUps || [])
   const sideMessageCount = $derived(sideMessages.length)
   const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
   const channels = $derived(andaClient.channelList)
@@ -177,10 +176,6 @@
       settingsOpen = true
     }
     await andaClient.sendPrompt(payload.text, payload.attachments)
-  }
-
-  function cancelPendingFollowUp(id: string) {
-    andaClient.cancelPendingFollowUp(id)
   }
 
   async function stopActiveTask() {
@@ -570,12 +565,10 @@
         {sending}
         working={isBusy}
         {stoppable}
-        {pendingFollowUps}
         voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voiceCapabilities}
         submitKeyMode={andaClient.settings.submitKeyMode}
         onSend={sendPrompt}
-        onCancelFollowUp={cancelPendingFollowUp}
         onStop={stopActiveTask}
         onVoiceSend={sendVoiceTurn}
         onBrowserSpeechStart={startBrowserSpeechRecognition}

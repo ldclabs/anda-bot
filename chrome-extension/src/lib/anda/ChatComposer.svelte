@@ -1,7 +1,6 @@
 <script lang="ts" module>
   import type {
     ChatAttachment,
-    ChatMessage,
     PageAudioResult,
     PromptSkill,
     SubmitKeyMode,
@@ -65,8 +64,7 @@
     SendHorizontal,
     Square,
     Volume2,
-    VolumeX,
-    X
+    VolumeX
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick } from 'svelte'
@@ -77,11 +75,9 @@
     placeholder = chrome.i18n.getMessage('placeholderMessage'),
     working = false,
     stoppable = false,
-    pendingFollowUps = [],
     voiceAvailable = false,
     voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
     onSend,
-    onCancelFollowUp,
     onStop,
     onVoiceSend,
     onBrowserSpeechStart,
@@ -98,7 +94,6 @@
     placeholder?: string
     working?: boolean
     stoppable?: boolean
-    pendingFollowUps?: ChatMessage[]
     voiceAvailable?: boolean
     voiceCapabilities?: VoiceCapabilities
     submitKeyMode?: SubmitKeyMode
@@ -112,7 +107,6 @@
     onBrowserAudioStop?: () => Promise<PageAudioResult>
     onBrowserAudioCancel?: () => Promise<void>
     onLoadSkills?: () => Promise<PromptSkill[]>
-    onCancelFollowUp?: (id: string) => void
   } = $props()
 
   let text = $state('')
@@ -561,18 +555,6 @@
 
   function removeAttachment(id: string) {
     attachments = attachments.filter((attachment) => attachment.id !== id)
-  }
-
-  function pendingFollowUpPreview(message: ChatMessage): string {
-    const text = message.text.trim()
-    if (text) {
-      return text
-    }
-    return (message.attachments || []).map((attachment) => attachment.name).join(', ')
-  }
-
-  function cancelPendingFollowUp(id: string) {
-    onCancelFollowUp?.(id)
   }
 
   function toggleInputMode() {
@@ -1095,37 +1077,6 @@
   >
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
-    {#if pendingFollowUps.length}
-      <div class="pending-follow-ups" aria-live="polite">
-        <div class="pending-follow-ups-header">
-          <span class="pending-follow-ups-pulse">
-            <LoaderCircle class="size-3 animate-spin" />
-          </span>
-          <span class="min-w-0 flex-1 truncate">
-            {chrome.i18n.getMessage('queuedFollowUps')}
-          </span>
-          <span class="pending-follow-ups-count">{pendingFollowUps.length}</span>
-        </div>
-        <div class="pending-follow-ups-list">
-          {#each pendingFollowUps as message (message.id)}
-            <div class="pending-follow-up-item">
-              <span class="pending-follow-up-dot"></span>
-              <span class="min-w-0 flex-1 truncate">{pendingFollowUpPreview(message)}</span>
-              <button
-                type="button"
-                class={buttonClass('ghost', 'icon-xs', 'pending-follow-up-cancel')}
-                aria-label={chrome.i18n.getMessage('cancel')}
-                title={chrome.i18n.getMessage('cancel')}
-                onclick={() => cancelPendingFollowUp(message.id)}
-              >
-                <X class="size-3.5" />
-              </button>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
     {#if attachmentError}
       <div
         role="alert"
@@ -1414,91 +1365,6 @@
   :global(.composer-shell.composer-working)::after {
     opacity: 1;
     animation: composer-border-flow 4s linear infinite;
-  }
-
-  .pending-follow-ups {
-    display: grid;
-    gap: 6px;
-    border-radius: 7px;
-    border: 1px solid rgba(4, 120, 87, 0.16);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, #ecfdf5);
-    padding: 7px;
-    color: var(--message-text, #171717);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--message-bg, #ffffff) 78%, transparent);
-  }
-
-  .pending-follow-ups-header,
-  .pending-follow-up-item {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-  }
-
-  .pending-follow-ups-header {
-    gap: 7px;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.2;
-  }
-
-  .pending-follow-ups-pulse {
-    display: grid;
-    width: 20px;
-    height: 20px;
-    flex: 0 0 auto;
-    place-items: center;
-    border-radius: 6px;
-    border: 1px solid rgba(4, 120, 87, 0.12);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
-    color: #047857;
-  }
-
-  .pending-follow-ups-count {
-    min-width: 18px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
-    padding: 1px 6px;
-    text-align: center;
-    font-size: 10px;
-    font-weight: 800;
-    color: #047857;
-  }
-
-  .pending-follow-ups-list {
-    display: grid;
-    gap: 4px;
-  }
-
-  .pending-follow-up-item {
-    gap: 7px;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 82%, var(--message-surface, #f7f7f7));
-    padding: 5px 7px;
-    font-size: 12px;
-    line-height: 1.25;
-    color: var(--message-text, #171717);
-  }
-
-  .pending-follow-up-dot {
-    width: 5px;
-    height: 5px;
-    flex: 0 0 auto;
-    border-radius: 999px;
-    background: #10b981;
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
-  }
-
-  :global(.pending-follow-up-cancel) {
-    width: 22px;
-    height: 22px;
-    flex: 0 0 auto;
-    border-radius: 6px;
-    color: var(--message-muted, #737373);
-  }
-
-  :global(.pending-follow-up-cancel:hover) {
-    background: var(--message-surface-hover, #eeeeee);
-    color: var(--message-text, #171717);
   }
 
   .prompt-input-wrap {

@@ -322,10 +322,6 @@ export class AndaSidePanelClient extends EventTarget {
     }
   }
 
-  cancelPendingFollowUp(id: string): boolean {
-    return this.activeChannel?.cancelPendingFollowUp(id) || false
-  }
-
   async stopActiveTask(): Promise<void> {
     const channel = this.activeChannel
     if (!channel) {

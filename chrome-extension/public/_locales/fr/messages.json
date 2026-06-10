@@ -140,9 +140,6 @@
   "sideTasksLabel": {
     "message": "Tâches latérales"
   },
-  "queuedFollowUps": {
-    "message": "Suivis en attente"
-  },
   "expandSideTasks": {
     "message": "Développer les tâches latérales"
   },

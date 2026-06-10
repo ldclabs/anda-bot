@@ -359,7 +359,7 @@ describe('Channel.sendPrompt', () => {
     }
   })
 
-  it('queues a plain prompt outside the conversation while the active conversation is working', async () => {
+  it('inserts a plain follow-up into the active conversation while it is working', async () => {
     const prompt = 'please adjust the approach'
     const currentConversation = conversation(1, {
       messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
@@ -412,9 +412,13 @@ describe('Channel.sendPrompt', () => {
       expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
       expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
         'hello',
-        'working'
+        'working',
+        prompt
       ])
-      expect(channel.pendingFollowUps.map((item) => item.text)).toEqual([prompt])
+      expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({
+        conversation: currentConversation._id,
+        pending: true
+      })
     } catch (error) {
       agentRun.resolve({
         content: '',
@@ -438,7 +442,6 @@ describe('Channel.sendPrompt', () => {
       // drain the async poll loop so the test observes the settled state.
     }
 
-    expect(channel.pendingFollowUps).toEqual([])
     expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
       'hello',
       'working',
@@ -446,69 +449,7 @@ describe('Channel.sendPrompt', () => {
     ])
   })
 
-  it('cancels a queued follow-up before it leaves the frontend', async () => {
-    const prompt = 'never send this follow-up'
-    const currentConversation = conversation(1, {
-      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'working', 11)],
-      status: 'working',
-      updated_at: 11
-    })
-    const requestExtraStarted = deferred<void>()
-    const requestExtra = deferred<Record<string, unknown>>()
-    let blockNextRequestExtra = false
-    const agentInputs: AgentInput[] = []
-    const api = createApi({
-      onAgentRun: (input) => {
-        agentInputs.push(input)
-      },
-      requestExtra: async () => {
-        if (blockNextRequestExtra) {
-          blockNextRequestExtra = false
-          requestExtraStarted.resolve()
-          return requestExtra.promise
-        }
-        return {}
-      },
-      toolCall: async (input) => {
-        const args = toolArgs(input)
-        switch (args.type) {
-          case 'GetSourceState':
-            return toolResult({ conv_id: currentConversation._id })
-          case 'GetConversation':
-            return toolResult(currentConversation)
-          default:
-            throw new Error(`Unexpected tool call: ${String(args.type)}`)
-        }
-      }
-    })
-    const channel = new Channel('source:test', api)
-    await channel.init()
-
-    blockNextRequestExtra = true
-    const send = channel.sendPrompt(prompt, [])
-    await requestExtraStarted.promise
-
-    const pendingFollowUp = channel.pendingFollowUps[0]!
-    expect(pendingFollowUp.text).toBe(prompt)
-    expect(channel.cancelPendingFollowUp(pendingFollowUp.id)).toBe(true)
-    expect(channel.pendingFollowUps).toEqual([])
-
-    requestExtra.resolve({})
-    const poller = await send
-    for await (const _current of poller!) {
-      // drain the cancelled poller so the test observes the final state.
-    }
-
-    expect(agentInputs).toEqual([])
-    expect(channel.cancelPendingFollowUp(pendingFollowUp.id)).toBe(false)
-    expect(channel.pendingFollowUps).toEqual([])
-    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
-      'hello',
-      'working'
-    ])
-  })
-
-  it('clears a queued follow-up when it is accepted inside a combined user message', async () => {
+  it('merges a pending follow-up when it is accepted inside a combined user message', async () => {
     const firstPrompt = '是的，一个交互优化'
     const secondPrompt = '后面的提交变更就没必要跑测试了'
     const runtimeText =
@@ -560,7 +501,12 @@ describe('Channel.sendPrompt', () => {
     const send = channel.sendPrompt(firstPrompt, [])
     await agentRunStarted.promise
 
-    expect(channel.pendingFollowUps.map((item) => item.text)).toEqual([firstPrompt])
+    expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
+      'hello',
+      'working',
+      firstPrompt
+    ])
+    expect(channel.messageGroups[0]!.messages.at(-1)).toMatchObject({ pending: true })
 
     agentRun.resolve({
       content: '',
@@ -573,7 +519,6 @@ describe('Channel.sendPrompt', () => {
       // drain the async poll loop.
     }
 
-    expect(channel.pendingFollowUps).toEqual([])
     expect(channel.messageGroups[0]!.messages.at(-2)).toMatchObject({
       role: 'user',
       text: `${firstPrompt}\n\n${secondPrompt}`
@@ -724,7 +669,6 @@ describe('Channel.sendPrompt', () => {
       // drain the async poll loop so the test observes the settled state.
     }
 
-    expect(channel.pendingFollowUps).toEqual([])
     expect(channel.sideMessages).toEqual([])
     expect(channel.messageGroups.map((group) => group._id)).toEqual([currentConversation._id])
     expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
@@ -845,7 +789,6 @@ describe('Channel.sendPrompt', () => {
       'queued follow-up',
       '/new fresh start'
     ])
-    expect(channel.pendingFollowUps).toEqual([])
     expect(channel.messageGroups.map((group) => group._id)).toEqual([SubmitMessageConversationId])
     expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
       '/new fresh start'
@@ -930,7 +873,6 @@ describe('Channel.sendPrompt', () => {
     }
 
     expect(agentInputs.map((input) => input.prompt)).toEqual(['/new fresh start'])
-    expect(channel.pendingFollowUps).toEqual([])
     expect(channel.messageGroups.map((group) => group._id)).toEqual([SubmitMessageConversationId])
     expect(channel.messageGroups[0]!.messages.map((item) => item.text)).toEqual([
       '/new fresh start'

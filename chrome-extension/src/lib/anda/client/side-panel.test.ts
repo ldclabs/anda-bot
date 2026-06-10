@@ -277,25 +277,6 @@ describe('AndaSidePanelClient.sendPrompt', () => {
   })
 })
 
-describe('AndaSidePanelClient.cancelPendingFollowUp', () => {
-  it('delegates cancellation to the active channel', async () => {
-    const chromeApi = createChromeApi({
-      settings: { token: 'token' }
-    })
-    vi.stubGlobal('chrome', chromeApi)
-    const { AndaSidePanelClient } = await importSidePanelModule()
-    const client = new AndaSidePanelClient()
-    const cancelPendingFollowUp = vi.fn().mockReturnValue(true)
-
-    client.activeChannel = {
-      cancelPendingFollowUp
-    } as any
-
-    expect(client.cancelPendingFollowUp('m-follow-up-1')).toBe(true)
-    expect(cancelPendingFollowUp).toHaveBeenCalledWith('m-follow-up-1')
-  })
-})
-
 describe('AndaSidePanelClient.bindChromeEvents', () => {
   it('ignores tab update events until the active tab is known', async () => {
     const chromeApi = createChromeApi({ activeTabs: [] })
