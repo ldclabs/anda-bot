@@ -132,18 +132,45 @@ fn windows_safe_path_component(value: &str) -> String {
         return "channel".to_string();
     }
 
-    let mut encoded = String::with_capacity(value.len());
+    let mut sanitized = String::with_capacity(value.len());
     for ch in value.chars() {
         if is_windows_safe_path_char(ch) {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    while matches!(sanitized.as_bytes().last(), Some(b'.' | b' ')) {
+        sanitized.pop();
+        sanitized.push('_');
+    }
+
+    if is_reserved_windows_name(&sanitized) {
+        sanitized.insert(0, '_');
+    }
+
+    sanitized
+}
+
+pub(crate) fn legacy_percent_encoded_channel_workspace_dir_name(channel_id: &str) -> String {
+    let value = channel_id.trim();
+    if value.is_empty() {
+        return "channel".to_string();
+    }
+
+    let mut encoded = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if is_legacy_percent_encoded_safe_path_char(ch) {
             encoded.push(ch);
         } else {
-            push_percent_encoded_char(&mut encoded, ch);
+            push_legacy_percent_encoded_char(&mut encoded, ch);
         }
     }
 
     while matches!(encoded.as_bytes().last(), Some(b'.' | b' ')) {
         let ch = encoded.pop().expect("path component is not empty");
-        push_percent_encoded_char(&mut encoded, ch);
+        push_legacy_percent_encoded_char(&mut encoded, ch);
     }
 
     if is_reserved_windows_name(&encoded) {
@@ -154,6 +181,10 @@ fn windows_safe_path_component(value: &str) -> String {
 }
 
 fn is_windows_safe_path_char(ch: char) -> bool {
+    !ch.is_control() && !matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+}
+
+fn is_legacy_percent_encoded_safe_path_char(ch: char) -> bool {
     !ch.is_control()
         && !matches!(
             ch,
@@ -161,14 +192,14 @@ fn is_windows_safe_path_char(ch: char) -> bool {
         )
 }
 
-fn push_percent_encoded_char(output: &mut String, ch: char) {
+fn push_legacy_percent_encoded_char(output: &mut String, ch: char) {
     let mut buf = [0_u8; 4];
     for byte in ch.encode_utf8(&mut buf).as_bytes() {
-        push_percent_encoded_byte(output, *byte);
+        push_legacy_percent_encoded_byte(output, *byte);
     }
 }
 
-fn push_percent_encoded_byte(output: &mut String, byte: u8) {
+fn push_legacy_percent_encoded_byte(output: &mut String, byte: u8) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     output.push('%');
     output.push(HEX[(byte >> 4) as usize] as char);
@@ -436,31 +467,28 @@ mod tests {
     fn workspace_dir_name_uses_safe_layout_on_all_platforms() {
         assert_eq!(
             channel_workspace_dir_name("wechat:personal"),
-            "wechat%3Apersonal"
+            "wechat_personal"
         );
     }
 
     #[test]
-    fn windows_workspace_dir_name_escapes_invalid_path_characters() {
+    fn windows_workspace_dir_name_replaces_invalid_path_characters() {
         assert_eq!(
             windows_safe_path_component("wechat:personal"),
-            "wechat%3Apersonal"
+            "wechat_personal"
         );
         assert_eq!(
             windows_safe_path_component("telegram:ops/chat?prod*"),
-            "telegram%3Aops%2Fchat%3Fprod%2A"
+            "telegram_ops_chat_prod_"
         );
-        assert_eq!(
-            windows_safe_path_component("discord%prod"),
-            "discord%25prod"
-        );
+        assert_eq!(windows_safe_path_component("discord%prod"), "discord%prod");
     }
 
     #[test]
     fn windows_workspace_dir_name_handles_reserved_and_trailing_names() {
         assert_eq!(windows_safe_path_component("con"), "_con");
         assert_eq!(windows_safe_path_component("LPT1.log"), "_LPT1.log");
-        assert_eq!(windows_safe_path_component("wechat."), "wechat%2E");
+        assert_eq!(windows_safe_path_component("wechat."), "wechat_");
         assert_eq!(windows_safe_path_component("  "), "channel");
     }
 }
