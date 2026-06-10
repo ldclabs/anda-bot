@@ -77,6 +77,9 @@
   "settings": {
     "message": "Settings"
   },
+  "brainGraph": {
+    "message": "Memory graph"
+  },
   "gatewayUrl": {
     "message": "Gateway URL"
   },

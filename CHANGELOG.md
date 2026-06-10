@@ -6,6 +6,8 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Browser extension Brain Graph visualizer**: added a dedicated Brain Graph page with searchable, expandable cognitive graph visualization, saved graph settings, and a side-panel shortcut that opens it from the extension.
+- **Browser extension read-only Brain RPC bridge**: added local websocket RPC methods for Brain status and read-only KIP queries so the default `anda_bot` graph can be explored without exposing write operations.
 - **Browser extension appearance theme control**: added a localized settings control for System, Light, and Dark themes, persists the preference, applies it to the side panel root, and follows system color-scheme changes when System is selected.
 
 ### Changed

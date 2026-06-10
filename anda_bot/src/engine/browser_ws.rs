@@ -1,6 +1,7 @@
 use anda_core::{AgentInput, BoxError, Json, Principal, ToolInput};
 use anda_engine::{model::Models, unix_ms};
 use anda_engine_server::handler::AppState;
+use anda_kip::Request as KipRequest;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -28,6 +29,7 @@ use tokio_tungstenite::{
 };
 
 use super::browser::{BrowserActionResult, BrowserBridge, BrowserCommand};
+use crate::brain;
 #[cfg(target_os = "windows")]
 use crate::util::windows_process::suppress_tokio_console_window;
 use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
@@ -39,6 +41,7 @@ const SEC_WEBSOCKET_VERSION: &str = "sec-websocket-version";
 #[derive(Clone)]
 pub struct BrowserWebSocketState {
     pub app: AppState,
+    pub brain: brain::Client,
     pub bridge: Arc<BrowserBridge>,
     pub voice_capabilities: BrowserVoiceCapabilities,
     pub auto_updater: Arc<AutoUpdater>,
@@ -266,6 +269,8 @@ async fn handle_browser_ws_request(
         "browser_register" => handle_browser_register(incoming.params, state, connection),
         "agent_run" => handle_agent_run(incoming.params, state, caller, engine_id).await,
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
+        "brain_status" => handle_brain_status(state).await,
+        "brain_kip_readonly" => handle_brain_kip_readonly(incoming.params, state).await,
         "information" => handle_information(state, engine_id),
         "pick_workspace" => handle_pick_workspace().await,
         "capabilities" => handle_capabilities(state, engine_id),
@@ -338,6 +343,28 @@ async fn handle_tool_call(
         .await
         .map_err(|err| format!("failed to call tool: {err:?}"))?;
     serde_json::to_value(output).map_err(|err| err.to_string())
+}
+
+async fn handle_brain_status(state: &BrowserWebSocketState) -> Result<Value, String> {
+    let status = state
+        .brain
+        .brain_status()
+        .await
+        .map_err(|err| format!("failed to query Brain status: {err:?}"))?;
+    serde_json::to_value(status).map_err(|err| err.to_string())
+}
+
+async fn handle_brain_kip_readonly(
+    params: Value,
+    state: &BrowserWebSocketState,
+) -> Result<Value, String> {
+    let (request,): (KipRequest,) = params_from_value(params)?;
+    let response = state
+        .brain
+        .execute_kip_readonly(request)
+        .await
+        .map_err(|err| format!("failed to execute read-only Brain KIP: {err:?}"))?;
+    serde_json::to_value(response).map_err(|err| err.to_string())
 }
 
 fn handle_information(

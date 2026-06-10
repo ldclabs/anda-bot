@@ -69,6 +69,7 @@ const ACTIVE_MODEL_LABEL: &str = "";
 pub struct Engines {
     state: AppState,
     bot: Arc<AndaBot>,
+    brain: brain::Client,
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
@@ -284,7 +285,7 @@ impl Engines {
             .with_store(Store::new(object_store))
             .with_management(management)
             .with_models(Arc::new(cfg.models))
-            .register_tool(Arc::new(brain_client))?
+            .register_tool(Arc::new(brain_client.clone()))?
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(GoalTool::new()))?
@@ -368,6 +369,7 @@ impl Engines {
         Ok(Self {
             state,
             bot,
+            brain: brain_client,
             browser_bridge,
             voice_capabilities,
             auto_updater: cfg.auto_updater,
@@ -386,6 +388,7 @@ impl Engines {
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
+            brain: self.brain,
             bridge: self.browser_bridge,
             voice_capabilities: self.voice_capabilities,
             auto_updater: self.auto_updater,

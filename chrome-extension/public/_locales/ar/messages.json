@@ -77,6 +77,9 @@
   "settings": {
     "message": "الإعدادات"
   },
+  "brainGraph": {
+    "message": "مخطط الذاكرة"
+  },
   "gatewayUrl": {
     "message": "عنوان URL للبوابة"
   },

@@ -25,6 +25,7 @@
     Download,
     History,
     LoaderCircle,
+    BrainCircuit,
     Radio,
     RefreshCw,
     Settings
@@ -136,6 +137,13 @@
     if (settingsOpen) {
       setupGuideOpen = !andaClient.settings.token.trim()
     }
+  }
+
+  function openBrainGraphPage() {
+    const url = new URL('brain.html', window.location.href).toString()
+    chrome.tabs.create({ url, active: true }).catch(() => {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
   }
 
   function toggleSideMessagesPanel() {
@@ -383,15 +391,26 @@
         {/if}
       </div>
 
-      <button
-        type="button"
-        class={buttonClass('ghost', 'icon')}
-        aria-label={chrome.i18n.getMessage('settings')}
-        title={chrome.i18n.getMessage('settings')}
-        onclick={toggleSettingsPanel}
-      >
-        <Settings class="size-4" />
-      </button>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class={buttonClass('ghost', 'icon')}
+          aria-label={chrome.i18n.getMessage('brainGraph')}
+          title={chrome.i18n.getMessage('brainGraph')}
+          onclick={openBrainGraphPage}
+        >
+          <BrainCircuit class="size-4" />
+        </button>
+        <button
+          type="button"
+          class={buttonClass('ghost', 'icon')}
+          aria-label={chrome.i18n.getMessage('settings')}
+          title={chrome.i18n.getMessage('settings')}
+          onclick={toggleSettingsPanel}
+        >
+          <Settings class="size-4" />
+        </button>
+      </div>
     </header>
 
     {#if settingsOpen}

@@ -57,14 +57,11 @@ impl Client {
     }
 
     pub async fn describe_primer(&self) -> Result<Json, BoxError> {
-        let rt: KipResponse = self
-            .post(
-                "/execute_kip_readonly",
-                &KipRequest {
-                    command: "DESCRIBE PRIMER".to_string(),
-                    ..Default::default()
-                },
-            )
+        let rt = self
+            .execute_kip_readonly(KipRequest {
+                command: "DESCRIBE PRIMER".to_string(),
+                ..Default::default()
+            })
             .await?;
         match rt {
             KipResponse::Ok { result, .. } => Ok(result),
@@ -74,6 +71,10 @@ impl Client {
                 })
                 .into()),
         }
+    }
+
+    pub async fn execute_kip_readonly(&self, request: KipRequest) -> Result<KipResponse, BoxError> {
+        self.post("/execute_kip_readonly", &request).await
     }
 
     pub async fn user_info(&self, user: String, name: Option<String>) -> Result<Json, BoxError> {
