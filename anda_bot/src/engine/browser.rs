@@ -467,15 +467,39 @@ impl BrowserBridge {
             )
             .into());
         }
+        let timeout_ms = normalized_action_timeout(args.timeout_ms);
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         let action_sender = self
             .connections
             .read()
             .get(&session)
             .map(|connection| connection.sender.clone());
+        let action_sender = match action_sender {
+            Some(sender) => sender,
+            None => {
+                // The extension reconnects after service-worker restarts; wait
+                // for the session to come back instead of parking a command
+                // that no connection would deliver.
+                if self
+                    .wait_for_connected_session(Some(session.clone()), timeout_ms)
+                    .await
+                    .is_none()
+                {
+                    return Err(format!(
+                        "Chrome extension session {session:?} has no active connection. Open the Anda browser extension or launch the browser and try again."
+                    )
+                    .into());
+                }
+                self.connections
+                    .read()
+                    .get(&session)
+                    .map(|connection| connection.sender.clone())
+                    .ok_or("Chrome browser WebSocket connection is closed")?
+            }
+        };
 
         let request_id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
         let created_at = unix_ms();
-        let timeout_ms = normalized_action_timeout(args.timeout_ms);
         let command = BrowserCommand {
             request_id,
             session: session.clone(),
@@ -494,16 +518,13 @@ impl BrowserBridge {
                 },
             );
         }
-        if let Some(action_sender) = action_sender {
-            if let Err(_err) = action_sender.send(command).await {
-                self.pending.lock().await.remove(&request_id);
-                return Err("Chrome browser WebSocket connection is closed".into());
-            }
-        } else {
-            self.notify.notify_waiters();
+        if action_sender.send(command).await.is_err() {
+            self.pending.lock().await.remove(&request_id);
+            return Err("Chrome browser WebSocket connection is closed".into());
         }
 
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), receiver).await {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, receiver).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(_)) => Err("Chrome browser action response channel closed".into()),
             Err(_) => {

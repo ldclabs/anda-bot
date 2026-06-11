@@ -64,6 +64,10 @@ const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hou
 // The idle loop reaches the submission point about once per second; without a
 // backoff a failing brain endpoint would be hammered continuously.
 const FORMATION_RETRY_BACKOFF_MS: u64 = 60 * 1000;
+// Wait this long after a failed goal supervisor evaluation before retrying.
+// The idle loop reaches the goal check about once per second; without a
+// backoff a failing supervisor model would be hammered continuously.
+const GOAL_CHECK_RETRY_BACKOFF_MS: u64 = 60 * 1000;
 const STARTUP_SELF_SOURCE: &str = "startup:self";
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 static COMPACTION_PROMPT: &str = include_str!("../../assets/CompactionPrompt.md");
@@ -704,7 +708,12 @@ impl AndaBot {
         };
 
         let session_request_meta = SessionRequestMeta::new(meta.clone());
-        let sess_id = conversation.thread.clone().unwrap_or_default();
+        // A fresh id when the conversation has no thread: the zero default id
+        // would collide across resumed conversations in the session map.
+        let sess_id = match conversation.thread.clone() {
+            Some(thread) => thread,
+            None => Xid::new(),
+        };
 
         conversation.thread = Some(sess_id.clone());
         conversation.status = ConversationStatus::Working;
@@ -732,6 +741,7 @@ impl AndaBot {
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
             formation_backoff_until: AtomicU64::new(0),
+            goal_check_backoff_until: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(now_ms)),
             finish_when_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
@@ -1098,7 +1108,6 @@ impl Agent<AgentCtx> for AndaBot {
                 .await;
         }
 
-        let _session_creation_guard = self.inner.session_creation_lock.lock().await;
         let RequestState {
             workspace,
             source_key,
@@ -1140,57 +1149,90 @@ impl Agent<AgentCtx> for AndaBot {
             .as_ref()
             .and_then(|conv| conv.thread.clone())
             .unwrap_or_else(Xid::new);
-        let active_session = self
-            .get_session(&sess_id)
-            .or_else(|| self.get_session_by_source(&source_key));
         let mut detached_existing_session = false;
         let mut detached_conversation_id = current_conversation_id.unwrap_or_default();
-        if let Some(session) = active_session {
-            // Join existing conversation session if it's active
-            if matches!(input.command, PromptCommand::New { .. }) {
-                detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
-                if let Some(session) = self.detach_session(&session.id) {
-                    session.finish_when_idle.store(true, Ordering::SeqCst);
-                    detached_existing_session = true;
-                }
-                if Some(detached_conversation_id) != current_conversation_id {
-                    // fetch the latest ancestors in session for /new command
-                    if let Ok(conv) = self
-                        .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
-                        .await
-                    {
-                        let mut ids = conv.ancestors.clone().unwrap_or_default();
-                        ids.push(conv._id);
-                        if ids.len() > 10 {
-                            ids.drain(0..ids.len() - 10);
+
+        // The brain lookups behind build_system_instructions (primer + user
+        // profile) are network calls and can be slow, so they must not run
+        // while holding the session creation lock: that would block message
+        // delivery to every already-running session. Check for a joinable
+        // session under the lock, release it to build instructions, then
+        // re-check before creating the session so concurrent requests for the
+        // same source cannot create duplicate sessions.
+        let mut instructions: Option<String> = None;
+        let _session_creation_guard = loop {
+            let guard = self.inner.session_creation_lock.lock().await;
+            let active_session = self
+                .get_session(&sess_id)
+                .or_else(|| self.get_session_by_source(&source_key));
+            if let Some(session) = active_session {
+                if matches!(input.command, PromptCommand::New { .. }) {
+                    detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
+                    if let Some(session) = self.detach_session(&session.id) {
+                        session.finish_when_idle.store(true, Ordering::SeqCst);
+                        detached_existing_session = true;
+                    }
+                    if Some(detached_conversation_id) != current_conversation_id {
+                        // fetch the latest ancestors in session for /new command
+                        if let Ok(conv) = self
+                            .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
+                            .await
+                        {
+                            let mut ids = conv.ancestors.clone().unwrap_or_default();
+                            ids.push(conv._id);
+                            if ids.len() > 10 {
+                                ids.drain(0..ids.len() - 10);
+                            }
+                            ancestors = Some(ids);
                         }
-                        ancestors = Some(ids);
                     }
-                }
-            } else {
-                let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
-                let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
-                session.request_meta.set(meta);
-                match session.sender.send(input).await {
-                    Ok(_) => {
-                        return Ok(AgentOutput {
-                            conversation: (response_conversation_id > 0)
-                                .then_some(response_conversation_id),
-                            session: Some(session.id.to_string()),
-                            ..Default::default()
-                        });
+                } else {
+                    // Join existing conversation session if it's active.
+                    // Release the lock first: enqueueing can wait on a full
+                    // channel and must not stall unrelated requests.
+                    drop(guard);
+                    let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
+                    let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
+                    session.request_meta.set(meta);
+                    match session.sender.send(input).await {
+                        Ok(_) => {
+                            return Ok(AgentOutput {
+                                conversation: (response_conversation_id > 0)
+                                    .then_some(response_conversation_id),
+                                session: Some(session.id.to_string()),
+                                ..Default::default()
+                            });
+                        }
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to enqueue prompt for processing conversation {}",
+                                maybe_conv_id,
+                            );
+                            self.detach_session(&session.id);
+                            input = err.0;
+                        }
                     }
-                    Err(err) => {
-                        log::warn!(
-                            "Failed to enqueue prompt for processing conversation {}",
-                            maybe_conv_id,
-                        );
-                        self.detach_session(&session.id);
-                        input = err.0;
-                    }
+                    continue;
                 }
             }
-        }
+
+            if instructions.is_none() {
+                drop(guard);
+                instructions = Some(
+                    self.build_system_instructions(
+                        &ctx,
+                        &home_dir,
+                        &workspace,
+                        &available_tools,
+                        now_ms,
+                    )
+                    .await?,
+                );
+                continue;
+            }
+
+            break guard;
+        };
 
         // If the conversation session is not active, start a new session and process the prompt
         let ConversationInput {
@@ -1199,14 +1241,8 @@ impl Agent<AgentCtx> for AndaBot {
             extra,
             ..
         } = input;
-
-        // Built only when a new session is actually needed: joining an active
-        // session above returns early and would waste the brain lookups
-        // (primer + user profile) this requires — and a brain outage must not
-        // block message delivery to already-running sessions.
-        let mut instructions = self
-            .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
-            .await?;
+        let mut instructions =
+            instructions.expect("system instructions are built before session creation");
 
         let mut initial_goal = None;
         let mut tools = UniqueVec::from(self.inner.tools.clone());
@@ -1419,6 +1455,7 @@ impl Agent<AgentCtx> for AndaBot {
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
             formation_backoff_until: AtomicU64::new(0),
+            goal_check_backoff_until: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(unix_ms())),
             finish_when_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
@@ -1757,12 +1794,21 @@ impl SessionRunner {
                 self.submit_pending_formation(self.runner.chat_history(), now_ms)
                     .await;
 
-                let maybe_goal = { self.session.goal.write().take() };
+                let maybe_goal = if now_ms
+                    >= self.session.goal_check_backoff_until.load(Ordering::SeqCst)
+                {
+                    self.session.goal.write().take()
+                } else {
+                    None
+                };
                 let mut goal_continue_prompt: Option<String> = None;
                 let mut active = false;
                 if let Some(mut goal) = maybe_goal {
                     match goal.check_progress(&self.runner, &self.ctx).await {
                         Ok(check) => {
+                            self.session
+                                .goal_check_backoff_until
+                                .store(0, Ordering::SeqCst);
                             self.runner.accumulate(&check.usage);
                             match check.action {
                                 goal::GoalAction::Complete(reason) => {
@@ -1790,6 +1836,18 @@ impl SessionRunner {
                                 self.session.id,
                                 err
                             );
+                            // Keep the goal: a transient supervisor failure
+                            // must not silently drop a long-running objective.
+                            // Retry after a backoff so a failing supervisor is
+                            // not hammered by the once-per-second idle loop.
+                            self.session.goal_check_backoff_until.store(
+                                unix_ms().saturating_add(GOAL_CHECK_RETRY_BACKOFF_MS),
+                                Ordering::SeqCst,
+                            );
+                            let mut slot = self.session.goal.write();
+                            if slot.is_none() {
+                                *slot = Some(goal);
+                            }
                         }
                     }
                 }
@@ -2075,6 +2133,8 @@ struct Session {
     submit_formation_at: AtomicU64,
     // Unix ms before which formation submissions are skipped (set on failure).
     formation_backoff_until: AtomicU64,
+    // Unix ms before which goal supervisor checks are skipped (set on failure).
+    goal_check_backoff_until: AtomicU64,
     active_at: Arc<AtomicU64>,
     finish_when_idle: AtomicBool,
     formation_context: Option<InputContext>,
@@ -2552,12 +2612,15 @@ fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
 
 fn needs_compaction(runner: &CompletionRunner) -> bool {
     let current_usage = runner.current_usage();
-    let threshold = runner
-        .model()
-        .context_window
-        .saturating_mul(8)
-        .saturating_div(10)
-        .max(100_000) as u64;
+    // context_window is 0 when the model config does not declare it; only then
+    // fall back to a conservative default. A floor above a small declared
+    // window would disable token-based compaction until the context overflows.
+    let context_window = runner.model().context_window as u64;
+    let threshold = if context_window == 0 {
+        100_000
+    } else {
+        context_window.saturating_mul(8).saturating_div(10)
+    };
 
     current_usage.input_tokens >= threshold || runner.turns() >= MAX_TURNS_TO_COMPACT
 }

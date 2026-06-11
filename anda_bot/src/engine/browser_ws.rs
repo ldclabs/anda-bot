@@ -87,6 +87,7 @@ struct BrowserWsRequest<'a> {
     params: &'a BrowserCommand,
 }
 
+#[derive(Clone)]
 struct BrowserWsConnection {
     id: u64,
     sender: mpsc::Sender<BrowserCommand>,
@@ -248,8 +249,23 @@ async fn handle_browser_ws_text(
     };
 
     if incoming.method.is_some() {
-        handle_browser_ws_request(incoming, state, caller, engine_id, connection, write_sender)
+        // Handle requests on their own task: agent runs, folder pickers, and
+        // auto-update checks can take seconds to minutes, and the read loop
+        // must keep draining pings and browser-action responses meanwhile.
+        let state = state.clone();
+        let connection = connection.clone();
+        let write_sender = write_sender.clone();
+        tokio::spawn(async move {
+            handle_browser_ws_request(
+                incoming,
+                &state,
+                caller,
+                engine_id,
+                &connection,
+                &write_sender,
+            )
             .await;
+        });
     } else {
         handle_browser_ws_response(incoming, state).await;
     }
