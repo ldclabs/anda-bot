@@ -722,6 +722,7 @@ impl AndaBot {
             conversation_id: AtomicU64::new(conversation._id),
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(None)),
             request_meta: session_request_meta.clone(),
             completion_hooks: self.inner.completion_hooks.clone(),
@@ -1386,6 +1387,7 @@ impl Agent<AgentCtx> for AndaBot {
             conversation_id: AtomicU64::new(conversation._id),
             sender,
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(initial_goal.map(goal::GoalState::new))),
             request_meta: session_request_meta.clone(),
             completion_hooks: self.inner.completion_hooks.clone(),
@@ -2020,6 +2022,7 @@ struct Session {
     sender: tokio::sync::mpsc::Sender<ConversationInput>,
     // task_id -> BackgroundTaskInfo
     background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
+    background_progress_outputs: Arc<RwLock<HashMap<String, String>>>,
     goal: Arc<RwLock<Option<goal::GoalState>>>,
     request_meta: SessionRequestMeta,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
@@ -2063,6 +2066,62 @@ fn conversation_extra_without_id(meta: &RequestMeta) -> Map<String, Value> {
     let mut extra = meta.extra.clone();
     extra.remove("conversation");
     extra
+}
+
+fn subagent_background_output_key(session_id: &str) -> String {
+    format!("subagent:{session_id}")
+}
+
+fn shell_background_output_key(task_id: &str) -> String {
+    format!("shell:{task_id}")
+}
+
+fn subagent_final_output_prompt(
+    session_id: &str,
+    output: &AgentOutput,
+    last_progress_content: Option<&str>,
+) -> String {
+    let message = if !output.content.is_empty() {
+        if last_progress_content == Some(output.content.as_str()) {
+            format!(
+                "Subagent session {session_id} completed; final output is unchanged from the latest intermediate output."
+            )
+        } else {
+            format!(
+                "Subagent session {session_id} final output:\n\n{}",
+                output.content
+            )
+        }
+    } else if let Some(failed_reason) = output.failed_reason.as_ref() {
+        format!(
+            "Subagent session {session_id} failed with reason: {:?}",
+            failed_reason
+        )
+    } else {
+        format!("Subagent session {session_id} completed")
+    };
+
+    system_runtime_prompt("subagent final output", message)
+}
+
+fn background_shell_output_json(output: &ExecOutput) -> String {
+    serde_json::to_string(output).unwrap_or_default()
+}
+
+fn background_shell_end_prompt(
+    task_id: &str,
+    output_json: &str,
+    last_progress_output: Option<&str>,
+) -> String {
+    let message = if last_progress_output == Some(output_json) {
+        format!(
+            "Background task {task_id} completed; final output is unchanged from the latest intermediate output."
+        )
+    } else {
+        format!("Background task {task_id} completed:\n\n{output_json}")
+    };
+
+    system_runtime_prompt("background shell", message)
 }
 
 fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String {
@@ -2269,6 +2328,9 @@ impl AgentHook for Session {
                 progress_message: None,
             },
         );
+        self.background_progress_outputs
+            .write()
+            .remove(&subagent_background_output_key(session_id));
     }
 
     async fn on_background_progress(
@@ -2278,6 +2340,10 @@ impl AgentHook for Session {
         output: AgentOutput,
     ) {
         let prompt = if !output.content.is_empty() {
+            self.background_progress_outputs.write().insert(
+                subagent_background_output_key(&session_id),
+                output.content.clone(),
+            );
             system_runtime_prompt(
                 "subagent progress",
                 format!(
@@ -2312,28 +2378,12 @@ impl AgentHook for Session {
             self.background_tasks.write().remove(&session_id);
         }
 
-        let prompt = if !output.content.is_empty() {
-            system_runtime_prompt(
-                "subagent final output",
-                format!(
-                    "Subagent session {session_id} final output:\n\n{}",
-                    output.content
-                ),
-            )
-        } else if let Some(failed_reason) = output.failed_reason {
-            system_runtime_prompt(
-                "subagent final output",
-                format!(
-                    "Subagent session {session_id} failed with reason: {:?}",
-                    failed_reason
-                ),
-            )
-        } else {
-            system_runtime_prompt(
-                "subagent final output",
-                format!("Subagent session {session_id} completed"),
-            )
-        };
+        let last_progress_content = self
+            .background_progress_outputs
+            .write()
+            .remove(&subagent_background_output_key(&session_id));
+        let prompt =
+            subagent_final_output_prompt(&session_id, &output, last_progress_content.as_deref());
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain { prompt },
@@ -2357,6 +2407,9 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 progress_message: None,
             },
         );
+        self.background_progress_outputs
+            .write()
+            .remove(&shell_background_output_key(task_id));
     }
 
     async fn on_background_progress(
@@ -2365,6 +2418,10 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         task_id: String,
         output: ToolOutput<ExecOutput>,
     ) {
+        let output_json = background_shell_output_json(&output.output);
+        self.background_progress_outputs
+            .write()
+            .insert(shell_background_output_key(&task_id), output_json.clone());
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain {
@@ -2372,7 +2429,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                         "background shell",
                         format!(
                             "Background task {task_id} intermediate output:\n\n{}",
-                            serde_json::to_string(&output.output).unwrap_or_default()
+                            output_json
                         ),
                     ),
                 },
@@ -2394,17 +2451,16 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             self.background_tasks.write().remove(&task_id);
         }
 
+        let output_json = background_shell_output_json(&output.output);
+        let last_progress_output = self
+            .background_progress_outputs
+            .write()
+            .remove(&shell_background_output_key(&task_id));
+        let prompt =
+            background_shell_end_prompt(&task_id, &output_json, last_progress_output.as_deref());
         self.sender
             .send(ConversationInput {
-                command: PromptCommand::Plain {
-                    prompt: system_runtime_prompt(
-                        "background shell",
-                        format!(
-                            "Background task {task_id} completed:\n\n{}",
-                            serde_json::to_string(&output.output).unwrap_or_default()
-                        ),
-                    ),
-                },
+                command: PromptCommand::Plain { prompt },
                 usage: output.usage,
                 extra: ctx.meta().extra.clone(),
                 resources: output.artifacts,
@@ -2594,6 +2650,54 @@ mod tests {
     fn base_agent_tools_include_goal_tool() {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(base_tools().contains(&GoalTool::NAME.to_string()));
+    }
+
+    #[test]
+    fn subagent_final_output_prompt_omits_duplicate_progress_content() {
+        let output = AgentOutput {
+            content: "same final body".to_string(),
+            ..Default::default()
+        };
+
+        let prompt = subagent_final_output_prompt("session-1", &output, Some("same final body"));
+
+        assert!(prompt.contains("Subagent session session-1 completed"));
+        assert!(prompt.contains("unchanged from the latest intermediate output"));
+        assert!(!prompt.contains("same final body"));
+    }
+
+    #[test]
+    fn subagent_final_output_prompt_keeps_new_final_content() {
+        let output = AgentOutput {
+            content: "new final body".to_string(),
+            ..Default::default()
+        };
+
+        let prompt = subagent_final_output_prompt("session-1", &output, Some("old body"));
+
+        assert!(prompt.contains("Subagent session session-1 final output"));
+        assert!(prompt.contains("new final body"));
+    }
+
+    #[test]
+    fn background_shell_end_prompt_omits_duplicate_progress_output() {
+        let output_json = r#"{"stdout":"same final body"}"#;
+
+        let prompt = background_shell_end_prompt("task-1", output_json, Some(output_json));
+
+        assert!(prompt.contains("Background task task-1 completed"));
+        assert!(prompt.contains("unchanged from the latest intermediate output"));
+        assert!(!prompt.contains("same final body"));
+    }
+
+    #[test]
+    fn background_shell_end_prompt_keeps_new_final_output() {
+        let output_json = r#"{"stdout":"new final body"}"#;
+
+        let prompt = background_shell_end_prompt("task-1", output_json, Some(r#"{"stdout":""}"#));
+
+        assert!(prompt.contains("Background task task-1 completed"));
+        assert!(prompt.contains("new final body"));
     }
 
     #[test]
