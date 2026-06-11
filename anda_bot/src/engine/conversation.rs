@@ -117,6 +117,10 @@ pub struct ConversationsTool {
     default_workspace: String,
     tools_usage: RwLock<HashMap<String, Usage>>,
     source_conversation: RwLock<HashMap<String, SourceState>>,
+    // Serializes extension persistence so concurrent updates cannot save
+    // snapshots out of order: a stale snapshot written last would win on the
+    // next daemon start.
+    extension_save_lock: tokio::sync::Mutex<()>,
 }
 
 impl ConversationsTool {
@@ -129,6 +133,7 @@ impl ConversationsTool {
             default_workspace,
             tools_usage: RwLock::new(HashMap::new()),
             source_conversation: RwLock::new(HashMap::new()),
+            extension_save_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -186,6 +191,7 @@ impl ConversationsTool {
         source: String,
         state: SourceState,
     ) -> Result<(), BoxError> {
+        let _guard = self.extension_save_lock.lock().await;
         let fv = {
             let mut map = self.source_conversation.write();
             map.insert(source, state);
@@ -199,6 +205,7 @@ impl ConversationsTool {
     }
 
     pub async fn delete_source_state(&self, source: &str) -> Result<Option<SourceState>, BoxError> {
+        let _guard = self.extension_save_lock.lock().await;
         let (removed, fv) = {
             let mut map = self.source_conversation.write();
             let removed = map.remove(source);
@@ -234,6 +241,7 @@ impl ConversationsTool {
             return Ok(());
         }
 
+        let _guard = self.extension_save_lock.lock().await;
         let tools_usage = {
             let mut tools_usage = self.tools_usage.write();
             for (tool, usage) in tools_usage_delta.into_iter() {
