@@ -11,6 +11,12 @@ All notable changes to Anda Bot.
 - **Launcher downloaded-update label is action-oriented**: updated English and Chinese menu text from passive download status to “Install and restart” wording.
 - **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.7`.
 
+### Fixed
+
+- **Daemon config saves are atomic and serialized**: config updates now write through a same-directory temp file with fsync and rename, and concurrent updates are serialized, so a crash mid-save can no longer leave a truncated config that blocks the next daemon start.
+- **Skill loading failures no longer block daemon startup**: errors scanning skill directories (such as permission problems in the shared `~/.agents/skills`) are logged and the daemon continues without skills instead of refusing to start.
+- **Daemon status failures surface their cause**: `/daemon/status` errors are now logged and the underlying error detail is returned in the response instead of a generic message.
+
 ## [0.9.6] — 2026-06-10
 
 ### Added

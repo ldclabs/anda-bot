@@ -108,6 +108,9 @@ struct DaemonControlRouteState {
     bot: Arc<AndaBot>,
     cancel_token: CancellationToken,
     config_path: PathBuf,
+    // Serializes config updates so concurrent PUTs cannot interleave
+    // the backup check, backup copy, and file write.
+    config_write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Serialize)]
@@ -367,7 +370,11 @@ impl Engines {
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
         let engine = Arc::new(engine);
         engine_ref.bind(Arc::downgrade(&engine));
-        skills_tool.load().await?;
+        // A failure scanning the skills directories (e.g. permissions on the
+        // shared ~/.agents/skills) should not prevent the daemon from starting.
+        if let Err(err) = skills_tool.load().await {
+            log::error!("failed to load skills, continuing without them: {err}");
+        }
         engine.sub_agents_manager().insert(skills_tool);
 
         let default_engine = engine.id();
@@ -403,6 +410,7 @@ impl Engines {
             bot: self.bot.clone(),
             cancel_token,
             config_path: self.config_path.clone(),
+            config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
@@ -446,7 +454,7 @@ async fn auto_update_status(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_update_request(&state.app, &headers) {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
         return *response;
     }
     AxumJson(state.auto_updater.state()).into_response()
@@ -456,7 +464,7 @@ async fn auto_update_check(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_update_request(&state.app, &headers) {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
         return *response;
     }
     AxumJson(state.auto_updater.check_if_due().await).into_response()
@@ -466,7 +474,7 @@ async fn auto_update_install_and_restart(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_update_request(&state.app, &headers) {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
         return *response;
     }
     match state.auto_updater.install_and_restart().await {
@@ -488,10 +496,16 @@ async fn daemon_shutdown(
 }
 
 async fn get_status(State(state): State<DaemonControlRouteState>) -> impl IntoResponse {
-    if let Ok(status) = state.bot.status().await {
-        AxumJson(status).into_response()
-    } else {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get status").into_response()
+    match state.bot.status().await {
+        Ok(status) => AxumJson(status).into_response(),
+        Err(err) => {
+            log::warn!("failed to get daemon status: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to get status: {err}"),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -538,6 +552,8 @@ async fn update_daemon_config(
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
+    let _write_guard = state.config_write_lock.lock().await;
+
     match daemon_config_needs_backup(&state.config_path, content.as_bytes()).await {
         Ok(true) => {
             if let Err(err) = backup_daemon_config(&state.config_path).await {
@@ -555,20 +571,31 @@ async fn update_daemon_config(
     AxumJson(response).into_response()
 }
 
-// Write via a temp file + rename so a crash mid-write cannot leave a
-// truncated config that prevents the daemon from starting.
+// Write via a temp file in the same directory plus fsync and rename, so a
+// crash mid-write cannot leave a truncated config that blocks the next
+// daemon start.
 async fn write_daemon_config_atomically(path: &Path, content: &[u8]) -> Result<(), BoxError> {
+    use tokio::io::AsyncWriteExt;
+
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(config::CONFIG_FILE_NAME);
     let temp_path = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
-    tokio::fs::write(&temp_path, content).await?;
-    if let Err(err) = tokio::fs::rename(&temp_path, path).await {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        return Err(err.into());
+
+    let result = async {
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(content).await?;
+        file.sync_all().await?;
+        drop(file);
+        tokio::fs::rename(&temp_path, path).await
     }
-    Ok(())
+    .await;
+
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+    }
+    Ok(result?)
 }
 
 fn daemon_config_response(
@@ -631,13 +658,6 @@ async fn unique_daemon_config_backup_path(path: &Path) -> Result<PathBuf, BoxErr
     Err(format!("could not allocate backup path for {}", path.display()).into())
 }
 
-fn verify_update_request(
-    app: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), Box<axum::response::Response>> {
-    verify_authenticated_request(app, headers)
-}
-
 fn verify_authenticated_request(
     app: &AppState,
     headers: &HeaderMap,
@@ -670,6 +690,31 @@ mod tests {
             normalize_config_file_content("addr: 127.0.0.1:8042\r\nlog_level: warn".to_string()),
             "addr: 127.0.0.1:8042\nlog_level: warn\n"
         );
+    }
+
+    #[tokio::test]
+    async fn daemon_config_atomic_write_replaces_content_without_leftover_temp_files() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join(config::CONFIG_FILE_NAME);
+
+        write_daemon_config_atomically(&config_path, b"addr: 127.0.0.1:8042\n")
+            .await
+            .unwrap();
+        write_daemon_config_atomically(&config_path, b"addr: 127.0.0.1:9000\n")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tokio::fs::read(&config_path).await.unwrap(),
+            b"addr: 127.0.0.1:9000\n"
+        );
+
+        let mut entries = tokio::fs::read_dir(home.path()).await.unwrap();
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        assert_eq!(names, vec![config::CONFIG_FILE_NAME.to_string()]);
     }
 
     #[tokio::test]
