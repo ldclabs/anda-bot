@@ -786,7 +786,10 @@ mod tests {
 
         // No pid file at all.
         assert_eq!(
-            daemon.stop_background(Duration::from_secs(1)).await.unwrap(),
+            daemon
+                .stop_background(Duration::from_secs(1))
+                .await
+                .unwrap(),
             StopState::NotRunning
         );
 
@@ -795,7 +798,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            daemon.stop_background(Duration::from_secs(1)).await.unwrap(),
+            daemon
+                .stop_background(Duration::from_secs(1))
+                .await
+                .unwrap(),
             StopState::NotRunning
         );
         assert!(!daemon.pid_file_path().exists());

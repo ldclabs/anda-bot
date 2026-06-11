@@ -208,12 +208,8 @@ mod tests {
         let area = Rect::new(0, 0, 8, 3);
         let mut buf = Buffer::empty(area);
 
-        PackedLines::new(vec![
-            Line::from("ab"),
-            Line::from("cd"),
-            Line::from("ef"),
-        ])
-        .render(area, &mut buf);
+        PackedLines::new(vec![Line::from("ab"), Line::from("cd"), Line::from("ef")])
+            .render(area, &mut buf);
         assert_eq!(rendered_row(&buf, 0), "ab      ");
 
         let mut buf = Buffer::empty(area);
@@ -278,8 +274,7 @@ mod tests {
         let area = Rect::new(0, 0, 2, 1);
         let mut buf = Buffer::empty(area);
 
-        PackedLines::new(vec![Line::from("abcdef"), Line::from("never")])
-            .render(area, &mut buf);
+        PackedLines::new(vec![Line::from("abcdef"), Line::from("never")]).render(area, &mut buf);
 
         assert_eq!(rendered_row(&buf, 0), "ab");
 

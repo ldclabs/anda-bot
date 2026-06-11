@@ -83,6 +83,7 @@ impl TtsProvider for GoogleTtsProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     #[test]
     fn new_rejects_empty_api_key() {
@@ -91,7 +92,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = GoogleTtsProvider::new(&config, reqwest::Client::new())
+        let err = GoogleTtsProvider::new(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("API key must not be empty"));
@@ -105,7 +106,7 @@ mod tests {
             voice: "zh-CN-Standard-A".to_string(),
         };
 
-        let provider = GoogleTtsProvider::new(&config, reqwest::Client::new()).unwrap();
+        let provider = GoogleTtsProvider::new(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_key, "key-1");
         assert_eq!(provider.language_code, "zh-CN");
         assert_eq!(provider.voice, "zh-CN-Standard-A");

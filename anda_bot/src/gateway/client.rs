@@ -14,6 +14,7 @@ use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
     engine::AndaBotStatus,
+    util::http_client::new_reqwest_client,
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
@@ -39,7 +40,7 @@ pub struct Client {
 impl Client {
     pub fn new(base_url: String, auth_token: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
             base_url,
             auth_token,
         }
@@ -397,7 +398,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
         let base_url = spawn_gateway_mock(status_app()).await;
 
         let client = Client::new(base_url.clone(), "token-1".to_string())
-            .with_http_client(reqwest::Client::new());
+            .with_http_client(new_reqwest_client());
         let status = client.status().await.unwrap();
         assert_eq!(status.conversations, 7);
         assert_eq!(status.memory_nodes, 11);
@@ -608,6 +609,9 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
         );
 
         // Missing log file is tolerated.
-        assert_eq!(daemon_startup_error(&dir.path().join("missing.log")).await, None);
+        assert_eq!(
+            daemon_startup_error(&dir.path().join("missing.log")).await,
+            None
+        );
     }
 }

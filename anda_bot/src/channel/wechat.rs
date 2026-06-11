@@ -1173,7 +1173,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let workspace = workspace_at(&dir);
 
-        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+        assert!(
+            load_context_token_for_send(&workspace, "alice")
+                .await
+                .is_none()
+        );
         assert!(load_context_token_for_send(&workspace, " ").await.is_none());
 
         save_context_token_to_workspace(&workspace, "alice", "tok-1").await;
@@ -1191,7 +1195,11 @@ mod tests {
             unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1,
         );
         save_context_token_meta_to_workspace(&workspace, &meta).await;
-        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+        assert!(
+            load_context_token_for_send(&workspace, "alice")
+                .await
+                .is_none()
+        );
         assert!(
             load_context_tokens_from_workspace(&workspace)
                 .await
@@ -1216,7 +1224,11 @@ mod tests {
         );
 
         remove_context_token_from_workspace(&workspace, "alice", Some("tok-1")).await;
-        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+        assert!(
+            load_context_token_for_send(&workspace, "alice")
+                .await
+                .is_none()
+        );
     }
 
     #[test]
@@ -1283,7 +1295,11 @@ mod tests {
         );
         assert_eq!(
             wechat_media_file_name(
-                &media(None, Some("https://cdn.example.com/path/pic.jpg?x=1"), MediaType::Image),
+                &media(
+                    None,
+                    Some("https://cdn.example.com/path/pic.jpg?x=1"),
+                    MediaType::Image
+                ),
                 "m1"
             ),
             "pic.jpg"

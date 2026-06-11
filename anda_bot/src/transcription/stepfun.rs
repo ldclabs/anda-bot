@@ -310,6 +310,7 @@ fn parse_stepfun_sse_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     fn test_stepfun_provider() -> StepFunProvider {
         StepFunProvider::from_config(
@@ -317,7 +318,7 @@ mod tests {
                 api_key: "sk-test".to_string(),
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            new_reqwest_client(),
         )
         .unwrap()
     }
@@ -408,7 +409,7 @@ mod tests {
             ..Default::default()
         };
         mutate(&mut config);
-        StepFunProvider::from_config(&config, reqwest::Client::new())
+        StepFunProvider::from_config(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err()
             .to_string()
@@ -424,9 +425,7 @@ mod tests {
                 .contains("must use http or https")
         );
         assert!(config_error(|c| c.model = " ".into()).contains("`model` must not be empty"));
-        assert!(
-            config_error(|c| c.language = " ".into()).contains("`language` must not be empty")
-        );
+        assert!(config_error(|c| c.language = " ".into()).contains("`language` must not be empty"));
         assert!(config_error(|c| c.pcm_rate = 0).contains("`pcm_rate`"));
         assert!(config_error(|c| c.pcm_bits = 0).contains("`pcm_bits`"));
         assert!(config_error(|c| c.pcm_channel = 0).contains("`pcm_channel`"));
@@ -444,7 +443,7 @@ mod tests {
                 prompt: Some("  转写提示  ".to_string()),
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            new_reqwest_client(),
         )
         .unwrap();
 
@@ -465,15 +464,12 @@ mod tests {
                 prompt: Some("领域词提示".to_string()),
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            new_reqwest_client(),
         )
         .unwrap();
 
         let body = build_stepfun_request_body(b"audio-bytes", "voice.mp3", &provider).unwrap();
-        assert_eq!(
-            body["audio"]["data"],
-            STANDARD.encode(b"audio-bytes")
-        );
+        assert_eq!(body["audio"]["data"], STANDARD.encode(b"audio-bytes"));
         assert_eq!(body["audio"]["input"]["format"]["type"], "mp3");
         assert_eq!(
             body["audio"]["input"]["transcription"]["prompt"],
@@ -552,7 +548,7 @@ mod tests {
                 api_url,
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            new_reqwest_client(),
         )
         .unwrap()
     }
@@ -593,28 +589,22 @@ mod tests {
     async fn transcribe_reports_stream_and_status_errors() {
         let url = spawn_sse_mock("", http::StatusCode::OK).await;
         let provider = provider_for(url).await;
-        let err = provider
-            .transcribe(b"data", "voice.mp3")
-            .await
-            .unwrap_err();
+        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
         assert!(err.to_string().contains("ended without"));
 
         let url = spawn_sse_mock("quota exceeded", http::StatusCode::TOO_MANY_REQUESTS).await;
         let provider = provider_for(url).await;
-        let err = provider
-            .transcribe(b"data", "voice.mp3")
-            .await
-            .unwrap_err();
+        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("StepFun ASR API error (429"), "got: {msg}");
 
         let url = spawn_sse_mock("data: not json\n\n", http::StatusCode::OK).await;
         let provider = provider_for(url).await;
-        let err = provider
-            .transcribe(b"data", "voice.mp3")
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("Failed to parse StepFun ASR SSE event"));
+        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Failed to parse StepFun ASR SSE event")
+        );
 
         // Unsupported container is rejected before any request is sent.
         let provider = test_stepfun_provider();

@@ -328,6 +328,7 @@ pub fn normalize_identity(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use anda_engine::model::ModelConfig;
 
     #[test]
@@ -654,7 +655,7 @@ channels:
             ..Default::default()
         });
 
-        let models = config.models(reqwest::Client::new());
+        let models = config.models(new_reqwest_client());
         assert!(models.get("test-model").is_some());
         assert!(models.get_model().is_some());
     }

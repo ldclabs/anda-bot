@@ -76,6 +76,7 @@ impl TtsProvider for OpenAiTtsProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     #[test]
     fn new_rejects_empty_api_key() {
@@ -84,7 +85,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = OpenAiTtsProvider::new(&config, reqwest::Client::new())
+        let err = OpenAiTtsProvider::new(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("API key must not be empty"));
@@ -99,7 +100,7 @@ mod tests {
             voice: "nova".to_string(),
         };
 
-        let provider = OpenAiTtsProvider::new(&config, reqwest::Client::new()).unwrap();
+        let provider = OpenAiTtsProvider::new(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_key, "sk-test");
         assert_eq!(provider.model, "tts-1-hd");
         assert_eq!(provider.speed, 1.5);

@@ -793,7 +793,9 @@ mod tests {
         tool.accumulate_tool_usage(delta.clone()).await.unwrap();
         tool.accumulate_tool_usage(delta).await.unwrap();
 
-        let total = tool.tool_usage_with(|usage| usage.get("shell").cloned()).unwrap();
+        let total = tool
+            .tool_usage_with(|usage| usage.get("shell").cloned())
+            .unwrap();
         assert_eq!(total.input_tokens, 10);
         assert_eq!(total.requests, 2);
     }

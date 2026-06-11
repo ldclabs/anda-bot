@@ -1583,12 +1583,7 @@ impl SessionRunner {
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
-        if now_ms
-            < self
-                .session
-                .formation_backoff_until
-                .load(Ordering::SeqCst)
-        {
+        if now_ms < self.session.formation_backoff_until.load(Ordering::SeqCst) {
             return;
         }
 
@@ -1794,13 +1789,12 @@ impl SessionRunner {
                 self.submit_pending_formation(self.runner.chat_history(), now_ms)
                     .await;
 
-                let maybe_goal = if now_ms
-                    >= self.session.goal_check_backoff_until.load(Ordering::SeqCst)
-                {
-                    self.session.goal.write().take()
-                } else {
-                    None
-                };
+                let maybe_goal =
+                    if now_ms >= self.session.goal_check_backoff_until.load(Ordering::SeqCst) {
+                        self.session.goal.write().take()
+                    } else {
+                        None
+                    };
                 let mut goal_continue_prompt: Option<String> = None;
                 let mut active = false;
                 if let Some(mut goal) = maybe_goal {

@@ -131,7 +131,9 @@ async fn save_resource_blob(resource: &Resource, dir: Option<&Path>) -> Result<P
         .blob
         .as_ref()
         .ok_or_else(|| format!("resource {} has no blob data", resource._id))?;
-    let dir = dir.map(Path::to_path_buf).unwrap_or_else(std::env::temp_dir);
+    let dir = dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(std::env::temp_dir);
     tokio::fs::create_dir_all(&dir).await?;
     let path = dir.join(download_file_name(resource));
     tokio::fs::write(&path, blob.as_slice()).await?;
@@ -296,7 +298,10 @@ mod tests {
         }))
         .expect("download variant with null dir should parse");
 
-        assert_eq!(args, ResourcesToolArgs::DownloadResource { _id: 42, dir: None });
+        assert_eq!(
+            args,
+            ResourcesToolArgs::DownloadResource { _id: 42, dir: None }
+        );
 
         let args: ResourcesToolArgs = serde_json::from_value(json!({
             "type": "DownloadResource",
@@ -396,7 +401,10 @@ mod tests {
         );
 
         let refs = store
-            .persist_resources(&user, vec![sample_resource("a.txt"), sample_resource("b.txt")])
+            .persist_resources(
+                &user,
+                vec![sample_resource("a.txt"), sample_resource("b.txt")],
+            )
             .await
             .unwrap();
 
@@ -424,10 +432,7 @@ mod tests {
         let id = refs[0]._id;
 
         // Re-persisting an already-persisted ref keeps its id without inserting.
-        let again = store
-            .persist_resources(&user, refs)
-            .await
-            .unwrap();
+        let again = store.persist_resources(&user, refs).await.unwrap();
         assert_eq!(again[0]._id, id);
     }
 
@@ -443,10 +448,7 @@ mod tests {
             .unwrap();
         let id = refs[0]._id;
 
-        let (resource, path) = store
-            .download_resource(id, Some(dir.path()))
-            .await
-            .unwrap();
+        let (resource, path) = store.download_resource(id, Some(dir.path())).await.unwrap();
         assert_eq!(resource.name, "a.txt");
         assert_eq!(path, dir.path().join(format!("{id}_a.txt")));
         let contents = tokio::fs::read(&path).await.unwrap();
@@ -586,7 +588,9 @@ mod tests {
         let err = store
             .call(
                 ctx,
-                ResourcesToolArgs::GetResource { _id: foreign[0]._id },
+                ResourcesToolArgs::GetResource {
+                    _id: foreign[0]._id,
+                },
                 Vec::new(),
             )
             .await

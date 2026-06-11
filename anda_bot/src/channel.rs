@@ -56,8 +56,7 @@ mod channel_tests {
 
     #[test]
     fn build_channels_with_empty_settings_yields_no_channels() {
-        let channels =
-            build_channels(&config::ChannelSettings::default(), Client::new()).unwrap();
+        let channels = build_channels(&config::ChannelSettings::default(), Client::new()).unwrap();
         assert!(channels.is_empty());
     }
 }

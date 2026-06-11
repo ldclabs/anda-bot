@@ -75,6 +75,7 @@ impl TranscriptionProvider for GroqProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use axum::{Router, routing};
 
     async fn spawn_mock(app: Router) -> String {
@@ -100,7 +101,7 @@ mod tests {
     fn from_config_rejects_empty_api_key() {
         let config = config::GroqSttConfig::default();
 
-        let err = GroqProvider::from_config(&config, reqwest::Client::new())
+        let err = GroqProvider::from_config(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("api_key must not be empty"));
@@ -108,9 +109,12 @@ mod tests {
 
     #[test]
     fn from_config_copies_fields() {
-        let config = groq_config("https://api.groq.com/v1".to_string(), Some("zh".to_string()));
+        let config = groq_config(
+            "https://api.groq.com/v1".to_string(),
+            Some("zh".to_string()),
+        );
 
-        let provider = GroqProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = GroqProvider::from_config(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_url, "https://api.groq.com/v1");
         assert_eq!(provider.model, "whisper-large-v3");
         assert_eq!(provider.language, Some("zh".to_string()));
@@ -124,9 +128,11 @@ mod tests {
             routing::post(|| async { axum::Json(serde_json::json!({"text": "你好，世界"})) }),
         );
         let url = spawn_mock(app).await;
-        let provider =
-            GroqProvider::from_config(&groq_config(url, Some("zh".to_string())), reqwest::Client::new())
-                .unwrap();
+        let provider = GroqProvider::from_config(
+            &groq_config(url, Some("zh".to_string())),
+            new_reqwest_client(),
+        )
+        .unwrap();
 
         let text = provider.transcribe(b"data", "voice.oga").await.unwrap();
         assert_eq!(text, "你好，世界");
@@ -142,7 +148,7 @@ mod tests {
         );
         let url = spawn_mock(app).await;
         let provider =
-            GroqProvider::from_config(&groq_config(url, None), reqwest::Client::new()).unwrap();
+            GroqProvider::from_config(&groq_config(url, None), new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
         let msg = err.to_string();
@@ -158,7 +164,7 @@ mod tests {
         );
         let url = spawn_mock(app).await;
         let provider =
-            GroqProvider::from_config(&groq_config(url, None), reqwest::Client::new()).unwrap();
+            GroqProvider::from_config(&groq_config(url, None), new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.wav").await.unwrap_err();
         assert!(err.to_string().contains("missing 'text' field"));

@@ -178,6 +178,7 @@ impl Brain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use crate::util::key::Ed25519Key;
     use anda_engine::model::ModelConfig;
     use object_store::memory::InMemory;
@@ -191,7 +192,7 @@ mod tests {
                 api_key: "sk-test".to_string(),
                 ..Default::default()
             }],
-            reqwest::Client::new(),
+            new_reqwest_client(),
         );
         models.get("test-model").expect("test model")
     }

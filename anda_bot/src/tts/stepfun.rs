@@ -221,12 +221,13 @@ fn parse_stepfun_tts_error_message(raw_body: &str) -> String {
 mod tests {
     use super::super::mime_for_audio_format;
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     fn test_stepfun_provider(
         config: config::StepFunTtsConfig,
         default_format: &str,
     ) -> StepFunTtsProvider {
-        StepFunTtsProvider::new(&config, default_format, reqwest::Client::new()).unwrap()
+        StepFunTtsProvider::new(&config, default_format, new_reqwest_client()).unwrap()
     }
 
     #[test]
@@ -292,7 +293,7 @@ mod tests {
             ..Default::default()
         };
         mutate(&mut config);
-        StepFunTtsProvider::new(&config, "mp3", reqwest::Client::new())
+        StepFunTtsProvider::new(&config, "mp3", new_reqwest_client())
             .map(|_| ())
             .unwrap_err()
             .to_string()
@@ -301,7 +302,9 @@ mod tests {
     #[test]
     fn new_validates_every_config_field() {
         assert!(tts_config_error(|c| c.api_key = " ".into()).contains("Missing StepFun TTS"));
-        assert!(tts_config_error(|c| c.api_url = " ".into()).contains("`api_url` must not be empty"));
+        assert!(
+            tts_config_error(|c| c.api_url = " ".into()).contains("`api_url` must not be empty")
+        );
         assert!(tts_config_error(|c| c.api_url = "not a url".into()).contains("invalid `api_url`"));
         assert!(
             tts_config_error(|c| c.api_url = "ftp://x".into()).contains("must use http or https")
@@ -332,9 +335,9 @@ mod tests {
     async fn provider_with_mock(status: u16, body: &'static str) -> StepFunTtsProvider {
         let app = Router::new().route(
             "/tts",
-            routing::post(move || async move {
-                (http::StatusCode::from_u16(status).unwrap(), body)
-            }),
+            routing::post(
+                move || async move { (http::StatusCode::from_u16(status).unwrap(), body) },
+            ),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -349,7 +352,7 @@ mod tests {
                 ..Default::default()
             },
             "mp3",
-            reqwest::Client::new(),
+            new_reqwest_client(),
         )
         .unwrap()
     }
@@ -370,8 +373,7 @@ mod tests {
         let err = provider.synthesize("hi").await.unwrap_err();
         assert!(err.to_string().contains("body was empty"));
 
-        let provider =
-            provider_with_mock(429, r#"{"error":{"message":"rate limited"}}"#).await;
+        let provider = provider_with_mock(429, r#"{"error":{"message":"rate limited"}}"#).await;
         let err = provider.synthesize("hi").await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("StepFun TTS API error (429"), "got: {msg}");

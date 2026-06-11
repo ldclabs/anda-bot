@@ -367,7 +367,10 @@ impl ChatSession {
         self.last_ping = Instant::now();
         let mut input = AgentInput::new(String::new(), String::new());
         input.meta = Some(current_request_meta(self.conv_id.unwrap_or_default()));
-        let _ = self.client.agent_run_with_timeout(&input, PING_TIMEOUT).await;
+        let _ = self
+            .client
+            .agent_run_with_timeout(&input, PING_TIMEOUT)
+            .await;
     }
 
     /// Poll the conversation for updates. Returns `true` if new messages were received.
@@ -872,7 +875,10 @@ mod tests {
     async fn restore_source_conversation_replays_active_chains() {
         let client = spawn_chat_gateway(ChatGateway {
             conversations: HashMap::from([
-                (200, conversation(200, ConversationStatus::Completed, Some(201))),
+                (
+                    200,
+                    conversation(200, ConversationStatus::Completed, Some(201)),
+                ),
                 (201, conversation(201, ConversationStatus::Idle, None)),
             ]),
             agent_output: Ok(AgentOutput::default()),

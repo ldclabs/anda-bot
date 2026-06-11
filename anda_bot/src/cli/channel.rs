@@ -381,7 +381,10 @@ mod tests {
     fn configured_rows_cover_all_channel_kinds() {
         let rows = configured_channel_rows(&full_config());
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(ids, vec!["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"]);
+        assert_eq!(
+            ids,
+            vec!["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"]
+        );
         assert_eq!(rows[0].username, "anda-tg");
         assert_eq!(rows[1].username, "wechat");
 
@@ -408,8 +411,7 @@ mod tests {
         let client = Client::new();
 
         for id in ["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"] {
-            let (channel_id, channel) =
-                build_configured_channel(&cfg, id, client.clone()).unwrap();
+            let (channel_id, channel) = build_configured_channel(&cfg, id, client.clone()).unwrap();
             assert_eq!(channel_id, id);
             assert_eq!(channel.id(), id);
         }

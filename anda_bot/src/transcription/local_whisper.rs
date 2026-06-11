@@ -111,6 +111,7 @@ impl TranscriptionProvider for LocalWhisperProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use axum::{Router, routing};
 
     fn whisper_config(url: &str) -> config::LocalWhisperConfig {
@@ -132,7 +133,7 @@ mod tests {
     }
 
     fn config_error(config: &config::LocalWhisperConfig) -> String {
-        LocalWhisperProvider::from_config(config, reqwest::Client::new())
+        LocalWhisperProvider::from_config(config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err()
             .to_string()
@@ -171,14 +172,12 @@ mod tests {
     fn from_config_normalizes_bearer_token() {
         let mut config = whisper_config("http://localhost:8000");
         config.bearer_token = Some(" secret ".to_string());
-        let provider =
-            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.bearer_token.as_deref(), Some("secret"));
         assert_eq!(provider.name(), "local_whisper");
 
         config.bearer_token = Some("   ".to_string());
-        let provider =
-            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.bearer_token, None);
     }
 
@@ -186,10 +185,12 @@ mod tests {
     async fn transcribe_rejects_audio_over_configured_limit() {
         let mut config = whisper_config("http://localhost:8000");
         config.max_audio_bytes = 4;
-        let provider =
-            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
 
-        let err = provider.transcribe(b"12345", "voice.mp3").await.unwrap_err();
+        let err = provider
+            .transcribe(b"12345", "voice.mp3")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("Audio file too large"));
     }
 
@@ -218,16 +219,14 @@ mod tests {
 
         let mut config = whisper_config(&url);
         config.bearer_token = Some("secret".to_string());
-        let provider =
-            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
         let text = provider.transcribe(b"data", "voice.ogg").await.unwrap();
         assert_eq!(text, "local transcript");
 
         // Without the token the mock rejects the request and the status error
         // is surfaced to the caller.
         let provider =
-            LocalWhisperProvider::from_config(&whisper_config(&url), reqwest::Client::new())
-                .unwrap();
+            LocalWhisperProvider::from_config(&whisper_config(&url), new_reqwest_client()).unwrap();
         let err = provider.transcribe(b"data", "voice.ogg").await.unwrap_err();
         assert!(err.to_string().contains("Transcription API error (401"));
     }

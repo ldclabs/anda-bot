@@ -983,12 +983,11 @@ mod tests {
 
         assert_eq!(err.to_string(), "tz can only be used with cron schedules");
 
-        let err = build_schedule(&ScheduleKind::Every, "30m", Some(&"UTC".to_string()))
-            .unwrap_err();
+        let err =
+            build_schedule(&ScheduleKind::Every, "30m", Some(&"UTC".to_string())).unwrap_err();
         assert_eq!(err.to_string(), "tz can only be used with cron schedules");
 
-        let err = build_schedule(&ScheduleKind::Once, "30m", Some(&"UTC".to_string()))
-            .unwrap_err();
+        let err = build_schedule(&ScheduleKind::Once, "30m", Some(&"UTC".to_string())).unwrap_err();
         assert_eq!(err.to_string(), "tz can only be used with cron schedules");
     }
 
@@ -1201,14 +1200,13 @@ mod tests {
 
     #[test]
     fn persisted_schedule_requires_once_to_resolve_to_at() {
-        let err = persisted_schedule(
-            &ScheduleKind::Once,
-            "60",
-            &Schedule::Every { every: 60 },
-        )
-        .map(|_| ())
-        .unwrap_err();
-        assert!(err.to_string().contains("must resolve to a single timestamp"));
+        let err = persisted_schedule(&ScheduleKind::Once, "60", &Schedule::Every { every: 60 })
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must resolve to a single timestamp")
+        );
 
         let (kind, value) = persisted_schedule(
             &ScheduleKind::Once,
@@ -1232,10 +1230,7 @@ mod tests {
     #[test]
     fn five_field_cron_expressions_translate_weekdays() {
         // Five-field expressions get a seconds field and 0-6 weekday translation.
-        assert_eq!(
-            normalize_expression("30 9 * * 0").unwrap(),
-            "0 30 9 * * 1"
-        );
+        assert_eq!(normalize_expression("30 9 * * 0").unwrap(), "0 30 9 * * 1");
         assert_eq!(
             normalize_expression("30 9 * * 1-5").unwrap(),
             "0 30 9 * * 2-6"
@@ -1252,10 +1247,7 @@ mod tests {
             normalize_expression("30 9 * * MON").unwrap(),
             "0 30 9 * * MON"
         );
-        assert_eq!(
-            normalize_expression("30 9 * * ?").unwrap(),
-            "0 30 9 * * ?"
-        );
+        assert_eq!(normalize_expression("30 9 * * ?").unwrap(), "0 30 9 * * ?");
         // Six- and seven-field expressions pass through untouched.
         assert_eq!(
             normalize_expression("0 30 9 * * 2").unwrap(),

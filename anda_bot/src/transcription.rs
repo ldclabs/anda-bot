@@ -7,6 +7,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::config::TranscriptionConfig;
+use crate::util::http_client::new_reqwest_client;
 
 mod google;
 mod groq;
@@ -481,7 +482,7 @@ pub async fn transcribe_audio(
         validate_audio(&audio_data, file_name)?;
     }
 
-    let http = reqwest::Client::new();
+    let http = new_reqwest_client();
 
     match config.default_provider.as_str() {
         "groq" => {
@@ -590,7 +591,7 @@ mod tests {
     #[test]
     fn manager_disabled_config_registers_no_providers() {
         let manager =
-            TranscriptionManager::new(&TranscriptionConfig::default(), reqwest::Client::new())
+            TranscriptionManager::new(&TranscriptionConfig::default(), new_reqwest_client())
                 .unwrap();
 
         assert!(!manager.is_enabled());
@@ -626,7 +627,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = TranscriptionManager::new(&config, reqwest::Client::new()).unwrap();
+        let manager = TranscriptionManager::new(&config, new_reqwest_client()).unwrap();
 
         assert!(manager.is_enabled());
         assert_eq!(
@@ -651,7 +652,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = TranscriptionManager::new(&config, reqwest::Client::new())
+        let err = TranscriptionManager::new(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(
@@ -664,7 +665,7 @@ mod tests {
     async fn manager_routes_transcription_to_default_provider() {
         let url = spawn_whisper_mock("routed text").await;
         let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
                 .unwrap();
 
         let text = manager.transcribe(b"data", "voice.mp3").await.unwrap();
@@ -684,7 +685,7 @@ mod tests {
     async fn transcription_tool_call_decodes_base64_payload() {
         let url = spawn_whisper_mock("from base64").await;
         let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
                 .unwrap();
         let ctx = EngineBuilder::new().mock_ctx().base;
 
@@ -710,7 +711,7 @@ mod tests {
     async fn transcription_tool_call_reads_audio_resource_blob() {
         let url = spawn_whisper_mock("from resource").await;
         let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
                 .unwrap();
         let ctx = EngineBuilder::new().mock_ctx().base;
 

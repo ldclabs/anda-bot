@@ -2222,10 +2222,7 @@ mod tests {
 
         write_config_atomic(&config_path, "new contents\n").unwrap();
 
-        assert_eq!(
-            fs::read_to_string(&config_path).unwrap(),
-            "new contents\n"
-        );
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "new contents\n");
         assert!(!config_path.with_file_name("config.yaml.tmp").exists());
     }
 

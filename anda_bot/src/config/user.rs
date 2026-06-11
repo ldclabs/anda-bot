@@ -269,7 +269,9 @@ mod tests {
     #[test]
     fn user_registry_resolves_principals_and_raw_pubkeys() {
         let default_key = Ed25519Key::new([1; 32]);
-        let registry = Config::default().user_registry(default_key.pubkey()).unwrap();
+        let registry = Config::default()
+            .user_registry(default_key.pubkey())
+            .unwrap();
 
         assert_eq!(registry.default_user(), default_key.pubkey().id());
         assert_eq!(registry.resolve(None).unwrap(), default_key.pubkey().id());

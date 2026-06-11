@@ -6,6 +6,66 @@ use std::time::Duration;
 pub static NO_PROXY: &str =
     "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.local";
 
+/// The default local/private exemptions merged with the `NO_PROXY` env var.
+fn no_proxy_with_env() -> Option<reqwest::NoProxy> {
+    let merged = match std::env::var("no_proxy").or_else(|_| std::env::var("NO_PROXY")) {
+        Ok(env) if !env.trim().is_empty() => format!("{NO_PROXY},{env}"),
+        _ => NO_PROXY.to_string(),
+    };
+    reqwest::NoProxy::from_string(&merged)
+}
+
+/// Proxies from the standard environment variables, each exempting local and
+/// private network addresses. reqwest's built-in env-proxy support only
+/// honors `$NO_PROXY`, which routes loopback traffic (daemon gateway, brain,
+/// test mocks) through the proxy on machines where that variable is unset.
+fn env_proxies() -> Vec<Proxy> {
+    fn env_var(names: [&str; 2]) -> Option<String> {
+        names.iter().find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                // Env proxy values commonly omit the scheme ("127.0.0.1:7890").
+                .map(|v| {
+                    if v.contains("://") {
+                        v
+                    } else {
+                        format!("http://{v}")
+                    }
+                })
+        })
+    }
+
+    let mut proxies = Vec::new();
+    if let Some(url) = env_var(["http_proxy", "HTTP_PROXY"])
+        && let Ok(proxy) = Proxy::http(&url)
+    {
+        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+    }
+    if let Some(url) = env_var(["https_proxy", "HTTPS_PROXY"])
+        && let Ok(proxy) = Proxy::https(&url)
+    {
+        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+    }
+    if let Some(url) = env_var(["all_proxy", "ALL_PROXY"])
+        && let Ok(proxy) = Proxy::all(&url)
+    {
+        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+    }
+    proxies
+}
+
+/// Drop-in replacement for `reqwest::Client::new()` that keeps proxy env vars
+/// working for external hosts but never proxies local or private addresses.
+pub fn new_reqwest_client() -> reqwest::Client {
+    let mut builder = reqwest::Client::builder();
+    for proxy in env_proxies() {
+        builder = builder.proxy(proxy);
+    }
+    builder.build().expect("failed to build reqwest client")
+}
+
 #[derive(Clone, Copy, Debug)]
 struct AnyHost;
 
@@ -55,8 +115,11 @@ where
                 }),
         );
     if let Some(proxy) = &https_proxy {
-        http_client =
-            http_client.proxy(Proxy::all(proxy)?.no_proxy(reqwest::NoProxy::from_string(NO_PROXY)));
+        http_client = http_client.proxy(Proxy::all(proxy)?.no_proxy(no_proxy_with_env()));
+    } else {
+        for proxy in env_proxies() {
+            http_client = http_client.proxy(proxy);
+        }
     }
     let http_client = f(http_client).build()?;
     Ok(http_client)

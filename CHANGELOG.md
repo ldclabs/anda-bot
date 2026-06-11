@@ -17,6 +17,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **HTTP clients bypass local and private addresses when proxies are configured**: shared reqwest clients now honor standard proxy environment variables for external hosts while always exempting loopback and private-network traffic, so daemon, Brain, and local mock requests are not accidentally routed through a proxy.
 - **Daemon config saves are atomic and serialized**: config updates now write through a same-directory temp file with fsync and rename, and concurrent updates are serialized, so a crash mid-save can no longer leave a truncated config that blocks the next daemon start.
 - **Skill loading failures no longer block daemon startup**: errors scanning skill directories (such as permission problems in the shared `~/.agents/skills`) are logged and the daemon continues without skills instead of refusing to start.
 - **Daemon status failures surface their cause**: `/daemon/status` errors are now logged and the underlying error detail is returned in the response instead of a generic message.

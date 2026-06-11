@@ -67,6 +67,7 @@ impl TranscriptionProvider for OpenAiWhisperProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     #[test]
     fn from_config_rejects_empty_api_key() {
@@ -75,7 +76,7 @@ mod tests {
             model: "whisper-1".to_string(),
         };
 
-        let err = OpenAiWhisperProvider::from_config(&config, reqwest::Client::new())
+        let err = OpenAiWhisperProvider::from_config(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("Missing OpenAI STT API key"));
@@ -88,7 +89,7 @@ mod tests {
             model: "whisper-large".to_string(),
         };
 
-        let provider = OpenAiWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = OpenAiWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_key, "sk-test");
         assert_eq!(provider.model, "whisper-large");
         assert_eq!(provider.name(), "openai");
@@ -100,7 +101,7 @@ mod tests {
             api_key: "sk-test".to_string(),
             model: "whisper-1".to_string(),
         };
-        let provider = OpenAiWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = OpenAiWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.xyz").await.unwrap_err();
         assert!(err.to_string().contains("Unsupported audio format '.xyz'"));

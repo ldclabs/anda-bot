@@ -4,6 +4,8 @@ use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
 use std::time::Duration;
 
+use crate::util::http_client::new_reqwest_client;
+
 pub use anda_brain::{
     payload::RpcResponse,
     types::{FormationInputRef, FormationStatus, GetOrInitUserInput, RecallInput, RecallInputRef},
@@ -27,7 +29,7 @@ impl Client {
     pub const NAME: &'static str = "recall_memory";
     pub fn new(base_url: String, auth_token: Option<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
             base_url,
             auth_token,
         }
@@ -357,13 +359,16 @@ mod tests {
                         axum::Json(json!({"error": "unauthorized"})),
                     );
                 }
-                (http::StatusCode::OK, axum::Json(formation_status_response()))
+                (
+                    http::StatusCode::OK,
+                    axum::Json(formation_status_response()),
+                )
             }),
         );
         let base_url = spawn_brain_mock(app).await;
 
         let client = Client::new(base_url.clone(), Some("brain-token".to_string()))
-            .with_http_client(reqwest::Client::new());
+            .with_http_client(new_reqwest_client());
         let status = client.brain_status().await.unwrap();
         assert_eq!(status.concepts, 3);
         assert_eq!(status.propositions, 5);
@@ -371,7 +376,10 @@ mod tests {
         // Without a token the request carries no Authorization header.
         let anonymous = Client::new(base_url, None);
         let err = anonymous.brain_status().await.map(|_| ()).unwrap_err();
-        assert!(err.to_string().contains("request failed for GET /formation_status"));
+        assert!(
+            err.to_string()
+                .contains("request failed for GET /formation_status")
+        );
     }
 
     #[tokio::test]
@@ -513,10 +521,7 @@ mod tests {
         let base_url = spawn_brain_mock(app).await;
         let client = Client::new(base_url, None);
 
-        let info = client
-            .user_info("alice".to_string(), None)
-            .await
-            .unwrap();
+        let info = client.user_info("alice".to_string(), None).await.unwrap();
         assert_eq!(info["user"], "alice");
         assert_eq!(info["trust"], "high");
     }
@@ -532,7 +537,10 @@ mod tests {
 
         let err = client.brain_status().await.map(|_| ()).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("Invalid response for GET /formation_status"), "got: {msg}");
+        assert!(
+            msg.contains("Invalid response for GET /formation_status"),
+            "got: {msg}"
+        );
         assert!(msg.contains("plain text"), "got: {msg}");
     }
 

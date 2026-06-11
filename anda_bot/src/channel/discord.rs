@@ -1235,6 +1235,7 @@ fn discord_reaction_url(api_base: &str, channel_id: &str, message_id: &str, emoj
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     fn test_config() -> config::DiscordChannelSettings {
         config::DiscordChannelSettings {
@@ -1253,7 +1254,7 @@ mod tests {
 
     #[test]
     fn discord_channel_identity() {
-        let channel = DiscordChannel::new(&test_config(), Client::new());
+        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
         assert_eq!(channel.name(), "discord");
         assert_eq!(channel.username(), "anda-discord");
         assert_eq!(channel.id(), "discord:test");
@@ -1269,7 +1270,7 @@ mod tests {
 
     #[test]
     fn allowed_users_match_exact_id_or_wildcard() {
-        let channel = DiscordChannel::new(&test_config(), Client::new());
+        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
         assert!(channel.is_user_allowed("111"));
         assert!(channel.is_user_allowed("222"));
         assert!(!channel.is_user_allowed(""));
@@ -1281,7 +1282,7 @@ mod tests {
         cfg.allowed_users = vec!["111".to_string()];
         cfg.allow_external_users = true;
         cfg.mention_only = false;
-        let channel = DiscordChannel::new(&cfg, Client::new());
+        let channel = DiscordChannel::new(&cfg, new_reqwest_client());
         let payload = serde_json::json!({
             "id": "msg_1",
             "channel_id": "chan_1",
@@ -1335,7 +1336,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let channel = DiscordChannel::new(&test_config(), Client::new());
+        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
         {
             let mut guard = channel.typing_handles.lock().await;
             guard.insert(
@@ -1431,7 +1432,7 @@ mod tests {
     ) -> DiscordChannel {
         let mut cfg = test_config();
         mutate(&mut cfg);
-        let mut channel = DiscordChannel::new(&cfg, Client::new());
+        let mut channel = DiscordChannel::new(&cfg, new_reqwest_client());
         channel.api_base = spawn_discord_mock(state).await;
         channel
     }
@@ -1503,7 +1504,10 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(state.recorded("POST", "channels/thread_9/messages").len(), 1);
+        assert_eq!(
+            state.recorded("POST", "channels/thread_9/messages").len(),
+            1
+        );
 
         // Empty content and no attachments sends a placeholder space.
         channel
@@ -1521,7 +1525,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_outgoing_resources_rejects_invalid_entries() {
-        let channel = DiscordChannel::new(&test_config(), Client::new());
+        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
 
         let err = channel
             .collect_outgoing_resources(&[Resource::default()])
@@ -1600,19 +1604,13 @@ mod tests {
             .add_reaction("chan_1", "msg_100", "\u{1F440}")
             .await
             .unwrap();
-        assert_eq!(
-            state.recorded("PUT", "reactions/\u{1F440}/@me").len(),
-            1
-        );
+        assert_eq!(state.recorded("PUT", "reactions/\u{1F440}/@me").len(), 1);
 
         channel
             .remove_reaction("chan_1", "msg_100", "\u{1F440}")
             .await
             .unwrap();
-        assert_eq!(
-            state.recorded("DELETE", "reactions/\u{1F440}/@me").len(),
-            1
-        );
+        assert_eq!(state.recorded("DELETE", "reactions/\u{1F440}/@me").len(), 1);
 
         channel.pin_message("chan_1", "msg_100").await.unwrap();
         assert_eq!(state.recorded("PUT", "pins/msg_100").len(), 1);
@@ -1659,7 +1657,7 @@ mod tests {
         let channel = mock_channel(|_| {}, state).await;
         assert!(channel.health_check().await);
 
-        let mut dead = DiscordChannel::new(&test_config(), Client::new());
+        let mut dead = DiscordChannel::new(&test_config(), new_reqwest_client());
         dead.api_base = "http://127.0.0.1:1".to_string();
         assert!(!dead.health_check().await);
     }
@@ -1681,7 +1679,12 @@ mod tests {
             "id": "m2", "channel_id": "c1", "content": "hi",
             "author": {"id": "111", "bot": true}, "attachments": [],
         });
-        assert!(channel.parse_gateway_message(&from_bot, "999").await.is_none());
+        assert!(
+            channel
+                .parse_gateway_message(&from_bot, "999")
+                .await
+                .is_none()
+        );
 
         // Messages from other guilds are ignored.
         let other_guild = serde_json::json!({
@@ -1775,10 +1778,7 @@ mod tests {
     fn pure_helpers_normalize_content_and_ids() {
         assert_eq!(decode_base64_string(""), None);
         assert_eq!(decode_base64_string("!!"), None);
-        assert_eq!(
-            decode_base64_string("MTIzNDU2").as_deref(),
-            Some("123456")
-        );
+        assert_eq!(decode_base64_string("MTIzNDU2").as_deref(), Some("123456"));
 
         assert!(contains_bot_mention("<@!999> hi", "999"));
         assert!(!contains_bot_mention("hi", "999"));
@@ -1791,10 +1791,7 @@ mod tests {
         );
         assert_eq!(normalize_incoming_content("<@999>", true, "999"), None);
 
-        assert_eq!(
-            content_with_attachment_fallback(String::new(), &[]),
-            ""
-        );
+        assert_eq!(content_with_attachment_fallback(String::new(), &[]), "");
         assert_eq!(
             with_inline_resource_urls("text", &["https://a".to_string()]),
             "text\nhttps://a"

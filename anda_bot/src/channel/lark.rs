@@ -1862,6 +1862,7 @@ fn should_respond_in_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     fn test_config() -> config::LarkChannelSettings {
         config::LarkChannelSettings {
@@ -1882,7 +1883,7 @@ mod tests {
     }
 
     fn test_channel() -> LarkChannel {
-        let channel = LarkChannel::new(&test_config(), Client::new());
+        let channel = LarkChannel::new(&test_config(), new_reqwest_client());
         channel.set_resolved_bot_open_id(Some("ou_bot".to_string()));
         channel
     }
@@ -2028,7 +2029,7 @@ mod tests {
     async fn lark_parse_external_user_when_enabled() {
         let mut cfg = test_config();
         cfg.allow_external_users = true;
-        let channel = LarkChannel::new(&cfg, Client::new());
+        let channel = LarkChannel::new(&cfg, new_reqwest_client());
         channel.set_resolved_bot_open_id(Some("ou_bot".to_string()));
         let payload = serde_json::json!({
             "sender": {
@@ -2078,7 +2079,10 @@ mod tests {
 
         fn should_expire(&self, path: &str) -> bool {
             let mut expire = self.expire_once.lock().unwrap();
-            if let Some(position) = expire.iter().position(|entry| path.contains(entry.as_str())) {
+            if let Some(position) = expire
+                .iter()
+                .position(|entry| path.contains(entry.as_str()))
+            {
                 expire.remove(position);
                 true
             } else {
@@ -2136,7 +2140,7 @@ mod tests {
     ) -> LarkChannel {
         let mut cfg = test_config();
         mutate(&mut cfg);
-        let mut channel = LarkChannel::new(&cfg, Client::new());
+        let mut channel = LarkChannel::new(&cfg, new_reqwest_client());
         channel.api_base = spawn_lark_mock(state).await;
         channel
     }
@@ -2268,7 +2272,7 @@ mod tests {
         let channel = {
             let mut cfg = test_config();
             cfg.mention_only = false;
-            let mut channel = LarkChannel::new(&cfg, Client::new());
+            let mut channel = LarkChannel::new(&cfg, new_reqwest_client());
             channel.api_base = "http://127.0.0.1:1".to_string();
             channel
         };
@@ -2363,7 +2367,7 @@ mod tests {
         let handle = tokio::spawn(async move { listen_channel.listen(listen_cancel, tx).await });
 
         // Wait for the webhook server to come up.
-        let client = Client::new();
+        let client = new_reqwest_client();
         let url = format!("http://127.0.0.1:{port}/lark");
         let mut ready = false;
         for _ in 0..50 {
@@ -2484,7 +2488,10 @@ mod tests {
             payload: Some(payload.to_vec()),
         };
 
-        assert_eq!(reassemble_lark_ws_payload(frame("0", b"he"), &mut cache), None);
+        assert_eq!(
+            reassemble_lark_ws_payload(frame("0", b"he"), &mut cache),
+            None
+        );
         assert_eq!(
             reassemble_lark_ws_payload(frame("1", b"llo"), &mut cache),
             Some(b"hello".to_vec())
@@ -2515,7 +2522,9 @@ mod tests {
         assert_eq!(service_id_from_ws_url("wss://host/ws"), 0);
 
         assert!(should_refresh_last_recv(&WsMsg::Ping(Vec::new().into())));
-        assert!(!should_refresh_last_recv(&WsMsg::Text("x".to_string().into())));
+        assert!(!should_refresh_last_recv(&WsMsg::Text(
+            "x".to_string().into()
+        )));
     }
 
     #[test]
@@ -2576,7 +2585,10 @@ mod tests {
             detect_locale_from_text("ありがとうございます"),
             Some(LarkAckLocale::Ja)
         );
-        assert_eq!(detect_locale_from_text("简体测试"), Some(LarkAckLocale::ZhCn));
+        assert_eq!(
+            detect_locale_from_text("简体测试"),
+            Some(LarkAckLocale::ZhCn)
+        );
         assert_eq!(
             detect_locale_from_text("繁體測試"),
             Some(LarkAckLocale::ZhTw)
@@ -2627,14 +2639,13 @@ mod tests {
             assert!(rendered.contains("first"));
         }
 
-        assert!(
-            mention_matches_bot_open_id(
-                &serde_json::json!({"id": {"open_id": "ou_bot"}}),
-                "ou_bot"
-            )
-        );
-        assert!(
-            !mention_matches_bot_open_id(&serde_json::json!({"id": {"open_id": "ou_x"}}), "ou_bot")
-        );
+        assert!(mention_matches_bot_open_id(
+            &serde_json::json!({"id": {"open_id": "ou_bot"}}),
+            "ou_bot"
+        ));
+        assert!(!mention_matches_bot_open_id(
+            &serde_json::json!({"id": {"open_id": "ou_x"}}),
+            "ou_bot"
+        ));
     }
 }

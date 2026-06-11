@@ -26,6 +26,7 @@ use super::model_retry;
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
+use crate::util::http_client::new_reqwest_client;
 
 pub const IMAGE_UNDERSTANDING_AGENT_NAME: &str = "image_understanding";
 pub const AUDIO_UNDERSTANDING_AGENT_NAME: &str = "audio_understanding";
@@ -262,7 +263,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Image,
             workspaces,
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
         }
     }
 
@@ -270,7 +271,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Audio,
             workspaces,
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
         }
     }
 
@@ -278,7 +279,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Video,
             workspaces,
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
         }
     }
 
@@ -286,7 +287,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Other,
             workspaces,
-            http: reqwest::Client::new(),
+            http: new_reqwest_client(),
         }
     }
 

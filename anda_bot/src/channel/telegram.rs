@@ -1292,6 +1292,7 @@ fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     fn test_config() -> config::TelegramChannelSettings {
         config::TelegramChannelSettings {
@@ -1308,7 +1309,7 @@ mod tests {
 
     #[test]
     fn telegram_channel_identity() {
-        let channel = TelegramChannel::new(&test_config(), Client::new());
+        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
         assert_eq!(channel.name(), "telegram");
         assert_eq!(channel.username(), "anda_bot");
         assert_eq!(channel.id(), "telegram:test");
@@ -1328,7 +1329,7 @@ mod tests {
 
     #[test]
     fn allowed_users_match_username_or_numeric_id() {
-        let channel = TelegramChannel::new(&test_config(), Client::new());
+        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
         assert!(channel.is_user_allowed("alice"));
         assert!(channel.is_user_allowed("Alice"));
         assert!(channel.is_user_allowed("12345"));
@@ -1341,7 +1342,7 @@ mod tests {
         cfg.allowed_users = vec!["Alice".to_string()];
         cfg.allow_external_users = true;
         cfg.mention_only = false;
-        let channel = TelegramChannel::new(&cfg, Client::new());
+        let channel = TelegramChannel::new(&cfg, new_reqwest_client());
         let update = serde_json::json!({
             "message": {
                 "message_id": 42,
@@ -1395,7 +1396,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let channel = TelegramChannel::new(&test_config(), Client::new());
+        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
         {
             let mut guard = channel.typing_handle.lock().await;
             *guard = Some(tokio::spawn(async {
@@ -1511,7 +1512,7 @@ mod tests {
     ) -> TelegramChannel {
         let mut cfg = test_config();
         mutate(&mut cfg);
-        let mut channel = TelegramChannel::new(&cfg, Client::new());
+        let mut channel = TelegramChannel::new(&cfg, new_reqwest_client());
         channel.api_base = spawn_telegram_mock(state).await;
         channel
     }
@@ -1628,8 +1629,14 @@ mod tests {
         let state = Arc::new(MockApi::default());
         let channel = mock_channel(|_| {}, state.clone()).await;
 
-        assert_eq!(channel.get_bot_username().await.as_deref(), Some("anda_bot"));
-        assert_eq!(channel.get_bot_username().await.as_deref(), Some("anda_bot"));
+        assert_eq!(
+            channel.get_bot_username().await.as_deref(),
+            Some("anda_bot")
+        );
+        assert_eq!(
+            channel.get_bot_username().await.as_deref(),
+            Some("anda_bot")
+        );
         assert_eq!(state.recorded("getMe").len(), 1);
     }
 
@@ -1639,7 +1646,7 @@ mod tests {
         let channel = mock_channel(|_| {}, state).await;
         assert!(channel.health_check().await);
 
-        let mut dead = TelegramChannel::new(&test_config(), Client::new());
+        let mut dead = TelegramChannel::new(&test_config(), new_reqwest_client());
         dead.api_base = "http://127.0.0.1:1".to_string();
         assert!(!dead.health_check().await);
     }
@@ -1700,23 +1707,25 @@ mod tests {
             }
         });
 
-        assert!(channel.try_parse_attachment_message(&update).await.is_none());
+        assert!(
+            channel
+                .try_parse_attachment_message(&update)
+                .await
+                .is_none()
+        );
         assert!(state.recorded("getFile").is_empty());
     }
 
     #[tokio::test]
     async fn listen_delivers_updates_until_cancelled() {
         let state = Arc::new(MockApi::default());
-        let channel = Arc::new(
-            mock_channel(|cfg| cfg.mention_only = false, state.clone()).await,
-        );
+        let channel = Arc::new(mock_channel(|cfg| cfg.mention_only = false, state.clone()).await);
 
         let cancel = CancellationToken::new();
         let (tx, mut rx) = mpsc::channel(4);
         let listen_channel = channel.clone();
         let listen_cancel = cancel.clone();
-        let handle =
-            tokio::spawn(async move { listen_channel.listen(listen_cancel, tx).await });
+        let handle = tokio::spawn(async move { listen_channel.listen(listen_cancel, tx).await });
 
         let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
@@ -1739,7 +1748,7 @@ mod tests {
 
     #[test]
     fn should_retry_send_matches_transient_errors() {
-        let channel = TelegramChannel::new(&test_config(), Client::new());
+        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
         assert!(channel.should_retry_send("Connection reset by peer"));
         assert!(channel.should_retry_send("HTTP 429 Too Many Requests"));
         assert!(channel.should_retry_send("upstream 503"));

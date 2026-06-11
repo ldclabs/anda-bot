@@ -363,6 +363,7 @@ fn normalize_artifact_name(name: Option<String>, format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use crate::util::json_schema::assert_openai_strict_parameters;
 
     struct StaticTtsProvider {
@@ -461,8 +462,7 @@ mod tests {
 
     #[test]
     fn manager_disabled_config_registers_no_providers() {
-        let manager =
-            TtsManager::new(&config::TtsConfig::default(), reqwest::Client::new()).unwrap();
+        let manager = TtsManager::new(&config::TtsConfig::default(), new_reqwest_client()).unwrap();
 
         assert!(!manager.is_enabled());
         assert!(manager.available_providers().is_empty());
@@ -475,7 +475,7 @@ mod tests {
             max_text_length: 0,
             ..Default::default()
         };
-        let manager = TtsManager::new(&config, reqwest::Client::new()).unwrap();
+        let manager = TtsManager::new(&config, new_reqwest_client()).unwrap();
 
         assert_eq!(manager.max_text_length, DEFAULT_MAX_TEXT_LENGTH);
     }
@@ -496,7 +496,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = TtsManager::new(&config, reqwest::Client::new()).unwrap();
+        let manager = TtsManager::new(&config, new_reqwest_client()).unwrap();
 
         assert!(manager.is_enabled());
         assert_eq!(manager.available_providers(), vec!["edge", "stepfun"]);
@@ -511,7 +511,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = TtsManager::new(&config, reqwest::Client::new())
+        let err = TtsManager::new(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("Default TTS provider 'openai'"));

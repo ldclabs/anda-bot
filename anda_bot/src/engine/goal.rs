@@ -545,7 +545,10 @@ mod tests {
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("requires an active AndaBot session"));
+        assert!(
+            err.to_string()
+                .contains("requires an active AndaBot session")
+        );
 
         ctx.set_state(GoalToolState::new(
             Arc::new(RwLock::new(None)),

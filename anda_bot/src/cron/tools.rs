@@ -775,7 +775,10 @@ mod tests {
             UpdateCronJobTool::new(cron.clone()).name(),
             "update_cron_job"
         );
-        assert_eq!(ManageCronJobTool::new(cron.clone()).name(), "manage_cron_job");
+        assert_eq!(
+            ManageCronJobTool::new(cron.clone()).name(),
+            "manage_cron_job"
+        );
         assert_eq!(ListCronJobsTool::new(cron.clone()).name(), "list_cron_jobs");
         assert_eq!(ListCronRunsTool::new(cron.clone()).name(), "list_cron_runs");
 

@@ -79,6 +79,10 @@ mod tests {
         assert!(err.to_string().contains("not valid text"));
         assert!(read_text_file_sync(&binary_path).is_err());
 
-        assert!(read_text_file(dir.path().join("missing.txt")).await.is_err());
+        assert!(
+            read_text_file(dir.path().join("missing.txt"))
+                .await
+                .is_err()
+        );
     }
 }

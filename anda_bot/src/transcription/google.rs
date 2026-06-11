@@ -108,6 +108,7 @@ impl TranscriptionProvider for GoogleSttProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
 
     #[test]
     fn from_config_rejects_empty_api_key() {
@@ -116,7 +117,7 @@ mod tests {
             language_code: "en-US".to_string(),
         };
 
-        let err = GoogleSttProvider::from_config(&config, reqwest::Client::new())
+        let err = GoogleSttProvider::from_config(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("Missing Google STT API key"));
@@ -129,7 +130,7 @@ mod tests {
             language_code: "zh-CN".to_string(),
         };
 
-        let provider = GoogleSttProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = GoogleSttProvider::from_config(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_key, "key-1");
         assert_eq!(provider.language_code, "zh-CN");
         assert_eq!(provider.name(), "google");
@@ -145,7 +146,7 @@ mod tests {
             api_key: "key-1".to_string(),
             language_code: "en-US".to_string(),
         };
-        let provider = GoogleSttProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let provider = GoogleSttProvider::from_config(&config, new_reqwest_client()).unwrap();
 
         // `.m4a` passes the generic audio validation but is not accepted by
         // Google STT, so the error surfaces before any network request.
