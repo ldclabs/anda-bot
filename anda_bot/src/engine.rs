@@ -548,11 +548,27 @@ async fn update_daemon_config(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 
-    if let Err(err) = tokio::fs::write(&state.config_path, content).await {
+    if let Err(err) = write_daemon_config_atomically(&state.config_path, content.as_bytes()).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
     AxumJson(response).into_response()
+}
+
+// Write via a temp file + rename so a crash mid-write cannot leave a
+// truncated config that prevents the daemon from starting.
+async fn write_daemon_config_atomically(path: &Path, content: &[u8]) -> Result<(), BoxError> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(config::CONFIG_FILE_NAME);
+    let temp_path = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
+    tokio::fs::write(&temp_path, content).await?;
+    if let Err(err) = tokio::fs::rename(&temp_path, path).await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(err.into());
+    }
+    Ok(())
 }
 
 fn daemon_config_response(

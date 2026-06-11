@@ -4,7 +4,6 @@ use anda_engine::{
     engine::{Engine, EngineRef},
     extension::shell::{ExecArgs, ShellTool},
 };
-use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::{
@@ -12,24 +11,55 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_POLL_SECS: u64 = 5;
 const MAX_DUE_JOBS_PER_TICK: usize = 64;
 const MAX_CONCURRENT_JOBS: usize = 8;
-const STALE_RUNNING_MS: u64 = 10 * 60 * 1000;
+// Last-resort prune threshold for leaked in-memory entries. Agent jobs can
+// legitimately run for a long time; pruning a live entry restarts the job
+// concurrently, so this must stay well above any expected job duration.
+const STALE_RUNNING_MS: u64 = 2 * 60 * 60 * 1000;
 
 use super::{store::*, types::*};
 use crate::engine::system_runtime_prompt;
+
+#[derive(Debug, Clone, Copy)]
+struct RunningJob {
+    run_id: u64,
+    started_at: u64,
+}
+
+type RunningJobs = Arc<Mutex<BTreeMap<u64, RunningJob>>>;
+
+// Removes the owning run's entry on drop (also on panic or cancellation),
+// without touching an entry that a newer run has claimed in the meantime.
+struct RunningJobGuard {
+    running_jobs: RunningJobs,
+    job_id: u64,
+    run_id: u64,
+}
+
+impl Drop for RunningJobGuard {
+    fn drop(&mut self) {
+        let mut running_jobs = self.running_jobs.lock();
+        if running_jobs
+            .get(&self.job_id)
+            .is_some_and(|entry| entry.run_id == self.run_id)
+        {
+            running_jobs.remove(&self.job_id);
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct CronRuntime {
     pub store: CronStore,
     engine: Arc<EngineRef>,
     controller: Principal,
-    // job_id -> started_at
-    running_jobs: Arc<Mutex<BTreeMap<u64, u64>>>,
+    // job_id -> in-flight run
+    running_jobs: RunningJobs,
 }
 
 impl CronRuntime {
@@ -49,7 +79,7 @@ impl CronRuntime {
             let mut running_jobs = self.running_jobs.lock();
             let before_len = running_jobs.len();
             running_jobs
-                .retain(|_, started_at| now_ms.saturating_sub(*started_at) < STALE_RUNNING_MS);
+                .retain(|_, entry| now_ms.saturating_sub(entry.started_at) < STALE_RUNNING_MS);
             let pruned = before_len.saturating_sub(running_jobs.len());
             if pruned > 0 {
                 log::warn!(name = "cron"; "pruned {pruned} stale in-memory cron jobs");
@@ -76,7 +106,13 @@ impl CronRuntime {
             let started_at_ms = unix_ms();
             let run = match self.store.job_start(job._id, started_at_ms).await {
                 Ok(run) => {
-                    self.running_jobs.lock().insert(job._id, started_at_ms);
+                    self.running_jobs.lock().insert(
+                        job._id,
+                        RunningJob {
+                            run_id: run._id,
+                            started_at: started_at_ms,
+                        },
+                    );
                     run
                 }
                 Err(err) => {
@@ -93,17 +129,21 @@ impl CronRuntime {
         }
 
         let store = self.store.clone();
-        let mut in_flight = stream::iter(runs.into_iter().map(move |(job, run)| {
+        // Each job runs in its own task so a panicking job cannot take down
+        // the other in-flight jobs or skip the final store flush.
+        let mut in_flight = JoinSet::new();
+        for (job, run) in runs {
             let this = self.clone();
             let engine = engine.clone();
-            async move {
+            in_flight.spawn(async move {
                 this.process_due_job(engine, job, run).await;
-            }
-        }))
-        .buffer_unordered(available_slots);
+            });
+        }
         tokio::spawn(async move {
-            while let Some(()) = in_flight.next().await {
-                // nothing to do here, just drive the stream
+            while let Some(result) = in_flight.join_next().await {
+                if let Err(err) = result {
+                    log::error!(name = "cron"; "cron job task failed: {err}");
+                }
             }
             if let Err(err) = store.flush(unix_ms()).await {
                 log::error!(name = "cron"; "failed to flush cron store: {err}");
@@ -114,6 +154,11 @@ impl CronRuntime {
     }
 
     async fn process_due_job(&self, engine: Arc<Engine>, job: CronJob, run: CronRun) {
+        let _running_guard = RunningJobGuard {
+            running_jobs: self.running_jobs.clone(),
+            job_id: job._id,
+            run_id: run._id,
+        };
         let request_meta = job.request_meta();
         let caller = job
             .origin
@@ -196,8 +241,6 @@ impl CronRuntime {
         if let Err(err) = self.store.job_finish(run, finished_at_ms, result).await {
             log::error!(name = "cron"; "failed to mark cron job {} (run id: {}) as finished: {err}", job._id, run_id);
         }
-
-        self.running_jobs.lock().remove(&job._id);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -270,4 +313,64 @@ fn cron_shell_result_prompt(job: &CronJob, run_id: u64, result: &CronJobResult) 
             job._id, name, run_id, job.job, outcome
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn running_jobs_with(job_id: u64, run_id: u64, started_at: u64) -> RunningJobs {
+        let running_jobs: RunningJobs = Arc::new(Mutex::new(BTreeMap::new()));
+        running_jobs
+            .lock()
+            .insert(job_id, RunningJob { run_id, started_at });
+        running_jobs
+    }
+
+    #[test]
+    fn running_job_guard_removes_own_entry_on_drop() {
+        let running_jobs = running_jobs_with(1, 10, 0);
+
+        drop(RunningJobGuard {
+            running_jobs: running_jobs.clone(),
+            job_id: 1,
+            run_id: 10,
+        });
+
+        assert!(running_jobs.lock().is_empty());
+    }
+
+    #[test]
+    fn running_job_guard_keeps_entry_claimed_by_newer_run() {
+        // Simulates a stale-pruned run finishing after the job was restarted:
+        // the old run's guard must not remove the new run's entry.
+        let running_jobs = running_jobs_with(1, 11, 5);
+
+        drop(RunningJobGuard {
+            running_jobs: running_jobs.clone(),
+            job_id: 1,
+            run_id: 10,
+        });
+
+        let entries = running_jobs.lock();
+        assert_eq!(entries.get(&1).map(|entry| entry.run_id), Some(11));
+    }
+
+    #[test]
+    fn running_job_guard_runs_on_panic_unwind() {
+        let running_jobs = running_jobs_with(1, 10, 0);
+        let guard_jobs = running_jobs.clone();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = RunningJobGuard {
+                running_jobs: guard_jobs,
+                job_id: 1,
+                run_id: 10,
+            };
+            panic!("job panicked");
+        }));
+
+        assert!(result.is_err());
+        assert!(running_jobs.lock().is_empty());
+    }
 }

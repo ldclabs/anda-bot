@@ -26,8 +26,20 @@ where
             reqwest::retry::for_host(AnyHost)
                 .max_retries_per_request(2)
                 .classify_fn(|req_rep| {
-                    if req_rep.error().is_some() {
-                        return req_rep.retryable();
+                    if let Some(err) = req_rep.error() {
+                        // Only replay requests that never reached the server.
+                        // Retrying after a timeout or mid-response failure can
+                        // double-submit non-idempotent calls (agent prompts,
+                        // IM messages, memory formation); those layers have
+                        // their own idempotency-aware retries.
+                        let connect_failed = err
+                            .downcast_ref::<reqwest::Error>()
+                            .is_some_and(reqwest::Error::is_connect);
+                        return if connect_failed {
+                            req_rep.retryable()
+                        } else {
+                            req_rep.success()
+                        };
                     }
 
                     match req_rep.status() {

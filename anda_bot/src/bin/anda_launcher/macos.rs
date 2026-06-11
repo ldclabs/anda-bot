@@ -16,9 +16,9 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSAlertSecondButtonReturn, NSApplication, NSApplicationActivationPolicy,
-    NSApplicationDelegate, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar,
-    NSStatusBarButton, NSStatusItem, NSVariableStatusItemLength,
+    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
+    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusBarButton, NSStatusItem,
+    NSVariableStatusItemLength,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
@@ -86,43 +86,21 @@ define_class!(
         #[unsafe(method(settings:))]
         fn settings(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                match settings::run_wizard(ctx) {
-                    Ok(true) => show_result(
-                        &text().app_title,
-                        &core::restart_daemon(ctx).unwrap_or_else(error_result),
-                    ),
-                    Ok(false) => {}
-                    Err(err) => show_error(&text().settings_title, &err.to_string()),
-                }
-            }
-        }
-
-        #[unsafe(method(showStatus:))]
-        fn show_status(&self, _sender: &AnyObject) {
-            if let Some(ctx) = CTX.get() {
-                show_result(
-                    &text().app_title,
-                    &core::daemon_status(ctx).unwrap_or_else(error_result),
-                );
+                run_settings_wizard_async(ctx.clone());
             }
         }
 
         #[unsafe(method(restartDaemon:))]
         fn restart_daemon(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_result(
-                    &text().app_title,
-                    &core::restart_daemon(ctx).unwrap_or_else(error_result),
-                );
+                restart_daemon_async(ctx.clone());
             }
         }
 
         #[unsafe(method(generateBrowserExtensionToken:))]
         fn generate_browser_extension_token(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
-                show_browser_extension_token_result(
-                    &core::generate_browser_extension_token(ctx).unwrap_or_else(error_result),
-                );
+                show_browser_extension_token_result_async(ctx.clone());
             }
         }
 
@@ -446,57 +424,58 @@ fn add_disabled_item(menu: &NSMenu, mtm: MainThreadMarker, title: &str) -> Retai
     item
 }
 
-fn show_result(title: &str, result: &CommandResult) {
-    show_alert(title, &result.message);
-}
-
 fn show_info(title: &str, message: &str) {
     show_alert(title, message);
 }
 
 fn show_browser_extension_token_result(result: &CommandResult) {
+    let title = text().browser_extension_token_title;
     if result.success && copy_to_clipboard(&result.message).is_ok() {
         let token = core::browser_extension_bearer_token(&result.message);
-        let copied = CommandResult {
-            success: result.success,
-            message: format!(
-                "{}\n\n{}",
-                text().browser_extension_token_copied,
-                result.message
-            ),
-        };
-        show_browser_extension_token_alert(&copied.message, token.as_deref());
+        let message = format!(
+            "{}\n\n{}",
+            text().browser_extension_token_copied,
+            result.message
+        );
+        show_browser_extension_token_dialog(&title, &message, token.as_deref());
     } else {
-        show_result(&text().browser_extension_token_title, result);
+        show_background_dialog(&title, &result.message);
     }
 }
 
-fn show_browser_extension_token_alert(message: &str, token: Option<&str>) {
-    if let Some(mtm) = MainThreadMarker::new() {
-        let alert = NSAlert::init(NSAlert::alloc(mtm));
-        alert.setMessageText(nsstring(&text().browser_extension_token_title).as_ref());
-        alert.setInformativeText(nsstring(message).as_ref());
-        alert.addButtonWithTitle(nsstring(&text().ok).as_ref());
-        if token.is_some() {
-            alert
-                .addButtonWithTitle(nsstring(&text().browser_extension_token_copy_button).as_ref());
-        }
+// Shown via osascript so it works from the background threads that run the
+// token command; NSAlert is main-thread only.
+fn show_browser_extension_token_dialog(title: &str, message: &str, token: Option<&str>) {
+    let Some(token) = token else {
+        show_background_dialog(title, message);
+        return;
+    };
 
-        let response = alert.runModal();
-        if response == NSAlertSecondButtonReturn
-            && let Some(token) = token
-        {
-            if let Err(err) = copy_to_clipboard(token) {
-                show_error(&text().browser_extension_token_title, &err.to_string());
-            } else {
-                show_info(
-                    &text().browser_extension_token_title,
-                    &text().browser_extension_token_only_copied,
-                );
-            }
+    let copy = text();
+    let script = format!(
+        "display dialog {} with title {} buttons {{{}, {}}} default button {} with icon note",
+        applescript_string(message),
+        applescript_string(title),
+        applescript_string(&copy.ok),
+        applescript_string(&copy.browser_extension_token_copy_button),
+        applescript_string(&copy.ok),
+    );
+    let output = match Command::new("osascript").arg("-e").arg(script).output() {
+        Ok(output) => output,
+        Err(_) => {
+            eprintln!("{title}: {message}");
+            return;
         }
-    } else {
-        eprintln!("{}: {message}", text().browser_extension_token_title);
+    };
+
+    let copy_clicked = output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .contains(copy.browser_extension_token_copy_button.as_str());
+    if copy_clicked {
+        match copy_to_clipboard(token) {
+            Ok(()) => show_background_dialog(title, &copy.browser_extension_token_only_copied),
+            Err(err) => show_background_dialog(title, &err.to_string()),
+        }
     }
 }
 
@@ -514,6 +493,45 @@ fn copy_to_clipboard(value: &str) -> LauncherResult<()> {
     }
 }
 
+// Menu actions run `anda` commands that can block for seconds (daemon
+// restart) or as long as the user keeps a wizard open, so they must stay off
+// the AppKit main thread; results are reported through osascript dialogs,
+// which are safe from any thread.
+fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
+    thread::spawn(move || {
+        let Some(_guard) = core::try_begin_menu_action() else {
+            return;
+        };
+        action();
+    });
+}
+
+fn run_settings_wizard_async(ctx: LauncherContext) {
+    spawn_menu_action(move || match settings::run_wizard(&ctx) {
+        Ok(true) => {
+            let result = core::restart_daemon(&ctx).unwrap_or_else(error_result);
+            show_background_dialog(&text().app_title, &result.message);
+        }
+        Ok(false) => {}
+        Err(err) => show_background_dialog(&text().settings_title, &err.to_string()),
+    });
+}
+
+fn restart_daemon_async(ctx: LauncherContext) {
+    spawn_menu_action(move || {
+        let result = core::restart_daemon(&ctx).unwrap_or_else(error_result);
+        show_background_dialog(&text().app_title, &result.message);
+    });
+}
+
+fn show_browser_extension_token_result_async(ctx: LauncherContext) {
+    spawn_menu_action(move || {
+        show_browser_extension_token_result(
+            &core::generate_browser_extension_token(&ctx).unwrap_or_else(error_result),
+        );
+    });
+}
+
 fn start_startup_tasks(ctx: LauncherContext) {
     thread::spawn(move || {
         if let Err(err) = ensure_application_entrypoint(&ctx) {
@@ -528,6 +546,9 @@ fn start_startup_tasks(ctx: LauncherContext) {
 }
 
 fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
+    // Hold the menu-action gate so a menu click cannot race the initial
+    // setup wizard with a second wizard or daemon command.
+    let _guard = core::begin_menu_action();
     if core::config_needs_setup(ctx) {
         if settings::run_initial_setup_wizard(ctx)? {
             let _ = core::start_daemon(ctx);
@@ -571,7 +592,9 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 
 fn run_manual_update_check(ctx: LauncherContext) {
     if let Some(state) = core::downloaded_update_state() {
-        prompt_update_ready(ctx, state);
+        // Installing stops, updates, and restarts the daemon — far too slow
+        // for the main thread.
+        thread::spawn(move || prompt_update_ready(ctx, state));
         return;
     }
 
@@ -609,6 +632,9 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
         return;
     }
 
+    // Serialize with other daemon-touching menu actions so a concurrent
+    // restart cannot interleave with the install.
+    let _guard = core::begin_menu_action();
     show_background_notification(&text().update_restart_title, &text().update_restart_started);
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {

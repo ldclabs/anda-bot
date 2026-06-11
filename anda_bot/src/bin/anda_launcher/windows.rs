@@ -669,8 +669,19 @@ fn open_anda_terminal_async(ctx: LauncherContext) {
     });
 }
 
+// Serialized through the menu-action gate so rapid repeated tray clicks
+// cannot run concurrent `anda` commands or stack result dialogs.
+fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
+    thread::spawn(move || {
+        let Some(_guard) = core::try_begin_menu_action() else {
+            return;
+        };
+        action();
+    });
+}
+
 fn run_settings_wizard_async(ctx: LauncherContext) {
-    thread::spawn(move || match settings::run_wizard(&ctx) {
+    spawn_menu_action(move || match settings::run_wizard(&ctx) {
         Ok(true) => show_result(
             &text().app_title,
             &core::restart_daemon(&ctx).unwrap_or_else(error_result),
@@ -684,14 +695,14 @@ fn show_command_result_async<F>(title: String, ctx: LauncherContext, command: F)
 where
     F: FnOnce(&LauncherContext) -> LauncherResult<CommandResult> + Send + 'static,
 {
-    thread::spawn(move || {
+    spawn_menu_action(move || {
         let result = command(&ctx).unwrap_or_else(error_result);
         show_result(&title, &result);
     });
 }
 
 fn show_browser_extension_token_result_async(ctx: LauncherContext) {
-    thread::spawn(move || {
+    spawn_menu_action(move || {
         show_browser_extension_token_result(
             &core::generate_browser_extension_token(&ctx).unwrap_or_else(error_result),
         );
@@ -699,7 +710,7 @@ fn show_browser_extension_token_result_async(ctx: LauncherContext) {
 }
 
 fn toggle_autostart_async(ctx: LauncherContext) {
-    thread::spawn(move || match toggle_autostart(&ctx) {
+    spawn_menu_action(move || match toggle_autostart(&ctx) {
         Ok(message) => message_box(&text().app_title, &message, MB_OK | MB_ICONINFORMATION),
         Err(err) => show_error(&text().app_title, &err.to_string()),
     });
@@ -747,6 +758,9 @@ fn start_startup_tasks(ctx: LauncherContext) {
 }
 
 fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
+    // Hold the menu-action gate so a tray click cannot race the initial
+    // setup wizard with a second wizard or daemon command.
+    let _guard = core::begin_menu_action();
     if core::config_needs_setup(ctx) {
         if settings::run_initial_setup_wizard(ctx)? {
             show_result(&text().app_title, &core::start_daemon(ctx)?);
@@ -790,7 +804,11 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 
 fn run_manual_update_check(_hwnd: HWND, ctx: LauncherContext) {
     if let Some(state) = core::downloaded_update_state() {
-        prompt_update_ready(ctx, state);
+        // Installing stops, updates, and restarts the daemon. Running it on
+        // the message-loop thread would stop message pumping, which the
+        // hung-launcher takeover in main() would misread as a dead instance
+        // and allow a second launcher to start.
+        thread::spawn(move || prompt_update_ready(ctx, state));
         return;
     }
 
@@ -833,6 +851,9 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
         return;
     }
 
+    // Serialize with other daemon-touching menu actions so a concurrent
+    // restart cannot interleave with the install.
+    let _guard = core::begin_menu_action();
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
         core::finish_update_restart_success(&state);

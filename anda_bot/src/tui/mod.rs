@@ -70,6 +70,7 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     app.bootstrap().await;
 
     enable_raw_mode()?;
+    let mut terminal_modes_guard = TerminalModesGuard::new();
     let mut stdout = io::stdout();
     stdout.execute(EnableBracketedPaste)?;
     // Push kitty keyboard enhancement flags so Shift+Enter, Ctrl+Enter, etc.
@@ -83,6 +84,7 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
             .is_ok(),
         _ => false,
     };
+    terminal_modes_guard.keyboard_enhancement_pushed = keyboard_enhancement_pushed;
 
     // Size the inline viewport to the initial content, not the full terminal,
     // so the TUI expands from the current cursor row instead of reserving the
@@ -95,6 +97,9 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     let cleanup_result = cleanup_inline_viewport(&mut stdout, terminal.get_frame().area());
     drop(terminal);
 
+    // Normal exit path: run the ordered cleanup ourselves and disarm the
+    // unwind guard so terminal modes are not restored twice.
+    terminal_modes_guard.disarm();
     if keyboard_enhancement_pushed {
         let _ = stdout.execute(PopKeyboardEnhancementFlags);
     }
@@ -105,6 +110,41 @@ pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError
     raw_mode_result?;
     cleanup_result?;
     run_result
+}
+
+/// Restores terminal modes if `run` unwinds (panic or an early `?` return
+/// after raw mode was enabled). Leaving raw mode on would break the user's
+/// shell session.
+struct TerminalModesGuard {
+    keyboard_enhancement_pushed: bool,
+    armed: bool,
+}
+
+impl TerminalModesGuard {
+    fn new() -> Self {
+        Self {
+            keyboard_enhancement_pushed: false,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TerminalModesGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut stdout = io::stdout();
+        if self.keyboard_enhancement_pushed {
+            let _ = stdout.execute(PopKeyboardEnhancementFlags);
+        }
+        let _ = stdout.execute(DisableBracketedPaste);
+        let _ = disable_raw_mode();
+    }
 }
 
 #[derive(Default)]
@@ -595,12 +635,10 @@ async fn run_app(
 
         needs_render |= app.finish_pending_update_check();
 
-        // Recreate the terminal when:
-        //  - the outer terminal was resized, or
-        //  - the inline viewport needs to grow to fit new content (capped at
-        //    the terminal height).
-        // We never shrink the viewport, so the layout doesn't jitter as
-        // messages arrive and disappear.
+        // Recreate the terminal when the outer terminal was resized, or when
+        // the dynamic bottom area (input + status footer) changed height in
+        // either direction, so the inline viewport always hugs the prompt
+        // without leaving dead rows behind.
         let (w, h) = size()?;
         let h = h.max(1);
         let terminal_resized = w != term_w || h != term_h;
@@ -610,9 +648,7 @@ async fn run_app(
             needs_render = true;
         }
 
-        let desired = dynamic_viewport_height(app, term_w, term_h);
-        let new_height = desired;
-        let new_height = new_height.min(term_h).max(1);
+        let new_height = dynamic_viewport_height(app, term_w, term_h).clamp(1, term_h);
         if app.pending_scrollback_purge {
             let old_area = terminal.get_frame().area();
             let mut stdout = io::stdout();
@@ -678,26 +714,32 @@ async fn run_app(
             continue;
         }
 
-        match event::read()? {
-            Event::Key(key) => {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        // Drain every buffered event before looping back to render, so bursts
+        // of keystrokes (fast typing, IME composition, key auto-repeat)
+        // coalesce into a single frame instead of one render per key.
+        loop {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let input_content_width =
+                        input_navigation_content_width(app, terminal.get_frame().area());
+                    if let Err(err) = app.handle_key(key, input_content_width).await {
+                        app.notice = err.to_string();
+                    }
+                    needs_render = true;
                 }
-                let input_content_width =
-                    input_navigation_content_width(app, terminal.get_frame().area());
-                if let Err(err) = app.handle_key(key, input_content_width).await {
-                    app.notice = err.to_string();
+                Event::Paste(text) => {
+                    app.handle_paste(text);
+                    needs_render = true;
                 }
-                needs_render = true;
+                Event::Resize(_, _) => {
+                    needs_render = true;
+                }
+                _ => {}
             }
-            Event::Paste(text) => {
-                app.handle_paste(text);
-                needs_render = true;
+
+            if app.should_quit || !event::poll(Duration::ZERO)? {
+                break;
             }
-            Event::Resize(_, _) => {
-                needs_render = true;
-            }
-            _ => {}
         }
     }
     Ok(())

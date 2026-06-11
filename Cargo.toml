@@ -32,12 +32,12 @@ anda_engine = { version = "0.12" }
 anda_engine_server = { version = "0.12" }
 anda_web3_client = { version = "0.12" }
 anda_object_store = "0.3"
-anda_db = { version = "0.7", features = ["full"] }
+anda_db = { version = "0.8", features = ["full"] }
 anda_db_tfs = { version = "0.5", features = ["full"] }
 anda_db_utils = { version = "0.2" }
-anda_cognitive_nexus = "0.7"
-anda_brain = { version = "0.6" }
-anda_kip = "0.7"
+anda_cognitive_nexus = "0.8"
+anda_brain = { version = "0.7" }
+anda_kip = "0.8"
 base64 = "0.22"
 cpal = { version = "0.17" }
 ciborium = "0.2"

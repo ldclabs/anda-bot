@@ -13,6 +13,11 @@ use crate::engine::{ConversationsTool, ConversationsToolArgs, PromptCommand, Sou
 
 const POLL_INTERVAL: Duration = Duration::from_millis(2000);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
+// The keepalive ping and conversation fetches run inline in the poll loop;
+// keep their timeouts short so an unresponsive daemon cannot stall the UI for
+// the HTTP client's full default timeout.
+const PING_TIMEOUT: Duration = Duration::from_secs(30);
+const CONVERSATION_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build a synthetic system message (used for local notices / errors that
 /// aren't part of the persisted conversation history).
@@ -314,7 +319,10 @@ impl ChatSession {
 
         let output = self
             .client
-            .tool_call::<ConversationsToolArgs, KipResponse>(&input)
+            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
+                &input,
+                CONVERSATION_FETCH_TIMEOUT,
+            )
             .await?;
 
         let state = match output.output {
@@ -359,7 +367,7 @@ impl ChatSession {
         self.last_ping = Instant::now();
         let mut input = AgentInput::new(String::new(), String::new());
         input.meta = Some(current_request_meta(self.conv_id.unwrap_or_default()));
-        let _ = self.client.agent_run(&input).await;
+        let _ = self.client.agent_run_with_timeout(&input, PING_TIMEOUT).await;
     }
 
     /// Poll the conversation for updates. Returns `true` if new messages were received.
@@ -464,10 +472,13 @@ impl ChatSession {
     async fn fetch_conversation(&self, conv_id: u64) -> Result<Conversation, BoxError> {
         let output = self
             .client
-            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
-                ConversationsTool::NAME.to_string(),
-                ConversationsToolArgs::GetConversation { _id: conv_id },
-            ))
+            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
+                &ToolInput::new(
+                    ConversationsTool::NAME.to_string(),
+                    ConversationsToolArgs::GetConversation { _id: conv_id },
+                ),
+                CONVERSATION_FETCH_TIMEOUT,
+            )
             .await?;
 
         match output.output {

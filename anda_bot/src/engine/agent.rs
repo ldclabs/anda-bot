@@ -60,6 +60,10 @@ use crate::{
 const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
+// Wait this long after a failed memory formation submission before retrying.
+// The idle loop reaches the submission point about once per second; without a
+// backoff a failing brain endpoint would be hammered continuously.
+const FORMATION_RETRY_BACKOFF_MS: u64 = 60 * 1000;
 const STARTUP_SELF_SOURCE: &str = "startup:self";
 static SELF_INSTRUCTIONS: &str = include_str!("../../assets/SelfInstructions.md");
 static COMPACTION_PROMPT: &str = include_str!("../../assets/CompactionPrompt.md");
@@ -727,6 +731,7 @@ impl AndaBot {
             request_meta: session_request_meta.clone(),
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
+            formation_backoff_until: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(now_ms)),
             finish_when_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
@@ -894,6 +899,23 @@ impl AndaBot {
                                 &sess_runner.conversation.status,
                                 !pending_inputs.is_empty(),
                                 has_background_tasks,
+                            ) {
+                                continue;
+                            }
+
+                            // Shutting down: stop accepting new inputs first, so a
+                            // concurrent join that already holds the sender fails
+                            // and falls back to starting a fresh session, then
+                            // rescue anything that slipped in between the drain
+                            // above and the close.
+                            rx.close();
+                            while let Ok(input) = rx.try_recv() {
+                                pending_inputs.push(input);
+                            }
+                            if should_continue_session_runner_after_stop(
+                                &sess_runner.conversation.status,
+                                !pending_inputs.is_empty(),
+                                false,
                             ) {
                                 continue;
                             }
@@ -1085,10 +1107,6 @@ impl Agent<AgentCtx> for AndaBot {
             ..
         } = self.inner.conversations.state_from_meta(ctx.meta());
 
-        let mut instructions = self
-            .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
-            .await?;
-
         let mut ancestors: Option<Vec<u64>> = None;
         let mut current_conversation = if maybe_conv_id > 0 {
             self.latest_conversation_in_chain(maybe_conv_id, Some(*caller))
@@ -1181,6 +1199,14 @@ impl Agent<AgentCtx> for AndaBot {
             extra,
             ..
         } = input;
+
+        // Built only when a new session is actually needed: joining an active
+        // session above returns early and would waste the brain lookups
+        // (primer + user profile) this requires — and a brain outage must not
+        // block message delivery to already-running sessions.
+        let mut instructions = self
+            .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
+            .await?;
 
         let mut initial_goal = None;
         let mut tools = UniqueVec::from(self.inner.tools.clone());
@@ -1392,6 +1418,7 @@ impl Agent<AgentCtx> for AndaBot {
             request_meta: session_request_meta.clone(),
             completion_hooks: self.inner.completion_hooks.clone(),
             submit_formation_at: AtomicU64::new(0),
+            formation_backoff_until: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(unix_ms())),
             finish_when_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
@@ -1519,6 +1546,15 @@ impl SessionRunner {
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
+        if now_ms
+            < self
+                .session
+                .formation_backoff_until
+                .load(Ordering::SeqCst)
+        {
+            return;
+        }
+
         let mut messages = chat_history
             .iter()
             .skip(self.session.submit_formation_at.load(Ordering::SeqCst) as usize)
@@ -1552,8 +1588,18 @@ impl SessionRunner {
                 self.session
                     .submit_formation_at
                     .store(next_submit_formation_at as u64, Ordering::SeqCst);
+                self.session
+                    .formation_backoff_until
+                    .store(0, Ordering::SeqCst);
             }
             Err(err) => {
+                // Keep the offset so the window is retried, but not before the
+                // backoff expires — the idle loop reaches this point every
+                // second and must not hammer a failing brain endpoint.
+                self.session.formation_backoff_until.store(
+                    unix_ms().saturating_add(FORMATION_RETRY_BACKOFF_MS),
+                    Ordering::SeqCst,
+                );
                 log::error!(
                     "Failed to send formation for session {}, conversation {}, error: {:?}",
                     self.session.id,
@@ -2027,6 +2073,8 @@ struct Session {
     request_meta: SessionRequestMeta,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     submit_formation_at: AtomicU64,
+    // Unix ms before which formation submissions are skipped (set on failure).
+    formation_backoff_until: AtomicU64,
     active_at: Arc<AtomicU64>,
     finish_when_idle: AtomicBool,
     formation_context: Option<InputContext>,

@@ -3,7 +3,8 @@ use serde::Deserialize;
 use std::{
     env,
     ffi::{OsStr, OsString},
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::{Mutex, OnceLock},
@@ -459,6 +460,7 @@ impl Drop for LauncherInstanceLock {
 static LAUNCHER_LANGUAGE: OnceLock<LauncherLanguage> = OnceLock::new();
 static UPDATE_UI_STATE: OnceLock<Mutex<LauncherUpdateUiState>> = OnceLock::new();
 static DAEMON_STATUS_CACHE: OnceLock<Mutex<Option<LauncherDaemonStatus>>> = OnceLock::new();
+static MENU_ACTION_GATE: Mutex<()> = Mutex::new(());
 
 impl LauncherLanguage {
     fn locale(self) -> &'static str {
@@ -877,7 +879,7 @@ fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> Launcher
 
     if content != updated {
         backup_config_file(&config_path)?;
-        fs::write(config_path, updated)?;
+        write_config_atomic(&config_path, &updated)?;
     }
     Ok(())
 }
@@ -969,6 +971,25 @@ pub fn check_update_menu_label() -> String {
     }
 
     text().check_update_label(&current_tag)
+}
+
+/// Serializes user-triggered menu actions (daemon restart, settings wizard,
+/// token generation) so rapid repeated clicks cannot run concurrent `anda`
+/// commands or stack result dialogs. Returns `None` while another action is
+/// still running.
+pub fn try_begin_menu_action() -> Option<std::sync::MutexGuard<'static, ()>> {
+    match MENU_ACTION_GATE.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
+/// Blocking variant for the startup setup path, which must always run.
+pub fn begin_menu_action() -> std::sync::MutexGuard<'static, ()> {
+    MENU_ACTION_GATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn begin_update_check() -> bool {
@@ -1380,11 +1401,34 @@ fn ensure_config_file_exists(ctx: &LauncherContext) -> LauncherResult<bool> {
         Ok(_) => Ok(false),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             fs::create_dir_all(&ctx.home)?;
-            fs::write(config_path, DEFAULT_CONFIG_TEMPLATE)?;
+            write_config_atomic(&config_path, DEFAULT_CONFIG_TEMPLATE)?;
             Ok(true)
         }
         Err(err) => Err(err.into()),
     }
+}
+
+/// Writes through a sibling temp file and rename so a crash mid-write cannot
+/// leave a truncated config.yaml behind (a partial file would either break the
+/// daemon or silently suppress the setup wizard).
+fn write_config_atomic(path: &Path, content: &str) -> io::Result<()> {
+    let mut tmp_name = path
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("config.yaml"))
+        .to_os_string();
+    tmp_name.push(".tmp");
+    let tmp_path = path.with_file_name(tmp_name);
+
+    let result = fs::File::create(&tmp_path)
+        .and_then(|mut file| {
+            file.write_all(content.as_bytes())?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&tmp_path, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 fn backup_config_file(config_path: &Path) -> LauncherResult<PathBuf> {
@@ -2156,6 +2200,33 @@ mod tests {
         finish_update_restart_prompt(&state);
 
         reset_update_ui_state_for_test();
+    }
+
+    #[test]
+    fn menu_action_gate_blocks_concurrent_actions() {
+        let guard = try_begin_menu_action().expect("gate should be free");
+        assert!(try_begin_menu_action().is_none());
+        drop(guard);
+
+        let guard = begin_menu_action();
+        assert!(try_begin_menu_action().is_none());
+        drop(guard);
+        assert!(try_begin_menu_action().is_some());
+    }
+
+    #[test]
+    fn write_config_atomic_replaces_existing_file_and_cleans_temp() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join("config.yaml");
+        fs::write(&config_path, "old").unwrap();
+
+        write_config_atomic(&config_path, "new contents\n").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            "new contents\n"
+        );
+        assert!(!config_path.with_file_name("config.yaml.tmp").exists());
     }
 
     #[test]

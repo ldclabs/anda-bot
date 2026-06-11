@@ -18,6 +18,17 @@ use crate::{
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
 
+// Agent runs routinely outlast the shared HTTP client's 120s default timeout
+// (tool loops, model retries). Callers that need a quick failure signal, such
+// as the chat keepalive ping, should pass their own timeout via
+// `agent_run_with_timeout`.
+pub const AGENT_RUN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+// The status endpoint is a loopback health check polled from interactive
+// loops (TUI refresh, daemon readiness waits); fail fast instead of letting a
+// wedged daemon hold callers for the client's full default timeout.
+pub const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -46,7 +57,10 @@ impl Client {
     }
 
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
-        self.get_json("/daemon/status").await
+        let req = self
+            .request(reqwest::Method::GET, "/daemon/status")
+            .timeout(STATUS_TIMEOUT);
+        self.decode_response(req.send().await?).await
     }
 
     pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {
@@ -70,16 +84,23 @@ impl Client {
     }
 
     pub async fn agent_run(&self, input: &AgentInput) -> Result<AgentOutput, BoxError> {
+        self.agent_run_with_timeout(input, AGENT_RUN_TIMEOUT).await
+    }
+
+    pub async fn agent_run_with_timeout(
+        &self,
+        input: &AgentInput,
+        timeout: Duration,
+    ) -> Result<AgentOutput, BoxError> {
         let params = serde_json::to_vec(&(input,))?;
-        let rt: RPCResponse = self
-            .post_json(
-                "/engine/default",
-                &RPCRequestRef {
-                    method: "agent_run",
-                    params: &ByteBufB64(params),
-                },
-            )
-            .await?;
+        let req = self
+            .request(reqwest::Method::POST, "/engine/default")
+            .timeout(timeout)
+            .json(&RPCRequestRef {
+                method: "agent_run",
+                params: &ByteBufB64(params),
+            });
+        let rt: RPCResponse = self.decode_response(req.send().await?).await?;
         let rt: AgentOutput = serde_json::from_slice(&(rt?))?;
         Ok(rt)
     }
@@ -89,16 +110,40 @@ impl Client {
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
+        self.tool_call_inner(input, None).await
+    }
+
+    pub async fn tool_call_with_timeout<I, O>(
+        &self,
+        input: &ToolInput<I>,
+        timeout: Duration,
+    ) -> Result<ToolOutput<O>, BoxError>
+    where
+        I: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
+        self.tool_call_inner(input, Some(timeout)).await
+    }
+
+    async fn tool_call_inner<I, O>(
+        &self,
+        input: &ToolInput<I>,
+        timeout: Option<Duration>,
+    ) -> Result<ToolOutput<O>, BoxError>
+    where
+        I: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
         let params = serde_json::to_vec(&(input,))?;
-        let rt: RPCResponse = self
-            .post_json(
-                "/engine/default",
-                &RPCRequestRef {
-                    method: "tool_call",
-                    params: &ByteBufB64(params),
-                },
-            )
-            .await?;
+        let mut req = self.request(reqwest::Method::POST, "/engine/default");
+        if let Some(timeout) = timeout {
+            req = req.timeout(timeout);
+        }
+        let req = req.json(&RPCRequestRef {
+            method: "tool_call",
+            params: &ByteBufB64(params),
+        });
+        let rt: RPCResponse = self.decode_response(req.send().await?).await?;
         let rt: ToolOutput<O> = serde_json::from_slice(&(rt?))?;
         Ok(rt)
     }
@@ -182,15 +227,6 @@ impl Client {
     {
         let req = self.request(reqwest::Method::POST, path);
         let response = req.json(&input).send().await?;
-        self.decode_response(response).await
-    }
-
-    async fn get_json<O>(&self, path: &str) -> Result<O, BoxError>
-    where
-        O: serde::de::DeserializeOwned,
-    {
-        let req = self.request(reqwest::Method::GET, path);
-        let response = req.send().await?;
         self.decode_response(response).await
     }
 

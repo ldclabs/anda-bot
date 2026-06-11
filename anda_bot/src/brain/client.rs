@@ -2,11 +2,18 @@ use anda_core::{AgentOutput, BoxError, FunctionDefinition, Json, Resource, Tool,
 use anda_engine::context::BaseCtx;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
+use std::time::Duration;
 
 pub use anda_brain::{
     payload::RpcResponse,
     types::{FormationInputRef, FormationStatus, GetOrInitUserInput, RecallInput, RecallInputRef},
 };
+
+// Recall runs LLM work inline in the brain handler and can exceed the shared
+// HTTP client's 120s default timeout; a client-side timeout drops the loopback
+// connection and cancels the in-flight work. Lightweight reads (primer, user
+// info, status) keep the client default for fast failure.
+const RECALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone)]
 pub struct Client {
@@ -46,7 +53,9 @@ impl Client {
     }
 
     pub async fn recall<'a>(&self, input: RecallInputRef<'a>) -> Result<AgentOutput, BoxError> {
-        let rt: RpcResponse<AgentOutput> = self.post("/recall", &input).await?;
+        let rt: RpcResponse<AgentOutput> = self
+            .post_with_timeout("/recall", &input, RECALL_TIMEOUT)
+            .await?;
         if let Some(result) = rt.result {
             Ok(result)
         } else {
@@ -104,6 +113,22 @@ impl Client {
         O: serde::de::DeserializeOwned,
     {
         let req = self.request(reqwest::Method::POST, path);
+        let response = req.json(&input).send().await?;
+        self.decode_response(reqwest::Method::POST, path, response)
+            .await
+    }
+
+    async fn post_with_timeout<I, O>(
+        &self,
+        path: &str,
+        input: &I,
+        timeout: Duration,
+    ) -> Result<O, BoxError>
+    where
+        I: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
+        let req = self.request(reqwest::Method::POST, path).timeout(timeout);
         let response = req.json(&input).send().await?;
         self.decode_response(reqwest::Method::POST, path, response)
             .await
