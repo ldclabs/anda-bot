@@ -350,4 +350,264 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             Some("Default TTS provider 'stepfun' is not configured. Available: []")
         );
     }
+
+    use axum::{Router, routing};
+    use serde_json::json;
+
+    async fn spawn_gateway_mock(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn authorized(headers: &http::HeaderMap) -> bool {
+        headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            == Some("Bearer token-1")
+    }
+
+    fn status_app() -> Router {
+        Router::new().route(
+            "/daemon/status",
+            routing::get(|headers: http::HeaderMap| async move {
+                if !authorized(&headers) {
+                    return (
+                        http::StatusCode::UNAUTHORIZED,
+                        axum::Json(json!({"error": "unauthorized"})),
+                    );
+                }
+                (
+                    http::StatusCode::OK,
+                    axum::Json(json!({
+                        "conversations": 7,
+                        "memory_nodes": 11,
+                        "memory_links": 13,
+                    })),
+                )
+            }),
+        )
+    }
+
+    #[tokio::test]
+    async fn status_sends_bearer_token_and_decodes_response() {
+        let base_url = spawn_gateway_mock(status_app()).await;
+
+        let client = Client::new(base_url.clone(), "token-1".to_string())
+            .with_http_client(reqwest::Client::new());
+        let status = client.status().await.unwrap();
+        assert_eq!(status.conversations, 7);
+        assert_eq!(status.memory_nodes, 11);
+        assert_eq!(status.memory_links, 13);
+
+        // A wrong token is rejected by the server and surfaced as a status error.
+        let unauthorized = Client::new(base_url, "wrong".to_string());
+        let err = unauthorized.status().await.map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("request failed, status: 401"));
+    }
+
+    #[tokio::test]
+    async fn decode_response_reports_invalid_json_bodies() {
+        let app = Router::new().route(
+            "/daemon/status",
+            routing::get(|| async { "definitely not json" }),
+        );
+        let base_url = spawn_gateway_mock(app).await;
+
+        let client = Client::new(base_url, "token-1".to_string());
+        let err = client.status().await.map(|_| ()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid response"), "got: {msg}");
+        assert!(msg.contains("definitely not json"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn post_json_endpoints_round_trip() {
+        let app = Router::new()
+            .route(
+                "/auto_update/check",
+                routing::post(|| async {
+                    axum::Json(serde_json::to_value(AutoUpdateState::default()).unwrap())
+                }),
+            )
+            .route(
+                "/daemon/shutdown",
+                routing::post(|| async { axum::Json(json!({"shutdown": true})) }),
+            );
+        let base_url = spawn_gateway_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+
+        let state = client.auto_update_check().await.unwrap();
+        assert!(state.latest_tag.is_none());
+
+        let result = client.shutdown().await.unwrap();
+        assert_eq!(result["shutdown"], true);
+    }
+
+    #[tokio::test]
+    async fn agent_run_unwraps_rpc_response_payload() {
+        let output = AgentOutput {
+            content: "agent says hi".to_string(),
+            ..Default::default()
+        };
+        let payload = ByteBufB64(serde_json::to_vec(&output).unwrap());
+        let rpc: RPCResponse = Ok(payload);
+        let body = serde_json::to_value(&rpc).unwrap();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        );
+        let base_url = spawn_gateway_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+
+        let result = client
+            .agent_run(&AgentInput::new(String::new(), "hello".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(result.content, "agent says hi");
+    }
+
+    #[tokio::test]
+    async fn agent_run_surfaces_rpc_error_payload() {
+        let rpc: RPCResponse = Err("engine exploded".to_string());
+        let body = serde_json::to_value(&rpc).unwrap();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        );
+        let base_url = spawn_gateway_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+
+        let err = client
+            .agent_run_with_timeout(
+                &AgentInput::new(String::new(), "hello".to_string()),
+                Duration::from_secs(5),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("engine exploded"));
+    }
+
+    #[tokio::test]
+    async fn tool_call_unwraps_rpc_response_payload() {
+        let output: ToolOutput<Json> = ToolOutput::new(json!({"echo": "ok"}));
+        let payload = ByteBufB64(serde_json::to_vec(&output).unwrap());
+        let rpc: RPCResponse = Ok(payload);
+        let body = serde_json::to_value(&rpc).unwrap();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        );
+        let base_url = spawn_gateway_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+
+        let result: ToolOutput<Json> = client
+            .tool_call(&ToolInput::new("echo".to_string(), json!({})))
+            .await
+            .unwrap();
+        assert_eq!(result.output["echo"], "ok");
+
+        let result: ToolOutput<Json> = client
+            .tool_call_with_timeout(
+                &ToolInput::new("echo".to_string(), json!({})),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.output["echo"], "ok");
+    }
+
+    #[tokio::test]
+    async fn rebased_client_targets_new_base_url() {
+        let base_url = spawn_gateway_mock(status_app()).await;
+
+        let dead = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string());
+        assert!(dead.status().await.is_err());
+
+        let rebased = dead.rebased(base_url);
+        assert!(rebased.status().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn wait_for_daemon_ready_succeeds_and_times_out() {
+        let base_url = spawn_gateway_mock(status_app()).await;
+        let client = Client::new(base_url, "token-1".to_string());
+        client
+            .wait_for_daemon_ready(Duration::from_secs(5))
+            .await
+            .unwrap();
+
+        let dead = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string());
+        let err = dead
+            .wait_for_daemon_ready(Duration::ZERO)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Daemon not ready within"));
+    }
+
+    #[test]
+    fn error_from_log_line_handles_plain_json_and_noise() {
+        assert_eq!(error_from_log_line(""), None);
+        assert_eq!(error_from_log_line("   "), None);
+        assert_eq!(
+            error_from_log_line("Error: bind failed").as_deref(),
+            Some("Error: bind failed")
+        );
+        assert_eq!(
+            error_from_log_line("fatal error while starting").as_deref(),
+            Some("fatal error while starting")
+        );
+        assert_eq!(error_from_log_line("all good"), None);
+        // Malformed JSON lines are ignored rather than treated as errors.
+        assert_eq!(error_from_log_line("{not json"), None);
+        assert_eq!(
+            error_from_log_line(r#"{"level":"INFO","msg":"fine"}"#),
+            None
+        );
+        assert_eq!(
+            error_from_log_line(r#"{"severity":"ERROR","message":"db locked"}"#).as_deref(),
+            Some("db locked")
+        );
+        assert_eq!(
+            error_from_log_line(r#"{"level":"ERROR","error":"oom"}"#).as_deref(),
+            Some("oom")
+        );
+        // Error-level entries without a recognizable message field yield None.
+        assert_eq!(error_from_log_line(r#"{"level":"ERROR"}"#), None);
+        // JSON without a level/severity field yields None.
+        assert_eq!(error_from_log_line(r#"{"msg":"error happened"}"#), None);
+    }
+
+    #[tokio::test]
+    async fn daemon_startup_error_reads_log_tail_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("daemon.log");
+        tokio::fs::write(
+            &log_path,
+            "{\"level\":\"INFO\",\"msg\":\"starting\"}\nError: port in use\n",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            daemon_startup_error(&log_path).await.as_deref(),
+            Some("Error: port in use")
+        );
+
+        // Missing log file is tolerated.
+        assert_eq!(daemon_startup_error(&dir.path().join("missing.log")).await, None);
+    }
 }

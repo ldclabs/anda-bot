@@ -341,4 +341,93 @@ mod tests {
 
         assert!(resolve_channel_targets(&rows, Some("personal"), false).is_err());
     }
+
+    use crate::config::{
+        ChannelSettings, DiscordChannelSettings, LarkChannelSettings, TelegramChannelSettings,
+        WechatChannelSettings,
+    };
+
+    fn full_config() -> Config {
+        Config {
+            channels: ChannelSettings {
+                telegram: vec![TelegramChannelSettings {
+                    id: Some("tg".to_string()),
+                    bot_token: "token".to_string(),
+                    username: Some("anda-tg".to_string()),
+                    ..Default::default()
+                }],
+                wechat: vec![WechatChannelSettings {
+                    id: Some("wc".to_string()),
+                    bot_token: "token".to_string(),
+                    ..Default::default()
+                }],
+                discord: vec![DiscordChannelSettings {
+                    id: Some("dc".to_string()),
+                    bot_token: "token".to_string(),
+                    ..Default::default()
+                }],
+                lark: vec![LarkChannelSettings {
+                    id: Some("lk".to_string()),
+                    app_id: "app".to_string(),
+                    app_secret: "secret".to_string(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn configured_rows_cover_all_channel_kinds() {
+        let rows = configured_channel_rows(&full_config());
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"]);
+        assert_eq!(rows[0].username, "anda-tg");
+        assert_eq!(rows[1].username, "wechat");
+
+        assert_eq!(
+            available_channel_ids(&rows),
+            "telegram:tg, wechat:wc, discord:dc, lark:lk"
+        );
+
+        // --all returns every channel; --all plus a target is rejected.
+        let all = resolve_channel_targets(&rows, None, true).unwrap();
+        assert_eq!(all.len(), 4);
+        assert!(resolve_channel_targets(&rows, Some("telegram:tg"), true).is_err());
+        assert!(resolve_channel_targets(&[], None, false).is_err());
+        // Multiple channels with no target lists the alternatives.
+        let err = resolve_channel_targets(&rows, None, false)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("specify one of"));
+    }
+
+    #[test]
+    fn build_configured_channel_resolves_each_kind() {
+        let cfg = full_config();
+        let client = Client::new();
+
+        for id in ["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"] {
+            let (channel_id, channel) =
+                build_configured_channel(&cfg, id, client.clone()).unwrap();
+            assert_eq!(channel_id, id);
+            assert_eq!(channel.id(), id);
+        }
+
+        assert!(build_configured_channel(&cfg, "telegram:missing", client.clone()).is_err());
+        assert!(build_configured_channel(&cfg, "matrix:x", client.clone()).is_err());
+        assert!(build_configured_channel(&cfg, "no-colon", client).is_err());
+    }
+
+    #[tokio::test]
+    async fn list_channels_prints_configured_and_empty_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(dir.path().to_path_buf(), Config::default());
+
+        list_channels(&daemon, &full_config()).unwrap();
+        list_channels(&daemon, &Config::default()).unwrap();
+
+        // The full CLI entrypoint loads config from disk and lists channels.
+        run(&daemon, ChannelCommand::List).await.unwrap();
+    }
 }

@@ -982,5 +982,300 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err.to_string(), "tz can only be used with cron schedules");
+
+        let err = build_schedule(&ScheduleKind::Every, "30m", Some(&"UTC".to_string()))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "tz can only be used with cron schedules");
+
+        let err = build_schedule(&ScheduleKind::Once, "30m", Some(&"UTC".to_string()))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "tz can only be used with cron schedules");
+    }
+
+    #[test]
+    fn schedule_validate_rejects_invalid_inputs() {
+        let now_ms = 1_750_000_000_000;
+
+        assert!(
+            Schedule::Cron {
+                expr: "0 9 * * 1".to_string(),
+                tz: None,
+            }
+            .validate(now_ms)
+            .is_ok()
+        );
+        assert!(
+            Schedule::Cron {
+                expr: "not a cron".to_string(),
+                tz: None,
+            }
+            .validate(now_ms)
+            .is_err()
+        );
+        assert!(Schedule::At { at: now_ms + 1000 }.validate(now_ms).is_ok());
+        assert!(Schedule::At { at: now_ms }.validate(now_ms).is_err());
+        assert!(Schedule::Every { every: 60 }.validate(now_ms).is_ok());
+        assert!(Schedule::Every { every: 0 }.validate(now_ms).is_err());
+    }
+
+    #[test]
+    fn schedule_next_run_handles_each_kind() {
+        let now_ms = 1_750_000_000_000;
+
+        let cron = Schedule::Cron {
+            expr: "0 9 * * 1".to_string(),
+            tz: Some("Asia/Shanghai".to_string()),
+        };
+        let next = cron.next_run(now_ms);
+        assert!(next > now_ms / 1000);
+        assert_ne!(next, DISABLED_JOB_NEXT_RUN);
+
+        let local_cron = Schedule::Cron {
+            expr: "*/5 * * * *".to_string(),
+            tz: None,
+        };
+        assert!(local_cron.next_run(now_ms) > now_ms / 1000);
+
+        let broken = Schedule::Cron {
+            expr: "broken".to_string(),
+            tz: None,
+        };
+        assert_eq!(broken.next_run(now_ms), DISABLED_JOB_NEXT_RUN);
+
+        let bad_tz = Schedule::Cron {
+            expr: "0 9 * * 1".to_string(),
+            tz: Some("Mars/Olympus".to_string()),
+        };
+        assert_eq!(bad_tz.next_run(now_ms), DISABLED_JOB_NEXT_RUN);
+
+        assert_eq!(
+            Schedule::At { at: now_ms + 5000 }.next_run(now_ms),
+            (now_ms + 5000) / 1000
+        );
+        assert_eq!(
+            Schedule::At { at: now_ms }.next_run(now_ms),
+            DISABLED_JOB_NEXT_RUN
+        );
+
+        assert_eq!(
+            Schedule::Every { every: 90 }.next_run(now_ms),
+            now_ms / 1000 + 90
+        );
+        assert_eq!(
+            Schedule::Every { every: u64::MAX }.next_run(now_ms),
+            DISABLED_JOB_NEXT_RUN
+        );
+    }
+
+    #[test]
+    fn kind_display_matches_serde_names() {
+        assert_eq!(JobKind::Shell.to_string(), "shell");
+        assert_eq!(JobKind::Agent.to_string(), "agent");
+        assert_eq!(ScheduleKind::Cron.to_string(), "cron");
+        assert_eq!(ScheduleKind::At.to_string(), "at");
+        assert_eq!(ScheduleKind::Every.to_string(), "every");
+        assert_eq!(ScheduleKind::Once.to_string(), "once");
+    }
+
+    #[test]
+    fn empty_meta_yields_no_origin_and_no_request_meta() {
+        let meta = RequestMeta::default();
+        assert_eq!(CronJobOrigin::from_meta_and_caller(&meta, None), None);
+
+        let job = CreateCronJobArgs {
+            job_kind: JobKind::Shell,
+            job: "echo hi".to_string(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "60".to_string(),
+            name: None,
+            tz: None,
+        }
+        .into_cron_job(1_750_000_000_000)
+        .unwrap();
+        assert!(job.request_meta().is_none());
+
+        // schedule() rebuilds the schedule from persisted fields.
+        assert_eq!(job.schedule().unwrap(), Schedule::Every { every: 60 });
+    }
+
+    #[test]
+    fn origin_caller_principal_parses_valid_text() {
+        let origin = CronJobOrigin {
+            caller: Some(Principal::anonymous().to_text()),
+            ..Default::default()
+        };
+        assert_eq!(origin.caller_principal(), Some(Principal::anonymous()));
+
+        let invalid = CronJobOrigin {
+            caller: Some("not a principal".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(invalid.caller_principal(), None);
+    }
+
+    #[test]
+    fn update_args_and_empty_update_are_rejected() {
+        let job = CreateCronJobArgs {
+            job_kind: JobKind::Shell,
+            job: "echo hi".to_string(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "60".to_string(),
+            name: None,
+            tz: None,
+        }
+        .into_cron_job(1_750_000_000_000)
+        .unwrap();
+
+        let err = CronJobUpdate::default()
+            .apply_to(job.clone(), 1_750_000_000_001)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("at least one cron job field"));
+
+        let args: UpdateCronJobArgs = serde_json::from_value(json!({
+            "id": "42",
+            "job": "echo updated",
+            "name": "  ",
+            "tz": " ",
+            "schedule_kind": "every",
+            "schedule": "120",
+        }))
+        .unwrap();
+        assert_eq!(args.id, 42);
+        let update = args.into_update_with_origin(None);
+        let updated = update.apply_to(job, 1_750_000_000_001).unwrap();
+
+        assert_eq!(updated.job, "echo updated");
+        assert_eq!(updated.name, None);
+        assert_eq!(updated.tz, None);
+        assert_eq!(updated.schedule, "120");
+        assert_eq!(updated.next_run, 1_750_000_000 + 120);
+        assert_eq!(updated.updated_at, 1_750_000_000_001);
+    }
+
+    #[test]
+    fn numeric_string_deserializers_accept_numbers_and_strings() {
+        assert!(serde_json::from_value::<UpdateCronJobArgs>(json!({"id": 7})).is_ok());
+        assert!(serde_json::from_value::<UpdateCronJobArgs>(json!({"id": "7"})).is_ok());
+        let err = serde_json::from_value::<UpdateCronJobArgs>(json!({"id": "  "}))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("non-empty unsigned integer"));
+        let err = serde_json::from_value::<UpdateCronJobArgs>(json!({"id": "abc"}))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid unsigned integer"));
+    }
+
+    #[test]
+    fn cron_job_result_conversions_capture_outcomes() {
+        let err: BoxError = "boom".into();
+        let result = CronJobResult::from(err);
+        assert_eq!(result.error.as_deref(), Some("boom"));
+        assert!(result.result.is_none());
+
+        let ok_output = AgentOutput {
+            content: "done".to_string(),
+            conversation: Some(9),
+            ..Default::default()
+        };
+        let result = CronJobResult::from(ok_output);
+        assert_eq!(result.conversation_id, Some(9));
+        assert_eq!(result.result.as_deref(), Some("done"));
+        assert!(result.error.is_none());
+
+        let failed_output = AgentOutput {
+            content: "partial".to_string(),
+            failed_reason: Some("model timeout".to_string()),
+            ..Default::default()
+        };
+        let result = CronJobResult::from(failed_output);
+        assert!(result.result.is_none());
+        assert_eq!(result.error.as_deref(), Some("model timeout"));
+
+        let tool_output: ToolOutput<serde_json::Value> = ToolOutput::new(json!({"ok": true}));
+        let result = CronJobResult::from(tool_output);
+        assert_eq!(result.result.as_deref(), Some(r#"{"ok":true}"#));
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn persisted_schedule_requires_once_to_resolve_to_at() {
+        let err = persisted_schedule(
+            &ScheduleKind::Once,
+            "60",
+            &Schedule::Every { every: 60 },
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("must resolve to a single timestamp"));
+
+        let (kind, value) = persisted_schedule(
+            &ScheduleKind::Once,
+            "60",
+            &Schedule::At {
+                at: 1_750_000_000_000,
+            },
+        )
+        .unwrap();
+        assert_eq!(kind, ScheduleKind::At);
+        assert!(value.starts_with("2025-06-15T"));
+    }
+
+    #[test]
+    fn parse_delay_rejects_empty_and_unknown_units() {
+        assert!(parse_delay("  ").is_err());
+        assert!(parse_delay("5y").is_err());
+        assert!(parse_delay("y").is_err());
+    }
+
+    #[test]
+    fn five_field_cron_expressions_translate_weekdays() {
+        // Five-field expressions get a seconds field and 0-6 weekday translation.
+        assert_eq!(
+            normalize_expression("30 9 * * 0").unwrap(),
+            "0 30 9 * * 1"
+        );
+        assert_eq!(
+            normalize_expression("30 9 * * 1-5").unwrap(),
+            "0 30 9 * * 2-6"
+        );
+        assert_eq!(
+            normalize_expression("30 9 * * 1,3,7").unwrap(),
+            "0 30 9 * * 2,4,1"
+        );
+        assert_eq!(
+            normalize_expression("30 9 * * */2").unwrap(),
+            "0 30 9 * * */2"
+        );
+        assert_eq!(
+            normalize_expression("30 9 * * MON").unwrap(),
+            "0 30 9 * * MON"
+        );
+        assert_eq!(
+            normalize_expression("30 9 * * ?").unwrap(),
+            "0 30 9 * * ?"
+        );
+        // Six- and seven-field expressions pass through untouched.
+        assert_eq!(
+            normalize_expression("0 30 9 * * 2").unwrap(),
+            "0 30 9 * * 2"
+        );
+        assert_eq!(
+            normalize_expression("0 30 9 * * 2 2026").unwrap(),
+            "0 30 9 * * 2 2026"
+        );
+        assert!(normalize_expression("9 * *").is_err());
+        assert!(normalize_expression("30 9 * * 8").is_err());
+        assert!(normalize_expression("30 9 * * 8-9").is_err());
+        assert!(normalize_expression("30 9 * * 1-9").is_err());
+    }
+
+    #[test]
+    fn weekday_translation_covers_full_range() {
+        assert_eq!(translate_weekday_value(0).unwrap(), 1);
+        assert_eq!(translate_weekday_value(7).unwrap(), 1);
+        assert_eq!(translate_weekday_value(3).unwrap(), 4);
+        assert!(translate_weekday_value(8).is_err());
     }
 }

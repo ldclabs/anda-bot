@@ -240,4 +240,99 @@ mod tests {
 
         assert!(err.to_string().contains("unknown user 'missing'"));
     }
+
+    #[test]
+    fn user_registry_rejects_duplicate_user_ids() {
+        let default_key = Ed25519Key::new([1; 32]);
+        let cfg = Config {
+            users: vec![
+                UserSettings::default(), // empty entries are skipped
+                UserSettings {
+                    id: Some("alice".to_string()),
+                    pubkey: pubkey_string(&Ed25519Key::new([2; 32])),
+                },
+                UserSettings {
+                    id: Some("alice".to_string()),
+                    pubkey: pubkey_string(&Ed25519Key::new([3; 32])),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let err = match cfg.user_registry(default_key.pubkey()) {
+            Ok(_) => panic!("duplicate user id should fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("duplicate user id 'alice'"));
+    }
+
+    #[test]
+    fn user_registry_resolves_principals_and_raw_pubkeys() {
+        let default_key = Ed25519Key::new([1; 32]);
+        let registry = Config::default().user_registry(default_key.pubkey()).unwrap();
+
+        assert_eq!(registry.default_user(), default_key.pubkey().id());
+        assert_eq!(registry.resolve(None).unwrap(), default_key.pubkey().id());
+        assert_eq!(
+            registry.resolve(Some(" ")).unwrap(),
+            default_key.pubkey().id()
+        );
+
+        // Principal text and raw pubkey strings resolve without registration.
+        let other = Ed25519Key::new([4; 32]);
+        assert_eq!(
+            registry
+                .resolve(Some(&other.pubkey().id().to_text()))
+                .unwrap(),
+            other.pubkey().id()
+        );
+        assert_eq!(
+            registry.resolve(Some(&pubkey_string(&other))).unwrap(),
+            other.pubkey().id()
+        );
+
+        let err = registry.resolve(Some("nobody")).map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("unknown user 'nobody'"));
+    }
+
+    #[test]
+    fn channel_user_refs_register_principals_and_pubkeys() {
+        let default_key = Ed25519Key::new([1; 32]);
+        let by_principal = Ed25519Key::new([5; 32]);
+        let by_pubkey = Ed25519Key::new([6; 32]);
+        let cfg = Config {
+            channels: ChannelSettings {
+                wechat: vec![
+                    WechatChannelSettings {
+                        id: Some("via-principal".to_string()),
+                        user: Some(by_principal.pubkey().id().to_text()),
+                        bot_token: "token".to_string(),
+                        ..Default::default()
+                    },
+                    WechatChannelSettings {
+                        id: Some("via-pubkey".to_string()),
+                        user: Some(pubkey_string(&by_pubkey)),
+                        bot_token: "token".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let registry = cfg.user_registry(default_key.pubkey()).unwrap();
+        let bindings = cfg.channels.user_bindings(&registry).unwrap();
+
+        assert_eq!(
+            bindings.get("wechat:via-principal"),
+            Some(&by_principal.pubkey().id())
+        );
+        assert_eq!(
+            bindings.get("wechat:via-pubkey"),
+            Some(&by_pubkey.pubkey().id())
+        );
+        // The pubkey-referenced user is registered into the key list.
+        assert_eq!(registry.pubkeys().len(), 2);
+    }
 }

@@ -542,4 +542,252 @@ mod tests {
         assert_eq!(update.job, Some("echo updated".to_string()));
         assert_eq!(update.origin, None);
     }
+
+    use super::super::types::{JobKind, ScheduleKind};
+    use anda_db::{
+        database::{AndaDB, DBConfig},
+        storage::StorageConfig,
+    };
+    use anda_engine::engine::{EngineBuilder, EngineRef};
+    use object_store::memory::InMemory;
+
+    async fn test_cron_runtime() -> Arc<CronRuntime> {
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "cron_tools_test_db".to_string(),
+                description: "cron tools test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        Arc::new(
+            CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+                .await
+                .unwrap(),
+        )
+    }
+
+    fn create_args(name: &str) -> CreateCronJobArgs {
+        CreateCronJobArgs {
+            job_kind: JobKind::Shell,
+            job: "echo hello".to_string(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "60".to_string(),
+            name: Some(name.to_string()),
+            tz: None,
+        }
+    }
+
+    fn result_of(output: ToolOutput<Response>) -> Value {
+        match output.output {
+            Response::Ok { result, .. } => result,
+            other => panic!("expected ok response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_update_and_manage_cron_jobs_through_tools() {
+        let cron = test_cron_runtime().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        // Create a job; the origin is derived from the calling context.
+        let created = result_of(
+            CreateCronTool::new(cron.clone())
+                .call(ctx.clone(), create_args("daily"), Vec::new())
+                .await
+                .unwrap(),
+        );
+        let job_id = created["_id"].as_u64().expect("job id");
+        assert_eq!(created["name"], "daily");
+        assert_eq!(created["schedule_kind"], "every");
+
+        // Update the schedule and replace the origin with the current caller.
+        let update_args: UpdateCronJobArgs = serde_json::from_value(json!({
+            "id": job_id,
+            "schedule_kind": "every",
+            "schedule": "5m",
+            "origin": true,
+        }))
+        .unwrap();
+        let updated = result_of(
+            UpdateCronJobTool::new(cron.clone())
+                .call(ctx.clone(), update_args, Vec::new())
+                .await
+                .unwrap(),
+        );
+        assert_eq!(updated["schedule"], "5m");
+
+        // Update without origin replacement keeps the previous origin.
+        let update_args: UpdateCronJobArgs = serde_json::from_value(json!({
+            "id": job_id,
+            "name": "renamed",
+        }))
+        .unwrap();
+        let updated = result_of(
+            UpdateCronJobTool::new(cron.clone())
+                .call(ctx.clone(), update_args, Vec::new())
+                .await
+                .unwrap(),
+        );
+        assert_eq!(updated["name"], "renamed");
+
+        let manage = ManageCronJobTool::new(cron.clone());
+        let got = result_of(
+            manage
+                .call(
+                    ctx.clone(),
+                    ManageCronJobArgs {
+                        action: CronJobAction::Get,
+                        id: job_id,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(got["action"], "get");
+        assert_eq!(got["job"]["_id"], job_id);
+
+        let paused = result_of(
+            manage
+                .call(
+                    ctx.clone(),
+                    ManageCronJobArgs {
+                        action: CronJobAction::Pause,
+                        id: job_id,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(paused["action"], "pause");
+
+        let resumed = result_of(
+            manage
+                .call(
+                    ctx.clone(),
+                    ManageCronJobArgs {
+                        action: CronJobAction::Resume,
+                        id: job_id,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(resumed["action"], "resume");
+
+        let removed = result_of(
+            manage
+                .call(
+                    ctx.clone(),
+                    ManageCronJobArgs {
+                        action: CronJobAction::Remove,
+                        id: job_id,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(removed["action"], "remove");
+        assert_eq!(removed["id"], job_id);
+
+        // The removed job is gone.
+        assert!(
+            manage
+                .call(
+                    ctx,
+                    ManageCronJobArgs {
+                        action: CronJobAction::Get,
+                        id: job_id,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tools_paginate_jobs_and_runs() {
+        let cron = test_cron_runtime().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        for name in ["a", "b", "c"] {
+            CreateCronTool::new(cron.clone())
+                .call(ctx.clone(), create_args(name), Vec::new())
+                .await
+                .unwrap();
+        }
+
+        let listed = ListCronJobsTool::new(cron.clone())
+            .call(
+                ctx.clone(),
+                ListCronArgs {
+                    job_id: None,
+                    cursor: None,
+                    limit: Some(2),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        match listed.output {
+            Response::Ok {
+                result,
+                next_cursor,
+            } => {
+                assert_eq!(result.as_array().map(Vec::len), Some(2));
+                assert!(next_cursor.is_some());
+            }
+            other => panic!("expected ok response, got {other:?}"),
+        }
+
+        let runs = ListCronRunsTool::new(cron)
+            .call(ctx, ListCronArgs::default(), Vec::new())
+            .await
+            .unwrap();
+        match runs.output {
+            Response::Ok { result, .. } => {
+                assert_eq!(result.as_array().map(Vec::len), Some(0));
+            }
+            other => panic!("expected ok response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cron_tool_metadata_exposes_names_and_strict_schemas() {
+        let cron = test_cron_runtime().await;
+        assert_eq!(CreateCronTool::new(cron.clone()).name(), "create_cron_job");
+        assert_eq!(
+            UpdateCronJobTool::new(cron.clone()).name(),
+            "update_cron_job"
+        );
+        assert_eq!(ManageCronJobTool::new(cron.clone()).name(), "manage_cron_job");
+        assert_eq!(ListCronJobsTool::new(cron.clone()).name(), "list_cron_jobs");
+        assert_eq!(ListCronRunsTool::new(cron.clone()).name(), "list_cron_runs");
+
+        for definition in [
+            CreateCronTool::new(cron.clone()).definition(),
+            UpdateCronJobTool::new(cron.clone()).definition(),
+            ManageCronJobTool::new(cron.clone()).definition(),
+            ListCronJobsTool::new(cron.clone()).definition(),
+            ListCronRunsTool::new(cron).definition(),
+        ] {
+            assert_eq!(definition.strict, Some(true));
+            assert!(!definition.description.is_empty());
+        }
+    }
 }

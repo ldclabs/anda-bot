@@ -107,3 +107,128 @@ impl TranscriptionProvider for LocalWhisperProvider {
         parse_whisper_response(resp).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Router, routing};
+
+    fn whisper_config(url: &str) -> config::LocalWhisperConfig {
+        config::LocalWhisperConfig {
+            url: url.to_string(),
+            bearer_token: None,
+            max_audio_bytes: 1024,
+            timeout_secs: 5,
+        }
+    }
+
+    async fn spawn_mock(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/v1/transcribe")
+    }
+
+    fn config_error(config: &config::LocalWhisperConfig) -> String {
+        LocalWhisperProvider::from_config(config, reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn from_config_rejects_empty_url() {
+        assert!(config_error(&whisper_config("  ")).contains("`url` must not be empty"));
+    }
+
+    #[test]
+    fn from_config_rejects_invalid_url() {
+        assert!(config_error(&whisper_config("not a url")).contains("invalid `url`"));
+    }
+
+    #[test]
+    fn from_config_rejects_non_http_scheme() {
+        assert!(
+            config_error(&whisper_config("ftp://localhost/transcribe"))
+                .contains("must use http or https")
+        );
+    }
+
+    #[test]
+    fn from_config_rejects_zero_limits() {
+        let mut config = whisper_config("http://localhost:8000");
+        config.max_audio_bytes = 0;
+        assert!(config_error(&config).contains("`max_audio_bytes`"));
+
+        let mut config = whisper_config("http://localhost:8000");
+        config.timeout_secs = 0;
+        assert!(config_error(&config).contains("`timeout_secs`"));
+    }
+
+    #[test]
+    fn from_config_normalizes_bearer_token() {
+        let mut config = whisper_config("http://localhost:8000");
+        config.bearer_token = Some(" secret ".to_string());
+        let provider =
+            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        assert_eq!(provider.bearer_token.as_deref(), Some("secret"));
+        assert_eq!(provider.name(), "local_whisper");
+
+        config.bearer_token = Some("   ".to_string());
+        let provider =
+            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        assert_eq!(provider.bearer_token, None);
+    }
+
+    #[tokio::test]
+    async fn transcribe_rejects_audio_over_configured_limit() {
+        let mut config = whisper_config("http://localhost:8000");
+        config.max_audio_bytes = 4;
+        let provider =
+            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+
+        let err = provider.transcribe(b"12345", "voice.mp3").await.unwrap_err();
+        assert!(err.to_string().contains("Audio file too large"));
+    }
+
+    #[tokio::test]
+    async fn transcribe_sends_bearer_token_and_parses_response() {
+        let app = Router::new().route(
+            "/v1/transcribe",
+            routing::post(|headers: http::HeaderMap| async move {
+                if headers
+                    .get(http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    != Some("Bearer secret")
+                {
+                    return (
+                        http::StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({"error": "unauthorized"})),
+                    );
+                }
+                (
+                    http::StatusCode::OK,
+                    axum::Json(serde_json::json!({"text": "local transcript"})),
+                )
+            }),
+        );
+        let url = spawn_mock(app).await;
+
+        let mut config = whisper_config(&url);
+        config.bearer_token = Some("secret".to_string());
+        let provider =
+            LocalWhisperProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        let text = provider.transcribe(b"data", "voice.ogg").await.unwrap();
+        assert_eq!(text, "local transcript");
+
+        // Without the token the mock rejects the request and the status error
+        // is surfaced to the caller.
+        let provider =
+            LocalWhisperProvider::from_config(&whisper_config(&url), reqwest::Client::new())
+                .unwrap();
+        let err = provider.transcribe(b"data", "voice.ogg").await.unwrap_err();
+        assert!(err.to_string().contains("Transcription API error (401"));
+    }
+}

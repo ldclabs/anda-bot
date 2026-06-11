@@ -228,4 +228,144 @@ mod tests {
 
         assert!(ensure_resource_access(&resource, &caller).is_err());
     }
+
+    use anda_core::ByteBufB64;
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::engine::EngineBuilder;
+    use object_store::memory::InMemory;
+
+    async fn test_resource_store() -> ResourceStore {
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "resources_test_db".to_string(),
+                description: "resources test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        ResourceStore::connect(Arc::new(db)).await.unwrap()
+    }
+
+    fn sample_resource(name: &str) -> Resource {
+        Resource {
+            name: name.to_string(),
+            tags: vec!["text".to_string()],
+            mime_type: Some("text/plain".to_string()),
+            blob: Some(ByteBufB64(format!("contents of {name}").into_bytes())),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_resources_assigns_ids_and_strips_blobs() {
+        let store = test_resource_store().await;
+        let user = Principal::anonymous();
+
+        assert!(
+            store
+                .persist_resources(&user, Vec::new())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let refs = store
+            .persist_resources(&user, vec![sample_resource("a.txt"), sample_resource("b.txt")])
+            .await
+            .unwrap();
+
+        assert_eq!(refs.len(), 2);
+        for resource_ref in &refs {
+            assert!(resource_ref._id > 0);
+            assert!(resource_ref.blob.is_none());
+        }
+
+        // Stored resources keep their blob and remain loadable by id.
+        let stored = store.get_resource(refs[0]._id).await.unwrap();
+        assert_eq!(stored.name, "a.txt");
+        assert!(stored.blob.is_some());
+    }
+
+    #[tokio::test]
+    async fn persist_resources_keeps_existing_ids() {
+        let store = test_resource_store().await;
+        let user = Principal::anonymous();
+
+        let refs = store
+            .persist_resources(&user, vec![sample_resource("a.txt")])
+            .await
+            .unwrap();
+        let id = refs[0]._id;
+
+        // Re-persisting an already-persisted ref keeps its id without inserting.
+        let again = store
+            .persist_resources(&user, refs)
+            .await
+            .unwrap();
+        assert_eq!(again[0]._id, id);
+    }
+
+    #[tokio::test]
+    async fn tool_call_enforces_id_and_ownership() {
+        let store = test_resource_store().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        let err = store
+            .call(
+                ctx.clone(),
+                ResourcesToolArgs::GetResource { _id: 0 },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("_id is required"));
+
+        // The mock context's caller is anonymous, matching the persisting user.
+        let refs = store
+            .persist_resources(&Principal::anonymous(), vec![sample_resource("mine.txt")])
+            .await
+            .unwrap();
+        let output = store
+            .call(
+                ctx.clone(),
+                ResourcesToolArgs::GetResource { _id: refs[0]._id },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        match output.output {
+            Response::Ok { result, .. } => assert_eq!(result["name"], "mine.txt"),
+            other => panic!("expected ok response, got {other:?}"),
+        }
+
+        // A resource owned by someone else is rejected.
+        let foreign = store
+            .persist_resources(
+                &Principal::management_canister(),
+                vec![sample_resource("theirs.txt")],
+            )
+            .await
+            .unwrap();
+        let err = store
+            .call(
+                ctx,
+                ResourcesToolArgs::GetResource { _id: foreign[0]._id },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("permission denied"));
+    }
 }

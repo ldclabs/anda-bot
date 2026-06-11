@@ -514,4 +514,97 @@ mod tests {
         assert_eq!(sanitize_path_segment("v0.7.8"), "v0.7.8");
         assert_eq!(sanitize_path_segment("v0/7/8"), "v0_7_8");
     }
+
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use object_store::memory::InMemory;
+
+    async fn test_updater() -> AutoUpdater {
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "auto_update_test_db".to_string(),
+                description: "auto update test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        // All HTTP requests are routed through a dead proxy so checks fail
+        // fast without touching the network.
+        let http = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .build()
+            .unwrap();
+        AutoUpdater::new(Arc::new(db), std::env::temp_dir(), http)
+    }
+
+    #[test]
+    fn downloaded_update_notice_requires_complete_state() {
+        let mut state = AutoUpdateState::default();
+        assert!(!state.downloaded_update_available());
+        assert!(state.cli_notice().is_none());
+
+        state.status = AutoUpdateStatus::Downloaded;
+        state.latest_tag = Some("v999.0.0".to_string());
+        state.downloaded_path = Some("/tmp/anda-update".to_string());
+        assert!(state.downloaded_update_available());
+        let notice = state.cli_notice().expect("update notice");
+        assert!(notice.contains("v999.0.0"));
+
+        // The same tag as the running build is not an update.
+        state.latest_tag = Some(state.current_tag.clone());
+        assert!(!state.downloaded_update_available());
+    }
+
+    #[tokio::test]
+    async fn failed_checks_persist_state_in_db() {
+        let updater = test_updater().await;
+
+        let initial = updater.state();
+        assert_eq!(initial.status, AutoUpdateStatus::Idle);
+
+        // A forced check hits the dead proxy and records the failure.
+        let failed = updater.check_now().await;
+        assert_eq!(failed.status, AutoUpdateStatus::Failed);
+        assert!(failed.error.is_some());
+        assert!(failed.last_checked_ms.is_some());
+
+        // The failure state is durable across reads.
+        let reread = updater.state();
+        assert_eq!(reread.status, AutoUpdateStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn due_checks_are_skipped_when_recently_current() {
+        let updater = test_updater().await;
+        let mut state = updater.state();
+        state.status = AutoUpdateStatus::Current;
+        state.last_checked_ms = Some(unix_ms());
+        updater.save_state(&state).await.unwrap();
+
+        // Not yet due: returns the stored state without any network call.
+        let result = updater.check_if_due().await;
+        assert_eq!(result.status, AutoUpdateStatus::Current);
+        assert!(result.error.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn install_requires_a_downloaded_update() {
+        let updater = test_updater().await;
+
+        let err = updater.install_and_restart().await.map(|_| ()).unwrap_err();
+        assert!(
+            err.to_string().contains("no downloaded update"),
+            "got: {err}"
+        );
+    }
 }

@@ -167,3 +167,123 @@ impl Widget for PackedLines<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{style::Color, text::Span};
+
+    fn rendered_row(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width)
+            .map(|x| buf[(x, y)].symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn banner_height_covers_art_plus_padding() {
+        assert_eq!(Banner::height(), BANNER_ART.len() as u16 + 1);
+    }
+
+    #[test]
+    fn banner_renders_centered_art() {
+        let area = Rect::new(0, 0, 45, 8);
+        let mut buf = Buffer::empty(area);
+
+        Banner {}.render(area, &mut buf);
+
+        let row = rendered_row(&buf, 4);
+        assert!(row.contains(r#"/_/   \_\|_| \_| |____/ /_/   \_\"#));
+    }
+
+    #[test]
+    fn banner_render_tolerates_zero_and_short_areas() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 2));
+        Banner {}.render(Rect::new(0, 0, 0, 0), &mut buf);
+        // Shorter than the art: rendering stops at the bottom edge.
+        Banner {}.render(Rect::new(0, 0, 10, 2), &mut buf);
+    }
+
+    #[test]
+    fn packed_lines_alignment_offsets_content() {
+        let area = Rect::new(0, 0, 8, 3);
+        let mut buf = Buffer::empty(area);
+
+        PackedLines::new(vec![
+            Line::from("ab"),
+            Line::from("cd"),
+            Line::from("ef"),
+        ])
+        .render(area, &mut buf);
+        assert_eq!(rendered_row(&buf, 0), "ab      ");
+
+        let mut buf = Buffer::empty(area);
+        PackedLines::new(vec![Line::from("ab")])
+            .alignment(Alignment::Center)
+            .render(area, &mut buf);
+        assert_eq!(rendered_row(&buf, 0), "   ab   ");
+
+        let mut buf = Buffer::empty(area);
+        PackedLines::new(vec![Line::from("ab")])
+            .alignment(Alignment::Right)
+            .render(area, &mut buf);
+        assert_eq!(rendered_row(&buf, 0), "      ab");
+    }
+
+    #[test]
+    fn packed_lines_truncates_wide_graphemes_at_edge() {
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+
+        PackedLines::new(vec![Line::from("中文")]).render(area, &mut buf);
+
+        // "中" takes two columns; "文" would overflow the third column and is
+        // dropped instead of being clipped mid-glyph.
+        assert_eq!(buf[(0, 0)].symbol(), "中");
+        assert_eq!(buf[(2, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn packed_lines_skips_zero_width_graphemes() {
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+
+        // A lone combining acute accent has zero display width.
+        PackedLines::new(vec![Line::from(vec![
+            Span::raw("\u{0301}"),
+            Span::raw("ok"),
+        ])])
+        .render(area, &mut buf);
+
+        assert_eq!(rendered_row(&buf, 0), "ok  ");
+    }
+
+    #[test]
+    fn packed_lines_patches_span_styles_over_base() {
+        let area = Rect::new(0, 0, 2, 1);
+        let mut buf = Buffer::empty(area);
+
+        PackedLines::new(vec![Line::from(vec![
+            Span::styled("a", Style::default().fg(Color::Red)),
+            Span::raw("b"),
+        ])])
+        .style(Style::default().fg(Color::Blue))
+        .render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].fg, Color::Red);
+        assert_eq!(buf[(1, 0)].fg, Color::Blue);
+    }
+
+    #[test]
+    fn packed_lines_stops_at_area_bounds() {
+        let area = Rect::new(0, 0, 2, 1);
+        let mut buf = Buffer::empty(area);
+
+        PackedLines::new(vec![Line::from("abcdef"), Line::from("never")])
+            .render(area, &mut buf);
+
+        assert_eq!(rendered_row(&buf, 0), "ab");
+
+        // Zero-sized areas render nothing and must not panic.
+        PackedLines::new(vec![Line::from("x")]).render(Rect::new(0, 0, 0, 0), &mut buf);
+    }
+}

@@ -442,4 +442,217 @@ mod tests {
         assert_eq!(output.usage.requests, 2);
         assert_eq!(output.chat_history.len(), 2);
     }
+
+    use anda_core::ByteBufB64;
+    use axum::{Router, extract::State, routing};
+    use base64::Engine;
+    use std::{collections::HashMap, sync::Arc};
+
+    async fn agent_gateway_handler(
+        State(state): State<Arc<HashMap<u64, Conversation>>>,
+        axum::Json(request): axum::Json<serde_json::Value>,
+    ) -> axum::Json<serde_json::Value> {
+        let method = request["method"].as_str().unwrap_or_default();
+        let rpc: anda_core::http::RPCResponse = if method == "agent_run" {
+            let output = AgentOutput {
+                conversation: Some(1),
+                ..Default::default()
+            };
+            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
+        } else {
+            let params = base64::engine::general_purpose::STANDARD
+                .decode(request["params"].as_str().unwrap_or_default())
+                .unwrap_or_default();
+            let (input,): (ToolInput<serde_json::Value>,) =
+                serde_json::from_slice(&params).unwrap();
+            let id = input.args["_id"].as_u64().unwrap_or_default();
+            let conversation = state.get(&id).expect("known conversation");
+            let response = KipResponse::Ok {
+                result: serde_json::to_value(conversation).unwrap(),
+                next_cursor: None,
+            };
+            let output: anda_core::ToolOutput<KipResponse> = anda_core::ToolOutput::new(response);
+            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
+        };
+        axum::Json(serde_json::to_value(&rpc).unwrap())
+    }
+
+    async fn spawn_agent_gateway(conversations: HashMap<u64, Conversation>) -> gateway::Client {
+        let app = Router::new()
+            .route("/engine/default", routing::post(agent_gateway_handler))
+            .with_state(Arc::new(conversations));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        gateway::Client::new(format!("http://{addr}"), "token".to_string())
+    }
+
+    fn finished_conversation(id: u64, status: ConversationStatus) -> Conversation {
+        Conversation {
+            _id: id,
+            status,
+            messages: vec![
+                serde_json::to_value(Message {
+                    role: "assistant".to_string(),
+                    content: vec![ContentPart::Text {
+                        text: format!("final answer {id}"),
+                    }],
+                    ..Default::default()
+                })
+                .unwrap(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn run_once_waits_for_completion_and_writes_output() {
+        let client = spawn_agent_gateway(HashMap::from([(
+            1,
+            finished_conversation(1, ConversationStatus::Completed),
+        )]))
+        .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let output_path = dir.path().join("nested").join("output.json");
+        run_once(
+            &client,
+            AgentRunCommand {
+                name: String::new(),
+                prompt: Some("do the thing".to_string()),
+                prompt_file: None,
+                workspace: Some(PathBuf::from("relative-ws")),
+                session_id: Some("session-1".to_string()),
+                meta: Some(r#"{"user":"alice"}"#.to_string()),
+                output_json: Some(output_path.clone()),
+                wait_timeout_secs: 5,
+                poll_interval_ms: 1,
+            },
+        )
+        .await
+        .unwrap();
+
+        let written = std::fs::read_to_string(output_path).unwrap();
+        assert!(written.contains("final answer 1"));
+    }
+
+    #[tokio::test]
+    async fn run_once_propagates_agent_failure() {
+        let client = spawn_agent_gateway(HashMap::from([(
+            1,
+            finished_conversation(1, ConversationStatus::Failed),
+        )]))
+        .await;
+
+        let err = run_once(
+            &client,
+            AgentRunCommand {
+                name: String::new(),
+                prompt: Some("do the thing".to_string()),
+                prompt_file: None,
+                workspace: None,
+                session_id: None,
+                meta: None,
+                output_json: None,
+                wait_timeout_secs: 5,
+                poll_interval_ms: 1,
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("agent failed"));
+    }
+
+    #[tokio::test]
+    async fn wait_for_agent_output_times_out_and_detects_cycles() {
+        // No conversation id: the initial output is returned untouched.
+        let client = spawn_agent_gateway(HashMap::new()).await;
+        let initial = AgentOutput {
+            content: "direct".to_string(),
+            ..Default::default()
+        };
+        let output = wait_for_agent_output(&client, initial, None, Duration::from_millis(1))
+            .await
+            .unwrap();
+        assert_eq!(output.content, "direct");
+
+        // A conversation stuck in Working trips the timeout.
+        let client = spawn_agent_gateway(HashMap::from([(
+            1,
+            finished_conversation(1, ConversationStatus::Working),
+        )]))
+        .await;
+        let initial = AgentOutput {
+            conversation: Some(1),
+            ..Default::default()
+        };
+        let err = wait_for_agent_output(
+            &client,
+            initial,
+            Some(Duration::ZERO),
+            Duration::from_millis(1),
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("did not complete"));
+
+        // A self-referencing child chain is detected as a cycle.
+        let mut looping = finished_conversation(1, ConversationStatus::Working);
+        looping.child = Some(1);
+        let client = spawn_agent_gateway(HashMap::from([(1, looping)])).await;
+        let initial = AgentOutput {
+            conversation: Some(1),
+            ..Default::default()
+        };
+        let err = wait_for_agent_output(&client, initial, None, Duration::from_millis(1))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("cycle"));
+    }
+
+    #[tokio::test]
+    async fn read_prompt_validates_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt_path = dir.path().join("prompt.txt");
+        tokio::fs::write(&prompt_path, "from file").await.unwrap();
+
+        assert_eq!(read_prompt(Some("inline"), None).await.unwrap(), "inline");
+        assert_eq!(
+            read_prompt(None, Some(&prompt_path)).await.unwrap(),
+            "from file"
+        );
+        assert!(
+            read_prompt(Some("inline"), Some(&prompt_path))
+                .await
+                .is_err()
+        );
+        assert!(read_prompt(None, None).await.is_err());
+    }
+
+    #[test]
+    fn meta_and_workspace_helpers_validate_input() {
+        assert!(parse_meta(None).unwrap().extra.is_empty());
+        assert_eq!(
+            parse_meta(Some(r#"{"user":"alice"}"#.to_string()))
+                .unwrap()
+                .user
+                .as_deref(),
+            Some("alice")
+        );
+        assert!(parse_meta(Some("not json".to_string())).is_err());
+
+        assert_eq!(wait_timeout(0), None);
+        assert_eq!(wait_timeout(5), Some(Duration::from_secs(5)));
+
+        let absolute = absolute_workspace(Path::new("/tmp/abs")).unwrap();
+        assert_eq!(absolute, PathBuf::from("/tmp/abs"));
+        let relative = absolute_workspace(Path::new("rel")).unwrap();
+        assert!(relative.is_absolute());
+        assert!(relative.ends_with("rel"));
+    }
 }

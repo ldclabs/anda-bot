@@ -130,4 +130,36 @@ mod tests {
                 .is_file()
         );
     }
+
+    #[test]
+    fn daily_json_writer_appends_json_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = DailyJsonWriter::new(dir.path().to_path_buf(), "anda-test").unwrap();
+
+        let key = log::kv::Key::from_str("msg");
+        let value = log::kv::Value::from("daemon started");
+        let mut entry = BTreeMap::new();
+        entry.insert(key, value);
+        writer.write_log(&entry).unwrap();
+
+        let date = Local::now().date_naive();
+        let log_path = dir.path().join(daily_log_file_name("anda-test", date));
+        let content = std::fs::read_to_string(log_path).unwrap();
+        assert_eq!(content, "{\"msg\":\"daemon started\"}\n");
+    }
+
+    #[test]
+    fn init_daily_json_logger_installs_global_writer() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // The global logger can only be installed once per process; later
+        // tests in this binary must tolerate it already being set.
+        init_daily_json_logger("info", dir.path().to_path_buf(), "anda-test").unwrap();
+        log::info!(target: "logger-test", "hello from test");
+        log::logger().flush();
+
+        let date = Local::now().date_naive();
+        let log_path = dir.path().join(daily_log_file_name("anda-test", date));
+        assert!(log_path.is_file());
+    }
 }

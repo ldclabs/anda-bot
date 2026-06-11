@@ -229,4 +229,180 @@ mod tests {
         assert_eq!(format_duration_ms(3_600_000), "1h0m");
         assert_eq!(format_duration_ms(7_260_000), "2h1m");
     }
+
+    use anda_core::{ByteBufB64, ToolOutput, http::RPCResponse};
+    use axum::{Router, routing};
+    use serde_json::{Value, json};
+
+    fn session_summary_json(id: &str) -> Value {
+        json!({
+            "id": id,
+            "caller": "anonymous",
+            "workspace": "/tmp/ws",
+            "source": "cli:/tmp/ws",
+            "conversation_id": 7,
+            "active_at": 1_750_000_000_000u64,
+            "idle_ms": 65_000,
+            "has_goal": true,
+            "background_task_count": 1,
+        })
+    }
+
+    fn session_state_json(id: &str) -> Value {
+        json!({
+            "summary": session_summary_json(id),
+            "formation_context": {
+                "counterparty": "alice",
+                "agent": null,
+                "source": "wechat:mom",
+                "topic": "  ",
+            },
+            "goal": {
+                "objective": "finish the\nrelease notes",
+                "prev_objective": "draft the outline",
+                "prev_evaluation": {
+                    "complete": false,
+                    "reason": "missing\nsections",
+                    "follow_up": "add changelog",
+                },
+            },
+            "background_tasks": {
+                "task-1": {
+                    "agent_name": "anda",
+                    "tool_name": "shell",
+                    "progress_message": "running",
+                },
+            },
+            "submit_formation_at": 1_750_000_100_000u64,
+        })
+    }
+
+    async fn spawn_sessions_gateway(kip_response: Value) -> gateway::Client {
+        let output: ToolOutput<KipResponse> =
+            ToolOutput::new(serde_json::from_value(kip_response).unwrap());
+        let payload = ByteBufB64(serde_json::to_vec(&output).unwrap());
+        let rpc: RPCResponse = Ok(payload);
+        let body = serde_json::to_value(&rpc).unwrap();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        gateway::Client::new(format!("http://{addr}"), "token".to_string())
+    }
+
+    #[tokio::test]
+    async fn run_lists_sessions_in_text_and_json() {
+        let client = spawn_sessions_gateway(json!({
+            "result": [session_summary_json("session-1")],
+        }))
+        .await;
+
+        run(
+            &client,
+            SessionCommand {
+                json: false,
+                command: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        run(
+            &client,
+            SessionCommand {
+                json: true,
+                command: Some(SessionsSubcommand::List),
+            },
+        )
+        .await
+        .unwrap();
+
+        // An empty session list prints the placeholder message.
+        let client = spawn_sessions_gateway(json!({"result": []})).await;
+        run(
+            &client,
+            SessionCommand {
+                json: false,
+                command: Some(SessionsSubcommand::List),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_gets_session_state_in_text_and_json() {
+        let client = spawn_sessions_gateway(json!({
+            "result": session_state_json("session-1"),
+        }))
+        .await;
+
+        for json_output in [false, true] {
+            run(
+                &client,
+                SessionCommand {
+                    json: json_output,
+                    command: Some(SessionsSubcommand::Get {
+                        session_id: "session-1".to_string(),
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // Minimal session state exercises the "none" print branches.
+        let client = spawn_sessions_gateway(json!({
+            "result": {
+                "summary": session_summary_json("session-2"),
+                "formation_context": null,
+                "goal": null,
+                "background_tasks": {},
+                "submit_formation_at": 0,
+            },
+        }))
+        .await;
+        run(
+            &client,
+            SessionCommand {
+                json: false,
+                command: Some(SessionsSubcommand::Get {
+                    session_id: "session-2".to_string(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_surfaces_kip_error_responses() {
+        let client = spawn_sessions_gateway(json!({
+            "error": {
+                "code": "KIP_2001",
+                "message": "sessions unavailable",
+            },
+        }))
+        .await;
+
+        let err = run(
+            &client,
+            SessionCommand {
+                json: false,
+                command: Some(SessionsSubcommand::List),
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("sessions API returned an error"));
+    }
 }

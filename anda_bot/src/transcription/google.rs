@@ -104,3 +104,52 @@ impl TranscriptionProvider for GoogleSttProvider {
         Ok(text)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_config_rejects_empty_api_key() {
+        let config = config::GoogleSttConfig {
+            api_key: "\t".to_string(),
+            language_code: "en-US".to_string(),
+        };
+
+        let err = GoogleSttProvider::from_config(&config, reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing Google STT API key"));
+    }
+
+    #[test]
+    fn from_config_trims_api_key_and_copies_language() {
+        let config = config::GoogleSttConfig {
+            api_key: " key-1 ".to_string(),
+            language_code: "zh-CN".to_string(),
+        };
+
+        let provider = GoogleSttProvider::from_config(&config, reqwest::Client::new()).unwrap();
+        assert_eq!(provider.api_key, "key-1");
+        assert_eq!(provider.language_code, "zh-CN");
+        assert_eq!(provider.name(), "google");
+        assert_eq!(
+            provider.supported_audio_formats(),
+            &["webm", "ogg", "opus", "mp3", "wav", "flac"]
+        );
+    }
+
+    #[tokio::test]
+    async fn transcribe_rejects_extensions_google_does_not_support() {
+        let config = config::GoogleSttConfig {
+            api_key: "key-1".to_string(),
+            language_code: "en-US".to_string(),
+        };
+        let provider = GoogleSttProvider::from_config(&config, reqwest::Client::new()).unwrap();
+
+        // `.m4a` passes the generic audio validation but is not accepted by
+        // Google STT, so the error surfaces before any network request.
+        let err = provider.transcribe(b"data", "voice.m4a").await.unwrap_err();
+        assert!(err.to_string().contains("does not support '.m4a'"));
+    }
+}

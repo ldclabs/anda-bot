@@ -491,4 +491,91 @@ mod tests {
         assert_eq!(windows_safe_path_component("wechat."), "wechat_");
         assert_eq!(windows_safe_path_component("  "), "channel");
     }
+
+    #[test]
+    fn legacy_percent_encoding_escapes_unsafe_and_trailing_chars() {
+        assert_eq!(
+            legacy_percent_encoded_channel_workspace_dir_name("  "),
+            "channel"
+        );
+        assert_eq!(
+            legacy_percent_encoded_channel_workspace_dir_name("tele/gram%1"),
+            "tele%2Fgram%251"
+        );
+        assert_eq!(
+            legacy_percent_encoded_channel_workspace_dir_name("wechat."),
+            "wechat%2E"
+        );
+        assert_eq!(
+            legacy_percent_encoded_channel_workspace_dir_name("con"),
+            "_con"
+        );
+    }
+
+    struct MinimalChannel;
+
+    #[async_trait]
+    impl Channel for MinimalChannel {
+        fn name(&self) -> &str {
+            "minimal"
+        }
+
+        fn username(&self) -> &str {
+            "minimal-bot"
+        }
+
+        fn id(&self) -> String {
+            "minimal:test".to_string()
+        }
+
+        async fn send(&self, _message: &SendMessage) -> Result<(), BoxError> {
+            Ok(())
+        }
+
+        async fn listen(
+            &self,
+            _cancel_token: CancellationToken,
+            _tx: tokio::sync::mpsc::Sender<ChannelMessage>,
+        ) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_trait_defaults_are_tolerant_no_ops() {
+        let channel = MinimalChannel;
+
+        channel.set_workspace(PathBuf::from("/tmp/anda-min"));
+        let result = channel.init(ChannelInitOptions::default()).await.unwrap();
+        assert!(!result.changed);
+        assert!(result.message.contains("minimal:test"));
+
+        assert!(channel.health_check().await);
+        assert!(!channel.should_retry_send("timeout"));
+        assert!(!channel.supports_draft_updates());
+        assert!(!channel.supports_multi_message_streaming());
+        assert_eq!(channel.multi_message_delay_ms(), 800);
+
+        channel.start_typing("alice").await.unwrap();
+        channel.stop_typing("alice").await.unwrap();
+        assert_eq!(
+            channel
+                .send_draft(&SendMessage::new("hi", "alice"))
+                .await
+                .unwrap(),
+            None
+        );
+        channel.update_draft("alice", "m1", "text").await.unwrap();
+        channel
+            .update_draft_progress("alice", "m1", "running")
+            .await
+            .unwrap();
+        channel.finalize_draft("alice", "m1", "done").await.unwrap();
+        channel.cancel_draft("alice", "m1").await.unwrap();
+        channel.add_reaction("c1", "m1", "👀").await.unwrap();
+        channel.remove_reaction("c1", "m1", "👀").await.unwrap();
+        channel.pin_message("c1", "m1").await.unwrap();
+        channel.unpin_message("c1", "m1").await.unwrap();
+        channel.redact_message("c1", "m1", None).await.unwrap();
+    }
 }

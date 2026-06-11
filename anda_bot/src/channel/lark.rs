@@ -2049,4 +2049,592 @@ mod tests {
         assert_eq!(message.content, "hello");
         assert!(message.external_user.unwrap_or_default());
     }
+
+    use axum::{
+        Router,
+        extract::{Path as AxumPath, State},
+        routing,
+    };
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct MockApi {
+        requests: StdMutex<Vec<(String, String, Value)>>,
+        // Routes listed here answer with an invalid-token code once, then
+        // succeed, to exercise the refresh-and-retry paths.
+        expire_once: StdMutex<Vec<String>>,
+    }
+
+    impl MockApi {
+        fn recorded(&self, path_part: &str) -> Vec<Value> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, p, _)| p.contains(path_part))
+                .map(|(_, _, body)| body.clone())
+                .collect()
+        }
+
+        fn should_expire(&self, path: &str) -> bool {
+            let mut expire = self.expire_once.lock().unwrap();
+            if let Some(position) = expire.iter().position(|entry| path.contains(entry.as_str())) {
+                expire.remove(position);
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    async fn lark_handler(
+        method: http::Method,
+        State(state): State<Arc<MockApi>>,
+        AxumPath(path): AxumPath<String>,
+        body: axum::body::Bytes,
+    ) -> axum::Json<Value> {
+        let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        state
+            .requests
+            .lock()
+            .unwrap()
+            .push((method.to_string(), path.clone(), parsed));
+
+        let response = if path == "auth/v3/tenant_access_token/internal" {
+            serde_json::json!({
+                "code": 0,
+                "tenant_access_token": "tat-1",
+                "expire": 7200,
+            })
+        } else if state.should_expire(&path) {
+            serde_json::json!({"code": LARK_INVALID_ACCESS_TOKEN_CODE, "msg": "token expired"})
+        } else if path == "bot/v3/info" {
+            serde_json::json!({"code": 0, "bot": {"open_id": "ou_bot"}})
+        } else if path.starts_with("im/v1/images/") || path.contains("/resources/") {
+            serde_json::json!({"bytes": "BINDATA"})
+        } else {
+            serde_json::json!({"code": 0, "data": {}})
+        };
+        axum::Json(response)
+    }
+
+    async fn spawn_lark_mock(state: Arc<MockApi>) -> String {
+        let app = Router::new()
+            .route("/{*path}", routing::any(lark_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    async fn mock_channel(
+        mutate: impl FnOnce(&mut config::LarkChannelSettings),
+        state: Arc<MockApi>,
+    ) -> LarkChannel {
+        let mut cfg = test_config();
+        mutate(&mut cfg);
+        let mut channel = LarkChannel::new(&cfg, Client::new());
+        channel.api_base = spawn_lark_mock(state).await;
+        channel
+    }
+
+    #[tokio::test]
+    async fn tenant_access_token_is_cached_until_expiry() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        assert_eq!(channel.get_tenant_access_token().await.unwrap(), "tat-1");
+        assert_eq!(channel.get_tenant_access_token().await.unwrap(), "tat-1");
+        assert_eq!(state.recorded("tenant_access_token").len(), 1);
+
+        channel.invalidate_token().await;
+        assert_eq!(channel.get_tenant_access_token().await.unwrap(), "tat-1");
+        assert_eq!(state.recorded("tenant_access_token").len(), 2);
+
+        assert!(channel.health_check().await);
+    }
+
+    #[tokio::test]
+    async fn refresh_bot_open_id_retries_after_expired_token() {
+        let state = Arc::new(MockApi {
+            expire_once: StdMutex::new(vec!["bot/v3/info".to_string()]),
+            ..Default::default()
+        });
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        let open_id = channel.refresh_bot_open_id().await.unwrap();
+        assert_eq!(open_id.as_deref(), Some("ou_bot"));
+        assert_eq!(channel.resolved_bot_open_id().as_deref(), Some("ou_bot"));
+        // First call hit the expired token, the retry succeeded.
+        assert_eq!(state.recorded("bot/v3/info").len(), 2);
+        assert_eq!(state.recorded("tenant_access_token").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn send_posts_interactive_cards_with_token_refresh() {
+        // The axum wildcard captures the path without the query string.
+        let state = Arc::new(MockApi {
+            expire_once: StdMutex::new(vec!["im/v1/messages".to_string()]),
+            ..Default::default()
+        });
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .send(&SendMessage {
+                content: "**hello lark**".to_string(),
+                recipient: "oc_chat123".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let sends = state.recorded("im/v1/messages");
+        assert_eq!(sends.len(), 2, "expired send is retried after refresh");
+        assert_eq!(sends[0]["receive_id"], "oc_chat123");
+        assert_eq!(sends[0]["msg_type"], "interactive");
+        assert!(
+            sends[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("**hello lark**")
+        );
+    }
+
+    #[tokio::test]
+    async fn add_reaction_posts_emoji_type() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .add_reaction("ignored", "om_1", "THUMBSUP")
+            .await
+            .unwrap();
+        let reactions = state.recorded("im/v1/messages/om_1/reactions");
+        assert_eq!(reactions.len(), 1);
+        assert_eq!(reactions[0]["reaction_type"]["emoji_type"], "THUMBSUP");
+
+        channel.try_add_ack_reaction("om_2", "OK").await;
+        assert_eq!(state.recorded("im/v1/messages/om_2/reactions").len(), 1);
+        // Blank message ids are ignored.
+        channel.try_add_ack_reaction("  ", "OK").await;
+    }
+
+    #[tokio::test]
+    async fn media_messages_download_resources_through_api() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|cfg| cfg.mention_only = false, state.clone()).await;
+        let dir = tempfile::tempdir().unwrap();
+        channel.set_workspace(dir.path().to_path_buf());
+
+        let image = channel
+            .parse_message_content("image", r#"{"image_key":"img_k1"}"#, "om_10")
+            .await
+            .expect("image content");
+        assert_eq!(image.attachments.len(), 1);
+        assert!(image.content.starts_with("[Image:"));
+
+        let file = channel
+            .parse_message_content(
+                "file",
+                r#"{"file_key":"file_k1","file_name":"notes.pdf"}"#,
+                "om_11",
+            )
+            .await
+            .expect("file content");
+        assert_eq!(file.attachments.len(), 1);
+        assert!(file.content.starts_with("[File:"));
+
+        let audio = channel
+            .parse_message_content("audio", r#"{"file_key":"audio_k1"}"#, "om_12")
+            .await
+            .expect("audio content");
+        assert_eq!(audio.attachments.len(), 1);
+        assert!(audio.content.is_empty());
+
+        // Unsupported types are skipped.
+        assert!(
+            channel
+                .parse_message_content("sticker", "{}", "om_13")
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_media_downloads_fall_back_to_placeholders() {
+        let channel = {
+            let mut cfg = test_config();
+            cfg.mention_only = false;
+            let mut channel = LarkChannel::new(&cfg, Client::new());
+            channel.api_base = "http://127.0.0.1:1".to_string();
+            channel
+        };
+
+        // Token fetch fails, so the image download fails and the parser
+        // degrades to a placeholder text message.
+        let image = channel
+            .parse_message_content("image", r#"{"image_key":"img_k1"}"#, "om_10")
+            .await
+            .expect("placeholder content");
+        assert!(image.attachments.is_empty());
+        assert!(image.content.contains("download failed"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_message_ids_are_suppressed() {
+        let channel = test_channel();
+        assert!(!channel.is_duplicate_message("om_dup").await);
+        assert!(channel.is_duplicate_message("om_dup").await);
+        assert!(!channel.is_duplicate_message("").await);
+    }
+
+    #[tokio::test]
+    async fn parse_event_payload_filters_event_types() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|cfg| cfg.mention_only = false, state).await;
+
+        let wrong_type = serde_json::json!({
+            "header": {"event_type": "im.chat.updated_v1"},
+            "event": {},
+        });
+        assert!(channel.parse_event_payload(&wrong_type).await.is_empty());
+
+        let payload = serde_json::json!({
+            "header": {"event_type": "im.message.receive_v1"},
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_testuser123"}},
+                "message": {
+                    "message_id": "om_evt1",
+                    "message_type": "text",
+                    "content": "{\"text\":\"from webhook\"}",
+                    "chat_id": "oc_chat123",
+                    "chat_type": "p2p",
+                },
+            },
+        });
+        let messages = channel.parse_event_payload(&payload).await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "from webhook");
+
+        // Bot senders are dropped.
+        let from_bot = serde_json::json!({
+            "header": {"event_type": "im.message.receive_v1"},
+            "event": {
+                "sender": {"sender_type": "app", "sender_id": {"open_id": "ou_x"}},
+                "message": {
+                    "message_id": "om_evt2",
+                    "message_type": "text",
+                    "content": "{\"text\":\"hi\"}",
+                    "chat_id": "oc_chat123",
+                    "chat_type": "p2p",
+                },
+            },
+        });
+        assert!(channel.parse_event_payload(&from_bot).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn webhook_listener_answers_challenges_and_delivers_events() {
+        let state = Arc::new(MockApi::default());
+        // Reserve a free port for the webhook server.
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let channel = Arc::new(
+            mock_channel(
+                |cfg| {
+                    cfg.mention_only = false;
+                    cfg.receive_mode = config::LarkReceiveMode::Webhook;
+                    cfg.port = Some(port);
+                },
+                state,
+            )
+            .await,
+        );
+
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let listen_channel = channel.clone();
+        let listen_cancel = cancel.clone();
+        let handle = tokio::spawn(async move { listen_channel.listen(listen_cancel, tx).await });
+
+        // Wait for the webhook server to come up.
+        let client = Client::new();
+        let url = format!("http://127.0.0.1:{port}/lark");
+        let mut ready = false;
+        for _ in 0..50 {
+            if client
+                .post(&url)
+                .json(&serde_json::json!({
+                    "challenge": "c-1",
+                    "token": "test_verification_token",
+                }))
+                .send()
+                .await
+                .is_ok()
+            {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(ready, "webhook server did not start");
+
+        // Challenge with a wrong token is rejected.
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({"challenge": "c-2", "token": "wrong"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+
+        // Event with a wrong token is rejected.
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({"token": "wrong", "event": {}}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+
+        // A valid event is parsed and delivered.
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "token": "test_verification_token",
+                "header": {"event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_testuser123"}},
+                    "message": {
+                        "message_id": "om_webhook1",
+                        "message_type": "text",
+                        "content": "{\"text\":\"via webhook\"}",
+                        "chat_id": "oc_chat123",
+                        "chat_type": "p2p",
+                    },
+                },
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+
+        let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("webhook should deliver a message")
+            .expect("channel open");
+        assert_eq!(message.content, "via webhook");
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("listener should stop")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn ws_frame_reassembly_handles_fragments() {
+        let mut cache = FragCache::new();
+
+        let single = PbFrame {
+            seq_id: 1,
+            log_id: 0,
+            service: 1,
+            method: 0,
+            headers: vec![PbHeader {
+                key: "type".to_string(),
+                value: "event".to_string(),
+            }],
+            payload: Some(b"whole".to_vec()),
+        };
+        assert_eq!(
+            reassemble_lark_ws_payload(single, &mut cache),
+            Some(b"whole".to_vec())
+        );
+
+        let frame = |seq: &str, payload: &[u8]| PbFrame {
+            seq_id: 1,
+            log_id: 0,
+            service: 1,
+            method: 0,
+            headers: vec![
+                PbHeader {
+                    key: "type".to_string(),
+                    value: "event".to_string(),
+                },
+                PbHeader {
+                    key: "message_id".to_string(),
+                    value: "m1".to_string(),
+                },
+                PbHeader {
+                    key: "sum".to_string(),
+                    value: "2".to_string(),
+                },
+                PbHeader {
+                    key: "seq".to_string(),
+                    value: seq.to_string(),
+                },
+            ],
+            payload: Some(payload.to_vec()),
+        };
+
+        assert_eq!(reassemble_lark_ws_payload(frame("0", b"he"), &mut cache), None);
+        assert_eq!(
+            reassemble_lark_ws_payload(frame("1", b"llo"), &mut cache),
+            Some(b"hello".to_vec())
+        );
+        assert!(cache.is_empty());
+
+        // Non-event frames are ignored.
+        let ping = PbFrame {
+            seq_id: 1,
+            log_id: 0,
+            service: 1,
+            method: 0,
+            headers: vec![PbHeader {
+                key: "type".to_string(),
+                value: "pong".to_string(),
+            }],
+            payload: None,
+        };
+        assert_eq!(reassemble_lark_ws_payload(ping, &mut cache), None);
+    }
+
+    #[test]
+    fn ws_helpers_parse_service_ids_and_activity() {
+        assert_eq!(
+            service_id_from_ws_url("wss://host/ws?foo=1&service_id=17"),
+            17
+        );
+        assert_eq!(service_id_from_ws_url("wss://host/ws"), 0);
+
+        assert!(should_refresh_last_recv(&WsMsg::Ping(Vec::new().into())));
+        assert!(!should_refresh_last_recv(&WsMsg::Text("x".to_string().into())));
+    }
+
+    #[test]
+    fn send_success_check_rejects_status_and_code_errors() {
+        let ok = serde_json::json!({"code": 0});
+        assert!(ensure_lark_send_success(reqwest::StatusCode::OK, &ok, "ctx").is_ok());
+
+        let err = ensure_lark_send_success(
+            reqwest::StatusCode::BAD_GATEWAY,
+            &serde_json::json!({}),
+            "ctx",
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("status=502"));
+
+        let err = ensure_lark_send_success(
+            reqwest::StatusCode::OK,
+            &serde_json::json!({"code": 230002, "msg": "bot not in chat"}),
+            "ctx",
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("code=230002"));
+    }
+
+    #[test]
+    fn outgoing_markdown_appends_resource_links() {
+        assert_eq!(outgoing_markdown_with_resources("text", &[]), "text");
+
+        let with_url = outgoing_markdown_with_resources(
+            "text",
+            &[
+                Resource {
+                    name: "pic.png".to_string(),
+                    uri: Some("https://cdn.example.com/pic.png".to_string()),
+                    ..Default::default()
+                },
+                Resource {
+                    name: "blob.bin".to_string(),
+                    ..Default::default()
+                },
+            ],
+        );
+        assert!(with_url.contains("https://cdn.example.com/pic.png"));
+        assert!(with_url.contains("blob.bin"));
+    }
+
+    #[test]
+    fn ack_locale_detection_prefers_hints_then_text() {
+        assert_eq!(map_locale_tag("ja-JP"), Some(LarkAckLocale::Ja));
+        assert_eq!(map_locale_tag("en_US"), Some(LarkAckLocale::En));
+        assert_eq!(map_locale_tag("zh-Hant-TW"), Some(LarkAckLocale::ZhTw));
+        assert_eq!(map_locale_tag("zh-CN"), Some(LarkAckLocale::ZhCn));
+        assert_eq!(map_locale_tag("fr"), None);
+
+        assert_eq!(
+            detect_locale_from_text("ありがとうございます"),
+            Some(LarkAckLocale::Ja)
+        );
+        assert_eq!(detect_locale_from_text("简体测试"), Some(LarkAckLocale::ZhCn));
+        assert_eq!(
+            detect_locale_from_text("繁體測試"),
+            Some(LarkAckLocale::ZhTw)
+        );
+        // Plain Latin text has no script signal; the caller defaults to En.
+        assert_eq!(detect_locale_from_text("plain english"), None);
+        assert_eq!(
+            detect_lark_ack_locale(None, "plain english"),
+            LarkAckLocale::En
+        );
+
+        let payload = serde_json::json!({"message": {"locale": "ja_jp"}});
+        let emoji = random_lark_ack_reaction(Some(&payload), "");
+        assert!(LARK_ACK_REACTIONS_JA.contains(&emoji));
+
+        let emoji = random_lark_ack_reaction(None, "简体中文消息");
+        assert!(LARK_ACK_REACTIONS_ZH_CN.contains(&emoji));
+    }
+
+    #[test]
+    fn post_and_list_content_extract_text_and_mentions() {
+        let post = r#"{
+            "zh_cn": {
+                "title": "Update",
+                "content": [
+                    [
+                        {"tag": "text", "text": "hello "},
+                        {"tag": "at", "user_id": "ou_bot"},
+                        {"tag": "a", "text": "link", "href": "https://example.com"}
+                    ]
+                ]
+            }
+        }"#;
+        let details = parse_post_content_details(post).expect("post content");
+        assert!(details.text.contains("Update"));
+        assert!(details.text.contains("hello"));
+        assert!(details.mentioned_open_ids.contains(&"ou_bot".to_string()));
+
+        let list = r#"{
+            "elements": [
+                {"tag": "list", "items": [
+                    {"elements": [{"tag": "text", "text": "first"}]},
+                    {"elements": [{"tag": "text", "text": "second"}]}
+                ]}
+            ]
+        }"#;
+        if let Some(rendered) = parse_list_content(list) {
+            assert!(rendered.contains("first"));
+        }
+
+        assert!(
+            mention_matches_bot_open_id(
+                &serde_json::json!({"id": {"open_id": "ou_bot"}}),
+                "ou_bot"
+            )
+        );
+        assert!(
+            !mention_matches_bot_open_id(&serde_json::json!({"id": {"open_id": "ou_x"}}), "ou_bot")
+        );
+    }
 }

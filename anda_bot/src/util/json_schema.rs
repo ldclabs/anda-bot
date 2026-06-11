@@ -57,3 +57,56 @@ fn assert_openai_strict_schema(schema: &Value, path: &str) {
         assert_openai_strict_schema(items, &format!("{path}.items"));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_strict_schema_with_nested_items() {
+        assert_openai_strict_parameters(&json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["names"],
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        }));
+    }
+
+    #[test]
+    fn ignores_non_object_schemas() {
+        assert_openai_strict_parameters(&json!(true));
+    }
+
+    #[test]
+    #[should_panic(expected = "must define required")]
+    fn panics_when_required_is_missing() {
+        assert_openai_strict_parameters(&json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "a": { "type": "string" } }
+        }));
+    }
+
+    #[test]
+    #[should_panic(expected = "required must contain only strings")]
+    fn panics_when_required_holds_non_strings() {
+        assert_openai_strict_parameters(&json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": [1],
+            "properties": { "a": { "type": "string" } }
+        }));
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported schema keyword anyOf")]
+    fn panics_on_unsupported_keywords() {
+        assert_openai_strict_parameters(&json!({ "anyOf": [] }));
+    }
+}

@@ -324,4 +324,33 @@ mod tests {
             r"\\server\share\中文.txt"
         );
     }
+
+    #[test]
+    fn file_uri_round_trips_for_relative_and_absolute_paths() {
+        let absolute = file_uri_for_path(Path::new("/tmp/anda file.txt")).unwrap();
+        assert_eq!(absolute, "file:///tmp/anda%20file.txt");
+        assert_eq!(
+            path_from_file_uri(&absolute).unwrap(),
+            PathBuf::from("/tmp/anda file.txt")
+        );
+
+        // Relative paths are anchored at the current directory.
+        let relative = file_uri_for_path(Path::new("notes.txt")).unwrap();
+        assert!(relative.starts_with("file:///"));
+        assert!(relative.ends_with("/notes.txt"));
+
+        assert_eq!(
+            path_from_file_uri_or_path(" /plain/path.txt ").unwrap(),
+            PathBuf::from("/plain/path.txt")
+        );
+        assert_eq!(
+            path_from_file_uri_or_path("file:///tmp/x.txt").unwrap(),
+            PathBuf::from("/tmp/x.txt")
+        );
+
+        assert_eq!(
+            user_path_string_for_path(Path::new("/tmp/x.txt")),
+            "/tmp/x.txt"
+        );
+    }
 }

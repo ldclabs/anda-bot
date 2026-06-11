@@ -61,4 +61,24 @@ mod tests {
     fn rejects_control_heavy_binary() {
         assert!(decode_text_bytes(&[0, 0, 0, 0, 0, 0]).is_none());
     }
+
+    #[tokio::test]
+    async fn file_readers_decode_text_and_reject_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let text_path = dir.path().join("note.txt");
+        tokio::fs::write(&text_path, "hello 中文").await.unwrap();
+
+        assert_eq!(read_text_file(&text_path).await.unwrap(), "hello 中文");
+        assert_eq!(read_text_file_sync(&text_path).unwrap(), "hello 中文");
+
+        let binary_path = dir.path().join("blob.bin");
+        tokio::fs::write(&binary_path, [0u8; 16]).await.unwrap();
+
+        let err = read_text_file(&binary_path).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("not valid text"));
+        assert!(read_text_file_sync(&binary_path).is_err());
+
+        assert!(read_text_file(dir.path().join("missing.txt")).await.is_err());
+    }
 }

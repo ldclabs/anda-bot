@@ -18,3 +18,19 @@ pub(crate) fn suppress_console_window(command: &mut std::process::Command) {
 pub(crate) fn suppress_tokio_console_window(command: &mut tokio::process::Command) {
     command.creation_flags(CREATE_NO_WINDOW);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suppress_console_window_keeps_command_intact() {
+        let mut command = std::process::Command::new("echo");
+        command.arg("hello");
+
+        suppress_console_window(&mut command);
+
+        assert_eq!(command.get_program(), "echo");
+        assert_eq!(command.get_args().count(), 1);
+    }
+}

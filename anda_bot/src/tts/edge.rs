@@ -84,3 +84,46 @@ impl TtsProvider for EdgeTtsProvider {
         Ok(bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edge_config(binary_path: &str) -> config::EdgeTtsConfig {
+        config::EdgeTtsConfig {
+            binary_path: binary_path.to_string(),
+            voice: "en-US-AriaNeural".to_string(),
+        }
+    }
+
+    #[test]
+    fn new_rejects_paths_with_separators() {
+        for path in ["/tmp/edge-tts", "tools\\edge-tts", "./edge-tts"] {
+            let err = EdgeTtsProvider::new(&edge_config(path))
+                .map(|_| ())
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("without path separators"),
+                "expected separator error for {path:?}, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_rejects_unknown_binary_names() {
+        let err = EdgeTtsProvider::new(&edge_config("malicious-tts"))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("must be one of"));
+    }
+
+    #[test]
+    fn new_accepts_allowed_binaries() {
+        for path in EdgeTtsProvider::ALLOWED_BINARIES {
+            let provider = EdgeTtsProvider::new(&edge_config(path)).unwrap();
+            assert_eq!(provider.binary_path, *path);
+            assert_eq!(provider.voice, "en-US-AriaNeural");
+            assert_eq!(provider.name(), "edge");
+        }
+    }
+}

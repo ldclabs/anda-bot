@@ -682,4 +682,283 @@ mod tests {
         assert!(session.apply_conversation_data(conv));
         assert!(!session.awaiting_response);
     }
+
+    use anda_core::ByteBufB64;
+    use axum::{Router, extract::State, routing};
+    use base64::Engine;
+    use std::{collections::HashMap, sync::Arc};
+
+    struct ChatGateway {
+        conversations: HashMap<u64, Conversation>,
+        agent_output: Result<AgentOutput, ()>,
+        source_state: serde_json::Value,
+    }
+
+    async fn chat_gateway_handler(
+        State(state): State<Arc<ChatGateway>>,
+        axum::Json(request): axum::Json<serde_json::Value>,
+    ) -> axum::Json<serde_json::Value> {
+        let method = request["method"].as_str().unwrap_or_default().to_string();
+        let params = base64::engine::general_purpose::STANDARD
+            .decode(request["params"].as_str().unwrap_or_default())
+            .unwrap_or_default();
+
+        let rpc: anda_core::http::RPCResponse = if method == "agent_run" {
+            match &state.agent_output {
+                Ok(output) => Ok(ByteBufB64(serde_json::to_vec(output).unwrap())),
+                Err(()) => Err("agent unavailable".to_string()),
+            }
+        } else {
+            let (input,): (ToolInput<serde_json::Value>,) =
+                serde_json::from_slice(&params).unwrap();
+            let response = match input.args["type"].as_str() {
+                Some("GetSourceState") => KipResponse::Ok {
+                    result: state.source_state.clone(),
+                    next_cursor: None,
+                },
+                Some("GetConversation") => {
+                    let id = input.args["_id"].as_u64().unwrap_or_default();
+                    match state.conversations.get(&id) {
+                        Some(conv) => KipResponse::Ok {
+                            result: serde_json::to_value(conv).unwrap(),
+                            next_cursor: None,
+                        },
+                        None => KipResponse::Err {
+                            error: anda_kip::ErrorObject {
+                                code: "KIP_404".to_string(),
+                                message: format!("conversation {id} not found"),
+                                hint: None,
+                                data: None,
+                            },
+                            result: None,
+                        },
+                    }
+                }
+                other => panic!("unexpected tool args type: {other:?}"),
+            };
+            let output: anda_core::ToolOutput<KipResponse> = anda_core::ToolOutput::new(response);
+            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
+        };
+
+        axum::Json(serde_json::to_value(&rpc).unwrap())
+    }
+
+    async fn spawn_chat_gateway(state: ChatGateway) -> Client {
+        let app = Router::new()
+            .route("/engine/default", routing::post(chat_gateway_handler))
+            .with_state(Arc::new(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Client::new(format!("http://{addr}"), "token".to_string())
+    }
+
+    fn conversation(id: u64, status: ConversationStatus, child: Option<u64>) -> Conversation {
+        Conversation {
+            _id: id,
+            status,
+            child,
+            messages: vec![
+                serde_json::to_value(user_message(format!("question {id}"))).unwrap(),
+                serde_json::to_value(assistant_message(format!("answer {id}"))).unwrap(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn send_round_trip_applies_reply_and_polls_conversation() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::from([(
+                101,
+                conversation(101, ConversationStatus::Working, None),
+            )]),
+            agent_output: Ok(AgentOutput {
+                content: "assistant reply".to_string(),
+                conversation: Some(101),
+                ..Default::default()
+            }),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+
+        // Guards reject empty input and double sends.
+        assert!(session.start_send("   ".to_string()).is_none());
+        assert!(session.send("hello there".to_string()).await.is_none());
+
+        assert_eq!(session.conv_id, Some(101));
+        assert!(!session.sending);
+        // The fetched conversation is still Working, so the session reports
+        // thinking via the conversation status.
+        assert!(session.is_thinking());
+        assert_eq!(session.status_label(), "working…");
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.text().is_some_and(|t| t == "assistant reply"))
+        );
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.text().is_some_and(|t| t == "answer 101"))
+        );
+
+        // Polling again while active refreshes without errors.
+        assert!(session.poll(Some(101)).await);
+
+        session.reset();
+        assert!(session.conv_id.is_none());
+        assert!(session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_agent_output_records_error_message() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Ok(AgentOutput {
+                content: String::new(),
+                failed_reason: Some("model exploded".to_string()),
+                ..Default::default()
+            }),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+
+        let error = session.send("hello".to_string()).await;
+        assert_eq!(error.as_deref(), Some("model exploded"));
+        assert_eq!(session.errors, vec!["model exploded".to_string()]);
+
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Err(()),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+        let error = session.send("hello".to_string()).await;
+        assert!(error.is_some_and(|message| message.starts_with("Request failed:")));
+    }
+
+    #[tokio::test]
+    async fn new_command_clears_display_before_sending() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+        session.messages.push(user_message("old"));
+        session.conv_id = Some(7);
+
+        // A bare /new clears the transcript and does not await a reply.
+        session.send("/new".to_string()).await;
+        assert!(session.conv_id.is_none());
+        assert!(session.messages.is_empty());
+        assert!(!session.awaiting_response);
+
+        assert!(is_new_conversation_command("/new"));
+        assert!(is_new_conversation_command("/new start fresh"));
+        assert!(!is_new_conversation_command("hello"));
+    }
+
+    #[tokio::test]
+    async fn restore_source_conversation_replays_active_chains() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::from([
+                (200, conversation(200, ConversationStatus::Completed, Some(201))),
+                (201, conversation(201, ConversationStatus::Idle, None)),
+            ]),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 200}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+
+        let restored = session.restore_source_conversation().await.unwrap();
+        assert!(restored);
+        assert_eq!(session.conv_id, Some(201));
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.text().is_some_and(|t| t == "answer 200"))
+        );
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.text().is_some_and(|t| t == "answer 201"))
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_source_conversation_skips_empty_and_finished_state() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+        assert!(!session.restore_source_conversation().await.unwrap());
+
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::from([(
+                300,
+                conversation(300, ConversationStatus::Completed, None),
+            )]),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 300}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+        assert!(!session.restore_source_conversation().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn conversation_chains_stop_on_cycles() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::from([(
+                400,
+                conversation(400, ConversationStatus::Idle, Some(400)),
+            )]),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 400}),
+        })
+        .await;
+        let session = ChatSession::new(client);
+
+        let chain = session.fetch_conversation_chain(400).await.unwrap();
+        assert_eq!(chain.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn poll_skips_when_idle_or_finished() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c": 0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+
+        // No conversation id: nothing to poll.
+        assert!(!session.poll(None).await);
+
+        // A finished conversation is not re-polled.
+        session.conv_id = Some(7);
+        session.conversation = Some(Conversation {
+            _id: 7,
+            status: ConversationStatus::Completed,
+            ..Default::default()
+        });
+        assert!(!session.poll(Some(7)).await);
+    }
 }

@@ -357,6 +357,313 @@ mod tests {
     }
 
     #[test]
+    fn shell_result_prompt_reports_each_outcome() {
+        let job = CronJob {
+            _id: 5,
+            origin: None,
+            job_kind: JobKind::Shell,
+            job: "echo hi".to_string(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "60".to_string(),
+            tz: None,
+            name: Some("heartbeat".to_string()),
+            created_at: 0,
+            updated_at: 0,
+            next_run: 0,
+            last_finished_at: None,
+            last_result: None,
+            last_error: None,
+            last_conversation_id: None,
+        };
+
+        let failed = cron_shell_result_prompt(
+            &job,
+            9,
+            &CronJobResult {
+                error: Some("exit 1".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(failed.contains("Shell command failed"));
+        assert!(failed.contains("heartbeat"));
+
+        let ok = cron_shell_result_prompt(
+            &job,
+            9,
+            &CronJobResult {
+                result: Some("hi".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(ok.contains("Shell command completed"));
+
+        let silent = cron_shell_result_prompt(&job, 9, &CronJobResult::default());
+        assert!(silent.contains("without a textual result"));
+    }
+
+    #[tokio::test]
+    async fn serve_skips_ticks_without_engine_and_stops_on_cancel() {
+        use anda_db::database::DBConfig;
+        use anda_db::storage::StorageConfig;
+        use anda_engine::engine::EngineRef;
+        use object_store::memory::InMemory;
+
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "cron_serve_test_db".to_string(),
+                description: "cron serve test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        let runtime = CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+            .await
+            .unwrap();
+
+        let cancel = CancellationToken::new();
+        let handle = runtime.serve(cancel.clone()).await.unwrap();
+
+        // The first tick fires immediately and is skipped because the engine
+        // reference is unbound; cancellation then stops the scheduler.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("scheduler should stop")
+            .unwrap()
+            .unwrap();
+    }
+
+    use anda_core::{
+        Agent, AgentOutput, BoxError as CoreBoxError, FunctionDefinition, Json, Resource, Tool,
+        ToolOutput,
+    };
+    use anda_engine::{
+        context::{AgentCtx, BaseCtx},
+        engine::AgentInfo,
+        management::{BaseManagement, Visibility},
+    };
+    use std::collections::BTreeSet;
+
+    struct EchoAgent;
+
+    impl Agent<AgentCtx> for EchoAgent {
+        fn name(&self) -> String {
+            "echo_agent".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Echoes the prompt".to_string()
+        }
+
+        async fn run(
+            &self,
+            _ctx: AgentCtx,
+            prompt: String,
+            _resources: Vec<Resource>,
+        ) -> Result<AgentOutput, CoreBoxError> {
+            Ok(AgentOutput {
+                content: format!("echo:{prompt}"),
+                conversation: Some(77),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct FakeShellTool;
+
+    impl Tool<BaseCtx> for FakeShellTool {
+        type Args = Json;
+        type Output = Json;
+
+        fn name(&self) -> String {
+            ShellTool::NAME.to_string()
+        }
+
+        fn description(&self) -> String {
+            "Echoes shell args".to_string()
+        }
+
+        fn definition(&self) -> FunctionDefinition {
+            FunctionDefinition {
+                name: self.name(),
+                description: self.description(),
+                parameters: json!({"type": "object"}),
+                strict: Some(false),
+            }
+        }
+
+        async fn call(
+            &self,
+            _ctx: BaseCtx,
+            args: Self::Args,
+            _resources: Vec<Resource>,
+        ) -> Result<ToolOutput<Self::Output>, CoreBoxError> {
+            Ok(ToolOutput {
+                output: json!({"ran": args["command"]}),
+                ..Default::default()
+            })
+        }
+    }
+
+    async fn test_engine() -> Arc<Engine> {
+        Arc::new(
+            Engine::builder()
+                .with_info(AgentInfo {
+                    handle: "cron_test".to_string(),
+                    name: "Cron Test Engine".to_string(),
+                    description: "Test engine".to_string(),
+                    endpoint: "https://example.com/engine".to_string(),
+                    ..Default::default()
+                })
+                .with_management(Arc::new(BaseManagement {
+                    controller: Principal::management_canister(),
+                    managers: BTreeSet::new(),
+                    visibility: Visibility::Public,
+                }))
+                .register_tool(Arc::new(FakeShellTool))
+                .unwrap()
+                .register_agent(Arc::new(EchoAgent), None)
+                .unwrap()
+                .export_tools(vec![ShellTool::NAME.to_string()])
+                .build("echo_agent".to_string())
+                .await
+                .unwrap(),
+        )
+    }
+
+    async fn test_runtime() -> CronRuntime {
+        use anda_db::{database::DBConfig, storage::StorageConfig};
+        use anda_engine::engine::EngineRef;
+        use object_store::memory::InMemory;
+
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "cron_engine_test_db".to_string(),
+                description: "cron engine test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn process_due_job_runs_shell_and_agent_jobs() {
+        let engine = test_engine().await;
+        let runtime = test_runtime().await;
+
+        // Nothing is due yet: the tick is a no-op.
+        assert_eq!(
+            runtime
+                .clone()
+                .process_due_jobs_once(engine.clone())
+                .await
+                .unwrap(),
+            0
+        );
+
+        let shell_job = runtime
+            .store
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Shell,
+                    job: "echo hi".to_string(),
+                    schedule_kind: ScheduleKind::Every,
+                    schedule: "60".to_string(),
+                    name: Some("shell-job".to_string()),
+                    tz: None,
+                },
+                Some(CronJobOrigin {
+                    source: Some("cli:/tmp/ws".to_string()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let run = runtime
+            .store
+            .job_start(shell_job._id, unix_ms())
+            .await
+            .unwrap();
+        runtime
+            .process_due_job(engine.clone(), shell_job.clone(), run)
+            .await;
+
+        let finished = runtime.store.get_job(shell_job._id).await.unwrap();
+        assert!(finished.last_finished_at.is_some());
+        assert!(
+            finished
+                .last_result
+                .as_deref()
+                .is_some_and(|result| result.contains("echo hi")),
+            "got: {:?}",
+            finished.last_result
+        );
+        assert!(finished.last_error.is_none());
+        // The shell result notification ran through the agent and recorded
+        // the conversation id it returned.
+        assert_eq!(finished.last_conversation_id, Some(77));
+
+        let agent_job = runtime
+            .store
+            .insert_job(
+                CreateCronJobArgs {
+                    job_kind: JobKind::Agent,
+                    job: "summarize the day".to_string(),
+                    schedule_kind: ScheduleKind::Every,
+                    schedule: "60".to_string(),
+                    name: Some("agent-job".to_string()),
+                    tz: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let run = runtime
+            .store
+            .job_start(agent_job._id, unix_ms())
+            .await
+            .unwrap();
+        runtime
+            .process_due_job(engine, agent_job.clone(), run)
+            .await;
+
+        let finished = runtime.store.get_job(agent_job._id).await.unwrap();
+        assert!(
+            finished
+                .last_result
+                .as_deref()
+                .is_some_and(|result| result.contains("echo:")),
+            "got: {:?}",
+            finished.last_result
+        );
+        assert_eq!(finished.last_conversation_id, Some(77));
+    }
+
+    #[test]
     fn running_job_guard_runs_on_panic_unwind() {
         let running_jobs = running_jobs_with(1, 10, 0);
         let guard_jobs = running_jobs.clone();

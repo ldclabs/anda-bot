@@ -510,4 +510,103 @@ mod tests {
         assert_eq!(evaluation.reason, "done");
         assert!(evaluation.follow_up.is_empty());
     }
+
+    use anda_engine::engine::EngineBuilder;
+
+    #[tokio::test]
+    async fn goal_tool_call_starts_and_updates_goals() {
+        let tool = GoalTool::new();
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        let err = tool
+            .call(
+                ctx.clone(),
+                GoalToolArgs {
+                    objective: "  ".to_string(),
+                    reason: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("objective cannot be empty"));
+
+        // Without session state the tool refuses to activate.
+        let err = tool
+            .call(
+                ctx.clone(),
+                GoalToolArgs {
+                    objective: "ship the feature".to_string(),
+                    reason: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("requires an active AndaBot session"));
+
+        ctx.set_state(GoalToolState::new(
+            Arc::new(RwLock::new(None)),
+            Arc::new(AtomicU64::new(0)),
+        ));
+
+        let output = tool
+            .call(
+                ctx.clone(),
+                GoalToolArgs {
+                    objective: " ship the feature ".to_string(),
+                    reason: Some("  long running  ".to_string()),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        match output.output {
+            Response::Ok { result, .. } => {
+                assert_eq!(result["status"], "started");
+                assert_eq!(result["goal"]["objective"], "ship the feature");
+                assert_eq!(result["reason"], "long running");
+            }
+            other => panic!("expected ok response, got {other:?}"),
+        }
+
+        let output = tool
+            .call(
+                ctx,
+                GoalToolArgs {
+                    objective: "ship and verify the feature".to_string(),
+                    reason: Some("   ".to_string()),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        match output.output {
+            Response::Ok { result, .. } => {
+                assert_eq!(result["status"], "updated");
+                assert_eq!(result["goal"]["prev_objective"], "ship the feature");
+                assert!(result["reason"].is_null());
+            }
+            other => panic!("expected ok response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluation_prompt_includes_previous_objective_and_evaluation() {
+        let mut state = GoalState::new("v2 objective".to_string());
+        state.prev_objective = Some("v1 objective".to_string());
+        state.prev_evaluation = Some(GoalEvaluation {
+            complete: false,
+            reason: "missing tests".to_string(),
+            follow_up: "add tests".to_string(),
+        });
+
+        let prompt = state.evaluation_prompt(&[]).expect("prompt should render");
+        assert!(prompt.contains("Previous objective:"));
+        assert!(prompt.contains("v1 objective"));
+        assert!(prompt.contains("Previous evaluation:"));
+        assert!(prompt.contains("missing tests"));
+    }
 }

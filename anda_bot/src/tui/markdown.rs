@@ -611,4 +611,203 @@ mod tests {
         );
         assert_eq!(lines[1].spans[0].style.fg, Some(theme::BAMBOO_DIM));
     }
+
+    #[test]
+    fn blockquotes_and_lists_use_dim_and_leaf_styles() {
+        let lines = render("> quoted wisdom\n\n- first\n- second");
+
+        assert_eq!(line_text(&lines[0]), "> quoted wisdom");
+        assert!(
+            lines[0].spans[0]
+                .style
+                .add_modifier
+                .contains(Modifier::ITALIC)
+        );
+        assert_eq!(lines[0].spans[0].style.fg, Some(theme::BAMBOO_DIM));
+
+        let list_line = lines
+            .iter()
+            .find(|line| line_text(line) == "- first")
+            .expect("list line");
+        assert_eq!(list_line.spans[0].style.fg, Some(theme::BAMBOO_LIGHT));
+    }
+
+    #[test]
+    fn code_blocks_and_thematic_breaks_are_styled() {
+        let lines = render("```rust\nlet x = 1;\n```\n\n---");
+
+        let code_line = lines
+            .iter()
+            .find(|line| line_text(line) == "let x = 1;")
+            .expect("code body line");
+        assert_eq!(code_line.spans[0].style.fg, Some(theme::ACCENT_TEAL));
+        assert_eq!(code_line.spans[0].style.bg, Some(theme::FOOTER_BG));
+
+        let break_line = lines
+            .iter()
+            .find(|line| line_text(line) == "---")
+            .expect("thematic break line");
+        assert_eq!(break_line.spans[0].style.fg, Some(theme::BAMBOO_DIM));
+    }
+
+    #[test]
+    fn strikethrough_links_and_images_are_styled() {
+        let lines =
+            render("~~gone~~ [docs](https://example.com) ![logo](https://example.com/x.png)");
+
+        let strike = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains("~~gone~~"))
+            .expect("strikethrough span");
+        assert!(strike.style.add_modifier.contains(Modifier::CROSSED_OUT));
+
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains("[docs]"))
+            .expect("link span");
+        assert!(link.style.add_modifier.contains(Modifier::UNDERLINED));
+
+        let image = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains("![logo]"))
+            .expect("image span");
+        assert!(image.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn link_references_and_definitions_are_styled() {
+        let lines = render("See [docs][ref].\n\n[ref]: https://example.com");
+
+        let link = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains("[docs]"))
+            .expect("link reference span");
+        assert!(link.style.add_modifier.contains(Modifier::UNDERLINED));
+
+        let definition = lines
+            .iter()
+            .find(|line| line_text(line).starts_with("[ref]:"))
+            .expect("definition line");
+        assert_eq!(definition.spans[0].style.fg, Some(theme::BAMBOO_DIM));
+    }
+
+    #[test]
+    fn emphasis_is_italic() {
+        let lines = render("an *emphasized* word");
+        let emphasis = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.contains("*emphasized*"))
+            .expect("emphasis span");
+        assert!(emphasis.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn heading_styles_vary_by_depth() {
+        assert_eq!(heading_style(1).fg, Some(theme::PANDA_WHITE));
+        assert_eq!(heading_style(2).fg, Some(theme::BAMBOO_LIGHT));
+        assert_eq!(heading_style(3).fg, Some(theme::BAMBOO_GREEN));
+        assert_eq!(heading_style(4).fg, Some(theme::LEAF_MINT));
+
+        let lines = render("## Second\n\n#### Fourth");
+        assert_eq!(lines[0].spans[0].style.fg, Some(theme::BAMBOO_LIGHT));
+        assert_eq!(lines[2].spans[0].style.fg, Some(theme::LEAF_MINT));
+    }
+
+    #[test]
+    fn center_aligned_tables_pad_cells_evenly() {
+        // The centered separator forces a minimum column width of 5.
+        let lines = render("| Name |\n| :---: |\n| ab |");
+
+        assert_eq!(line_text(&lines[0]), "| Name  |");
+        assert_eq!(line_text(&lines[1]), "| :---: |");
+        assert_eq!(line_text(&lines[2]), "|  ab   |");
+    }
+
+    #[test]
+    fn table_cells_support_escaped_pipes() {
+        let row = split_table_row(r#"| a \| b | c |"#).expect("row should parse");
+        assert_eq!(row, vec![r#"a \| b"#.to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn align_and_separator_cells_cover_all_alignments() {
+        assert_eq!(align_cell("ab", 4, AlignKind::Left), "ab  ");
+        assert_eq!(align_cell("ab", 4, AlignKind::Right), "  ab");
+        assert_eq!(align_cell("ab", 4, AlignKind::Center), " ab ");
+        assert_eq!(align_cell("ab", 4, AlignKind::None), "ab  ");
+
+        assert_eq!(separator_cell(4, AlignKind::Left), ":---");
+        assert_eq!(separator_cell(4, AlignKind::Right), "---:");
+        assert_eq!(separator_cell(5, AlignKind::Center), ":---:");
+        assert_eq!(separator_cell(3, AlignKind::None), "---");
+
+        assert_eq!(separator_min_width(AlignKind::Center), 5);
+        assert_eq!(separator_min_width(AlignKind::Left), 4);
+        assert_eq!(separator_min_width(AlignKind::Right), 4);
+        assert_eq!(separator_min_width(AlignKind::None), 3);
+    }
+
+    #[test]
+    fn plain_text_lines_split_on_newlines() {
+        let lines = plain_text_lines("first\nsecond");
+        assert_eq!(line_text(&lines[0]), "first");
+        assert_eq!(line_text(&lines[1]), "second");
+    }
+
+    #[test]
+    fn push_span_merges_adjacent_spans_with_same_style() {
+        let mut line = Line::from(Vec::<Span<'static>>::new());
+        push_span(&mut line, "", Style::default());
+        push_span(&mut line, "abc", Style::default());
+        push_span(&mut line, "def", Style::default());
+        push_span(&mut line, "g", Style::default().fg(theme::ERROR_RED));
+
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content.as_ref(), "abcdef");
+        assert_eq!(line.spans[1].content.as_ref(), "g");
+    }
+
+    #[test]
+    fn push_rendered_lines_appends_after_open_line() {
+        let mut builder = LineBuilder::new();
+        builder.push_rendered_lines(Vec::new());
+        builder.push_text("prefix", 0, &[]);
+        builder.push_rendered_lines(vec![
+            line_from_text("table-1", Style::default()),
+            line_from_text("table-2", Style::default()),
+        ]);
+        let lines = builder.finish();
+
+        assert_eq!(line_text(&lines[0]), "prefix");
+        assert_eq!(line_text(&lines[1]), "table-1");
+        assert_eq!(line_text(&lines[2]), "table-2");
+    }
+
+    #[test]
+    fn table_ast_rows_recovers_cells_from_tree() {
+        let tree = ::markdown::to_mdast("| h1 | h2 |\n| - | - |\n| a | b |", &ParseOptions::gfm())
+            .expect("table should parse");
+        let table = match &tree {
+            Node::Root(root) => root.children.iter().find_map(|node| match node {
+                Node::Table(table) => Some(table),
+                _ => None,
+            }),
+            _ => None,
+        }
+        .expect("tree should contain a table");
+
+        let rows = table_ast_rows(table);
+        assert_eq!(
+            rows,
+            vec![
+                vec!["h1".to_string(), "h2".to_string()],
+                vec!["a".to_string(), "b".to_string()],
+            ]
+        );
+    }
 }

@@ -263,4 +263,36 @@ mod tests {
             PromptCommand::Plain { .. }
         ));
     }
+
+    #[test]
+    fn prompt_command_parses_remaining_aliases() {
+        assert!(matches!(
+            PromptCommand::from("/ping".to_string()),
+            PromptCommand::Ping
+        ));
+        assert!(matches!(
+            PromptCommand::from("/side check the weather".to_string()),
+            PromptCommand::Side { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/steer focus on tests".to_string()),
+            PromptCommand::Steer { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/stop".to_string()),
+            PromptCommand::Stop { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/cancel everything".to_string()),
+            PromptCommand::Stop { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/clear".to_string()),
+            PromptCommand::New { prompt: None }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/unknown command".to_string()),
+            PromptCommand::Plain { .. }
+        ));
+    }
 }

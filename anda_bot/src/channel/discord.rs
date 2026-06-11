@@ -1350,4 +1350,468 @@ mod tests {
 
         assert!(channel.typing_handles.lock().await.is_empty());
     }
+
+    use anda_core::ByteBufB64;
+    use axum::{
+        Router,
+        extract::{Path as AxumPath, State},
+        routing,
+    };
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct MockApi {
+        requests: StdMutex<Vec<(String, String, Value)>>,
+    }
+
+    impl MockApi {
+        fn record(&self, method: &str, path: String, body: Value) {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((method.to_string(), path, body));
+        }
+
+        fn recorded(&self, method: &str, path_part: &str) -> Vec<Value> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, p, _)| m == method && p.contains(path_part))
+                .map(|(_, _, body)| body.clone())
+                .collect()
+        }
+    }
+
+    async fn record_handler(
+        method: http::Method,
+        state: Arc<MockApi>,
+        path: String,
+        body: axum::body::Bytes,
+    ) -> axum::Json<Value> {
+        let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        state.record(method.as_str(), path.clone(), parsed);
+
+        let response = if path == "users/@me" {
+            serde_json::json!({"id": "999", "username": "anda"})
+        } else if path == "gateway/bot" {
+            serde_json::json!({"url": "wss://gateway.example"})
+        } else if path.ends_with("/messages") {
+            serde_json::json!({"id": "msg_100"})
+        } else {
+            serde_json::json!({})
+        };
+        axum::Json(response)
+    }
+
+    async fn spawn_discord_mock(state: Arc<MockApi>) -> String {
+        async fn handle(
+            method: http::Method,
+            State(state): State<Arc<MockApi>>,
+            AxumPath(path): AxumPath<String>,
+            body: axum::body::Bytes,
+        ) -> axum::Json<Value> {
+            record_handler(method, state, path, body).await
+        }
+
+        let app = Router::new()
+            .route("/{*path}", routing::any(handle))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    async fn mock_channel(
+        mutate: impl FnOnce(&mut config::DiscordChannelSettings),
+        state: Arc<MockApi>,
+    ) -> DiscordChannel {
+        let mut cfg = test_config();
+        mutate(&mut cfg);
+        let mut channel = DiscordChannel::new(&cfg, Client::new());
+        channel.api_base = spawn_discord_mock(state).await;
+        channel
+    }
+
+    #[tokio::test]
+    async fn send_combines_text_uploads_and_remote_urls() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("notes.txt");
+        tokio::fs::write(&local, b"local-bytes").await.unwrap();
+
+        channel
+            .send(&SendMessage {
+                content: "see files".to_string(),
+                recipient: "chan_1".to_string(),
+                attachments: vec![
+                    Resource {
+                        name: "pic.png".to_string(),
+                        uri: Some("https://cdn.example.com/pic.png".to_string()),
+                        ..Default::default()
+                    },
+                    Resource {
+                        name: "blob.bin".to_string(),
+                        blob: Some(ByteBufB64(b"blob-bytes".to_vec())),
+                        ..Default::default()
+                    },
+                    Resource {
+                        name: "notes.txt".to_string(),
+                        uri: Some(format!("file://{}", local.display())),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // Uploads go out as one multipart message (recorded with a null body).
+        let sends = state.recorded("POST", "channels/chan_1/messages");
+        assert_eq!(sends.len(), 1);
+        assert!(sends[0].is_null());
+    }
+
+    #[tokio::test]
+    async fn send_text_only_and_placeholder_messages() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .send(&SendMessage {
+                content: "plain message".to_string(),
+                recipient: "chan_2".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let sends = state.recorded("POST", "channels/chan_2/messages");
+        assert_eq!(sends[0]["content"], "plain message");
+
+        // Thread overrides the recipient channel.
+        channel
+            .send(&SendMessage {
+                content: "threaded".to_string(),
+                recipient: "chan_2".to_string(),
+                thread: Some("thread_9".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(state.recorded("POST", "channels/thread_9/messages").len(), 1);
+
+        // Empty content and no attachments sends a placeholder space.
+        channel
+            .send(&SendMessage {
+                recipient: "chan_3".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            state.recorded("POST", "channels/chan_3/messages")[0]["content"],
+            " "
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_outgoing_resources_rejects_invalid_entries() {
+        let channel = DiscordChannel::new(&test_config(), Client::new());
+
+        let err = channel
+            .collect_outgoing_resources(&[Resource::default()])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("has no uri or blob"));
+    }
+
+    #[tokio::test]
+    async fn draft_lifecycle_uses_message_edits() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        let draft_id = channel
+            .send_draft(&SendMessage {
+                recipient: "chan_1".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .expect("draft id");
+        assert_eq!(draft_id, "msg_100");
+
+        channel
+            .update_draft("chan_1", "discord_msg_100", "thinking…")
+            .await
+            .unwrap();
+        assert_eq!(
+            state
+                .recorded("PATCH", "channels/chan_1/messages/msg_100")
+                .len(),
+            1
+        );
+
+        channel
+            .update_draft_progress("chan_1", "msg_100", "still thinking…")
+            .await
+            .unwrap();
+
+        channel
+            .finalize_draft("chan_1", "msg_100", "final answer")
+            .await
+            .unwrap();
+
+        // A long finalize deletes the draft and re-sends in chunks.
+        let long_text = "b".repeat(DISCORD_MAX_MESSAGE_LENGTH + 10);
+        channel
+            .finalize_draft("chan_1", "msg_100", &long_text)
+            .await
+            .unwrap();
+        assert_eq!(
+            state
+                .recorded("DELETE", "channels/chan_1/messages/msg_100")
+                .len(),
+            1
+        );
+
+        channel.cancel_draft("chan_1", "msg_100").await.unwrap();
+        assert_eq!(
+            state
+                .recorded("DELETE", "channels/chan_1/messages/msg_100")
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn reactions_pins_and_redactions_hit_expected_routes() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        // The axum wildcard captures the URL-decoded path, so the percent-
+        // encoded emoji arrives decoded.
+        channel
+            .add_reaction("chan_1", "msg_100", "\u{1F440}")
+            .await
+            .unwrap();
+        assert_eq!(
+            state.recorded("PUT", "reactions/\u{1F440}/@me").len(),
+            1
+        );
+
+        channel
+            .remove_reaction("chan_1", "msg_100", "\u{1F440}")
+            .await
+            .unwrap();
+        assert_eq!(
+            state.recorded("DELETE", "reactions/\u{1F440}/@me").len(),
+            1
+        );
+
+        channel.pin_message("chan_1", "msg_100").await.unwrap();
+        assert_eq!(state.recorded("PUT", "pins/msg_100").len(), 1);
+        channel.unpin_message("chan_1", "msg_100").await.unwrap();
+        assert_eq!(state.recorded("DELETE", "pins/msg_100").len(), 1);
+
+        channel
+            .redact_message("chan_1", "msg_100", None)
+            .await
+            .unwrap();
+        // Exactly one DELETE hit the bare message route (the reaction DELETE
+        // shares the prefix but has the /reactions suffix).
+        let deletes = state
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, p, _)| m == "DELETE" && p.ends_with("messages/msg_100"))
+            .count();
+        assert_eq!(deletes, 1);
+    }
+
+    #[tokio::test]
+    async fn bot_user_id_falls_back_to_api_when_token_is_opaque() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(
+            |cfg| cfg.bot_token = "!!.fake.hmac".to_string(),
+            state.clone(),
+        )
+        .await;
+
+        assert_eq!(channel.get_bot_user_id().await.as_deref(), Some("999"));
+        // Cached on the second call.
+        assert_eq!(channel.get_bot_user_id().await.as_deref(), Some("999"));
+        assert_eq!(state.recorded("GET", "users/@me").len(), 1);
+
+        let url = channel.fetch_gateway_url().await.unwrap();
+        assert_eq!(url, "wss://gateway.example");
+    }
+
+    #[tokio::test]
+    async fn health_check_reflects_api_reachability() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state).await;
+        assert!(channel.health_check().await);
+
+        let mut dead = DiscordChannel::new(&test_config(), Client::new());
+        dead.api_base = "http://127.0.0.1:1".to_string();
+        assert!(!dead.health_check().await);
+    }
+
+    #[tokio::test]
+    async fn gateway_messages_filter_by_author_guild_and_mentions() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|cfg| cfg.mention_only = true, state.clone()).await;
+
+        // Own messages are ignored.
+        let own = serde_json::json!({
+            "id": "m1", "channel_id": "c1", "content": "hi",
+            "author": {"id": "999"}, "attachments": [],
+        });
+        assert!(channel.parse_gateway_message(&own, "999").await.is_none());
+
+        // Bot authors are ignored unless listen_to_bots is set.
+        let from_bot = serde_json::json!({
+            "id": "m2", "channel_id": "c1", "content": "hi",
+            "author": {"id": "111", "bot": true}, "attachments": [],
+        });
+        assert!(channel.parse_gateway_message(&from_bot, "999").await.is_none());
+
+        // Messages from other guilds are ignored.
+        let other_guild = serde_json::json!({
+            "id": "m3", "channel_id": "c1", "guild_id": "654", "content": "<@999> hi",
+            "author": {"id": "111"}, "attachments": [],
+        });
+        assert!(
+            channel
+                .parse_gateway_message(&other_guild, "999")
+                .await
+                .is_none()
+        );
+
+        // Guild messages require a mention; the mention is stripped.
+        let no_mention = serde_json::json!({
+            "id": "m4", "channel_id": "c1", "guild_id": "987", "content": "hi",
+            "author": {"id": "111"}, "attachments": [],
+        });
+        assert!(
+            channel
+                .parse_gateway_message(&no_mention, "999")
+                .await
+                .is_none()
+        );
+
+        let mentioned = serde_json::json!({
+            "id": "m5", "channel_id": "c1", "guild_id": "987", "content": "<@999> do it",
+            "author": {"id": "111"}, "attachments": [],
+        });
+        let message = channel
+            .parse_gateway_message(&mentioned, "999")
+            .await
+            .expect("mentioned message");
+        assert_eq!(message.content, "do it");
+        assert_eq!(message.reply_target, "c1");
+        assert_eq!(message.sender, "111");
+
+        // DMs bypass mention_only.
+        let dm = serde_json::json!({
+            "id": "m6", "channel_id": "c1", "content": "direct",
+            "author": {"id": "111"}, "attachments": [],
+        });
+        let message = channel.parse_gateway_message(&dm, "999").await.unwrap();
+        assert_eq!(message.content, "direct");
+    }
+
+    #[tokio::test]
+    async fn gateway_messages_download_attachments() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|cfg| cfg.mention_only = false, state.clone()).await;
+        let dir = tempfile::tempdir().unwrap();
+        channel.set_workspace(dir.path().to_path_buf());
+
+        // Serve the attachment bytes from a tiny static server.
+        let files = Router::new().route("/img.png", routing::get(|| async { "PNGDATA" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let files_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, files).await.unwrap();
+        });
+
+        let payload = serde_json::json!({
+            "id": "m7", "channel_id": "c1", "content": "",
+            "author": {"id": "111"},
+            "attachments": [
+                {
+                    "url": format!("http://{files_addr}/img.png"),
+                    "filename": "img.png",
+                    "size": 7,
+                    "content_type": "image/png",
+                },
+                // Oversized attachments are skipped without failing the message.
+                {
+                    "url": format!("http://{files_addr}/img.png"),
+                    "filename": "huge.bin",
+                    "size": DISCORD_MAX_FILE_BYTES + 1,
+                },
+            ],
+        });
+
+        let message = channel
+            .parse_gateway_message(&payload, "999")
+            .await
+            .expect("attachment message");
+        assert_eq!(message.attachments.len(), 1);
+        assert_eq!(message.attachments[0].name, "img.png");
+        assert_eq!(message.content, "[Attachment: img.png]");
+    }
+
+    #[test]
+    fn pure_helpers_normalize_content_and_ids() {
+        assert_eq!(decode_base64_string(""), None);
+        assert_eq!(decode_base64_string("!!"), None);
+        assert_eq!(
+            decode_base64_string("MTIzNDU2").as_deref(),
+            Some("123456")
+        );
+
+        assert!(contains_bot_mention("<@!999> hi", "999"));
+        assert!(!contains_bot_mention("hi", "999"));
+        assert!(!contains_bot_mention("<@999>", ""));
+
+        assert_eq!(normalize_incoming_content("", false, "999"), None);
+        assert_eq!(
+            normalize_incoming_content("<@999>  hi", true, "999").as_deref(),
+            Some("hi")
+        );
+        assert_eq!(normalize_incoming_content("<@999>", true, "999"), None);
+
+        assert_eq!(
+            content_with_attachment_fallback(String::new(), &[]),
+            ""
+        );
+        assert_eq!(
+            with_inline_resource_urls("text", &["https://a".to_string()]),
+            "text\nhttps://a"
+        );
+        assert_eq!(with_inline_resource_urls("text", &[]), "text");
+
+        assert_eq!(raw_discord_message_id("discord_5"), "5");
+        assert_eq!(raw_discord_message_id("5"), "5");
+
+        let long = "x".repeat(DISCORD_MAX_MESSAGE_LENGTH + 5);
+        assert_eq!(
+            truncate_for_discord(&long).chars().count(),
+            DISCORD_MAX_MESSAGE_LENGTH
+        );
+        assert_eq!(truncate_for_discord("short"), "short");
+
+        assert!(DISCORD_ACK_REACTIONS.contains(&random_discord_ack_reaction()));
+        assert_eq!(encode_emoji_for_discord("custom:123"), "custom:123");
+    }
 }

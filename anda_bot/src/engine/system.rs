@@ -229,4 +229,99 @@ mod tests {
 
         assert_eq!(messages[0].name.as_deref(), Some(EXTERNAL_USER_PERSON_NAME));
     }
+
+    #[test]
+    fn external_user_name_falls_back_without_scope() {
+        assert_eq!(external_user_name("  "), EXTERNAL_USER_PERSON_NAME);
+        assert_eq!(external_user_name("alice"), "$external_user:\"alice\"");
+    }
+
+    #[test]
+    fn external_user_scope_normalizes_blank_fields() {
+        assert_eq!(
+            external_user_scope("  ", None, "  "),
+            "unknown-channel/unknown-sender"
+        );
+        assert_eq!(
+            external_user_scope("wechat", Some("   "), "mom"),
+            "wechat/mom"
+        );
+    }
+
+    #[test]
+    fn system_runtime_prompt_defaults_blank_kind_to_notice() {
+        let prompt = system_runtime_prompt("  ", "body");
+        assert!(prompt.starts_with("[$system: kind=\"notice\"]"));
+    }
+
+    #[test]
+    fn system_extra_user_context_skips_empty_and_wraps_json() {
+        assert!(system_extra_user_context(&Map::new()).is_none());
+
+        let mut ctx = Map::new();
+        ctx.insert("source".to_string(), Value::String("telegram".to_string()));
+        let message = system_extra_user_context(&ctx).expect("context message");
+
+        assert_eq!(message.role, "user");
+        assert_eq!(message.name.as_deref(), Some(SYSTEM_PERSON_NAME));
+        let text = message.text().expect("text content");
+        assert!(text.contains("request context"));
+        assert!(text.contains("telegram"));
+    }
+
+    #[test]
+    fn external_user_prompt_handles_blank_fields_and_sender_space_overlap() {
+        let prompt = external_user_prompt_with_space("  ", "  ", Some("alice"), "hi");
+        assert!(prompt.starts_with("[$external_user: channel=\"unknown\", sender=\"unknown\""));
+
+        // A space equal to the sender is dropped from the header.
+        let prompt = external_user_prompt_with_space("wechat", "alice", Some("alice"), "hi");
+        assert!(!prompt.contains("space="));
+    }
+
+    #[test]
+    fn mark_special_user_messages_skips_unrelated_messages() {
+        let mut messages = vec![
+            Message {
+                role: "assistant".to_string(),
+                content: vec![ContentPart::Text {
+                    text: system_runtime_prompt("notice", "ignored: not a user message"),
+                }],
+                ..Default::default()
+            },
+            Message {
+                role: "user".to_string(),
+                content: vec![ContentPart::Text {
+                    text: "an ordinary user message".to_string(),
+                }],
+                ..Default::default()
+            },
+            // An external prompt whose name is already scoped is reset to the
+            // bare external-user marker rather than double-scoped.
+            Message {
+                role: "user".to_string(),
+                name: Some("$external_user:\"wechat/mom\"".to_string()),
+                content: vec![ContentPart::Text {
+                    text: external_user_prompt_with_space("wechat", "mom", None, "hi"),
+                }],
+                ..Default::default()
+            },
+            // An external prompt with a plain sender name gets scoped.
+            Message {
+                role: "user".to_string(),
+                name: Some("mom".to_string()),
+                content: vec![ContentPart::Text {
+                    text: external_user_prompt_with_space("wechat", "mom", None, "hi"),
+                }],
+                ..Default::default()
+            },
+        ];
+
+        mark_special_user_messages(&mut messages);
+
+        assert!(messages[0].name.is_none());
+        assert!(messages[1].name.is_none());
+        assert_eq!(messages[2].name.as_deref(), Some(EXTERNAL_USER_PERSON_NAME));
+        assert_eq!(messages[3].name.as_deref(), Some("$external_user:\"mom\""));
+    }
 }

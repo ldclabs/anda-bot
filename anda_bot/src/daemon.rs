@@ -664,4 +664,183 @@ mod tests {
     fn current_process_is_detected_as_existing() {
         assert!(process_exists(std::process::id()));
     }
+
+    fn temp_daemon() -> (tempfile::TempDir, Daemon) {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(dir.path().to_path_buf(), Config::default());
+        (dir, daemon)
+    }
+
+    // A pid that almost certainly refers to no live process: pid_max on Linux
+    // defaults to 4 million and macOS pids stay below 100k.
+    const DEAD_PID: u32 = 4_000_000;
+
+    #[tokio::test]
+    async fn read_pid_file_handles_missing_garbage_and_valid_content() {
+        let (_dir, daemon) = temp_daemon();
+
+        assert_eq!(daemon.read_pid_file().await.unwrap(), None);
+
+        tokio::fs::write(daemon.pid_file_path(), "not a pid")
+            .await
+            .unwrap();
+        assert_eq!(daemon.read_pid_file().await.unwrap(), None);
+
+        tokio::fs::write(daemon.pid_file_path(), " 12345 \n")
+            .await
+            .unwrap();
+        assert_eq!(daemon.read_pid_file().await.unwrap(), Some(12345));
+
+        daemon.remove_pid_file_if_exists().await.unwrap();
+        assert_eq!(daemon.read_pid_file().await.unwrap(), None);
+        // Removing again is a no-op.
+        daemon.remove_pid_file_if_exists().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ensure_directories_creates_runtime_layout() {
+        let (_dir, daemon) = temp_daemon();
+
+        daemon.ensure_directories().await.unwrap();
+
+        for path in [
+            daemon.keys_dir_path(),
+            daemon.db_dir_path(),
+            daemon.skills_dir_path(),
+            daemon.sandbox_dir_path(),
+            daemon.logs_dir_path(),
+            daemon.channels_dir_path(),
+            daemon.workspace_dir_path(),
+        ] {
+            assert!(path.is_dir(), "missing directory {path:?}");
+        }
+
+        let log_path = daemon.log_file_path();
+        assert!(log_path.starts_with(daemon.logs_dir_path()));
+    }
+
+    #[tokio::test]
+    async fn ensure_config_file_round_trips_from_disk() {
+        let (_dir, daemon) = temp_daemon();
+
+        let created = daemon.ensure_config_file_exists().await.unwrap();
+        assert!(created);
+        let created_again = daemon.ensure_config_file_exists().await.unwrap();
+        assert!(!created_again);
+
+        let config = daemon.load_config_from_disk().await.unwrap();
+        assert!(!config.addr.is_empty());
+    }
+
+    #[tokio::test]
+    async fn connect_bot_db_creates_database_directory() {
+        let (_dir, daemon) = temp_daemon();
+
+        let db = daemon.connect_bot_db().await.unwrap();
+        assert!(daemon.db_dir_path().is_dir());
+        drop(db);
+    }
+
+    #[tokio::test]
+    async fn acquire_pid_file_writes_and_cleans_up_pid() {
+        let (_dir, daemon) = temp_daemon();
+        let pid_path = daemon.pid_file_path();
+
+        let guard = acquire_pid_file(pid_path.clone()).await.unwrap();
+        let content = tokio::fs::read_to_string(&pid_path).await.unwrap();
+        assert_eq!(content, std::process::id().to_string());
+
+        drop(guard);
+        assert!(!pid_path.exists());
+    }
+
+    #[tokio::test]
+    async fn acquire_pid_file_rejects_live_daemon_and_replaces_stale_pid() {
+        let (_dir, daemon) = temp_daemon();
+        let pid_path = daemon.pid_file_path();
+
+        // A live pid (this test process) blocks acquisition.
+        tokio::fs::write(&pid_path, std::process::id().to_string())
+            .await
+            .unwrap();
+        let err = acquire_pid_file(pid_path.clone())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("already running"));
+
+        // A stale pid is removed and acquisition succeeds.
+        tokio::fs::write(&pid_path, DEAD_PID.to_string())
+            .await
+            .unwrap();
+        let guard = acquire_pid_file(pid_path.clone()).await.unwrap();
+        let content = tokio::fs::read_to_string(&pid_path).await.unwrap();
+        assert_eq!(content, std::process::id().to_string());
+        drop(guard);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_background_handles_missing_stale_and_live_processes() {
+        let (_dir, daemon) = temp_daemon();
+
+        // No pid file at all.
+        assert_eq!(
+            daemon.stop_background(Duration::from_secs(1)).await.unwrap(),
+            StopState::NotRunning
+        );
+
+        // A stale pid file is cleaned up.
+        tokio::fs::write(daemon.pid_file_path(), DEAD_PID.to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            daemon.stop_background(Duration::from_secs(1)).await.unwrap(),
+            StopState::NotRunning
+        );
+        assert!(!daemon.pid_file_path().exists());
+
+        // A live helper process is terminated and reported. The helper is
+        // started through a short-lived shell so init reaps it after SIGTERM;
+        // a direct child would linger as a zombie and never "exit".
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30 >/dev/null 2>&1 & echo $!")
+            .output()
+            .unwrap();
+        let pid: u32 = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_exists(pid));
+        tokio::fs::write(daemon.pid_file_path(), pid.to_string())
+            .await
+            .unwrap();
+        assert_eq!(
+            daemon
+                .stop_background(Duration::from_secs(10))
+                .await
+                .unwrap(),
+            StopState::Stopped(pid)
+        );
+        assert!(!daemon.pid_file_path().exists());
+    }
+
+    #[tokio::test]
+    async fn wait_for_background_exit_times_out_on_live_process() {
+        let (_dir, daemon) = temp_daemon();
+
+        daemon
+            .wait_for_background_exit(DEAD_PID, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        let err = daemon
+            .wait_for_background_exit(std::process::id(), Duration::ZERO)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+    }
 }

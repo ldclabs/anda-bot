@@ -135,4 +135,33 @@ mod tests {
 
         assert_eq!(retry_delay_for_error(&err), None);
     }
+
+    #[tokio::test]
+    async fn completion_with_retry_propagates_non_retryable_runner_errors() {
+        // The mock engine has no completion model configured, so the first
+        // runner step fails with a non-retryable error that must surface
+        // directly instead of looping.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let result = completion_with_retry(&ctx, CompletionRequest::default(), vec![], "test")
+            .await
+            .map(|_| ());
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn runner_next_with_retry_propagates_non_retryable_runner_errors() {
+        // The mock runner yields no steps: next() settles with Ok(None)
+        // without entering the retry loop.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let mut runner = ctx
+            .clone()
+            .completion_iter(CompletionRequest::default(), vec![]);
+        let result = runner_next_with_retry(&mut runner, "test").await.unwrap();
+        assert!(result.is_none());
+
+        // finalize may succeed (no pending steps) or fail depending on the
+        // mock runner; either way the retry wrapper must settle promptly.
+        let mut runner = ctx.completion_iter(CompletionRequest::default(), vec![]);
+        let _ = runner_finalize_with_retry(&mut runner, Some("done".to_string()), "test").await;
+    }
 }

@@ -1143,4 +1143,237 @@ mod tests {
                 .is_some_and(|updated| *updated > old_updated_at)
         );
     }
+
+    fn workspace_at(dir: &tempfile::TempDir) -> Arc<ChannelWorkspace> {
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_path_buf());
+        workspace
+    }
+
+    #[tokio::test]
+    async fn sync_buf_round_trips_through_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_at(&dir);
+
+        assert!(load_sync_buf_from_workspace(&workspace).await.is_none());
+        save_sync_buf_to_workspace(&workspace, "buf-state-1").await;
+        assert_eq!(
+            load_sync_buf_from_workspace(&workspace).await.as_deref(),
+            Some("buf-state-1")
+        );
+
+        // Without a workspace path both operations are no-ops.
+        let detached = Arc::new(ChannelWorkspace::default());
+        save_sync_buf_to_workspace(&detached, "ignored").await;
+        assert!(load_sync_buf_from_workspace(&detached).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn context_tokens_load_for_send_until_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_at(&dir);
+
+        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+        assert!(load_context_token_for_send(&workspace, " ").await.is_none());
+
+        save_context_token_to_workspace(&workspace, "alice", "tok-1").await;
+        assert_eq!(
+            load_context_token_for_send(&workspace, "alice")
+                .await
+                .as_deref(),
+            Some("tok-1")
+        );
+
+        // A stale token is dropped on read.
+        let mut meta = HashMap::new();
+        meta.insert(
+            "alice".to_string(),
+            unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1,
+        );
+        save_context_token_meta_to_workspace(&workspace, &meta).await;
+        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+        assert!(
+            load_context_tokens_from_workspace(&workspace)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_context_token_respects_expected_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_at(&dir);
+
+        save_context_token_to_workspace(&workspace, "alice", "tok-1").await;
+
+        // Mismatched expectation keeps the newer token.
+        remove_context_token_from_workspace(&workspace, "alice", Some("other")).await;
+        assert_eq!(
+            load_context_token_for_send(&workspace, "alice")
+                .await
+                .as_deref(),
+            Some("tok-1")
+        );
+
+        remove_context_token_from_workspace(&workspace, "alice", Some("tok-1")).await;
+        assert!(load_context_token_for_send(&workspace, "alice").await.is_none());
+    }
+
+    #[test]
+    fn context_token_staleness_uses_max_age() {
+        assert!(!context_token_is_stale(None));
+        assert!(!context_token_is_stale(Some(unix_ms())));
+        assert!(context_token_is_stale(Some(
+            unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1
+        )));
+    }
+
+    #[tokio::test]
+    async fn resolve_token_prefers_config_then_saved_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let channel = WechatChannel::new(&test_config());
+        assert!(channel.resolve_token().await.is_ok());
+
+        let mut cfg = test_config();
+        cfg.bot_token = String::new();
+        let channel = WechatChannel::new(&cfg);
+        channel.set_workspace(dir.path().to_path_buf());
+        let err = channel.resolve_token().await.map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("no bot_token configured"));
+
+        tokio::fs::write(dir.path().join("token.txt"), " saved-token \n")
+            .await
+            .unwrap();
+        assert_eq!(channel.resolve_token().await.unwrap(), "saved-token");
+    }
+
+    #[tokio::test]
+    async fn temp_media_paths_are_sanitized_under_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = workspace_at(&dir);
+
+        let path = temp_media_path(&workspace, "msg/1", "weird name!.bin").await;
+        assert!(path.starts_with(dir.path().join("incoming")));
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        assert!(!file_name.contains('/'));
+        assert!(!file_name.contains('!'));
+        assert!(!file_name.contains(' '));
+
+        // Without a workspace the temp dir is used.
+        let detached = Arc::new(ChannelWorkspace::default());
+        let path = temp_media_path(&detached, "msg", "name.bin").await;
+        assert!(path.starts_with(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn media_file_names_fall_back_by_type() {
+        let media = |file_name: Option<&str>, url: Option<&str>, media_type: MediaType| MediaInfo {
+            media_type,
+            cdn_media: None,
+            url: url.map(str::to_string),
+            file_name: file_name.map(str::to_string),
+            file_size: None,
+            aes_key_base64: None,
+        };
+
+        assert_eq!(
+            wechat_media_file_name(&media(Some("notes.pdf"), None, MediaType::File), "m1"),
+            "notes.pdf"
+        );
+        assert_eq!(
+            wechat_media_file_name(
+                &media(None, Some("https://cdn.example.com/path/pic.jpg?x=1"), MediaType::Image),
+                "m1"
+            ),
+            "pic.jpg"
+        );
+        assert_eq!(
+            wechat_media_file_name(&media(None, None, MediaType::Image), "m1"),
+            "m1.jpg"
+        );
+        assert_eq!(
+            wechat_media_file_name(&media(None, None, MediaType::Video), "m1"),
+            "m1.mp4"
+        );
+        assert_eq!(
+            wechat_media_file_name(&media(None, None, MediaType::Voice), "m1"),
+            "m1.silk"
+        );
+        assert_eq!(
+            wechat_media_file_name(&media(None, None, MediaType::File), "m1"),
+            "m1.bin"
+        );
+    }
+
+    #[test]
+    fn quoted_messages_and_attachments_render_labels() {
+        assert_eq!(
+            format_ref_message(&weixin_agent::RefMessageInfo {
+                title: Some("Alice".to_string()),
+                body: Some("original text".to_string()),
+            }),
+            "[Quoted: Alice | original text]"
+        );
+        assert_eq!(
+            format_ref_message(&weixin_agent::RefMessageInfo {
+                title: None,
+                body: None,
+            }),
+            "[Quoted message]"
+        );
+
+        let image = Resource {
+            name: "pic.png".to_string(),
+            tags: vec!["image".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&image), "[Image: pic.png]");
+        let video = Resource {
+            name: "clip.mp4".to_string(),
+            tags: vec!["video".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&video), "[Video: clip.mp4]");
+        let audio = Resource {
+            name: "voice.silk".to_string(),
+            tags: vec!["audio".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&audio), "[Audio: voice.silk]");
+        let other = Resource {
+            name: "doc.pdf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&other), "[Document: doc.pdf]");
+    }
+
+    #[test]
+    fn identity_allowlist_normalizes_and_supports_wildcard() {
+        let allowed = vec!["alice".to_string(), "*".to_string()];
+        assert!(is_identity_allowed(&allowed, "@Alice"));
+        assert!(is_identity_allowed(&allowed, "anyone"));
+        assert!(!is_identity_allowed(&allowed, "  "));
+
+        let strict = vec!["alice".to_string()];
+        assert!(!is_identity_allowed(&strict, "bob"));
+    }
+
+    #[test]
+    fn context_token_errors_match_known_signatures() {
+        assert!(is_wechat_context_token_error("Session Expired"));
+        assert!(is_wechat_context_token_error("errcode=-14"));
+        assert!(is_wechat_context_token_error("\"ret\":-2"));
+        assert!(is_wechat_context_token_error("invalid token"));
+        assert!(is_wechat_context_token_error("the token has expired"));
+        assert!(!is_wechat_context_token_error("network unreachable"));
+    }
+
+    #[test]
+    fn should_retry_send_matches_transient_errors() {
+        let channel = WechatChannel::new(&test_config());
+        assert!(channel.should_retry_send("connection reset"));
+        assert!(channel.should_retry_send("HTTP 503"));
+        assert!(!channel.should_retry_send("400 bad request"));
+    }
 }

@@ -1407,4 +1407,363 @@ mod tests {
 
         assert!(channel.typing_handle.lock().await.is_none());
     }
+
+    use anda_core::ByteBufB64;
+    use axum::{Router, extract::State, routing};
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Default)]
+    struct MockApi {
+        requests: StdMutex<Vec<(String, Value)>>,
+        fail_html_send: bool,
+        get_updates_calls: StdMutex<u32>,
+    }
+
+    impl MockApi {
+        fn recorded(&self, method: &str) -> Vec<Value> {
+            self.requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _)| m == method)
+                .map(|(_, body)| body.clone())
+                .collect()
+        }
+    }
+
+    async fn handle_method(
+        State(state): State<Arc<MockApi>>,
+        axum::extract::Path(method): axum::extract::Path<String>,
+        body: axum::body::Bytes,
+    ) -> axum::Json<Value> {
+        let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        state
+            .requests
+            .lock()
+            .unwrap()
+            .push((method.clone(), parsed.clone()));
+
+        let response = match method.as_str() {
+            "getMe" => serde_json::json!({
+                "ok": true,
+                "result": {"username": "anda_bot"},
+            }),
+            "sendMessage" => {
+                if state.fail_html_send && parsed.get("parse_mode").is_some() {
+                    serde_json::json!({"ok": false, "description": "can't parse entities"})
+                } else {
+                    serde_json::json!({"ok": true, "result": {}})
+                }
+            }
+            "getFile" => serde_json::json!({
+                "ok": true,
+                "result": {"file_path": "photos/file_7.jpg"},
+            }),
+            "getUpdates" => {
+                let calls = {
+                    let mut calls = state.get_updates_calls.lock().unwrap();
+                    *calls += 1;
+                    *calls
+                };
+                if calls == 1 {
+                    serde_json::json!({
+                        "ok": true,
+                        "result": [{
+                            "update_id": 100,
+                            "message": {
+                                "message_id": 7,
+                                "text": "hello bot",
+                                "from": {"id": 12345, "username": "Alice"},
+                                "chat": {"id": 555, "type": "private"},
+                            },
+                        }],
+                    })
+                } else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    serde_json::json!({"ok": true, "result": []})
+                }
+            }
+            _ => serde_json::json!({"ok": true, "result": {}}),
+        };
+        axum::Json(response)
+    }
+
+    async fn spawn_telegram_mock(state: Arc<MockApi>) -> String {
+        let app = Router::new()
+            .route("/bot123:ABC/{method}", routing::post(handle_method))
+            .route("/bot123:ABC/{method}", routing::get(handle_method))
+            .route(
+                "/file/bot123:ABC/photos/{name}",
+                routing::get(|| async { "JPEGDATA" }),
+            )
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    async fn mock_channel(
+        mutate: impl FnOnce(&mut config::TelegramChannelSettings),
+        state: Arc<MockApi>,
+    ) -> TelegramChannel {
+        let mut cfg = test_config();
+        mutate(&mut cfg);
+        let mut channel = TelegramChannel::new(&cfg, Client::new());
+        channel.api_base = spawn_telegram_mock(state).await;
+        channel
+    }
+
+    #[tokio::test]
+    async fn send_renders_html_and_falls_back_to_plain_text() {
+        let state = Arc::new(MockApi {
+            fail_html_send: true,
+            ..Default::default()
+        });
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .send(&SendMessage {
+                content: "**bold** text".to_string(),
+                recipient: "555:777".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let sends = state.recorded("sendMessage");
+        assert_eq!(sends.len(), 2);
+        assert_eq!(sends[0]["parse_mode"], "HTML");
+        assert_eq!(sends[0]["text"], "<b>bold</b> text");
+        assert_eq!(sends[0]["message_thread_id"], "777");
+        assert!(sends[1].get("parse_mode").is_none());
+        assert_eq!(sends[1]["text"], "**bold** text");
+    }
+
+    #[tokio::test]
+    async fn send_delivers_attachments_by_url_and_bytes() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .send(&SendMessage {
+                content: "see attached".to_string(),
+                recipient: "555".to_string(),
+                attachments: vec![
+                    Resource {
+                        name: "pic.png".to_string(),
+                        tags: vec!["image".to_string()],
+                        uri: Some("https://example.com/pic.png".to_string()),
+                        ..Default::default()
+                    },
+                    Resource {
+                        name: "notes.txt".to_string(),
+                        blob: Some(ByteBufB64(b"file-bytes".to_vec())),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let photos = state.recorded("sendPhoto");
+        assert_eq!(photos.len(), 1);
+        assert_eq!(photos[0]["photo"], "https://example.com/pic.png");
+        // The blob attachment goes out as multipart (body is not JSON).
+        assert_eq!(state.recorded("sendDocument").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_without_content_or_attachments_sends_placeholder() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel
+            .send(&SendMessage {
+                recipient: "555".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(state.recorded("sendMessage").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_resource_reads_local_file_uri_and_rejects_empty() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("report.pdf");
+        tokio::fs::write(&file_path, b"pdf-bytes").await.unwrap();
+
+        channel
+            .send_resource(
+                "555",
+                None,
+                &Resource {
+                    name: "report.pdf".to_string(),
+                    uri: Some(format!("file://{}", file_path.display())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.recorded("sendDocument").len(), 1);
+
+        let err = channel
+            .send_resource("555", None, &Resource::default())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("has no uri or blob"));
+    }
+
+    #[tokio::test]
+    async fn bot_username_is_fetched_once_and_cached() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        assert_eq!(channel.get_bot_username().await.as_deref(), Some("anda_bot"));
+        assert_eq!(channel.get_bot_username().await.as_deref(), Some("anda_bot"));
+        assert_eq!(state.recorded("getMe").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn health_check_reflects_api_reachability() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state).await;
+        assert!(channel.health_check().await);
+
+        let mut dead = TelegramChannel::new(&test_config(), Client::new());
+        dead.api_base = "http://127.0.0.1:1".to_string();
+        assert!(!dead.health_check().await);
+    }
+
+    #[tokio::test]
+    async fn attachment_updates_download_files_into_resources() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(
+            |cfg| {
+                cfg.mention_only = false;
+            },
+            state.clone(),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        channel.set_workspace(dir.path().to_path_buf());
+
+        let update = serde_json::json!({
+            "message": {
+                "message_id": 9,
+                "caption": "look at this",
+                "photo": [
+                    {"file_id": "small", "file_size": 10},
+                    {"file_id": "big", "file_size": 100},
+                ],
+                "from": {"id": 12345, "username": "Alice"},
+                "chat": {"id": 555, "type": "private"},
+            }
+        });
+
+        let message = channel
+            .try_parse_attachment_message(&update)
+            .await
+            .expect("attachment message");
+
+        assert_eq!(message.content, "look at this");
+        assert_eq!(message.attachments.len(), 1);
+        assert_eq!(message.attachments[0].name, "file_7.jpg");
+        // getFile is called with the highest-resolution photo variant.
+        assert_eq!(state.recorded("getFile")[0]["file_id"], "big");
+    }
+
+    #[tokio::test]
+    async fn oversized_attachments_are_skipped() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|cfg| cfg.mention_only = false, state.clone()).await;
+
+        let update = serde_json::json!({
+            "message": {
+                "message_id": 9,
+                "document": {
+                    "file_id": "huge",
+                    "file_name": "big.bin",
+                    "file_size": TELEGRAM_MAX_FILE_DOWNLOAD_BYTES + 1,
+                },
+                "from": {"id": 12345, "username": "Alice"},
+                "chat": {"id": 555, "type": "private"},
+            }
+        });
+
+        assert!(channel.try_parse_attachment_message(&update).await.is_none());
+        assert!(state.recorded("getFile").is_empty());
+    }
+
+    #[tokio::test]
+    async fn listen_delivers_updates_until_cancelled() {
+        let state = Arc::new(MockApi::default());
+        let channel = Arc::new(
+            mock_channel(|cfg| cfg.mention_only = false, state.clone()).await,
+        );
+
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let listen_channel = channel.clone();
+        let listen_cancel = cancel.clone();
+        let handle =
+            tokio::spawn(async move { listen_channel.listen(listen_cancel, tx).await });
+
+        let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("listen should deliver a message")
+            .expect("channel open");
+        assert_eq!(message.sender, "Alice");
+        assert_eq!(message.content, "hello bot");
+        assert_eq!(message.reply_target, "555");
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("listen should stop")
+            .unwrap()
+            .unwrap();
+
+        // The poll acknowledged the update and sent a typing indicator.
+        assert!(state.recorded("sendChatAction").len() >= 1);
+    }
+
+    #[test]
+    fn should_retry_send_matches_transient_errors() {
+        let channel = TelegramChannel::new(&test_config(), Client::new());
+        assert!(channel.should_retry_send("Connection reset by peer"));
+        assert!(channel.should_retry_send("HTTP 429 Too Many Requests"));
+        assert!(channel.should_retry_send("upstream 503"));
+        assert!(!channel.should_retry_send("400 Bad Request"));
+    }
+
+    #[test]
+    fn ack_reactions_come_from_known_set() {
+        for _ in 0..16 {
+            assert!(TELEGRAM_ACK_REACTIONS.contains(&random_telegram_ack_reaction()));
+        }
+    }
+
+    #[tokio::test]
+    async fn start_typing_spawns_keepalive_loop() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        channel.start_typing("555:777").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        channel.stop_typing("555:777").await.unwrap();
+
+        let actions = state.recorded("sendChatAction");
+        assert!(!actions.is_empty());
+        assert_eq!(actions[0]["message_thread_id"], "777");
+    }
 }

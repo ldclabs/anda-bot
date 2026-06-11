@@ -72,3 +72,38 @@ impl TtsProvider for OpenAiTtsProvider {
         Ok(bytes.to_vec())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_rejects_empty_api_key() {
+        let config = config::OpenAiTtsConfig {
+            api_key: "   ".to_string(),
+            ..Default::default()
+        };
+
+        let err = OpenAiTtsProvider::new(&config, reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("API key must not be empty"));
+    }
+
+    #[test]
+    fn new_trims_api_key_and_copies_config() {
+        let config = config::OpenAiTtsConfig {
+            api_key: "  sk-test  ".to_string(),
+            model: "tts-1-hd".to_string(),
+            speed: 1.5,
+            voice: "nova".to_string(),
+        };
+
+        let provider = OpenAiTtsProvider::new(&config, reqwest::Client::new()).unwrap();
+        assert_eq!(provider.api_key, "sk-test");
+        assert_eq!(provider.model, "tts-1-hd");
+        assert_eq!(provider.speed, 1.5);
+        assert_eq!(provider.voice, "nova");
+        assert_eq!(provider.name(), "openai");
+    }
+}

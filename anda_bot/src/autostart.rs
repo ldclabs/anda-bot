@@ -546,6 +546,28 @@ mod windows_tests {
 }
 
 #[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn status_reports_registration_without_side_effects() {
+        // status() only inspects the user's autostart registration; it must
+        // never error on a normal developer machine.
+        let status = status().unwrap();
+        assert!(matches!(
+            status,
+            AutostartStatus::Installed | AutostartStatus::NotInstalled
+        ));
+    }
+
+    #[test]
+    fn helper_paths_resolve() {
+        assert!(home_dir().is_ok());
+        assert!(current_exe().is_ok());
+    }
+}
+
+#[cfg(test)]
 mod macos_tests {
     use super::*;
 

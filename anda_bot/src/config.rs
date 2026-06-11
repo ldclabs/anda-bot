@@ -504,6 +504,162 @@ channels:
     }
 
     #[test]
+    fn setup_issues_flag_provider_state_users_and_channel_duplicates() {
+        let _env = model::guard_model_api_key_env();
+        let alice = crate::util::key::Ed25519Key::new([7; 32]);
+        let bob = crate::util::key::Ed25519Key::new([8; 32]);
+        let pubkey_of = |key: &crate::util::key::Ed25519Key| {
+            ic_auth_types::ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string()
+        };
+
+        let mut config = Config::default();
+        config.model.active = "test-model".to_string();
+        config.model.providers.push(ModelConfig {
+            family: "  ".to_string(),
+            model: "test-model".to_string(),
+            disabled: true,
+            ..Default::default()
+        });
+        config.users = vec![
+            UserSettings {
+                id: Some("alice".to_string()),
+                pubkey: pubkey_of(&alice),
+            },
+            UserSettings {
+                id: Some("alice".to_string()),
+                pubkey: pubkey_of(&bob),
+            },
+        ];
+        config.channels.telegram = vec![
+            TelegramChannelSettings {
+                id: Some("tg".to_string()),
+                bot_token: "  ".to_string(),
+                ..Default::default()
+            },
+            TelegramChannelSettings {
+                id: Some("tg".to_string()),
+                bot_token: "token".to_string(),
+                ..Default::default()
+            },
+        ];
+        config.channels.wechat = vec![
+            WechatChannelSettings {
+                id: Some("wc".to_string()),
+                bot_token: "a".to_string(),
+                ..Default::default()
+            },
+            WechatChannelSettings {
+                id: Some("wc".to_string()),
+                bot_token: "b".to_string(),
+                ..Default::default()
+            },
+        ];
+        config.channels.discord = vec![
+            DiscordChannelSettings {
+                id: Some("dc".to_string()),
+                bot_token: String::new(),
+                ..Default::default()
+            },
+            DiscordChannelSettings {
+                id: Some("dc".to_string()),
+                bot_token: "token".to_string(),
+                ..Default::default()
+            },
+        ];
+        config.channels.lark = vec![
+            LarkChannelSettings {
+                id: Some("lk".to_string()),
+                app_id: String::new(),
+                app_secret: String::new(),
+                receive_mode: LarkReceiveMode::Webhook,
+                port: None,
+                ..Default::default()
+            },
+            LarkChannelSettings {
+                id: Some("lk".to_string()),
+                app_id: "app".to_string(),
+                app_secret: "secret".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let issues = config.setup_issues();
+        for expected in [
+            "model.providers[0].disabled",
+            "model.providers[0].family",
+            "model.providers[0].api_base",
+            "model.providers[0].api_key",
+            "users[1].id",
+            "channels.telegram[0].bot_token",
+            "channels.telegram[1].id",
+            "channels.wechat[1].id",
+            "channels.discord[0].bot_token",
+            "channels.discord[1].id",
+            "channels.lark[0].app_id",
+            "channels.lark[0].app_secret",
+            "channels.lark[0].port",
+            "channels.lark[1].id",
+        ] {
+            assert!(
+                issues.iter().any(|issue| issue == expected),
+                "missing issue {expected:?} in {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn base_url_handles_ipv6_and_unparseable_addresses() {
+        let config = Config {
+            addr: "[::1]:8042".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.base_url(), "http://[::1]:8042");
+
+        let config = Config {
+            addr: " localhost:8042 ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.base_url(), "http://localhost:8042");
+
+        let config = Config::default();
+        assert!(config.brain_base_url().starts_with(&config.base_url()));
+        assert!(config.brain_base_url().ends_with(ANDA_BOT_SPACE_ID));
+    }
+
+    #[test]
+    fn empty_contents_fall_back_to_default_config() {
+        let config = Config::from_contents("  \n").unwrap();
+        assert_eq!(config.addr, Config::default().addr);
+    }
+
+    #[tokio::test]
+    async fn from_file_returns_default_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::from_file(&dir.path().join("missing.yaml"))
+            .await
+            .unwrap();
+        assert_eq!(config.addr, Config::default().addr);
+    }
+
+    #[test]
+    fn models_sets_active_model_as_default() {
+        let _env = model::guard_model_api_key_env();
+        let mut config = Config::default();
+        config.model.active = "test-model".to_string();
+        config.model.providers.push(ModelConfig {
+            family: "openai".to_string(),
+            model: "test-model".to_string(),
+            api_base: "https://api.example.test/v1".to_string(),
+            api_key: "sk-test".to_string(),
+            ..Default::default()
+        });
+
+        let models = config.models(reqwest::Client::new());
+        assert!(models.get("test-model").is_some());
+        assert!(models.get_model().is_some());
+    }
+
+    #[test]
     fn default_template_contains_setup_guidance() {
         let template = Config::default_template();
 

@@ -570,4 +570,107 @@ mod tests {
         assert!(settings.telegram[0].ack_reactions);
         assert_eq!(settings.wechat[0].route_tag, None);
     }
+
+    #[test]
+    fn channel_labels_use_id_or_position() {
+        assert_eq!(
+            TelegramChannelSettings {
+                id: Some("tg".to_string()),
+                ..Default::default()
+            }
+            .label(0),
+            "tg"
+        );
+        // Without an explicit id, channel_id() falls back to "default".
+        assert_eq!(TelegramChannelSettings::default().label(0), "default");
+        assert_eq!(
+            WechatChannelSettings {
+                id: Some("wc".to_string()),
+                ..Default::default()
+            }
+            .label(1),
+            "wc"
+        );
+        assert_eq!(WechatChannelSettings::default().label(1), "default");
+        assert_eq!(
+            DiscordChannelSettings {
+                id: Some("dc".to_string()),
+                ..Default::default()
+            }
+            .label(2),
+            "dc"
+        );
+        assert_eq!(DiscordChannelSettings::default().label(2), "default");
+        assert_eq!(
+            LarkChannelSettings {
+                id: Some("lk".to_string()),
+                ..Default::default()
+            }
+            .label(3),
+            "lk"
+        );
+        assert_eq!(LarkChannelSettings::default().label(3), "default");
+    }
+
+    #[test]
+    fn user_bindings_cover_all_channel_kinds() {
+        use crate::util::key::Ed25519Key;
+        use ic_auth_types::ByteBufB64;
+
+        let default_key = Ed25519Key::new([1; 32]);
+        let teammate = Ed25519Key::new([2; 32]);
+        let teammate_ref = ByteBufB64(teammate.pubkey().as_bytes().to_vec()).to_string();
+
+        let settings = ChannelSettings {
+            telegram: vec![TelegramChannelSettings {
+                id: Some("tg".to_string()),
+                user: Some(teammate_ref.clone()),
+                bot_token: "token".to_string(),
+                ..Default::default()
+            }],
+            wechat: vec![WechatChannelSettings {
+                id: Some("wc".to_string()),
+                user: Some(teammate_ref.clone()),
+                bot_token: "token".to_string(),
+                ..Default::default()
+            }],
+            discord: vec![DiscordChannelSettings {
+                id: Some("dc".to_string()),
+                user: Some(teammate_ref.clone()),
+                bot_token: "token".to_string(),
+                ..Default::default()
+            }],
+            lark: vec![
+                LarkChannelSettings {
+                    id: Some("lk".to_string()),
+                    user: Some(teammate_ref.clone()),
+                    app_id: "app".to_string(),
+                    app_secret: "secret".to_string(),
+                    ..Default::default()
+                },
+                LarkChannelSettings {
+                    id: Some("fs".to_string()),
+                    user: Some(teammate_ref),
+                    platform: LarkPlatform::Feishu,
+                    app_id: "app".to_string(),
+                    app_secret: "secret".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let config = crate::config::Config {
+            channels: settings.clone(),
+            ..Default::default()
+        };
+
+        let registry = config.user_registry(default_key.pubkey()).unwrap();
+        let bindings = settings.user_bindings(&registry).unwrap();
+
+        let expected = teammate.pubkey().id();
+        assert_eq!(bindings.get("telegram:tg"), Some(&expected));
+        assert_eq!(bindings.get("wechat:wc"), Some(&expected));
+        assert_eq!(bindings.get("discord:dc"), Some(&expected));
+        assert_eq!(bindings.get("lark:lk"), Some(&expected));
+        assert_eq!(bindings.get("feishu:fs"), Some(&expected));
+    }
 }

@@ -79,3 +79,36 @@ impl TtsProvider for GoogleTtsProvider {
         Ok(bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_rejects_empty_api_key() {
+        let config = config::GoogleTtsConfig {
+            api_key: " ".to_string(),
+            ..Default::default()
+        };
+
+        let err = GoogleTtsProvider::new(&config, reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("API key must not be empty"));
+    }
+
+    #[test]
+    fn new_trims_api_key_and_copies_config() {
+        let config = config::GoogleTtsConfig {
+            api_key: " key-1 ".to_string(),
+            language_code: "zh-CN".to_string(),
+            voice: "zh-CN-Standard-A".to_string(),
+        };
+
+        let provider = GoogleTtsProvider::new(&config, reqwest::Client::new()).unwrap();
+        assert_eq!(provider.api_key, "key-1");
+        assert_eq!(provider.language_code, "zh-CN");
+        assert_eq!(provider.voice, "zh-CN-Standard-A");
+        assert_eq!(provider.name(), "google");
+    }
+}

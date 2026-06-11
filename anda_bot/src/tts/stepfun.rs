@@ -285,4 +285,110 @@ mod tests {
         assert_eq!(normalize_stepfun_response_format("opus").unwrap(), "opus");
         assert!(normalize_stepfun_response_format("ogg").is_err());
     }
+
+    fn tts_config_error(mutate: impl FnOnce(&mut config::StepFunTtsConfig)) -> String {
+        let mut config = config::StepFunTtsConfig {
+            api_key: "sk-test".to_string(),
+            ..Default::default()
+        };
+        mutate(&mut config);
+        StepFunTtsProvider::new(&config, "mp3", reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn new_validates_every_config_field() {
+        assert!(tts_config_error(|c| c.api_key = " ".into()).contains("Missing StepFun TTS"));
+        assert!(tts_config_error(|c| c.api_url = " ".into()).contains("`api_url` must not be empty"));
+        assert!(tts_config_error(|c| c.api_url = "not a url".into()).contains("invalid `api_url`"));
+        assert!(
+            tts_config_error(|c| c.api_url = "ftp://x".into()).contains("must use http or https")
+        );
+        assert!(tts_config_error(|c| c.model = " ".into()).contains("`model` must not be empty"));
+        assert!(tts_config_error(|c| c.voice = " ".into()).contains("`voice` must not be empty"));
+        assert!(tts_config_error(|c| c.speed = 3.0).contains("`speed`"));
+        assert!(tts_config_error(|c| c.volume = 0.0).contains("`volume`"));
+        assert!(tts_config_error(|c| c.sample_rate = 44100).contains("`sample_rate`"));
+        assert!(
+            tts_config_error(|c| {
+                c.model = "step-tts-mini".to_string();
+                c.instruction = Some("生气".into());
+            })
+            .contains("only supported by stepaudio-2.5-tts")
+        );
+        assert!(
+            tts_config_error(|c| {
+                c.model = STEPFUN_TTS_25_MODEL.to_string();
+                c.instruction = Some("长".repeat(201));
+            })
+            .contains("`instruction` too long")
+        );
+    }
+
+    use axum::{Router, routing};
+
+    async fn provider_with_mock(status: u16, body: &'static str) -> StepFunTtsProvider {
+        let app = Router::new().route(
+            "/tts",
+            routing::post(move || async move {
+                (http::StatusCode::from_u16(status).unwrap(), body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        StepFunTtsProvider::new(
+            &config::StepFunTtsConfig {
+                api_key: "sk-test".to_string(),
+                api_url: format!("http://{addr}/tts"),
+                ..Default::default()
+            },
+            "mp3",
+            reqwest::Client::new(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn synthesize_returns_audio_bytes_and_reports_errors() {
+        let provider = provider_with_mock(200, "MP3DATA").await;
+        assert_eq!(provider.synthesize("你好").await.unwrap(), b"MP3DATA");
+        assert_eq!(provider.name(), "stepfun");
+        assert_eq!(provider.audio_format(), "mp3");
+
+        // Oversized input is rejected before sending.
+        let long_text = "好".repeat(STEPFUN_MAX_INPUT_LENGTH + 1);
+        let err = provider.synthesize(&long_text).await.unwrap_err();
+        assert!(err.to_string().contains("text too long"));
+
+        let provider = provider_with_mock(200, "").await;
+        let err = provider.synthesize("hi").await.unwrap_err();
+        assert!(err.to_string().contains("body was empty"));
+
+        let provider =
+            provider_with_mock(429, r#"{"error":{"message":"rate limited"}}"#).await;
+        let err = provider.synthesize("hi").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("StepFun TTS API error (429"), "got: {msg}");
+        assert!(msg.contains("rate limited"), "got: {msg}");
+    }
+
+    #[test]
+    fn error_messages_fall_back_through_known_shapes() {
+        assert_eq!(
+            parse_stepfun_tts_error_message(r#"{"message":"top level"}"#),
+            "top level"
+        );
+        assert_eq!(
+            parse_stepfun_tts_error_message(r#"{"error":"string error"}"#),
+            "string error"
+        );
+        assert_eq!(parse_stepfun_tts_error_message("plain text"), "plain text");
+        assert_eq!(parse_stepfun_tts_error_message("  "), "unknown error");
+    }
 }

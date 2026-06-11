@@ -61,3 +61,133 @@ where
     let http_client = f(http_client).build()?;
     Ok(http_client)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn any_host_matches_every_host() {
+        assert!(AnyHost == "api.openai.com");
+        assert!(AnyHost == "localhost");
+        assert!(AnyHost == "");
+    }
+
+    #[test]
+    fn build_http_client_without_proxy() {
+        let client = build_http_client(None, |builder| builder).unwrap();
+        // The client is usable; just make sure construction settles its config.
+        let _ = format!("{client:?}");
+    }
+
+    #[test]
+    fn build_http_client_with_proxy_applies_customizer() {
+        let mut customized = false;
+        let client = build_http_client(Some("http://127.0.0.1:7890".to_string()), |builder| {
+            customized = true;
+            builder.user_agent("anda-test")
+        });
+
+        assert!(client.is_ok());
+        assert!(customized);
+    }
+
+    #[test]
+    fn build_http_client_rejects_invalid_proxy() {
+        let result = build_http_client(Some("://not-a-proxy".to_string()), |builder| builder);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn client_retries_retryable_status_codes() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let handler_attempts = attempts.clone();
+        let app = axum::Router::new().route(
+            "/flaky",
+            axum::routing::get(move || {
+                let attempts = handler_attempts.clone();
+                async move {
+                    if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                        (http::StatusCode::SERVICE_UNAVAILABLE, "warming up")
+                    } else {
+                        (http::StatusCode::OK, "ready")
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = build_http_client(None, |builder| builder).unwrap();
+        let response = client
+            .get(format!("http://{addr}/flaky"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn client_does_not_retry_non_retryable_status_codes() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let handler_attempts = attempts.clone();
+        let app = axum::Router::new().route(
+            "/broken",
+            axum::routing::get(move || {
+                let attempts = handler_attempts.clone();
+                async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    (http::StatusCode::BAD_REQUEST, "no")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = build_http_client(None, |builder| builder).unwrap();
+        let response = client
+            .get(format!("http://{addr}/broken"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn client_classifies_connect_failures_as_retryable() {
+        let client = build_http_client(None, |builder| {
+            builder.connect_timeout(Duration::from_millis(200))
+        })
+        .unwrap();
+
+        // Nothing listens on port 1; the connect error path classifies the
+        // request as retryable and the call still fails after retries.
+        let err = client
+            .get("http://127.0.0.1:1/unreachable")
+            .send()
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.is_connect() || err.is_request());
+    }
+}

@@ -229,4 +229,71 @@ mod tests {
         assert_eq!(key.len(), 32);
         assert!(key.iter().any(|byte| *byte != 0));
     }
+
+    #[test]
+    fn keys_parse_from_raw_and_cose_strings() {
+        let raw = ByteBufB64(SECRET.to_vec()).to_string();
+        let key = Ed25519Key::from_str(&raw).unwrap();
+        assert_eq!(key.as_bytes(), &SECRET);
+
+        let encoded = encode_ed25519_privkey(&SECRET).unwrap();
+        let key = Ed25519Key::from_str(&encoded).unwrap();
+        assert_eq!(key.as_bytes(), &SECRET);
+
+        let pub_raw = ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string();
+        let pubkey = Ed25519PubKey::from_str(&pub_raw).unwrap();
+        assert_eq!(pubkey.id(), key.id());
+
+        let verifying: VerifyingKey = pubkey.into();
+        assert_eq!(verifying.as_bytes(), key.pubkey().as_bytes());
+    }
+
+    #[test]
+    fn cose_keys_with_wrong_key_type_are_rejected() {
+        let ec2 = CoseKeyBuilder::new_ec2_pub_key(
+            iana::EllipticCurve::P_256,
+            vec![1u8; 32],
+            vec![2u8; 32],
+        )
+        .build();
+        let encoded = ByteBufB64(ec2.to_vec().unwrap()).to_string();
+
+        let err = parse_ed25519_privkey(&encoded).map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("invalid key type"));
+        let err = parse_ed25519_pubkey(&encoded).map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("invalid key type"));
+    }
+
+    #[test]
+    fn cose_public_key_round_trips() {
+        let key = Ed25519Key::new(SECRET);
+        let cose_key = CoseKeyBuilder::new_okp_key()
+            .algorithm(iana::Algorithm::EdDSA)
+            .param(
+                iana::OkpKeyParameter::Crv as i64,
+                (iana::EllipticCurve::Ed25519 as i64).into(),
+            )
+            .param(
+                iana::OkpKeyParameter::X as i64,
+                key.pubkey().as_bytes().to_vec().into(),
+            )
+            .build();
+        let encoded = ByteBufB64(cose_key.to_vec().unwrap()).to_string();
+
+        assert_eq!(
+            parse_ed25519_pubkey(&encoded).unwrap(),
+            *key.pubkey().as_bytes()
+        );
+    }
+
+    #[test]
+    fn sign_cwt_produces_decodable_cose_sign1() {
+        let key = Ed25519Key::new(SECRET);
+        let claims = ClaimsSet::default();
+
+        let token = key.sign_cwt(claims).unwrap();
+        let bytes = ByteBufB64::from_str(&token).unwrap();
+        let sign1 = coset::CoseSign1::from_slice(&bytes).unwrap();
+        assert_eq!(sign1.signature.len(), 64);
+    }
 }

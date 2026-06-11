@@ -326,4 +326,80 @@ mod tests {
         assert_eq!(settings.providers[0].api_key, "codex-token");
         assert!(ModelSettings::uses_codex_auth(&settings.providers[0]));
     }
+
+    #[test]
+    fn api_key_env_candidates_cover_known_brands() {
+        fn candidates(family: &str, model: &str, api_base: &str) -> Vec<&'static str> {
+            api_key_env_candidates(&ModelConfig {
+                family: family.to_string(),
+                model: model.to_string(),
+                api_base: api_base.to_string(),
+                ..Default::default()
+            })
+        }
+
+        assert_eq!(
+            candidates("", "deepseek-v3", "https://api.deepseek.com/v1"),
+            vec!["DEEPSEEK_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "minimax-01", "https://api.minimaxi.com/v1"),
+            vec!["MINIMAX_API_KEY", "MINIMAXI_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "mimo-v2", "https://api.xiaomimimo.com/v1"),
+            vec!["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "kimi-k2", "https://api.moonshot.cn/v1"),
+            vec!["MOONSHOT_API_KEY", "KIMI_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "glm-5", "https://open.bigmodel.cn/api"),
+            vec!["BIGMODEL_API_KEY", "ZHIPUAI_API_KEY", "GLM_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "any", "https://openrouter.ai/api/v1"),
+            vec!["OPENROUTER_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "any", "https://api.groq.com/openai/v1"),
+            vec!["GROQ_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "any", "https://api.siliconflow.cn/v1"),
+            vec!["SILICONFLOW_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "qwen-max", "https://dashscope.aliyuncs.com/api"),
+            vec!["DASHSCOPE_API_KEY", "QWEN_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "any", "https://api.anthropic.com"),
+            vec!["ANTHROPIC_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "any", "https://api.openai.com/v1"),
+            vec!["OPENAI_API_KEY"]
+        );
+        assert_eq!(
+            candidates("", "gemini-3", "https://generativelanguage.googleapis.com"),
+            vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        );
+
+        // Unrecognized endpoints fall back to the provider family.
+        assert_eq!(
+            candidates("anthropic", "custom", "https://llm.internal"),
+            vec!["ANTHROPIC_API_KEY"]
+        );
+        assert_eq!(
+            candidates("openai", "custom", "https://llm.internal"),
+            vec!["OPENAI_API_KEY"]
+        );
+        assert_eq!(
+            candidates("google", "custom", "https://llm.internal"),
+            vec!["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        );
+        assert!(candidates("unknown", "custom", "https://llm.internal").is_empty());
+    }
 }

@@ -649,4 +649,369 @@ mod tests {
             source_conversation_key("telegram", Some("chat-1"), Some("thread-b"))
         );
     }
+
+    use anda_core::Principal;
+    use anda_db::{
+        database::{AndaDB, DBConfig},
+        storage::StorageConfig,
+    };
+    use anda_engine::{
+        engine::EngineBuilder,
+        memory::{Conversation, ConversationRef},
+    };
+    use object_store::memory::InMemory;
+    use std::sync::Arc;
+
+    async fn test_tool() -> ConversationsTool {
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let db = AndaDB::connect(
+            object_store,
+            DBConfig {
+                name: "conversations_test_db".to_string(),
+                description: "conversations test db".to_string(),
+                storage: StorageConfig {
+                    cache_max_capacity: 1024,
+                    compress_level: 1,
+                    object_chunk_size: 256 * 1024,
+                    bucket_overload_size: 256 * 1024,
+                    max_small_object_size: 1024 * 1024,
+                },
+                lock: None,
+            },
+        )
+        .await
+        .unwrap();
+        let conversations = Conversations::connect(Arc::new(db), "conversations".to_string())
+            .await
+            .unwrap();
+        ConversationsTool::new(conversations, "/tmp/default-ws".to_string())
+    }
+
+    fn meta_with_extra(entries: &[(&str, Value)]) -> RequestMeta {
+        let mut extra = serde_json::Map::new();
+        for (key, value) in entries {
+            extra.insert((*key).to_string(), value.clone());
+        }
+        RequestMeta {
+            extra,
+            ..Default::default()
+        }
+    }
+
+    fn ok_result(output: ToolOutput<Response>) -> Value {
+        match output.output {
+            Response::Ok { result, .. } => result,
+            other => panic!("expected ok response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn state_from_meta_resolves_workspace_and_source() {
+        let tool = test_tool().await;
+
+        let state = tool.state_from_meta(&meta_with_extra(&[
+            ("workspace", json!("/tmp/ws")),
+            ("source", json!("telegram")),
+            ("reply_target", json!("chat-1")),
+            ("thread", json!("topic-2")),
+            ("conversation", json!(7)),
+        ]));
+        assert_eq!(state.workspace, "/tmp/ws");
+        assert_eq!(state.source, "telegram");
+        assert_eq!(
+            state.source_key,
+            "telegram:reply_target:chat-1:thread:topic-2"
+        );
+        assert_eq!(state.conversation, 7);
+
+        let state = tool.state_from_meta(&meta_with_extra(&[("workspace", json!("/tmp/ws"))]));
+        assert_eq!(state.source, "cli:/tmp/ws");
+
+        let state = tool.state_from_meta(&meta_with_extra(&[("source", json!("cli:/tmp/other"))]));
+        assert_eq!(state.workspace, "/tmp/other");
+
+        let state = tool.state_from_meta(&meta_with_extra(&[("source", json!("discord"))]));
+        assert_eq!(state.workspace, "/tmp/default-ws");
+        assert_eq!(state.source, "discord");
+
+        let state = tool.state_from_meta(&RequestMeta::default());
+        assert_eq!(state.workspace, "/tmp/default-ws");
+        assert_eq!(state.source, "cli:/tmp/default-ws");
+        assert_eq!(state.conversation, 0);
+    }
+
+    #[tokio::test]
+    async fn source_state_round_trips_through_extension_storage() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        tool.update_source_state(
+            "telegram".to_string(),
+            SourceState {
+                conv_id: 11,
+                status: ConversationStatus::Working,
+                timestamp: 1_750_000_000_000,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, 11);
+        assert_eq!(tool.source_conversations().len(), 1);
+
+        // init() reloads the persisted map after the in-memory copy is lost.
+        tool.source_conversation.write().clear();
+        tool.init(ctx).await.unwrap();
+        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, 11);
+
+        let removed = tool.delete_source_state("telegram").await.unwrap();
+        assert_eq!(removed.map(|state| state.conv_id), Some(11));
+        assert!(
+            tool.delete_source_state("telegram")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_usage_accumulates_and_persists() {
+        let tool = test_tool().await;
+
+        tool.accumulate_tool_usage(HashMap::new()).await.unwrap();
+        assert!(tool.tools_usage().is_empty());
+
+        let delta = HashMap::from([(
+            "shell".to_string(),
+            Usage {
+                input_tokens: 5,
+                output_tokens: 3,
+                cached_tokens: 1,
+                requests: 1,
+            },
+        )]);
+        tool.accumulate_tool_usage(delta.clone()).await.unwrap();
+        tool.accumulate_tool_usage(delta).await.unwrap();
+
+        let total = tool.tool_usage_with(|usage| usage.get("shell").cloned()).unwrap();
+        assert_eq!(total.input_tokens, 10);
+        assert_eq!(total.requests, 2);
+    }
+
+    #[tokio::test]
+    async fn tool_call_reads_source_states_and_conversations() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        // GetSourceState falls back to an empty default state.
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::GetSourceState {},
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["c"], 0);
+
+        tool.update_source_state(
+            "telegram".to_string(),
+            SourceState {
+                conv_id: 11,
+                status: ConversationStatus::Idle,
+                timestamp: 1_750_000_000_000,
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::ListSourceState {},
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["telegram"]["c"], 11);
+
+        // The agent-facing variant renders display-friendly fields.
+        let agent_ctx = ctx.clone();
+        agent_ctx.set_state(AgentInfo {
+            name: "anda".to_string(),
+        });
+        let result = ok_result(
+            tool.call(
+                agent_ctx.clone(),
+                ConversationsToolArgs::ListSourceState {},
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["telegram"]["conv_id"], 11);
+        assert!(result["telegram"]["timestamp"].is_string());
+
+        let err = tool
+            .call(
+                ctx.clone(),
+                ConversationsToolArgs::DeleteSourceState {
+                    source: "  ".to_string(),
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("source is required"));
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::DeleteSourceState {
+                    source: "telegram".to_string(),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["deleted"], true);
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::DeleteSourceState {
+                    source: "telegram".to_string(),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["deleted"], false);
+    }
+
+    #[tokio::test]
+    async fn tool_call_enforces_conversation_ownership() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        let mine = Conversation {
+            user: Principal::anonymous(),
+            messages: vec![json!({"role": "user", "content": "hello world"})],
+            ..Default::default()
+        };
+        let my_id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&mine))
+            .await
+            .unwrap();
+
+        let theirs = Conversation {
+            user: Principal::management_canister(),
+            ..Default::default()
+        };
+        let their_id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&theirs))
+            .await
+            .unwrap();
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::GetConversation { _id: my_id },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["_id"], my_id);
+
+        let err = tool
+            .call(
+                ctx.clone(),
+                ConversationsToolArgs::GetConversation { _id: their_id },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("permission denied"));
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::GetConversationDelta {
+                    _id: my_id,
+                    messages_offset: 0,
+                    artifacts_offset: 0,
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result["messages"].as_array().map(Vec::len), Some(1));
+
+        let err = tool
+            .call(
+                ctx.clone(),
+                ConversationsToolArgs::GetConversationDelta {
+                    _id: their_id,
+                    messages_offset: 0,
+                    artifacts_offset: 0,
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("permission denied"));
+
+        // Batch get only returns the caller's conversations.
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::BatchGetConversations {
+                    ids: vec![my_id, their_id],
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result.as_array().map(Vec::len), Some(1));
+
+        let result = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::ListPrevConversations {
+                    cursor: None,
+                    limit: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(result.as_array().map(Vec::len), Some(1));
+
+        let result = ok_result(
+            tool.call(
+                ctx,
+                ConversationsToolArgs::SearchConversations {
+                    query: "hello".to_string(),
+                    limit: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(result.is_array());
+    }
 }

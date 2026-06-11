@@ -325,4 +325,58 @@ mod tests {
         assert!(uri.ends_with("/voice%20file.mp3"));
         assert_eq!(path_from_file_uri(&uri).unwrap(), path);
     }
+
+    #[tokio::test]
+    async fn store_resource_skips_missing_workspace_or_blob_and_dedupes_names() {
+        let workspace = ChannelWorkspace::default();
+        let mut with_blob = resource_from_bytes("a.txt".to_string(), b"data".to_vec(), "test");
+
+        // No workspace path: storing is a no-op.
+        assert!(
+            workspace
+                .store_resource(&mut with_blob, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        workspace.set_path(dir.path().to_path_buf());
+
+        // No blob: nothing to store.
+        let mut without_blob = Resource {
+            name: "b.txt".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            workspace
+                .store_resource(&mut without_blob, None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Storing twice with the same message key produces unique file names.
+        let first = workspace
+            .store_resource(&mut with_blob, Some("m1"))
+            .await
+            .unwrap()
+            .expect("stored path");
+        let mut duplicate = resource_from_bytes("a.txt".to_string(), b"data2".to_vec(), "test");
+        duplicate.size = None;
+        let second = workspace
+            .store_resource(&mut duplicate, Some("m1"))
+            .await
+            .unwrap()
+            .expect("stored path");
+        assert_ne!(first, second);
+        assert_eq!(duplicate.size, Some(5));
+
+        // The lossy variant tolerates errors silently.
+        let mut lossy = resource_from_bytes("c.txt".to_string(), b"x".to_vec(), "test");
+        workspace
+            .store_resources_lossy(std::slice::from_mut(&mut lossy), None, "test attachment")
+            .await;
+        assert!(lossy.uri.is_some());
+    }
 }

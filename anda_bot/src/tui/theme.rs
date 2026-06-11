@@ -94,3 +94,48 @@ pub fn badge_style() -> Style {
 pub fn panel_glow_style() -> Style {
     Style::default().fg(PANDA_WHITE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn styles_use_palette_colors() {
+        assert_eq!(title_style().fg, Some(BAMBOO_LIGHT));
+        assert!(title_style().add_modifier.contains(Modifier::BOLD));
+        assert_eq!(heading_style().fg, Some(LEAF_MINT));
+        assert_eq!(body_style().fg, Some(PANDA_WHITE));
+        assert_eq!(dim_style().fg, Some(BAMBOO_DIM));
+        assert_eq!(accent_style().fg, Some(ACCENT_TEAL));
+        assert_eq!(success_style().fg, Some(BAMBOO_GREEN));
+        assert_eq!(warn_style().fg, Some(WARN_AMBER));
+        assert_eq!(danger_style().fg, Some(ERROR_RED));
+        assert_eq!(subtle_style().fg, Some(BAMBOO_DIM));
+        assert_eq!(panel_glow_style().fg, Some(PANDA_WHITE));
+    }
+
+    #[test]
+    fn footer_styles_share_footer_background() {
+        assert_eq!(footer_panel_style().bg, Some(FOOTER_BG));
+        assert_eq!(footer_border_style().fg, Some(FOOTER_BORDER));
+        assert_eq!(footer_border_style().bg, Some(FOOTER_BG));
+        assert_eq!(footer_text_style().fg, Some(BAMBOO_LIGHT));
+        assert_eq!(footer_text_style().bg, Some(FOOTER_BG));
+    }
+
+    #[test]
+    fn badge_style_inverts_ink_on_mint() {
+        assert_eq!(badge_style().fg, Some(PANDA_INK));
+        assert_eq!(badge_style().bg, Some(LEAF_MINT));
+    }
+
+    #[test]
+    fn banner_line_style_varies_by_row() {
+        assert_eq!(banner_line_style(0).fg, Some(LEAF_MINT));
+        assert_eq!(banner_line_style(1).fg, Some(BAMBOO_LIGHT));
+        assert_eq!(banner_line_style(2).fg, Some(BAMBOO_LIGHT));
+        assert_eq!(banner_line_style(3).fg, Some(BAMBOO_GREEN));
+        assert_eq!(banner_line_style(4).fg, Some(BAMBOO_DIM));
+        assert_eq!(banner_line_style(99).fg, Some(BAMBOO_DIM));
+    }
+}

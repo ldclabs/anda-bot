@@ -174,3 +174,64 @@ impl Brain {
         app
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::key::Ed25519Key;
+    use anda_engine::model::ModelConfig;
+    use object_store::memory::InMemory;
+
+    fn brain_model() -> Model {
+        let models = Models::from_configs(
+            &[ModelConfig {
+                family: "openai".to_string(),
+                model: "test-model".to_string(),
+                api_base: "https://api.example.test/v1".to_string(),
+                api_key: "sk-test".to_string(),
+                ..Default::default()
+            }],
+            reqwest::Client::new(),
+        );
+        models.get("test-model").expect("test model")
+    }
+
+    #[tokio::test]
+    async fn brain_creates_missing_space_and_builds_router() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let manager = Ed25519Key::new([9; 32]).pubkey();
+
+        let brain = Brain::new(
+            object_store,
+            BrainConfig {
+                managers: vec![manager],
+                https_proxy: None,
+                model: brain_model(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // The space was created on first load and the router registers the
+        // public API routes without panicking.
+        let _router = brain.into_router();
+    }
+
+    #[tokio::test]
+    async fn brain_requires_at_least_one_manager() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+        let err = Brain::new(
+            object_store,
+            BrainConfig {
+                managers: Vec::new(),
+                https_proxy: None,
+                model: brain_model(),
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("At least one manager"));
+    }
+}

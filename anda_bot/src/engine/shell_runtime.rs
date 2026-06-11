@@ -57,3 +57,27 @@ impl Executor for NativeShellRuntime {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_exposes_native_runtime_metadata() {
+        let workspace = PathBuf::from("/tmp/anda-shell-test");
+        let runtime = NativeShellRuntime::new(workspace.clone());
+
+        assert_eq!(runtime.workspace(), &workspace);
+        assert!(!runtime.name().is_empty());
+        assert!(!runtime.os().is_empty());
+        assert!(!runtime.shell().is_empty());
+    }
+
+    #[test]
+    fn insecure_preserves_workspace() {
+        let workspace = PathBuf::from("/tmp/anda-shell-test");
+        let runtime = NativeShellRuntime::new(workspace.clone()).insecure();
+
+        assert_eq!(runtime.workspace(), &workspace);
+    }
+}

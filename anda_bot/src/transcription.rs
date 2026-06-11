@@ -552,4 +552,313 @@ mod tests {
         assert!(resolve_audio_format("voice.txt").is_err());
         assert_eq!(resolve_audio_format("voice.mp3").unwrap().1, "audio/mpeg");
     }
+
+    use crate::config::{
+        GoogleSttConfig, GroqSttConfig, LocalWhisperConfig, OpenAiSttConfig, StepFunSttConfig,
+    };
+    use anda_core::ByteBufB64;
+    use anda_engine::engine::EngineBuilder;
+    use axum::{Router, routing};
+
+    async fn spawn_whisper_mock(text: &'static str) -> String {
+        let app = Router::new().route(
+            "/transcribe",
+            routing::post(move || async move { axum::Json(json!({"text": text})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/transcribe")
+    }
+
+    fn enabled_config_with_groq(api_url: String) -> TranscriptionConfig {
+        TranscriptionConfig {
+            enabled: true,
+            default_provider: "groq".to_string(),
+            groq: Some(GroqSttConfig {
+                api_key: "gsk-test".to_string(),
+                api_url,
+                model: "whisper-large-v3".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn manager_disabled_config_registers_no_providers() {
+        let manager =
+            TranscriptionManager::new(&TranscriptionConfig::default(), reqwest::Client::new())
+                .unwrap();
+
+        assert!(!manager.is_enabled());
+        assert!(manager.available_providers().is_empty());
+        assert!(manager.supported_audio_formats().is_empty());
+    }
+
+    #[test]
+    fn manager_registers_valid_providers_and_skips_invalid_ones() {
+        let config = TranscriptionConfig {
+            enabled: true,
+            default_provider: "groq".to_string(),
+            groq: Some(GroqSttConfig {
+                api_key: "gsk-test".to_string(),
+                ..Default::default()
+            }),
+            // Empty API key: skipped with a warning instead of failing startup.
+            openai: Some(OpenAiSttConfig::default()),
+            google: Some(GoogleSttConfig {
+                api_key: "key".to_string(),
+                ..Default::default()
+            }),
+            stepfun: Some(StepFunSttConfig {
+                api_key: "sk".to_string(),
+                ..Default::default()
+            }),
+            local_whisper: Some(LocalWhisperConfig {
+                url: "http://localhost:9/transcribe".to_string(),
+                bearer_token: None,
+                max_audio_bytes: 1024,
+                timeout_secs: 5,
+            }),
+            ..Default::default()
+        };
+
+        let manager = TranscriptionManager::new(&config, reqwest::Client::new()).unwrap();
+
+        assert!(manager.is_enabled());
+        assert_eq!(
+            manager.available_providers(),
+            vec!["google", "groq", "local_whisper", "stepfun"]
+        );
+        assert_eq!(
+            manager.supported_audio_formats(),
+            WHISPER_COMPATIBLE_AUDIO_FORMATS
+                .iter()
+                .map(|format| format.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manager_rejects_unavailable_default_provider() {
+        let config = TranscriptionConfig {
+            enabled: true,
+            default_provider: "openai".to_string(),
+            openai: Some(OpenAiSttConfig::default()),
+            ..Default::default()
+        };
+
+        let err = TranscriptionManager::new(&config, reqwest::Client::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Default transcription provider 'openai'")
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_routes_transcription_to_default_provider() {
+        let url = spawn_whisper_mock("routed text").await;
+        let manager =
+            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+                .unwrap();
+
+        let text = manager.transcribe(b"data", "voice.mp3").await.unwrap();
+        assert_eq!(text, "routed text");
+
+        let err = manager
+            .transcribe_with_provider(b"data", "voice.mp3", "missing")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Transcription provider 'missing' not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcription_tool_call_decodes_base64_payload() {
+        let url = spawn_whisper_mock("from base64").await;
+        let manager =
+            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+                .unwrap();
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        let output = manager
+            .call(
+                ctx,
+                TranscriptionArgs {
+                    provider: None,
+                    file_name: None,
+                    audio_base64: Some(STANDARD.encode(b"data")),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.output.text, "from base64");
+        assert_eq!(output.output.provider, "groq");
+        assert_eq!(output.output.file_name, "audio.wav");
+    }
+
+    #[tokio::test]
+    async fn transcription_tool_call_reads_audio_resource_blob() {
+        let url = spawn_whisper_mock("from resource").await;
+        let manager =
+            TranscriptionManager::new(&enabled_config_with_groq(url), reqwest::Client::new())
+                .unwrap();
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        let resource = Resource {
+            name: "note.ogg".to_string(),
+            tags: vec!["audio".to_string()],
+            blob: Some(ByteBufB64(b"data".to_vec())),
+            ..Default::default()
+        };
+        let output = manager
+            .call(ctx, TranscriptionArgs::default(), vec![resource])
+            .await
+            .unwrap();
+
+        assert_eq!(output.output.text, "from resource");
+        assert_eq!(output.output.file_name, "note.ogg");
+    }
+
+    #[tokio::test]
+    async fn transcription_tool_call_rejects_bad_input() {
+        let manager = TranscriptionManager {
+            providers: HashMap::new(),
+            default_provider: "groq".to_string(),
+        };
+
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let err = manager
+            .call(
+                ctx.clone(),
+                TranscriptionArgs {
+                    audio_base64: Some("not base64!!!".to_string()),
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid audio_base64 payload"));
+
+        let err = manager
+            .call(ctx, TranscriptionArgs::default(), Vec::new())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("no audio resource provided"));
+    }
+
+    #[test]
+    fn audio_resource_helpers_detect_and_name_audio() {
+        let tagged = Resource {
+            tags: vec!["Audio".to_string()],
+            ..Default::default()
+        };
+        assert!(is_audio_resource(&tagged));
+        assert_eq!(audio_resource_file_name(&tagged, "voice"), "voice.wav");
+
+        let by_mime = Resource {
+            mime_type: Some("audio/mpeg".to_string()),
+            ..Default::default()
+        };
+        assert!(is_audio_resource(&by_mime));
+        assert_eq!(audio_resource_file_name(&by_mime, "voice"), "voice.mp3");
+
+        let by_extension_tag = Resource {
+            tags: vec!["FLAC".to_string()],
+            ..Default::default()
+        };
+        assert!(is_audio_resource(&by_extension_tag));
+        assert_eq!(
+            audio_resource_file_name(&by_extension_tag, "voice"),
+            "voice.flac"
+        );
+
+        let named = Resource {
+            name: "memo.ogg".to_string(),
+            tags: vec!["audio".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(audio_resource_file_name(&named, "voice"), "memo.ogg");
+
+        let not_audio = Resource {
+            tags: vec!["image".to_string()],
+            mime_type: Some("image/png".to_string()),
+            ..Default::default()
+        };
+        assert!(!is_audio_resource(&not_audio));
+
+        assert!(supported_audio_resource_tags().contains(&"audio".to_string()));
+    }
+
+    #[tokio::test]
+    async fn transcribe_audio_routes_by_default_provider() {
+        let url = spawn_whisper_mock("legacy entry").await;
+
+        let text = transcribe_audio(
+            b"data".to_vec(),
+            "voice.mp3",
+            &enabled_config_with_groq(url),
+        )
+        .await
+        .unwrap();
+        assert_eq!(text, "legacy entry");
+    }
+
+    #[tokio::test]
+    async fn transcribe_audio_reports_missing_provider_sections() {
+        for provider in ["groq", "openai", "google", "stepfun", "local_whisper"] {
+            let config = TranscriptionConfig {
+                enabled: true,
+                default_provider: provider.to_string(),
+                ..Default::default()
+            };
+            let err = transcribe_audio(b"data".to_vec(), "voice.mp3", &config)
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("is not configured"),
+                "provider {provider}: {err}"
+            );
+        }
+
+        let config = TranscriptionConfig {
+            default_provider: "unknown".to_string(),
+            ..Default::default()
+        };
+        let err = transcribe_audio(b"data".to_vec(), "voice.mp3", &config)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Unsupported transcription provider 'unknown'")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcribe_audio_validates_audio_before_credentials() {
+        let oversized = vec![0u8; MAX_AUDIO_BYTES + 1];
+        let err = transcribe_audio(
+            oversized,
+            "voice.mp3",
+            &TranscriptionConfig {
+                default_provider: "groq".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("Audio file too large"));
+    }
 }
