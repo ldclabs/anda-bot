@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [0.9.7] — 2026-06-11
 
+### Added
+
+- **Resource blobs can be downloaded for local processing**: the resources API now offers a `DownloadResource` operation that writes a persisted resource blob to a safe local filename in a requested directory or the system temp directory.
+
 ### Changed
 
 - **Launcher downloaded updates install only from explicit menu action**: automatic update polling now records downloaded updates without immediately opening restart prompts, and manual update checks use the tray/menu item as the single explicit install-and-restart entrypoint.
