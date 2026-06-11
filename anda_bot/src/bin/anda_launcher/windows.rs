@@ -29,8 +29,8 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::{
-            NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-            NOTIFYICONDATAW, Shell_NotifyIconW, ShellExecuteW,
+            NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+            Shell_NotifyIconW, ShellExecuteW,
         },
         WindowsAndMessaging::{
             AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconIndirect,
@@ -296,20 +296,6 @@ unsafe fn add_tray_icon(hwnd: HWND) {
     };
     copy_wide_fixed(&mut data.szTip, &text().app_title);
     Shell_NotifyIconW(NIM_ADD, &data);
-}
-
-unsafe fn show_tray_notification(hwnd: HWND, title: &str, message: &str) {
-    let mut data = NOTIFYICONDATAW {
-        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-        hWnd: hwnd,
-        uID: TRAY_ID,
-        uFlags: NIF_INFO,
-        dwInfoFlags: NIIF_INFO,
-        ..Default::default()
-    };
-    copy_wide_fixed(&mut data.szInfoTitle, title);
-    copy_wide_fixed(&mut data.szInfo, message);
-    Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
 fn launcher_icon() -> HICON {
@@ -782,7 +768,6 @@ fn start_status_loop(ctx: LauncherContext) {
 
 fn start_auto_update_loop(ctx: LauncherContext) {
     thread::spawn(move || {
-        let mut prompted_tag: Option<String> = None;
         loop {
             if !core::begin_update_check() {
                 thread::sleep(core::auto_update_poll_interval());
@@ -791,14 +776,7 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 
             match core::check_update_if_due(&ctx) {
                 Ok(state) => {
-                    core::finish_update_check(Some(state.clone()));
-                    if state.downloaded_update_available() {
-                        let tag = state.latest_tag.clone();
-                        if tag != prompted_tag {
-                            prompted_tag = tag;
-                            prompt_update_ready(ctx.clone(), state);
-                        }
-                    }
+                    core::finish_update_check(Some(state));
                 }
                 Err(err) => {
                     core::finish_update_check(None);
@@ -810,29 +788,14 @@ fn start_auto_update_loop(ctx: LauncherContext) {
     });
 }
 
-fn run_manual_update_check(hwnd: HWND, ctx: LauncherContext) {
+fn run_manual_update_check(_hwnd: HWND, ctx: LauncherContext) {
     if let Some(state) = core::downloaded_update_state() {
         prompt_update_ready(ctx, state);
         return;
     }
 
     if !core::begin_update_check() {
-        unsafe {
-            show_tray_notification(
-                hwnd,
-                &text().update_check_result_title,
-                &core::check_update_menu_label(),
-            );
-        }
         return;
-    }
-
-    unsafe {
-        show_tray_notification(
-            hwnd,
-            &text().update_check_result_title,
-            &core::check_update_menu_label(),
-        );
     }
 
     thread::spawn(move || match core::check_update_now(&ctx) {
@@ -872,19 +835,15 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
 
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
-        message_box(
-            &text().update_restart_title,
-            &result.message,
-            MB_OK | MB_ICONINFORMATION,
-        );
+        core::finish_update_restart_success(&state);
     } else {
         message_box(
             &text().update_restart_title,
             &text().update_restart_failed_message(&result.message),
             MB_OK | MB_ICONERROR,
         );
+        core::finish_update_restart_prompt(&state);
     }
-    core::finish_update_restart_prompt(&state);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {

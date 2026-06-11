@@ -1013,6 +1013,21 @@ pub fn finish_update_restart_prompt(state: &LauncherAutoUpdateState) {
     }
 }
 
+pub fn finish_update_restart_success(state: &LauncherAutoUpdateState) {
+    let tag = state.latest_tag_label();
+    let mut ui_state = lock_update_ui_state();
+    if ui_state.prompting_restart_tag.as_deref() == Some(tag.as_str()) {
+        ui_state.prompting_restart_tag = None;
+    }
+    ui_state.last_state = Some(LauncherAutoUpdateState {
+        status: "installed".to_string(),
+        current_tag: tag,
+        latest_tag: state.latest_tag.clone(),
+        downloaded_path: None,
+        error: None,
+    });
+}
+
 pub fn check_update_now(ctx: &LauncherContext) -> LauncherResult<LauncherAutoUpdateState> {
     run_update_check(ctx, true)
 }
@@ -2016,7 +2031,7 @@ mod tests {
         );
         assert_eq!(
             en.update_downloaded_restart_message("v1.2.3"),
-            "Downloaded v1.2.3; restart to apply"
+            "Install and restart v1.2.3"
         );
         assert_eq!(en.browser_extension_token_copy_button, "Copy Token");
         assert_eq!(
@@ -2048,7 +2063,7 @@ mod tests {
         );
         assert_eq!(
             zh.update_downloaded_restart_message("v1.2.3"),
-            "已下载 v1.2.3，重启生效"
+            "安装并重启 v1.2.3"
         );
         assert_eq!(zh.browser_extension_token_copy_button, "复制 Token");
         assert_eq!(
@@ -2110,6 +2125,33 @@ mod tests {
         assert!(begin_update_restart_prompt(&state));
         assert!(!begin_update_restart_prompt(&state));
         finish_update_restart_prompt(&state);
+        assert!(begin_update_restart_prompt(&state));
+        finish_update_restart_prompt(&state);
+
+        reset_update_ui_state_for_test();
+    }
+
+    #[test]
+    fn update_restart_success_clears_pending_download_menu_state() {
+        let _guard = UPDATE_UI_TEST_LOCK.lock().unwrap();
+        reset_update_ui_state_for_test();
+        let state = downloaded_test_update_state();
+
+        finish_update_check(Some(state.clone()));
+        assert_eq!(downloaded_update_state(), Some(state.clone()));
+        assert_eq!(
+            check_update_menu_label(),
+            text().update_downloaded_restart_message("v1.2.3")
+        );
+
+        assert!(begin_update_restart_prompt(&state));
+        finish_update_restart_success(&state);
+
+        assert!(downloaded_update_state().is_none());
+        assert_eq!(
+            check_update_menu_label(),
+            text().check_update_label("v1.2.3")
+        );
         assert!(begin_update_restart_prompt(&state));
         finish_update_restart_prompt(&state);
 

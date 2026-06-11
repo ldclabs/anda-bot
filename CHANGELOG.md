@@ -2,6 +2,15 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.7] — 2026-06-11
+
+### Changed
+
+- **Launcher downloaded updates install only from explicit menu action**: automatic update polling now records downloaded updates without immediately opening restart prompts, and manual update checks use the tray/menu item as the single explicit install-and-restart entrypoint.
+- **Launcher update menu state clears after successful restart handoff**: successful update installation now clears the pending downloaded-update state so the menu returns to the normal update-check label.
+- **Launcher downloaded-update label is action-oriented**: updated English and Chinese menu text from passive download status to “Install and restart” wording.
+- **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.7`.
+
 ## [0.9.6] — 2026-06-10
 
 ### Added

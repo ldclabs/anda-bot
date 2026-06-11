@@ -216,8 +216,8 @@ launcher.update_ready_message:
   en: Downloaded %{latest_tag}. Restart to apply.
   zh-Hans: 已下载 %{latest_tag}，重启生效。
 launcher.update_downloaded_restart_message:
-  en: Downloaded %{latest_tag}; restart to apply
-  zh-Hans: 已下载 %{latest_tag}，重启生效
+  en: Install and restart %{latest_tag}
+  zh-Hans: 安装并重启 %{latest_tag}
 launcher.update_restart_confirm:
   en: Downloaded %{latest_tag}. Install and restart now to apply it?
   zh-Hans: 已下载 %{latest_tag}，重启生效。现在安装并重启？

@@ -126,7 +126,7 @@ class ${FORMULA_CLASS} < Formula
 
   test do
     assert_match version.to_s, shell_output("#{bin}/anda --version")
-    assert (bin/"anda_launcher").exist? if OS.mac?
+    assert_path_exists bin/"anda_launcher" if OS.mac?
   end
 end
 EOF

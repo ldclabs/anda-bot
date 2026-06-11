@@ -549,7 +549,6 @@ fn start_status_loop(ctx: LauncherContext) {
 
 fn start_auto_update_loop(ctx: LauncherContext) {
     thread::spawn(move || {
-        let mut prompted_tag: Option<String> = None;
         loop {
             if !core::begin_update_check() {
                 thread::sleep(core::auto_update_poll_interval());
@@ -558,14 +557,7 @@ fn start_auto_update_loop(ctx: LauncherContext) {
 
             match core::check_update_if_due(&ctx) {
                 Ok(state) => {
-                    core::finish_update_check(Some(state.clone()));
-                    if state.downloaded_update_available() {
-                        let tag = state.latest_tag.clone();
-                        if tag != prompted_tag {
-                            prompted_tag = tag;
-                            prompt_update_ready(ctx.clone(), state);
-                        }
-                    }
+                    core::finish_update_check(Some(state));
                 }
                 Err(err) => {
                     core::finish_update_check(None);
@@ -584,17 +576,9 @@ fn run_manual_update_check(ctx: LauncherContext) {
     }
 
     if !core::begin_update_check() {
-        show_background_notification(
-            &text().update_check_result_title,
-            &core::check_update_menu_label(),
-        );
         return;
     }
 
-    show_background_notification(
-        &text().update_check_result_title,
-        &core::check_update_menu_label(),
-    );
     thread::spawn(move || match core::check_update_now(&ctx) {
         Ok(state) if state.downloaded_update_available() => {
             core::finish_update_check(Some(state.clone()));
@@ -628,14 +612,14 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     show_background_notification(&text().update_restart_title, &text().update_restart_started);
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
-        show_background_dialog(&text().update_restart_title, &result.message);
+        core::finish_update_restart_success(&state);
     } else {
         show_background_dialog(
             &text().update_restart_title,
             &text().update_restart_failed_message(&result.message),
         );
+        core::finish_update_restart_prompt(&state);
     }
-    core::finish_update_restart_prompt(&state);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {

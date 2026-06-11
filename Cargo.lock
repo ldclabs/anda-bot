@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "anda_brain",
  "anda_core",
