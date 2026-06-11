@@ -522,22 +522,19 @@
 
     if (files.length > 0) {
       event.preventDefault()
-      await addFiles(files as unknown as FileList)
+      await addFiles(files)
     }
   }
 
   async function addFiles(fileList: FileList | File[] | null) {
-    if (
-      !fileList ||
-      (fileList instanceof FileList ? fileList.length === 0 : (fileList as File[]).length === 0)
-    ) {
+    if (!fileList || fileList.length === 0) {
       return
     }
     attachmentError = ''
     preparingAttachments = true
     try {
       const nextAttachments: ChatAttachment[] = []
-      const filesArray = fileList instanceof FileList ? Array.from(fileList) : fileList
+      const filesArray = Array.from(fileList)
       for (const file of filesArray) {
         nextAttachments.push(await fileToAttachment(file))
       }

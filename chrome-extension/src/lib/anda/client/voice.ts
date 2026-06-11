@@ -11,15 +11,9 @@ type NormalizedVoiceRecording = {
   fileName: string
 }
 
-export type VoiceTtsSynthesizer<TArtifact> = (
-  chunk: string,
-  index: number
-) => Promise<TArtifact>
+export type VoiceTtsSynthesizer<TArtifact> = (chunk: string, index: number) => Promise<TArtifact>
 
-export type VoiceTtsPlayer<TArtifact> = (
-  artifact: TArtifact,
-  index: number
-) => Promise<void>
+export type VoiceTtsPlayer<TArtifact> = (artifact: TArtifact, index: number) => Promise<void>
 
 export function normalizeCapabilityFormats(
   value: boolean | string[] | undefined,
@@ -44,10 +38,7 @@ export async function normalizeVoiceRecordingAudio(
   const sourceFormat = recordingAudioFormat(fileName, recording.mimeType)
   if (!sourceFormat) {
     throw new Error(
-      chrome.i18n.getMessage('audioFormatNotSupported', [
-        'unknown',
-        accepted.join(', ') || 'none'
-      ])
+      chrome.i18n.getMessage('audioFormatNotSupported', ['unknown', accepted.join(', ') || 'none'])
     )
   }
 
@@ -447,11 +438,7 @@ export async function playVoiceTtsPipeline<TArtifact>(
   for (let index = 1; index < chunks.length; index += 1) {
     const next = synthesize(chunks[index], index)
     next.catch(() => undefined)
-    try {
-      await play(current, index - 1)
-    } catch (error) {
-      throw error
-    }
+    await play(current, index - 1)
     current = await next
   }
   await play(current, chunks.length - 1)

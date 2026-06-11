@@ -381,6 +381,9 @@ function closeSocket(reason: string): void {
   if (socket) {
     const oldSocket = socket
     socket = null
+    oldSocket.onopen = null
+    oldSocket.onmessage = null
+    oldSocket.onerror = null
     oldSocket.onclose = null
     oldSocket.close()
   }

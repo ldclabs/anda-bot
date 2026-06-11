@@ -200,7 +200,6 @@ export class AndaSidePanelClient extends EventTarget {
         type: 'DeleteSourceState',
         source: sourceKey
       })
-      console.log('Delete channel API call completed:', sourceKey)
       await this.removeWorkspaceChannelSource(sourceKey)
 
       const wasActive = this.activeChannel?.source === sourceKey
@@ -312,7 +311,9 @@ export class AndaSidePanelClient extends EventTarget {
     }
     try {
       await this.refreshActiveTab()
-      await channel.sendPrompt(prompt, attachments)
+      const poller = await channel.sendPrompt(prompt, attachments)
+      // No consumer here; close so the polling loop does not buffer messages indefinitely.
+      poller?.close()
     } catch (error) {
       this.updateStatus('send failed', { kind: 'error', text: errorToMessage(error) })
     } finally {
@@ -334,7 +335,8 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     try {
-      await channel.sendPrompt('/stop', [])
+      const poller = await channel.sendPrompt('/stop', [])
+      poller?.close()
     } catch (error) {
       this.updateStatus('stop failed', { kind: 'error', text: errorToMessage(error) })
     }
@@ -364,7 +366,11 @@ export class AndaSidePanelClient extends EventTarget {
 
       await this.refreshActiveTab()
       const poller = await channel.sendPrompt(prompt, [])
-      if (!poller || !recording.ttsEnabled) {
+      if (!poller) {
+        return
+      }
+      if (!recording.ttsEnabled) {
+        poller.close()
         return
       }
 
@@ -840,8 +846,7 @@ export class AndaSidePanelClient extends EventTarget {
       return
     }
 
-    const response = await this.serviceWorkerMessage<{ session?: string }>('anda_register')
-    console.log('Registered browser session:', response)
+    await this.serviceWorkerMessage<{ session?: string }>('anda_register')
   }
 
   async requestExtra(): Promise<Record<string, unknown>> {

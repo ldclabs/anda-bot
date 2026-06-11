@@ -1398,9 +1398,10 @@ async function printToPdf(
 async function waitForNetworkIdle(
   chromeApi: ChromeApi,
   tabId: number,
-  args: BrowserActionArgs
+  args: BrowserActionArgs,
+  timeoutMs?: number
 ): Promise<BrowserActionResult> {
-  const timeout = actionTimeoutMs(args, 30000)
+  const timeout = timeoutMs ?? actionTimeoutMs(args, 30000)
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, (target) =>
       waitForNetworkIdleWithAttachedDebugger(chromeApi, target, timeout)
@@ -1827,9 +1828,14 @@ function keyDefinition(key: string): Record<string, unknown> {
   const text = normalizedKey.length === 1 ? normalizedKey : ''
   const upper = text.toUpperCase()
   const windowsVirtualKeyCode = upper ? upper.charCodeAt(0) : 0
+  const code = /^[A-Z]$/.test(upper)
+    ? `Key${upper}`
+    : /^[0-9]$/.test(upper)
+      ? `Digit${upper}`
+      : normalizedKey
   return {
     key: normalizedKey,
-    code: upper && /^[A-Z]$/.test(upper) ? `Key${upper}` : normalizedKey,
+    code,
     text,
     windowsVirtualKeyCode,
     nativeVirtualKeyCode: windowsVirtualKeyCode
@@ -2477,13 +2483,18 @@ async function waitForTabReady(
   tabId: number,
   args: BrowserActionArgs,
   loadWatcher = createTabLoadWatcher(chromeApi, tabId, actionTimeoutMs(args), args),
-  waitOptions?: { noLoadTimeoutMs?: number }
+  waitOptions?: { noLoadTimeoutMs?: number; networkIdleTimeoutMs?: number }
 ): Promise<Record<string, unknown>> {
   try {
     const load = await loadWatcher.wait(waitOptions)
     const loaded = load.loaded !== false
     const network = loaded
-      ? await waitForNetworkIdleBestEffort(chromeApi, tabId, args)
+      ? await waitForNetworkIdleBestEffort(
+          chromeApi,
+          tabId,
+          args,
+          waitOptions?.networkIdleTimeoutMs
+        )
       : { skipped: true, reason: 'no page load detected' }
     const tab = await chromeApi.tabs.get(tabId).catch(() => null)
     return {
@@ -2512,7 +2523,8 @@ async function waitForTabReadyIfLoading(
   const watcher = createTabLoadWatcher(chromeApi, tabId, timeout, args)
   try {
     return await waitForTabReady(chromeApi, tabId, args, watcher, {
-      noLoadTimeoutMs: options?.noLoadTimeoutMs
+      noLoadTimeoutMs: options?.noLoadTimeoutMs,
+      networkIdleTimeoutMs: options?.timeoutMs
     })
   } catch (error) {
     if (options?.bestEffort) {
@@ -2525,13 +2537,14 @@ async function waitForTabReadyIfLoading(
 async function waitForNetworkIdleBestEffort(
   chromeApi: ChromeApi,
   tabId: number,
-  args: BrowserActionArgs
+  args: BrowserActionArgs,
+  timeoutMs?: number
 ): Promise<Record<string, unknown>> {
   if (!chromeApi.debugger?.onEvent) {
     return { skipped: true, reason: 'debugger event API unavailable' }
   }
   try {
-    return (await waitForNetworkIdle(chromeApi, tabId, args)) as Record<string, unknown>
+    return (await waitForNetworkIdle(chromeApi, tabId, args, timeoutMs)) as Record<string, unknown>
   } catch (error) {
     return { skipped: true, error: errorMessage(error) }
   }
@@ -3443,7 +3456,15 @@ export function pageActionDispatcher(
     case 'clear_annotations': {
       const existing = document.getElementById('__anda_viewport_annotations')
       existing?.remove()
-      return { cleared: Boolean(existing) }
+      const highlighted = Array.from(document.querySelectorAll('[data-anda-find-highlight]'))
+      for (const element of highlighted) {
+        if (element instanceof HTMLElement) {
+          delete element.dataset.andaFindHighlight
+          element.style.outline = ''
+          element.style.outlineOffset = ''
+        }
+      }
+      return { cleared: Boolean(existing) || highlighted.length > 0 }
     }
     case 'snapshot': {
       const links = args.include_links

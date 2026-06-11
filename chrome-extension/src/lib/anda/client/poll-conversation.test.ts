@@ -1161,4 +1161,48 @@ describe('Channel.sendPrompt', () => {
     await expect(channel.loadPreviousConversations()).resolves.toBe(true)
     expect(channel.messageGroups.map((group) => group._id)).toContain(1)
   })
+
+  it('polls the same conversation again after a previous poll loop completed', async () => {
+    let deltaCalls = 0
+    const api = createApi({
+      agentOutputs: [
+        { content: '', conversation: 1, usage: usage() },
+        { content: '', conversation: 1, usage: usage() }
+      ],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetConversation':
+            return toolResult(conversation(1, { status: 'working', updated_at: 10 }))
+          case 'GetConversationDelta':
+            deltaCalls += 1
+            return toolResult(
+              conversationDelta(1, {
+                status: 'completed',
+                messages: [rawMessage('assistant', `reply ${deltaCalls}`, 10 + deltaCalls)],
+                updated_at: 10 + deltaCalls
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    const firstPoller = await channel.sendPrompt('hello', [])
+    const firstReceived: ChatMessage[] = []
+    for await (const current of firstPoller!) {
+      firstReceived.push(current)
+    }
+    expect(firstReceived.map((item) => item.text)).toEqual(['reply 1'])
+
+    const secondPoller = await channel.sendPrompt('again', [])
+    const secondReceived: ChatMessage[] = []
+    for await (const current of secondPoller!) {
+      secondReceived.push(current)
+    }
+    expect(secondReceived.map((item) => item.text)).toEqual(['reply 2'])
+    expect(deltaCalls).toBe(2)
+  })
 })

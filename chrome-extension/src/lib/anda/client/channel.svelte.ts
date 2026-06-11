@@ -318,6 +318,11 @@ export class Channel extends EventTarget {
       await delay(ms)
     }
 
+    // Release the lock so the same conversation can be polled again later
+    // (e.g. when a follow-up prompt re-activates it after a terminal status).
+    if (this.#pollingConversation === conversation._id) {
+      this.#pollingConversation = 0
+    }
     poller.finish()
   }
 
@@ -722,8 +727,7 @@ function findAcceptedLocalMessages(
           continue
         }
         remainingServerText =
-          remainingServerText.slice(0, index) +
-          remainingServerText.slice(index + localText.length)
+          remainingServerText.slice(0, index) + remainingServerText.slice(index + localText.length)
       }
       matched.add(local)
       accepted.push(local)

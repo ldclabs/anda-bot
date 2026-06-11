@@ -28,7 +28,8 @@ export async function loadSettings(chromeApi: ChromeApi): Promise<SettingsState>
 export async function browserSession(chromeApi: ChromeApi): Promise<string> {
   const saved = await chromeApi.storage.local.get([browserSessionStorageKey])
   let id = saved.browserSessionId || '0'
-  if (parseInt(id, 10) < 1000) {
+  // Regenerate when the stored value is missing, too small, or not numeric (NaN fails the check).
+  if (!(parseInt(id, 10) >= 1000)) {
     id = Date.now().toString()
     await chromeApi.storage.local.set({ browserSessionId: id })
   }
