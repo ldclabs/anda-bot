@@ -283,7 +283,7 @@ impl CronRuntime {
                     }
                     _ = interval.tick() => {
                         let Some(engine) = self.engine.get() else {
-                             log::warn!(name = "cron"; "engine is not available, skipping cron tick");
+                             log::info!(name = "cron"; "engine is not available, skipping cron tick");
                              continue;
                         };
                         if let Err(err) = self.clone().process_due_jobs_once(engine).await {

@@ -351,8 +351,11 @@ impl Daemon {
             .serve(global_cancel_token.child_token())
             .await?;
 
+        // The gateway gets the root token (not a child) because its
+        // /daemon/shutdown route cancels it, and that must propagate to the
+        // cron and channel child tokens as well.
         let gateway_handle = gateway::serve(
-            global_cancel_token.child_token(),
+            global_cancel_token.clone(),
             bot_db,
             self.cfg.addr.clone(),
             brain_cfg,
@@ -364,13 +367,10 @@ impl Daemon {
         )
         .await?;
 
-        let terminate_handle = shutdown_signal(global_cancel_token);
-        let _ = tokio::join!(
-            cron_handle,
-            channel_handle,
-            gateway_handle,
-            terminate_handle
-        );
+        // shutdown_signal only completes on an OS signal; joining it would
+        // keep the process alive forever after an HTTP-triggered shutdown.
+        tokio::spawn(shutdown_signal(global_cancel_token));
+        let _ = tokio::join!(cron_handle, channel_handle, gateway_handle);
 
         Ok(())
     }
@@ -848,5 +848,57 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("timed out"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serve_exits_promptly_after_http_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let config = Config {
+            addr: format!("127.0.0.1:{port}"),
+            model: crate::config::ModelSettings {
+                active: "fake-model".to_string(),
+                providers: vec![anda_engine::model::ModelConfig {
+                    family: "openai".to_string(),
+                    model: "fake-model".to_string(),
+                    api_base: "http://127.0.0.1:1/v1".to_string(),
+                    api_key: "fake-key".to_string(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+        let daemon = Daemon::new(dir.path().to_path_buf(), config);
+        daemon.ensure_directories().await.unwrap();
+        let base_url = daemon.base_url();
+
+        let id_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
+        let user_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
+        let token = user_key
+            .sign_cwt(
+                util::key::ClaimsSetBuilder::new()
+                    .claim(util::key::iana::CwtClaimName::Scope, "*".into())
+                    .build(),
+            )
+            .unwrap();
+        let user_pubkey = user_key.pubkey();
+
+        let serve_handle = tokio::spawn(daemon.serve(id_key, user_pubkey));
+
+        let client = crate::gateway::Client::new(base_url, token);
+        client
+            .wait_for_daemon_ready(Duration::from_secs(20))
+            .await
+            .unwrap();
+        client.shutdown().await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), serve_handle)
+            .await
+            .expect("daemon did not exit within 5s after HTTP shutdown")
+            .unwrap()
+            .unwrap();
     }
 }
