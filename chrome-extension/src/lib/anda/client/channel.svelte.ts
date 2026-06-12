@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   Conversation,
   ConversationDelta,
+  ConversationStatus,
   MessageGroup,
   RequestMeta,
   RpcOutput,
@@ -23,6 +24,20 @@ import type {
 import { SubmitMessageConversationId } from './types'
 
 const pollingIntervalMs = 3000
+// A subscriber waiting for a turn that never visibly starts (no working status,
+// no assistant message) is released after this many idle poll ticks.
+const maxIdlePollTicksForTurn = 10
+
+// A consumer of one prompt turn's assistant output (e.g. voice TTS). The poll
+// loop is shared per conversation; each sendPrompt registers its own
+// subscriber, which finishes at the turn boundary instead of conversation end.
+interface PollSubscriber {
+  poller: PollConversation
+  conversationId: number
+  sawWorking: boolean
+  deliveredAssistant: boolean
+  idleTicks: number
+}
 
 export interface API {
   activeChannel(): string | null
@@ -47,6 +62,7 @@ export class Channel extends EventTarget {
   #localMessageSeq: number = 0
   #sendEpoch: number = 0
   #pollWake: (() => void) | null = null
+  #pollSubscribers = new Set<PollSubscriber>()
   #api: API
 
   constructor(source: string, api: API) {
@@ -158,7 +174,7 @@ export class Channel extends EventTarget {
           latest.status === 'idle') &&
         latest.updated_at > Date.now() - 7 * 24 * 3600 * 1000
       ) {
-        this.pollConversationLoop(new PollConversation())
+        this.pollConversationLoop()
       }
       this.dispatchEvent(new CustomEvent('ChannelInitialized', { detail: { source: this.source } }))
     } catch (error) {
@@ -274,7 +290,10 @@ export class Channel extends EventTarget {
         }
         this.updateLatestConversation(conversation)
 
-        this.pollConversationLoop(poller)
+        // Register the returned poller for this turn's assistant output (the
+        // voice flow consumes it for TTS), then make sure a loop is running.
+        this.subscribePoll(conversationId, poller)
+        this.pollConversationLoop()
         // If a loop was already polling this conversation, skip its remaining
         // sleep so the just-submitted prompt's status flip shows up promptly.
         this.wakePolling()
@@ -329,17 +348,18 @@ export class Channel extends EventTarget {
     }
   }
 
-  private async pollConversationLoop(poller: PollConversation): Promise<void> {
+  private async pollConversationLoop(): Promise<void> {
     const epoch = this.#sendEpoch
     const conversation = this.#conversation ? { ...this.#conversation } : null
     if (!conversation || this.#pollingConversation === conversation._id) {
-      poller.finish()
+      // A loop is already polling this conversation; it serves the
+      // subscribers registered by follow-up prompts.
       return
     }
 
     this.#pollingConversation = conversation._id
     while (this.#pollingConversation === conversation._id && epoch === this.#sendEpoch) {
-      const shouldContinue = await this.pollConversationOnce(conversation, poller, epoch)
+      const shouldContinue = await this.pollConversationOnce(conversation, epoch)
       if (!shouldContinue) {
         break
       }
@@ -353,7 +373,73 @@ export class Channel extends EventTarget {
     if (this.#pollingConversation === conversation._id) {
       this.#pollingConversation = 0
     }
-    poller.finish()
+    // Finish after the final refresh so consumers observe the settled state.
+    this.finishPollSubscribers(conversation._id)
+  }
+
+  private subscribePoll(conversationId: number, poller: PollConversation): void {
+    this.#pollSubscribers.add({
+      poller,
+      conversationId,
+      sawWorking: false,
+      deliveredAssistant: false,
+      idleTicks: 0
+    })
+  }
+
+  private finishPollSubscribers(conversationId?: number): void {
+    for (const subscriber of [...this.#pollSubscribers]) {
+      if (conversationId !== undefined && subscriber.conversationId !== conversationId) {
+        continue
+      }
+      subscriber.poller.finish()
+      this.#pollSubscribers.delete(subscriber)
+    }
+  }
+
+  // Fan polled messages out to every turn subscriber and finish those whose
+  // turn has reached its boundary: the conversation went back to idle after
+  // visibly working or after delivering assistant output. Terminal statuses
+  // are left to the loop exit, which runs after the final full refresh.
+  private broadcastPolledMessages(
+    conversationId: number,
+    messages: ChatMessage[],
+    status: ConversationStatus
+  ): void {
+    if (!this.#pollSubscribers.size) {
+      return
+    }
+    const assistantMessages = messages.filter((message) => message.role === 'assistant')
+    const terminal = isTerminalConversationStatus(status)
+    for (const subscriber of [...this.#pollSubscribers]) {
+      if (subscriber.conversationId !== conversationId) {
+        continue
+      }
+      if (subscriber.poller.done) {
+        this.#pollSubscribers.delete(subscriber)
+        continue
+      }
+      if (assistantMessages.length) {
+        subscriber.poller.push(...assistantMessages)
+        subscriber.deliveredAssistant = true
+      }
+      if (status === 'working' || status === 'submitted') {
+        subscriber.sawWorking = true
+        continue
+      }
+      if (terminal) {
+        continue
+      }
+      subscriber.idleTicks += 1
+      if (
+        subscriber.sawWorking ||
+        subscriber.deliveredAssistant ||
+        subscriber.idleTicks >= maxIdlePollTicksForTurn
+      ) {
+        subscriber.poller.finish()
+        this.#pollSubscribers.delete(subscriber)
+      }
+    }
   }
 
   // Sleep between poll ticks, but allow wakePolling() to cut the wait short
@@ -376,11 +462,7 @@ export class Channel extends EventTarget {
     this.#pollWake?.()
   }
 
-  private async pollConversationOnce(
-    conversation: Conversation,
-    poller: PollConversation,
-    epoch: number
-  ): Promise<boolean> {
+  private async pollConversationOnce(conversation: Conversation, epoch: number): Promise<boolean> {
     try {
       const {
         output: { result }
@@ -408,19 +490,18 @@ export class Channel extends EventTarget {
       conversation.child = result.child
 
       this.updateLatestConversation({ ...conversation })
-      if (result.messages.length > 0) {
-        const start = conversation.messages!.length - result.messages.length || 0
-        poller.push(
-          ...result.messages.flatMap((message, index) =>
-            normalizeMessages(message, {
-              conversation: conversation._id,
-              index: start + index,
-              fallbackTimestamp: conversation.updated_at
-            })
-          )
-        )
-        poller.drain()
-      }
+      const start = conversation.messages!.length - result.messages.length || 0
+      this.broadcastPolledMessages(
+        conversation._id,
+        result.messages.flatMap((message, index) =>
+          normalizeMessages(message, {
+            conversation: conversation._id,
+            index: start + index,
+            fallbackTimestamp: conversation.updated_at
+          })
+        ),
+        conversation.status
+      )
 
       const terminal = isTerminalConversationStatus(conversation.status)
       if (terminal || this.hasPendingLocalAttachments(conversation._id)) {
@@ -643,6 +724,7 @@ export class Channel extends EventTarget {
     this.#syncing = false
     this.#syncAt = 0
     this.#conversationAncestors = []
+    this.finishPollSubscribers()
     // Let a sleeping poll loop notice the epoch change and exit right away.
     this.wakePolling()
   }

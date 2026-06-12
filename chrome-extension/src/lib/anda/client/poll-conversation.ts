@@ -8,6 +8,11 @@ export class PollConversation implements AsyncIterable<ChatMessage> {
   #producerDone = false
   #consumerDone = false
 
+  // True once either side is done; producers use this to drop dead subscribers.
+  get done(): boolean {
+    return this.#producerDone || this.#consumerDone
+  }
+
   push(...messages: ChatMessage[]): void {
     if (messages.length === 0 || this.#producerDone || this.#consumerDone) {
       return

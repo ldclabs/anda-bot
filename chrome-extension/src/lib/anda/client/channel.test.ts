@@ -64,6 +64,9 @@ interface MockBackend {
   agentRun: (input: { prompt: string }) => Promise<AgentOutput>
   conversations: Map<number, Conversation>
   sourceState: SourceState | null
+  // Consumed one per GetConversationDelta call; falls back to an empty delta
+  // derived from `conversations` once drained.
+  deltaQueue: ConversationDelta[]
 }
 
 function createBackend(options: {
@@ -81,6 +84,7 @@ function createBackend(options: {
       (async () => {
         throw new Error('agent_run not mocked')
       }),
+    deltaQueue: [],
     api: null as unknown as API
   }
 
@@ -111,6 +115,10 @@ function createBackend(options: {
             return { output: { result: conv }, usage: {} } as Result
           }
           case 'GetConversationDelta': {
+            const queued = backend.deltaQueue.shift()
+            if (queued) {
+              return { output: { result: queued }, usage: {} } as Result
+            }
             const conv = backend.conversations.get(input.args._id || 0)
             const delta: ConversationDelta = {
               _id: input.args._id || 0,
@@ -285,6 +293,62 @@ describe('Channel.sendPrompt', () => {
 
     expect(channel.messageGroups).toHaveLength(0)
     expect(backend.statusUpdates[backend.statusUpdates.length - 1]).toBe('request failed')
+  })
+
+  it('delivers follow-up turn output to the voice poller of an already polled conversation', async () => {
+    const now = Date.now()
+    const idleConversation = conversation({ updated_at: now, created_at: now - 1000 })
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
+    const backend = createBackend({
+      conversations: [idleConversation],
+      sourceState: { conv_id: 5, status: 'idle', timestamp: now },
+      agentRun: async () => ({
+        content: '',
+        usage: turnUsage,
+        conversation: 5,
+        session: 'sess-1'
+      })
+    })
+    backend.deltaQueue.push(
+      // First tick right after init: nothing new yet.
+      { _id: 5, messages: [], artifacts: [], status: 'idle', usage: turnUsage, updated_at: now },
+      // Next tick: the follow-up turn's messages have landed.
+      {
+        _id: 5,
+        messages: [
+          { role: 'user', content: [{ type: 'Text', text: '继续' }], timestamp: now + 1 },
+          {
+            role: 'assistant',
+            content: [{ type: 'Text', text: '收到，继续处理。' }],
+            timestamp: now + 2
+          }
+        ],
+        artifacts: [],
+        status: 'idle',
+        usage: turnUsage,
+        updated_at: now + 2
+      }
+    )
+    const channel = new Channel('browser:test', backend.api)
+    await channel.init()
+
+    // Keep the poll loop from sleeping so the test stays fast and deterministic.
+    const wakeTimer = setInterval(() => channel.wakePolling(), 5)
+    try {
+      const poller = await channel.sendPrompt('继续', [])
+      expect(poller).not.toBeNull()
+
+      const spoken: string[] = []
+      for await (const message of poller!) {
+        spoken.push(message.text)
+      }
+      // Only the assistant reply is delivered (no user echo), and the poller
+      // finishes at the turn boundary instead of waiting for conversation end.
+      expect(spoken).toEqual(['收到，继续处理。'])
+    } finally {
+      clearInterval(wakeTimer)
+      channel.destroy()
+    }
   })
 
   it('places /steer follow-ups into the submit group when no conversation is active', async () => {
