@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import ChatChannelsSidebar from '$lib/anda/ChatChannelsSidebar.svelte'
   import ChatComposer, {
     type ComposerSubmitPayload,
@@ -213,7 +214,7 @@
       return
     }
     const latest = updateState?.latest_tag || ''
-    if (!window.confirm(chrome.i18n.getMessage('updateRestartConfirm', [latest]))) {
+    if (!window.confirm(getMessage('updateRestartConfirm', [latest]))) {
       return
     }
     updateRestarting = true
@@ -337,11 +338,11 @@
   function groupLabel(group: MessageGroup): string {
     const time = group.createdAt || group.updatedAt || group.messages[0]?.timestamp
     if (!time) {
-      return group.current ? chrome.i18n.getMessage('currentSession') : 'Conversation'
+      return group.current ? getMessage('currentSession') : 'Conversation'
     }
     const date = new Date(time)
     if (Number.isNaN(date.getTime())) {
-      return group.current ? chrome.i18n.getMessage('currentSession') : 'Conversation'
+      return group.current ? getMessage('currentSession') : 'Conversation'
     }
     return date.toLocaleString([], {
       month: 'short',
@@ -395,8 +396,8 @@
         <button
           type="button"
           class={buttonClass('ghost', 'icon')}
-          aria-label={chrome.i18n.getMessage('brainGraph')}
-          title={chrome.i18n.getMessage('brainGraph')}
+          aria-label={getMessage('brainGraph')}
+          title={getMessage('brainGraph')}
           onclick={openBrainGraphPage}
         >
           <BrainCircuit class="size-4" />
@@ -404,8 +405,8 @@
         <button
           type="button"
           class={buttonClass('ghost', 'icon')}
-          aria-label={chrome.i18n.getMessage('settings')}
-          title={chrome.i18n.getMessage('settings')}
+          aria-label={getMessage('settings')}
+          title={getMessage('settings')}
           onclick={toggleSettingsPanel}
         >
           <Settings class="size-4" />
@@ -427,10 +428,10 @@
           </span>
           <div class="min-w-0 flex-1">
             <p class="truncate text-xs font-bold text-stone-800">
-              {chrome.i18n.getMessage('updateReadyTitle')}
+              {getMessage('updateReadyTitle')}
             </p>
             <p class="truncate text-xs text-stone-600">
-              {chrome.i18n.getMessage('updateReadyBody', [updateState?.latest_tag || ''])}
+              {getMessage('updateReadyBody', [updateState?.latest_tag || ''])}
             </p>
           </div>
           <button
@@ -444,7 +445,7 @@
             {:else}
               <RefreshCw class="size-3" />
             {/if}
-            <span class="truncate">{chrome.i18n.getMessage('installRestartUpdate')}</span>
+            <span class="truncate">{getMessage('installRestartUpdate')}</span>
           </button>
         </div>
       </section>
@@ -466,7 +467,7 @@
             {/if}
           </div>
           <div class="message-empty-title text-xs font-semibold">
-            {syncing ? chrome.i18n.getMessage('syncing') : chrome.i18n.getMessage('ready')}
+            {syncing ? getMessage('syncing') : getMessage('ready')}
           </div>
         </div>
       {:else}
@@ -483,7 +484,7 @@
               {:else}
                 <History class="size-3" />
               {/if}
-              {chrome.i18n.getMessage('loadHistory')}
+              {getMessage('loadHistory')}
             </button>
           </div>
         {/if}
@@ -532,10 +533,10 @@
             'message-side-toggle flex h-10 w-full gap-2 px-3 text-left transition'
           )}
           aria-expanded={sideMessagesOpen}
-          aria-label={chrome.i18n.getMessage(
+          aria-label={getMessage(
             sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
           )}
-          title={chrome.i18n.getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
+          title={getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
           onclick={toggleSideMessagesPanel}
         >
           <span
@@ -544,7 +545,7 @@
             <Bot class="size-3.5" />
           </span>
           <span class="message-side-title min-w-0 flex-1 truncate text-xs font-bold">
-            {chrome.i18n.getMessage('sideTasksLabel')}
+            {getMessage('sideTasksLabel')}
           </span>
           <span
             class={badgeClass(
@@ -579,8 +580,8 @@
     <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatComposer
         placeholder={andaClient.settings.token
-          ? chrome.i18n.getMessage('placeholderMessage')
-          : chrome.i18n.getMessage('placeholderSettings')}
+          ? getMessage('placeholderMessage')
+          : getMessage('placeholderSettings')}
         {sending}
         working={isBusy}
         {stoppable}

@@ -1,3 +1,4 @@
+import { getMessage } from '$lib/i18n'
 import type {
   BrowserActionArgs,
   BrowserActionResult,
@@ -54,8 +55,8 @@ class BrowserActionError extends Error {
 
 function localFileAccessDisabledMessage(chromeApi: ChromeApi): string {
   return (
+    getMessage('localFileAccessDisabled') ||
     chromeApi.i18n?.getMessage?.('localFileAccessDisabled') ||
-    (typeof chrome !== 'undefined' ? chrome.i18n.getMessage('localFileAccessDisabled') : '') ||
     LOCAL_FILE_ACCESS_DISABLED_FALLBACK_MESSAGE
   )
 }

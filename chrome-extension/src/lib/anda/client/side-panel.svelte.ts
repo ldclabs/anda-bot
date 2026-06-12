@@ -10,6 +10,7 @@ import { Channel, type API } from './channel.svelte'
 import { getChromeApi } from './chrome'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import { normalizePromptSkills } from './helper'
+import { getMessage, normalizeUiLanguage, uiLanguageStorageKey } from '$lib/i18n'
 import type {
   AppearanceTheme,
   ChatAttachment,
@@ -49,6 +50,9 @@ import {
 } from './voice'
 
 const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
+// The launcher persists language switches on disk; the daemon serves them via
+// the `ui_language` RPC, so a modest poll keeps an open panel in sync.
+const uiLanguageSyncIntervalMs = 30_000
 
 export class AndaSidePanelClient extends EventTarget {
   readonly chrome: ChromeApi
@@ -69,6 +73,7 @@ export class AndaSidePanelClient extends EventTarget {
   updateState = $state<AutoUpdateState | null>(null)
 
   #initPromise: Promise<void> | null = null
+  #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
   #resourceCache = new Map<number, Resource>()
   #resourceRequests = new Map<number, Promise<Resource>>()
   #localChannelSource = ''
@@ -108,7 +113,32 @@ export class AndaSidePanelClient extends EventTarget {
       await this.refreshChannels().catch(() => undefined)
       await channel.init().catch(() => undefined)
       this.refreshUpdateState().catch(() => undefined)
+      this.syncUiLanguage().catch(() => undefined)
     }
+    this.#uiLanguageTimer = setInterval(() => {
+      this.syncUiLanguage().catch(() => undefined)
+    }, uiLanguageSyncIntervalMs)
+  }
+
+  /**
+   * Follows the language selected in the Anda launcher: persists it for
+   * initI18n() and reloads the panel so every rendered string switches.
+   */
+  async syncUiLanguage(): Promise<void> {
+    if (!this.settings.token) {
+      return
+    }
+    const result = await this.rpc<{ language?: string | null }>('ui_language', [])
+    const language = normalizeUiLanguage(result?.language)
+    if (!language) {
+      return
+    }
+    const saved = await this.chrome.storage.local.get([uiLanguageStorageKey])
+    if (normalizeUiLanguage(saved?.[uiLanguageStorageKey]) === language) {
+      return
+    }
+    await this.chrome.storage.local.set({ [uiLanguageStorageKey]: language })
+    globalThis.location?.reload()
   }
 
   get channelList(): Channel[] {
@@ -122,6 +152,10 @@ export class AndaSidePanelClient extends EventTarget {
   }
 
   destroy(): void {
+    if (this.#uiLanguageTimer) {
+      clearInterval(this.#uiLanguageTimer)
+      this.#uiLanguageTimer = null
+    }
     if (this.chrome && this.#tabActivatedListener) {
       this.chrome.tabs.onActivated.removeListener(this.#tabActivatedListener)
     }
@@ -186,7 +220,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return
     }
 
@@ -218,7 +252,7 @@ export class AndaSidePanelClient extends EventTarget {
         }
       }
 
-      this.systemMessage = { kind: 'info', text: chrome.i18n.getMessage('channelDeleted') }
+      this.systemMessage = { kind: 'info', text: getMessage('channelDeleted') }
     } catch (error) {
       this.updateStatus('delete failed', { kind: 'error', text: errorToMessage(error) })
     }
@@ -230,7 +264,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return
     }
 
@@ -253,13 +287,14 @@ export class AndaSidePanelClient extends EventTarget {
     this.settings = normalizeSettings(settings)
     await this.chrome.storage.local.set(this.settings)
     if (!options.quiet) {
-      this.systemMessage = { kind: 'info', text: chrome.i18n.getMessage('settingsSaved') }
+      this.systemMessage = { kind: 'info', text: getMessage('settingsSaved') }
     }
     await this.syncServiceWorker().catch(() => undefined)
     if (this.settings.token) {
       this.refreshChannels().catch(() => undefined)
       this.refreshModelState().catch(() => undefined)
       this.refreshUpdateState().catch(() => undefined)
+      this.syncUiLanguage().catch(() => undefined)
     } else {
       this.modelState = emptyModelState()
       this.updateState = null
@@ -284,7 +319,7 @@ export class AndaSidePanelClient extends EventTarget {
       await this.refreshModelState()
       this.updateStatus('connected', {
         kind: 'info',
-        text: chrome.i18n.getMessage('connectionTestPassed')
+        text: getMessage('connectionTestPassed')
       })
     } catch (error) {
       this.updateStatus('connection failed', { kind: 'error', text: errorToMessage(error) })
@@ -301,7 +336,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return
     }
 
@@ -330,7 +365,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return
     }
 
@@ -349,7 +384,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return
     }
 
@@ -359,7 +394,7 @@ export class AndaSidePanelClient extends EventTarget {
       if (!prompt) {
         this.updateStatus('idle', {
           kind: 'error',
-          text: chrome.i18n.getMessage('noVoiceCaptured')
+          text: getMessage('noVoiceCaptured')
         })
         return
       }
@@ -388,11 +423,11 @@ export class AndaSidePanelClient extends EventTarget {
         if (!spokenBy) {
           const service =
             recording.voiceProvider === 'anda'
-              ? chrome.i18n.getMessage('andaVoiceService')
-              : chrome.i18n.getMessage('browserVoiceService')
+              ? getMessage('andaVoiceService')
+              : getMessage('browserVoiceService')
           this.updateStatus('playback failed', {
             kind: 'error',
-            text: chrome.i18n.getMessage('playbackUnavailable') + `: ${service}`
+            text: getMessage('playbackUnavailable') + `: ${service}`
           })
           return
         }
@@ -413,7 +448,7 @@ export class AndaSidePanelClient extends EventTarget {
     })
     const result = response.result || {}
     if (result.error || result.started === false) {
-      throw new Error(result.error || chrome.i18n.getMessage('browserSpeechStartFailed'))
+      throw new Error(result.error || getMessage('browserSpeechStartFailed'))
     }
   }
 
@@ -438,7 +473,7 @@ export class AndaSidePanelClient extends EventTarget {
     })
     const result = response.result || {}
     if (result.error || result.started === false) {
-      throw new Error(result.error || chrome.i18n.getMessage('andaVoiceStartFailed'))
+      throw new Error(result.error || getMessage('andaVoiceStartFailed'))
     }
   }
 
@@ -449,7 +484,7 @@ export class AndaSidePanelClient extends EventTarget {
       throw new Error(result.error)
     }
     if (!result.audioBase64 || !result.mimeType) {
-      throw new Error(chrome.i18n.getMessage('noVoiceCaptured'))
+      throw new Error(getMessage('noVoiceCaptured'))
     }
     return result
   }
@@ -544,20 +579,20 @@ export class AndaSidePanelClient extends EventTarget {
 
   async installUpdateAndRestart(): Promise<AutoUpdateState | null> {
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return null
     }
 
     try {
       this.updateStatus('updating', {
         kind: 'info',
-        text: chrome.i18n.getMessage('updateRestarting')
+        text: getMessage('updateRestarting')
       })
       const state = await this.rpc<AutoUpdateState>('auto_update_install_and_restart', [])
       this.updateState = state
       this.updateStatus('restarting', {
         kind: 'info',
-        text: chrome.i18n.getMessage('updateRestartRequested')
+        text: getMessage('updateRestartRequested')
       })
       return state
     } catch (error) {
@@ -573,14 +608,14 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: chrome.i18n.getMessage('pasteTokenFirst') }
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
       return this.modelState
     }
 
     try {
       const daemonState = await this.rpc<DaemonModelState>('set_model', [nextModel])
       this.modelState = normalizeModelState(daemonState)
-      this.systemMessage = { kind: 'info', text: chrome.i18n.getMessage('modelUpdated') }
+      this.systemMessage = { kind: 'info', text: getMessage('modelUpdated') }
       return this.modelState
     } catch (error) {
       this.systemMessage = { kind: 'error', text: errorToMessage(error) }
@@ -731,10 +766,10 @@ export class AndaSidePanelClient extends EventTarget {
       await this.refreshVoiceCapabilities()
     }
     if (this.voiceCapabilities.transcription.length === 0) {
-      throw new Error(chrome.i18n.getMessage('voiceTranscriptionNotConfigured'))
+      throw new Error(getMessage('voiceTranscriptionNotConfigured'))
     }
     if (!recording.audioBase64 || !recording.fileName) {
-      throw new Error(chrome.i18n.getMessage('audioCaptureMissingData'))
+      throw new Error(getMessage('audioCaptureMissingData'))
     }
     const normalizedRecording = await normalizeVoiceRecordingAudio(
       recording,
@@ -836,7 +871,7 @@ export class AndaSidePanelClient extends EventTarget {
       ...message
     })
     if (!response?.ok) {
-      throw new Error(response?.error || chrome.i18n.getMessage('extensionError'))
+      throw new Error(response?.error || getMessage('extensionError'))
     }
     return response
   }
@@ -871,7 +906,7 @@ export class AndaSidePanelClient extends EventTarget {
 
   async rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result> {
     if (!this.settings.token) {
-      throw new Error(chrome.i18n.getMessage('tokenMissing'))
+      throw new Error(getMessage('tokenMissing'))
     }
     const response = await this.serviceWorkerMessage<Result>('anda_rpc', {
       method,

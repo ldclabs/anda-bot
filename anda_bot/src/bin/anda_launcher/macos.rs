@@ -16,9 +16,9 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusBarButton, NSStatusItem,
-    NSVariableStatusItemLength,
+    NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSControlStateValueOn, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar,
+    NSStatusBarButton, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
@@ -42,6 +42,7 @@ const STATUS_GATEWAY_MENU_TAG: isize = 1013;
 const STATUS_CONVERSATIONS_MENU_TAG: isize = 1014;
 const STATUS_MEMORY_NODES_MENU_TAG: isize = 1015;
 const STATUS_MEMORY_LINKS_MENU_TAG: isize = 1016;
+const LANGUAGE_MENU_TAG_BASE: isize = 1100;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
@@ -111,6 +112,29 @@ define_class!(
             }
         }
 
+        #[unsafe(method(selectLanguage:))]
+        fn select_language(&self, sender: &AnyObject) {
+            let Some(item) = sender.downcast_ref::<NSMenuItem>() else {
+                return;
+            };
+            let Some(language) = usize::try_from(item.tag() - LANGUAGE_MENU_TAG_BASE)
+                .ok()
+                .and_then(|index| core::LauncherLanguage::ALL.get(index))
+                .copied()
+            else {
+                return;
+            };
+            let Some(ctx) = CTX.get() else {
+                return;
+            };
+
+            if let Err(err) = core::set_launcher_language(&ctx.home, language) {
+                show_error(&text().app_title, &err.to_string());
+                return;
+            }
+            self.rebuild_menu();
+        }
+
         #[unsafe(method(toggleLaunchAtLogin:))]
         fn toggle_launch_at_login(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
@@ -176,6 +200,18 @@ impl Delegate {
             _status_image: status_image,
         });
     }
+
+    // Rebuilds every menu item in place so a language switch retitles the
+    // whole menu without replacing the status item.
+    fn rebuild_menu(&self) {
+        let Some(state) = self.ivars().status_bar.get() else {
+            return;
+        };
+        let menu = &state._menu;
+        menu.removeAllItems();
+        menu.setTitle(nsstring(&text().app_title).as_ref());
+        populate_menu(menu, self.mtm(), self);
+    }
 }
 
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
@@ -219,44 +255,49 @@ pub fn show_error(title: &str, message: &str) {
 }
 
 fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
-    let copy = text();
-    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.app_title).as_ref());
+    let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&text().app_title).as_ref());
     menu.setDelegate(Some(ProtocolObject::from_ref(delegate)));
-    add_item(&menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
-    add_item(&menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
+    populate_menu(&menu, mtm, delegate);
+    menu
+}
+
+fn populate_menu(menu: &NSMenu, mtm: MainThreadMarker, delegate: &Delegate) {
+    let copy = text();
+    add_item(menu, mtm, &copy.open_anda, sel!(openAnda:), delegate);
+    add_item(menu, mtm, &copy.open_logs, sel!(openLogs:), delegate);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_disabled_item(&menu, mtm, &copy.status);
+    add_disabled_item(menu, mtm, &copy.status);
     let status = core::cached_daemon_status();
-    let status_pid = add_disabled_item(&menu, mtm, &status_pid_title(&status));
+    let status_pid = add_disabled_item(menu, mtm, &status_pid_title(&status));
     status_pid.setTag(STATUS_PID_MENU_TAG);
-    let status_gateway = add_disabled_item(&menu, mtm, &status_gateway_title(&status));
+    let status_gateway = add_disabled_item(menu, mtm, &status_gateway_title(&status));
     status_gateway.setTag(STATUS_GATEWAY_MENU_TAG);
-    let status_conversations = add_disabled_item(&menu, mtm, &status_conversations_title(&status));
+    let status_conversations = add_disabled_item(menu, mtm, &status_conversations_title(&status));
     status_conversations.setTag(STATUS_CONVERSATIONS_MENU_TAG);
-    let status_memory_nodes = add_disabled_item(&menu, mtm, &status_memory_nodes_title(&status));
+    let status_memory_nodes = add_disabled_item(menu, mtm, &status_memory_nodes_title(&status));
     status_memory_nodes.setTag(STATUS_MEMORY_NODES_MENU_TAG);
-    let status_memory_links = add_disabled_item(&menu, mtm, &status_memory_links_title(&status));
+    let status_memory_links = add_disabled_item(menu, mtm, &status_memory_links_title(&status));
     status_memory_links.setTag(STATUS_MEMORY_LINKS_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(
-        &menu,
+        menu,
         mtm,
         &copy.restart_daemon,
         sel!(restartDaemon:),
         delegate,
     );
     add_item(
-        &menu,
+        menu,
         mtm,
         &copy.browser_extension_token,
         sel!(generateBrowserExtensionToken:),
         delegate,
     );
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_settings_submenu(&menu, mtm, delegate, &copy);
+    add_settings_submenu(menu, mtm, delegate, &copy);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let check_update = add_item(
-        &menu,
+        menu,
         mtm,
         &core::check_update_menu_label(),
         sel!(checkUpdate:),
@@ -264,8 +305,7 @@ fn build_menu(mtm: MainThreadMarker, delegate: &Delegate) -> Retained<NSMenu> {
     );
     check_update.setTag(CHECK_UPDATE_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    add_item(&menu, mtm, &copy.quit, sel!(quit:), delegate);
-    menu
+    add_item(menu, mtm, &copy.quit, sel!(quit:), delegate);
 }
 
 fn refresh_status_menu_items(menu: &NSMenu) {
@@ -376,6 +416,40 @@ fn add_settings_submenu(
         sel!(toggleLaunchAtLogin:),
         delegate,
     );
+    add_language_submenu(&submenu, mtm, delegate, copy);
+    item.setSubmenu(Some(&submenu));
+    menu.addItem(&item);
+}
+
+fn add_language_submenu(
+    menu: &NSMenu,
+    mtm: MainThreadMarker,
+    delegate: &Delegate,
+    copy: &core::LauncherText,
+) {
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            nsstring(&copy.language).as_ref(),
+            None,
+            nsstring("").as_ref(),
+        )
+    };
+    let submenu = NSMenu::initWithTitle(NSMenu::alloc(mtm), nsstring(&copy.language).as_ref());
+    let current_language = core::launcher_language();
+    for (index, language) in core::LauncherLanguage::ALL.into_iter().enumerate() {
+        let language_item = add_item(
+            &submenu,
+            mtm,
+            language.native_name(),
+            sel!(selectLanguage:),
+            delegate,
+        );
+        language_item.setTag(LANGUAGE_MENU_TAG_BASE + index as isize);
+        if language == current_language {
+            language_item.setState(NSControlStateValueOn);
+        }
+    }
     item.setSubmenu(Some(&submenu));
     menu.addItem(&item);
 }

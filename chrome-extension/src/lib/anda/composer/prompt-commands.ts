@@ -1,3 +1,4 @@
+import { getMessage } from '$lib/i18n'
 import type { PromptSkill } from '../client/types'
 
 export type PromptCommandContext = {
@@ -205,11 +206,11 @@ export function buildPromptCommandSuggestions(
     })
     return matches.length
       ? matches
-      : [promptCommandStatus('commands-empty', chrome.i18n.getMessage('promptCommandsEmpty'))]
+      : [promptCommandStatus('commands-empty', getMessage('promptCommandsEmpty'))]
   }
 
   if (skillsLoading && skills.length === 0) {
-    return [promptCommandStatus('skills-loading', chrome.i18n.getMessage('promptSkillsLoading'))]
+    return [promptCommandStatus('skills-loading', getMessage('promptSkillsLoading'))]
   }
   if (skillsError) {
     return [promptCommandStatus('skills-error', skillsError)]
@@ -227,11 +228,11 @@ export function buildPromptCommandSuggestions(
         id: `skill:${skill.name}`,
         label: skill.name,
         insertText: `${skill.name} `,
-        description: skill.description || chrome.i18n.getMessage('promptSkillDescription'),
+        description: skill.description || getMessage('promptSkillDescription'),
         detail: '/skill',
         kind: 'skill'
       }))
-    : [promptCommandStatus('skills-empty', chrome.i18n.getMessage('promptSkillsEmpty'))]
+    : [promptCommandStatus('skills-empty', getMessage('promptSkillsEmpty'))]
 }
 
 function promptCommandStatus(id: string, description: string): PromptCommandSuggestion {

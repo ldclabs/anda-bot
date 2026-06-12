@@ -1,3 +1,4 @@
+import { getMessage } from '$lib/i18n'
 import type {
   ChatAttachment,
   ChatMessage,
@@ -43,8 +44,8 @@ export function conversationToGroup(conversation: Conversation): MessageGroup {
 export function failureReasonMessage(reason?: string | null): string {
   const trimmed = reason?.trim()
   return trimmed
-    ? chrome.i18n.getMessage('conversationFailed', [trimmed])
-    : chrome.i18n.getMessage('conversationFailedNoReason')
+    ? getMessage('conversationFailed', [trimmed])
+    : getMessage('conversationFailedNoReason')
 }
 
 export function normalizeMessage(

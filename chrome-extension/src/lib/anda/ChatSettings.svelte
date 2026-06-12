@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
     type AppearanceTheme,
@@ -213,8 +214,8 @@
       <button
         type="button"
         class={buttonClass('ghost', 'icon-xs')}
-        aria-label={chrome.i18n.getMessage('copyCommand')}
-        title={chrome.i18n.getMessage('copyCommand')}
+        aria-label={getMessage('copyCommand')}
+        title={getMessage('copyCommand')}
         onclick={() => copyCommand(command)}
       >
         {#if copiedCommand === command}
@@ -240,7 +241,7 @@
       target="_blank"
       rel="noreferrer"
     >
-      <span class="min-w-0 truncate">{chrome.i18n.getMessage('openDownload')}</span>
+      <span class="min-w-0 truncate">{getMessage('openDownload')}</span>
       <ExternalLink class="size-3.5" />
     </a>
   </div>
@@ -253,7 +254,7 @@
       class={dialogContentClass(
         'flex max-h-[min(90vh,46rem)] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl'
       )}
-      aria-label={chrome.i18n.getMessage('settings')}
+      aria-label={getMessage('settings')}
     >
       <Dialog.Close>
         {#snippet child({ props })}
@@ -273,10 +274,10 @@
           <div class="grid min-w-0 gap-1">
             <Dialog.Title class="flex min-w-0 items-center gap-2 text-base font-bold">
               <Terminal class="size-4 shrink-0 text-emerald-800" />
-              <span class="truncate">{chrome.i18n.getMessage('settings')}</span>
+              <span class="truncate">{getMessage('settings')}</span>
             </Dialog.Title>
             <Dialog.Description class={dialogDescriptionClass('text-xs leading-relaxed')}>
-              {chrome.i18n.getMessage('onboardingIntro')}
+              {getMessage('onboardingIntro')}
             </Dialog.Description>
           </div>
         </div>
@@ -290,20 +291,20 @@
             aria-expanded={setupGuideOpen}
             aria-controls="local-setup-guide"
             aria-label={setupGuideOpen
-              ? chrome.i18n.getMessage('collapseLocalSetup')
-              : chrome.i18n.getMessage('expandLocalSetup')}
+              ? getMessage('collapseLocalSetup')
+              : getMessage('expandLocalSetup')}
             onclick={() => (setupGuideOpen = !setupGuideOpen)}
           >
             <span class="grid min-w-0 gap-1">
               <span class="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
                 <Terminal class="size-3.5" />
-                <span>{chrome.i18n.getMessage('onboardingEyebrow')}</span>
+                <span>{getMessage('onboardingEyebrow')}</span>
               </span>
               <span class="text-sm font-bold text-foreground">
-                {chrome.i18n.getMessage('onboardingTitle')}
+                {getMessage('onboardingTitle')}
               </span>
               <span class="text-xs leading-relaxed text-muted-foreground">
-                {chrome.i18n.getMessage('onboardingIntro')}
+                {getMessage('onboardingIntro')}
               </span>
             </span>
             <ChevronDown
@@ -322,19 +323,19 @@
                 <div class="grid min-w-0 gap-2">
                   <div class="grid gap-0.5">
                     <h3 class="text-xs font-bold text-foreground">
-                      {chrome.i18n.getMessage('onboardingInstallTitle')}
+                      {getMessage('onboardingInstallTitle')}
                     </h3>
                     <p class="text-xs leading-relaxed text-muted-foreground">
-                      {chrome.i18n.getMessage('onboardingInstallBody')}
+                      {getMessage('onboardingInstallBody')}
                     </p>
                   </div>
                   <div class="grid gap-2">
                     {@render downloadBlock(
-                      chrome.i18n.getMessage('windowsInstaller'),
+                      getMessage('windowsInstaller'),
                       windowsInstallerUrl
                     )}
                     {@render commandBlock(
-                      chrome.i18n.getMessage('macosInstaller'),
+                      getMessage('macosInstaller'),
                       installScriptCommand
                     )}
                   </div>
@@ -352,10 +353,10 @@
                 <div class="grid min-w-0 gap-2">
                   <div class="grid gap-0.5">
                     <h3 class="text-xs font-bold text-foreground">
-                      {chrome.i18n.getMessage('onboardingConfigureTitle')}
+                      {getMessage('onboardingConfigureTitle')}
                     </h3>
                     <p class="text-xs leading-relaxed text-muted-foreground">
-                      {chrome.i18n.getMessage('onboardingConfigureBody')}
+                      {getMessage('onboardingConfigureBody')}
                     </p>
                   </div>
                   <a
@@ -369,7 +370,7 @@
                     rel="noreferrer"
                   >
                     <span class="min-w-0 truncate"
-                      >{chrome.i18n.getMessage('openConfigEditor')}</span
+                      >{getMessage('openConfigEditor')}</span
                     >
                     <ExternalLink class="size-3.5" />
                   </a>
@@ -387,13 +388,13 @@
                 <div class="grid min-w-0 gap-2">
                   <div class="grid gap-0.5">
                     <h3 class="text-xs font-bold text-foreground">
-                      {chrome.i18n.getMessage('onboardingTokenTitle')}
+                      {getMessage('onboardingTokenTitle')}
                     </h3>
                     <p class="text-xs leading-relaxed text-muted-foreground">
-                      {chrome.i18n.getMessage('onboardingTokenBody')}
+                      {getMessage('onboardingTokenBody')}
                     </p>
                   </div>
-                  {@render commandBlock(chrome.i18n.getMessage('tokenCommandLabel'), tokenCommand)}
+                  {@render commandBlock(getMessage('tokenCommandLabel'), tokenCommand)}
                 </div>
               </div>
             </div>
@@ -410,10 +411,10 @@
             <div class="grid min-w-0 gap-2">
               <div class="grid gap-0.5">
                 <h3 class="text-xs font-bold text-foreground">
-                  {chrome.i18n.getMessage('configEditorTitle')}
+                  {getMessage('configEditorTitle')}
                 </h3>
                 <p class="text-xs leading-relaxed text-muted-foreground">
-                  {chrome.i18n.getMessage('configEditorBody')}
+                  {getMessage('configEditorBody')}
                 </p>
               </div>
               <a
@@ -422,7 +423,7 @@
                 target="_blank"
                 rel="noreferrer"
               >
-                <span class="min-w-0 truncate">{chrome.i18n.getMessage('openConfigEditor')}</span>
+                <span class="min-w-0 truncate">{getMessage('openConfigEditor')}</span>
                 <ExternalLink class="size-3.5" />
               </a>
             </div>
@@ -433,7 +434,7 @@
           <div class="flex items-center justify-between gap-2">
             <div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-foreground">
               <Play class="size-3.5 shrink-0 text-emerald-800" />
-              <span class="truncate">{chrome.i18n.getMessage('connectionDetails')}</span>
+              <span class="truncate">{getMessage('connectionDetails')}</span>
             </div>
           </div>
 
@@ -443,7 +444,7 @@
               for="base-url"
             >
               <ExternalLink class="size-3" />
-              {chrome.i18n.getMessage('gatewayUrl')}
+              {getMessage('gatewayUrl')}
             </label>
             <input
               id="base-url"
@@ -459,14 +460,14 @@
           <div data-slot="field" class={fieldClass('gap-1.5')}>
             <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')} for="token">
               <KeyRound class="size-3" />
-              {chrome.i18n.getMessage('bearerToken')}
+              {getMessage('bearerToken')}
             </label>
             <input
               id="token"
               type="text"
               class={inputClass()}
               spellcheck={false}
-              placeholder={chrome.i18n.getMessage('tokenPlaceholder')}
+              placeholder={getMessage('tokenPlaceholder')}
               bind:value={draftSettings.token}
               oninput={markSettingsDirty}
             />
@@ -479,7 +480,7 @@
                 for="active-model"
               >
                 <BrainCircuit class="size-3" />
-                <span class="truncate">{chrome.i18n.getMessage('activeModel')}</span>
+                <span class="truncate">{getMessage('activeModel')}</span>
               </label>
             </div>
             <div class="grid grid-cols-[1fr_auto] items-center gap-2">
@@ -495,12 +496,12 @@
                   class={nativeSelectClass()}
                   value={activeModel}
                   disabled={!canChangeModel}
-                  aria-label={chrome.i18n.getMessage('activeModel')}
+                  aria-label={getMessage('activeModel')}
                   onchange={switchActiveModel}
                 >
                   {#if modelNames.length === 0}
                     <option class="bg-[Canvas] text-[CanvasText]" value="">
-                      {chrome.i18n.getMessage('modelListEmpty')}
+                      {getMessage('modelListEmpty')}
                     </option>
                   {/if}
                   {#each modelNames as modelName}
@@ -518,8 +519,8 @@
                 type="button"
                 class={buttonClass('ghost')}
                 disabled={!andaClient.settings.token || loadingModels || switchingModel}
-                aria-label={chrome.i18n.getMessage('refreshModels')}
-                title={chrome.i18n.getMessage('refreshModels')}
+                aria-label={getMessage('refreshModels')}
+                title={getMessage('refreshModels')}
                 onclick={refreshModels}
               >
                 <RefreshCw
@@ -532,12 +533,12 @@
           <div data-slot="field" class={fieldClass('gap-1.5')}>
             <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
               <Monitor class="size-3" />
-              {chrome.i18n.getMessage('appearanceTheme')}
+              {getMessage('appearanceTheme')}
             </label>
             <div
               class="grid grid-cols-3 gap-1 rounded-md border bg-muted/45 p-1"
               role="radiogroup"
-              aria-label={chrome.i18n.getMessage('appearanceTheme')}
+              aria-label={getMessage('appearanceTheme')}
             >
               <button
                 type="button"
@@ -548,7 +549,7 @@
                 onclick={() => updateAppearanceTheme('light')}
               >
                 <Sun class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceLight')}</span>
+                <span class="min-w-0 truncate">{getMessage('appearanceLight')}</span>
               </button>
               <button
                 type="button"
@@ -559,7 +560,7 @@
                 onclick={() => updateAppearanceTheme('dark')}
               >
                 <Moon class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceDark')}</span>
+                <span class="min-w-0 truncate">{getMessage('appearanceDark')}</span>
               </button>
               <button
                 type="button"
@@ -570,7 +571,7 @@
                 onclick={() => updateAppearanceTheme('system')}
               >
                 <Monitor class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{chrome.i18n.getMessage('appearanceSystem')}</span>
+                <span class="min-w-0 truncate">{getMessage('appearanceSystem')}</span>
               </button>
             </div>
           </div>
@@ -578,12 +579,12 @@
           <div data-slot="field" class={fieldClass('gap-1.5')}>
             <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
               <Keyboard class="size-3" />
-              {chrome.i18n.getMessage('enterKeyBehavior')}
+              {getMessage('enterKeyBehavior')}
             </label>
             <div
               class="grid grid-cols-2 gap-1 rounded-md border bg-muted/45 p-1"
               role="radiogroup"
-              aria-label={chrome.i18n.getMessage('enterKeyBehavior')}
+              aria-label={getMessage('enterKeyBehavior')}
             >
               <button
                 type="button"
@@ -594,10 +595,10 @@
               >
                 <span class="grid min-w-0 gap-0.5">
                   <span class="block truncate text-xs font-bold">
-                    {chrome.i18n.getMessage('enterSendsMessage')}
+                    {getMessage('enterSendsMessage')}
                   </span>
                   <span class="block truncate text-[10px] font-semibold opacity-70">
-                    {chrome.i18n.getMessage('shiftEnterNewLine')}
+                    {getMessage('shiftEnterNewLine')}
                   </span>
                 </span>
               </button>
@@ -610,10 +611,10 @@
               >
                 <span class="grid min-w-0 gap-0.5">
                   <span class="block truncate text-xs font-bold">
-                    {chrome.i18n.getMessage('modifierEnterSendsMessage')}
+                    {getMessage('modifierEnterSendsMessage')}
                   </span>
                   <span class="block truncate text-[10px] font-semibold opacity-70">
-                    {chrome.i18n.getMessage('enterNewLineModifierSends')}
+                    {getMessage('enterNewLineModifierSends')}
                   </span>
                 </span>
               </button>
@@ -636,7 +637,7 @@
           {:else}
             <Save class="size-3.5" />
           {/if}
-          {chrome.i18n.getMessage('save')}
+          {getMessage('save')}
         </button>
         <button
           type="button"
@@ -649,7 +650,7 @@
           {:else}
             <PlugZap class="size-3.5" />
           {/if}
-          {chrome.i18n.getMessage('test')}
+          {getMessage('test')}
         </button>
       </div>
     </Dialog.Content>

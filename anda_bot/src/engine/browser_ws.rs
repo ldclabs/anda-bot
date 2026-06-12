@@ -45,6 +45,7 @@ pub struct BrowserWebSocketState {
     pub bridge: Arc<BrowserBridge>,
     pub voice_capabilities: BrowserVoiceCapabilities,
     pub auto_updater: Arc<AutoUpdater>,
+    pub home_dir: PathBuf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -288,6 +289,7 @@ async fn handle_browser_ws_request(
         "brain_status" => handle_brain_status(state).await,
         "brain_kip_readonly" => handle_brain_kip_readonly(incoming.params, state).await,
         "information" => handle_information(state, engine_id),
+        "ui_language" => handle_ui_language(state),
         "pick_workspace" => handle_pick_workspace().await,
         "capabilities" => handle_capabilities(state, engine_id),
         "model_names" => handle_model_names(state, engine_id),
@@ -400,6 +402,26 @@ async fn handle_pick_workspace() -> Result<Value, String> {
     Ok(json!({
         "path": path.map(|path| path.to_string_lossy().to_string())
     }))
+}
+
+fn handle_ui_language(state: &BrowserWebSocketState) -> Result<Value, String> {
+    Ok(json!({ "language": launcher_ui_language(&state.home_dir) }))
+}
+
+/// Reads the UI language the launcher persisted (launcher/ui.json) so the
+/// browser extension can follow language switches made in the launcher menu.
+/// Read per call: the launcher may rewrite the file while the daemon runs.
+fn launcher_ui_language(home_dir: &std::path::Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct LauncherUiSettings {
+        #[serde(default)]
+        language: String,
+    }
+
+    let content = std::fs::read_to_string(home_dir.join("launcher").join("ui.json")).ok()?;
+    let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
+    let language = settings.language.trim().to_string();
+    (!language.is_empty()).then_some(language)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1012,11 +1034,33 @@ fn percent_decode(value: &str) -> String {
 mod tests {
     use super::{
         WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tag,
-        language_from_tags, normalize_selected_workspace_path, powershell_single_quoted_string,
-        workspace_picker_macos_script, workspace_picker_title_for_language,
-        workspace_picker_windows_script,
+        language_from_tags, launcher_ui_language, normalize_selected_workspace_path,
+        powershell_single_quoted_string, workspace_picker_macos_script,
+        workspace_picker_title_for_language, workspace_picker_windows_script,
     };
-    use std::{env, path::MAIN_SEPARATOR};
+    use std::{env, fs, path::MAIN_SEPARATOR};
+
+    #[test]
+    fn launcher_ui_language_reads_persisted_launcher_setting() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(launcher_ui_language(home.path()), None);
+
+        let launcher_dir = home.path().join("launcher");
+        fs::create_dir_all(&launcher_dir).unwrap();
+        let ui_path = launcher_dir.join("ui.json");
+
+        fs::write(&ui_path, r#"{"language": "zh-Hans"}"#).unwrap();
+        assert_eq!(
+            launcher_ui_language(home.path()),
+            Some("zh-Hans".to_string())
+        );
+
+        fs::write(&ui_path, r#"{"language": "  "}"#).unwrap();
+        assert_eq!(launcher_ui_language(home.path()), None);
+
+        fs::write(&ui_path, "not json").unwrap();
+        assert_eq!(launcher_ui_language(home.path()), None);
+    }
 
     #[test]
     fn workspace_picker_language_prefers_chinese_system_tags() {

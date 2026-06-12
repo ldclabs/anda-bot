@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import {
     alertDialogContentClass,
     alertDialogDescriptionClass,
@@ -52,10 +53,10 @@
   const pendingDeleteTitle = $derived(
     pendingDeleteSource
       ? channelTitle(pendingDeleteSource)
-      : chrome.i18n.getMessage('deleteChannel')
+      : getMessage('deleteChannel')
   )
   const pendingDeleteDescription = $derived(
-    chrome.i18n.getMessage('deleteChannelConfirm', pendingDeleteTitle)
+    getMessage('deleteChannelConfirm', pendingDeleteTitle)
   )
 
   function toggleCollapsed() {
@@ -200,9 +201,9 @@
         'icon-sm',
         'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
       )}
-      aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+      aria-label={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
       aria-expanded={!collapsed || flyoutOpen}
-      title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+      title={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
       onclick={toggleCollapsed}
     >
       <History class="size-4" />
@@ -211,7 +212,7 @@
     {#if expanded}
       <div class="min-w-0 flex-1">
         <div class="truncate text-xs font-bold text-sidebar-foreground">
-          {chrome.i18n.getMessage('channelsLabel')}
+          {getMessage('channelsLabel')}
           <span class={badgeClass('outline')}>
             {channels.length}
           </span>
@@ -224,8 +225,8 @@
           'icon-sm',
           'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
         )}
-        aria-label={chrome.i18n.getMessage('openFolder')}
-        title={chrome.i18n.getMessage('openFolder')}
+        aria-label={getMessage('openFolder')}
+        title={getMessage('openFolder')}
         disabled={sending}
         onclick={openFolder}
       >
@@ -238,9 +239,9 @@
           'icon-sm',
           'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
         )}
-        aria-label={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+        aria-label={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         aria-expanded={!collapsed || flyoutOpen}
-        title={chrome.i18n.getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+        title={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
         onclick={toggleCollapsed}
       >
         <ChevronDown class="size-4 shrink-0 rotate-90 text-muted-foreground" />
@@ -346,8 +347,8 @@
               'icon-xs',
               'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
             )}
-            aria-label={chrome.i18n.getMessage('deleteChannel')}
-            title={chrome.i18n.getMessage('deleteChannel')}
+            aria-label={getMessage('deleteChannel')}
+            title={getMessage('deleteChannel')}
             disabled={sending || channel.sending}
             onclick={() => requestDeleteChannel(channel.source)}
           >
@@ -363,7 +364,7 @@
   class={`group/sidebar relative z-20 h-full shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
     collapsed ? 'w-12 overflow-visible' : 'w-64 overflow-hidden'
   }`}
-  aria-label={chrome.i18n.getMessage('channelsLabel')}
+  aria-label={getMessage('channelsLabel')}
   onpointerenter={openFlyout}
   onpointerleave={closeFlyout}
   onfocusin={openFlyout}
@@ -377,7 +378,7 @@
   {#if collapsed && flyoutOpen}
     <div
       class="absolute inset-y-0 left-0 z-50 w-64"
-      aria-label={chrome.i18n.getMessage('channelsLabel')}
+      aria-label={getMessage('channelsLabel')}
     >
       <div
         class="flex h-full min-h-0 flex-col overflow-hidden rounded-r-md border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-sidebar-border/70 backdrop-blur-xl will-change-transform dark:shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
@@ -398,7 +399,7 @@
         class="grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6"
       >
         <AlertDialog.Title class="text-lg font-medium">
-          {chrome.i18n.getMessage('deleteChannel')}
+          {getMessage('deleteChannel')}
         </AlertDialog.Title>
         <AlertDialog.Description class={alertDialogDescriptionClass()}>
           {pendingDeleteDescription}
@@ -406,10 +407,10 @@
       </div>
       <div class="cn-alert-dialog-footer grid grid-cols-2 gap-2">
         <AlertDialog.Cancel class={buttonClass('outline')}>
-          {chrome.i18n.getMessage('cancel')}
+          {getMessage('cancel')}
         </AlertDialog.Cancel>
         <AlertDialog.Action class={buttonClass('destructive')} onclick={confirmDeleteChannel}>
-          {chrome.i18n.getMessage('deleteChannel')}
+          {getMessage('deleteChannel')}
         </AlertDialog.Action>
       </div>
     </AlertDialog.Content>

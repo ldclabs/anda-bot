@@ -327,11 +327,18 @@ mod tests {
 
     #[test]
     fn file_uri_round_trips_for_relative_and_absolute_paths() {
-        let absolute = file_uri_for_path(Path::new("/tmp/anda file.txt")).unwrap();
-        assert_eq!(absolute, "file:///tmp/anda%20file.txt");
+        // "/tmp/..." is not absolute on Windows (no drive prefix), so use a
+        // platform-appropriate absolute path.
+        #[cfg(windows)]
+        let (abs_path, abs_uri) = (r"C:\tmp\anda file.txt", "file:///C:/tmp/anda%20file.txt");
+        #[cfg(not(windows))]
+        let (abs_path, abs_uri) = ("/tmp/anda file.txt", "file:///tmp/anda%20file.txt");
+
+        let absolute = file_uri_for_path(Path::new(abs_path)).unwrap();
+        assert_eq!(absolute, abs_uri);
         assert_eq!(
             path_from_file_uri(&absolute).unwrap(),
-            PathBuf::from("/tmp/anda file.txt")
+            PathBuf::from(abs_path)
         );
 
         // Relative paths are anchored at the current directory.

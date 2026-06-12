@@ -23,19 +23,24 @@ pub fn build_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels: HashMap<String, Arc<dyn Channel>> = HashMap::new();
 
-    let mut register =
-        |built: HashMap<String, Arc<dyn Channel>>| -> Result<(), BoxError> {
-            for (channel_id, channel) in built {
-                if channels.insert(channel_id.clone(), channel).is_some() {
-                    return Err(format!("duplicate channel id '{channel_id}'").into());
-                }
+    let mut register = |built: HashMap<String, Arc<dyn Channel>>| -> Result<(), BoxError> {
+        for (channel_id, channel) in built {
+            if channels.insert(channel_id.clone(), channel).is_some() {
+                return Err(format!("duplicate channel id '{channel_id}'").into());
             }
-            Ok(())
-        };
+        }
+        Ok(())
+    };
 
-    register(telegram::build_telegram_channels(&cfg.telegram, client.clone())?)?;
+    register(telegram::build_telegram_channels(
+        &cfg.telegram,
+        client.clone(),
+    )?)?;
     register(wechat::build_wechat_channels(&cfg.wechat)?)?;
-    register(discord::build_discord_channels(&cfg.discord, client.clone())?)?;
+    register(discord::build_discord_channels(
+        &cfg.discord,
+        client.clone(),
+    )?)?;
     register(lark::build_lark_channels(&cfg.lark, client)?)?;
 
     Ok(channels)

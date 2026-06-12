@@ -11,6 +11,7 @@ export interface SettingsState {
 export type StorageState = Partial<SettingsState> & {
   browserSessionId?: string
   workspaceChannelSources?: string[]
+  uiLanguage?: string
 }
 
 export type ChromeTabInfo = {
@@ -239,6 +240,14 @@ export interface ChromeApi {
     local: {
       get(keys: string[]): Promise<StorageState>
       set(items: StorageState): Promise<void>
+    }
+    onChanged?: {
+      addListener?(
+        callback: (
+          changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
+          areaName: string
+        ) => void
+      ): void
     }
   }
   tabs: {

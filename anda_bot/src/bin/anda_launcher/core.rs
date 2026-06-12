@@ -44,6 +44,10 @@ const UPDATE_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
 pub enum LauncherLanguage {
     En,
     ZhHans,
+    Ru,
+    Ar,
+    Fr,
+    Es,
 }
 
 #[derive(Clone, Debug)]
@@ -183,6 +187,7 @@ pub struct LauncherText {
     pub setup_title: String,
     pub open_anda: String,
     pub settings: String,
+    pub language: String,
     pub model_settings: String,
     pub status: String,
     pub status_pid: String,
@@ -457,16 +462,42 @@ impl Drop for LauncherInstanceLock {
     }
 }
 
-static LAUNCHER_LANGUAGE: OnceLock<LauncherLanguage> = OnceLock::new();
+static LAUNCHER_LANGUAGE: Mutex<Option<LauncherLanguage>> = Mutex::new(None);
 static UPDATE_UI_STATE: OnceLock<Mutex<LauncherUpdateUiState>> = OnceLock::new();
 static DAEMON_STATUS_CACHE: OnceLock<Mutex<Option<LauncherDaemonStatus>>> = OnceLock::new();
 static MENU_ACTION_GATE: Mutex<()> = Mutex::new(());
 
 impl LauncherLanguage {
-    fn locale(self) -> &'static str {
+    pub const ALL: [LauncherLanguage; 6] = [
+        LauncherLanguage::En,
+        LauncherLanguage::ZhHans,
+        LauncherLanguage::Ru,
+        LauncherLanguage::Ar,
+        LauncherLanguage::Fr,
+        LauncherLanguage::Es,
+    ];
+
+    pub fn locale(self) -> &'static str {
         match self {
             LauncherLanguage::En => "en",
             LauncherLanguage::ZhHans => "zh-Hans",
+            LauncherLanguage::Ru => "ru",
+            LauncherLanguage::Ar => "ar",
+            LauncherLanguage::Fr => "fr",
+            LauncherLanguage::Es => "es",
+        }
+    }
+
+    /// Shown in the language menu in the language itself, so every reader can
+    /// find their own entry regardless of the current UI language.
+    pub fn native_name(self) -> &'static str {
+        match self {
+            LauncherLanguage::En => "English",
+            LauncherLanguage::ZhHans => "简体中文",
+            LauncherLanguage::Ru => "Русский",
+            LauncherLanguage::Ar => "العربية",
+            LauncherLanguage::Fr => "Français",
+            LauncherLanguage::Es => "Español",
         }
     }
 }
@@ -488,6 +519,7 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         setup_title: t!("launcher.setup_title", locale = locale).into_owned(),
         open_anda: t!("launcher.open_anda", locale = locale).into_owned(),
         settings: t!("launcher.settings", locale = locale).into_owned(),
+        language: t!("launcher.language", locale = locale).into_owned(),
         model_settings: t!("launcher.model_settings", locale = locale).into_owned(),
         status: t!("launcher.status", locale = locale).into_owned(),
         status_pid: t!("launcher.status_pid", locale = locale).into_owned(),
@@ -563,7 +595,61 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
 }
 
 pub fn launcher_language() -> LauncherLanguage {
-    *LAUNCHER_LANGUAGE.get_or_init(detect_launcher_language)
+    if let Some(language) = *lock_launcher_language() {
+        return language;
+    }
+
+    // Resolved outside the lock: the home-detection fallback path calls
+    // text(), which would re-enter this function and deadlock.
+    let language = initial_launcher_language();
+    *lock_launcher_language().get_or_insert(language)
+}
+
+pub fn set_launcher_language(home: &Path, language: LauncherLanguage) -> LauncherResult<()> {
+    persist_launcher_language(home, language)?;
+    *lock_launcher_language() = Some(language);
+    Ok(())
+}
+
+fn lock_launcher_language() -> std::sync::MutexGuard<'static, Option<LauncherLanguage>> {
+    LAUNCHER_LANGUAGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn initial_launcher_language() -> LauncherLanguage {
+    detect_anda_home()
+        .ok()
+        .and_then(|home| load_persisted_language(&home))
+        .unwrap_or_else(detect_launcher_language)
+}
+
+fn ui_settings_path(home: &Path) -> PathBuf {
+    home.join("launcher").join("ui.json")
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct LauncherUiSettings {
+    language: String,
+}
+
+pub fn load_persisted_language(home: &Path) -> Option<LauncherLanguage> {
+    let content = fs::read_to_string(ui_settings_path(home)).ok()?;
+    let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
+    language_from_tag(&settings.language)
+}
+
+fn persist_launcher_language(home: &Path, language: LauncherLanguage) -> LauncherResult<()> {
+    let path = ui_settings_path(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let content = serde_json::to_string_pretty(&serde_json::json!({
+        "language": language.locale(),
+    }))?;
+    fs::write(path, content)?;
+    Ok(())
 }
 
 fn detect_launcher_language() -> LauncherLanguage {
@@ -593,6 +679,14 @@ fn language_from_tag(tag: &str) -> Option<LauncherLanguage> {
         Some(LauncherLanguage::ZhHans)
     } else if normalized.starts_with("en") {
         Some(LauncherLanguage::En)
+    } else if normalized.starts_with("ru") {
+        Some(LauncherLanguage::Ru)
+    } else if normalized.starts_with("ar") {
+        Some(LauncherLanguage::Ar)
+    } else if normalized.starts_with("fr") {
+        Some(LauncherLanguage::Fr)
+    } else if normalized.starts_with("es") {
+        Some(LauncherLanguage::Es)
     } else {
         None
     }
@@ -2031,7 +2125,7 @@ mod tests {
     #[test]
     fn launcher_language_detects_chinese_tags() {
         assert_eq!(
-            language_from_tags(["fr-FR", "zh-Hans-CN", "en-US"]),
+            language_from_tags(["xx-XX", "zh-Hans-CN", "en-US"]),
             LauncherLanguage::ZhHans
         );
         assert_eq!(
@@ -2041,9 +2135,49 @@ mod tests {
     }
 
     #[test]
+    fn launcher_language_detects_all_supported_tags() {
+        assert_eq!(language_from_tags(["ru-RU"]), LauncherLanguage::Ru);
+        assert_eq!(language_from_tags(["ar-SA"]), LauncherLanguage::Ar);
+        assert_eq!(language_from_tags(["fr-FR"]), LauncherLanguage::Fr);
+        assert_eq!(language_from_tags(["es-419"]), LauncherLanguage::Es);
+        assert_eq!(
+            language_from_tags(["xx-XX", "fr-FR", "en-US"]),
+            LauncherLanguage::Fr
+        );
+    }
+
+    #[test]
     fn launcher_language_falls_back_to_english() {
-        assert_eq!(language_from_tags(["fr-FR", "es-ES"]), LauncherLanguage::En);
+        assert_eq!(language_from_tags(["de-DE", "xx-XX"]), LauncherLanguage::En);
         assert_eq!(language_from_tags(["en-US"]), LauncherLanguage::En);
+    }
+
+    #[test]
+    fn persisted_language_roundtrip() {
+        let home = tempfile::tempdir().unwrap();
+
+        assert_eq!(load_persisted_language(home.path()), None);
+        persist_launcher_language(home.path(), LauncherLanguage::Fr).unwrap();
+        assert_eq!(
+            load_persisted_language(home.path()),
+            Some(LauncherLanguage::Fr)
+        );
+
+        let content = fs::read_to_string(ui_settings_path(home.path())).unwrap();
+        assert!(content.contains("\"language\": \"fr\""));
+    }
+
+    #[test]
+    fn persisted_language_ignores_invalid_content() {
+        let home = tempfile::tempdir().unwrap();
+        let path = ui_settings_path(home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        fs::write(&path, "not json").unwrap();
+        assert_eq!(load_persisted_language(home.path()), None);
+
+        fs::write(&path, r#"{"language": "xx"}"#).unwrap();
+        assert_eq!(load_persisted_language(home.path()), None);
     }
 
     #[test]
@@ -2114,6 +2248,31 @@ mod tests {
             zh.browser_extension_token_only_copied,
             "已将 Bearer token 复制到剪贴板。"
         );
+    }
+
+    #[test]
+    fn launcher_text_supports_added_locales() {
+        assert_eq!(
+            text_for_language(LauncherLanguage::Ru).settings,
+            "Настройки"
+        );
+        assert_eq!(text_for_language(LauncherLanguage::Ar).settings, "الإعدادات");
+        assert_eq!(
+            text_for_language(LauncherLanguage::Fr).settings,
+            "Paramètres"
+        );
+        assert_eq!(
+            text_for_language(LauncherLanguage::Es).settings,
+            "Configuración"
+        );
+
+        for language in LauncherLanguage::ALL {
+            let copy = text_for_language(language);
+            assert!(!copy.language.is_empty());
+            assert_ne!(copy.language, "launcher.language");
+            assert!(!language.native_name().is_empty());
+            assert_eq!(language_from_tag(language.locale()), Some(language));
+        }
     }
 
     #[test]

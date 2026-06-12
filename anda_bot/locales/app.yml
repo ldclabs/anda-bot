@@ -3,236 +3,555 @@ _version: 2
 launcher.app_title:
   en: Anda Bot
   zh-Hans: Anda Bot
+  ru: Anda Bot
+  ar: Anda Bot
+  fr: Anda Bot
+  es: Anda Bot
 launcher.launcher_title:
   en: Anda Launcher
   zh-Hans: Anda 启动器
+  ru: Лаунчер Anda
+  ar: مشغّل Anda
+  fr: Lanceur Anda
+  es: Lanzador de Anda
 launcher.launcher_window_title:
   en: Anda Bot Launcher
   zh-Hans: Anda Bot 启动器
+  ru: Лаунчер Anda Bot
+  ar: مشغّل Anda Bot
+  fr: Lanceur Anda Bot
+  es: Lanzador de Anda Bot
 launcher.settings_title:
   en: Anda Bot Settings
   zh-Hans: Anda Bot 设置
+  ru: Настройки Anda Bot
+  ar: إعدادات Anda Bot
+  fr: Paramètres d'Anda Bot
+  es: Configuración de Anda Bot
 launcher.setup_title:
   en: Anda Bot Setup
   zh-Hans: Anda Bot 初始设置
+  ru: Настройка Anda Bot
+  ar: إعداد Anda Bot
+  fr: Configuration d'Anda Bot
+  es: Configuración inicial de Anda Bot
 launcher.open_anda:
   en: Open Anda
   zh-Hans: 打开 Anda
+  ru: Открыть Anda
+  ar: فتح Anda
+  fr: Ouvrir Anda
+  es: Abrir Anda
 launcher.settings:
   en: Settings
   zh-Hans: 设置
+  ru: Настройки
+  ar: الإعدادات
+  fr: Paramètres
+  es: Configuración
+launcher.language:
+  en: Language
+  zh-Hans: 语言
+  ru: Язык
+  ar: اللغة
+  fr: Langue
+  es: Idioma
 launcher.model_settings:
   en: Model settings...
   zh-Hans: 大模型配置...
+  ru: Настройки модели...
+  ar: إعدادات النموذج...
+  fr: Paramètres du modèle...
+  es: Configuración del modelo...
 launcher.status:
   en: Status
   zh-Hans: 状态
+  ru: Статус
+  ar: الحالة
+  fr: État
+  es: Estado
 launcher.status_pid:
   en: PID
   zh-Hans: PID
+  ru: PID
+  ar: PID
+  fr: PID
+  es: PID
 launcher.status_gateway_url:
   en: Gateway URL
   zh-Hans: Gateway URL
+  ru: Gateway URL
+  ar: Gateway URL
+  fr: Gateway URL
+  es: Gateway URL
 launcher.status_conversations:
   en: Conversations
   zh-Hans: 对话数量
+  ru: Диалоги
+  ar: المحادثات
+  fr: Conversations
+  es: Conversaciones
 launcher.status_memory_nodes:
   en: Memory nodes
   zh-Hans: 记忆节点数量
+  ru: Узлы памяти
+  ar: عقد الذاكرة
+  fr: Nœuds de mémoire
+  es: Nodos de memoria
 launcher.status_memory_links:
   en: Memory links
   zh-Hans: 记忆链接数量
+  ru: Связи памяти
+  ar: روابط الذاكرة
+  fr: Liens de mémoire
+  es: Enlaces de memoria
 launcher.status_checking:
   en: Checking status...
   zh-Hans: 正在检查状态...
+  ru: Проверка статуса...
+  ar: جارٍ التحقق من الحالة...
+  fr: Vérification de l'état...
+  es: Comprobando el estado...
 launcher.status_unavailable:
   en: unavailable
   zh-Hans: 不可用
+  ru: недоступно
+  ar: غير متاح
+  fr: indisponible
+  es: no disponible
 launcher.start_daemon:
   en: Start daemon
   zh-Hans: 启动守护进程
+  ru: Запустить демон
+  ar: تشغيل الخدمة
+  fr: Démarrer le démon
+  es: Iniciar el demonio
 launcher.stop_daemon:
   en: Stop daemon
   zh-Hans: 停止守护进程
+  ru: Остановить демон
+  ar: إيقاف الخدمة
+  fr: Arrêter le démon
+  es: Detener el demonio
 launcher.restart_daemon:
   en: Restart daemon
   zh-Hans: 重启守护进程
+  ru: Перезапустить демон
+  ar: إعادة تشغيل الخدمة
+  fr: Redémarrer le démon
+  es: Reiniciar el demonio
 launcher.browser_extension_token:
   en: Generate browser extension token
   zh-Hans: 生成浏览器扩展应用 token
+  ru: Создать токен для расширения браузера
+  ar: إنشاء رمز لملحق المتصفح
+  fr: Générer un jeton pour l'extension de navigateur
+  es: Generar token para la extensión del navegador
 launcher.browser_extension_token_title:
   en: Browser extension token
   zh-Hans: 浏览器扩展应用 token
+  ru: Токен расширения браузера
+  ar: رمز ملحق المتصفح
+  fr: Jeton de l'extension de navigateur
+  es: Token de la extensión del navegador
 launcher.browser_extension_token_copied:
   en: Copied Gateway URL and Bearer token to the clipboard.
   zh-Hans: 已将 Gateway URL 和 Bearer token 复制到剪贴板。
+  ru: Gateway URL и Bearer token скопированы в буфер обмена.
+  ar: تم نسخ Gateway URL ورمز Bearer إلى الحافظة.
+  fr: Gateway URL et jeton Bearer copiés dans le presse-papiers.
+  es: Se copiaron la Gateway URL y el token Bearer al portapapeles.
 launcher.browser_extension_token_copy_button:
   en: Copy Token
   zh-Hans: 复制 Token
+  ru: Копировать токен
+  ar: نسخ الرمز
+  fr: Copier le jeton
+  es: Copiar token
 launcher.browser_extension_token_only_copied:
   en: Copied Bearer token to the clipboard.
   zh-Hans: 已将 Bearer token 复制到剪贴板。
+  ru: Bearer token скопирован в буфер обмена.
+  ar: تم نسخ رمز Bearer إلى الحافظة.
+  fr: Jeton Bearer copié dans le presse-papiers.
+  es: Se copió el token Bearer al portapapeles.
 launcher.check_update:
   en: Check for updates...
   zh-Hans: 检查更新...
+  ru: Проверить обновления...
+  ar: التحقق من التحديثات...
+  fr: Rechercher des mises à jour...
+  es: Buscar actualizaciones...
 launcher.check_update_versioned:
   en: Check for updates (%{current_tag})
   zh-Hans: 检查更新（%{current_tag}）
+  ru: Проверить обновления (%{current_tag})
+  ar: التحقق من التحديثات (%{current_tag})
+  fr: Rechercher des mises à jour (%{current_tag})
+  es: Buscar actualizaciones (%{current_tag})
 launcher.launch_at_login:
   en: Launch at login
   zh-Hans: 登录时启动
+  ru: Запускать при входе в систему
+  ar: التشغيل عند تسجيل الدخول
+  fr: Lancer à l'ouverture de session
+  es: Iniciar al iniciar sesión
 launcher.disable_launch_at_login:
   en: Disable launch at login
   zh-Hans: 取消登录时启动
+  ru: Не запускать при входе в систему
+  ar: تعطيل التشغيل عند تسجيل الدخول
+  fr: Désactiver le lancement à l'ouverture de session
+  es: Desactivar el inicio al iniciar sesión
 launcher.open_logs:
   en: Open logs
   zh-Hans: 打开日志
+  ru: Открыть журналы
+  ar: فتح السجلات
+  fr: Ouvrir les journaux
+  es: Abrir registros
 launcher.quit:
   en: Quit
   zh-Hans: 退出
+  ru: Выход
+  ar: إنهاء
+  fr: Quitter
+  es: Salir
 launcher.ok:
   en: OK
   zh-Hans: 确定
+  ru: ОК
+  ar: موافق
+  fr: OK
+  es: Aceptar
 launcher.save:
   en: Save
   zh-Hans: 保存
+  ru: Сохранить
+  ar: حفظ
+  fr: Enregistrer
+  es: Guardar
 launcher.cancel:
   en: Cancel
   zh-Hans: 取消
+  ru: Отмена
+  ar: إلغاء
+  fr: Annuler
+  es: Cancelar
 launcher.provider:
   en: Provider
   zh-Hans: 供应商
+  ru: Провайдер
+  ar: المزوّد
+  fr: Fournisseur
+  es: Proveedor
 launcher.model:
   en: Model
   zh-Hans: 模型
+  ru: Модель
+  ar: النموذج
+  fr: Modèle
+  es: Modelo
 launcher.api_key:
   en: API key
   zh-Hans: API 密钥
+  ru: API-ключ
+  ar: مفتاح API
+  fr: Clé API
+  es: Clave de API
 launcher.choose_provider_prompt:
   en: "Choose a model provider:"
   zh-Hans: 选择模型供应商：
+  ru: "Выберите провайдера модели:"
+  ar: "اختر مزوّد النموذج:"
+  fr: "Choisissez un fournisseur de modèle :"
+  es: "Elige un proveedor de modelo:"
 launcher.setup_required_message:
   en: Model is required. API key is required unless Codex is selected.
   zh-Hans: 必须填写模型。除选择 Codex 外，必须填写 API key。
+  ru: Необходимо указать модель. API-ключ обязателен, если не выбран Codex.
+  ar: النموذج مطلوب. مفتاح API مطلوب ما لم يتم اختيار Codex.
+  fr: Le modèle est requis. La clé API est requise sauf si Codex est sélectionné.
+  es: El modelo es obligatorio. La clave de API es obligatoria salvo que se seleccione Codex.
 launcher.launch_at_login_enabled:
   en: Launch at login enabled.
   zh-Hans: 已启用登录时启动。
+  ru: Запуск при входе в систему включён.
+  ar: تم تفعيل التشغيل عند تسجيل الدخول.
+  fr: Lancement à l'ouverture de session activé.
+  es: Inicio al iniciar sesión activado.
 launcher.launch_at_login_disabled:
   en: Launch at login disabled.
   zh-Hans: 已关闭登录时启动。
+  ru: Запуск при входе в систему отключён.
+  ar: تم تعطيل التشغيل عند تسجيل الدخول.
+  fr: Lancement à l'ouverture de session désactivé.
+  es: Inicio al iniciar sesión desactivado.
 launcher.settings_not_supported:
   en: Anda Launcher settings are not supported on this platform.
   zh-Hans: 当前平台不支持 Anda 启动器设置。
+  ru: Настройки лаунчера Anda не поддерживаются на этой платформе.
+  ar: إعدادات مشغّل Anda غير مدعومة على هذه المنصة.
+  fr: Les paramètres du lanceur Anda ne sont pas pris en charge sur cette plateforme.
+  es: La configuración del lanzador de Anda no es compatible con esta plataforma.
 launcher.unsupported_platform:
   en: Anda Launcher currently supports Windows and macOS.
   zh-Hans: Anda 启动器目前支持 Windows 和 macOS。
+  ru: Лаунчер Anda в настоящее время поддерживает Windows и macOS.
+  ar: يدعم مشغّل Anda حاليًا نظامي Windows وmacOS.
+  fr: Le lanceur Anda prend actuellement en charge Windows et macOS.
+  es: El lanzador de Anda actualmente es compatible con Windows y macOS.
 launcher.main_thread_required:
   en: Anda Launcher must run on the main thread
   zh-Hans: Anda 启动器必须在主线程运行
+  ru: Лаунчер Anda должен выполняться в главном потоке
+  ar: يجب تشغيل مشغّل Anda على الخيط الرئيسي
+  fr: Le lanceur Anda doit s'exécuter sur le thread principal
+  es: El lanzador de Anda debe ejecutarse en el hilo principal
 launcher.create_window_failed:
   en: could not create launcher window
   zh-Hans: 无法创建启动器窗口
+  ru: не удалось создать окно лаунчера
+  ar: تعذّر إنشاء نافذة المشغّل
+  fr: impossible de créer la fenêtre du lanceur
+  es: no se pudo crear la ventana del lanzador
 launcher.resolve_launch_agents_failed:
   en: could not resolve LaunchAgents directory
   zh-Hans: 无法解析 LaunchAgents 目录
+  ru: не удалось определить каталог LaunchAgents
+  ar: تعذّر تحديد مجلد LaunchAgents
+  fr: impossible de résoudre le répertoire LaunchAgents
+  es: no se pudo resolver el directorio LaunchAgents
 launcher.detect_home_failed:
   en: could not detect user home directory
   zh-Hans: 无法检测用户主目录
+  ru: не удалось определить домашний каталог пользователя
+  ar: تعذّر اكتشاف المجلد الرئيسي للمستخدم
+  fr: impossible de détecter le répertoire personnel de l'utilisateur
+  es: no se pudo detectar el directorio personal del usuario
 launcher.command_done:
   en: Done.
   zh-Hans: 完成。
+  ru: Готово.
+  ar: تم.
+  fr: Terminé.
+  es: Hecho.
 launcher.powershell_not_found:
   en: not found
   zh-Hans: 未找到
+  ru: не найден
+  ar: غير موجود
+  fr: introuvable
+  es: no encontrado
 launcher.checking_update:
   en: Checking for updates...
   zh-Hans: 正在检查更新...
+  ru: Проверка обновлений...
+  ar: جارٍ التحقق من التحديثات...
+  fr: Recherche de mises à jour...
+  es: Buscando actualizaciones...
 launcher.checking_update_versioned:
   en: "%{spinner} Checking for updates (%{current_tag})"
   zh-Hans: "%{spinner} 正在检查更新（%{current_tag}）"
+  ru: "%{spinner} Проверка обновлений (%{current_tag})"
+  ar: "%{spinner} جارٍ التحقق من التحديثات (%{current_tag})"
+  fr: "%{spinner} Recherche de mises à jour (%{current_tag})"
+  es: "%{spinner} Buscando actualizaciones (%{current_tag})"
 launcher.update_ready_title:
   en: Update ready
   zh-Hans: 更新已就绪
+  ru: Обновление готово
+  ar: التحديث جاهز
+  fr: Mise à jour prête
+  es: Actualización lista
 launcher.install_restart_update:
   en: Install and restart
   zh-Hans: 安装并重启
+  ru: Установить и перезапустить
+  ar: تثبيت وإعادة تشغيل
+  fr: Installer et redémarrer
+  es: Instalar y reiniciar
 launcher.update_check_result_title:
   en: Update check
   zh-Hans: 检查更新
+  ru: Проверка обновлений
+  ar: التحقق من التحديثات
+  fr: Vérification des mises à jour
+  es: Comprobación de actualizaciones
 launcher.update_check_failed_title:
   en: Update check failed
   zh-Hans: 检查更新失败
+  ru: Не удалось проверить обновления
+  ar: فشل التحقق من التحديثات
+  fr: Échec de la vérification des mises à jour
+  es: Error al comprobar actualizaciones
 launcher.update_restart_title:
   en: Anda update
   zh-Hans: Anda 更新
+  ru: Обновление Anda
+  ar: تحديث Anda
+  fr: Mise à jour d'Anda
+  es: Actualización de Anda
 launcher.update_restart_started:
   en: Installing update and restarting Anda...
   zh-Hans: 正在安装更新并重启 Anda...
+  ru: Установка обновления и перезапуск Anda...
+  ar: جارٍ تثبيت التحديث وإعادة تشغيل Anda...
+  fr: Installation de la mise à jour et redémarrage d'Anda...
+  es: Instalando la actualización y reiniciando Anda...
 launcher.update_not_checked:
   en: No update check has run yet.
   zh-Hans: 尚未执行更新检查。
+  ru: Проверка обновлений ещё не выполнялась.
+  ar: لم يتم إجراء أي تحقق من التحديثات بعد.
+  fr: Aucune vérification de mise à jour n'a encore été effectuée.
+  es: Aún no se ha realizado ninguna comprobación de actualizaciones.
 launcher.latest_release:
   en: the latest release
   zh-Hans: 最新版本
+  ru: последний выпуск
+  ar: أحدث إصدار
+  fr: la dernière version
+  es: la última versión
 launcher.unknown_error:
   en: unknown error
   zh-Hans: 未知错误
+  ru: неизвестная ошибка
+  ar: خطأ غير معروف
+  fr: erreur inconnue
+  es: error desconocido
 
 browser.workspace_picker_title:
   en: Open a workspace folder for Anda
   zh-Hans: 选择 Anda 工作空间目录
+  ru: Откройте папку рабочего пространства для Anda
+  ar: افتح مجلد مساحة عمل لـ Anda
+  fr: Ouvrir un dossier d'espace de travail pour Anda
+  es: Abrir una carpeta de espacio de trabajo para Anda
 
 launcher.error.unsupported_provider:
   en: "unsupported provider: %{provider_id}"
   zh-Hans: 不支持的模型供应商：%{provider_id}
+  ru: "неподдерживаемый провайдер: %{provider_id}"
+  ar: "مزوّد غير مدعوم: %{provider_id}"
+  fr: "fournisseur non pris en charge : %{provider_id}"
+  es: "proveedor no compatible: %{provider_id}"
 launcher.error.unsupported_provider_from_wizard:
   en: "unsupported provider returned by wizard: %{provider_id}"
   zh-Hans: 设置向导返回了不支持的模型供应商：%{provider_id}
+  ru: "мастер настройки вернул неподдерживаемого провайдера: %{provider_id}"
+  ar: "أعاد معالج الإعداد مزوّدًا غير مدعوم: %{provider_id}"
+  fr: "l'assistant a renvoyé un fournisseur non pris en charge : %{provider_id}"
+  es: "el asistente devolvió un proveedor no compatible: %{provider_id}"
 launcher.error.env_required:
   en: "%{env_var} is required"
   zh-Hans: 必须填写 %{env_var}
+  ru: "необходимо указать %{env_var}"
+  ar: "%{env_var} مطلوب"
+  fr: "%{env_var} est requis"
+  es: "%{env_var} es obligatorio"
 launcher.error.settings_wizard_failed:
   en: "settings wizard failed: %{detail}"
   zh-Hans: 设置向导失败：%{detail}
+  ru: "ошибка мастера настройки: %{detail}"
+  ar: "فشل معالج الإعدادات: %{detail}"
+  fr: "échec de l'assistant de configuration : %{detail}"
+  es: "el asistente de configuración falló: %{detail}"
 launcher.error.powershell_launch_failed:
   en: "could not launch PowerShell for settings wizard: %{detail}"
   zh-Hans: 无法启动 PowerShell 设置向导：%{detail}
+  ru: "не удалось запустить PowerShell для мастера настройки: %{detail}"
+  ar: "تعذّر تشغيل PowerShell لمعالج الإعدادات: %{detail}"
+  fr: "impossible de lancer PowerShell pour l'assistant de configuration : %{detail}"
+  es: "no se pudo iniciar PowerShell para el asistente de configuración: %{detail}"
 launcher.error.launcher_exe_detect_failed:
   en: "could not detect launcher executable: %{detail}"
   zh-Hans: 无法检测 launcher 可执行文件：%{detail}
+  ru: "не удалось определить исполняемый файл лаунчера: %{detail}"
+  ar: "تعذّر اكتشاف الملف التنفيذي للمشغّل: %{detail}"
+  fr: "impossible de détecter l'exécutable du lanceur : %{detail}"
+  es: "no se pudo detectar el ejecutable del lanzador: %{detail}"
 launcher.error.run_anda_failed:
   en: "could not run %{path}: %{detail}"
   zh-Hans: 无法运行 %{path}：%{detail}
+  ru: "не удалось запустить %{path}: %{detail}"
+  ar: "تعذّر تشغيل %{path}: %{detail}"
+  fr: "impossible d'exécuter %{path} : %{detail}"
+  es: "no se pudo ejecutar %{path}: %{detail}"
 launcher.command_exited:
   en: "Command exited with %{status}"
   zh-Hans: 命令退出状态：%{status}
+  ru: "Команда завершилась со статусом %{status}"
+  ar: "انتهى الأمر بالحالة %{status}"
+  fr: "La commande s'est terminée avec %{status}"
+  es: "El comando finalizó con %{status}"
 launcher.error.command_failed:
   en: "command failed: %{detail}"
   zh-Hans: 命令失败：%{detail}
+  ru: "команда завершилась с ошибкой: %{detail}"
+  ar: "فشل الأمر: %{detail}"
+  fr: "échec de la commande : %{detail}"
+  es: "el comando falló: %{detail}"
 launcher.error.schtasks_failed:
   en: "schtasks.exe failed: %{detail}"
   zh-Hans: schtasks.exe 执行失败：%{detail}
+  ru: "ошибка schtasks.exe: %{detail}"
+  ar: "فشل schtasks.exe: %{detail}"
+  fr: "échec de schtasks.exe : %{detail}"
+  es: "schtasks.exe falló: %{detail}"
 launcher.update_ready_message:
   en: Downloaded %{latest_tag}. Restart to apply.
   zh-Hans: 已下载 %{latest_tag}，重启生效。
+  ru: Загружено %{latest_tag}. Перезапустите, чтобы применить.
+  ar: تم تنزيل %{latest_tag}. أعد التشغيل للتطبيق.
+  fr: "%{latest_tag} téléchargée. Redémarrez pour appliquer."
+  es: Se descargó %{latest_tag}. Reinicia para aplicar.
 launcher.update_downloaded_restart_message:
   en: Install and restart %{latest_tag}
   zh-Hans: 安装并重启 %{latest_tag}
+  ru: Установить и перезапустить %{latest_tag}
+  ar: تثبيت وإعادة تشغيل %{latest_tag}
+  fr: Installer et redémarrer %{latest_tag}
+  es: Instalar y reiniciar %{latest_tag}
 launcher.update_restart_confirm:
   en: Downloaded %{latest_tag}. Install and restart now to apply it?
   zh-Hans: 已下载 %{latest_tag}，重启生效。现在安装并重启？
+  ru: Загружено %{latest_tag}. Установить и перезапустить сейчас?
+  ar: تم تنزيل %{latest_tag}. هل تريد التثبيت وإعادة التشغيل الآن؟
+  fr: "%{latest_tag} téléchargée. Installer et redémarrer maintenant ?"
+  es: Se descargó %{latest_tag}. ¿Instalar y reiniciar ahora?
 launcher.update_current_message:
   en: Anda is already up to date (%{current_tag}).
   zh-Hans: Anda 已是最新版本（%{current_tag}）。
+  ru: Anda уже обновлён до последней версии (%{current_tag}).
+  ar: Anda محدث بالفعل (%{current_tag}).
+  fr: Anda est déjà à jour (%{current_tag}).
+  es: Anda ya está actualizado (%{current_tag}).
 launcher.update_check_failed_message:
   en: "Update check failed: %{detail}"
   zh-Hans: 检查更新失败：%{detail}
+  ru: "Не удалось проверить обновления: %{detail}"
+  ar: "فشل التحقق من التحديثات: %{detail}"
+  fr: "Échec de la vérification des mises à jour : %{detail}"
+  es: "Error al comprobar actualizaciones: %{detail}"
 launcher.update_restart_failed_message:
   en: "Update install or restart failed: %{detail}"
   zh-Hans: 安装更新或重启失败：%{detail}
+  ru: "Не удалось установить обновление или перезапустить: %{detail}"
+  ar: "فشل تثبيت التحديث أو إعادة التشغيل: %{detail}"
+  fr: "Échec de l'installation de la mise à jour ou du redémarrage : %{detail}"
+  es: "Error al instalar la actualización o reiniciar: %{detail}"
 launcher.restart_recovery:
   en: "Restart recovery: %{message}"
   zh-Hans: 重启恢复：%{message}
+  ru: "Восстановление после перезапуска: %{message}"
+  ar: "استعادة إعادة التشغيل: %{message}"
+  fr: "Récupération du redémarrage : %{message}"
+  es: "Recuperación del reinicio: %{message}"
 launcher.missing_home_arg:
   en: missing value for --home
   zh-Hans: 缺少 --home 的值
+  ru: отсутствует значение для --home
+  ar: قيمة --home مفقودة
+  fr: valeur manquante pour --home
+  es: falta el valor de --home

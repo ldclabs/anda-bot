@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import type { ChatAttachment } from '$lib/anda/client'
   import { fileSizeLabel } from '$lib/anda/composer/attachments'
   import { badgeClass, buttonClass, cardClass } from '$lib/anda/ui'
@@ -34,7 +35,7 @@
               'icon-xs',
               'absolute top-0 right-0 size-4 rounded-none rounded-bl-md bg-black/50 p-0 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500'
             )}
-            aria-label={chrome.i18n.getMessage('removeAttachment')}
+            aria-label={getMessage('removeAttachment')}
             onclick={() => onRemove(attachment.id)}
           >
             <X class="size-2" />
@@ -60,8 +61,8 @@
               'icon-xs',
               'size-4 rounded-sm text-muted-foreground/80 hover:text-foreground'
             )}
-            aria-label={chrome.i18n.getMessage('removeAttachment')}
-            title={chrome.i18n.getMessage('removeAttachment')}
+            aria-label={getMessage('removeAttachment')}
+            title={getMessage('removeAttachment')}
             onclick={() => onRemove(attachment.id)}
           >
             <X class="size-3" />

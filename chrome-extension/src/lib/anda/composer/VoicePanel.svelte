@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import type { VoiceProvider } from '$lib/anda/client'
   import { badgeClass, buttonClass, cardClass } from '$lib/anda/ui'
   import { LoaderCircle, Mic, Square } from '@lucide/svelte'
@@ -54,11 +55,11 @@
     style={voiceOrbStyle}
     disabled={!canRecordVoice}
     aria-label={voiceStage === 'recording'
-      ? chrome.i18n.getMessage('stopRecording')
-      : chrome.i18n.getMessage('startRecording')}
+      ? getMessage('stopRecording')
+      : getMessage('startRecording')}
     title={voiceStage === 'recording'
-      ? chrome.i18n.getMessage('stopRecording')
-      : chrome.i18n.getMessage('startRecording')}
+      ? getMessage('stopRecording')
+      : getMessage('startRecording')}
     onclick={onToggleRecording}
   >
     <span class="voice-orb-core"></span>
@@ -96,10 +97,10 @@
           }`
         )}
         disabled={!canUseBrowserSpeech || voiceStage !== 'idle'}
-        title={chrome.i18n.getMessage('useBrowserVoice')}
+        title={getMessage('useBrowserVoice')}
         onclick={() => onSelectVoiceProvider('chrome')}
       >
-        {chrome.i18n.getMessage('browserVoiceProviderLabel')}
+        {getMessage('browserVoiceProviderLabel')}
       </button>
       <button
         type="button"
@@ -113,7 +114,7 @@
           }`
         )}
         disabled={!canUseAndaVoice || voiceStage !== 'idle'}
-        title={chrome.i18n.getMessage('useAndaVoice')}
+        title={getMessage('useAndaVoice')}
         onclick={() => onSelectVoiceProvider('anda')}
       >
         Anda
@@ -121,8 +122,8 @@
     </div>
     <span class="voice-service-label"
       >{voiceProvider === 'chrome'
-        ? chrome.i18n.getMessage('browserVoiceService')
-        : chrome.i18n.getMessage('andaVoiceService')}</span
+        ? getMessage('browserVoiceService')
+        : getMessage('andaVoiceService')}</span
     >
   </div>
   {#if voiceTranscript}

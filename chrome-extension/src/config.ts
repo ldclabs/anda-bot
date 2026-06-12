@@ -1,4 +1,5 @@
 import { mount } from 'svelte'
+import { initI18n } from '$lib/i18n'
 import './app.css'
 import ConfigApp from './ConfigApp.svelte'
 
@@ -7,4 +8,6 @@ if (!target) {
   throw new Error('Could not find app container')
 }
 
-mount(ConfigApp, { target })
+initI18n().finally(() => {
+  mount(ConfigApp, { target })
+})

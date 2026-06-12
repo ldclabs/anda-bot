@@ -75,6 +75,7 @@ pub struct Engines {
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
     config_path: PathBuf,
+    home_dir: PathBuf,
 }
 
 #[async_trait]
@@ -397,6 +398,7 @@ impl Engines {
             voice_capabilities,
             auto_updater: cfg.auto_updater,
             config_path,
+            home_dir: cfg.home_dir,
         })
     }
 
@@ -418,6 +420,7 @@ impl Engines {
             bridge: self.browser_bridge,
             voice_capabilities: self.voice_capabilities,
             auto_updater: self.auto_updater,
+            home_dir: self.home_dir,
         };
         let browser_ws_router = Router::new()
             .route("/ws/engine/{*id}", routing::get(browser_websocket))

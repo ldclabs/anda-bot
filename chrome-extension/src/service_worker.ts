@@ -4,6 +4,7 @@ import {
   rememberActiveTab
 } from '$lib/service-worker/browser-actions'
 import { getChromeApi, isDevelopmentMode } from '$lib/service-worker/chrome'
+import { applyUiLanguage, initI18n, uiLanguageStorageKey } from '$lib/i18n'
 import { handlePageAudioCapture, handlePageSpeechRecognition } from '$lib/service-worker/page-voice'
 import {
   browserSession,
@@ -47,6 +48,13 @@ let status = 'starting'
 const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let browserActionQueue: Promise<void> = Promise.resolve()
+
+void initI18n()
+chromeApi.storage?.onChanged?.addListener?.((changes, areaName) => {
+  if (areaName === 'local' && changes[uiLanguageStorageKey]) {
+    void applyUiLanguage(changes[uiLanguageStorageKey].newValue)
+  }
+})
 
 chromeApi.runtime.onInstalled.addListener((details) => {
   if (chromeApi.sidePanel?.setPanelBehavior) {

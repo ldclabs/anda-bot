@@ -261,11 +261,7 @@ impl Tool<BaseCtx> for ResourceStore {
                 }
 
                 let (resource, path) = self
-                    .download_resource(
-                        _id,
-                        dir.as_deref().map(Path::new),
-                        Some(ctx.caller()),
-                    )
+                    .download_resource(_id, dir.as_deref().map(Path::new), Some(ctx.caller()))
                     .await?;
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!({

@@ -305,7 +305,9 @@ function addOccurrence(map, key, occurrence) {
 }
 
 function scanGetMessageCalls(filePath, text, occurrences, dynamicUsages) {
-  const callPattern = /chrome\.i18n\.getMessage\s*\(/g
+  // Matches chrome.i18n.getMessage(...) and the $lib/i18n getMessage(...)
+  // wrapper, but not the wrapper's own function declaration.
+  const callPattern = /(?<!function\s)(?:chrome\.i18n\.)?getMessage\s*\(/g
 
   for (const match of text.matchAll(callPattern)) {
     const openIndex = (match.index ?? 0) + match[0].length - 1

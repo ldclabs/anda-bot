@@ -1,3 +1,4 @@
+import { getMessage } from '$lib/i18n'
 import { getPlainText } from '$lib/utils/markdown'
 import type { Resource, VoiceRecordingInput } from './types'
 
@@ -32,13 +33,13 @@ export async function normalizeVoiceRecordingAudio(
   const audioBase64 = recording.audioBase64 || ''
   const fileName = recording.fileName?.trim() || 'chrome_voice.webm'
   if (!audioBase64.trim()) {
-    throw new Error(chrome.i18n.getMessage('audioCaptureMissingData'))
+    throw new Error(getMessage('audioCaptureMissingData'))
   }
   const accepted = normalizeAudioFormats(acceptedFormats)
   const sourceFormat = recordingAudioFormat(fileName, recording.mimeType)
   if (!sourceFormat) {
     throw new Error(
-      chrome.i18n.getMessage('audioFormatNotSupported', ['unknown', accepted.join(', ') || 'none'])
+      getMessage('audioFormatNotSupported', ['unknown', accepted.join(', ') || 'none'])
     )
   }
 
@@ -51,7 +52,7 @@ export async function normalizeVoiceRecordingAudio(
   }
   if (!accepted.includes('wav')) {
     throw new Error(
-      chrome.i18n.getMessage('audioFormatNotSupported', [
+      getMessage('audioFormatNotSupported', [
         sourceFormat,
         accepted.join(', ') || 'none'
       ])
@@ -174,7 +175,7 @@ function preferredAudioExtension(format: string): string {
 async function audioBlobToWavBytes(blob: Blob): Promise<Uint8Array> {
   const AudioContextCtor = globalThis.AudioContext
   if (!AudioContextCtor) {
-    throw new Error(chrome.i18n.getMessage('audioConversionFailed'))
+    throw new Error(getMessage('audioConversionFailed'))
   }
   const context = new AudioContextCtor()
   try {
@@ -182,7 +183,7 @@ async function audioBlobToWavBytes(blob: Blob): Promise<Uint8Array> {
     return audioBufferToWavBytes(audioBuffer)
   } catch (error) {
     throw new Error(
-      chrome.i18n.getMessage('wavConversionFailed', [
+      getMessage('wavConversionFailed', [
         error instanceof Error ? error.message : String(error)
       ])
     )
@@ -300,7 +301,7 @@ export async function playAudioArtifact(resource: Resource): Promise<void> {
       }
     }
     audio.onended = () => settle()
-    audio.onerror = () => settle(new Error(chrome.i18n.getMessage('audioPlaybackFailed')))
+    audio.onerror = () => settle(new Error(getMessage('audioPlaybackFailed')))
     void audio.play().catch(settle)
   })
 }

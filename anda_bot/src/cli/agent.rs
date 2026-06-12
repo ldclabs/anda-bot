@@ -649,8 +649,14 @@ mod tests {
         assert_eq!(wait_timeout(0), None);
         assert_eq!(wait_timeout(5), Some(Duration::from_secs(5)));
 
-        let absolute = absolute_workspace(Path::new("/tmp/abs")).unwrap();
-        assert_eq!(absolute, PathBuf::from("/tmp/abs"));
+        // "/tmp/abs" is not absolute on Windows (no drive prefix), so use a
+        // platform-appropriate absolute path.
+        #[cfg(windows)]
+        let abs_path = Path::new(r"C:\tmp\abs");
+        #[cfg(not(windows))]
+        let abs_path = Path::new("/tmp/abs");
+        let absolute = absolute_workspace(abs_path).unwrap();
+        assert_eq!(absolute, abs_path);
         let relative = absolute_workspace(Path::new("rel")).unwrap();
         assert!(relative.is_absolute());
         assert!(relative.ends_with("rel"));

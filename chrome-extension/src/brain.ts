@@ -1,4 +1,5 @@
 import { mount } from 'svelte'
+import { initI18n } from '$lib/i18n'
 import './app.css'
 import BrainApp from './BrainApp.svelte'
 
@@ -7,4 +8,6 @@ if (!target) {
   throw new Error('Could not find app container')
 }
 
-mount(BrainApp, { target })
+initI18n().finally(() => {
+  mount(BrainApp, { target })
+})

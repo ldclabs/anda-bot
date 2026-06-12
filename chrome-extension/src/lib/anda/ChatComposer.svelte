@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { getMessage } from '$lib/i18n'
   import type {
     ChatAttachment,
     PageAudioResult,
@@ -72,7 +73,7 @@
   let {
     disabled = false,
     sending = false,
-    placeholder = chrome.i18n.getMessage('placeholderMessage'),
+    placeholder = getMessage('placeholderMessage'),
     working = false,
     stoppable = false,
     voiceAvailable = false,
@@ -158,13 +159,13 @@
   const submitTitle = $derived(
     submitKeyMode === 'modifier-enter'
       ? isMacPlatform()
-        ? chrome.i18n.getMessage('sendWithCmdEnter')
-        : chrome.i18n.getMessage('sendWithCtrlEnter')
-      : chrome.i18n.getMessage('sendWithEnter')
+        ? getMessage('sendWithCmdEnter')
+        : getMessage('sendWithCtrlEnter')
+      : getMessage('sendWithEnter')
   )
   const showStopButton = $derived(Boolean(onStop) && stoppable && inputMode === 'text' && !hasDraft)
   const stopTitle = $derived(
-    chrome.i18n.getMessage(stopPending ? 'stoppingTask' : 'stopTask') ||
+    getMessage(stopPending ? 'stoppingTask' : 'stopTask') ||
       (stopPending ? 'Stopping current task' : 'Stop current task')
   )
   const canUseBrowserSpeech = $derived(
@@ -188,19 +189,19 @@
       voiceStage !== 'processing'
   )
   const voiceProviderLabel = $derived(
-    voiceProvider === 'chrome' ? chrome.i18n.getMessage('browserVoiceProviderLabel') : 'Anda'
+    voiceProvider === 'chrome' ? getMessage('browserVoiceProviderLabel') : 'Anda'
   )
   const voiceProviderTitle = $derived(
     voiceProvider === 'chrome'
-      ? chrome.i18n.getMessage('useBrowserVoice')
-      : chrome.i18n.getMessage('useAndaVoice')
+      ? getMessage('useBrowserVoice')
+      : getMessage('useAndaVoice')
   )
   const voiceStatus = $derived(
     voiceStage === 'recording'
-      ? chrome.i18n.getMessage('listening')
+      ? getMessage('listening')
       : voiceStage === 'processing' || sending
-        ? chrome.i18n.getMessage('working')
-        : chrome.i18n.getMessage('ready')
+        ? getMessage('working')
+        : getMessage('ready')
   )
   const voiceOrbStyle = $derived(`--voice-level: ${voiceLevel.toFixed(3)}`)
   const promptCommandContext = $derived(readPromptCommandContext(text, caretIndex))
@@ -223,8 +224,8 @@
   )
   const promptCommandPanelTitle = $derived(
     promptCommandContext.mode === 'skill'
-      ? chrome.i18n.getMessage('promptSkillsLabel')
-      : chrome.i18n.getMessage('promptCommandsLabel')
+      ? getMessage('promptSkillsLabel')
+      : getMessage('promptCommandsLabel')
   )
 
   let workingPersisted = $state(false)
@@ -939,12 +940,12 @@
       return
     }
     if (!result.audioBase64 || !result.mimeType) {
-      voiceError = chrome.i18n.getMessage('noVoiceCaptured')
+      voiceError = getMessage('noVoiceCaptured')
       voiceStage = 'idle'
       return
     }
     if (!onVoiceSend) {
-      voiceError = chrome.i18n.getMessage('voiceNotConnected')
+      voiceError = getMessage('voiceNotConnected')
       voiceStage = 'idle'
       return
     }
@@ -976,12 +977,12 @@
     }
     const blob = new Blob(chunks, { type: mimeType })
     if (!blob.size) {
-      voiceError = chrome.i18n.getMessage('noVoiceCaptured')
+      voiceError = getMessage('noVoiceCaptured')
       voiceStage = 'idle'
       return
     }
     if (!onVoiceSend) {
-      voiceError = chrome.i18n.getMessage('voiceNotConnected')
+      voiceError = getMessage('voiceNotConnected')
       voiceStage = 'idle'
       return
     }
@@ -1161,8 +1162,8 @@
             type="button"
             class={buttonClass('ghost', 'icon-sm', 'composer-icon-button hover:text-emerald-700')}
             disabled={disabled || preparingAttachments}
-            aria-label={chrome.i18n.getMessage('attachFiles')}
-            title={chrome.i18n.getMessage('attachFiles')}
+            aria-label={getMessage('attachFiles')}
+            title={getMessage('attachFiles')}
             onclick={openFileDialog}
           >
             {#if preparingAttachments}
@@ -1182,11 +1183,11 @@
               )}
               disabled={disabled || sending}
               aria-label={inputMode === 'voice'
-                ? chrome.i18n.getMessage('switchToKeyboard')
-                : chrome.i18n.getMessage('switchToVoice')}
+                ? getMessage('switchToKeyboard')
+                : getMessage('switchToVoice')}
               title={inputMode === 'voice'
-                ? chrome.i18n.getMessage('keyboardInput')
-                : chrome.i18n.getMessage('voiceInput')}
+                ? getMessage('keyboardInput')
+                : getMessage('voiceInput')}
               onclick={toggleInputMode}
             >
               {#if inputMode === 'voice'}
@@ -1212,11 +1213,11 @@
                 voiceStage === 'recording' ||
                 !selectedVoiceTtsAvailable}
               aria-label={ttsEnabled
-                ? chrome.i18n.getMessage('disablePlayback')
-                : chrome.i18n.getMessage('enablePlayback')}
+                ? getMessage('disablePlayback')
+                : getMessage('enablePlayback')}
               title={selectedVoiceTtsAvailable
-                ? `${voiceProviderLabel} ${ttsEnabled ? chrome.i18n.getMessage('playbackOn') : chrome.i18n.getMessage('playbackOff')}`
-                : `${voiceProviderLabel} ${chrome.i18n.getMessage('playbackUnavailable')}`}
+                ? `${voiceProviderLabel} ${ttsEnabled ? getMessage('playbackOn') : getMessage('playbackOff')}`
+                : `${voiceProviderLabel} ${getMessage('playbackUnavailable')}`}
               onclick={() => (ttsEnabled = !ttsEnabled)}
             >
               {#if ttsEnabled}
@@ -1263,7 +1264,7 @@
                               : 'composer-send-disabled'
                           }`
                         )}
-                        aria-label={chrome.i18n.getMessage('send')}
+                        aria-label={getMessage('send')}
                       >
                         {#if sending}
                           <LoaderCircle class="size-4 animate-spin" />

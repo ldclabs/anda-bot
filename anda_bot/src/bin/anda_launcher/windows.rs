@@ -37,11 +37,11 @@ use windows_sys::Win32::{
             CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
             DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, HICON,
             HMENU, ICONINFO, IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
-            MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW,
-            PostQuitMessage, RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_SHOWNORMAL,
-            SendMessageTimeoutW, SetForegroundWindow, TPM_RIGHTBUTTON, TrackPopupMenu,
-            TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-            WNDCLASSW, WS_OVERLAPPEDWINDOW,
+            MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
+            PostMessageW, PostQuitMessage, RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
+            SW_SHOWNORMAL, SendMessageTimeoutW, SetForegroundWindow, TPM_RIGHTBUTTON,
+            TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
+            WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -74,6 +74,7 @@ const ID_LOGS: usize = 1008;
 const ID_CHECK_UPDATE: usize = 1009;
 const ID_QUIT: usize = 1010;
 const ID_BROWSER_TOKEN: usize = 1011;
+const ID_LANGUAGE_BASE: usize = 1100;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
@@ -193,7 +194,21 @@ fn handle_command(hwnd: HWND, id: usize) {
         ID_QUIT => unsafe {
             DestroyWindow(hwnd);
         },
+        id if (ID_LANGUAGE_BASE..ID_LANGUAGE_BASE + core::LauncherLanguage::ALL.len())
+            .contains(&id) =>
+        {
+            select_language(ctx, id - ID_LANGUAGE_BASE);
+        }
         _ => {}
+    }
+}
+
+fn select_language(ctx: &LauncherContext, index: usize) {
+    let Some(language) = core::LauncherLanguage::ALL.get(index).copied() else {
+        return;
+    };
+    if let Err(err) = core::set_launcher_language(&ctx.home, language) {
+        show_error(&text().app_title, &err.to_string());
     }
 }
 
@@ -262,6 +277,22 @@ fn show_tray_menu(hwnd: HWND) {
             &copy.launch_at_login
         };
         append_item(settings_menu, ID_AUTOSTART, autostart_label);
+        let language_menu = CreatePopupMenu();
+        let current_language = core::launcher_language();
+        for (index, language) in core::LauncherLanguage::ALL.into_iter().enumerate() {
+            let flags = if language == current_language {
+                MF_STRING | MF_CHECKED
+            } else {
+                MF_STRING
+            };
+            AppendMenuW(
+                language_menu,
+                flags,
+                ID_LANGUAGE_BASE + index,
+                wide_null(language.native_name()).as_ptr(),
+            );
+        }
+        append_submenu(settings_menu, language_menu, &copy.language);
         append_submenu(menu, settings_menu, &copy.settings);
         append_separator(menu);
         append_item(menu, ID_CHECK_UPDATE, &core::check_update_menu_label());
