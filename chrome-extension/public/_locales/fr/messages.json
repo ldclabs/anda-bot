@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "L'enregistrement vocal Anda n'a pas démarré."
+  },
+  "refresh": {
+    "message": "Actualiser"
+  },
+  "search": {
+    "message": "Rechercher"
+  },
+  "close": {
+    "message": "Fermer"
+  },
+  "loading": {
+    "message": "Chargement"
+  },
+  "brainPageTitle": {
+    "message": "Graphe de mémoire Anda"
+  },
+  "brainStatusIdle": {
+    "message": "Inactif"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "Paramètres indisponibles"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "Chargement du graphe"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "Aperçu : $1 nœuds"
+  },
+  "brainStatusLoadFailed": {
+    "message": "Échec du chargement"
+  },
+  "brainStatusSearching": {
+    "message": "Recherche en cours"
+  },
+  "brainStatusSearchResults": {
+    "message": "$1 résultats de recherche"
+  },
+  "brainStatusSearchFailed": {
+    "message": "Échec de la recherche"
+  },
+  "brainStatusRunningKip": {
+    "message": "Exécution de KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "KIP terminé"
+  },
+  "brainStatusKipFailed": {
+    "message": "Échec de KIP"
+  },
+  "brainClipboardUnavailable": {
+    "message": "Le presse-papiers est indisponible"
+  },
+  "brainConnection": {
+    "message": "Connexion"
+  },
+  "brainFieldSpace": {
+    "message": "Espace"
+  },
+  "brainSearchPlaceholder": {
+    "message": "Concept, type, alias"
+  },
+  "brainPrev": {
+    "message": "Préc."
+  },
+  "brainNext": {
+    "message": "Suiv."
+  },
+  "brainViewPanel": {
+    "message": "Affichage"
+  },
+  "brainFieldMode": {
+    "message": "Mode"
+  },
+  "brainModeOverview": {
+    "message": "Aperçu"
+  },
+  "brainModeFocus": {
+    "message": "Focus"
+  },
+  "brainModeFull": {
+    "message": "Complet"
+  },
+  "brainFieldEdges": {
+    "message": "Arêtes"
+  },
+  "brainAll": {
+    "message": "Toutes"
+  },
+  "brainNone": {
+    "message": "Aucune"
+  },
+  "brainFieldLabels": {
+    "message": "Étiquettes"
+  },
+  "brainLabelsSmart": {
+    "message": "Intelligentes"
+  },
+  "brainFieldNodeCap": {
+    "message": "Limite de nœuds $1"
+  },
+  "brainFieldRadius": {
+    "message": "Rayon $1"
+  },
+  "brainResetFilters": {
+    "message": "Réinitialiser les filtres"
+  },
+  "brainFilters": {
+    "message": "Filtres"
+  },
+  "brainFieldType": {
+    "message": "Type"
+  },
+  "brainAllTypes": {
+    "message": "Tous les types"
+  },
+  "brainFieldPredicate": {
+    "message": "Prédicat"
+  },
+  "brainAllPredicates": {
+    "message": "Tous les prédicats"
+  },
+  "brainCounts": {
+    "message": "Statistiques"
+  },
+  "brainLoadedNodes": {
+    "message": "Nœuds chargés"
+  },
+  "brainLoadedLinks": {
+    "message": "Liens chargés"
+  },
+  "brainVisibleNodes": {
+    "message": "Nœuds visibles"
+  },
+  "brainVisibleLinks": {
+    "message": "Liens visibles"
+  },
+  "brainTotalConcepts": {
+    "message": "Concepts au total : $1"
+  },
+  "brainTotalProps": {
+    "message": "Propositions au total : $1"
+  },
+  "brainZoomIn": {
+    "message": "Zoom avant"
+  },
+  "brainZoomOut": {
+    "message": "Zoom arrière"
+  },
+  "brainFitView": {
+    "message": "Ajuster la vue"
+  },
+  "brainFocusSelected": {
+    "message": "Centrer la sélection"
+  },
+  "brainToggleEdges": {
+    "message": "Afficher/masquer les arêtes"
+  },
+  "brainInspector": {
+    "message": "Inspecteur"
+  },
+  "brainCopyJson": {
+    "message": "Copier le JSON"
+  },
+  "brainCopiedJson": {
+    "message": "JSON copié"
+  },
+  "brainCloseInspector": {
+    "message": "Fermer l'inspecteur"
+  },
+  "brainExpand": {
+    "message": "Développer"
+  },
+  "brainAttributes": {
+    "message": "Attributs"
+  },
+  "brainMetadata": {
+    "message": "Métadonnées"
+  },
+  "brainProposition": {
+    "message": "Proposition"
+  },
+  "brainVirtual": {
+    "message": "Virtuelle"
+  },
+  "brainSubject": {
+    "message": "Sujet $1"
+  },
+  "brainObject": {
+    "message": "Objet $1"
+  },
+  "brainHide": {
+    "message": "Masquer"
+  },
+  "brainShow": {
+    "message": "Afficher"
+  },
+  "brainRunReadonly": {
+    "message": "Exécuter en lecture seule"
+  },
+  "brainTopTypes": {
+    "message": "Types principaux"
+  },
+  "configSectionRuntime": {
+    "message": "Exécution"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "Passerelle, proxy et espaces de travail"
+  },
+  "configSectionModels": {
+    "message": "Modèles"
+  },
+  "configSectionModelsDetail": {
+    "message": "Liste des fournisseurs et modèle actif"
+  },
+  "configSectionTtsDetail": {
+    "message": "Fournisseurs de synthèse vocale"
+  },
+  "configSectionTranscription": {
+    "message": "Transcription"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "Fournisseurs de reconnaissance vocale"
+  },
+  "configSectionChannelsDetail": {
+    "message": "Runtimes des canaux de messagerie"
+  },
+  "configSectionUsers": {
+    "message": "Utilisateurs"
+  },
+  "configSectionUsersDetail": {
+    "message": "Identités partagées du démon"
+  },
+  "configHeaderHint": {
+    "message": "Connectez-vous au démon Anda local pour charger la configuration."
+  },
+  "configLoad": {
+    "message": "Charger"
+  },
+  "configLoading": {
+    "message": "Chargement de config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "Paramètres principaux du démon. Réservez les réglages du panneau latéral aux détails de connexion du navigateur ; utilisez cette page pour le fichier complet."
+  },
+  "configModelsDescription": {
+    "message": "Choisissez le modèle actif et gérez toutes les entrées de fournisseurs disponibles pour le démon."
+  },
+  "configProviders": {
+    "message": "Fournisseurs"
+  },
+  "configProvidersDescription": {
+    "message": "Les labels routent les requêtes memory, flash, image, audio et vidéo."
+  },
+  "configAddProvider": {
+    "message": "Ajouter un fournisseur"
+  },
+  "configProviderFallback": {
+    "message": "Fournisseur $1"
+  },
+  "configRemoveProvider": {
+    "message": "Supprimer le fournisseur"
+  },
+  "configTtsTitle": {
+    "message": "Synthèse vocale"
+  },
+  "configTtsDescription": {
+    "message": "Activez la synthèse vocale et configurez les blocs de fournisseurs à enregistrer sous tts."
+  },
+  "configProviderBlock": {
+    "message": "Bloc fournisseur"
+  },
+  "configTranscriptionDescription": {
+    "message": "Configurez les valeurs par défaut de la transcription et les options propres aux fournisseurs."
+  },
+  "configChannelsDescription": {
+    "message": "Configurez les runtimes Telegram, WeChat, Discord et Lark/Feishu. Les réponses restent routées par plateforme."
+  },
+  "configCountConfigured": {
+    "message": "$1 configuré(s)"
+  },
+  "configAddChannel": {
+    "message": "Ajouter $1"
+  },
+  "configRemoveChannel": {
+    "message": "Supprimer $1"
+  },
+  "configUsersDescription": {
+    "message": "Utilisateurs de confiance pouvant partager ce démon et le même agent Anda."
+  },
+  "configAddUser": {
+    "message": "Ajouter un utilisateur"
+  },
+  "configUserFallback": {
+    "message": "Utilisateur $1"
+  },
+  "configRemoveUser": {
+    "message": "Supprimer l'utilisateur"
+  },
+  "configYamlSource": {
+    "message": "Source YAML"
+  },
+  "configFormatForm": {
+    "message": "Mettre en forme depuis le formulaire"
+  },
+  "configFormatted": {
+    "message": "YAML mis en forme depuis le formulaire. Les commentaires du fichier précédent ont été conservés."
+  },
+  "configSaved": {
+    "message": "config.yaml enregistré. Redémarrez Anda pour appliquer les paramètres de démarrage du démon."
+  },
+  "configEnabled": {
+    "message": "Activé"
+  },
+  "configDisabled": {
+    "message": "Désactivé"
+  },
+  "configOptionalPlaceholder": {
+    "message": "facultatif"
+  },
+  "configOneItemPerLine": {
+    "message": "Un élément par ligne"
   }
 }

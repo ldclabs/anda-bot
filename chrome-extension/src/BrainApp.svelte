@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import {
     ANDA_BOT_SPACE_ID,
     BrainApi,
@@ -83,7 +84,7 @@
   let loading = $state(false)
   let saving = $state(false)
   let errorMessage = $state('')
-  let statusText = $state('Idle')
+  let statusText = $state(getMessage('brainStatusIdle'))
   let settingsOpen = $state(false)
   let queryOpen = $state(false)
   let inspectorCopyState = $state<'idle' | 'copied'>('idle')
@@ -168,7 +169,7 @@ LIMIT 6000`)
       })
       .catch((error) => {
         errorMessage = errorToMessage(error)
-        statusText = 'Settings unavailable'
+        statusText = getMessage('brainStatusSettingsUnavailable')
       })
 
     return () => {
@@ -543,17 +544,20 @@ LIMIT 6000`)
   async function loadGraph() {
     loading = true
     errorMessage = ''
-    statusText = 'Loading graph'
+    statusText = getMessage('brainStatusLoadingGraph')
     try {
       graphData.clear()
       graphData.setApi(new BrainApi(settings))
       const stats = await graphData.loadOverview()
-      statusText = graphData.status
-        ? `Overview ${graphData.nodes.size}/${graphData.status.concepts} nodes`
-        : `Overview ${stats.concepts} nodes`
+      statusText = getMessage(
+        'brainStatusOverviewNodes',
+        graphData.status
+          ? `${graphData.nodes.size}/${graphData.status.concepts}`
+          : String(stats.concepts)
+      )
     } catch (error) {
       errorMessage = errorToMessage(error)
-      statusText = 'Load failed'
+      statusText = getMessage('brainStatusLoadFailed')
       try {
         await graphData.loadSchema()
       } catch (_schemaError) {
@@ -589,7 +593,7 @@ LIMIT 6000`)
 
     loading = true
     errorMessage = ''
-    statusText = 'Searching'
+    statusText = getMessage('brainStatusSearching')
     try {
       const results = await graphData.searchConcepts(query)
       searchResults = results.map((result) => result.id)
@@ -601,10 +605,10 @@ LIMIT 6000`)
         requestFocus(results[0].id)
         await graphData.expandConcept(results[0].id).catch(() => undefined)
       }
-      statusText = `${results.length} search results`
+      statusText = getMessage('brainStatusSearchResults', String(results.length))
     } catch (error) {
       errorMessage = errorToMessage(error)
-      statusText = 'Search failed'
+      statusText = getMessage('brainStatusSearchFailed')
     } finally {
       loading = false
     }
@@ -630,14 +634,14 @@ LIMIT 6000`)
     }
     loading = true
     errorMessage = ''
-    statusText = 'Running KIP'
+    statusText = getMessage('brainStatusRunningKip')
     try {
       const result = await graphData.executeQuery(command)
       queryOutput = JSON.stringify(result, null, 2)
-      statusText = 'KIP complete'
+      statusText = getMessage('brainStatusKipComplete')
     } catch (error) {
       errorMessage = errorToMessage(error)
-      statusText = 'KIP failed'
+      statusText = getMessage('brainStatusKipFailed')
     } finally {
       loading = false
     }
@@ -651,7 +655,7 @@ LIMIT 6000`)
     }
     try {
       if (!navigator.clipboard?.writeText) {
-        throw new Error('Clipboard is unavailable')
+        throw new Error(getMessage('brainClipboardUnavailable'))
       }
       await navigator.clipboard.writeText(JSON.stringify(value, null, 2))
       inspectorCopyState = 'copied'
@@ -955,7 +959,7 @@ LIMIT 6000`)
     }
     const record = item as Partial<Concept & Proposition>
     if (record.predicate) {
-      return `<div class="brain-tooltip"><strong>${escapeHtml(record.predicate)}</strong><span>Proposition</span></div>`
+      return `<div class="brain-tooltip"><strong>${escapeHtml(record.predicate)}</strong><span>${escapeHtml(getMessage('brainProposition'))}</span></div>`
     }
     if (record.name) {
       return `<div class="brain-tooltip"><strong>${escapeHtml(record.name)}</strong><span>${escapeHtml(record.type || '')}</span></div>`
@@ -1059,7 +1063,7 @@ LIMIT 6000`)
 </script>
 
 <svelte:head>
-  <title>Anda Brain Graph</title>
+  <title>{getMessage('brainPageTitle') || 'Anda Brain Graph'}</title>
 </svelte:head>
 
 <div class="brain-shell">
@@ -1087,14 +1091,14 @@ LIMIT 6000`)
       </span>
       <button
         class={buttonClass('ghost', 'icon-sm')}
-        title="Settings"
+        title={getMessage('settings')}
         onclick={() => (settingsOpen = !settingsOpen)}
       >
         <Settings class="size-4" />
       </button>
       <button class={buttonClass('outline', 'sm')} onclick={loadGraph} disabled={loading}>
         <RefreshCw class={cn('size-4', loading && 'animate-spin')} />
-        Refresh
+        {getMessage('refresh')}
       </button>
     </div>
   </header>
@@ -1113,26 +1117,26 @@ LIMIT 6000`)
         <section class="brain-panel">
           <div class="brain-panel-heading">
             <Settings class="size-4" />
-            Connection
+            {getMessage('brainConnection')}
           </div>
           <label class="brain-field">
-            <span>Gateway</span>
+            <span>{getMessage('gatewayUrl')}</span>
             <input class={inputClass('h-8 text-xs')} bind:value={settings.baseUrl} />
           </label>
           <label class="brain-field">
-            <span>Space</span>
+            <span>{getMessage('brainFieldSpace')}</span>
             <input class={inputClass('h-8 text-xs')} bind:value={settings.spaceId} />
           </label>
           <label class="brain-field">
-            <span>Token</span>
+            <span>{getMessage('bearerToken')}</span>
             <input class={inputClass('h-8 text-xs')} bind:value={settings.token} type="password" />
           </label>
           <label class="brain-field">
-            <span>Theme</span>
+            <span>{getMessage('appearanceTheme')}</span>
             <select class={nativeSelectClass('h-8 text-xs')} bind:value={settings.appearanceTheme}>
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="system">{getMessage('appearanceSystem')}</option>
+              <option value="light">{getMessage('appearanceLight')}</option>
+              <option value="dark">{getMessage('appearanceDark')}</option>
             </select>
           </label>
           <button
@@ -1143,7 +1147,7 @@ LIMIT 6000`)
             {#if saving}
               <LoaderCircle class="size-4 animate-spin" />
             {/if}
-            Save
+            {getMessage('save')}
           </button>
         </section>
       {/if}
@@ -1151,13 +1155,13 @@ LIMIT 6000`)
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <Search class="size-4" />
-          Search
+          {getMessage('search')}
         </div>
         <div class="flex gap-2">
           <input
             class={inputClass('h-8 text-xs')}
             bind:value={searchQuery}
-            placeholder="Concept, type, alias"
+            placeholder={getMessage('brainSearchPlaceholder')}
             onkeydown={(event) => {
               if (event.key === 'Enter') runSearch()
               if (event.key === 'Escape') {
@@ -1166,7 +1170,7 @@ LIMIT 6000`)
               }
             }}
           />
-          <button class={buttonClass('outline', 'icon-sm')} onclick={runSearch} title="Search">
+          <button class={buttonClass('outline', 'icon-sm')} onclick={runSearch} title={getMessage('search')}>
             <Search class="size-4" />
           </button>
         </div>
@@ -1174,9 +1178,9 @@ LIMIT 6000`)
           <div class="flex items-center justify-between text-xs text-muted-foreground">
             <span>{searchIndex + 1}/{searchResults.length}</span>
             <div class="flex gap-1">
-              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(-1)}>Prev</button
+              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(-1)}>{getMessage('brainPrev')}</button
               >
-              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(1)}>Next</button>
+              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(1)}>{getMessage('brainNext')}</button>
             </div>
           </div>
         {/if}
@@ -1185,34 +1189,34 @@ LIMIT 6000`)
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <SlidersHorizontal class="size-4" />
-          View
+          {getMessage('brainViewPanel')}
         </div>
         <label class="brain-field">
-          <span>Mode</span>
+          <span>{getMessage('brainFieldMode')}</span>
           <select class={nativeSelectClass('h-8 text-xs')} bind:value={viewMode}>
-            <option value="overview">Overview</option>
-            <option value="focus">Focus</option>
-            <option value="full">Full</option>
+            <option value="overview">{getMessage('brainModeOverview')}</option>
+            <option value="focus">{getMessage('brainModeFocus')}</option>
+            <option value="full">{getMessage('brainModeFull')}</option>
           </select>
         </label>
         <label class="brain-field">
-          <span>Edges</span>
+          <span>{getMessage('brainFieldEdges')}</span>
           <select class={nativeSelectClass('h-8 text-xs')} bind:value={edgeMode}>
-            <option value="focus">Focus</option>
-            <option value="all">All</option>
-            <option value="none">None</option>
+            <option value="focus">{getMessage('brainModeFocus')}</option>
+            <option value="all">{getMessage('brainAll')}</option>
+            <option value="none">{getMessage('brainNone')}</option>
           </select>
         </label>
         <label class="brain-field">
-          <span>Labels</span>
+          <span>{getMessage('brainFieldLabels')}</span>
           <select class={nativeSelectClass('h-8 text-xs')} bind:value={labelMode}>
-            <option value="smart">Smart</option>
-            <option value="all">All</option>
-            <option value="none">None</option>
+            <option value="smart">{getMessage('brainLabelsSmart')}</option>
+            <option value="all">{getMessage('brainAll')}</option>
+            <option value="none">{getMessage('brainNone')}</option>
           </select>
         </label>
         <label class="brain-field">
-          <span>Node cap {maxVisibleNodes}</span>
+          <span>{getMessage('brainFieldNodeCap', String(maxVisibleNodes))}</span>
           <input
             class="w-full accent-primary"
             bind:value={maxVisibleNodes}
@@ -1223,7 +1227,7 @@ LIMIT 6000`)
           />
         </label>
         <label class="brain-field">
-          <span>Radius {focusRadius}</span>
+          <span>{getMessage('brainFieldRadius', String(focusRadius))}</span>
           <input
             class="w-full accent-primary"
             bind:value={focusRadius}
@@ -1234,28 +1238,28 @@ LIMIT 6000`)
           />
         </label>
         <button class={buttonClass('ghost', 'sm', 'w-full')} onclick={resetFilters}
-          >Reset filters</button
+          >{getMessage('brainResetFilters')}</button
         >
       </section>
 
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <GitFork class="size-4" />
-          Filters
+          {getMessage('brainFilters')}
         </div>
         <label class="brain-field">
-          <span>Type</span>
+          <span>{getMessage('brainFieldType')}</span>
           <select class={nativeSelectClass('h-8 text-xs')} bind:value={typeFilter}>
-            <option value="">All types</option>
+            <option value="">{getMessage('brainAllTypes')}</option>
             {#each summary.typeCounts as [type, count]}
               <option value={type}>{type} ({count})</option>
             {/each}
           </select>
         </label>
         <label class="brain-field">
-          <span>Predicate</span>
+          <span>{getMessage('brainFieldPredicate')}</span>
           <select class={nativeSelectClass('h-8 text-xs')} bind:value={predicateFilter}>
-            <option value="">All predicates</option>
+            <option value="">{getMessage('brainAllPredicates')}</option>
             {#each summary.predicateCounts as [predicate, count]}
               <option value={predicate}>{predicate} ({count})</option>
             {/each}
@@ -1266,30 +1270,30 @@ LIMIT 6000`)
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <Database class="size-4" />
-          Counts
+          {getMessage('brainCounts')}
         </div>
         <dl class="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <dt class="text-muted-foreground">Loaded nodes</dt>
+            <dt class="text-muted-foreground">{getMessage('brainLoadedNodes')}</dt>
             <dd class="font-medium">{summary.nodeCount}</dd>
           </div>
           <div>
-            <dt class="text-muted-foreground">Loaded links</dt>
+            <dt class="text-muted-foreground">{getMessage('brainLoadedLinks')}</dt>
             <dd class="font-medium">{summary.linkCount}</dd>
           </div>
           <div>
-            <dt class="text-muted-foreground">Visible nodes</dt>
+            <dt class="text-muted-foreground">{getMessage('brainVisibleNodes')}</dt>
             <dd class="font-medium">{summary.visibleNodeCount}</dd>
           </div>
           <div>
-            <dt class="text-muted-foreground">Visible links</dt>
+            <dt class="text-muted-foreground">{getMessage('brainVisibleLinks')}</dt>
             <dd class="font-medium">{summary.visibleLinkCount}</dd>
           </div>
         </dl>
         {#if snapshot.status}
           <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-            <span>Total concepts {snapshot.status.concepts}</span>
-            <span>Total props {snapshot.status.propositions}</span>
+            <span>{getMessage('brainTotalConcepts', String(snapshot.status.concepts))}</span>
+            <span>{getMessage('brainTotalProps', String(snapshot.status.propositions))}</span>
           </div>
         {/if}
       </section>
@@ -1306,7 +1310,7 @@ LIMIT 6000`)
             class="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm"
           >
             <LoaderCircle class="size-4 animate-spin" />
-            Loading
+            {getMessage('loading')}
           </div>
         </div>
       {/if}
@@ -1315,32 +1319,32 @@ LIMIT 6000`)
         <button
           class={buttonClass('outline', 'icon-sm')}
           onclick={() => zoomBy(1.25)}
-          title="Zoom in"
+          title={getMessage('brainZoomIn')}
         >
           <ZoomIn class="size-4" />
         </button>
         <button
           class={buttonClass('outline', 'icon-sm')}
           onclick={() => zoomBy(0.8)}
-          title="Zoom out"
+          title={getMessage('brainZoomOut')}
         >
           <ZoomOut class="size-4" />
         </button>
-        <button class={buttonClass('outline', 'icon-sm')} onclick={fitView} title="Fit view">
+        <button class={buttonClass('outline', 'icon-sm')} onclick={fitView} title={getMessage('brainFitView')}>
           <Maximize2 class="size-4" />
         </button>
         <button
           class={buttonClass('outline', 'icon-sm')}
           onclick={() => focusElement()}
           disabled={!selectedNodeId}
-          title="Focus selected"
+          title={getMessage('brainFocusSelected')}
         >
           <LocateFixed class="size-4" />
         </button>
         <button
           class={buttonClass('outline', 'icon-sm')}
           onclick={() => (edgeMode = edgeMode === 'none' ? 'focus' : 'none')}
-          title="Toggle edges"
+          title={getMessage('brainToggleEdges')}
         >
           {#if edgeMode === 'none'}
             <EyeOff class="size-4" />
@@ -1355,19 +1359,19 @@ LIMIT 6000`)
           class={buttonClass(viewMode === 'overview' ? 'default' : 'outline', 'xs')}
           onclick={() => (viewMode = 'overview')}
         >
-          Overview
+          {getMessage('brainModeOverview')}
         </button>
         <button
           class={buttonClass(viewMode === 'focus' ? 'default' : 'outline', 'xs')}
           onclick={() => (viewMode = 'focus')}
         >
-          Focus
+          {getMessage('brainModeFocus')}
         </button>
         <button
           class={buttonClass(viewMode === 'full' ? 'default' : 'outline', 'xs')}
           onclick={() => (viewMode = 'full')}
         >
-          Full
+          {getMessage('brainModeFull')}
         </button>
       </div>
     </section>
@@ -1377,15 +1381,19 @@ LIMIT 6000`)
         <div class="brain-panel-heading justify-between">
           <span class="flex items-center gap-2">
             <FileBracesCorner class="size-4" />
-            Inspector
+            {getMessage('brainInspector')}
           </span>
           {#if selectedNode || selectedEdge}
             <div class="flex items-center gap-1">
               <button
                 class={buttonClass('ghost', 'icon-xs')}
                 onclick={() => copyInspectorJson()}
-                title={inspectorCopyState === 'copied' ? 'Copied JSON' : 'Copy JSON'}
-                aria-label={inspectorCopyState === 'copied' ? 'Copied JSON' : 'Copy JSON'}
+                title={inspectorCopyState === 'copied'
+                  ? getMessage('brainCopiedJson')
+                  : getMessage('brainCopyJson')}
+                aria-label={inspectorCopyState === 'copied'
+                  ? getMessage('brainCopiedJson')
+                  : getMessage('brainCopyJson')}
               >
                 {#if inspectorCopyState === 'copied'}
                   <Check class="size-3" />
@@ -1400,8 +1408,8 @@ LIMIT 6000`)
                   selectedEdgeId = ''
                   inspectorCopyState = 'idle'
                 }}
-                title="Close"
-                aria-label="Close inspector"
+                title={getMessage('close')}
+                aria-label={getMessage('brainCloseInspector')}
               >
                 <X class="size-3" />
               </button>
@@ -1425,7 +1433,7 @@ LIMIT 6000`)
                 {#if expandingNodeId === selectedNode.id}
                   <LoaderCircle class="size-3 animate-spin" />
                 {/if}
-                Expand
+                {getMessage('brainExpand')}
               </button>
               <button
                 class={buttonClass('ghost', 'xs')}
@@ -1435,18 +1443,18 @@ LIMIT 6000`)
                   focusElement(selectedNode.id)
                 }}
               >
-                Focus
+                {getMessage('brainModeFocus')}
               </button>
             </div>
             <div class={separatorClass()}></div>
-            {@render DetailBlock('Attributes', selectedNode.attributes)}
-            {@render DetailBlock('Metadata', selectedNode.metadata || {})}
+            {@render DetailBlock(getMessage('brainAttributes'), selectedNode.attributes)}
+            {@render DetailBlock(getMessage('brainMetadata'), selectedNode.metadata || {})}
           </div>
         {:else if selectedEdge}
           <div class="space-y-3">
             <div>
               <span class={badgeClass(selectedEdge._virtual ? 'outline' : 'secondary')}>
-                {selectedEdge._virtual ? 'Virtual' : 'Proposition'}
+                {selectedEdge._virtual ? getMessage('brainVirtual') : getMessage('brainProposition')}
               </span>
               <h2 class="mt-2 break-words text-sm font-semibold">{selectedEdge.predicate}</h2>
               <p class="mt-1 break-all text-xs text-muted-foreground">{selectedEdge.id}</p>
@@ -1456,18 +1464,24 @@ LIMIT 6000`)
                 class={buttonClass('ghost', 'xs', 'w-full justify-start')}
                 onclick={() => selectNode(selectedEdge.subject)}
               >
-                Subject {graphData.nodes.get(selectedEdge.subject)?.name || selectedEdge.subject}
+                {getMessage(
+                  'brainSubject',
+                  graphData.nodes.get(selectedEdge.subject)?.name || selectedEdge.subject
+                )}
               </button>
               <button
                 class={buttonClass('ghost', 'xs', 'w-full justify-start')}
                 onclick={() => selectNode(selectedEdge.object)}
               >
-                Object {graphData.nodes.get(selectedEdge.object)?.name || selectedEdge.object}
+                {getMessage(
+                  'brainObject',
+                  graphData.nodes.get(selectedEdge.object)?.name || selectedEdge.object
+                )}
               </button>
             </div>
             <div class={separatorClass()}></div>
-            {@render DetailBlock('Attributes', selectedEdge.attributes)}
-            {@render DetailBlock('Metadata', selectedEdge.metadata || {})}
+            {@render DetailBlock(getMessage('brainAttributes'), selectedEdge.attributes)}
+            {@render DetailBlock(getMessage('brainMetadata'), selectedEdge.metadata || {})}
           </div>
         {:else}
           <div class="space-y-2 text-xs text-muted-foreground">
@@ -1497,7 +1511,7 @@ LIMIT 6000`)
             <Braces class="size-4" />
             KIP
           </span>
-          <span>{queryOpen ? 'Hide' : 'Show'}</span>
+          <span>{queryOpen ? getMessage('brainHide') : getMessage('brainShow')}</span>
         </button>
         {#if queryOpen}
           <textarea class={textareaClass('mt-3 min-h-36 font-mono text-xs')} bind:value={kipCommand}
@@ -1507,7 +1521,7 @@ LIMIT 6000`)
             onclick={runKipQuery}
             disabled={loading}
           >
-            Run readonly
+            {getMessage('brainRunReadonly')}
           </button>
           {#if queryOutput}
             <pre class="brain-json language-json mt-3 max-h-64"><code class="language-json"
@@ -1520,7 +1534,7 @@ LIMIT 6000`)
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <GitFork class="size-4" />
-          Top Types
+          {getMessage('brainTopTypes')}
         </div>
         <div class="space-y-1">
           {#each summary.typeCounts.slice(0, 8) as [type, count]}

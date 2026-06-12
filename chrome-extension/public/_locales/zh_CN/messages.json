@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "Anda 录音未启动。"
+  },
+  "refresh": {
+    "message": "刷新"
+  },
+  "search": {
+    "message": "搜索"
+  },
+  "close": {
+    "message": "关闭"
+  },
+  "loading": {
+    "message": "加载中"
+  },
+  "brainPageTitle": {
+    "message": "Anda 记忆图谱"
+  },
+  "brainStatusIdle": {
+    "message": "空闲"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "设置不可用"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "正在加载图谱"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "概览 $1 个节点"
+  },
+  "brainStatusLoadFailed": {
+    "message": "加载失败"
+  },
+  "brainStatusSearching": {
+    "message": "正在搜索"
+  },
+  "brainStatusSearchResults": {
+    "message": "$1 条搜索结果"
+  },
+  "brainStatusSearchFailed": {
+    "message": "搜索失败"
+  },
+  "brainStatusRunningKip": {
+    "message": "正在执行 KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "KIP 执行完成"
+  },
+  "brainStatusKipFailed": {
+    "message": "KIP 执行失败"
+  },
+  "brainClipboardUnavailable": {
+    "message": "剪贴板不可用"
+  },
+  "brainConnection": {
+    "message": "连接"
+  },
+  "brainFieldSpace": {
+    "message": "空间"
+  },
+  "brainSearchPlaceholder": {
+    "message": "概念、类型、别名"
+  },
+  "brainPrev": {
+    "message": "上一个"
+  },
+  "brainNext": {
+    "message": "下一个"
+  },
+  "brainViewPanel": {
+    "message": "视图"
+  },
+  "brainFieldMode": {
+    "message": "模式"
+  },
+  "brainModeOverview": {
+    "message": "概览"
+  },
+  "brainModeFocus": {
+    "message": "聚焦"
+  },
+  "brainModeFull": {
+    "message": "全部"
+  },
+  "brainFieldEdges": {
+    "message": "边"
+  },
+  "brainAll": {
+    "message": "全部"
+  },
+  "brainNone": {
+    "message": "无"
+  },
+  "brainFieldLabels": {
+    "message": "标签"
+  },
+  "brainLabelsSmart": {
+    "message": "智能"
+  },
+  "brainFieldNodeCap": {
+    "message": "节点上限 $1"
+  },
+  "brainFieldRadius": {
+    "message": "半径 $1"
+  },
+  "brainResetFilters": {
+    "message": "重置筛选"
+  },
+  "brainFilters": {
+    "message": "筛选"
+  },
+  "brainFieldType": {
+    "message": "类型"
+  },
+  "brainAllTypes": {
+    "message": "所有类型"
+  },
+  "brainFieldPredicate": {
+    "message": "谓词"
+  },
+  "brainAllPredicates": {
+    "message": "所有谓词"
+  },
+  "brainCounts": {
+    "message": "统计"
+  },
+  "brainLoadedNodes": {
+    "message": "已加载节点"
+  },
+  "brainLoadedLinks": {
+    "message": "已加载链接"
+  },
+  "brainVisibleNodes": {
+    "message": "可见节点"
+  },
+  "brainVisibleLinks": {
+    "message": "可见链接"
+  },
+  "brainTotalConcepts": {
+    "message": "概念总数 $1"
+  },
+  "brainTotalProps": {
+    "message": "命题总数 $1"
+  },
+  "brainZoomIn": {
+    "message": "放大"
+  },
+  "brainZoomOut": {
+    "message": "缩小"
+  },
+  "brainFitView": {
+    "message": "适应视图"
+  },
+  "brainFocusSelected": {
+    "message": "聚焦所选"
+  },
+  "brainToggleEdges": {
+    "message": "显示/隐藏边"
+  },
+  "brainInspector": {
+    "message": "检查器"
+  },
+  "brainCopyJson": {
+    "message": "复制 JSON"
+  },
+  "brainCopiedJson": {
+    "message": "已复制 JSON"
+  },
+  "brainCloseInspector": {
+    "message": "关闭检查器"
+  },
+  "brainExpand": {
+    "message": "展开"
+  },
+  "brainAttributes": {
+    "message": "属性"
+  },
+  "brainMetadata": {
+    "message": "元数据"
+  },
+  "brainProposition": {
+    "message": "命题"
+  },
+  "brainVirtual": {
+    "message": "虚拟"
+  },
+  "brainSubject": {
+    "message": "主语 $1"
+  },
+  "brainObject": {
+    "message": "宾语 $1"
+  },
+  "brainHide": {
+    "message": "收起"
+  },
+  "brainShow": {
+    "message": "展开"
+  },
+  "brainRunReadonly": {
+    "message": "只读执行"
+  },
+  "brainTopTypes": {
+    "message": "主要类型"
+  },
+  "configSectionRuntime": {
+    "message": "运行时"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "网关、代理与工作空间"
+  },
+  "configSectionModels": {
+    "message": "模型"
+  },
+  "configSectionModelsDetail": {
+    "message": "供应商列表与当前模型"
+  },
+  "configSectionTtsDetail": {
+    "message": "语音合成供应商"
+  },
+  "configSectionTranscription": {
+    "message": "语音转写"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "语音转文字供应商"
+  },
+  "configSectionChannelsDetail": {
+    "message": "IM 通道运行时"
+  },
+  "configSectionUsers": {
+    "message": "用户"
+  },
+  "configSectionUsersDetail": {
+    "message": "共享守护进程的用户身份"
+  },
+  "configHeaderHint": {
+    "message": "连接本地 Anda 守护进程以加载运行时配置。"
+  },
+  "configLoad": {
+    "message": "加载"
+  },
+  "configLoading": {
+    "message": "正在加载 config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "守护进程核心设置。侧边栏设置仅保留浏览器连接信息；完整配置文件请在本页编辑。"
+  },
+  "configModelsDescription": {
+    "message": "选择当前模型，并维护守护进程可用的所有供应商条目。"
+  },
+  "configProviders": {
+    "message": "供应商"
+  },
+  "configProvidersDescription": {
+    "message": "labels 用于路由 memory、flash、图像、音频与视频请求。"
+  },
+  "configAddProvider": {
+    "message": "添加供应商"
+  },
+  "configProviderFallback": {
+    "message": "供应商 $1"
+  },
+  "configRemoveProvider": {
+    "message": "移除供应商"
+  },
+  "configTtsTitle": {
+    "message": "文本转语音"
+  },
+  "configTtsDescription": {
+    "message": "启用语音合成，并配置需要保存在 tts 下的供应商块。"
+  },
+  "configProviderBlock": {
+    "message": "供应商配置块"
+  },
+  "configTranscriptionDescription": {
+    "message": "配置语音转写默认值与各供应商选项。"
+  },
+  "configChannelsDescription": {
+    "message": "配置 Telegram、微信、Discord 与 Lark/飞书运行时。回复仍按各平台路由。"
+  },
+  "configCountConfigured": {
+    "message": "已配置 $1 个"
+  },
+  "configAddChannel": {
+    "message": "添加 $1"
+  },
+  "configRemoveChannel": {
+    "message": "移除 $1"
+  },
+  "configUsersDescription": {
+    "message": "可共享此守护进程与同一 Anda 智能体的受信任用户。"
+  },
+  "configAddUser": {
+    "message": "添加用户"
+  },
+  "configUserFallback": {
+    "message": "用户 $1"
+  },
+  "configRemoveUser": {
+    "message": "移除用户"
+  },
+  "configYamlSource": {
+    "message": "YAML 源码"
+  },
+  "configFormatForm": {
+    "message": "由表单格式化"
+  },
+  "configFormatted": {
+    "message": "已根据表单格式化 YAML，并保留了原文件中的注释。"
+  },
+  "configSaved": {
+    "message": "已保存 config.yaml。重启 Anda 后，守护进程启动项才会生效。"
+  },
+  "configEnabled": {
+    "message": "已启用"
+  },
+  "configDisabled": {
+    "message": "已禁用"
+  },
+  "configOptionalPlaceholder": {
+    "message": "可选"
+  },
+  "configOneItemPerLine": {
+    "message": "每行一项"
   }
 }

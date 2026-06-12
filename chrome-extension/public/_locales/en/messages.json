@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "Anda voice recording did not start."
+  },
+  "refresh": {
+    "message": "Refresh"
+  },
+  "search": {
+    "message": "Search"
+  },
+  "close": {
+    "message": "Close"
+  },
+  "loading": {
+    "message": "Loading"
+  },
+  "brainPageTitle": {
+    "message": "Anda Brain Graph"
+  },
+  "brainStatusIdle": {
+    "message": "Idle"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "Settings unavailable"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "Loading graph"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "Overview $1 nodes"
+  },
+  "brainStatusLoadFailed": {
+    "message": "Load failed"
+  },
+  "brainStatusSearching": {
+    "message": "Searching"
+  },
+  "brainStatusSearchResults": {
+    "message": "$1 search results"
+  },
+  "brainStatusSearchFailed": {
+    "message": "Search failed"
+  },
+  "brainStatusRunningKip": {
+    "message": "Running KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "KIP complete"
+  },
+  "brainStatusKipFailed": {
+    "message": "KIP failed"
+  },
+  "brainClipboardUnavailable": {
+    "message": "Clipboard is unavailable"
+  },
+  "brainConnection": {
+    "message": "Connection"
+  },
+  "brainFieldSpace": {
+    "message": "Space"
+  },
+  "brainSearchPlaceholder": {
+    "message": "Concept, type, alias"
+  },
+  "brainPrev": {
+    "message": "Prev"
+  },
+  "brainNext": {
+    "message": "Next"
+  },
+  "brainViewPanel": {
+    "message": "View"
+  },
+  "brainFieldMode": {
+    "message": "Mode"
+  },
+  "brainModeOverview": {
+    "message": "Overview"
+  },
+  "brainModeFocus": {
+    "message": "Focus"
+  },
+  "brainModeFull": {
+    "message": "Full"
+  },
+  "brainFieldEdges": {
+    "message": "Edges"
+  },
+  "brainAll": {
+    "message": "All"
+  },
+  "brainNone": {
+    "message": "None"
+  },
+  "brainFieldLabels": {
+    "message": "Labels"
+  },
+  "brainLabelsSmart": {
+    "message": "Smart"
+  },
+  "brainFieldNodeCap": {
+    "message": "Node cap $1"
+  },
+  "brainFieldRadius": {
+    "message": "Radius $1"
+  },
+  "brainResetFilters": {
+    "message": "Reset filters"
+  },
+  "brainFilters": {
+    "message": "Filters"
+  },
+  "brainFieldType": {
+    "message": "Type"
+  },
+  "brainAllTypes": {
+    "message": "All types"
+  },
+  "brainFieldPredicate": {
+    "message": "Predicate"
+  },
+  "brainAllPredicates": {
+    "message": "All predicates"
+  },
+  "brainCounts": {
+    "message": "Counts"
+  },
+  "brainLoadedNodes": {
+    "message": "Loaded nodes"
+  },
+  "brainLoadedLinks": {
+    "message": "Loaded links"
+  },
+  "brainVisibleNodes": {
+    "message": "Visible nodes"
+  },
+  "brainVisibleLinks": {
+    "message": "Visible links"
+  },
+  "brainTotalConcepts": {
+    "message": "Total concepts $1"
+  },
+  "brainTotalProps": {
+    "message": "Total props $1"
+  },
+  "brainZoomIn": {
+    "message": "Zoom in"
+  },
+  "brainZoomOut": {
+    "message": "Zoom out"
+  },
+  "brainFitView": {
+    "message": "Fit view"
+  },
+  "brainFocusSelected": {
+    "message": "Focus selected"
+  },
+  "brainToggleEdges": {
+    "message": "Toggle edges"
+  },
+  "brainInspector": {
+    "message": "Inspector"
+  },
+  "brainCopyJson": {
+    "message": "Copy JSON"
+  },
+  "brainCopiedJson": {
+    "message": "Copied JSON"
+  },
+  "brainCloseInspector": {
+    "message": "Close inspector"
+  },
+  "brainExpand": {
+    "message": "Expand"
+  },
+  "brainAttributes": {
+    "message": "Attributes"
+  },
+  "brainMetadata": {
+    "message": "Metadata"
+  },
+  "brainProposition": {
+    "message": "Proposition"
+  },
+  "brainVirtual": {
+    "message": "Virtual"
+  },
+  "brainSubject": {
+    "message": "Subject $1"
+  },
+  "brainObject": {
+    "message": "Object $1"
+  },
+  "brainHide": {
+    "message": "Hide"
+  },
+  "brainShow": {
+    "message": "Show"
+  },
+  "brainRunReadonly": {
+    "message": "Run readonly"
+  },
+  "brainTopTypes": {
+    "message": "Top Types"
+  },
+  "configSectionRuntime": {
+    "message": "Runtime"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "Gateway, proxy, and workspaces"
+  },
+  "configSectionModels": {
+    "message": "Models"
+  },
+  "configSectionModelsDetail": {
+    "message": "Provider list and active model"
+  },
+  "configSectionTtsDetail": {
+    "message": "Speech synthesis providers"
+  },
+  "configSectionTranscription": {
+    "message": "Transcription"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "Voice-to-text providers"
+  },
+  "configSectionChannelsDetail": {
+    "message": "IM channel runtimes"
+  },
+  "configSectionUsers": {
+    "message": "Users"
+  },
+  "configSectionUsersDetail": {
+    "message": "Shared daemon identities"
+  },
+  "configHeaderHint": {
+    "message": "Connect to the local Anda daemon to load the runtime configuration."
+  },
+  "configLoad": {
+    "message": "Load"
+  },
+  "configLoading": {
+    "message": "Loading config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "Core daemon settings. Keep the side panel settings focused on browser connection details; use this page for the full config file."
+  },
+  "configModelsDescription": {
+    "message": "Choose the active model and maintain every provider entry available to the daemon."
+  },
+  "configProviders": {
+    "message": "Providers"
+  },
+  "configProvidersDescription": {
+    "message": "Labels route memory, flash, image, audio, and video requests."
+  },
+  "configAddProvider": {
+    "message": "Add provider"
+  },
+  "configProviderFallback": {
+    "message": "Provider $1"
+  },
+  "configRemoveProvider": {
+    "message": "Remove provider"
+  },
+  "configTtsTitle": {
+    "message": "Text to speech"
+  },
+  "configTtsDescription": {
+    "message": "Enable speech synthesis and configure any provider block you want saved under tts."
+  },
+  "configProviderBlock": {
+    "message": "Provider block"
+  },
+  "configTranscriptionDescription": {
+    "message": "Configure voice transcription defaults and provider-specific options."
+  },
+  "configChannelsDescription": {
+    "message": "Configure Telegram, WeChat, Discord, and Lark/Feishu runtimes. Replies stay routed by each platform route."
+  },
+  "configCountConfigured": {
+    "message": "$1 configured"
+  },
+  "configAddChannel": {
+    "message": "Add $1"
+  },
+  "configRemoveChannel": {
+    "message": "Remove $1"
+  },
+  "configUsersDescription": {
+    "message": "Trusted users that can share this daemon and the same Anda agent."
+  },
+  "configAddUser": {
+    "message": "Add user"
+  },
+  "configUserFallback": {
+    "message": "User $1"
+  },
+  "configRemoveUser": {
+    "message": "Remove user"
+  },
+  "configYamlSource": {
+    "message": "YAML source"
+  },
+  "configFormatForm": {
+    "message": "Format form"
+  },
+  "configFormatted": {
+    "message": "YAML formatted from the form. Comments from the previous file were preserved."
+  },
+  "configSaved": {
+    "message": "Saved config.yaml. Restart Anda for daemon startup settings to take effect."
+  },
+  "configEnabled": {
+    "message": "Enabled"
+  },
+  "configDisabled": {
+    "message": "Disabled"
+  },
+  "configOptionalPlaceholder": {
+    "message": "optional"
+  },
+  "configOneItemPerLine": {
+    "message": "One item per line"
   }
 }

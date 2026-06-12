@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getMessage } from '$lib/i18n'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import {
     buttonClass,
@@ -60,12 +61,32 @@
   type SectionId = 'runtime' | 'models' | 'tts' | 'transcription' | 'channels' | 'users'
 
   const sections: { id: SectionId; label: string; detail: string }[] = [
-    { id: 'runtime', label: 'Runtime', detail: 'Gateway, proxy, and workspaces' },
-    { id: 'models', label: 'Models', detail: 'Provider list and active model' },
-    { id: 'tts', label: 'TTS', detail: 'Speech synthesis providers' },
-    { id: 'transcription', label: 'Transcription', detail: 'Voice-to-text providers' },
-    { id: 'channels', label: 'Channels', detail: 'IM channel runtimes' },
-    { id: 'users', label: 'Users', detail: 'Shared daemon identities' }
+    {
+      id: 'runtime',
+      label: getMessage('configSectionRuntime'),
+      detail: getMessage('configSectionRuntimeDetail')
+    },
+    {
+      id: 'models',
+      label: getMessage('configSectionModels'),
+      detail: getMessage('configSectionModelsDetail')
+    },
+    { id: 'tts', label: 'TTS', detail: getMessage('configSectionTtsDetail') },
+    {
+      id: 'transcription',
+      label: getMessage('configSectionTranscription'),
+      detail: getMessage('configSectionTranscriptionDetail')
+    },
+    {
+      id: 'channels',
+      label: getMessage('channelsLabel'),
+      detail: getMessage('configSectionChannelsDetail')
+    },
+    {
+      id: 'users',
+      label: getMessage('configSectionUsers'),
+      detail: getMessage('configSectionUsersDetail')
+    }
   ]
 
   let settings = $state<SettingsState>({ ...defaultSettings })
@@ -215,7 +236,7 @@
   function formatFromForm() {
     source = renderConfigYaml(draft, source)
     dirty = true
-    statusMessage = 'YAML formatted from the form. Comments from the previous file were preserved.'
+    statusMessage = getMessage('configFormatted')
   }
 
   function scrollFormPanelTo(selector: string) {
@@ -241,7 +262,7 @@
       source = response.content
       configPath = response.path
       dirty = false
-      statusMessage = 'Saved config.yaml. Restart Anda for daemon startup settings to take effect.'
+      statusMessage = getMessage('configSaved')
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {
@@ -270,7 +291,9 @@
           onchange={(event) => updateBoolean(target, field, event)}
         />
         <span class="text-muted-foreground"
-          >{booleanValue(target, field.key) ? 'Enabled' : 'Disabled'}</span
+          >{booleanValue(target, field.key)
+            ? getMessage('configEnabled')
+            : getMessage('configDisabled')}</span
         >
       </label>
     {:else if field.kind === 'select'}
@@ -294,14 +317,14 @@
         class={inputClass('h-9 text-sm')}
         type="number"
         value={numberValue(target, field.key)}
-        placeholder={field.nullable ? 'optional' : undefined}
+        placeholder={field.nullable ? getMessage('configOptionalPlaceholder') : undefined}
         oninput={(event) => updateNumber(target, field, event)}
       />
     {:else if field.kind === 'string-list'}
       <textarea
         class={textareaClass('min-h-20 resize-y font-mono text-xs')}
         spellcheck={false}
-        placeholder="One item per line"
+        placeholder={getMessage('configOneItemPerLine')}
         value={stringListValue(target, field.key)}
         oninput={(event) => updateStringList(target, field, event)}
       ></textarea>
@@ -318,7 +341,8 @@
         autocomplete="off"
         spellcheck={false}
         value={stringValue(target, field.key)}
-        placeholder={field.placeholder || (field.nullable ? 'optional' : undefined)}
+        placeholder={field.placeholder ||
+          (field.nullable ? getMessage('configOptionalPlaceholder') : undefined)}
         oninput={(event) => updateString(target, field, event)}
       />
     {/if}
@@ -371,7 +395,7 @@
           <h1 class="truncate text-lg font-bold">config.yaml</h1>
         </div>
         <p class="truncate text-xs text-muted-foreground">
-          {configPath || 'Connect to the local Anda daemon to load the runtime configuration.'}
+          {configPath || getMessage('configHeaderHint')}
         </p>
       </div>
 
@@ -380,7 +404,7 @@
           class={inputClass('h-8 text-xs')}
           value={settings.baseUrl}
           spellcheck={false}
-          aria-label="Gateway URL"
+          aria-label={getMessage('gatewayUrl')}
           oninput={(event) => updateSettingsString('baseUrl', event)}
         />
         <input
@@ -389,8 +413,8 @@
           type="password"
           autocomplete="off"
           spellcheck={false}
-          aria-label="Bearer token"
-          placeholder="Bearer token"
+          aria-label={getMessage('bearerToken')}
+          placeholder={getMessage('bearerToken')}
           oninput={(event) => updateSettingsString('token', event)}
         />
         <button
@@ -404,7 +428,7 @@
           {:else}
             <RefreshCw class="size-3.5" />
           {/if}
-          Load
+          {getMessage('configLoad')}
         </button>
       </div>
     </div>
@@ -438,7 +462,7 @@
       {#if loading}
         <div class="grid min-h-80 place-items-center gap-2 p-8 text-muted-foreground">
           <LoaderCircle class="size-5 animate-spin" />
-          <span class="text-sm font-medium">Loading config.yaml</span>
+          <span class="text-sm font-medium">{getMessage('configLoading')}</span>
         </div>
       {:else}
         <div
@@ -447,27 +471,27 @@
         >
           {#if activeSection === 'runtime'}
             {@render sectionHeader(
-              'Runtime',
-              'Core daemon settings. Keep the side panel settings focused on browser connection details; use this page for the full config file.'
+              getMessage('configSectionRuntime'),
+              getMessage('configRuntimeDescription')
             )}
             {@render objectEditor(draft, runtimeFields)}
           {:else if activeSection === 'models'}
             <div class="grid gap-5">
               {@render sectionHeader(
-                'Models',
-                'Choose the active model and maintain every provider entry available to the daemon.'
+                getMessage('configSectionModels'),
+                getMessage('configModelsDescription')
               )}
               <div class="grid gap-3 sm:grid-cols-2">
                 {@render fieldControl(model, {
                   key: 'active',
-                  label: 'Active model',
+                  label: getMessage('activeModel'),
                   kind: 'text'
                 })}
               </div>
               {@render arraySection(
-                'Providers',
-                'Labels route memory, flash, image, audio, and video requests.',
-                'Add provider',
+                getMessage('configProviders'),
+                getMessage('configProvidersDescription'),
+                getMessage('configAddProvider'),
                 addModelProvider
               )}
               <div class="grid gap-3">
@@ -479,7 +503,7 @@
                     <div class="flex items-center justify-between gap-3">
                       <div class="min-w-0">
                         <h3 class="truncate text-sm font-bold">
-                          {stringValue(provider, 'model') || `Provider ${index + 1}`}
+                          {stringValue(provider, 'model') || getMessage('configProviderFallback', String(index + 1))}
                         </h3>
                         <p class="truncate text-xs text-muted-foreground">
                           {stringValue(provider, 'family') || 'provider'}
@@ -488,8 +512,8 @@
                       <button
                         type="button"
                         class={buttonClass('ghost', 'icon-sm')}
-                        title="Remove provider"
-                        aria-label="Remove provider"
+                        title={getMessage('configRemoveProvider')}
+                        aria-label={getMessage('configRemoveProvider')}
                         onclick={() => removeObjectItem(model, 'providers', index)}
                       >
                         <Trash2 class="size-4" />
@@ -503,8 +527,8 @@
           {:else if activeSection === 'tts'}
             <div class="grid gap-5">
               {@render sectionHeader(
-                'Text to speech',
-                'Enable speech synthesis and configure any provider block you want saved under tts.'
+                getMessage('configTtsTitle'),
+                getMessage('configTtsDescription')
               )}
               {@render objectEditor(tts, ttsFields)}
               <div class="grid gap-3">
@@ -513,7 +537,7 @@
                     <label class="flex items-center justify-between gap-3">
                       <span class="grid gap-0.5">
                         <span class="text-sm font-bold">{provider}</span>
-                        <span class="text-xs text-muted-foreground">Provider block</span>
+                        <span class="text-xs text-muted-foreground">{getMessage('configProviderBlock')}</span>
                       </span>
                       <input
                         type="checkbox"
@@ -538,8 +562,8 @@
           {:else if activeSection === 'transcription'}
             <div class="grid gap-5">
               {@render sectionHeader(
-                'Transcription',
-                'Configure voice transcription defaults and provider-specific options.'
+                getMessage('configSectionTranscription'),
+                getMessage('configTranscriptionDescription')
               )}
               {@render objectEditor(transcription, transcriptionFields)}
               <div class="grid gap-3">
@@ -548,7 +572,7 @@
                     <label class="flex items-center justify-between gap-3">
                       <span class="grid gap-0.5">
                         <span class="text-sm font-bold">{provider}</span>
-                        <span class="text-xs text-muted-foreground">Provider block</span>
+                        <span class="text-xs text-muted-foreground">{getMessage('configProviderBlock')}</span>
                       </span>
                       <input
                         type="checkbox"
@@ -573,15 +597,15 @@
           {:else if activeSection === 'channels'}
             <div class="grid gap-5">
               {@render sectionHeader(
-                'Channels',
-                'Configure Telegram, WeChat, Discord, and Lark/Feishu runtimes. Replies stay routed by each platform route.'
+                getMessage('channelsLabel'),
+                getMessage('configChannelsDescription')
               )}
               {#each Object.entries(channelSchemas) as [channel, fields]}
                 <div class="grid gap-3 rounded-lg border bg-muted/15 p-3">
                   {@render arraySection(
                     channel,
-                    `${objectArray(channels, channel).length} configured`,
-                    `Add ${channel}`,
+                    getMessage('configCountConfigured', String(objectArray(channels, channel).length)),
+                    getMessage('configAddChannel', channel),
                     () => addObjectItem(channels, channel, createChannel(channel))
                   )}
                   <div class="grid gap-3">
@@ -601,8 +625,8 @@
                           <button
                             type="button"
                             class={buttonClass('ghost', 'icon-sm')}
-                            title={`Remove ${channel}`}
-                            aria-label={`Remove ${channel}`}
+                            title={getMessage('configRemoveChannel', channel)}
+                            aria-label={getMessage('configRemoveChannel', channel)}
                             onclick={() => removeObjectItem(channels, channel, index)}
                           >
                             <Trash2 class="size-4" />
@@ -618,9 +642,9 @@
           {:else if activeSection === 'users'}
             <div class="grid gap-5">
               {@render arraySection(
-                'Users',
-                'Trusted users that can share this daemon and the same Anda agent.',
-                'Add user',
+                getMessage('configSectionUsers'),
+                getMessage('configUsersDescription'),
+                getMessage('configAddUser'),
                 () => addObjectItem(draft, 'users', createUser())
               )}
               <div class="grid gap-3">
@@ -628,13 +652,13 @@
                   <div class="grid gap-3 rounded-lg border bg-muted/15 p-3">
                     <div class="flex items-center justify-between gap-3">
                       <h3 class="truncate text-sm font-bold">
-                        {stringValue(user, 'id') || `User ${index + 1}`}
+                        {stringValue(user, 'id') || getMessage('configUserFallback', String(index + 1))}
                       </h3>
                       <button
                         type="button"
                         class={buttonClass('ghost', 'icon-sm')}
-                        title="Remove user"
-                        aria-label="Remove user"
+                        title={getMessage('configRemoveUser')}
+                        aria-label={getMessage('configRemoveUser')}
                         onclick={() => removeObjectItem(draft, 'users', index)}
                       >
                         <Trash2 class="size-4" />
@@ -655,7 +679,7 @@
         <div class="flex items-center justify-between gap-3 border-b bg-muted/25 px-3 py-2">
           <div class="flex min-w-0 items-center gap-2">
             <SlidersHorizontal class="size-4 shrink-0 text-emerald-800" />
-            <span class="truncate text-sm font-bold">YAML source</span>
+            <span class="truncate text-sm font-bold">{getMessage('configYamlSource')}</span>
           </div>
           <div class="flex shrink-0 items-center gap-1">
             <button
@@ -664,7 +688,7 @@
               onclick={formatFromForm}
               disabled={loading}
             >
-              Format form
+              {getMessage('configFormatForm')}
             </button>
             <button
               type="button"
@@ -677,7 +701,7 @@
               {:else}
                 <Save class="size-3" />
               {/if}
-              Save
+              {getMessage('save')}
             </button>
           </div>
         </div>

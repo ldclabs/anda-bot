@@ -122,7 +122,8 @@ export class AndaSidePanelClient extends EventTarget {
 
   /**
    * Follows the language selected in the Anda launcher: persists it for
-   * initI18n() and reloads the panel so every rendered string switches.
+   * initI18n(). Every extension page watches the stored value (via
+   * watchUiLanguage) and reloads itself so all rendered strings switch.
    */
   async syncUiLanguage(): Promise<void> {
     if (!this.settings.token) {
@@ -138,7 +139,6 @@ export class AndaSidePanelClient extends EventTarget {
       return
     }
     await this.chrome.storage.local.set({ [uiLanguageStorageKey]: language })
-    globalThis.location?.reload()
   }
 
   get channelList(): Channel[] {

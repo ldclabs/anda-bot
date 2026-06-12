@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "Запись голоса Anda не запустилась."
+  },
+  "refresh": {
+    "message": "Обновить"
+  },
+  "search": {
+    "message": "Поиск"
+  },
+  "close": {
+    "message": "Закрыть"
+  },
+  "loading": {
+    "message": "Загрузка"
+  },
+  "brainPageTitle": {
+    "message": "Граф памяти Anda"
+  },
+  "brainStatusIdle": {
+    "message": "Ожидание"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "Настройки недоступны"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "Загрузка графа"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "Обзор: $1 узлов"
+  },
+  "brainStatusLoadFailed": {
+    "message": "Не удалось загрузить"
+  },
+  "brainStatusSearching": {
+    "message": "Поиск"
+  },
+  "brainStatusSearchResults": {
+    "message": "Результатов поиска: $1"
+  },
+  "brainStatusSearchFailed": {
+    "message": "Поиск не удался"
+  },
+  "brainStatusRunningKip": {
+    "message": "Выполнение KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "KIP выполнен"
+  },
+  "brainStatusKipFailed": {
+    "message": "Ошибка KIP"
+  },
+  "brainClipboardUnavailable": {
+    "message": "Буфер обмена недоступен"
+  },
+  "brainConnection": {
+    "message": "Подключение"
+  },
+  "brainFieldSpace": {
+    "message": "Пространство"
+  },
+  "brainSearchPlaceholder": {
+    "message": "Концепт, тип, псевдоним"
+  },
+  "brainPrev": {
+    "message": "Назад"
+  },
+  "brainNext": {
+    "message": "Далее"
+  },
+  "brainViewPanel": {
+    "message": "Вид"
+  },
+  "brainFieldMode": {
+    "message": "Режим"
+  },
+  "brainModeOverview": {
+    "message": "Обзор"
+  },
+  "brainModeFocus": {
+    "message": "Фокус"
+  },
+  "brainModeFull": {
+    "message": "Полный"
+  },
+  "brainFieldEdges": {
+    "message": "Рёбра"
+  },
+  "brainAll": {
+    "message": "Все"
+  },
+  "brainNone": {
+    "message": "Нет"
+  },
+  "brainFieldLabels": {
+    "message": "Подписи"
+  },
+  "brainLabelsSmart": {
+    "message": "Умные"
+  },
+  "brainFieldNodeCap": {
+    "message": "Лимит узлов $1"
+  },
+  "brainFieldRadius": {
+    "message": "Радиус $1"
+  },
+  "brainResetFilters": {
+    "message": "Сбросить фильтры"
+  },
+  "brainFilters": {
+    "message": "Фильтры"
+  },
+  "brainFieldType": {
+    "message": "Тип"
+  },
+  "brainAllTypes": {
+    "message": "Все типы"
+  },
+  "brainFieldPredicate": {
+    "message": "Предикат"
+  },
+  "brainAllPredicates": {
+    "message": "Все предикаты"
+  },
+  "brainCounts": {
+    "message": "Статистика"
+  },
+  "brainLoadedNodes": {
+    "message": "Загружено узлов"
+  },
+  "brainLoadedLinks": {
+    "message": "Загружено связей"
+  },
+  "brainVisibleNodes": {
+    "message": "Видимые узлы"
+  },
+  "brainVisibleLinks": {
+    "message": "Видимые связи"
+  },
+  "brainTotalConcepts": {
+    "message": "Всего концептов: $1"
+  },
+  "brainTotalProps": {
+    "message": "Всего пропозиций: $1"
+  },
+  "brainZoomIn": {
+    "message": "Увеличить"
+  },
+  "brainZoomOut": {
+    "message": "Уменьшить"
+  },
+  "brainFitView": {
+    "message": "Вписать в окно"
+  },
+  "brainFocusSelected": {
+    "message": "Фокус на выбранном"
+  },
+  "brainToggleEdges": {
+    "message": "Показать или скрыть рёбра"
+  },
+  "brainInspector": {
+    "message": "Инспектор"
+  },
+  "brainCopyJson": {
+    "message": "Копировать JSON"
+  },
+  "brainCopiedJson": {
+    "message": "JSON скопирован"
+  },
+  "brainCloseInspector": {
+    "message": "Закрыть инспектор"
+  },
+  "brainExpand": {
+    "message": "Развернуть"
+  },
+  "brainAttributes": {
+    "message": "Атрибуты"
+  },
+  "brainMetadata": {
+    "message": "Метаданные"
+  },
+  "brainProposition": {
+    "message": "Пропозиция"
+  },
+  "brainVirtual": {
+    "message": "Виртуальная"
+  },
+  "brainSubject": {
+    "message": "Субъект $1"
+  },
+  "brainObject": {
+    "message": "Объект $1"
+  },
+  "brainHide": {
+    "message": "Скрыть"
+  },
+  "brainShow": {
+    "message": "Показать"
+  },
+  "brainRunReadonly": {
+    "message": "Выполнить (только чтение)"
+  },
+  "brainTopTypes": {
+    "message": "Основные типы"
+  },
+  "configSectionRuntime": {
+    "message": "Среда выполнения"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "Шлюз, прокси и рабочие пространства"
+  },
+  "configSectionModels": {
+    "message": "Модели"
+  },
+  "configSectionModelsDetail": {
+    "message": "Список провайдеров и активная модель"
+  },
+  "configSectionTtsDetail": {
+    "message": "Провайдеры синтеза речи"
+  },
+  "configSectionTranscription": {
+    "message": "Транскрипция"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "Провайдеры распознавания речи"
+  },
+  "configSectionChannelsDetail": {
+    "message": "Среды IM-каналов"
+  },
+  "configSectionUsers": {
+    "message": "Пользователи"
+  },
+  "configSectionUsersDetail": {
+    "message": "Общие идентичности демона"
+  },
+  "configHeaderHint": {
+    "message": "Подключитесь к локальному демону Anda, чтобы загрузить конфигурацию."
+  },
+  "configLoad": {
+    "message": "Загрузить"
+  },
+  "configLoading": {
+    "message": "Загрузка config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "Основные настройки демона. Оставьте в боковой панели только параметры подключения браузера; полный файл конфигурации редактируйте здесь."
+  },
+  "configModelsDescription": {
+    "message": "Выберите активную модель и поддерживайте все записи провайдеров, доступные демону."
+  },
+  "configProviders": {
+    "message": "Провайдеры"
+  },
+  "configProvidersDescription": {
+    "message": "Метки маршрутизируют запросы memory, flash, изображений, аудио и видео."
+  },
+  "configAddProvider": {
+    "message": "Добавить провайдера"
+  },
+  "configProviderFallback": {
+    "message": "Провайдер $1"
+  },
+  "configRemoveProvider": {
+    "message": "Удалить провайдера"
+  },
+  "configTtsTitle": {
+    "message": "Синтез речи"
+  },
+  "configTtsDescription": {
+    "message": "Включите синтез речи и настройте блоки провайдеров, сохраняемые в разделе tts."
+  },
+  "configProviderBlock": {
+    "message": "Блок провайдера"
+  },
+  "configTranscriptionDescription": {
+    "message": "Настройте параметры транскрипции по умолчанию и опции провайдеров."
+  },
+  "configChannelsDescription": {
+    "message": "Настройте среды Telegram, WeChat, Discord и Lark/Feishu. Ответы маршрутизируются по каждой платформе."
+  },
+  "configCountConfigured": {
+    "message": "Настроено: $1"
+  },
+  "configAddChannel": {
+    "message": "Добавить $1"
+  },
+  "configRemoveChannel": {
+    "message": "Удалить $1"
+  },
+  "configUsersDescription": {
+    "message": "Доверенные пользователи, которые могут совместно использовать этого демона и того же агента Anda."
+  },
+  "configAddUser": {
+    "message": "Добавить пользователя"
+  },
+  "configUserFallback": {
+    "message": "Пользователь $1"
+  },
+  "configRemoveUser": {
+    "message": "Удалить пользователя"
+  },
+  "configYamlSource": {
+    "message": "Исходный YAML"
+  },
+  "configFormatForm": {
+    "message": "Форматировать из формы"
+  },
+  "configFormatted": {
+    "message": "YAML сформирован из формы. Комментарии из прежнего файла сохранены."
+  },
+  "configSaved": {
+    "message": "config.yaml сохранён. Перезапустите Anda, чтобы настройки запуска демона вступили в силу."
+  },
+  "configEnabled": {
+    "message": "Включено"
+  },
+  "configDisabled": {
+    "message": "Отключено"
+  },
+  "configOptionalPlaceholder": {
+    "message": "необязательно"
+  },
+  "configOneItemPerLine": {
+    "message": "По одному значению в строке"
   }
 }

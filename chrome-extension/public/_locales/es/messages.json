@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "La grabación de voz de Anda no se inició."
+  },
+  "refresh": {
+    "message": "Actualizar"
+  },
+  "search": {
+    "message": "Buscar"
+  },
+  "close": {
+    "message": "Cerrar"
+  },
+  "loading": {
+    "message": "Cargando"
+  },
+  "brainPageTitle": {
+    "message": "Grafo de memoria de Anda"
+  },
+  "brainStatusIdle": {
+    "message": "Inactivo"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "Configuración no disponible"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "Cargando el grafo"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "Vista general: $1 nodos"
+  },
+  "brainStatusLoadFailed": {
+    "message": "Error al cargar"
+  },
+  "brainStatusSearching": {
+    "message": "Buscando"
+  },
+  "brainStatusSearchResults": {
+    "message": "$1 resultados de búsqueda"
+  },
+  "brainStatusSearchFailed": {
+    "message": "Error en la búsqueda"
+  },
+  "brainStatusRunningKip": {
+    "message": "Ejecutando KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "KIP completado"
+  },
+  "brainStatusKipFailed": {
+    "message": "Error de KIP"
+  },
+  "brainClipboardUnavailable": {
+    "message": "El portapapeles no está disponible"
+  },
+  "brainConnection": {
+    "message": "Conexión"
+  },
+  "brainFieldSpace": {
+    "message": "Espacio"
+  },
+  "brainSearchPlaceholder": {
+    "message": "Concepto, tipo, alias"
+  },
+  "brainPrev": {
+    "message": "Anterior"
+  },
+  "brainNext": {
+    "message": "Siguiente"
+  },
+  "brainViewPanel": {
+    "message": "Vista"
+  },
+  "brainFieldMode": {
+    "message": "Modo"
+  },
+  "brainModeOverview": {
+    "message": "Vista general"
+  },
+  "brainModeFocus": {
+    "message": "Enfoque"
+  },
+  "brainModeFull": {
+    "message": "Completo"
+  },
+  "brainFieldEdges": {
+    "message": "Aristas"
+  },
+  "brainAll": {
+    "message": "Todas"
+  },
+  "brainNone": {
+    "message": "Ninguna"
+  },
+  "brainFieldLabels": {
+    "message": "Etiquetas"
+  },
+  "brainLabelsSmart": {
+    "message": "Inteligentes"
+  },
+  "brainFieldNodeCap": {
+    "message": "Límite de nodos $1"
+  },
+  "brainFieldRadius": {
+    "message": "Radio $1"
+  },
+  "brainResetFilters": {
+    "message": "Restablecer filtros"
+  },
+  "brainFilters": {
+    "message": "Filtros"
+  },
+  "brainFieldType": {
+    "message": "Tipo"
+  },
+  "brainAllTypes": {
+    "message": "Todos los tipos"
+  },
+  "brainFieldPredicate": {
+    "message": "Predicado"
+  },
+  "brainAllPredicates": {
+    "message": "Todos los predicados"
+  },
+  "brainCounts": {
+    "message": "Recuentos"
+  },
+  "brainLoadedNodes": {
+    "message": "Nodos cargados"
+  },
+  "brainLoadedLinks": {
+    "message": "Enlaces cargados"
+  },
+  "brainVisibleNodes": {
+    "message": "Nodos visibles"
+  },
+  "brainVisibleLinks": {
+    "message": "Enlaces visibles"
+  },
+  "brainTotalConcepts": {
+    "message": "Conceptos totales: $1"
+  },
+  "brainTotalProps": {
+    "message": "Proposiciones totales: $1"
+  },
+  "brainZoomIn": {
+    "message": "Acercar"
+  },
+  "brainZoomOut": {
+    "message": "Alejar"
+  },
+  "brainFitView": {
+    "message": "Ajustar vista"
+  },
+  "brainFocusSelected": {
+    "message": "Enfocar selección"
+  },
+  "brainToggleEdges": {
+    "message": "Mostrar u ocultar aristas"
+  },
+  "brainInspector": {
+    "message": "Inspector"
+  },
+  "brainCopyJson": {
+    "message": "Copiar JSON"
+  },
+  "brainCopiedJson": {
+    "message": "JSON copiado"
+  },
+  "brainCloseInspector": {
+    "message": "Cerrar inspector"
+  },
+  "brainExpand": {
+    "message": "Expandir"
+  },
+  "brainAttributes": {
+    "message": "Atributos"
+  },
+  "brainMetadata": {
+    "message": "Metadatos"
+  },
+  "brainProposition": {
+    "message": "Proposición"
+  },
+  "brainVirtual": {
+    "message": "Virtual"
+  },
+  "brainSubject": {
+    "message": "Sujeto $1"
+  },
+  "brainObject": {
+    "message": "Objeto $1"
+  },
+  "brainHide": {
+    "message": "Ocultar"
+  },
+  "brainShow": {
+    "message": "Mostrar"
+  },
+  "brainRunReadonly": {
+    "message": "Ejecutar en solo lectura"
+  },
+  "brainTopTypes": {
+    "message": "Tipos principales"
+  },
+  "configSectionRuntime": {
+    "message": "Tiempo de ejecución"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "Puerta de enlace, proxy y espacios de trabajo"
+  },
+  "configSectionModels": {
+    "message": "Modelos"
+  },
+  "configSectionModelsDetail": {
+    "message": "Lista de proveedores y modelo activo"
+  },
+  "configSectionTtsDetail": {
+    "message": "Proveedores de síntesis de voz"
+  },
+  "configSectionTranscription": {
+    "message": "Transcripción"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "Proveedores de voz a texto"
+  },
+  "configSectionChannelsDetail": {
+    "message": "Entornos de canales de mensajería"
+  },
+  "configSectionUsers": {
+    "message": "Usuarios"
+  },
+  "configSectionUsersDetail": {
+    "message": "Identidades compartidas del demonio"
+  },
+  "configHeaderHint": {
+    "message": "Conéctate al demonio local de Anda para cargar la configuración."
+  },
+  "configLoad": {
+    "message": "Cargar"
+  },
+  "configLoading": {
+    "message": "Cargando config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "Configuración principal del demonio. Mantén los ajustes del panel lateral centrados en la conexión del navegador; usa esta página para el archivo completo."
+  },
+  "configModelsDescription": {
+    "message": "Elige el modelo activo y mantén todas las entradas de proveedores disponibles para el demonio."
+  },
+  "configProviders": {
+    "message": "Proveedores"
+  },
+  "configProvidersDescription": {
+    "message": "Las etiquetas enrutan solicitudes de memory, flash, imagen, audio y vídeo."
+  },
+  "configAddProvider": {
+    "message": "Añadir proveedor"
+  },
+  "configProviderFallback": {
+    "message": "Proveedor $1"
+  },
+  "configRemoveProvider": {
+    "message": "Eliminar proveedor"
+  },
+  "configTtsTitle": {
+    "message": "Texto a voz"
+  },
+  "configTtsDescription": {
+    "message": "Activa la síntesis de voz y configura los bloques de proveedores que quieras guardar bajo tts."
+  },
+  "configProviderBlock": {
+    "message": "Bloque del proveedor"
+  },
+  "configTranscriptionDescription": {
+    "message": "Configura los valores predeterminados de transcripción y las opciones de cada proveedor."
+  },
+  "configChannelsDescription": {
+    "message": "Configura los entornos de Telegram, WeChat, Discord y Lark/Feishu. Las respuestas se enrutan por cada plataforma."
+  },
+  "configCountConfigured": {
+    "message": "$1 configurado(s)"
+  },
+  "configAddChannel": {
+    "message": "Añadir $1"
+  },
+  "configRemoveChannel": {
+    "message": "Eliminar $1"
+  },
+  "configUsersDescription": {
+    "message": "Usuarios de confianza que pueden compartir este demonio y el mismo agente de Anda."
+  },
+  "configAddUser": {
+    "message": "Añadir usuario"
+  },
+  "configUserFallback": {
+    "message": "Usuario $1"
+  },
+  "configRemoveUser": {
+    "message": "Eliminar usuario"
+  },
+  "configYamlSource": {
+    "message": "Código YAML"
+  },
+  "configFormatForm": {
+    "message": "Formatear desde el formulario"
+  },
+  "configFormatted": {
+    "message": "YAML formateado desde el formulario. Se conservaron los comentarios del archivo anterior."
+  },
+  "configSaved": {
+    "message": "config.yaml guardado. Reinicia Anda para aplicar la configuración de arranque del demonio."
+  },
+  "configEnabled": {
+    "message": "Activado"
+  },
+  "configDisabled": {
+    "message": "Desactivado"
+  },
+  "configOptionalPlaceholder": {
+    "message": "opcional"
+  },
+  "configOneItemPerLine": {
+    "message": "Un elemento por línea"
   }
 }

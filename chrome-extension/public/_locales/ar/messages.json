@@ -355,5 +355,326 @@
   },
   "andaVoiceStartFailed": {
     "message": "لم يبدأ تسجيل صوت Anda."
+  },
+  "refresh": {
+    "message": "تحديث"
+  },
+  "search": {
+    "message": "بحث"
+  },
+  "close": {
+    "message": "إغلاق"
+  },
+  "loading": {
+    "message": "جارٍ التحميل"
+  },
+  "brainPageTitle": {
+    "message": "مخطط ذاكرة Anda"
+  },
+  "brainStatusIdle": {
+    "message": "خامل"
+  },
+  "brainStatusSettingsUnavailable": {
+    "message": "الإعدادات غير متاحة"
+  },
+  "brainStatusLoadingGraph": {
+    "message": "جارٍ تحميل المخطط"
+  },
+  "brainStatusOverviewNodes": {
+    "message": "نظرة عامة: $1 عقدة"
+  },
+  "brainStatusLoadFailed": {
+    "message": "فشل التحميل"
+  },
+  "brainStatusSearching": {
+    "message": "جارٍ البحث"
+  },
+  "brainStatusSearchResults": {
+    "message": "نتائج البحث: $1"
+  },
+  "brainStatusSearchFailed": {
+    "message": "فشل البحث"
+  },
+  "brainStatusRunningKip": {
+    "message": "جارٍ تنفيذ KIP"
+  },
+  "brainStatusKipComplete": {
+    "message": "اكتمل KIP"
+  },
+  "brainStatusKipFailed": {
+    "message": "فشل KIP"
+  },
+  "brainClipboardUnavailable": {
+    "message": "الحافظة غير متاحة"
+  },
+  "brainConnection": {
+    "message": "الاتصال"
+  },
+  "brainFieldSpace": {
+    "message": "المساحة"
+  },
+  "brainSearchPlaceholder": {
+    "message": "مفهوم، نوع، اسم بديل"
+  },
+  "brainPrev": {
+    "message": "السابق"
+  },
+  "brainNext": {
+    "message": "التالي"
+  },
+  "brainViewPanel": {
+    "message": "العرض"
+  },
+  "brainFieldMode": {
+    "message": "الوضع"
+  },
+  "brainModeOverview": {
+    "message": "نظرة عامة"
+  },
+  "brainModeFocus": {
+    "message": "تركيز"
+  },
+  "brainModeFull": {
+    "message": "كامل"
+  },
+  "brainFieldEdges": {
+    "message": "الحواف"
+  },
+  "brainAll": {
+    "message": "الكل"
+  },
+  "brainNone": {
+    "message": "بلا"
+  },
+  "brainFieldLabels": {
+    "message": "التسميات"
+  },
+  "brainLabelsSmart": {
+    "message": "ذكي"
+  },
+  "brainFieldNodeCap": {
+    "message": "حد العقد $1"
+  },
+  "brainFieldRadius": {
+    "message": "نصف القطر $1"
+  },
+  "brainResetFilters": {
+    "message": "إعادة تعيين عوامل التصفية"
+  },
+  "brainFilters": {
+    "message": "عوامل التصفية"
+  },
+  "brainFieldType": {
+    "message": "النوع"
+  },
+  "brainAllTypes": {
+    "message": "كل الأنواع"
+  },
+  "brainFieldPredicate": {
+    "message": "المسند"
+  },
+  "brainAllPredicates": {
+    "message": "كل المسندات"
+  },
+  "brainCounts": {
+    "message": "الإحصاءات"
+  },
+  "brainLoadedNodes": {
+    "message": "العقد المحمّلة"
+  },
+  "brainLoadedLinks": {
+    "message": "الروابط المحمّلة"
+  },
+  "brainVisibleNodes": {
+    "message": "العقد المرئية"
+  },
+  "brainVisibleLinks": {
+    "message": "الروابط المرئية"
+  },
+  "brainTotalConcepts": {
+    "message": "إجمالي المفاهيم: $1"
+  },
+  "brainTotalProps": {
+    "message": "إجمالي القضايا: $1"
+  },
+  "brainZoomIn": {
+    "message": "تكبير"
+  },
+  "brainZoomOut": {
+    "message": "تصغير"
+  },
+  "brainFitView": {
+    "message": "ملاءمة العرض"
+  },
+  "brainFocusSelected": {
+    "message": "تركيز على المحدد"
+  },
+  "brainToggleEdges": {
+    "message": "إظهار/إخفاء الحواف"
+  },
+  "brainInspector": {
+    "message": "الفاحص"
+  },
+  "brainCopyJson": {
+    "message": "نسخ JSON"
+  },
+  "brainCopiedJson": {
+    "message": "تم نسخ JSON"
+  },
+  "brainCloseInspector": {
+    "message": "إغلاق الفاحص"
+  },
+  "brainExpand": {
+    "message": "توسيع"
+  },
+  "brainAttributes": {
+    "message": "السمات"
+  },
+  "brainMetadata": {
+    "message": "البيانات الوصفية"
+  },
+  "brainProposition": {
+    "message": "قضية"
+  },
+  "brainVirtual": {
+    "message": "افتراضي"
+  },
+  "brainSubject": {
+    "message": "الفاعل $1"
+  },
+  "brainObject": {
+    "message": "المفعول $1"
+  },
+  "brainHide": {
+    "message": "إخفاء"
+  },
+  "brainShow": {
+    "message": "إظهار"
+  },
+  "brainRunReadonly": {
+    "message": "تشغيل للقراءة فقط"
+  },
+  "brainTopTypes": {
+    "message": "الأنواع الرئيسية"
+  },
+  "configSectionRuntime": {
+    "message": "بيئة التشغيل"
+  },
+  "configSectionRuntimeDetail": {
+    "message": "البوابة والوكيل ومساحات العمل"
+  },
+  "configSectionModels": {
+    "message": "النماذج"
+  },
+  "configSectionModelsDetail": {
+    "message": "قائمة المزوّدين والنموذج النشط"
+  },
+  "configSectionTtsDetail": {
+    "message": "مزوّدو تركيب الكلام"
+  },
+  "configSectionTranscription": {
+    "message": "النسخ الصوتي"
+  },
+  "configSectionTranscriptionDetail": {
+    "message": "مزوّدو تحويل الصوت إلى نص"
+  },
+  "configSectionChannelsDetail": {
+    "message": "بيئات قنوات المراسلة"
+  },
+  "configSectionUsers": {
+    "message": "المستخدمون"
+  },
+  "configSectionUsersDetail": {
+    "message": "هويات الخدمة المشتركة"
+  },
+  "configHeaderHint": {
+    "message": "اتصل بخدمة Anda المحلية لتحميل إعدادات التشغيل."
+  },
+  "configLoad": {
+    "message": "تحميل"
+  },
+  "configLoading": {
+    "message": "جارٍ تحميل config.yaml"
+  },
+  "configRuntimeDescription": {
+    "message": "الإعدادات الأساسية للخدمة. أبقِ إعدادات اللوحة الجانبية مقتصرة على تفاصيل اتصال المتصفح، واستخدم هذه الصفحة لملف الإعداد الكامل."
+  },
+  "configModelsDescription": {
+    "message": "اختر النموذج النشط وأدر جميع إدخالات المزوّدين المتاحة للخدمة."
+  },
+  "configProviders": {
+    "message": "المزوّدون"
+  },
+  "configProvidersDescription": {
+    "message": "توجّه التسميات طلبات memory وflash والصور والصوت والفيديو."
+  },
+  "configAddProvider": {
+    "message": "إضافة مزوّد"
+  },
+  "configProviderFallback": {
+    "message": "مزوّد $1"
+  },
+  "configRemoveProvider": {
+    "message": "إزالة المزوّد"
+  },
+  "configTtsTitle": {
+    "message": "تحويل النص إلى كلام"
+  },
+  "configTtsDescription": {
+    "message": "فعّل تركيب الكلام واضبط أي كتلة مزوّد تريد حفظها ضمن tts."
+  },
+  "configProviderBlock": {
+    "message": "كتلة المزوّد"
+  },
+  "configTranscriptionDescription": {
+    "message": "اضبط إعدادات النسخ الصوتي الافتراضية وخيارات كل مزوّد."
+  },
+  "configChannelsDescription": {
+    "message": "اضبط بيئات Telegram وWeChat وDiscord وLark/Feishu. تبقى الردود موجهة حسب مسار كل منصة."
+  },
+  "configCountConfigured": {
+    "message": "تم إعداد $1"
+  },
+  "configAddChannel": {
+    "message": "إضافة $1"
+  },
+  "configRemoveChannel": {
+    "message": "إزالة $1"
+  },
+  "configUsersDescription": {
+    "message": "المستخدمون الموثوقون الذين يمكنهم مشاركة هذه الخدمة ونفس وكيل Anda."
+  },
+  "configAddUser": {
+    "message": "إضافة مستخدم"
+  },
+  "configUserFallback": {
+    "message": "مستخدم $1"
+  },
+  "configRemoveUser": {
+    "message": "إزالة المستخدم"
+  },
+  "configYamlSource": {
+    "message": "مصدر YAML"
+  },
+  "configFormatForm": {
+    "message": "تنسيق من النموذج"
+  },
+  "configFormatted": {
+    "message": "تم تنسيق YAML من النموذج مع الاحتفاظ بتعليقات الملف السابق."
+  },
+  "configSaved": {
+    "message": "تم حفظ config.yaml. أعد تشغيل Anda لتفعيل إعدادات بدء الخدمة."
+  },
+  "configEnabled": {
+    "message": "مفعّل"
+  },
+  "configDisabled": {
+    "message": "معطّل"
+  },
+  "configOptionalPlaceholder": {
+    "message": "اختياري"
+  },
+  "configOneItemPerLine": {
+    "message": "عنصر واحد في كل سطر"
   }
 }

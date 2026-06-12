@@ -115,6 +115,20 @@ function browserUiLanguage(): UiLanguage | '' {
   }
 }
 
+/**
+ * Invokes the listener whenever the stored UI language changes in another
+ * extension context (e.g. the side panel synced a launcher switch). Pages use
+ * this to reload themselves so every rendered string switches.
+ */
+export function watchUiLanguage(listener: (language: UiLanguage | '') => void): void {
+  const api = chromeApi()
+  api?.storage?.onChanged?.addListener?.((changes, areaName) => {
+    if (areaName === 'local' && changes[uiLanguageStorageKey]) {
+      listener(normalizeUiLanguage(changes[uiLanguageStorageKey].newValue))
+    }
+  })
+}
+
 /** Keeps Arabic pages right-to-left when the override changes the language. */
 function applyDocumentDirection(): void {
   if (typeof document === 'undefined') {
