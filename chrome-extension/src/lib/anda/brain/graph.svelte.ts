@@ -84,6 +84,9 @@ export class BrainGraphData {
   #initPromise: Promise<IngestStats> | null = null
   #overviewPromise: Promise<IngestStats> | null = null
   #expandConceptPromises = new Map<string, Promise<IngestStats>>()
+  #linksVersion = 0
+  #degreeCache: { version: number; value: Map<string, number> } | null = null
+  #adjacencyCache: { version: number; value: Map<string, Proposition[]> } | null = null
 
   constructor(api: BrainApi, globalRef: BrainGraphData | null = null) {
     this.#api = api
@@ -127,6 +130,7 @@ export class BrainGraphData {
     this.#initPromise = null
     this.#overviewPromise = null
     this.#expandConceptPromises.clear()
+    this.#linksVersion += 1
   }
 
   async loadOverview(): Promise<IngestStats> {
@@ -414,13 +418,7 @@ LIMIT :limit`,
   }
 
   getNeighborLinks(id: string): Proposition[] {
-    const links: Proposition[] = []
-    for (const link of this.links.values()) {
-      if (link.subject === id || link.object === id) {
-        links.push(link)
-      }
-    }
-    return links
+    return [...(this.#adjacencyIndex().get(id) || [])]
   }
 
   addConcept(input: Concept, cache = true): void {
@@ -443,17 +441,20 @@ LIMIT :limit`,
 
     const typeId = this.#typeIds.get(concept.type)
     if (typeId && typeId !== concept.id) {
-      this.addProposition({
-        _type: 'VirtualLink',
-        _virtual: true,
-        _expanded: true,
-        id: `virtual:instance_of:${concept.id}:${typeId}`,
-        subject: concept.id,
-        object: typeId,
-        predicate: 'instance_of',
-        attributes: {},
-        metadata: {}
-      }, false)
+      this.addProposition(
+        {
+          _type: 'VirtualLink',
+          _virtual: true,
+          _expanded: true,
+          id: `virtual:instance_of:${concept.id}:${typeId}`,
+          subject: concept.id,
+          object: typeId,
+          predicate: 'instance_of',
+          attributes: {},
+          metadata: {}
+        },
+        false
+      )
     }
   }
 
@@ -470,9 +471,13 @@ LIMIT :limit`,
       metadata: input.metadata || previous?.metadata || {}
     }
     this.links.set(proposition.id, proposition)
+    this.#linksVersion += 1
   }
 
   degreeByNode(): Map<string, number> {
+    if (this.#degreeCache?.version === this.#linksVersion) {
+      return this.#degreeCache.value
+    }
     const degree = new Map<string, number>()
     for (const link of this.links.values()) {
       if (link._virtual) {
@@ -481,29 +486,50 @@ LIMIT :limit`,
       degree.set(link.subject, (degree.get(link.subject) || 0) + 1)
       degree.set(link.object, (degree.get(link.object) || 0) + 1)
     }
+    this.#degreeCache = { version: this.#linksVersion, value: degree }
     return degree
   }
 
-  neighborIds(id: string, radius = 1): Set<string> {
-    const keep = new Set<string>([id])
-    let frontier = new Set<string>([id])
-    for (let i = 0; i < radius; i += 1) {
-      const next = new Set<string>()
-      for (const link of this.links.values()) {
-        const touchesSubject = frontier.has(link.subject)
-        const touchesObject = frontier.has(link.object)
-        if (!touchesSubject && !touchesObject) {
-          continue
-        }
-        if (this.nodes.has(link.subject)) {
-          next.add(link.subject)
-        }
-        if (this.nodes.has(link.object)) {
-          next.add(link.object)
-        }
+  #adjacencyIndex(): Map<string, Proposition[]> {
+    if (this.#adjacencyCache?.version === this.#linksVersion) {
+      return this.#adjacencyCache.value
+    }
+    const adjacency = new Map<string, Proposition[]>()
+    const push = (id: string, link: Proposition) => {
+      const list = adjacency.get(id)
+      if (list) {
+        list.push(link)
+      } else {
+        adjacency.set(id, [link])
       }
-      for (const nodeId of next) {
-        keep.add(nodeId)
+    }
+    for (const link of this.links.values()) {
+      push(link.subject, link)
+      if (link.object !== link.subject) {
+        push(link.object, link)
+      }
+    }
+    this.#adjacencyCache = { version: this.#linksVersion, value: adjacency }
+    return adjacency
+  }
+
+  neighborIds(id: string, radius = 1): Set<string> {
+    const adjacency = this.#adjacencyIndex()
+    const keep = new Set<string>([id])
+    let frontier: string[] = [id]
+    for (let i = 0; i < radius && frontier.length > 0; i += 1) {
+      const next: string[] = []
+      for (const nodeId of frontier) {
+        for (const link of adjacency.get(nodeId) || []) {
+          if (!keep.has(link.subject) && this.nodes.has(link.subject)) {
+            keep.add(link.subject)
+            next.push(link.subject)
+          }
+          if (!keep.has(link.object) && this.nodes.has(link.object)) {
+            keep.add(link.object)
+            next.push(link.object)
+          }
+        }
       }
       frontier = next
     }
@@ -512,18 +538,21 @@ LIMIT :limit`,
 
   summary(visibleNodeCount = this.nodes.size, visibleLinkCount = this.links.size): GraphSummary {
     const degree = this.degreeByNode()
+    const nodes = Array.from(this.nodes.values())
+    const realLinks: Proposition[] = []
+    for (const link of this.links.values()) {
+      if (!link._virtual) {
+        realLinks.push(link)
+      }
+    }
     return {
       nodeCount: this.nodes.size,
-      linkCount: Array.from(this.links.values()).filter((link) => !link._virtual).length,
+      linkCount: realLinks.length,
       visibleNodeCount,
       visibleLinkCount,
-      typeCounts: topCounts(Array.from(this.nodes.values()), (node) => node.type, 12),
-      predicateCounts: topCounts(
-        Array.from(this.links.values()).filter((link) => !link._virtual),
-        (link) => link.predicate,
-        12
-      ),
-      hubs: Array.from(this.nodes.values())
+      typeCounts: topCounts(nodes, (node) => node.type, 12),
+      predicateCounts: topCounts(realLinks, (link) => link.predicate, 12),
+      hubs: nodes
         .map((node) => ({
           id: node.id,
           name: node.name,
@@ -644,7 +673,9 @@ function findKipError(value: unknown): KipError | null {
 }
 
 function isKipError(value: unknown): value is KipError {
-  return Boolean(value && typeof value === 'object' && typeof (value as KipError).message === 'string')
+  return Boolean(
+    value && typeof value === 'object' && typeof (value as KipError).message === 'string'
+  )
 }
 
 function formatKipError(error: KipError): string {
@@ -658,7 +689,11 @@ function overviewTypePriority(type: string): number {
   return index === -1 ? OVERVIEW_TYPE_PRIORITY.length : index
 }
 
-function topCounts<T>(items: T[], key: (item: T) => string, limit: number): Array<[string, number]> {
+function topCounts<T>(
+  items: T[],
+  key: (item: T) => string,
+  limit: number
+): Array<[string, number]> {
   const counts = new Map<string, number>()
   for (const item of items) {
     const k = key(item)

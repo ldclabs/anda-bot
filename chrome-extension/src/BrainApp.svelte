@@ -145,6 +145,19 @@ LIMIT 6000`)
     }, 120)
   })
 
+  // Give instant selection feedback via element states; the debounced dataset
+  // sync converges the underlying styles afterwards.
+  $effect(() => {
+    void selectedNodeId
+    void selectedEdgeId
+    void expandingNodeId
+    void searchResults
+    if (!graph || !graphRendered) {
+      return
+    }
+    applyElementStates()
+  })
+
   onMount(() => {
     initGraph()
     loadBrainGraphSettings()
@@ -185,9 +198,11 @@ LIMIT 6000`)
       container,
       width: stage.width,
       height: stage.height,
-      autoFit: 'view',
       padding: 24,
-      animation: true,
+      // Animations run on requestAnimationFrame, which is throttled or fully
+      // suspended for hidden extension pages; awaiting them can stall the
+      // sync loop, and on large graphs they hurt interaction latency.
+      animation: false,
       theme: 'dark',
       node: {
         style: {
@@ -260,20 +275,13 @@ LIMIT 6000`)
         }
       },
       layout: {
-        ...buildLayoutOptions(stage)
+        ...buildLayoutOptions(graphDataset, stage)
       },
       behaviors: [
         { type: 'drag-canvas', key: 'drag-canvas' },
         { type: 'zoom-canvas', key: 'zoom-canvas', sensitivity: 1.12 },
         { type: 'drag-element', key: 'drag-element' },
         { type: 'hover-activate', key: 'hover-activate' },
-        {
-          type: 'click-select',
-          key: 'click-select',
-          degree: 0,
-          multiple: false,
-          state: 'selected'
-        },
         { type: 'optimize-viewport-transform', key: 'optimize-viewport', debounce: 240 },
         { type: 'auto-adapt-label', key: 'auto-adapt-label', throttle: 260, padding: 2 }
       ],
@@ -330,6 +338,10 @@ LIMIT 6000`)
       selectedEdgeId = ''
     })
 
+    if (import.meta.env.DEV) {
+      ;(window as unknown as { __brainGraph?: Graph }).__brainGraph = graph
+    }
+
     resizeObserver = new ResizeObserver(() => scheduleGraphResize())
     resizeObserver.observe(container)
 
@@ -342,18 +354,84 @@ LIMIT 6000`)
       })
   }
 
+  let syncing = false
+  let pendingSync = false
+  let lastTopologyKey = '__initial__'
+  let renderedNodeIds = new Set<string>()
+  let renderedEdgeIds = new Set<string>()
+  const appliedStates = new Map<string, string>()
+  let pendingFocus: { id: string; at: number } | null = null
+
   async function syncGraph() {
     if (!graph) {
       return
     }
-    resizeGraphCanvas()
-    graph.setOptions({ layout: buildLayoutOptions() as any })
-    graph.setData(graphDataset)
-    if (graphDataset.nodes.length > 300) {
-      graph.setOptions({ animation: false })
+    if (syncing) {
+      pendingSync = true
+      return
     }
-    await graph.render()
-    syncElementStates()
+    syncing = true
+    try {
+      do {
+        pendingSync = false
+        const dataset = graphDataset
+        const topologyKey = datasetTopologyKey(dataset)
+        const topologyChanged = topologyKey !== lastTopologyKey
+        graph.setData(dataset)
+        if (topologyChanged) {
+          lastTopologyKey = topologyKey
+          graph.setOptions({ layout: buildLayoutOptions(dataset) as any })
+          await withRenderWatchdog(graph.render())
+        } else {
+          // Same node topology: keep layout positions and the viewport,
+          // only redraw changed elements (edges, labels, styles).
+          await withRenderWatchdog(graph.draw())
+        }
+        renderedNodeIds = new Set(dataset.nodes.map((node) => String(node.id)))
+        renderedEdgeIds = new Set(dataset.edges.map((edge) => String(edge.id)))
+        for (const id of appliedStates.keys()) {
+          if (!renderedNodeIds.has(id) && !renderedEdgeIds.has(id)) {
+            appliedStates.delete(id)
+          }
+        }
+        applyElementStates()
+        const focus = pendingFocus
+        pendingFocus = null
+        if (dataset.nodes.length === 0) {
+          continue
+        }
+        // Animated camera updates rely on requestAnimationFrame, which is
+        // throttled or suspended for backgrounded extension pages and can
+        // leave their promises pending forever — apply viewport changes
+        // instantly and never await them.
+        if (focus && Date.now() - focus.at < 2000 && renderedNodeIds.has(focus.id)) {
+          graph.focusElement(focus.id, false).catch(() => undefined)
+        } else if (topologyChanged) {
+          graph.fitView(undefined, false).catch(() => undefined)
+        }
+      } while (pendingSync)
+    } finally {
+      syncing = false
+    }
+  }
+
+  function withRenderWatchdog(work: Promise<void>): Promise<void> {
+    // Element animations can also be left dangling when behaviors interrupt
+    // them; cap the wait so the sync loop never deadlocks.
+    return Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 8000))
+    ])
+  }
+
+  function requestFocus(id: string) {
+    pendingFocus = { id, at: Date.now() }
+  }
+
+  function datasetTopologyKey(dataset: RenderedDataset): string {
+    const keys = dataset.nodes.map((node) => `${node.id}|${node.combo || ''}`)
+    keys.sort()
+    return keys.join(',')
   }
 
   function scheduleGraphResize() {
@@ -362,15 +440,12 @@ LIMIT 6000`)
     }
     resizeTimer = setTimeout(() => {
       resizeTimer = null
-      if (!graph || !graphRendered) {
-        resizeGraphCanvas()
-        return
+      // Resizing only adjusts the canvas and refits the view; it never
+      // re-runs the layout.
+      resizeGraphCanvas()
+      if (graph && graphRendered && renderedNodeIds.size > 0) {
+        graph.fitView(undefined, false).catch(() => undefined)
       }
-      syncGraph()
-        .then(() => fitView())
-        .catch((error) => {
-          errorMessage = errorToMessage(error)
-        })
     }, 120)
   }
 
@@ -388,8 +463,8 @@ LIMIT 6000`)
     }
   }
 
-  function buildLayoutOptions(stage = graphStageSize()) {
-    const comboCount = Math.max(1, graphDataset.combos.length)
+  function buildLayoutOptions(dataset: RenderedDataset, stage = graphStageSize()) {
+    const comboCount = Math.max(1, dataset.combos.length)
     const comboScale = Math.sqrt(comboCount)
     const innerWidth = Math.max(
       360,
@@ -404,6 +479,10 @@ LIMIT 6000`)
 
     return {
       type: 'combo-combined',
+      // Iterative layouts with animation enabled return promises that never
+      // settle in this @antv/layout version; the non-animated path computes
+      // final positions synchronously and lets graph.render() resolve.
+      animation: false,
       comboPadding,
       spacing,
       innerLayout: new RadialLayout({
@@ -418,27 +497,46 @@ LIMIT 6000`)
     }
   }
 
-  function syncElementStates() {
+  function applyElementStates() {
     if (!graph) {
       return
     }
     const searchSet = new Set(searchResults)
-    for (const node of graphDataset.nodes) {
+    const batch: Record<string, string[]> = {}
+    let changed = 0
+    const apply = (id: string, states: string[]) => {
+      const key = states.join(' ')
+      if ((appliedStates.get(id) || '') === key) {
+        return
+      }
+      if (key) {
+        appliedStates.set(id, key)
+      } else {
+        appliedStates.delete(id)
+      }
+      batch[id] = states
+      changed += 1
+    }
+    for (const id of renderedNodeIds) {
       const states: string[] = []
-      if (node.id === selectedNodeId) {
+      if (id === selectedNodeId) {
         states.push('selected')
-      } else if (searchSet.has(node.id)) {
+      } else if (searchSet.has(id)) {
         states.push('highlight')
       } else if (searchSet.size > 0) {
         states.push('dim')
       }
-      if (node.id === expandingNodeId) {
+      if (id === expandingNodeId) {
         states.push('loading')
       }
-      graph.setElementState(String(node.id), states)
+      apply(id, states)
     }
-    if (selectedEdgeId) {
-      graph.setElementState(selectedEdgeId, ['selected'])
+    for (const id of renderedEdgeIds) {
+      apply(id, id === selectedEdgeId ? ['selected'] : [])
+    }
+    if (changed > 0) {
+      // One batched state update; tolerate elements that vanished mid-flight.
+      graph.setElementState(batch, false).catch(() => undefined)
     }
   }
 
@@ -453,8 +551,6 @@ LIMIT 6000`)
       statusText = graphData.status
         ? `Overview ${graphData.nodes.size}/${graphData.status.concepts} nodes`
         : `Overview ${stats.concepts} nodes`
-      await tick()
-      await fitView()
     } catch (error) {
       errorMessage = errorToMessage(error)
       statusText = 'Load failed'
@@ -488,7 +584,6 @@ LIMIT 6000`)
       searchResults = []
       searchIndex = 0
       selectedNodeId = ''
-      syncElementStates()
       return
     }
 
@@ -503,13 +598,10 @@ LIMIT 6000`)
         selectedNodeId = results[0].id
         selectedEdgeId = ''
         viewMode = 'focus'
+        requestFocus(results[0].id)
         await graphData.expandConcept(results[0].id).catch(() => undefined)
       }
       statusText = `${results.length} search results`
-      await tick()
-      if (results[0]) {
-        await focusElement(results[0].id)
-      }
     } catch (error) {
       errorMessage = errorToMessage(error)
       statusText = 'Search failed'
@@ -527,7 +619,7 @@ LIMIT 6000`)
     selectedEdgeId = ''
     viewMode = 'focus'
     if (selectedNodeId) {
-      focusElement(selectedNodeId)
+      requestFocus(selectedNodeId)
     }
   }
 
@@ -586,8 +678,7 @@ LIMIT 6000`)
       viewMode = 'focus'
       selectedNodeId = id
       selectedEdgeId = ''
-      await tick()
-      await focusElement(id)
+      requestFocus(id)
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {
@@ -608,7 +699,7 @@ LIMIT 6000`)
       return
     }
     await tick()
-    graph.focusElement(id, { duration: 300 })
+    graph.focusElement(id, false).catch(() => undefined)
   }
 
   async function fitView() {
@@ -616,7 +707,7 @@ LIMIT 6000`)
       return
     }
     await tick()
-    graph.fitView(undefined, { duration: 260 })
+    graph.fitView(undefined, false).catch(() => undefined)
   }
 
   function zoomBy(scale: number) {
@@ -624,7 +715,7 @@ LIMIT 6000`)
       return
     }
     const zoom = graph.getZoom()
-    graph.zoomTo(Math.max(0.08, Math.min(zoom * scale, 5)), { duration: 180 })
+    graph.zoomTo(Math.max(0.08, Math.min(zoom * scale, 5)), false)
   }
 
   function resetFilters() {
@@ -1340,6 +1431,7 @@ LIMIT 6000`)
                 class={buttonClass('ghost', 'xs')}
                 onclick={() => {
                   viewMode = 'focus'
+                  requestFocus(selectedNode.id)
                   focusElement(selectedNode.id)
                 }}
               >
@@ -1385,6 +1477,7 @@ LIMIT 6000`)
                 onclick={() => {
                   selectNode(hub.id)
                   viewMode = 'focus'
+                  requestFocus(hub.id)
                 }}
               >
                 <span class="min-w-0 truncate">{hub.name}</span>
