@@ -2,18 +2,20 @@
 
 All notable changes to Anda Bot.
 
-## [0.9.7] — 2026-06-11
+## [0.9.7] — 2026-06-12
 
 ### Added
 
 - **Resource blobs can be downloaded for local processing**: the resources API now offers a `DownloadResource` operation that writes a persisted resource blob to a safe local filename in a requested directory or the system temp directory.
+- **Idle Brain sleep maintenance**: when all bot sessions and background tasks have been continuously idle, the daemon now triggers a full Brain maintenance cycle if the previous maintenance start is more than 12 hours old.
 
 ### Changed
 
+- **Agent runtime split into focused modules**: separated instruction rendering, request metadata, session state, session running, and startup recovery logic from the monolithic agent implementation.
 - **Launcher downloaded updates install only from explicit menu action**: automatic update polling now records downloaded updates without immediately opening restart prompts, and manual update checks use the tray/menu item as the single explicit install-and-restart entrypoint.
 - **Launcher update menu state clears after successful restart handoff**: successful update installation now clears the pending downloaded-update state so the menu returns to the normal update-check label.
 - **Launcher downloaded-update label is action-oriented**: updated English and Chinese menu text from passive download status to “Install and restart” wording.
-- **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.7`.
+- **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.7`.
 
 ### Fixed
 

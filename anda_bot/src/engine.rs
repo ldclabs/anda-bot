@@ -35,6 +35,7 @@ mod browser;
 mod browser_ws;
 mod conversation;
 mod goal;
+mod idle;
 mod model_retry;
 mod multimodal;
 mod prompt;
@@ -59,6 +60,7 @@ pub use agent::{
 pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
+pub use idle::{BrainSleepIdleHook, IdleHook};
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
@@ -263,12 +265,17 @@ impl Engines {
                     "tools_select".to_string(),
                 ]),
         );
+        // Put the brain to sleep (full maintenance) once the bot has been
+        // fully idle and the last sleep is more than 12 hours old.
+        let idle_hooks: Vec<Arc<dyn IdleHook>> =
+            vec![Arc::new(BrainSleepIdleHook::new(brain_client.clone()))];
         let bot = Arc::new(AndaBot::new(
             brain_client.clone(),
             cfg.home_dir.clone(),
             conversations_tool.clone(),
             resource_store.clone(),
             completion_hooks,
+            idle_hooks,
             skills_tool.clone(),
             browser_tabs_tool.clone(),
             tts_manager.clone(),

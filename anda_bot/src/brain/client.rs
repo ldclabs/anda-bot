@@ -8,7 +8,10 @@ use crate::util::http_client::new_reqwest_client;
 
 pub use anda_brain::{
     payload::RpcResponse,
-    types::{FormationInputRef, FormationStatus, GetOrInitUserInput, RecallInput, RecallInputRef},
+    types::{
+        FormationInputRef, FormationStatus, GetOrInitUserInput, MaintenanceInput, MaintenanceScope,
+        RecallInput, RecallInputRef,
+    },
 };
 
 // Recall runs LLM work inline in the brain handler and can exceed the shared
@@ -104,6 +107,21 @@ impl Client {
             Err(serde_json::to_string(&rt)
                 .unwrap_or_else(|_| {
                     "[BrainClient] brain_state failed with unknown error".to_string()
+                })
+                .into())
+        }
+    }
+
+    /// Triggers a maintenance cycle. The brain runs the cycle asynchronously
+    /// and returns the maintenance conversation id immediately.
+    pub async fn maintenance(&self, input: &MaintenanceInput) -> Result<AgentOutput, BoxError> {
+        let rt: RpcResponse<AgentOutput> = self.post("/maintenance", input).await?;
+        if let Some(result) = rt.result {
+            Ok(result)
+        } else {
+            Err(serde_json::to_string(&rt)
+                .unwrap_or_else(|_| {
+                    "[BrainClient] maintenance failed with unknown error".to_string()
                 })
                 .into())
         }
@@ -339,7 +357,7 @@ mod tests {
                 "maintenance_processing": false,
                 "formation_processed_id": 9,
                 "maintenance_processed_id": 4,
-                "maintenance_at": {"daydream": 0, "full": 0, "quick": 0},
+                "maintenance_at": {"daydream": 0, "full": 0, "quick": 0, "start_at": 1700000000000u64},
             }
         })
     }
@@ -372,6 +390,7 @@ mod tests {
         let status = client.brain_status().await.unwrap();
         assert_eq!(status.concepts, 3);
         assert_eq!(status.propositions, 5);
+        assert_eq!(status.maintenance_at.start_at, 1700000000000);
 
         // Without a token the request carries no Authorization header.
         let anonymous = Client::new(base_url, None);
@@ -542,6 +561,36 @@ mod tests {
             "got: {msg}"
         );
         assert!(msg.contains("plain text"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn maintenance_posts_input_and_unwraps_output() {
+        let app = Router::new().route(
+            "/v1/anda_bot/maintenance",
+            routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                assert_eq!(body["trigger"], "scheduled");
+                assert_eq!(body["scope"], "full");
+                axum::Json(json!({
+                    "result": serde_json::to_value(AgentOutput {
+                        conversation: Some(7),
+                        ..Default::default()
+                    })
+                    .unwrap()
+                }))
+            }),
+        );
+        let base_url = spawn_brain_mock(app).await;
+        let client = Client::new(base_url, None);
+
+        let output = client
+            .maintenance(&MaintenanceInput {
+                trigger: "scheduled".to_string(),
+                scope: MaintenanceScope::Full,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(output.conversation, Some(7));
     }
 
     #[tokio::test]
