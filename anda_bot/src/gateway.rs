@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tower_http::compression::CompressionLayer;
 
-use crate::{brain, config, cron, engine};
+use crate::{brain, channel, config, cron, engine};
 
 mod chat;
 mod client;
@@ -24,7 +24,7 @@ pub async fn serve(
     engine_ref: Arc<EngineRef>,
     cron: Arc<cron::CronRuntime>,
     completion_hooks: Vec<Arc<dyn engine::CompletionHook>>,
-    active_im_channels: Vec<String>,
+    channel_sender: channel::ChannelSender,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
     let brain = brain::Brain::new(db.object_store(), brain_cfg).await?;
     let brain_state = brain.state.clone();
@@ -34,7 +34,7 @@ pub async fn serve(
         engine_ref,
         cron,
         completion_hooks,
-        active_im_channels,
+        channel_sender,
     )
     .await?;
 

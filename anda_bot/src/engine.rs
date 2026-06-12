@@ -48,7 +48,7 @@ use crate::util::{
     key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{
-    auto_update::AutoUpdater, brain, config, cron, transcription::TranscriptionManager,
+    auto_update::AutoUpdater, brain, channel, config, cron, transcription::TranscriptionManager,
     tts::TtsManager,
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
@@ -133,8 +133,9 @@ impl Engines {
         engine_ref: Arc<EngineRef>,
         cron_runtime: Arc<cron::CronRuntime>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
-        active_im_channels: Vec<String>,
+        channel_sender: channel::ChannelSender,
     ) -> Result<Self, BoxError> {
+        let active_im_channels = channel_sender.channels();
         let config_path = config::Config::file_path(&cfg.home_dir);
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
@@ -341,6 +342,13 @@ impl Engines {
         }
         if let Some(manager) = transcription_manager {
             engine_builder = engine_builder.register_tool(manager)?;
+        }
+        if !channel_sender.is_empty() {
+            engine_builder = engine_builder
+                .register_tool(Arc::new(channel::SendImMessageTool::new(
+                    channel_sender.clone(),
+                )))?
+                .register_tool(Arc::new(channel::ListImChannelsTool::new(channel_sender)))?;
         }
 
         let engine = engine_builder

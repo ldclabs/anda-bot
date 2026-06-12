@@ -53,7 +53,7 @@ use super::{
     },
 };
 use crate::{
-    brain, cron, transcription::TranscriptionManager, tts::TtsManager,
+    brain, channel, cron, transcription::TranscriptionManager, tts::TtsManager,
     util::request_meta::request_meta_extra_as,
 };
 
@@ -290,6 +290,10 @@ impl AndaBot {
         }
         if transcription_manager.is_some() {
             tool_dependencies.push(TranscriptionManager::NAME.to_string());
+        }
+        if !active_im_channels.is_empty() {
+            tool_dependencies.push(channel::SendImMessageTool::NAME.to_string());
+            tool_dependencies.push(channel::ListImChannelsTool::NAME.to_string());
         }
 
         Self {

@@ -5,6 +5,7 @@ pub mod wechat;
 
 mod attachments;
 mod runtime;
+mod tools;
 mod types;
 
 use anda_core::BoxError;
@@ -13,6 +14,7 @@ use std::{collections::HashMap, sync::Arc};
 
 pub use attachments::*;
 pub use runtime::*;
+pub use tools::*;
 pub use types::*;
 
 use crate::config;

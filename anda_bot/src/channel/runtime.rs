@@ -4,12 +4,15 @@ use anda_db::{
     database::AndaDB,
     error::DBError,
     index::jieba_tokenizer,
+    query::{Filter, Query, RangeQuery},
+    schema::Fv,
     unix_ms,
 };
 use anda_engine::{context::AgentCtx, engine::EngineRef};
 use anda_kip::Map;
 use async_trait::async_trait;
 use parking_lot::RwLock;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     io,
@@ -355,8 +358,10 @@ impl ChannelRuntime {
         Arc::new(self.inner.clone())
     }
 
-    pub fn active_channels(&self) -> Vec<String> {
-        self.inner.channels.keys().cloned().collect()
+    pub fn sender(&self) -> ChannelSender {
+        ChannelSender {
+            inner: self.inner.clone(),
+        }
     }
 
     pub async fn serve(
@@ -616,6 +621,108 @@ impl ChannelRuntimeInner {
         } else {
             Err(format!("channel {} not found", channel).into())
         }
+    }
+}
+
+/// A cloneable handle that lets the agent push messages into configured IM
+/// channels outside of the IM -> agent -> IM reply loop (any -> agent -> IM).
+#[derive(Clone)]
+pub struct ChannelSender {
+    inner: Arc<ChannelRuntimeInner>,
+}
+
+/// A distinct counterparty seen in recent channel traffic, used by the agent
+/// to resolve valid `recipient` values for a channel.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentRecipient {
+    pub channel: String,
+    pub recipient: String,
+    pub thread: Option<String>,
+    pub last_sender: String,
+    pub last_timestamp: u64,
+}
+
+/// How many recent messages to scan when aggregating distinct recipients.
+const RECENT_RECIPIENTS_SCAN_LIMIT: usize = 300;
+
+impl ChannelSender {
+    pub fn channels(&self) -> Vec<String> {
+        let mut channels: Vec<String> = self.inner.channels.keys().cloned().collect();
+        channels.sort();
+        channels
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.channels.is_empty()
+    }
+
+    /// Sends a message through the named channel with the runtime retry policy
+    /// and records it in the channel messages collection.
+    pub async fn send(
+        &self,
+        channel: &str,
+        message: SendMessage,
+        conversation: Option<u64>,
+    ) -> Result<(), BoxError> {
+        self.inner
+            .try_send(channel.to_string(), message, conversation)
+            .await
+    }
+
+    /// Aggregates the most recently active recipients from stored channel
+    /// messages, newest first, optionally restricted to one channel.
+    pub async fn recent_recipients(
+        &self,
+        channel: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RecentRecipient>, BoxError> {
+        let limit = limit.clamp(1, 100);
+        let cursor = self.inner.messages.max_document_id().saturating_add(1);
+        let id_filter = Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))));
+        let filter = match channel {
+            Some(channel) => Filter::And(vec![
+                Box::new(Filter::Field((
+                    "channel".to_string(),
+                    RangeQuery::Eq(Fv::Text(channel.to_string())),
+                ))),
+                Box::new(id_filter),
+            ]),
+            None => id_filter,
+        };
+        let messages: Vec<ChannelMessage> = self
+            .inner
+            .messages
+            .search_as(Query {
+                search: None,
+                filter: Some(filter),
+                limit: Some(RECENT_RECIPIENTS_SCAN_LIMIT),
+            })
+            .await?;
+
+        let mut recipients: Vec<RecentRecipient> = Vec::new();
+        // Results are ascending by _id; walk in reverse for newest first.
+        for message in messages.iter().rev() {
+            if message.reply_target.is_empty() {
+                continue;
+            }
+            if recipients
+                .iter()
+                .any(|r| r.channel == message.channel && r.recipient == message.reply_target)
+            {
+                continue;
+            }
+            recipients.push(RecentRecipient {
+                channel: message.channel.clone(),
+                recipient: message.reply_target.clone(),
+                thread: message.thread.clone(),
+                last_sender: message.sender.clone(),
+                last_timestamp: message.timestamp,
+            });
+            if recipients.len() >= limit {
+                break;
+            }
+        }
+        Ok(recipients)
     }
 }
 
@@ -1382,6 +1489,57 @@ mod tests {
         assert!(prompt.starts_with(
             "[$external_user: channel=\"wechat:family\", sender=\"agent-a\", space=\"room-7\"]"
         ));
+    }
+
+    #[tokio::test]
+    async fn sender_sends_and_aggregates_recent_recipients() {
+        let channel = Arc::new(TestChannel::new("test:sender", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let sender = runtime.sender();
+
+        assert!(!sender.is_empty());
+        assert_eq!(sender.channels(), vec![channel.id()]);
+
+        sender
+            .send(&channel.id(), SendMessage::new("first", "alice"), None)
+            .await
+            .unwrap();
+        sender
+            .send(&channel.id(), SendMessage::new("second", "bob"), Some(7))
+            .await
+            .unwrap();
+        sender
+            .send(&channel.id(), SendMessage::new("third", "alice"), None)
+            .await
+            .unwrap();
+
+        assert_eq!(channel.sent_messages().await.len(), 3);
+
+        let recipients = sender.recent_recipients(None, 10).await.unwrap();
+        assert_eq!(recipients.len(), 2);
+        assert_eq!(recipients[0].recipient, "alice"); // newest first
+        assert_eq!(recipients[0].channel, channel.id());
+        assert_eq!(recipients[0].last_sender, "anda-bot");
+        assert_eq!(recipients[1].recipient, "bob");
+
+        let filtered = sender
+            .recent_recipients(Some(&channel.id()), 1)
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].recipient, "alice");
+
+        let none = sender
+            .recent_recipients(Some("test:other"), 10)
+            .await
+            .unwrap();
+        assert!(none.is_empty());
+
+        let err = sender
+            .send("test:missing", SendMessage::new("x", "alice"), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
