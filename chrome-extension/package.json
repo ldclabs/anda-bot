@@ -45,6 +45,7 @@
     "@antv/layout": "1.2.14-beta.8",
     "katex": "^0.17.0",
     "markdown-it": "^14.2.0",
-    "prismjs": "^1.30.0"
+    "prismjs": "^1.30.0",
+    "yaml": "^2.9.0"
   }
 }

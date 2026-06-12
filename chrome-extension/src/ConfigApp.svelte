@@ -41,6 +41,7 @@
     numberValue,
     objectArray,
     optionalObject,
+    parseConfigDraft,
     removeArrayItem,
     renderConfigYaml,
     runtimeFields,
@@ -130,6 +131,12 @@
 
   function markSourceDirty(event: Event) {
     source = (event.currentTarget as HTMLTextAreaElement).value
+    // Keep the form in sync with hand-edited YAML so a later form edit does
+    // not overwrite manual changes with stale draft values.
+    const parsed = parseConfigDraft(source)
+    if (parsed) {
+      draft = parsed
+    }
     dirty = true
     statusMessage = ''
     errorMessage = ''

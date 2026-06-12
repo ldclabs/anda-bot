@@ -1,3 +1,5 @@
+import { Document, isMap, isNode, isScalar, isSeq, parseDocument } from 'yaml'
+import type { Pair, YAMLMap, YAMLSeq } from 'yaml'
 import type { Json } from './api'
 
 export type JsonObject = { [key: string]: Json }
@@ -462,325 +464,136 @@ export function removeArrayItem(target: JsonObject, key: string, index: number):
   items.splice(index, 1)
 }
 
+// Re-render the YAML source with the draft values applied. The previous
+// source is parsed into a comment-preserving document tree and the draft is
+// synced onto it in place, so comments (full-line and inline), key order,
+// quoting style, and keys the form schema does not know about all survive.
 export function renderConfigYaml(config: JsonObject, previousSource = ''): string {
-  const comments = analyzeComments(previousSource)
-  const emittedComments = new Set<number>()
-  const lines: string[] = []
-
-  writeCommentEntries(lines, comments.header, emittedComments)
-  writeTopScalar(lines, comments, emittedComments, 'addr', config.addr ?? '127.0.0.1:8042')
-  writeTopScalar(lines, comments, emittedComments, 'log_level', config.log_level ?? 'warn')
-  writeTopScalar(lines, comments, emittedComments, 'https_proxy', config.https_proxy ?? null, true)
-  writeTopList(lines, comments, emittedComments, 'workspaces', config.workspaces)
-  writeTopObjectArray(lines, comments, emittedComments, 'users', config.users, userFields)
-
-  writeTopSection(lines, comments, emittedComments, 'model')
-  const model = asObject(config.model)
-  lines.push('model:')
-  writeScalarField(
-    lines,
-    2,
-    { key: 'active', label: 'Active model', kind: 'text' },
-    model.active ?? ''
-  )
-  writeObjectArray(lines, 2, 'providers', model.providers, modelProviderFields)
-  lines.push('')
-
-  writeTopSection(lines, comments, emittedComments, 'tts')
-  const tts = asObject(config.tts)
-  lines.push('tts:')
-  writeFields(lines, 2, tts, ttsFields)
-  for (const provider of Object.keys(ttsProviderSchemas)) {
-    const value = optionalObject(tts, provider)
-    if (value) {
-      writeObject(lines, 2, provider, value, ttsProviderSchemas[provider])
-    }
+  let doc = parseDocument(previousSource)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) {
+    doc = new Document({}) as typeof doc
   }
-  lines.push('')
-
-  writeTopSection(lines, comments, emittedComments, 'transcription')
-  const transcription = asObject(config.transcription)
-  lines.push('transcription:')
-  writeFields(lines, 2, transcription, transcriptionFields)
-  for (const provider of Object.keys(transcriptionProviderSchemas)) {
-    const value = optionalObject(transcription, provider)
-    if (value) {
-      writeObject(lines, 2, provider, value, transcriptionProviderSchemas[provider])
-    }
-  }
-  lines.push('')
-
-  writeTopSection(lines, comments, emittedComments, 'channels')
-  const channels = asObject(config.channels)
-  lines.push('channels:')
-  for (const channel of Object.keys(channelSchemas)) {
-    writeObjectArray(lines, 2, channel, channels[channel], channelSchemas[channel])
-  }
-  lines.push('')
-
-  writeRemainingComments(lines, comments.all, emittedComments)
-
-  return `${lines
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd()}\n`
+  syncMapNode(doc, doc.contents as YAMLMap, config)
+  return doc.toString({ lineWidth: 0, flowCollectionPadding: false })
 }
 
-function writeTopScalar(
-  lines: string[],
-  comments: CommentIndex,
-  emittedComments: Set<number>,
-  key: string,
-  value: Json,
-  nullable = false
-): void {
-  writeTopSection(lines, comments, emittedComments, key)
-  lines.push(`${key}: ${yamlScalar(value, nullable)}`.trimEnd())
-  lines.push('')
-}
-
-function writeTopList(
-  lines: string[],
-  comments: CommentIndex,
-  emittedComments: Set<number>,
-  key: string,
-  value: Json | undefined
-): void {
-  writeTopSection(lines, comments, emittedComments, key)
-  writeStringList(lines, 0, key, Array.isArray(value) ? value : [])
-  lines.push('')
-}
-
-function writeTopObjectArray(
-  lines: string[],
-  comments: CommentIndex,
-  emittedComments: Set<number>,
-  key: string,
-  value: Json | undefined,
-  fields: FieldSchema[]
-): void {
-  writeTopSection(lines, comments, emittedComments, key)
-  writeObjectArray(lines, 0, key, value, fields)
-  lines.push('')
-}
-
-function writeTopSection(
-  lines: string[],
-  comments: CommentIndex,
-  emittedComments: Set<number>,
-  key: string
-): void {
-  writeCommentEntries(
-    lines,
-    comments.leadingByKey.get(key) || comments.sectionByKey.get(key),
-    emittedComments
-  )
-}
-
-function writeFields(
-  lines: string[],
-  indent: number,
-  target: JsonObject,
-  fields: FieldSchema[]
-): void {
-  for (const field of fields) {
-    writeScalarField(lines, indent, field, target[field.key])
+// Parse hand-edited YAML back into a draft object, or null when invalid.
+export function parseConfigDraft(source: string): JsonObject | null {
+  const doc = parseDocument(source)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) {
+    return null
   }
+  return normalizeConfigDraft(doc.toJS() as Json)
 }
 
-function writeObject(
-  lines: string[],
-  indent: number,
-  key: string,
-  value: JsonObject,
-  fields: FieldSchema[]
-): void {
-  lines.push(`${spaces(indent)}${key}:`)
-  writeFields(lines, indent + 2, value, fields)
-}
-
-function writeObjectArray(
-  lines: string[],
-  indent: number,
-  key: string,
-  value: Json | undefined,
-  fields: FieldSchema[]
-): void {
-  const items = Array.isArray(value)
-    ? value.filter(
-        (item): item is JsonObject =>
-          Boolean(item) && typeof item === 'object' && !Array.isArray(item)
-      )
-    : []
-  if (items.length === 0) {
-    lines.push(`${spaces(indent)}${key}: []`)
-    return
-  }
-
-  lines.push(`${spaces(indent)}${key}:`)
-  for (const item of items) {
-    lines.push(
-      `${spaces(indent + 2)}- ${fields[0].key}: ${yamlScalar(item[fields[0].key], fields[0].nullable)}`
-    )
-    for (const field of fields.slice(1)) {
-      writeScalarField(lines, indent + 4, field, item[field.key])
-    }
-  }
-}
-
-function writeScalarField(
-  lines: string[],
-  indent: number,
-  field: FieldSchema,
-  value: Json | undefined
-): void {
-  if (field.kind === 'string-list') {
-    writeStringList(lines, indent, field.key, Array.isArray(value) ? value : [])
-    return
-  }
-
-  if (field.kind === 'object') {
-    const objectValue = asObject(value)
-    writeObject(lines, indent, field.key, objectValue, field.fields || [])
-    return
-  }
-
-  lines.push(`${spaces(indent)}${field.key}: ${yamlScalar(value, field.nullable)}`.trimEnd())
-}
-
-function writeStringList(lines: string[], indent: number, key: string, value: Json[]): void {
-  const items = value.map((item) => String(item ?? '').trim()).filter(Boolean)
-  if (items.length === 0) {
-    lines.push(`${spaces(indent)}${key}: []`)
-    return
-  }
-
-  lines.push(`${spaces(indent)}${key}:`)
-  for (const item of items) {
-    lines.push(`${spaces(indent + 2)}- ${yamlScalar(item)}`)
-  }
-}
-
-function yamlScalar(value: Json | undefined, nullable = false): string {
-  if (value == null) {
-    return nullable ? '' : 'null'
-  }
-  if (typeof value === 'boolean' || typeof value === 'number') {
-    return String(value)
-  }
-  const text = String(value)
-  if (text === '') {
-    return nullable ? '' : '""'
-  }
-  if (
-    /^[A-Za-z0-9_./:@+-]+$/.test(text) &&
-    !['true', 'false', 'null', '~'].includes(text.toLowerCase())
-  ) {
-    return text
-  }
-  return JSON.stringify(text)
-}
-
-function spaces(count: number): string {
-  return ' '.repeat(count)
-}
-
-interface CommentEntry {
-  index: number
-  line: string
-}
-
-interface CommentIndex {
-  all: CommentEntry[]
-  header: CommentEntry[]
-  leadingByKey: Map<string, CommentEntry[]>
-  sectionByKey: Map<string, CommentEntry[]>
-}
-
-function analyzeComments(source: string): CommentIndex {
-  const lines = source.split(/\r?\n/)
-  const all: CommentEntry[] = []
-  const header: CommentEntry[] = []
-  const leadingByKey = new Map<string, CommentEntry[]>()
-  const sectionByKey = new Map<string, CommentEntry[]>()
-  const topKeyByLine = new Map<number, string>()
-  const topKeyPattern = /^([A-Za-z_][A-Za-z0-9_]*):(?:\s|$)/
-
-  let currentKey = '__header'
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    const match = topKeyPattern.exec(line)
-    if (match && !line.trimStart().startsWith('#')) {
-      currentKey = match[1]
-      topKeyByLine.set(index, currentKey)
+function syncMapNode(doc: Document, map: YAMLMap, json: JsonObject): void {
+  const pairs = map.items as Pair[]
+  for (const [key, value] of Object.entries(json)) {
+    const pair = pairs.find((item) => pairKey(item) === key)
+    if (!pair) {
+      // Keys the file never had are only added when they carry content, so a
+      // form round-trip does not pad hand-maintained files with empty keys.
+      if (!isEmptyDraftValue(value)) {
+        map.items.push(doc.createPair(key, value))
+      }
       continue
     }
-    if (!line.trimStart().startsWith('#')) {
+    if (value === null && (isMap(pair.value) || isSeq(pair.value))) {
+      // The form removed this optional block (e.g. a disabled TTS provider).
+      map.items.splice(map.items.indexOf(pair), 1)
       continue
     }
+    pair.value = syncNode(doc, pair.value, value)
+  }
+  // Keys absent from the draft (unknown to the form schema) are kept as-is.
+}
 
-    const entry = { index, line }
-    all.push(entry)
-    if (currentKey === '__header') {
-      header.push(entry)
+function syncNode(doc: Document, node: unknown, value: Json): unknown {
+  if (Array.isArray(value)) {
+    if (isSeq(node)) {
+      syncSeqNode(doc, node, value)
+      return node
+    }
+    if (isNullScalar(node) && isEmptyDraftValue(value)) {
+      // Keep a bare `key:` (often holding commented-out examples) instead of
+      // overwriting it with an empty placeholder.
+      return node
+    }
+    return replaceNode(doc, node, value)
+  }
+  if (value !== null && typeof value === 'object') {
+    if (isMap(node)) {
+      syncMapNode(doc, node, value)
+      return node
+    }
+    if (isNullScalar(node) && isEmptyDraftValue(value)) {
+      return node
+    }
+    return replaceNode(doc, node, value)
+  }
+  if (isScalar(node)) {
+    if (typeof node.value !== typeof value) {
+      // Drop the remembered scalar style so e.g. a quoted string does not
+      // turn a number or boolean into a quoted scalar.
+      node.type = undefined
+    }
+    node.value = value
+    return node
+  }
+  return replaceNode(doc, node, value)
+}
+
+function syncSeqNode(doc: Document, seq: YAMLSeq, values: Json[]): void {
+  if (seq.items.length > values.length) {
+    seq.items.length = values.length
+  }
+  values.forEach((value, index) => {
+    if (index < seq.items.length) {
+      seq.items[index] = syncNode(doc, seq.items[index], value)
     } else {
-      const entries = sectionByKey.get(currentKey) || []
-      entries.push(entry)
-      sectionByKey.set(currentKey, entries)
+      seq.items.push(doc.createNode(value))
     }
-  }
-
-  for (const [index, key] of topKeyByLine) {
-    const entries: CommentEntry[] = []
-    for (let scan = index - 1; scan >= 0; scan -= 1) {
-      const line = lines[scan]
-      if (line.trim() === '') {
-        continue
-      }
-      if (!line.trimStart().startsWith('#')) {
-        break
-      }
-      entries.unshift({ index: scan, line })
-    }
-    if (entries.length > 0) {
-      leadingByKey.set(key, entries)
-    }
-  }
-
-  return { all, header, leadingByKey, sectionByKey }
+  })
 }
 
-function writeCommentEntries(
-  lines: string[],
-  entries: CommentEntry[] | undefined,
-  emittedComments: Set<number>
-): void {
-  if (!entries?.length) {
-    return
-  }
-  for (const entry of entries) {
-    if (emittedComments.has(entry.index)) {
-      continue
+function replaceNode(doc: Document, node: unknown, value: Json): unknown {
+  const next = doc.createNode(value)
+  if (isNode(node)) {
+    if (node.commentBefore) {
+      next.commentBefore = node.commentBefore
     }
-    lines.push(entry.line)
-    emittedComments.add(entry.index)
+    if (node.comment) {
+      next.comment = node.comment
+    }
+    if (node.spaceBefore) {
+      next.spaceBefore = node.spaceBefore
+    }
   }
+  return next
 }
 
-function writeRemainingComments(
-  lines: string[],
-  entries: CommentEntry[],
-  emittedComments: Set<number>
-): void {
-  const remaining = entries.filter((entry) => !emittedComments.has(entry.index))
-  if (remaining.length === 0) {
-    return
+function pairKey(pair: Pair): string {
+  return isScalar(pair.key) ? String(pair.key.value) : String(pair.key)
+}
+
+function isNullScalar(node: unknown): boolean {
+  return node == null || (isScalar(node) && node.value == null)
+}
+
+// Empty in the sense that writing it would only add placeholders: nulls,
+// empty strings, and containers holding nothing but such values. Numbers and
+// booleans always count as content.
+function isEmptyDraftValue(value: Json): boolean {
+  if (value === null || value === '') {
+    return true
   }
-  lines.push('')
-  for (const entry of remaining) {
-    lines.push(entry.line)
-    emittedComments.add(entry.index)
+  if (Array.isArray(value)) {
+    return value.length === 0
   }
+  if (typeof value === 'object') {
+    return Object.values(value).every(isEmptyDraftValue)
+  }
+  return false
 }
 
 function cloneJson<T extends Json>(value: T): T {
