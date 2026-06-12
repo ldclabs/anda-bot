@@ -2,24 +2,46 @@
 
 All notable changes to Anda Bot.
 
-## [0.9.7] — 2026-06-12
+## [0.9.8] — 2026-06-12
 
 ### Added
 
 - **Resource blobs can be downloaded for local processing**: the resources API now offers a `DownloadResource` operation that writes a persisted resource blob to a safe local filename in a requested directory or the system temp directory.
+- **IM channel tools**: agents can now list configured IM channels and send messages through configured IM channel recipients using strict-schema tools.
+- **Skills in slash completions**: slash command completions now surface available skills so they are easier to discover and invoke.
+- **Browser extension Brain and config page localization**: the Brain Graph and config editor pages now use bundled localized strings across supported locales.
 - **Idle Brain sleep maintenance**: when all bot sessions and background tasks have been continuously idle, the daemon now triggers a full Brain maintenance cycle if the previous maintenance start is more than 12 hours old.
 
 ### Changed
 
 - **Agent runtime split into focused modules**: separated instruction rendering, request metadata, session state, session running, and startup recovery logic from the monolithic agent implementation.
-- **Launcher downloaded updates install only from explicit menu action**: automatic update polling now records downloaded updates without immediately opening restart prompts, and manual update checks use the tray/menu item as the single explicit install-and-restart entrypoint.
-- **Launcher update menu state clears after successful restart handoff**: successful update installation now clears the pending downloaded-update state so the menu returns to the normal update-check label.
-- **Launcher downloaded-update label is action-oriented**: updated English and Chinese menu text from passive download status to “Install and restart” wording.
-- **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.7`.
+- **Launcher language follows the extension UI**: launcher-facing text now stays aligned with the browser extension language choice.
 
 ### Fixed
 
 - **HTTP clients bypass local and private addresses when proxies are configured**: shared reqwest clients now honor standard proxy environment variables for external hosts while always exempting loopback and private-network traffic, so daemon, Brain, and local mock requests are not accidentally routed through a proxy.
+- **Browser extension polling, socket teardown, and browser actions are more robust**: hardened reconnect and browser-action paths to avoid stale state and missed updates.
+- **Hand-edited config YAML is preserved**: config saves now keep manually edited YAML structure and comments where possible instead of unnecessarily rewriting the file.
+- **Brain Graph sync no longer stalls**: graph synchronization now recovers from stalled sync state instead of leaving the page stuck.
+- **Optimistic chat sends are more reliable**: pending chat messages now reconcile more cleanly with accepted server history.
+- **Follow-up poll output is delivered**: queued follow-up results are now surfaced instead of being lost during polling.
+- **Daemon exits after HTTP shutdown**: HTTP shutdown now propagates through the daemon cancellation tree and no longer waits indefinitely on the OS signal handler.
+
+### Dependencies
+
+- Refreshed lockfile dependencies, including `anda_brain` 0.7.2, `anda_engine` 0.12.37, `liteparse` 2.0.8, `liteparse-pdfium` 1.1.0, `memchr` 2.8.2, and `smallvec` 1.15.2.
+
+## [0.9.7] — 2026-06-11
+
+### Changed
+
+- **Launcher downloaded updates install only from explicit menu action**: automatic update polling now records downloaded updates without immediately opening restart prompts, and manual update checks use the tray/menu item as the single explicit install-and-restart entrypoint.
+- **Launcher update menu state clears after successful restart handoff**: successful update installation now clears the pending downloaded-update state so the menu returns to the normal update-check label.
+- **Launcher downloaded-update label is action-oriented**: updated English and Chinese menu text from passive download status to “Install and restart” wording.
+- **Version synchronized for the 0.9.7 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.7`.
+
+### Fixed
+
 - **Daemon config saves are atomic and serialized**: config updates now write through a same-directory temp file with fsync and rename, and concurrent updates are serialized, so a crash mid-save can no longer leave a truncated config that blocks the next daemon start.
 - **Skill loading failures no longer block daemon startup**: errors scanning skill directories (such as permission problems in the shared `~/.agents/skills`) are logged and the daemon continues without skills instead of refusing to start.
 - **Daemon status failures surface their cause**: `/daemon/status` errors are now logged and the underlying error detail is returned in the response instead of a generic message.
