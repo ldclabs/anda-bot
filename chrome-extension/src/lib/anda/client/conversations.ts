@@ -81,7 +81,11 @@ export function normalizeMessages(
     return []
   }
   const timestamp = raw.timestamp || context.fallbackTimestamp || Date.now()
-  const baseId = `m-${context.conversation}-${context.index}-${timestamp}`
+  // The id must stay stable across poll ticks: `fallbackTimestamp` follows
+  // `conversation.updated_at`, so embedding it would regenerate every message
+  // id on each delta and force keyed re-renders, scroll jumps, and lost
+  // expanded-details state.
+  const baseId = `m-${context.conversation}-${context.index}`
   const messages: ChatMessage[] = []
   if (content.text || content.thinkingText || attachments.length > 0) {
     messages.push({

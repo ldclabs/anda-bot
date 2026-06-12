@@ -192,9 +192,7 @@
     voiceProvider === 'chrome' ? getMessage('browserVoiceProviderLabel') : 'Anda'
   )
   const voiceProviderTitle = $derived(
-    voiceProvider === 'chrome'
-      ? getMessage('useBrowserVoice')
-      : getMessage('useAndaVoice')
+    voiceProvider === 'chrome' ? getMessage('useBrowserVoice') : getMessage('useAndaVoice')
   )
   const voiceStatus = $derived(
     voiceStage === 'recording'
@@ -439,7 +437,10 @@
       text: text.trim(),
       attachments
     }
-    await onSend(payload)
+    // Clear optimistically: a send can take a while (e.g. /side runs inline on
+    // the daemon) and the draft lingering in the box reads as "not sent".
+    const draftText = text
+    const draftAttachments = attachments
     text = ''
     attachments = []
     attachmentError = ''
@@ -448,6 +449,18 @@
     caretIndex = 0
     await tick()
     resizeTextarea()
+    try {
+      await onSend(payload)
+    } catch (_error) {
+      // The send never reached the daemon; restore the draft for a retry
+      // unless the user has already started typing something new.
+      if (!text.trim() && attachments.length === 0) {
+        text = draftText
+        attachments = draftAttachments
+        await tick()
+        resizeTextarea()
+      }
+    }
   }
 
   async function stopTask() {
@@ -1185,9 +1198,7 @@
               aria-label={inputMode === 'voice'
                 ? getMessage('switchToKeyboard')
                 : getMessage('switchToVoice')}
-              title={inputMode === 'voice'
-                ? getMessage('keyboardInput')
-                : getMessage('voiceInput')}
+              title={inputMode === 'voice' ? getMessage('keyboardInput') : getMessage('voiceInput')}
               onclick={toggleInputMode}
             >
               {#if inputMode === 'voice'}
@@ -1212,9 +1223,7 @@
                 sending ||
                 voiceStage === 'recording' ||
                 !selectedVoiceTtsAvailable}
-              aria-label={ttsEnabled
-                ? getMessage('disablePlayback')
-                : getMessage('enablePlayback')}
+              aria-label={ttsEnabled ? getMessage('disablePlayback') : getMessage('enablePlayback')}
               title={selectedVoiceTtsAvailable
                 ? `${voiceProviderLabel} ${ttsEnabled ? getMessage('playbackOn') : getMessage('playbackOff')}`
                 : `${voiceProviderLabel} ${getMessage('playbackUnavailable')}`}

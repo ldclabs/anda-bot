@@ -208,6 +208,9 @@ export class AndaSidePanelClient extends EventTarget {
     const channel = this.ensureChannel(nextSource)
     this.activeChannel = channel
     this.updateStatus(channel.status, null)
+    // A background channel polls at a slow cadence; skip the remaining sleep
+    // so the just-activated channel refreshes immediately.
+    channel.wakePolling()
     if (this.settings.token) {
       await channel.init().catch(() => undefined)
     }
@@ -337,10 +340,13 @@ export class AndaSidePanelClient extends EventTarget {
 
     if (!this.settings.token) {
       this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
-      return
+      // Throw so the composer restores the draft instead of dropping it.
+      throw new Error(getMessage('pasteTokenFirst'))
     }
 
-    const ownsSendingFlag = !this.sending
+    // /side runs a detached subagent inline on the daemon and can take a long
+    // time; it must not hold the global sending flag and block the composer.
+    const ownsSendingFlag = !this.sending && command?.kind !== 'side'
     if (ownsSendingFlag) {
       this.sending = true
     }
@@ -351,6 +357,8 @@ export class AndaSidePanelClient extends EventTarget {
       poller?.close()
     } catch (error) {
       this.updateStatus('send failed', { kind: 'error', text: errorToMessage(error) })
+      // Propagate so the composer can restore the unsent draft.
+      throw error
     } finally {
       if (ownsSendingFlag) {
         this.sending = false

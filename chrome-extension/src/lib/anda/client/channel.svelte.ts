@@ -3,7 +3,6 @@ import {
   errorToMessage,
   isTransientWebSocketError
 } from '$lib/service-worker/settings'
-import { delay } from '$lib/utils/helper'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import { conversationToGroup, normalizeMessages } from './conversations'
 import { PollConversation } from './poll-conversation'
@@ -47,6 +46,7 @@ export class Channel extends EventTarget {
   #syncAt: number = 0
   #localMessageSeq: number = 0
   #sendEpoch: number = 0
+  #pollWake: (() => void) | null = null
   #api: API
 
   constructor(source: string, api: API) {
@@ -131,6 +131,7 @@ export class Channel extends EventTarget {
 
     this.#syncAt = nowMs
     this.#syncing = true
+    const epoch = this.#sendEpoch
     try {
       const {
         output: { result: state }
@@ -144,7 +145,7 @@ export class Channel extends EventTarget {
       }
 
       const conversations = await this.fetchConversationChain(sourceConversationId)
-      if (conversations.length === 0) {
+      if (conversations.length === 0 || epoch !== this.#sendEpoch) {
         return
       }
 
@@ -177,12 +178,20 @@ export class Channel extends EventTarget {
       return null
     }
 
-    const ownsSendingFlag = !this.#sending || command?.kind === 'new'
+    // A /side request runs a detached subagent and can take a long time; it
+    // must not hold the sending flag and freeze the composer for other input.
+    const ownsSendingFlag = (!this.#sending || command?.kind === 'new') && command?.kind !== 'side'
     if (ownsSendingFlag) {
       this.#sending = true
     }
     const resources = attachments.map((attachment) => attachment.resource)
     let sendEpoch = this.#sendEpoch
+    // A bare /new only detaches the current session; the daemon answers with
+    // the old conversation id, which must not be re-fetched into the display
+    // that was just cleared.
+    const bareNew = command?.kind === 'new' && !command.prompt && attachments.length === 0
+    const localMessageIds: string[] = []
+    let delivered = false
 
     try {
       const poller = new PollConversation()
@@ -192,20 +201,15 @@ export class Channel extends EventTarget {
         if (ownsSendingFlag) {
           this.#sending = true
         }
-        if (command.prompt) {
-          this.appendLocalMessage({
-            role: 'user',
-            text: command.prompt,
-            conversation: SubmitMessageConversationId,
-            attachments: attachments.length ? attachments : undefined
-          })
-        } else if (attachments.length) {
-          this.appendLocalMessage({
-            role: 'user',
-            text: '',
-            conversation: SubmitMessageConversationId,
-            attachments
-          })
+        if (command.prompt || attachments.length) {
+          localMessageIds.push(
+            this.appendLocalMessage({
+              role: 'user',
+              text: command.prompt,
+              conversation: SubmitMessageConversationId,
+              attachments: attachments.length ? attachments : undefined
+            })
+          )
         }
       } else if (command && command.kind === 'side') {
         if (!command.prompt) {
@@ -213,10 +217,12 @@ export class Channel extends EventTarget {
         }
 
         const timestamp = Date.now()
+        const sideId = this.nextLocalMessageId('m-side', SubmitMessageConversationId, timestamp)
+        localMessageIds.push(sideId)
         this.#sideMessages = [
           ...this.#sideMessages,
           {
-            id: this.nextLocalMessageId('m-side', SubmitMessageConversationId, timestamp),
+            id: sideId,
             role: 'user',
             text: command.prompt,
             conversation: SubmitMessageConversationId,
@@ -225,37 +231,53 @@ export class Channel extends EventTarget {
           }
         ]
       } else if (command && (command.kind === 'stop' || command.kind === 'steer')) {
-        this.appendLocalMessage({
-          role: 'user',
-          text: command.prompt,
-          conversation: this.#conversation?._id || SubmitMessageConversationId,
-          attachments: attachments.length ? attachments : undefined
-        })
+        // Anchor to the displayed conversation: both commands target the
+        // session that the user is looking at, even when the local status is
+        // stale. A failed delivery removes the message again below.
+        localMessageIds.push(
+          this.appendLocalMessage({
+            role: 'user',
+            text: command.prompt,
+            conversation: this.#conversation?._id || SubmitMessageConversationId,
+            attachments: attachments.length ? attachments : undefined
+          })
+        )
       } else {
-        this.appendLocalMessage({
-          role: 'user',
-          text: prompt,
-          conversation: this.optimisticConversationId(),
-          attachments: attachments.length ? attachments : undefined
-        })
+        localMessageIds.push(
+          this.appendLocalMessage({
+            role: 'user',
+            text: prompt,
+            conversation: this.optimisticConversationId(),
+            attachments: attachments.length ? attachments : undefined
+          })
+        )
       }
 
       this.#api.updateStatus('sending', null)
 
       const isRequestStale = () => sendEpoch !== this.#sendEpoch
       const output = await this.agentRun({ name: '', prompt, resources }, isRequestStale)
+      delivered = Boolean(output)
       if (!output || isRequestStale()) {
         poller.finish()
         return poller
       }
 
       this.#session = output.session || ''
-      const hasConversation = Boolean(output.conversation)
-      if (output.conversation) {
-        const conversation = await this.fetchConversation(output.conversation)
+      const conversationId = bareNew ? 0 : output.conversation || 0
+      const hasConversation = conversationId > 0
+      if (hasConversation) {
+        const conversation = await this.fetchConversation(conversationId)
+        if (isRequestStale()) {
+          poller.finish()
+          return poller
+        }
         this.updateLatestConversation(conversation)
 
         this.pollConversationLoop(poller)
+        // If a loop was already polling this conversation, skip its remaining
+        // sleep so the just-submitted prompt's status flip shows up promptly.
+        this.wakePolling()
       }
 
       if (output.failed_reason) {
@@ -285,13 +307,20 @@ export class Channel extends EventTarget {
         this.#api.updateStatus('completed', null)
         poller.finish()
       } else if (!hasConversation) {
-        this.#api.updateStatus('idle', null)
+        this.#api.updateStatus(bareNew ? 'ready' : 'idle', null)
         poller.finish()
       }
 
       return poller
     } catch (error) {
       this.#api.updateStatus('request failed', { kind: 'error', text: errorToMessage(error) })
+      if (!delivered) {
+        // The prompt never reached the daemon: drop the optimistic messages
+        // and rethrow so the composer can restore the draft for a retry.
+        this.removeLocalMessages(localMessageIds)
+        throw error
+      }
+      // Delivered but a follow-up fetch failed; the poll loop will reconcile.
       return null
     } finally {
       if (ownsSendingFlag && sendEpoch === this.#sendEpoch) {
@@ -301,6 +330,7 @@ export class Channel extends EventTarget {
   }
 
   private async pollConversationLoop(poller: PollConversation): Promise<void> {
+    const epoch = this.#sendEpoch
     const conversation = this.#conversation ? { ...this.#conversation } : null
     if (!conversation || this.#pollingConversation === conversation._id) {
       poller.finish()
@@ -308,14 +338,14 @@ export class Channel extends EventTarget {
     }
 
     this.#pollingConversation = conversation._id
-    while (this.#pollingConversation === conversation._id) {
-      const shouldContinue = await this.pollConversationOnce(conversation, poller)
+    while (this.#pollingConversation === conversation._id && epoch === this.#sendEpoch) {
+      const shouldContinue = await this.pollConversationOnce(conversation, poller, epoch)
       if (!shouldContinue) {
         break
       }
       const ms =
         this.#api.activeChannel() === this.source ? pollingIntervalMs : pollingIntervalMs * 10
-      await delay(ms)
+      await this.pollIdle(ms)
     }
 
     // Release the lock so the same conversation can be polled again later
@@ -326,9 +356,30 @@ export class Channel extends EventTarget {
     poller.finish()
   }
 
+  // Sleep between poll ticks, but allow wakePolling() to cut the wait short
+  // (new prompt submitted, channel re-activated, display cleared).
+  private pollIdle(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer)
+        if (this.#pollWake === finish) {
+          this.#pollWake = null
+        }
+        resolve()
+      }
+      const timer = setTimeout(finish, ms)
+      this.#pollWake = finish
+    })
+  }
+
+  wakePolling(): void {
+    this.#pollWake?.()
+  }
+
   private async pollConversationOnce(
     conversation: Conversation,
-    poller: PollConversation
+    poller: PollConversation,
+    epoch: number
   ): Promise<boolean> {
     try {
       const {
@@ -342,6 +393,11 @@ export class Channel extends EventTarget {
           artifacts_offset: conversation.artifacts?.length || 0
         }
       })
+      if (epoch !== this.#sendEpoch) {
+        // The display was cleared (/new) while this request was in flight;
+        // applying the stale result would resurrect the old conversation.
+        return false
+      }
 
       conversation.messages = [...(conversation.messages || []), ...result.messages]
       conversation.artifacts = [...(conversation.artifacts || []), ...result.artifacts]
@@ -369,6 +425,9 @@ export class Channel extends EventTarget {
       const terminal = isTerminalConversationStatus(conversation.status)
       if (terminal || this.hasPendingLocalAttachments(conversation._id)) {
         const refreshed = await this.fetchConversation(conversation._id)
+        if (epoch !== this.#sendEpoch) {
+          return false
+        }
         conversation.messages = refreshed.messages || []
         conversation.artifacts = refreshed.artifacts || []
         conversation.status = refreshed.status
@@ -486,6 +545,18 @@ export class Channel extends EventTarget {
   }
 
   private updateLatestConversation(conversation: Conversation): void {
+    // Two writers race here (the poll loop and sendPrompt's fetch); a slower
+    // response carrying an older snapshot must not shrink the displayed group.
+    const current = this.#conversation
+    if (
+      current &&
+      current._id === conversation._id &&
+      conversation.updated_at < current.updated_at &&
+      (conversation.messages?.length || 0) <= (current.messages?.length || 0)
+    ) {
+      return
+    }
+
     this.#conversation = conversation
     this.#conversationAncestors = conversation.ancestors || []
     this.#api.updateStatus(conversation.status, null)
@@ -494,7 +565,12 @@ export class Channel extends EventTarget {
     const submitGroup = this.#messageGroups.find(
       (existing) => existing._id === SubmitMessageConversationId
     )
-    mergePendingLocalMessages(group, [existingGroup, submitGroup])
+    mergePendingLocalMessages(
+      group,
+      [existingGroup, submitGroup],
+      knownServerMessageCount(existingGroup, group)
+    )
+    preserveMessageTimestamps(group, existingGroup)
 
     const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
     if (idx >= 0) {
@@ -532,7 +608,8 @@ export class Channel extends EventTarget {
       const b = incoming[j]!
 
       if (a._id === b._id) {
-        mergePendingLocalMessages(b, [a])
+        mergePendingLocalMessages(b, [a], knownServerMessageCount(a, b))
+        preserveMessageTimestamps(b, a)
         merged.push(b)
         i++
         j++
@@ -566,6 +643,8 @@ export class Channel extends EventTarget {
     this.#syncing = false
     this.#syncAt = 0
     this.#conversationAncestors = []
+    // Let a sleeping poll loop notice the epoch change and exit right away.
+    this.wakePolling()
   }
 
   private appendSystemMessage(text: string): void {
@@ -576,24 +655,42 @@ export class Channel extends EventTarget {
     })
   }
 
-  private appendLocalMessage(message: Omit<ChatMessage, 'id'>): void {
-    this.updateMessageGroupWith(
-      message.conversation || this.#conversation?._id || SubmitMessageConversationId,
-      (group) => {
-        const timestamp = Date.now()
-        group.messages = [
-          ...group.messages,
-          {
-            ...message,
-            id: this.nextLocalMessageId('m', group._id, timestamp),
-            conversation: group._id,
-            pending: true,
-            timestamp
-          }
-        ]
-        return { ...group }
-      }
-    )
+  private appendLocalMessage(message: Omit<ChatMessage, 'id'>): string {
+    const conversationId =
+      message.conversation || this.#conversation?._id || SubmitMessageConversationId
+    const timestamp = Date.now()
+    const id = this.nextLocalMessageId('m', conversationId, timestamp)
+    this.updateMessageGroupWith(conversationId, (group) => {
+      group.messages = [
+        ...group.messages,
+        {
+          ...message,
+          id,
+          conversation: group._id,
+          pending: true,
+          timestamp
+        }
+      ]
+      return { ...group }
+    })
+    return id
+  }
+
+  private removeLocalMessages(ids: string[]): void {
+    if (!ids.length) {
+      return
+    }
+    const idSet = new Set(ids)
+    this.#messageGroups = this.#messageGroups
+      .map((group) =>
+        group.messages.some((message) => idSet.has(message.id))
+          ? { ...group, messages: group.messages.filter((message) => !idSet.has(message.id)) }
+          : group
+      )
+      .filter((group) => group.messages.length > 0 || group._id !== SubmitMessageConversationId)
+    if (this.#sideMessages.some((message) => idSet.has(message.id))) {
+      this.#sideMessages = this.#sideMessages.filter((message) => !idSet.has(message.id))
+    }
   }
 
   private optimisticConversationId(): number {
@@ -670,9 +767,28 @@ function sameMessageContent(a: ChatMessage, b: ChatMessage): boolean {
   return a.role === b.role && a.text.trim() === b.text.trim()
 }
 
-function mergePendingLocalMessages(
+// Number of messages in `existing` that the server already knows about: every
+// non-pending message plus pending ones that share an id with the incoming
+// server group (a message merged earlier but still awaiting attachment
+// confirmation keeps its server id and occupies a server slot).
+export function knownServerMessageCount(
+  existing: MessageGroup | undefined,
+  incoming: MessageGroup
+): number {
+  if (!existing) {
+    return 0
+  }
+  const serverIds = new Set(incoming.messages.map((message) => message.id))
+  return existing.messages.reduce(
+    (count, message) => count + (!message.pending || serverIds.has(message.id) ? 1 : 0),
+    0
+  )
+}
+
+export function mergePendingLocalMessages(
   group: MessageGroup,
-  localGroups: Array<MessageGroup | undefined>
+  localGroups: Array<MessageGroup | undefined>,
+  minMatchIndex = 0
 ): void {
   const localMessages = localGroups
     .flatMap((localGroup) => localGroup?.messages || [])
@@ -682,13 +798,33 @@ function mergePendingLocalMessages(
   }
 
   const matched = new Set<ChatMessage>()
-  group.messages = group.messages.map((message) => {
-    const acceptedLocalMessages = findAcceptedLocalMessages(message, localMessages, matched)
-    if (!acceptedLocalMessages.length) {
-      return message
+  group.messages = group.messages.map((message, index) => {
+    // A pending message that already carries this server message's id was
+    // merged on an earlier pass (e.g. waiting for attachment confirmation);
+    // always re-merge it so refreshed server data can settle it.
+    let merged = message
+    const sameIdLocal = localMessages.find(
+      (local) => !matched.has(local) && local.id === message.id
+    )
+    if (sameIdLocal) {
+      matched.add(sameIdLocal)
+      merged = mergeServerAndLocalMessage(merged, sameIdLocal)
     }
 
-    return acceptedLocalMessages.reduce(mergeServerAndLocalMessage, message)
+    // Content-based matching is only allowed against server messages that
+    // arrived after the local message was created. Matching older history
+    // makes a freshly sent duplicate ("继续", "test", …) merge into an old
+    // bubble and vanish from the bottom of the chat until the real server
+    // copy lands seconds later.
+    if (index < minMatchIndex) {
+      return merged
+    }
+    const acceptedLocalMessages = findAcceptedLocalMessages(merged, localMessages, matched)
+    if (!acceptedLocalMessages.length) {
+      return merged
+    }
+
+    return acceptedLocalMessages.reduce(mergeServerAndLocalMessage, merged)
   })
 
   const unmatched = localMessages.filter((message) => !matched.has(message))
@@ -698,6 +834,26 @@ function mergePendingLocalMessages(
 
   group.messages = [...group.messages, ...unmatched]
   group.updatedAt = Math.max(group.updatedAt, ...unmatched.map((message) => message.timestamp || 0))
+}
+
+// Messages without their own timestamp fall back to `conversation.updated_at`,
+// which moves on every delta; keep the first-seen timestamp so rendered time
+// labels do not drift across poll ticks.
+export function preserveMessageTimestamps(
+  group: MessageGroup,
+  previous: MessageGroup | undefined
+): void {
+  if (!previous) {
+    return
+  }
+  const seen = new Map<string, number | undefined>()
+  for (const message of previous.messages) {
+    seen.set(message.id, message.timestamp)
+  }
+  group.messages = group.messages.map((message) => {
+    const timestamp = seen.get(message.id)
+    return timestamp && timestamp !== message.timestamp ? { ...message, timestamp } : message
+  })
 }
 
 function findAcceptedLocalMessages(
