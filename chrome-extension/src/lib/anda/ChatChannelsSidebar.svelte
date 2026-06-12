@@ -250,7 +250,11 @@
 {/snippet}
 
 {#snippet channelsList(expanded: boolean)}
-  <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5">
+  <div
+    class={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5 ${
+      expanded ? 'scrollbar-slim' : 'scrollbar-none'
+    }`}
+  >
     {#each channels as channel (channel.source)}
       {@const active = channel.source === activeSource}
       {@const icon = statusIcon(channel)}
@@ -265,13 +269,13 @@
             active
               ? 'border-sidebar-border bg-background text-foreground shadow-sm'
               : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-          } ${expanded ? '' : 'h-9 justify-center px-0'}`
+          } ${expanded ? '' : 'mx-auto size-9 shrink-0 justify-center'}`
         )}
       >
         <button
           type="button"
-          class={`flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left ${
-            expanded ? '' : 'h-9 justify-center px-0'
+          class={`flex items-center text-left ${
+            expanded ? 'min-w-0 flex-1 gap-2 px-2 py-2' : 'size-full justify-center'
           }`}
           aria-current={active ? 'page' : undefined}
           aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}

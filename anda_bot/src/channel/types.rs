@@ -602,6 +602,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn shared_split_prefers_newlines_then_spaces_then_hard_breaks() {
+        // Short input stays whole.
+        assert_eq!(
+            split_message_on_word_boundaries("short", 10, 8),
+            vec!["short"]
+        );
+
+        // A newline in the second half of the chunk wins over later spaces.
+        let text = format!("{}\n{} tail", "a".repeat(6), "b".repeat(10));
+        let chunks = split_message_on_word_boundaries(&text, 10, 8);
+        assert!(chunks[0].ends_with('\n'));
+
+        // Without any boundary the chunk is hard-split at the limit.
+        let solid = "c".repeat(25);
+        let chunks = split_message_on_word_boundaries(&solid, 10, 8);
+        assert!(chunks.len() >= 3);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 10));
+    }
+
+    #[test]
+    fn shared_transient_error_check_matches_baseline_signatures() {
+        assert!(is_transient_send_error("Connection reset"));
+        assert!(is_transient_send_error("HTTP 429"));
+        assert!(is_transient_send_error("Service Temporarily Unavailable"));
+        assert!(!is_transient_send_error("400 bad request"));
+    }
+
     #[tokio::test]
     async fn channel_trait_defaults_are_tolerant_no_ops() {
         let channel = MinimalChannel;

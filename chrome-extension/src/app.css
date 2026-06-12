@@ -445,3 +445,11 @@ button:disabled {
   border-radius: 999px;
   background-clip: padding-box;
 }
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
