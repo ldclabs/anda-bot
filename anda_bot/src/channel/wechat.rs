@@ -16,7 +16,7 @@ use weixin_agent::{
 
 use super::{
     Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace, SendMessage,
-    file_name_for_resource, is_http_url, resource_from_bytes,
+    file_name_for_resource, is_http_url, is_transient_send_error, resource_from_bytes,
 };
 use crate::{
     config::{self, normalize_identity, normalize_string},
@@ -387,16 +387,7 @@ impl Channel for WechatChannel {
     }
 
     fn should_retry_send(&self, error: &str) -> bool {
-        let error = error.to_ascii_lowercase();
-        error.contains("timeout")
-            || error.contains("connection")
-            || error.contains("temporarily")
-            || error.contains("too many requests")
-            || error.contains("429")
-            || error.contains("502")
-            || error.contains("503")
-            || error.contains("504")
-            || is_wechat_context_token_error(&error)
+        is_transient_send_error(error) || is_wechat_context_token_error(error)
     }
 
     async fn listen(

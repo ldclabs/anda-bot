@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    resource_from_bytes,
+    is_transient_send_error, resource_from_bytes,
 };
 use crate::config::{self, normalize_identity};
 
@@ -1190,15 +1190,7 @@ impl Channel for LarkChannel {
     }
 
     fn should_retry_send(&self, error: &str) -> bool {
-        let error = error.to_ascii_lowercase();
-        error.contains("timeout")
-            || error.contains("connection")
-            || error.contains("temporarily")
-            || error.contains("too many requests")
-            || error.contains("429")
-            || error.contains("502")
-            || error.contains("503")
-            || error.contains("504")
+        is_transient_send_error(error)
     }
 
     async fn listen(

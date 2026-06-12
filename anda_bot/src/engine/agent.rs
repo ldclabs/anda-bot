@@ -1704,7 +1704,9 @@ impl SessionRunner {
                         self.conversation._id
                     );
                 }
-                PromptCommand::Plain { prompt } => {
+                PromptCommand::Plain { prompt }
+                | PromptCommand::Side { prompt }
+                | PromptCommand::Steer { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
                     self.runner.follow_up_content(content);
                 }
@@ -1718,14 +1720,6 @@ impl SessionRunner {
                     } else {
                         *next_goal = Some(goal::GoalState::new(prompt));
                     };
-                }
-                PromptCommand::Side { prompt } => {
-                    prepend_prompt_content(&mut content, prompt);
-                    self.runner.follow_up_content(content);
-                }
-                PromptCommand::Steer { prompt } => {
-                    prepend_prompt_content(&mut content, prompt);
-                    self.runner.follow_up_content(content);
                 }
                 PromptCommand::Skill { mut skill, prompt } => {
                     if let Some(subagent) =

@@ -117,6 +117,67 @@ impl ChannelInitResult {
     }
 }
 
+/// Splits `message` into chunks no longer than `max_len` characters, preferring
+/// to break on newline and then whitespace boundaries.
+///
+/// `split_limit` bounds where a hard split may occur (so chunks can leave room
+/// for continuation markers). A newline break is only taken when it falls in the
+/// second half of the chunk; otherwise the last space is used, falling back to a
+/// hard character split when neither boundary is available.
+pub(crate) fn split_message_on_word_boundaries(
+    message: &str,
+    max_len: usize,
+    split_limit: usize,
+) -> Vec<String> {
+    if message.chars().count() <= max_len {
+        return vec![message.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut remaining = message;
+
+    while !remaining.is_empty() {
+        if remaining.chars().count() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+
+        let hard_split = remaining
+            .char_indices()
+            .nth(split_limit)
+            .map_or(remaining.len(), |(idx, _)| idx);
+        let chunk_end = if hard_split == remaining.len() {
+            hard_split
+        } else {
+            let search_area = &remaining[..hard_split];
+            match search_area.rfind('\n') {
+                Some(pos) if search_area[..pos].chars().count() >= split_limit / 2 => pos + 1,
+                _ => search_area.rfind(' ').map_or(hard_split, |pos| pos + 1),
+            }
+        };
+
+        chunks.push(remaining[..chunk_end].to_string());
+        remaining = &remaining[chunk_end..];
+    }
+
+    chunks
+}
+
+/// Returns whether a send error string looks like a transient transport or
+/// rate-limit failure that is worth retrying. Channels share this baseline and
+/// may layer additional, platform-specific checks on top.
+pub(crate) fn is_transient_send_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("timeout")
+        || error.contains("connection")
+        || error.contains("temporarily")
+        || error.contains("too many requests")
+        || error.contains("429")
+        || error.contains("502")
+        || error.contains("503")
+        || error.contains("504")
+}
+
 /// Returns the filesystem directory name for a channel workspace.
 ///
 /// Channel ids are stable metadata and routing keys, so they may contain

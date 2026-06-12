@@ -52,14 +52,25 @@ impl Default for ChannelReconnectPolicy {
     }
 }
 
+/// Computes an exponentially backed-off delay for the given 1-based `attempt`,
+/// doubling `base_delay` up to `max_shift` times and clamping to `max_delay`.
+fn exponential_backoff_delay(
+    base_delay: Duration,
+    max_delay: Duration,
+    attempt: u32,
+    max_shift: u32,
+) -> Duration {
+    let shift = attempt.saturating_sub(1).min(max_shift);
+    let factor = 1_u32 << shift;
+    base_delay
+        .checked_mul(factor)
+        .unwrap_or(max_delay)
+        .min(max_delay)
+}
+
 impl ChannelReconnectPolicy {
     fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let shift = attempt.saturating_sub(1).min(5);
-        let factor = 1_u32 << shift;
-        self.base_delay
-            .checked_mul(factor)
-            .unwrap_or(self.max_delay)
-            .min(self.max_delay)
+        exponential_backoff_delay(self.base_delay, self.max_delay, attempt, 5)
     }
 }
 
@@ -82,12 +93,7 @@ impl Default for ChannelSendRetryPolicy {
 
 impl ChannelSendRetryPolicy {
     fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let shift = attempt.saturating_sub(1).min(4);
-        let factor = 1_u32 << shift;
-        self.base_delay
-            .checked_mul(factor)
-            .unwrap_or(self.max_delay)
-            .min(self.max_delay)
+        exponential_backoff_delay(self.base_delay, self.max_delay, attempt, 4)
     }
 }
 

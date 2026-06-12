@@ -71,12 +71,19 @@ impl ResourceStore {
 
     /// Downloads the blob of a persisted resource into `dir` (the system temp
     /// directory when `None`), returning the resource and the saved file path.
+    ///
+    /// When `caller` is supplied, ownership is verified before the blob is
+    /// written to disk.
     pub async fn download_resource(
         &self,
         id: u64,
         dir: Option<&Path>,
+        caller: Option<&Principal>,
     ) -> Result<(Resource, PathBuf), BoxError> {
         let resource = self.get_resource(id).await?;
+        if let Some(caller) = caller {
+            ensure_resource_access(&resource, caller)?;
+        }
         let path = save_resource_blob(&resource, dir).await?;
         Ok((resource, path))
     }
@@ -253,9 +260,13 @@ impl Tool<BaseCtx> for ResourceStore {
                     return Err("_id is required".into());
                 }
 
-                let resource = self.get_resource(_id).await?;
-                ensure_resource_access(&resource, ctx.caller())?;
-                let path = save_resource_blob(&resource, dir.as_deref().map(Path::new)).await?;
+                let (resource, path) = self
+                    .download_resource(
+                        _id,
+                        dir.as_deref().map(Path::new),
+                        Some(ctx.caller()),
+                    )
+                    .await?;
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!({
                         "_id": resource._id,
@@ -448,7 +459,10 @@ mod tests {
             .unwrap();
         let id = refs[0]._id;
 
-        let (resource, path) = store.download_resource(id, Some(dir.path())).await.unwrap();
+        let (resource, path) = store
+            .download_resource(id, Some(dir.path()), None)
+            .await
+            .unwrap();
         assert_eq!(resource.name, "a.txt");
         assert_eq!(path, dir.path().join(format!("{id}_a.txt")));
         let contents = tokio::fs::read(&path).await.unwrap();
@@ -466,7 +480,7 @@ mod tests {
             .await
             .unwrap();
         let err = store
-            .download_resource(refs[0]._id, Some(dir.path()))
+            .download_resource(refs[0]._id, Some(dir.path()), None)
             .await
             .map(|_| ())
             .unwrap_err();

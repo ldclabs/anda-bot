@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    resource_from_bytes,
+    is_transient_send_error, resource_from_bytes, split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -700,15 +700,7 @@ impl Channel for DiscordChannel {
     }
 
     fn should_retry_send(&self, error: &str) -> bool {
-        let error = error.to_ascii_lowercase();
-        error.contains("timeout")
-            || error.contains("connection")
-            || error.contains("temporarily")
-            || error.contains("too many requests")
-            || error.contains("429")
-            || error.contains("502")
-            || error.contains("503")
-            || error.contains("504")
+        is_transient_send_error(error)
     }
 
     async fn listen(
@@ -1139,47 +1131,11 @@ fn with_inline_resource_urls(content: &str, remote_urls: &[String]) -> String {
 }
 
 fn split_message_for_discord(message: &str) -> Vec<String> {
-    if message.chars().count() <= DISCORD_MAX_MESSAGE_LENGTH {
-        return vec![message.to_string()];
-    }
-
-    let mut chunks = Vec::new();
-    let mut remaining = message;
-
-    while !remaining.is_empty() {
-        if remaining.chars().count() <= DISCORD_MAX_MESSAGE_LENGTH {
-            chunks.push(remaining.to_string());
-            break;
-        }
-
-        let hard_split = remaining
-            .char_indices()
-            .nth(DISCORD_MAX_MESSAGE_LENGTH)
-            .map_or(remaining.len(), |(index, _)| index);
-        let chunk_end = if hard_split == remaining.len() {
-            hard_split
-        } else {
-            let search_area = &remaining[..hard_split];
-            if let Some(position) = search_area.rfind('\n') {
-                if search_area[..position].chars().count() >= DISCORD_MAX_MESSAGE_LENGTH / 2 {
-                    position + 1
-                } else {
-                    search_area
-                        .rfind(' ')
-                        .map_or(hard_split, |position| position + 1)
-                }
-            } else {
-                search_area
-                    .rfind(' ')
-                    .map_or(hard_split, |position| position + 1)
-            }
-        };
-
-        chunks.push(remaining[..chunk_end].to_string());
-        remaining = &remaining[chunk_end..];
-    }
-
-    chunks
+    split_message_on_word_boundaries(
+        message,
+        DISCORD_MAX_MESSAGE_LENGTH,
+        DISCORD_MAX_MESSAGE_LENGTH,
+    )
 }
 
 #[allow(dead_code)]
