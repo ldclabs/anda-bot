@@ -268,7 +268,9 @@
   })
 
   $effect(() => {
-    if (promptCommandPanelOpen && promptCommandContext.mode === 'skill') {
+    // Skills surface in both `/` and `$` completion, so load them whenever
+    // the panel opens (cached for promptSkillsCacheMs).
+    if (promptCommandPanelOpen) {
       void ensurePromptSkillsLoaded()
     }
   })
