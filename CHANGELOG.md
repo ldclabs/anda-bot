@@ -2,6 +2,18 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.9] — 2026-06-13
+
+### Changed
+
+- **Dependencies aligned with Anda 0.13 and Brain 0.8**: updated the bot workspace to the latest Anda runtime, engine, object store, database, Web3, Brain, COSE, and auth crates.
+- **CBOR and COSE key handling now use `cbor2`**: replaced direct `ciborium`/`coset` usage with `cbor2` and `ic_cose_types` while preserving Ed25519 COSE key import/export behavior.
+- **Release automation publishes the Homebrew formula**: the GitHub release workflow now invokes the Homebrew publishing script after attaching release artifacts.
+
+### Fixed
+
+- **Proxy-aware HTTP clients explicitly disable ambient proxy defaults**: shared reqwest client builders now start from `no_proxy()` before re-adding filtered environment proxies, keeping local and private-network traffic off configured proxies.
+
 ## [0.9.8] — 2026-06-12
 
 ### Added

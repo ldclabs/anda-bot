@@ -59,7 +59,7 @@ fn env_proxies() -> Vec<Proxy> {
 /// Drop-in replacement for `reqwest::Client::new()` that keeps proxy env vars
 /// working for external hosts but never proxies local or private addresses.
 pub fn new_reqwest_client() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder().no_proxy();
     for proxy in env_proxies() {
         builder = builder.proxy(proxy);
     }
@@ -80,6 +80,7 @@ where
     F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
 {
     let mut http_client = request_client_builder()
+        .no_proxy()
         .https_only(false)
         .timeout(Duration::from_secs(120))
         .retry(

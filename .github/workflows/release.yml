@@ -352,3 +352,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
+
+      - name: Publish Homebrew formula
+        env:
+          CHECKSUM_DIR: release
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: scripts/publish-homebrew.sh "${{ github.ref_name }}"

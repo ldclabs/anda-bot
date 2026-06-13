@@ -1,6 +1,6 @@
 use anda_core::{BoxError, Json, ToolInput};
 use clap::{Args, Parser, Subcommand};
-use coset::cwt::Timestamp;
+use ic_cose_types::cose::cwt::Timestamp;
 use mimalloc::MiMalloc;
 use serde::Serialize;
 use std::{
