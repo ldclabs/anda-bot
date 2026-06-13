@@ -275,24 +275,6 @@
   "modelUpdated": {
     "message": "تم تحديث النموذج النشط."
   },
-  "updateReadyTitle": {
-    "message": "تحديث Anda جاهز"
-  },
-  "updateReadyBody": {
-    "message": "تم تنزيل $1. ثبّت وأعد التشغيل لاستخدامه."
-  },
-  "installRestartUpdate": {
-    "message": "تثبيت وإعادة تشغيل"
-  },
-  "updateRestartConfirm": {
-    "message": "هل تريد تثبيت $1 وإعادة تشغيل Anda الآن؟"
-  },
-  "updateRestarting": {
-    "message": "جار تثبيت التحديث وإعادة تشغيل Anda..."
-  },
-  "updateRestartRequested": {
-    "message": "يعيد Anda التشغيل لاستخدام التحديث."
-  },
   "voiceTranscriptionNotConfigured": {
     "message": "لم يتم تكوين نسخ الصوت في daemon Anda."
   },

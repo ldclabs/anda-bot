@@ -275,24 +275,6 @@
   "modelUpdated": {
     "message": "Active model updated."
   },
-  "updateReadyTitle": {
-    "message": "Anda update ready"
-  },
-  "updateReadyBody": {
-    "message": "$1 has been downloaded. Install and restart to use it."
-  },
-  "installRestartUpdate": {
-    "message": "Install & restart"
-  },
-  "updateRestartConfirm": {
-    "message": "Install $1 and restart Anda now?"
-  },
-  "updateRestarting": {
-    "message": "Installing update and restarting Anda..."
-  },
-  "updateRestartRequested": {
-    "message": "Anda is restarting to use the update."
-  },
   "voiceTranscriptionNotConfigured": {
     "message": "Voice transcription is not configured in the Anda daemon."
   },

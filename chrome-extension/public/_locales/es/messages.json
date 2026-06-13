@@ -275,24 +275,6 @@
   "modelUpdated": {
     "message": "Modelo activo actualizado."
   },
-  "updateReadyTitle": {
-    "message": "Actualización de Anda lista"
-  },
-  "updateReadyBody": {
-    "message": "$1 se ha descargado. Instala y reinicia para usarlo."
-  },
-  "installRestartUpdate": {
-    "message": "Instalar y reiniciar"
-  },
-  "updateRestartConfirm": {
-    "message": "¿Instalar $1 y reiniciar Anda ahora?"
-  },
-  "updateRestarting": {
-    "message": "Instalando la actualización y reiniciando Anda..."
-  },
-  "updateRestartRequested": {
-    "message": "Anda se está reiniciando para usar la actualización."
-  },
   "voiceTranscriptionNotConfigured": {
     "message": "La transcripción de voz no está configurada en el daemon de Anda."
   },

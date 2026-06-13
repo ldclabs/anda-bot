@@ -63,30 +63,6 @@ export interface ModelState {
   modelNames: string[]
 }
 
-export type AutoUpdateStatus =
-  | 'idle'
-  | 'checking'
-  | 'current'
-  | 'downloading'
-  | 'downloaded'
-  | 'failed'
-  | 'installed'
-
-export interface AutoUpdateState {
-  status: AutoUpdateStatus
-  current_tag: string
-  latest_tag?: string | null
-  last_checked_ms?: number | null
-  downloaded_at_ms?: number | null
-  installed_at_ms?: number | null
-  target?: string | null
-  asset_name?: string | null
-  downloaded_path?: string | null
-  sha256?: string | null
-  checksum_verified?: boolean
-  error?: string | null
-}
-
 export interface DaemonModelState {
   active_model?: string | null
   model_names?: string[]

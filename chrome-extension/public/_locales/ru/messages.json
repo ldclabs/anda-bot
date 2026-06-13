@@ -275,24 +275,6 @@
   "modelUpdated": {
     "message": "Активная модель обновлена."
   },
-  "updateReadyTitle": {
-    "message": "Обновление Anda готово"
-  },
-  "updateReadyBody": {
-    "message": "$1 загружен. Установите и перезапустите, чтобы использовать его."
-  },
-  "installRestartUpdate": {
-    "message": "Установить и перезапустить"
-  },
-  "updateRestartConfirm": {
-    "message": "Установить $1 и перезапустить Anda сейчас?"
-  },
-  "updateRestarting": {
-    "message": "Установка обновления и перезапуск Anda..."
-  },
-  "updateRestartRequested": {
-    "message": "Anda перезапускается для использования обновления."
-  },
   "voiceTranscriptionNotConfigured": {
     "message": "Голосовая транскрипция не настроена в daemon Anda."
   },

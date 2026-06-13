@@ -17,7 +17,6 @@ import type {
   ChromeApi,
   ChromeTabChangeInfo,
   ChromeTabInfo,
-  AutoUpdateState,
   DaemonModelState,
   DaemonVoiceCapabilities,
   ExtensionMessage,
@@ -70,7 +69,6 @@ export class AndaSidePanelClient extends EventTarget {
     chromeTts: false
   })
   modelState = $state<ModelState>(emptyModelState())
-  updateState = $state<AutoUpdateState | null>(null)
 
   #initPromise: Promise<void> | null = null
   #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
@@ -112,7 +110,6 @@ export class AndaSidePanelClient extends EventTarget {
       await this.refreshVoiceCapabilities().catch(() => undefined)
       await this.refreshChannels().catch(() => undefined)
       await channel.init().catch(() => undefined)
-      this.refreshUpdateState().catch(() => undefined)
       this.syncUiLanguage().catch(() => undefined)
     }
     this.#uiLanguageTimer = setInterval(() => {
@@ -296,11 +293,9 @@ export class AndaSidePanelClient extends EventTarget {
     if (this.settings.token) {
       this.refreshChannels().catch(() => undefined)
       this.refreshModelState().catch(() => undefined)
-      this.refreshUpdateState().catch(() => undefined)
       this.syncUiLanguage().catch(() => undefined)
     } else {
       this.modelState = emptyModelState()
-      this.updateState = null
     }
     await this.refreshVoiceCapabilities().catch(() => undefined)
   }
@@ -541,17 +536,6 @@ export class AndaSidePanelClient extends EventTarget {
     return this.modelState
   }
 
-  async refreshUpdateState(): Promise<AutoUpdateState | null> {
-    if (!this.settings.token) {
-      this.updateState = null
-      return null
-    }
-
-    const state = await this.rpc<AutoUpdateState>('auto_update_check', [])
-    this.updateState = state
-    return state
-  }
-
   async loadResource(resource: Resource): Promise<Resource | null> {
     const id = resource._id || 0
     if (!id) {
@@ -583,30 +567,6 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     return mergeResource(resource, await request)
-  }
-
-  async installUpdateAndRestart(): Promise<AutoUpdateState | null> {
-    if (!this.settings.token) {
-      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
-      return null
-    }
-
-    try {
-      this.updateStatus('updating', {
-        kind: 'info',
-        text: getMessage('updateRestarting')
-      })
-      const state = await this.rpc<AutoUpdateState>('auto_update_install_and_restart', [])
-      this.updateState = state
-      this.updateStatus('restarting', {
-        kind: 'info',
-        text: getMessage('updateRestartRequested')
-      })
-      return state
-    } catch (error) {
-      this.updateStatus('update failed', { kind: 'error', text: errorToMessage(error) })
-      throw error
-    }
   }
 
   async setActiveModel(modelName: string): Promise<ModelState> {
