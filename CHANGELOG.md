@@ -2,6 +2,25 @@
 
 All notable changes to Anda Bot.
 
+## [0.9.10] — 2026-06-14
+
+### Added
+
+- **Runtime model reload**: added `anda models reload`, a `POST /daemon/models/reload` daemon control endpoint, launcher menu entries, and browser extension wiring so running daemons can refresh model configuration from `config.yaml` without a full restart.
+- **Media workspace dependencies**: added the package workspace wiring needed for media-related extension tooling.
+
+### Changed
+
+- **Model configuration saves now reload in place**: saving `config.yaml` attempts to refresh the running model registry instead of asking users to restart the daemon when only model settings changed.
+- **Browser extension update controls moved out of the extension UI**: removed in-app update polling and install/restart controls because updates are handled by the launcher.
+- **Version synchronized for the 0.9.10 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.10`.
+
+### Fixed
+
+- **Channel message delivery is more robust**: Discord REST requests now include the required DiscordBot user agent, long message splitting respects continuation-marker budgets, and attachment resource tags are matched case-insensitively across channels.
+- **Cron due jobs no longer starve later scheduled work**: due-job polling now preserves scheduling progress so one ready job cannot prevent other eligible jobs from being considered.
+- **Homebrew release publishing checks out the repository first**: the release workflow now ensures the repository is available before running the Homebrew publishing step.
+
 ## [0.9.9] — 2026-06-13
 
 ### Changed
