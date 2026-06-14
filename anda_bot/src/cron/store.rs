@@ -163,19 +163,12 @@ impl CronStore {
 
     pub async fn remove_job(&self, id: u64) -> Result<(), BoxError> {
         let now_ms = unix_ms();
-        let _: CronJob = if let Ok(Some(job)) = self.jobs.remove(id).await {
-            job.try_into()?
-        } else {
+        if !matches!(self.jobs.remove(id).await, Ok(Some(_))) {
             return Ok(());
-        };
+        }
 
-        // keep the run history for removed jobs, but mark them as disabled
-        // let runs = self.list_runs_for_job(job._id).await?;
-        // for run in runs {
-        //     let _ = self.runs.remove(run._id).await;
-        // }
-        // self.runs.flush(now_ms).await?;
-
+        // Run history is intentionally retained for audit after the job
+        // definition is removed; only the `cron_jobs` entry goes away.
         self.jobs.flush(now_ms).await?;
         Ok(())
     }
@@ -231,6 +224,11 @@ impl CronStore {
         limit: usize,
         exclude: &HashSet<u64>,
     ) -> Result<Vec<CronJob>, BoxError> {
+        // A running job keeps `next_run <= now` until it finishes (next_run is
+        // only advanced in `job_finish`), so the in-flight jobs in `exclude`
+        // still match the query. Fetch enough extra rows to cover them, or they
+        // could consume the whole query budget and starve free slots until the
+        // next tick.
         let mut jobs: Vec<CronJob> = self
             .jobs
             .search_as(Query {
@@ -238,7 +236,7 @@ impl CronStore {
                     "next_run".to_string(),
                     RangeQuery::Le(Fv::U64(now_ms / 1000)),
                 ))),
-                limit: Some(limit),
+                limit: Some(limit.saturating_add(exclude.len())),
                 ..Default::default()
             })
             .await?;
@@ -527,6 +525,51 @@ mod tests {
         let due_ids: Vec<u64> = due_jobs.iter().map(|job| job._id).collect();
         assert_eq!(due_ids, vec![job_earliest._id, job_middle._id]);
         assert!(!due_ids.contains(&job_late._id));
+    }
+
+    #[tokio::test]
+    async fn due_jobs_does_not_starve_when_excluding_in_flight_jobs() {
+        let (_dir, store) = test_store().await;
+        let base = Utc::now();
+        // Insert in next_run order so the highest document ids are also the
+        // ones the range query keeps first; excluding them previously emptied
+        // the result even though earlier jobs were still due.
+        let mut jobs = Vec::new();
+        for secs in [10, 20, 30, 40, 50] {
+            jobs.push(
+                insert_at_job(
+                    &store,
+                    &format!("job-{secs}"),
+                    (base + Duration::seconds(secs)).timestamp_millis() as u64,
+                )
+                .await,
+            );
+        }
+        let exclude: HashSet<u64> = [jobs[3]._id, jobs[4]._id].into_iter().collect();
+
+        let due = store
+            .due_jobs(
+                (base + Duration::seconds(60)).timestamp_millis() as u64,
+                2,
+                &exclude,
+            )
+            .await
+            .unwrap();
+
+        // Before the fetch budget accounted for `exclude`, the two highest ids
+        // (which the range query returns first) were the excluded ones, so the
+        // retain left nothing and both free slots went unused this tick.
+        let due_ids: Vec<u64> = due.iter().map(|job| job._id).collect();
+        assert_eq!(
+            due_ids.len(),
+            2,
+            "free slots should be filled, got {due_ids:?}"
+        );
+        assert!(due_ids.iter().all(|id| !exclude.contains(id)));
+        assert!(
+            due.windows(2).all(|w| w[0].next_run <= w[1].next_run),
+            "due jobs should be ordered by next_run"
+        );
     }
 
     #[tokio::test]

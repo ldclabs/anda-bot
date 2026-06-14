@@ -557,7 +557,10 @@ fn persisted_schedule(
 
 fn schedule_next(expr: &str, from_ms: u64, tz: &Option<String>) -> Result<u64, BoxError> {
     let normalized = normalize_expression(expr)?;
-    let from = DateTime::from_timestamp_millis(from_ms as i64).unwrap();
+    let from = i64::try_from(from_ms)
+        .ok()
+        .and_then(DateTime::from_timestamp_millis)
+        .ok_or("schedule reference time is out of range")?;
     let cron = CronExprSchedule::from_str(&normalized)
         .map_err(|err| format!("invalid cron expression '{expr}': {err}"))?;
 

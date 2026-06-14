@@ -73,7 +73,7 @@ impl CronRuntime {
         })
     }
 
-    async fn process_due_jobs_once(self, engine: Arc<Engine>) -> Result<usize, BoxError> {
+    async fn process_due_jobs_once(&self, engine: Arc<Engine>) -> Result<usize, BoxError> {
         let now_ms = unix_ms();
         let running_ids = {
             let mut running_jobs = self.running_jobs.lock();
@@ -200,16 +200,20 @@ impl CronRuntime {
                 }
                 Err(err) => {
                     log::error!(name = "cron"; "failed to submit cron job {} (run id: {}): {err}", job._id, run._id);
-                    let result: CronJobResult = err.into();
-                    self.notify_shell_result(
-                        engine.clone(),
-                        caller,
-                        &job,
-                        run._id,
-                        &result,
-                        request_meta.clone(),
-                    )
-                    .await;
+                    let mut result: CronJobResult = err.into();
+                    if let Some(conversation_id) = self
+                        .notify_shell_result(
+                            engine.clone(),
+                            caller,
+                            &job,
+                            run._id,
+                            &result,
+                            request_meta.clone(),
+                        )
+                        .await
+                    {
+                        result.conversation_id.get_or_insert(conversation_id);
+                    }
                     result
                 }
             },
@@ -286,7 +290,7 @@ impl CronRuntime {
                              log::info!(name = "cron"; "engine is not available, skipping cron tick");
                              continue;
                         };
-                        if let Err(err) = self.clone().process_due_jobs_once(engine).await {
+                        if let Err(err) = self.process_due_jobs_once(engine).await {
                             log::error!(name = "cron"; "cron tick failed: {err}");
                         }
                     }
@@ -577,11 +581,7 @@ mod tests {
 
         // Nothing is due yet: the tick is a no-op.
         assert_eq!(
-            runtime
-                .clone()
-                .process_due_jobs_once(engine.clone())
-                .await
-                .unwrap(),
+            runtime.process_due_jobs_once(engine.clone()).await.unwrap(),
             0
         );
 
