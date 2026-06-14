@@ -189,6 +189,7 @@ pub struct LauncherText {
     pub settings: String,
     pub language: String,
     pub model_settings: String,
+    pub reload_models: String,
     pub status: String,
     pub status_pid: String,
     pub status_gateway_url: String,
@@ -521,6 +522,7 @@ fn text_for_language(language: LauncherLanguage) -> LauncherText {
         settings: t!("launcher.settings", locale = locale).into_owned(),
         language: t!("launcher.language", locale = locale).into_owned(),
         model_settings: t!("launcher.model_settings", locale = locale).into_owned(),
+        reload_models: t!("launcher.reload_models", locale = locale).into_owned(),
         status: t!("launcher.status", locale = locale).into_owned(),
         status_pid: t!("launcher.status_pid", locale = locale).into_owned(),
         status_gateway_url: t!("launcher.status_gateway_url", locale = locale).into_owned(),
@@ -988,6 +990,29 @@ pub fn stop_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
 
 pub fn restart_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["restart"])
+}
+
+pub fn reload_models(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
+    run_anda(ctx, &["models", "reload"])
+}
+
+pub fn reload_models_or_start_daemon(ctx: &LauncherContext) -> CommandResult {
+    let reload = reload_models(ctx).unwrap_or_else(command_error_result);
+    if reload.success {
+        return reload;
+    }
+
+    match daemon_status_json(ctx) {
+        Ok(status) if status.success => reload,
+        _ => start_daemon(ctx).unwrap_or(reload),
+    }
+}
+
+fn command_error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
+    CommandResult {
+        success: false,
+        message: err.to_string(),
+    }
 }
 
 pub fn daemon_status(ctx: &LauncherContext) -> LauncherResult<CommandResult> {

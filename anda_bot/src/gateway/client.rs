@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
-    engine::AndaBotStatus,
+    engine::{AndaBotStatus, DaemonModelsResponse},
     util::http_client::new_reqwest_client,
 };
 
@@ -66,6 +66,10 @@ impl Client {
 
     pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {
         self.post_json("/auto_update/check", &()).await
+    }
+
+    pub async fn reload_models(&self) -> Result<DaemonModelsResponse, BoxError> {
+        self.post_json("/daemon/models/reload", &()).await
     }
 
     #[allow(unused)]
@@ -437,6 +441,15 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             .route(
                 "/daemon/shutdown",
                 routing::post(|| async { axum::Json(json!({"shutdown": true})) }),
+            )
+            .route(
+                "/daemon/models/reload",
+                routing::post(|| async {
+                    axum::Json(json!({
+                        "active_model": "gpt-next",
+                        "model_names": ["gpt-next"]
+                    }))
+                }),
             );
         let base_url = spawn_gateway_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
@@ -446,6 +459,15 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
 
         let result = client.shutdown().await.unwrap();
         assert_eq!(result["shutdown"], true);
+
+        let models = client.reload_models().await.unwrap();
+        assert_eq!(
+            serde_json::to_value(models).unwrap(),
+            json!({
+                "active_model": "gpt-next",
+                "model_names": ["gpt-next"]
+            })
+        );
     }
 
     #[tokio::test]

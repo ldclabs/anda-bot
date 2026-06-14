@@ -21,7 +21,7 @@
     Trash2
   } from '@lucide/svelte'
   import { AlertDialog } from 'bits-ui'
-  import { cubicOut } from 'svelte/easing'
+  import { quadOut } from 'svelte/easing'
   import { fly } from 'svelte/transition'
   import type { Channel } from './client/channel.svelte'
 
@@ -382,7 +382,7 @@
     >
       <div
         class="flex h-full min-h-0 flex-col overflow-hidden rounded-r-md border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-sidebar-border/70 backdrop-blur-xl will-change-transform dark:shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
-        transition:fly={{ x: -18, duration: 160, easing: cubicOut, opacity: 0.92 }}
+        transition:fly={{ x: -18, duration: 320, easing: quadOut, opacity: 0.92 }}
       >
         {@render channelsHeader(true, true)}
         {@render channelsList(true)}

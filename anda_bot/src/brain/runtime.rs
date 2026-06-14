@@ -2,7 +2,7 @@ use anda_core::BoxError;
 use anda_db::{database::DBConfig, storage::StorageConfig, unix_ms};
 use anda_engine::{
     management::{BaseManagement, Visibility},
-    model::{Model, Models},
+    model::Models,
 };
 use axum::{Router, routing};
 use object_store::ObjectStore;
@@ -17,7 +17,7 @@ use anda_brain::{agents::SELF_USER_ID, handler::*, space::AppState};
 pub struct BrainConfig {
     pub managers: Vec<Ed25519PubKey>,
     pub https_proxy: Option<String>,
-    pub model: Model,
+    pub models: Arc<Models>,
 }
 
 pub struct Brain {
@@ -35,10 +35,6 @@ impl Brain {
             managers: cfg.managers.iter().map(|k| k.id()).collect(),
             visibility: Visibility::Protected,
         });
-
-        // Configure AI model
-        let models = Models::default();
-        models.set_model(cfg.model);
 
         let db_config = DBConfig {
             name: "brain_db".to_string(),
@@ -63,7 +59,7 @@ impl Brain {
             Arc::new(db_config),
             management.clone(),
             http_client.clone(),
-            Arc::new(models),
+            cfg.models,
             Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
             config::APP_NAME.to_string(),
             config::APP_VERSION.to_string(),
@@ -183,7 +179,7 @@ mod tests {
     use anda_engine::model::ModelConfig;
     use object_store::memory::InMemory;
 
-    fn brain_model() -> Model {
+    fn brain_models() -> Arc<Models> {
         let models = Models::from_configs(
             &[ModelConfig {
                 family: "openai".to_string(),
@@ -194,7 +190,9 @@ mod tests {
             }],
             new_reqwest_client(),
         );
-        models.get("test-model").expect("test model")
+        let model = models.get("test-model").expect("test model");
+        models.set_model(model);
+        Arc::new(models)
     }
 
     #[tokio::test]
@@ -207,7 +205,7 @@ mod tests {
             BrainConfig {
                 managers: vec![manager],
                 https_proxy: None,
-                model: brain_model(),
+                models: brain_models(),
             },
         )
         .await
@@ -227,7 +225,7 @@ mod tests {
             BrainConfig {
                 managers: Vec::new(),
                 https_proxy: None,
-                model: brain_model(),
+                models: brain_models(),
             },
         )
         .await

@@ -77,6 +77,9 @@ pub enum Commands {
     /// Browser (chrome) extension helper commands.
     #[command(subcommand)]
     Browser(BrowserCommand),
+    /// Model-related operations against the running daemon.
+    #[command(subcommand)]
+    Models(ModelsCommand),
     /// Manage login autostart for the current user.
     #[command(subcommand)]
     Autostart(autostart::AutostartCommand),
@@ -113,6 +116,12 @@ pub enum BrowserCommand {
         #[arg(long, default_value_t = 30)]
         days: u64,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ModelsCommand {
+    /// Reload model providers from config.yaml without restarting the daemon.
+    Reload,
 }
 
 #[derive(Args)]
@@ -338,6 +347,20 @@ async fn run() -> Result<(), BoxError> {
                     println!("Gateway URL: {}", daemon.base_url());
                     println!("Bearer token: {token}");
                     println!("Extension directory: chrome_extension");
+                }
+            }
+        }
+        Some(Commands::Models(cmd)) => {
+            log::info!(
+                "Starting CLI with command 'models' at {}",
+                daemon.base_url()
+            );
+
+            let client = build_control_client(&daemon).await?;
+            match cmd {
+                ModelsCommand::Reload => {
+                    let models = client.reload_models().await?;
+                    println!("{}", serde_json::to_string_pretty(&models)?);
                 }
             }
         }
@@ -663,6 +686,14 @@ mod tests {
         };
 
         assert!(!cmd.json);
+    }
+
+    #[test]
+    fn models_reload_command_parses() {
+        let cli = Cli::try_parse_from(["anda", "models", "reload"]).unwrap();
+        let Some(Commands::Models(ModelsCommand::Reload)) = cli.command else {
+            panic!("expected models reload command");
+        };
     }
 
     #[test]

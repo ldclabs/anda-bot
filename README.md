@@ -92,7 +92,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then press Enter in the terminal UI. For API keys, you can also export a provider environment variable before starting Anda.
+On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then refresh models from the launcher or browser side panel, or run `anda models reload`. For API keys, you can also export a provider environment variable before starting Anda.
 
 Minimal model configuration:
 
@@ -127,7 +127,8 @@ When the terminal UI is running:
 - Press Up or Down to move through multi-line input.
 - Press Ctrl+U to clear the input.
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
-- Use `/reload` after editing `config.yaml`.
+- Use `anda models reload`, or the launcher/browser refresh models button, after editing model providers in `config.yaml`.
+- Use `/reload` after changing daemon settings that still require a restart.
 - Use `/stop` or `/cancel` to interrupt the current response.
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
@@ -164,6 +165,7 @@ anda status
 anda start
 anda stop
 anda restart
+anda models reload
 anda autostart status
 ```
 

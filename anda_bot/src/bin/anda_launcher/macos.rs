@@ -98,6 +98,13 @@ define_class!(
             }
         }
 
+        #[unsafe(method(reloadModels:))]
+        fn reload_models(&self, _sender: &AnyObject) {
+            if let Some(ctx) = CTX.get() {
+                reload_models_async(ctx.clone());
+            }
+        }
+
         #[unsafe(method(generateBrowserExtensionToken:))]
         fn generate_browser_extension_token(&self, _sender: &AnyObject) {
             if let Some(ctx) = CTX.get() {
@@ -404,6 +411,13 @@ fn add_settings_submenu(
         sel!(settings:),
         delegate,
     );
+    add_item(
+        &submenu,
+        mtm,
+        &copy.reload_models,
+        sel!(reloadModels:),
+        delegate,
+    );
     let launch_title = if launch_agent_installed() {
         &copy.disable_launch_at_login
     } else {
@@ -583,7 +597,7 @@ fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
 fn run_settings_wizard_async(ctx: LauncherContext) {
     spawn_menu_action(move || match settings::run_wizard(&ctx) {
         Ok(true) => {
-            let result = core::restart_daemon(&ctx).unwrap_or_else(error_result);
+            let result = core::reload_models_or_start_daemon(&ctx);
             show_background_dialog(&text().app_title, &result.message);
         }
         Ok(false) => {}
@@ -594,6 +608,13 @@ fn run_settings_wizard_async(ctx: LauncherContext) {
 fn restart_daemon_async(ctx: LauncherContext) {
     spawn_menu_action(move || {
         let result = core::restart_daemon(&ctx).unwrap_or_else(error_result);
+        show_background_dialog(&text().app_title, &result.message);
+    });
+}
+
+fn reload_models_async(ctx: LauncherContext) {
+    spawn_menu_action(move || {
+        let result = core::reload_models(&ctx).unwrap_or_else(error_result);
         show_background_dialog(&text().app_title, &result.message);
     });
 }

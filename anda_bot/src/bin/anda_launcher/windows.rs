@@ -74,6 +74,7 @@ const ID_LOGS: usize = 1008;
 const ID_CHECK_UPDATE: usize = 1009;
 const ID_QUIT: usize = 1010;
 const ID_BROWSER_TOKEN: usize = 1011;
+const ID_RELOAD_MODELS: usize = 1012;
 const ID_LANGUAGE_BASE: usize = 1100;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
@@ -187,6 +188,11 @@ fn handle_command(hwnd: HWND, id: usize) {
         ID_RESTART => show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
             core::restart_daemon(ctx)
         }),
+        ID_RELOAD_MODELS => {
+            show_command_result_async(text().app_title.clone(), ctx.clone(), |ctx| {
+                core::reload_models(ctx)
+            })
+        }
         ID_BROWSER_TOKEN => show_browser_extension_token_result_async(ctx.clone()),
         ID_CHECK_UPDATE => run_manual_update_check(hwnd, ctx.clone()),
         ID_AUTOSTART => toggle_autostart_async(ctx.clone()),
@@ -271,6 +277,7 @@ fn show_tray_menu(hwnd: HWND) {
         append_separator(menu);
         let settings_menu = CreatePopupMenu();
         append_item(settings_menu, ID_SETTINGS, &copy.model_settings);
+        append_item(settings_menu, ID_RELOAD_MODELS, &copy.reload_models);
         let autostart_label = if launcher_autostart_installed() {
             &copy.disable_launch_at_login
         } else {
@@ -715,7 +722,7 @@ fn run_settings_wizard_async(ctx: LauncherContext) {
     spawn_menu_action(move || match settings::run_wizard(&ctx) {
         Ok(true) => show_result(
             &text().app_title,
-            &core::restart_daemon(&ctx).unwrap_or_else(error_result),
+            &core::reload_models_or_start_daemon(&ctx),
         ),
         Ok(false) => {}
         Err(err) => show_error(&text().settings_title, &err.to_string()),

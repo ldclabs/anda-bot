@@ -6,7 +6,7 @@ use anda_engine::{
     extension::{fs, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
-    model::Models,
+    model::{Model, Models, reqwest},
     store::Store,
     unix_ms,
 };
@@ -28,6 +28,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 mod agent;
@@ -76,7 +77,7 @@ pub struct Engines {
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
-    config_path: PathBuf,
+    runtime_models: RuntimeModels,
     home_dir: PathBuf,
 }
 
@@ -88,7 +89,8 @@ pub trait CompletionHook: Send + Sync {
 pub struct EngineConfig {
     pub id_key: Ed25519Key,
     pub managers: Vec<Ed25519PubKey>,
-    pub models: Models,
+    pub models: Arc<Models>,
+    pub brain_models: Arc<Models>,
     pub brain_base_url: String,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
@@ -106,14 +108,30 @@ struct AutoUpdateRouteState {
 }
 
 #[derive(Clone)]
+pub(crate) struct RuntimeModels {
+    models: Arc<Models>,
+    brain_models: Arc<Models>,
+    config_path: PathBuf,
+    http_client: reqwest::Client,
+    view: Arc<RwLock<DaemonModelsResponse>>,
+    reload_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaemonModelsResponse {
+    active_model: Option<String>,
+    model_names: Vec<String>,
+}
+
+#[derive(Clone)]
 struct DaemonControlRouteState {
     app: AppState,
     bot: Arc<AndaBot>,
     cancel_token: CancellationToken,
-    config_path: PathBuf,
+    runtime_models: RuntimeModels,
     // Serializes config updates so concurrent PUTs cannot interleave
     // the backup check, backup copy, and file write.
-    config_write_lock: Arc<tokio::sync::Mutex<()>>,
+    config_write_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Serialize)]
@@ -121,11 +139,97 @@ struct DaemonConfigResponse {
     path: String,
     content: String,
     config: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    models: Option<DaemonModelsResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    models_error: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct DaemonConfigUpdateRequest {
     content: String,
+}
+
+impl RuntimeModels {
+    fn new(
+        models: Arc<Models>,
+        brain_models: Arc<Models>,
+        config_path: PathBuf,
+        http_client: reqwest::Client,
+    ) -> Self {
+        let view = daemon_models_response(models.as_ref());
+        Self {
+            models,
+            brain_models,
+            config_path,
+            http_client,
+            view: Arc::new(RwLock::new(view)),
+            reload_lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    pub(crate) async fn current(&self) -> DaemonModelsResponse {
+        self.view.read().await.clone()
+    }
+
+    pub(crate) async fn set_active_model(&self, active_model: String) -> DaemonModelsResponse {
+        let mut view = self.view.write().await;
+        if !view.model_names.iter().any(|name| name == &active_model) {
+            view.model_names.push(active_model.clone());
+            view.model_names.sort();
+        }
+        view.active_model = Some(active_model);
+        view.clone()
+    }
+
+    pub(crate) async fn reload_from_config(&self) -> Result<DaemonModelsResponse, BoxError> {
+        let _reload_guard = self.reload_lock.lock().await;
+        let config = config::Config::from_file(&self.config_path).await?;
+        let model_issues = model_setup_issues(&config);
+        if !model_issues.is_empty() {
+            return Err(format!(
+                "model configuration is incomplete: {}",
+                model_issues.join(", ")
+            )
+            .into());
+        }
+
+        let next_models = config.models(self.http_client.clone());
+        if next_models.get_model().is_none() {
+            return Err("No model found in config.yaml".into());
+        }
+        let brain_model = brain_model_from_models(&next_models)
+            .ok_or("No model found for brain in config.yaml")?;
+
+        self.models.as_ref().replace(&next_models);
+        self.brain_models.as_ref().replace(&next_models);
+        self.brain_models.set_model(brain_model);
+        let response = daemon_models_response(&next_models);
+        *self.view.write().await = response.clone();
+        Ok(response)
+    }
+}
+
+fn model_setup_issues(config: &config::Config) -> Vec<String> {
+    config
+        .setup_issues()
+        .into_iter()
+        .filter(|issue| issue.starts_with("model."))
+        .collect()
+}
+
+pub(crate) fn brain_model_from_models(models: &Models) -> Option<Model> {
+    models
+        .get("brain")
+        .or_else(|| models.get("memory"))
+        .or_else(|| models.get_model())
+}
+
+pub(crate) fn daemon_models_response(models: &Models) -> DaemonModelsResponse {
+    DaemonModelsResponse {
+        active_model: models.get_model().map(|model| model.model_name()),
+        model_names: models.model_names().into_iter().collect(),
+    }
 }
 
 impl Engines {
@@ -145,6 +249,12 @@ impl Engines {
             hasher.finalize().into()
         };
         let outer_http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
+        let runtime_models = RuntimeModels::new(
+            cfg.models.clone(),
+            cfg.brain_models.clone(),
+            config_path.clone(),
+            outer_http_client.clone(),
+        );
 
         // Initialize Web3 client for ICP network interaction
         let web3 = Web3Client::builder()
@@ -312,7 +422,7 @@ impl Engines {
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
             .with_management(management)
-            .with_models(Arc::new(cfg.models))
+            .with_models(cfg.models.clone())
             .register_tool(Arc::new(brain_client.clone()))?
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(note::NoteTool::new()))?
@@ -412,7 +522,7 @@ impl Engines {
             browser_bridge,
             voice_capabilities,
             auto_updater: cfg.auto_updater,
-            config_path,
+            runtime_models,
             home_dir: cfg.home_dir,
         })
     }
@@ -426,8 +536,8 @@ impl Engines {
             app: self.state.clone(),
             bot: self.bot.clone(),
             cancel_token,
-            config_path: self.config_path.clone(),
-            config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            runtime_models: self.runtime_models.clone(),
+            config_write_lock: Arc::new(Mutex::new(())),
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
@@ -436,6 +546,7 @@ impl Engines {
             voice_capabilities: self.voice_capabilities,
             auto_updater: self.auto_updater,
             home_dir: self.home_dir,
+            runtime_models: self.runtime_models.clone(),
         };
         let browser_ws_router = Router::new()
             .route("/ws/engine/{*id}", routing::get(browser_websocket))
@@ -454,6 +565,7 @@ impl Engines {
                 "/daemon/config",
                 routing::get(get_daemon_config).put(update_daemon_config),
             )
+            .route("/daemon/models/reload", routing::post(reload_daemon_models))
             .route("/daemon/shutdown", routing::post(daemon_shutdown))
             .with_state(daemon_control_route_state);
 
@@ -535,7 +647,7 @@ async fn get_daemon_config(
         return *response;
     }
 
-    let content = match crate::util::text::read_text_file(&state.config_path).await {
+    let content = match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
         Ok(content) => content,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             config::Config::default_template().to_string()
@@ -543,8 +655,11 @@ async fn get_daemon_config(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     };
 
-    match daemon_config_response(&state.config_path, content) {
-        Ok(response) => AxumJson(response).into_response(),
+    match daemon_config_response(&state.runtime_models.config_path, content) {
+        Ok(mut response) => {
+            response.models = Some(state.runtime_models.current().await);
+            AxumJson(response).into_response()
+        }
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     }
 }
@@ -559,12 +674,13 @@ async fn update_daemon_config(
     }
 
     let content = normalize_config_file_content(request.content);
-    let response = match daemon_config_response(&state.config_path, content.clone()) {
+    let response = match daemon_config_response(&state.runtime_models.config_path, content.clone())
+    {
         Ok(response) => response,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
 
-    if let Some(parent) = state.config_path.parent()
+    if let Some(parent) = state.runtime_models.config_path.parent()
         && let Err(err) = tokio::fs::create_dir_all(parent).await
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
@@ -572,9 +688,9 @@ async fn update_daemon_config(
 
     let _write_guard = state.config_write_lock.lock().await;
 
-    match daemon_config_needs_backup(&state.config_path, content.as_bytes()).await {
+    match daemon_config_needs_backup(&state.runtime_models.config_path, content.as_bytes()).await {
         Ok(true) => {
-            if let Err(err) = backup_daemon_config(&state.config_path).await {
+            if let Err(err) = backup_daemon_config(&state.runtime_models.config_path).await {
                 return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
             }
         }
@@ -582,11 +698,37 @@ async fn update_daemon_config(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 
-    if let Err(err) = write_daemon_config_atomically(&state.config_path, content.as_bytes()).await {
+    if let Err(err) =
+        write_daemon_config_atomically(&state.runtime_models.config_path, content.as_bytes()).await
+    {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
+    let mut response = response;
+    match state.runtime_models.reload_from_config().await {
+        Ok(models) => response.models = Some(models),
+        Err(err) => {
+            log::warn!("failed to reload daemon models after config update: {err}");
+            response.models = Some(state.runtime_models.current().await);
+            response.models_error = Some(err.to_string());
+        }
+    }
+
     AxumJson(response).into_response()
+}
+
+async fn reload_daemon_models(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
+        return *response;
+    }
+
+    match state.runtime_models.reload_from_config().await {
+        Ok(models) => AxumJson(models).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
 }
 
 // Write via a temp file in the same directory plus fsync and rename, so a
@@ -626,6 +768,8 @@ fn daemon_config_response(
         path: path.to_string_lossy().to_string(),
         content,
         config,
+        models: None,
+        models_error: None,
     })
 }
 
@@ -701,12 +845,66 @@ pub async fn get_version() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anda_engine::model::ModelConfig;
+
+    fn test_model_config(model: &str, labels: &[&str]) -> ModelConfig {
+        ModelConfig {
+            family: "openai".to_string(),
+            model: model.to_string(),
+            api_base: "http://127.0.0.1:1/v1".to_string(),
+            api_key: "test-key".to_string(),
+            labels: labels.iter().map(|label| label.to_string()).collect(),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn normalize_config_file_content_uses_lf_and_final_newline() {
         assert_eq!(
             normalize_config_file_content("addr: 127.0.0.1:8042\r\nlog_level: warn".to_string()),
             "addr: 127.0.0.1:8042\nlog_level: warn\n"
+        );
+    }
+
+    #[test]
+    fn apply_models_update_switches_active_and_registers_new_labels() {
+        let http_client = crate::util::http_client::new_reqwest_client();
+        let target = Models::from_configs(
+            &[test_model_config("old-model", &["old", "memory"])],
+            http_client.clone(),
+        );
+        let next = Models::from_configs(&[test_model_config("new-model", &["fast"])], http_client);
+        let active = next.get("new-model").unwrap();
+        next.set_model(active);
+        target.replace(&next);
+
+        assert_eq!(target.get_model().unwrap().model_name(), "new-model");
+        assert_eq!(target.get("fast").unwrap().model_name(), "new-model");
+        assert_eq!(
+            serde_json::to_value(daemon_models_response(&next)).unwrap(),
+            json!({
+                "active_model": "new-model",
+                "model_names": ["new-model"]
+            })
+        );
+    }
+
+    #[test]
+    fn brain_model_from_models_prefers_brain_or_memory_labels() {
+        let http_client = crate::util::http_client::new_reqwest_client();
+        let models = Models::from_configs(
+            &[
+                test_model_config("active-model", &[]),
+                test_model_config("memory-model", &["memory"]),
+            ],
+            http_client,
+        );
+        let active = models.get("active-model").unwrap();
+        models.set_model(active);
+
+        assert_eq!(
+            brain_model_from_models(&models).unwrap().model_name(),
+            "memory-model"
         );
     }
 

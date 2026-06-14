@@ -83,7 +83,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-第一次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型配置缺失，请打开这个文件，填好 provider 信息，保存后回到终端按 Enter。API key 也可以在启动 Anda 前通过 provider 对应的环境变量导出。
+第一次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型配置缺失，请打开这个文件，填好 provider 信息，保存后在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。API key 也可以在启动 Anda 前通过 provider 对应的环境变量导出。
 
 最小模型配置示例：
 
@@ -118,7 +118,8 @@ anda --home /path/to/.anda
 - 上/下方向键在多行输入中移动光标。
 - Ctrl+U 清空输入。
 - Ctrl+A / Ctrl+E 跳到输入开头或结尾。
-- 修改 `config.yaml` 后输入 `/reload` 重新加载。
+- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 launcher / 浏览器侧边栏点击刷新模型。
+- 修改仍需要重启的 daemon 设置后，再输入 `/reload`。
 - 输入 `/stop` 或 `/cancel` 中断当前回复。
 - 输入 `/steer ...` 可以给正在生成的回复追加引导。
 - Esc 查看状态，Ctrl+C 退出。
@@ -155,6 +156,7 @@ anda status
 anda start
 anda stop
 anda restart
+anda models reload
 anda autostart status
 ```
 

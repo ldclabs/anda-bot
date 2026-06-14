@@ -175,7 +175,7 @@
     loadingModels = true
     try {
       await Promise.all([
-        andaClient.refreshModelState(),
+        andaClient.refreshModelState({ reload: true }),
         delay(800) // Ensure the loading spinner is visible for at least 1.2 seconds to avoid flickering
       ])
     } catch (_error) {

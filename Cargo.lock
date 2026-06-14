@@ -227,9 +227,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad24a5a3dd80907ba666da821d67d3c2503010b4e97e35aa432a118a943d28a9"
+checksum = "cf5432f871ade85f61243b082790a55408809054c2ca4e441739b8381efbe840"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -281,9 +281,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b639b4f113ce18b2c04c9dec61e82ad05be18baa53bb956ecb88f27803944517"
+checksum = "f7940bf55c6428ff93e427ecb98849507e0b1fe03b92de8a5cecb0a1107f2c39"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -312,9 +312,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9b4593ade1dabd382b75057c71fd315c85f0fe339a666efe95a98dca0ebbeeb"
+checksum = "3680cc4bfb4e4eec070ea8a6ff56ed61fe8bfb98a824ae8382965af9e05ba5b5"
 dependencies = [
  "anda_db_utils",
  "cbor2",
@@ -328,9 +328,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_derive"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39d205f44335e9961168e3a617f51eb2f2836a353e0726f7ce17fadab4a2cc53"
+checksum = "5890596d958d2a0555eca42c4080037afef2b09d010c3e2d09d7f4b51ff76940"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -339,9 +339,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_hnsw"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046d30ef74d8c5798de05450124476e67139910d8c1473ee773beb96b929cd3e"
+checksum = "5580e84f0ca32a8a350e1b865cc4c592bb5a50606895432e24cf06df7a0ed6b9"
 dependencies = [
  "cbor2",
  "croaring",
@@ -360,9 +360,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4158410a4697401d5999903ca8d96edc41f262eb07528f546b3b3fc7d8243f2"
+checksum = "ee22c025acdac67ad88c0f6c04c763187d5e068f89e44bf3e8068d7881e86980"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",
@@ -376,9 +376,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "281a5aec01879b835b5d54999a929f6cdddac6b0679a85bc58b9e7f3a21d5533"
+checksum = "a4271a1d5dcc29cf7bab172fbc5f37fb381a8b804737dec8d49f63ab8d610d59"
 dependencies = [
  "anda_db_utils",
  "cbor2",
@@ -394,9 +394,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_utils"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f96f020770c99293594ea119c2d7ad57af800b5431a6d9fce56b9b0792edc3c"
+checksum = "b323ce4b673adc259591d1d3d45410c4154c87be70392a258bf566d9fd26ca6c"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -404,9 +404,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b292451f97c5d4495b0e26187b845811fe1e0027d42875eb32b3b8411550a70"
+checksum = "0947f9bdd82de05274252cce8c48b8f634e27a9ec29b742dedb753016c657268"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -479,9 +479,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6269023850429003e052300264d7bd7ebceff396632bcaf75d4cb6fe287e70"
+checksum = "e61cc58e82d41bace8c844b1981620c520a2a25e67f76484916607666162accb"
 dependencies = [
  "async-trait",
  "chrono",
@@ -494,9 +494,9 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f293780ead50024830da57c27d3a1910b8e1986d78726b85e0ec932f8d5a23a"
+checksum = "94180968dd6adcc0d22a25a3be54116a9e061ae09386b18941c5fe2a0eddcd30"
 dependencies = [
  "aes-gcm",
  "async-stream",

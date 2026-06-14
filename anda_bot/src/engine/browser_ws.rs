@@ -1,5 +1,5 @@
 use anda_core::{AgentInput, BoxError, Json, Principal, ToolInput};
-use anda_engine::{model::Models, unix_ms};
+use anda_engine::unix_ms;
 use anda_engine_server::handler::AppState;
 use anda_kip::Request as KipRequest;
 use axum::{
@@ -28,7 +28,10 @@ use tokio_tungstenite::{
     tungstenite::{Message, handshake::derive_accept_key, protocol::Role},
 };
 
-use super::browser::{BrowserActionResult, BrowserBridge, BrowserCommand};
+use super::{
+    RuntimeModels,
+    browser::{BrowserActionResult, BrowserBridge, BrowserCommand},
+};
 use crate::brain;
 #[cfg(target_os = "windows")]
 use crate::util::windows_process::suppress_tokio_console_window;
@@ -46,6 +49,7 @@ pub struct BrowserWebSocketState {
     pub voice_capabilities: BrowserVoiceCapabilities,
     pub auto_updater: Arc<AutoUpdater>,
     pub home_dir: PathBuf,
+    pub(crate) runtime_models: RuntimeModels,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -292,8 +296,9 @@ async fn handle_browser_ws_request(
         "ui_language" => handle_ui_language(state),
         "pick_workspace" => handle_pick_workspace().await,
         "capabilities" => handle_capabilities(state, engine_id),
-        "model_names" => handle_model_names(state, engine_id),
-        "set_model" => handle_set_model(incoming.params, state, engine_id),
+        "model_names" => handle_model_names(state).await,
+        "reload_models" => handle_reload_models(state).await,
+        "set_model" => handle_set_model(incoming.params, state, engine_id).await,
         "auto_update_status" => handle_auto_update_status(state),
         "auto_update_check" => handle_auto_update_check(state).await,
         "auto_update_install_and_restart" => handle_auto_update_install_and_restart(state).await,
@@ -823,19 +828,20 @@ fn handle_capabilities(
     }))
 }
 
-fn handle_model_names(
-    state: &BrowserWebSocketState,
-    engine_id: Principal,
-) -> Result<Value, String> {
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
-    Ok(model_info_json(engine.models().as_ref()))
+async fn handle_model_names(state: &BrowserWebSocketState) -> Result<Value, String> {
+    serde_json::to_value(state.runtime_models.current().await).map_err(|err| err.to_string())
 }
 
-fn handle_set_model(
+async fn handle_reload_models(state: &BrowserWebSocketState) -> Result<Value, String> {
+    let models = state
+        .runtime_models
+        .reload_from_config()
+        .await
+        .map_err(|err| err.to_string())?;
+    serde_json::to_value(models).map_err(|err| err.to_string())
+}
+
+async fn handle_set_model(
     params: Value,
     state: &BrowserWebSocketState,
     engine_id: Principal,
@@ -856,7 +862,11 @@ fn handle_set_model(
         .get(model_name)
         .ok_or_else(|| format!("model {model_name:?} not found"))?;
     models.set_model(model);
-    Ok(model_info_json(models.as_ref()))
+    let response = state
+        .runtime_models
+        .set_active_model(model_name.to_string())
+        .await;
+    serde_json::to_value(response).map_err(|err| err.to_string())
 }
 
 fn handle_auto_update_status(state: &BrowserWebSocketState) -> Result<Value, String> {
@@ -876,15 +886,6 @@ async fn handle_auto_update_install_and_restart(
         .await
         .map_err(|err| err.to_string())?;
     serde_json::to_value(update_state).map_err(|err| err.to_string())
-}
-
-fn model_info_json(models: &Models) -> Value {
-    let active_model = models.get_model().map(|model| model.model_name());
-    let model_names = models.model_names().into_iter().collect::<Vec<_>>();
-    json!({
-        "active_model": active_model,
-        "model_names": model_names,
-    })
 }
 
 async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &BrowserWebSocketState) {

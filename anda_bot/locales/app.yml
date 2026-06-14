@@ -63,6 +63,13 @@ launcher.model_settings:
   ar: إعدادات النموذج...
   fr: Paramètres du modèle...
   es: Configuración del modelo...
+launcher.reload_models:
+  en: Refresh models
+  zh-Hans: 刷新模型
+  ru: Обновить модели
+  ar: تحديث النماذج
+  fr: Actualiser les modèles
+  es: Actualizar modelos
 launcher.status:
   en: Status
   zh-Hans: 状态

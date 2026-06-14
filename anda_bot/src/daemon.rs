@@ -290,7 +290,7 @@ impl Daemon {
         let global_cancel_token = CancellationToken::new();
         let outer_http_client =
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
-        let models = self.cfg.models(outer_http_client.clone());
+        let models = Arc::new(self.cfg.models(outer_http_client.clone()));
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_registry = self.cfg.user_registry(user_pubkey.clone())?;
         let default_user = user_registry.default_user();
@@ -299,13 +299,13 @@ impl Daemon {
         let mut brain_managers = Vec::with_capacity(user_pubkeys.len() + 1);
         brain_managers.push(id_key.pubkey());
         brain_managers.extend(user_pubkeys.clone());
+        let brain_model =
+            engine::brain_model_from_models(models.as_ref()).ok_or("No model found for brain")?;
+        let brain_models = Arc::new(anda_engine::model::Models::default());
+        brain_models.set_model(brain_model);
         let brain_cfg = brain::BrainConfig {
             managers: brain_managers,
-            model: models
-                .get("brain")
-                .or_else(|| models.get("memory"))
-                .or_else(|| models.get_model())
-                .ok_or("No model found for brain")?,
+            models: brain_models.clone(),
             https_proxy: self.cfg.https_proxy.clone(),
         };
         let bot_db = self.connect_bot_db().await?;
@@ -317,7 +317,8 @@ impl Daemon {
         let engine_cfg = engine::EngineConfig {
             id_key,
             managers: user_pubkeys,
-            models,
+            models: models.clone(),
+            brain_models,
             brain_base_url: self.cfg.brain_base_url(),
             home_dir: self.home.clone(),
             skills_dir: self.skills_dir_path(),

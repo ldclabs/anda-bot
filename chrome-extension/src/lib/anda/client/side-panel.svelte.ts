@@ -525,13 +525,14 @@ export class AndaSidePanelClient extends EventTarget {
     return normalizePromptSkills(result)
   }
 
-  async refreshModelState(): Promise<ModelState> {
+  async refreshModelState(options: { reload?: boolean } = {}): Promise<ModelState> {
     if (!this.settings.token) {
       this.modelState = emptyModelState()
       return this.modelState
     }
 
-    const daemonState = await this.rpc<DaemonModelState>('model_names', [])
+    const method = options.reload ? 'reload_models' : 'model_names'
+    const daemonState = await this.rpc<DaemonModelState>(method, [])
     this.modelState = normalizeModelState(daemonState)
     return this.modelState
   }
