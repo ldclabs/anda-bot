@@ -2,6 +2,7 @@ packages:
   - docsite
   - website
   - chrome-extension
+  - media/*
 allowBuilds:
   '@swc/core': true
   core-js: true
