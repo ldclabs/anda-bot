@@ -86,6 +86,8 @@ pub enum Commands {
     /// Channel-related operations that run directly from this CLI.
     #[command(subcommand)]
     Channel(cli::channel::ChannelCommand),
+    /// Manage trusted users and Ed25519 keys.
+    User(cli::user::UserCommand),
     /// Inspect currently active agent sessions in the daemon.
     Session(cli::session::SessionCommand),
     /// Start a continuous voice conversation with the agent.
@@ -212,11 +214,14 @@ async fn run() -> Result<(), BoxError> {
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
 
-            let ed25519_secret =
-                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("anda_bot.key")).await?;
+            let ed25519_secret = util::key::load_or_init_ed25519_secret(
+                &daemon.keys_dir_path().join("anda_bot.key"),
+            )
+            .await?;
             let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
             let user_secret =
-                load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+                util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key"))
+                    .await?;
             let user_key = util::key::Ed25519Key::new(user_secret);
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
@@ -374,6 +379,10 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
             cli::channel::run(&daemon, cmd).await?;
+        }
+        Some(Commands::User(cmd)) => {
+            log::info!("Starting CLI with command 'user' at {}", daemon.base_url());
+            cli::user::run(&daemon, cmd).await?;
         }
         Some(Commands::Session(cmd)) => {
             log::info!(
@@ -607,7 +616,8 @@ async fn load_daemon(home: PathBuf) -> Result<daemon::Daemon, BoxError> {
 async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret = load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_secret =
+        util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
     let gateway_token = user_key.sign_cwt(
         util::key::ClaimsSetBuilder::new()
@@ -625,7 +635,8 @@ async fn build_browser_extension_token(
 ) -> Result<String, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret = load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_secret =
+        util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
     let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
     let days = days.clamp(1, 3650);
@@ -639,29 +650,6 @@ async fn build_browser_extension_token(
             .text_claim("client".to_string(), "chrome_extension".into())
             .build(),
     )
-}
-
-async fn load_or_init_ed25519_secret(key_path: &PathBuf) -> Result<[u8; 32], BoxError> {
-    match util::text::read_text_file(key_path).await {
-        Ok(content) => {
-            let secret = util::key::parse_ed25519_privkey(content.trim())?;
-            Ok(secret)
-        }
-        Err(err) => {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                return Err(err.into());
-            }
-            log::warn!(
-                name = "daemon";
-                "ED25519 private key not found at {:?}, generating a new one",
-                key_path
-            );
-            let secret = util::key::random_ed25519_privkey();
-            let encoded = util::key::encode_ed25519_privkey(&secret)?;
-            tokio::fs::write(key_path, encoded).await?;
-            Ok(secret)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -693,6 +681,14 @@ mod tests {
         let cli = Cli::try_parse_from(["anda", "models", "reload"]).unwrap();
         let Some(Commands::Models(ModelsCommand::Reload)) = cli.command else {
             panic!("expected models reload command");
+        };
+    }
+
+    #[test]
+    fn user_create_command_parses() {
+        let cli = Cli::try_parse_from(["anda", "user", "create", "alice"]).unwrap();
+        let Some(Commands::User(_cmd)) = cli.command else {
+            panic!("expected user command");
         };
     }
 

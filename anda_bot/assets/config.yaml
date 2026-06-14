@@ -23,8 +23,9 @@ log_level: warn
 # workspaces: [/path/to/project]
 
 # Optional trusted users that can share this daemon and the same Anda agent.
-# Each pubkey is an Ed25519 public key. Channel entries can set `user:` to one
-# of these ids; HTTP/browser clients can authenticate with the matching private key.
+# Run `anda user create alice` to generate a private key and register the
+# matching Ed25519 public key here. Channel entries can set `user:` to one of
+# these ids; HTTP/browser clients can authenticate with the matching private key.
 # users:
 #   - id: alice
 #     pubkey: ""

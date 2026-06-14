@@ -206,7 +206,14 @@ Supported channel families:
 - Discord
 - Lark / Feishu
 
-Multiple trusted users can share one daemon and the same Anda agent. Add their Ed25519 public keys under top-level `users`, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner from `~/.anda/keys/user.key`.
+Multiple trusted users can share one daemon and the same Anda agent. Create a user key, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner from `~/.anda/keys/user.key`.
+
+```bash
+anda user create alice
+anda user list
+```
+
+The command writes the new public key under top-level `users` and saves the matching private key under `~/.anda/keys/users/`:
 
 ```yaml
 users:

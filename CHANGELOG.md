@@ -2,6 +2,13 @@
 
 All notable changes to Anda Bot.
 
+## [Unreleased]
+
+### Added
+
+- **Trusted user key management CLI**: added `anda user list`, `anda user create`, `anda user import`, and `anda user pubkey` to generate, inspect, and register Ed25519 keys for channel-bound trusted users.
+- **Multi-user and Discord setup documentation**: documented the `anda user` workflow, channel `user` binding, and Discord bot installation/configuration steps across the README and localized docsite channel guides.
+
 ## [0.9.10] — 2026-06-14
 
 ### Added

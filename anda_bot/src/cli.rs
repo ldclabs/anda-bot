@@ -4,6 +4,7 @@ pub mod agent;
 pub mod channel;
 pub mod session;
 pub mod updater;
+pub mod user;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub mod voice;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

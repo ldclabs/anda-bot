@@ -8,7 +8,7 @@ use ic_cose_types::cose::{
     sign1::cose_sign1,
 };
 use ic_ed25519::PublicKey;
-use std::{str::FromStr, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 
 pub use ic_cose_types::cose::cwt::{ClaimsSet, ClaimsSetBuilder};
 pub use ic_cose_types::cose::iana;
@@ -176,6 +176,70 @@ pub fn encode_ed25519_privkey(secret: &[u8; 32]) -> Result<String, BoxError> {
     Ok(ByteBufB64(cose_bytes).to_string())
 }
 
+pub fn encode_ed25519_pubkey(pubkey: &Ed25519PubKey) -> String {
+    ByteBufB64(pubkey.as_bytes().to_vec()).to_string()
+}
+
+pub async fn load_or_init_ed25519_secret(key_path: &Path) -> Result<[u8; 32], BoxError> {
+    match super::text::read_text_file(key_path).await {
+        Ok(content) => {
+            let secret = parse_ed25519_privkey(content.trim())?;
+            Ok(secret)
+        }
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err.into());
+            }
+            log::warn!(
+                name = "daemon";
+                "ED25519 private key not found at {:?}, generating a new one",
+                key_path
+            );
+            let secret = random_ed25519_privkey();
+            write_ed25519_secret_file(key_path, &secret, false).await?;
+            Ok(secret)
+        }
+    }
+}
+
+pub async fn write_ed25519_secret_file(
+    key_path: &Path,
+    secret: &[u8; 32],
+    overwrite: bool,
+) -> Result<(), BoxError> {
+    if let Some(parent) = key_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let encoded = encode_ed25519_privkey(secret)?;
+    let key_path = key_path.to_path_buf();
+    tokio::task::spawn_blocking(move || write_private_text_file(&key_path, &encoded, overwrite))
+        .await??;
+    Ok(())
+}
+
+fn write_private_text_file(path: &Path, content: &str, overwrite: bool) -> Result<(), BoxError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    if overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    use std::io::Write;
+    let mut file = options.open(path)?;
+    file.write_all(content.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
 pub fn random_ed25519_privkey() -> [u8; 32] {
     let mut rng = rand::rng();
     let mut bytes = [0u8; 32];
@@ -205,7 +269,7 @@ mod tests {
     #[test]
     fn public_key_parser_accepts_raw_public_key_bytes() {
         let key = Ed25519Key::new(SECRET);
-        let raw = ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string();
+        let raw = encode_ed25519_pubkey(&key.pubkey());
 
         assert_eq!(
             parse_ed25519_pubkey(&raw).unwrap(),
@@ -309,5 +373,32 @@ mod tests {
         };
         let sig = arr[3].as_bytes().unwrap();
         assert_eq!(sig.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn key_file_writer_round_trips_private_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("user.key");
+
+        write_ed25519_secret_file(&key_path, &SECRET, false)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            load_or_init_ed25519_secret(&key_path).await.unwrap(),
+            SECRET
+        );
+        assert!(
+            write_ed25519_secret_file(&key_path, &SECRET, false)
+                .await
+                .is_err()
+        );
+        write_ed25519_secret_file(&key_path, &[2; 32], true)
+            .await
+            .unwrap();
+        assert_eq!(
+            load_or_init_ed25519_secret(&key_path).await.unwrap(),
+            [2; 32]
+        );
     }
 }

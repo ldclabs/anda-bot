@@ -197,7 +197,14 @@ anda browser token --days 30
 - Discord
 - Lark / 飞书
 
-多个可信用户可以共享同一个 daemon 和同一个 Anda agent。把这些用户的 Ed25519 公钥添加到顶层 `users`，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以 `~/.anda/keys/user.key` 对应的本地 owner 身份运行。
+多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以 `~/.anda/keys/user.key` 对应的本地 owner 身份运行。
+
+```bash
+anda user create alice
+anda user list
+```
+
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/keys/users/`：
 
 ```yaml
 users:

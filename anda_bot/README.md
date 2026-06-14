@@ -192,6 +192,7 @@ The memory brain stores more than text snippets. It can form entities, relations
 | `cargo run -p anda_bot -- stop`                     | You want to stop a background daemon on Unix.         |
 | `cargo run -p anda_bot -- restart`                  | You changed config or want a fresh daemon on Unix.    |
 | `cargo run -p anda_bot -- agent run --prompt "..."` | You want a single prompt without opening the UI.      |
+| `cargo run -p anda_bot -- user create alice`        | You want to create a trusted channel/user key.        |
 | `cargo run -p anda_bot -- voice --record-secs 8`    | You want microphone input and optional spoken output. |
 
 Voice mode requires `transcription.enabled: true`. Playback requires `tts.enabled: true`; add `--no-playback` to keep voice input but print text output only.
@@ -207,12 +208,19 @@ Supported channel families:
 - Discord
 - Lark / Feishu
 
+To bind a channel to a trusted non-owner user, create a key first:
+
+```bash
+cargo run -p anda_bot -- user create alice
+```
+
 Minimal examples:
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: anda_bot
       allowed_users:
@@ -237,6 +245,7 @@ channels:
 Channel notes:
 
 - `allowed_users` restricts who can trigger me. Use `"*"` only when that is acceptable.
+- `user` chooses which trusted Anda caller owns the channel conversations, resources, and memory.
 - `allow_external_users: true` lets non-allowlisted IM senders talk to me as `$external_user`; they are treated as untrusted and are not the owner/partner.
 - Telegram and Discord require `bot_token`.
 - WeChat can use a saved token or QR login when `bot_token` is empty.

@@ -19,7 +19,14 @@ Anda 可以只待在终端里，也可以接入团队频道。频道会把上下
 
 ## 多用户
 
-一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。把每个用户的 Ed25519 公钥添加到顶层 `users`，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用 `~/.anda/keys/user.key` 对应的本地 owner。
+一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。先创建用户 key，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用 `~/.anda/keys/user.key` 对应的本地 owner。
+
+```bash
+anda user create alice
+anda user list
+```
+
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/keys/users/`：
 
 ```yaml
 users:
@@ -56,6 +63,48 @@ channels:
       allowed_users:
         - "*"
 ```
+
+## Discord 示例
+
+Discord 使用 bot token 和 Gateway 连接。先创建并安装 bot，再改 `config.yaml`：
+
+1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)，创建或打开你的 app。
+2. 在 app 的 **Bot** 页面复制或重置 bot token。同时在 **Privileged Gateway Intents** 下打开 **Message Content Intent**，这样 Anda 才能读取普通消息正文。
+3. 在 **Installation** 页面，让 **Guild Install** 包含 `bot` scope。没有 `bot` scope 时，app 可能会出现在 Discord Apps 里，但不会作为服务器 bot 成员出现。
+4. 至少授予 `View Channels`、`Send Messages` 和 `Read Message History`。如果要让 Anda 发送文件，加 `Attach Files`；如果 `ack_reactions: true`，加 `Add Reactions`。
+5. 把 app 安装到你的服务器。服务器安装成功后，bot 应该会出现在服务器成员列表里。
+
+```yaml
+channels:
+  discord:
+    - id: server
+      user: ops
+      bot_token: "YOUR_DISCORD_BOT_TOKEN"
+      username: anda-discord
+      # 可选。限制这个条目只处理一个 Discord 服务器。
+      guild_id: "YOUR_DISCORD_GUILD_ID"
+      allowed_users:
+        - "YOUR_DISCORD_USER_ID"
+      mention_only: true
+      ack_reactions: true
+```
+
+配置校验层面只有 `bot_token` 是必填。为了实际可用并更安全，建议把 `allowed_users` 设为 Discord 用户 ID；当 `allowed_users` 为空且 `allow_external_users: false` 时，非 allowlist 发送者会被忽略。只有确实要让不可信外部用户以 `$external_user` 身份对话时，才设置 `allow_external_users: true`。
+
+保存配置后运行：
+
+```bash
+anda channel list
+anda restart
+```
+
+在服务器频道里，@ 这个 bot：
+
+```text
+@anda-discord 总结一下这个讨论
+```
+
+在 bot 私信里，直接发送普通消息即可，不需要 @。如果看不到 bot，先确认 **Guild Install** 包含 `bot` scope，并确认 daemon 正在运行。
 
 ## Lark / 飞书示例
 

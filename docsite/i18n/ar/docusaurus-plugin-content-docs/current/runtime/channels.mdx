@@ -17,12 +17,30 @@ description: إعداد قنوات IM والإدخال الصوتي والتفر
 
 يوجد الإعداد تحت `channels` في `~/.anda/config.yaml`.
 
+## المستخدمون المتعددون
+
+يمكن لـ daemon واحد خدمة عدة مستخدمين موثوقين عبر وكيل Anda نفسه. أنشئ مفتاح مستخدم ثم استخدم ذلك id في حقل `user` داخل القناة. عند حذف `user` تستخدم القناة المالك المحلي من `~/.anda/keys/user.key`.
+
+```bash
+anda user create alice
+anda user list
+```
+
+يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في `~/.anda/keys/users/`:
+
+```yaml
+users:
+  - id: alice
+    pubkey: "ALICE_ED25519_PUBLIC_KEY"
+```
+
 ## Telegram
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
@@ -43,6 +61,38 @@ channels:
 ```
 
 عند ترك `bot_token` فارغًا يمكن استخدام `anda channel init wechat` ومسح QR.
+
+## Discord
+
+يستخدم Discord رمز bot واتصال Gateway. أنشئ وثبّت bot قبل تعديل `config.yaml`:
+
+1. افتح [Discord Developer Portal](https://discord.com/developers/applications)، ثم أنشئ app أو افتح app موجودة.
+2. في صفحة **Bot** انسخ رمز bot أو أعد إنشاءه. فعّل أيضًا **Message Content Intent** ضمن **Privileged Gateway Intents** حتى يستطيع Anda قراءة نص الرسائل العادية.
+3. في **Installation** تأكد أن **Guild Install** يحتوي على scope باسم `bot`. من دون `bot` قد تظهر app في Discord Apps لكنها لن تظهر كعضو bot في الخادم.
+4. امنح على الأقل `View Channels` و `Send Messages` و `Read Message History`. أضف `Attach Files` لردود الملفات، وأضف `Add Reactions` إذا كان `ack_reactions: true`.
+5. ثبّت app في الخادم. بعد تثبيت الخادم يجب أن يظهر bot في قائمة الأعضاء.
+
+```yaml
+channels:
+  discord:
+    - id: server
+      bot_token: "YOUR_DISCORD_BOT_TOKEN"
+      username: anda-discord
+      guild_id: "YOUR_DISCORD_GUILD_ID"
+      allowed_users:
+        - "YOUR_DISCORD_USER_ID"
+      mention_only: true
+      ack_reactions: true
+```
+
+الحقل الإلزامي الوحيد في التحقق من الإعداد هو `bot_token`. لإعداد عملي وأكثر أمانًا، اضبط `allowed_users` على Discord user IDs؛ عند ترك `allowed_users` فارغًا مع `allow_external_users: false` يتجاهل Anda المرسلين غير المسموح لهم.
+
+```bash
+anda channel list
+anda restart
+```
+
+في قناة الخادم اذكر bot مثل `@anda-discord لخص هذا النقاش`. في DM مع bot أرسل رسالة عادية من دون ذكره.
 
 ## Lark / Feishu
 

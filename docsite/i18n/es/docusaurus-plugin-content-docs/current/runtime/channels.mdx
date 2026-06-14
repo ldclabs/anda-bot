@@ -17,12 +17,30 @@ Anda puede quedarse en la terminal o unirse a canales de equipo. Los canales dev
 
 La configuración vive en `channels` dentro de `~/.anda/config.yaml`.
 
+## Múltiples usuarios
+
+Un daemon puede servir a varios usuarios de confianza con el mismo agente Anda. Crea una clave de usuario y usa ese id en el campo `user` del canal. Si omites `user`, el canal usa el propietario local de `~/.anda/keys/user.key`.
+
+```bash
+anda user create alice
+anda user list
+```
+
+El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en `~/.anda/keys/users/`:
+
+```yaml
+users:
+  - id: alice
+    pubkey: "ALICE_ED25519_PUBLIC_KEY"
+```
+
 ## Telegram
 
 ```yaml
 channels:
   telegram:
     - id: personal
+      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
       allowed_users:
@@ -43,6 +61,38 @@ channels:
 ```
 
 Con `bot_token` vacío puedes usar `anda channel init wechat` y escanear el QR.
+
+## Discord
+
+Discord usa un bot token y una conexión Gateway. Crea e instala el bot antes de editar `config.yaml`:
+
+1. Abre el [Discord Developer Portal](https://discord.com/developers/applications) y crea o abre tu app.
+2. En la página **Bot**, copia o regenera el bot token. Activa también **Message Content Intent** en **Privileged Gateway Intents** para que Anda pueda leer mensajes normales.
+3. En **Installation**, haz que **Guild Install** incluya el scope `bot`. Sin `bot`, la app puede aparecer en Discord Apps pero no como miembro bot del servidor.
+4. Concede al menos `View Channels`, `Send Messages` y `Read Message History`. Añade `Attach Files` para respuestas con archivos y `Add Reactions` si `ack_reactions: true`.
+5. Instala la app en tu servidor. Tras una instalación de servidor, el bot debería aparecer en la lista de miembros.
+
+```yaml
+channels:
+  discord:
+    - id: server
+      bot_token: "YOUR_DISCORD_BOT_TOKEN"
+      username: anda-discord
+      guild_id: "YOUR_DISCORD_GUILD_ID"
+      allowed_users:
+        - "YOUR_DISCORD_USER_ID"
+      mention_only: true
+      ack_reactions: true
+```
+
+Solo `bot_token` es obligatorio para validar la configuración. Para una configuración útil y más segura, define `allowed_users` con IDs de usuario de Discord; con `allowed_users` vacío y `allow_external_users: false`, Anda ignora remitentes no autorizados.
+
+```bash
+anda channel list
+anda restart
+```
+
+En un canal del servidor menciona al bot, por ejemplo `@anda-discord resume este hilo`. En un DM con el bot, envía un mensaje normal sin mencionarlo.
 
 ## Lark / Feishu
 
