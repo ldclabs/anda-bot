@@ -40,6 +40,15 @@ const DISCORD_ACK_REACTIONS: &[&str] = &[
     "\u{1F4AA}",
     "\u{1F44C}",
 ];
+/// Discord requires a `User-Agent: DiscordBot ($url, $version)` header on every
+/// HTTP API request; requests without it are blocked at the edge (Cloudflare),
+/// which surfaces as the `gateway/bot` lookup failing before the websocket can
+/// be opened. See https://discord.com/developers/docs/reference.
+const DISCORD_USER_AGENT: &str = concat!(
+    "DiscordBot (https://github.com/ldclabs/anda-bot, ",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IncomingAttachment {
@@ -135,6 +144,14 @@ impl DiscordChannel {
         format!("{}/{}", self.api_base, path.trim_start_matches('/'))
     }
 
+    /// Adds the headers Discord requires on every REST call: the bot
+    /// `Authorization` token and the mandatory `DiscordBot (...)` `User-Agent`.
+    fn authorized(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        builder
+            .header("Authorization", format!("Bot {}", self.bot_token))
+            .header("User-Agent", DISCORD_USER_AGENT)
+    }
+
     fn message_channel_id(message: &SendMessage) -> &str {
         message.thread.as_deref().unwrap_or(&message.recipient)
     }
@@ -155,9 +172,7 @@ impl DiscordChannel {
 
     async fn fetch_bot_user_id(&self) -> Result<String, BoxError> {
         let response = self
-            .client
-            .get(self.api_url("users/@me"))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            .authorized(self.client.get(self.api_url("users/@me")))
             .send()
             .await?;
         let status = response.status();
@@ -202,9 +217,7 @@ impl DiscordChannel {
 
     async fn fetch_gateway_url(&self) -> Result<String, BoxError> {
         let response = self
-            .client
-            .get(self.api_url("gateway/bot"))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            .authorized(self.client.get(self.api_url("gateway/bot")))
             .send()
             .await?;
         let status = response.status();
@@ -418,9 +431,10 @@ impl DiscordChannel {
 
     async fn send_typing_once(&self, channel_id: &str) -> Result<(), BoxError> {
         let response = self
-            .client
-            .post(self.api_url(&format!("channels/{channel_id}/typing")))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            .authorized(
+                self.client
+                    .post(self.api_url(&format!("channels/{channel_id}/typing"))),
+            )
             .send()
             .await?;
         if !response.status().is_success() {
@@ -446,6 +460,7 @@ impl DiscordChannel {
             let response = match client
                 .put(url)
                 .header("Authorization", format!("Bot {bot_token}"))
+                .header("User-Agent", DISCORD_USER_AGENT)
                 .header("Content-Length", "0")
                 .send()
                 .await
@@ -468,9 +483,7 @@ impl DiscordChannel {
 
     async fn post_json_checked(&self, path: &str, body: &Value) -> Result<Value, BoxError> {
         let response = self
-            .client
-            .post(self.api_url(path))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            .authorized(self.client.post(self.api_url(path)))
             .json(body)
             .send()
             .await?;
@@ -513,12 +526,10 @@ impl DiscordChannel {
         content: &str,
     ) -> Result<(), BoxError> {
         let response = self
-            .client
-            .patch(self.api_url(&format!(
+            .authorized(self.client.patch(self.api_url(&format!(
                 "channels/{channel_id}/messages/{}",
                 raw_discord_message_id(message_id)
-            )))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            ))))
             .json(&serde_json::json!({ "content": content }))
             .send()
             .await?;
@@ -529,12 +540,10 @@ impl DiscordChannel {
     #[allow(dead_code)]
     async fn delete_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
         let response = self
-            .client
-            .delete(self.api_url(&format!(
+            .authorized(self.client.delete(self.api_url(&format!(
                 "channels/{channel_id}/messages/{}",
                 raw_discord_message_id(message_id)
-            )))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            ))))
             .send()
             .await?;
         response_unit_checked(response, "Discord delete message").await
@@ -560,9 +569,10 @@ impl DiscordChannel {
         }
 
         let response = self
-            .client
-            .post(self.api_url(&format!("channels/{channel_id}/messages")))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            .authorized(
+                self.client
+                    .post(self.api_url(&format!("channels/{channel_id}/messages"))),
+            )
             .multipart(form)
             .send()
             .await?;
@@ -851,9 +861,7 @@ impl Channel for DiscordChannel {
         matches!(
             tokio::time::timeout(
                 Duration::from_secs(5),
-                self.client
-                    .get(self.api_url("users/@me"))
-                    .header("Authorization", format!("Bot {}", self.bot_token))
+                self.authorized(self.client.get(self.api_url("users/@me")))
                     .send(),
             )
             .await,
@@ -872,6 +880,7 @@ impl Channel for DiscordChannel {
                 let _ = client
                     .post(&url)
                     .header("Authorization", format!("Bot {bot_token}"))
+                    .header("User-Agent", DISCORD_USER_AGENT)
                     .send()
                     .await;
                 tokio::time::sleep(DISCORD_TYPING_INTERVAL).await;
@@ -938,9 +947,10 @@ impl Channel for DiscordChannel {
         }
 
         let _ = self.delete_message(recipient, message_id).await;
-        for (index, chunk) in split_message_for_discord(text).iter().enumerate() {
+        let chunks = split_message_for_discord(text);
+        for (index, chunk) in chunks.iter().enumerate() {
             self.send_message_json(recipient, chunk).await?;
-            if index < split_message_for_discord(text).len() - 1 {
+            if index < chunks.len() - 1 {
                 tokio::time::sleep(DISCORD_SEND_CHUNK_DELAY).await;
             }
         }
@@ -959,14 +969,12 @@ impl Channel for DiscordChannel {
         emoji: &str,
     ) -> Result<(), BoxError> {
         let response = self
-            .client
-            .put(discord_reaction_url(
+            .authorized(self.client.put(discord_reaction_url(
                 &self.api_base,
                 channel_id,
                 message_id,
                 emoji,
-            ))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            )))
             .header("Content-Length", "0")
             .send()
             .await?;
@@ -980,14 +988,12 @@ impl Channel for DiscordChannel {
         emoji: &str,
     ) -> Result<(), BoxError> {
         let response = self
-            .client
-            .delete(discord_reaction_url(
+            .authorized(self.client.delete(discord_reaction_url(
                 &self.api_base,
                 channel_id,
                 message_id,
                 emoji,
-            ))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            )))
             .send()
             .await?;
         response_unit_checked(response, "Discord remove reaction").await
@@ -995,12 +1001,10 @@ impl Channel for DiscordChannel {
 
     async fn pin_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
         let response = self
-            .client
-            .put(self.api_url(&format!(
+            .authorized(self.client.put(self.api_url(&format!(
                 "channels/{channel_id}/pins/{}",
                 raw_discord_message_id(message_id)
-            )))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            ))))
             .header("Content-Length", "0")
             .send()
             .await?;
@@ -1009,12 +1013,10 @@ impl Channel for DiscordChannel {
 
     async fn unpin_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
         let response = self
-            .client
-            .delete(self.api_url(&format!(
+            .authorized(self.client.delete(self.api_url(&format!(
                 "channels/{channel_id}/pins/{}",
                 raw_discord_message_id(message_id)
-            )))
-            .header("Authorization", format!("Bot {}", self.bot_token))
+            ))))
             .send()
             .await?;
         response_unit_checked(response, "Discord unpin message").await
@@ -1319,6 +1321,7 @@ mod tests {
     #[derive(Default)]
     struct MockApi {
         requests: StdMutex<Vec<(String, String, Value)>>,
+        user_agents: StdMutex<Vec<(String, Option<String>)>>,
     }
 
     impl MockApi {
@@ -1337,6 +1340,15 @@ mod tests {
                 .filter(|(m, p, _)| m == method && p.contains(path_part))
                 .map(|(_, _, body)| body.clone())
                 .collect()
+        }
+
+        fn user_agent(&self, path_part: &str) -> Option<String> {
+            self.user_agents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(path, _)| path.contains(path_part))
+                .and_then(|(_, ua)| ua.clone())
         }
     }
 
@@ -1366,8 +1378,18 @@ mod tests {
             method: http::Method,
             State(state): State<Arc<MockApi>>,
             AxumPath(path): AxumPath<String>,
+            headers: axum::http::HeaderMap,
             body: axum::body::Bytes,
         ) -> axum::Json<Value> {
+            let user_agent = headers
+                .get(axum::http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            state
+                .user_agents
+                .lock()
+                .unwrap()
+                .push((path.clone(), user_agent));
             record_handler(method, state, path, body).await
         }
 
@@ -1605,6 +1627,27 @@ mod tests {
 
         let url = channel.fetch_gateway_url().await.unwrap();
         assert_eq!(url, "wss://gateway.example");
+    }
+
+    #[tokio::test]
+    async fn rest_requests_send_discord_bot_user_agent() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        // Discord blocks requests without a `DiscordBot (...)` User-Agent at the
+        // edge, which previously made the gateway/bot lookup fail.
+        channel.fetch_gateway_url().await.unwrap();
+        channel.send_message_json("chan_1", "hi").await.unwrap();
+
+        let gateway_ua = state
+            .user_agent("gateway/bot")
+            .expect("gateway request recorded");
+        assert_eq!(gateway_ua, DISCORD_USER_AGENT);
+        assert!(gateway_ua.starts_with("DiscordBot ("));
+        assert_eq!(
+            state.user_agent("channels/chan_1/messages").as_deref(),
+            Some(DISCORD_USER_AGENT)
+        );
     }
 
     #[tokio::test]

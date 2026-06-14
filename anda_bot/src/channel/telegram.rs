@@ -1237,11 +1237,19 @@ fn split_message_for_telegram(message: &str) -> Vec<String> {
 
 fn telegram_method_and_field(resource: &Resource) -> (&'static str, &'static str) {
     let mime_type = resource.mime_type.as_deref().unwrap_or_default();
-    if resource.tags.iter().any(|tag| tag == "image") || mime_type.starts_with("image/") {
+    // `infer_resource` records capitalized matcher tags ("Image"/"Video"/...),
+    // while callers may set lowercase tags by hand; match case-insensitively.
+    let has_tag = |kind: &str| {
+        resource
+            .tags
+            .iter()
+            .any(|tag| tag.eq_ignore_ascii_case(kind))
+    };
+    if has_tag("image") || mime_type.starts_with("image/") {
         ("sendPhoto", "photo")
-    } else if resource.tags.iter().any(|tag| tag == "video") || mime_type.starts_with("video/") {
+    } else if has_tag("video") || mime_type.starts_with("video/") {
         ("sendVideo", "video")
-    } else if resource.tags.iter().any(|tag| tag == "audio") || mime_type.starts_with("audio/") {
+    } else if has_tag("audio") || mime_type.starts_with("audio/") {
         ("sendAudio", "audio")
     } else {
         ("sendDocument", "document")
@@ -1534,6 +1542,35 @@ mod tests {
         assert_eq!(photos[0]["photo"], "https://example.com/pic.png");
         // The blob attachment goes out as multipart (body is not JSON).
         assert_eq!(state.recorded("sendDocument").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_multipart_message_stays_within_telegram_limit() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+
+        // The tail chunk lands in (split_limit, max_len]; before the chunking fix
+        // its continuation marker pushed the final message past the 4096 limit.
+        let content = format!("{}{}", "a".repeat(4066), "b".repeat(4090));
+        channel
+            .send(&SendMessage {
+                content,
+                recipient: "555".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let sends = state.recorded("sendMessage");
+        assert!(sends.len() >= 2);
+        for body in sends {
+            let text = body["text"].as_str().unwrap();
+            assert!(
+                text.chars().count() <= TELEGRAM_MAX_MESSAGE_LENGTH,
+                "chunk exceeded Telegram limit: {} chars",
+                text.chars().count()
+            );
+        }
     }
 
     #[tokio::test]

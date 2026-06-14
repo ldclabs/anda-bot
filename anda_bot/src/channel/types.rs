@@ -117,13 +117,18 @@ impl ChannelInitResult {
     }
 }
 
-/// Splits `message` into chunks no longer than `max_len` characters, preferring
-/// to break on newline and then whitespace boundaries.
+/// Splits `message` into chunks, preferring to break on newline and then
+/// whitespace boundaries.
 ///
-/// `split_limit` bounds where a hard split may occur (so chunks can leave room
-/// for continuation markers). A newline break is only taken when it falls in the
-/// second half of the chunk; otherwise the last space is used, falling back to a
-/// hard character split when neither boundary is available.
+/// A message that already fits within `max_len` is returned as a single chunk
+/// verbatim. Once a message has to be split, **every** chunk (including the
+/// final one) is kept within `split_limit` so callers always have room to
+/// append continuation markers without exceeding `max_len`. Callers must pass
+/// `split_limit <= max_len`.
+///
+/// A newline break is only taken when it falls in the second half of the chunk;
+/// otherwise the last space is used, falling back to a hard character split when
+/// neither boundary is available.
 pub(crate) fn split_message_on_word_boundaries(
     message: &str,
     max_len: usize,
@@ -137,7 +142,9 @@ pub(crate) fn split_message_on_word_boundaries(
     let mut remaining = message;
 
     while !remaining.is_empty() {
-        if remaining.chars().count() <= max_len {
+        // Once we are splitting, cap every chunk at `split_limit` (not `max_len`)
+        // so the tail chunk still leaves room for continuation markers.
+        if remaining.chars().count() <= split_limit {
             chunks.push(remaining.to_string());
             break;
         }
@@ -620,6 +627,20 @@ mod tests {
         let chunks = split_message_on_word_boundaries(&solid, 10, 8);
         assert!(chunks.len() >= 3);
         assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 10));
+    }
+
+    #[test]
+    fn shared_split_keeps_every_multi_chunk_within_split_limit() {
+        // Regression: the final chunk used to be capped at `max_len` rather than
+        // `split_limit`, so once the tail landed in (split_limit, max_len] the
+        // caller's continuation markers pushed it past the platform hard limit.
+        // Craft an input whose tail (4090) is exactly in that window for the
+        // Telegram constants (max_len 4096, split_limit 4066).
+        let text = format!("{}{}", "a".repeat(4066), "b".repeat(4090));
+        let chunks = split_message_on_word_boundaries(&text, 4096, 4066);
+
+        assert!(chunks.len() >= 2);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 4066));
     }
 
     #[test]

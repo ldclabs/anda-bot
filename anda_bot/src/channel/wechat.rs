@@ -632,11 +632,19 @@ fn format_ref_message(ref_message: &weixin_agent::RefMessageInfo) -> String {
 }
 
 fn attachment_fallback_text(resource: &Resource) -> String {
-    let label = if resource.tags.iter().any(|tag| tag == "image") {
+    // `infer_resource` records capitalized matcher tags ("Image"/"Video"/...),
+    // while callers may set lowercase tags by hand; match case-insensitively.
+    let has_tag = |kind: &str| {
+        resource
+            .tags
+            .iter()
+            .any(|tag| tag.eq_ignore_ascii_case(kind))
+    };
+    let label = if has_tag("image") {
         "Image"
-    } else if resource.tags.iter().any(|tag| tag == "video") {
+    } else if has_tag("video") {
         "Video"
-    } else if resource.tags.iter().any(|tag| tag == "audio") {
+    } else if has_tag("audio") {
         "Audio"
     } else {
         "Document"
@@ -1336,6 +1344,17 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(attachment_fallback_text(&image), "[Image: pic.png]");
+        // Inferred resources carry capitalized matcher tags; they must still be
+        // recognized rather than falling through to the "Document" label.
+        let inferred_image = Resource {
+            name: "photo.jpg".to_string(),
+            tags: vec!["Image".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            attachment_fallback_text(&inferred_image),
+            "[Image: photo.jpg]"
+        );
         let video = Resource {
             name: "clip.mp4".to_string(),
             tags: vec!["video".to_string()],
