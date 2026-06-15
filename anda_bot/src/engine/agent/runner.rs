@@ -382,7 +382,8 @@ impl SessionRunner {
                 }
                 PromptCommand::Plain { prompt }
                 | PromptCommand::Side { prompt }
-                | PromptCommand::Steer { prompt } => {
+                | PromptCommand::Steer { prompt }
+                | PromptCommand::Loop { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
                     self.runner.follow_up_content(content);
                 }

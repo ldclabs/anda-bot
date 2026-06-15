@@ -14,7 +14,21 @@ Anda Bot vise les objectifs complexes qui demandent de la continuité. Il conser
 /goal Termine cette release : tests, changelog, docs d'installation et résumé des risques.
 ```
 
-`/goal` ou `/loop` ouvre une boucle longue. Quand l'agent principal est libre, le vérificateur décide si le résultat est complet ou doit continuer.
+`/goal` ouvre une boucle longue. Quand l'agent principal est libre, le vérificateur décide si le résultat est complet ou doit continuer.
+
+## Utiliser /loop
+
+`/loop` exécute à répétition un prompt ou une commande slash. Décrivez l'intervalle dans la demande avec les mots naturels pour vous, comme `toutes les 5 minutes`, `5m` ou des unités localisées. Le modèle interprète l'intervalle et peut créer un cron job agent récurrent si nécessaire :
+
+```text
+/loop toutes les 5 minutes /side Vérifie si la file de déploiement est bloquée et résume le résultat.
+```
+
+Si vous ne décrivez pas d'intervalle, Anda laisse le modèle choisir le rythme et continuer quand c'est nécessaire :
+
+```text
+/loop Continue à vérifier la migration jusqu'à prouver chaque étape de validation.
+```
 
 ## Utiliser /side
 

@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Loop command is now a first-class long-running command**: `/loop` now has dedicated parsing, slash completion, TUI help, self-instruction guidance, and docs for recurring or self-paced follow-ups instead of acting as a `/goal` alias.
 - **Trusted user key management CLI**: added `anda user list`, `anda user create`, `anda user import`, and `anda user pubkey` to generate, inspect, and register Ed25519 keys for channel-bound trusted users.
 - **Multi-user and Discord setup documentation**: documented the `anda user` workflow, channel `user` binding, and Discord bot installation/configuration steps across the README and localized docsite channel guides.
 

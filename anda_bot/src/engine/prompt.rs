@@ -10,7 +10,7 @@ pub enum PromptCommand {
     Plain {
         prompt: String,
     },
-    // '/goal' | '/loop', case-insensitive.
+    // '/goal', case-insensitive.
     // Intended for long-running tasks. When the main agent becomes idle after a turn,
     // a dedicated goal subagent evaluates whether the task is complete and can resume
     // the main agent via runner.follow_up when more work is needed.
@@ -19,6 +19,12 @@ pub enum PromptCommand {
     // agent should summarize its current progress and continue in a new child
     // conversation created from that summary.
     Goal {
+        prompt: String,
+    },
+    // '/loop', case-insensitive.
+    // Leaves interval and recurrence interpretation to the model so localized
+    // time expressions can be handled naturally.
+    Loop {
         prompt: String,
     },
     // '/side' | '/btw', case-insensitive.
@@ -85,11 +91,12 @@ impl From<String> for PromptCommand {
         let rest = stripped[command_end..].trim();
 
         match command.to_ascii_lowercase().as_str() {
-            "goal" | "loop" => {
-                required_prompt_command(command, rest, trimmed, |prompt| Self::Goal {
-                    prompt: prompt.trim().to_string(),
-                })
-            }
+            "goal" => required_prompt_command(command, rest, trimmed, |prompt| Self::Goal {
+                prompt: prompt.trim().to_string(),
+            }),
+            "loop" => required_prompt_command(command, rest, trimmed, |prompt| Self::Loop {
+                prompt: prompt.trim().to_string(),
+            }),
             "side" | "btw" => {
                 required_prompt_command(command, rest, trimmed, |prompt| Self::Side {
                     prompt: prompt.trim().to_string(),
@@ -207,6 +214,24 @@ mod tests {
             }
         );
         assert_eq!(
+            PromptCommand::from("/loop 5m /side check status".to_string()),
+            PromptCommand::Loop {
+                prompt: "/loop 5m /side check status".to_string()
+            }
+        );
+        assert_eq!(
+            PromptCommand::from("/loop 每5分钟 /side 检查状态".to_string()),
+            PromptCommand::Loop {
+                prompt: "/loop 每5分钟 /side 检查状态".to_string()
+            }
+        );
+        assert_eq!(
+            PromptCommand::from("/loop keep checking status".to_string()),
+            PromptCommand::Loop {
+                prompt: "/loop keep checking status".to_string()
+            }
+        );
+        assert_eq!(
             PromptCommand::from("/btw what is my status?".to_string()),
             PromptCommand::Side {
                 prompt: "/btw what is my status?".to_string()
@@ -264,6 +289,10 @@ mod tests {
     fn prompt_command_rejects_missing_required_arguments() {
         assert!(matches!(
             PromptCommand::from("/goal".to_string()),
+            PromptCommand::Invalid { .. }
+        ));
+        assert!(matches!(
+            PromptCommand::from("/loop".to_string()),
             PromptCommand::Invalid { .. }
         ));
         assert!(matches!(

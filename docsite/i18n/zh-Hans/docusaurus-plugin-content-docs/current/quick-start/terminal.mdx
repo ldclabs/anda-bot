@@ -35,7 +35,8 @@ anda models reload
 
 | 命令 | 何时使用 |
 | --- | --- |
-| `/goal message` 或 `/loop message` | 让一个目标进入长程循环，直到检查结果认为目标完成或需要继续。 |
+| `/goal message` | 让一个目标进入长程循环，直到检查结果认为目标完成或需要继续。 |
+| `/loop message` | 重复运行 prompt 或 slash 命令；需要间隔时用自然语言写在请求里，省略时让模型自定节奏。 |
 | `/side message` 或 `/btw message` | 开一个旁路子任务，适合临时研究、检查或不想打断主会话的请求。 |
 | `/skill skill-name message` | 指定某个运行时 Skill 处理请求。 |
 | `/steer message` | 中断接下来的工具调用，并用新指令纠偏当前回复。 |
@@ -46,6 +47,7 @@ anda models reload
 
 ```text
 /goal 帮我完成这个 release checklist，直到测试和 changelog 都确认通过。
+/loop 每5分钟 /side 检查发布队列并总结阻塞项。
 /side 查一下这个依赖最近有什么兼容性风险。
 /skill git-assistant 帮我整理这次改动的提交说明。
 /steer 不要继续重构，先只修复构建错误。

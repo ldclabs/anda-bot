@@ -45,7 +45,14 @@ const promptCommandItems: PromptCommandSuggestion[] = [
     label: '/goal',
     insertText: '/goal ',
     description: 'Start a supervised long-running task.',
-    detail: 'alias: /loop',
+    kind: 'command'
+  },
+  {
+    id: 'command:loop',
+    label: '/loop',
+    insertText: '/loop ',
+    description:
+      'Run a prompt or slash command repeatedly. Describe an interval in your own words, or omit it to let the model self-pace.',
     kind: 'command'
   },
   {

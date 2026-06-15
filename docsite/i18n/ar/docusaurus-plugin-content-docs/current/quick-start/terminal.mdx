@@ -29,7 +29,8 @@ description: عناصر تحكم واجهة الطرفية وأوامر slash و
 
 | الأمر | الاستخدام |
 | --- | --- |
-| `/goal message` أو `/loop message` | وضع هدف في حلقة طويلة. |
+| `/goal message` | وضع هدف في حلقة طويلة. |
+| `/loop message` | تشغيل prompt أو أمر slash بشكل متكرر. صف interval باللغة الطبيعية أو احذفه ليحدد النموذج الإيقاع. |
 | `/side message` أو `/btw message` | مهمة جانبية لا تقاطع المحادثة الرئيسية. |
 | `/skill skill-name message` | استخدام مهارة محددة. |
 | `/steer message` | تصحيح الرد الحالي. |
@@ -38,6 +39,7 @@ description: عناصر تحكم واجهة الطرفية وأوامر slash و
 
 ```text
 /goal أكمل قائمة الإصدار حتى تمر الاختبارات و changelog.
+/loop كل 5 دقائق /side افحص طابور النشر ولخص العوائق.
 /side تحقق من تأثير الاعتماد على macOS arm64.
 /skill git-assistant اكتب رسالة commit من diff الحالي.
 /steer لا تقم بإعادة هيكلة؛ أصلح build أولًا.

@@ -29,7 +29,8 @@ Après modification de `~/.anda/config.yaml` :
 
 | Commande | Usage |
 | --- | --- |
-| `/goal message` ou `/loop message` | Met un objectif dans la boucle longue. |
+| `/goal message` | Met un objectif dans la boucle longue. |
+| `/loop message` | Exécute un prompt ou une commande slash de façon répétée. Décrivez l'intervalle en langage naturel, ou omettez-le pour laisser le modèle choisir le rythme. |
 | `/side message` ou `/btw message` | Ouvre une tâche latérale. |
 | `/skill skill-name message` | Utilise une skill précise. |
 | `/steer message` | Corrige la réponse en cours. |
@@ -38,6 +39,7 @@ Après modification de `~/.anda/config.yaml` :
 
 ```text
 /goal Termine cette release avec tests et changelog confirmés.
+/loop toutes les 5 minutes /side Vérifie la file de déploiement et résume les blocages.
 /side Vérifie le risque pour macOS arm64.
 /skill git-assistant Rédige un commit depuis le diff.
 /steer Ne refactorise pas, corrige d'abord le build.

@@ -761,7 +761,9 @@ impl Agent<AgentCtx> for AndaBot {
         let mut tools = UniqueVec::from(self.inner.tools.clone());
         let mut force_standalone_conversation = false;
         let prompt = match command {
-            PromptCommand::Plain { prompt } | PromptCommand::Steer { prompt } => prompt,
+            PromptCommand::Plain { prompt }
+            | PromptCommand::Steer { prompt }
+            | PromptCommand::Loop { prompt } => prompt,
             PromptCommand::Goal { prompt } => {
                 initial_goal = Some(prompt.clone());
                 prompt

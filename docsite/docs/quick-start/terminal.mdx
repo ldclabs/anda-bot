@@ -35,7 +35,8 @@ After changing daemon settings that still require a restart, type:
 
 | Command | When to use it |
 | --- | --- |
-| `/goal message` or `/loop message` | Put a goal into the long-horizon loop until the checker decides it is complete or needs more work. |
+| `/goal message` | Put a goal into the long-horizon loop until the checker decides it is complete or needs more work. |
+| `/loop message` | Run a prompt or slash command repeatedly. Describe an interval in natural language if desired, or omit it to let the model self-pace. |
 | `/side message` or `/btw message` | Start a side task for research, inspection, or work that should not interrupt the main conversation. |
 | `/skill skill-name message` | Ask a specific runtime skill to handle the request. |
 | `/steer message` | Interrupt the next tool call and steer the current response with new instructions. |
@@ -46,6 +47,7 @@ Examples:
 
 ```text
 /goal Finish this release checklist until tests and the changelog are confirmed.
+/loop every 5 minutes /side Check the deploy queue and summarize blockers.
 /side Check whether this dependency upgrade has compatibility risk.
 /skill git-assistant Draft a commit message from the current diff.
 /steer Stop refactoring and only fix the build error first.

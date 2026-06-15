@@ -77,6 +77,15 @@ describe('buildPromptCommandSuggestions', () => {
     expect(suggestions[0]).toMatchObject({ label: '/new', detail: 'alias: /clear' })
   })
 
+  it('lists loop as its own command instead of a goal alias', () => {
+    const suggestions = buildPromptCommandSuggestions(commandContext('loop'), [], false, '')
+    expect(suggestions[0]).toMatchObject({
+      label: '/loop',
+      description: expect.stringContaining('self-pace')
+    })
+    expect(suggestions.find((suggestion) => suggestion.label === '/goal')).toBeUndefined()
+  })
+
   it('surfaces matching skills in slash completion with the dollar shorthand', () => {
     const suggestions = buildPromptCommandSuggestions(
       commandContext('ste'),

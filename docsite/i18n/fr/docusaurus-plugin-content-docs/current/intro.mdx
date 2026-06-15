@@ -14,7 +14,7 @@ Cette documentation s'adresse aux personnes qui veulent posséder la couche assi
 
 - [Installer Anda](./quick-start/install) : lanceur, Homebrew, script, PowerShell ou source.
 - [Connecter le navigateur](./quick-start/browser-extension) : relier le panneau au daemon local avec Gateway URL et Bearer token.
-- [Utiliser le terminal](./quick-start/terminal) : entrée multiligne, `/goal`, `/side`, `/skill`, `/steer` et commandes courantes.
+- [Utiliser le terminal](./quick-start/terminal) : entrée multiligne, `/goal`, `/loop`, `/side`, `/skill`, `/steer` et commandes courantes.
 - [Configurer le runtime](./runtime/configuration) : `~/.anda/config.yaml`, fournisseurs, clés API, proxy et dossiers locaux.
 - [Comprendre la mémoire](./memory/brain) : Formation, Recall et Maintenance.
 - [Travail longue durée](./workflows/long-horizon) : déléguer des objectifs complexes sans perdre le fil principal.
@@ -28,7 +28,7 @@ Anda n'est pas une simple fenêtre de chat. Sa différence est la continuité.
 - Brain transforme le contexte utile en mémoire graphe pour projets, préférences, relations, décisions et chronologies.
 - Les modèles et providers sont remplaçables; la mémoire reste locale et inspectable.
 - Navigateur, terminal, fichiers, skills, cron, sous-agents, canaux et voix se connectent au même runtime.
-- `/goal` maintient le travail long tout en préservant le fil principal et la vérification finale.
+- `/goal` maintient le travail long; `/loop` lance des suivis récurrents ou au rythme du modèle.
 
 ## Chemin le plus court
 

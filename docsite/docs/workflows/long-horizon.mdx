@@ -10,13 +10,27 @@ Anda Bot is designed for complex goals that need continuity, not only one answer
 
 ## Use /goal
 
-`/goal` or `/loop` marks a request as a long-horizon goal:
+`/goal` marks a request as a long-horizon goal:
 
 ```text
 /goal Finish this release prep: run tests, check the changelog, verify install script docs, and summarize risk.
 ```
 
 When the main agent is idle, the goal checker evaluates whether the current result is complete. If more work is needed, it can generate a follow-up for the main agent. When context grows too long, Anda compacts the current state and opens a linked conversation to continue the same session.
+
+## Use /loop
+
+`/loop` runs a prompt or slash command repeatedly. Describe the interval in the request using whatever wording is natural, such as `every 5 minutes`, `5m`, or localized time units. The model interprets the interval and can create a recurring agent cron job when needed:
+
+```text
+/loop every 5 minutes /side Check whether the deploy queue is blocked and summarize the result.
+```
+
+If you do not describe an interval, Anda lets the model self-pace the loop and continue when more work is needed:
+
+```text
+/loop Keep checking the migration until every validation step is proven complete.
+```
 
 ## Use /side
 
@@ -59,6 +73,6 @@ When a task involves the current repository or external tools, state the objecti
 /goal Fix the docs build in the current repository. Do not edit Rust code. Done means pnpm --dir docsite build passes.
 ```
 
-## When Not to Use /goal
+## When Not to Use /goal or /loop
 
-Simple Q&A, one-off explanations, and short command lookups do not need `/goal`. Send a normal message. Save `/goal` for work that genuinely needs continuation, verification, and follow-up.
+Simple Q&A, one-off explanations, and short command lookups do not need `/goal` or `/loop`. Send a normal message. Save `/goal` for work that needs completion auditing, and `/loop` for recurring or self-paced follow-up.
