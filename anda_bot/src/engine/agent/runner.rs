@@ -80,6 +80,7 @@ impl AndaBot {
                     vec![],
                 )
                 .unbound();
+            assistant.inner.apply_merge_discovered_tools(&mut runner);
             runner.accumulate(&media_usage);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
@@ -240,7 +241,7 @@ impl SessionRunner {
         }
         mark_special_user_messages(&mut chat_history);
 
-        self.runner = self
+        let mut runner = self
             .ctx
             .clone()
             .completion_iter(
@@ -251,6 +252,10 @@ impl SessionRunner {
                 Vec::new(),
             )
             .unbound();
+        self.assistant
+            .inner
+            .apply_merge_discovered_tools(&mut runner);
+        self.runner = runner;
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
@@ -465,7 +470,13 @@ impl SessionRunner {
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
 
-        match model_retry::runner_next_with_retry(&mut self.runner, "session runner").await {
+        let next_result =
+            model_retry::runner_next_with_retry(&mut self.runner, "session runner").await;
+        self.assistant
+            .inner
+            .cache_merge_discovered_tools(&self.runner);
+
+        match next_result {
             Ok(None) => {
                 let now_ms = unix_ms();
 
@@ -648,12 +659,16 @@ impl SessionRunner {
                                 log::error!("Failed to update_source_state: {:?}", err);
                             }
                             // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
-                            self.runner = self
+                            let mut runner = self
                                 .ctx
                                 .clone()
                                 .completion_iter(req, Vec::new())
                                 .reserve_chat_history(vec![compaction_msg])
                                 .unbound();
+                            self.assistant
+                                .inner
+                                .apply_merge_discovered_tools(&mut runner);
+                            self.runner = runner;
                             return Ok(true);
                         }
                         None => return Ok(false),

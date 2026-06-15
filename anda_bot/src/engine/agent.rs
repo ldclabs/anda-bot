@@ -6,7 +6,7 @@ use anda_core::{
 use anda_db_utils::UniqueVec;
 use anda_engine::{
     ANONYMOUS,
-    context::{AgentCtx, BaseCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
+    context::{AgentCtx, BaseCtx, CompletionRunner, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
         note::NoteTool,
@@ -86,6 +86,7 @@ struct AndaBotInner {
     browser_manager: Arc<ChromeBrowserTool>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
     active_im_channels: HashSet<String>,
+    merge_discovered_tools_cache: RwLock<HashMap<String, bool>>,
     session_creation_lock: tokio::sync::Mutex<()>,
 }
 
@@ -215,6 +216,7 @@ impl AndaBot {
                 browser_manager,
                 transcription_manager,
                 active_im_channels: active_im_channels.into_iter().collect(),
+                merge_discovered_tools_cache: RwLock::new(HashMap::new()),
                 session_creation_lock: tokio::sync::Mutex::new(()),
             }),
         }
@@ -1040,6 +1042,67 @@ impl Agent<AgentCtx> for AndaBot {
     }
 }
 
+impl AndaBotInner {
+    fn apply_merge_discovered_tools(&self, runner: &mut CompletionRunner) {
+        if let Some(merge_discovered_tools) =
+            self.merge_discovered_tools_for_model(&runner.model().model_name())
+        {
+            runner.set_merge_discovered_tools(Some(merge_discovered_tools));
+        }
+    }
+
+    fn cache_merge_discovered_tools(&self, runner: &CompletionRunner) {
+        let Some(merge_discovered_tools) = runner.merge_discovered_tools() else {
+            return;
+        };
+        let Some(model_name) = merge_discovered_tools_model_key(&runner.model().model_name())
+        else {
+            return;
+        };
+
+        self.merge_discovered_tools_cache
+            .write()
+            .insert(model_name, merge_discovered_tools);
+    }
+
+    fn merge_discovered_tools_for_model(&self, model_name: &str) -> Option<bool> {
+        merge_discovered_tools_for_model_cache(&self.merge_discovered_tools_cache, model_name)
+    }
+}
+
+fn merge_discovered_tools_for_model_cache(
+    cache: &RwLock<HashMap<String, bool>>,
+    model_name: &str,
+) -> Option<bool> {
+    known_merge_discovered_tools_for_model(model_name).or_else(|| {
+        let key = merge_discovered_tools_model_key(model_name)?;
+        cache.read().get(&key).copied()
+    })
+}
+
+fn known_merge_discovered_tools_for_model(model_name: &str) -> Option<bool> {
+    let model_name = merge_discovered_tools_model_key(model_name)?;
+    if model_name.contains("deepseek") {
+        Some(false)
+    } else if model_name.starts_with("gpt")
+        || model_name.contains("/gpt")
+        || model_name.contains("chatgpt")
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn merge_discovered_tools_model_key(model_name: &str) -> Option<String> {
+    let model_name = model_name.trim().to_ascii_lowercase();
+    if model_name.is_empty() {
+        None
+    } else {
+        Some(model_name)
+    }
+}
+
 fn select_most_used_tools(
     available_tools: &[String],
     base_tools: &[String],
@@ -1127,6 +1190,37 @@ mod tests {
     fn base_agent_tools_include_goal_tool() {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(base_tools().contains(&GoalTool::NAME.to_string()));
+    }
+
+    #[test]
+    fn known_merge_discovered_tools_policy_covers_deepseek_and_gpt_models() {
+        assert_eq!(
+            known_merge_discovered_tools_for_model("deepseek-v4-pro"),
+            Some(false)
+        );
+        assert_eq!(
+            known_merge_discovered_tools_for_model("openai/gpt-5.4"),
+            Some(true)
+        );
+        assert_eq!(
+            known_merge_discovered_tools_for_model("chatgpt-codex"),
+            Some(true)
+        );
+        assert_eq!(known_merge_discovered_tools_for_model("gemini-3-pro"), None);
+    }
+
+    #[test]
+    fn merge_discovered_tools_cache_reuses_unknown_model_probe_result() {
+        let cache = RwLock::new(HashMap::from([("custom-model".to_string(), true)]));
+
+        assert_eq!(
+            merge_discovered_tools_for_model_cache(&cache, "CUSTOM-MODEL"),
+            Some(true)
+        );
+        assert_eq!(
+            merge_discovered_tools_for_model_cache(&cache, "unknown-model"),
+            None
+        );
     }
 
     #[test]

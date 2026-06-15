@@ -4,6 +4,8 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.11] — 2026-06-15
+
 ### Added
 
 - **Loop command is now a first-class long-running command**: `/loop` now has dedicated parsing, slash completion, TUI help, self-instruction guidance, and docs for recurring or self-paced follow-ups instead of acting as a `/goal` alias.
@@ -15,9 +17,11 @@ All notable changes to Anda Bot.
 - **Stop and cancel commands now have distinct behavior**: `/stop` stops the current task and leaves the conversation idle, while `/cancel` exits the active conversation session; the TUI, browser extension, README, and docsite command help now document the split semantics.
 - **COSE key and token handling now uses `cose2` directly**: replaced `ic_cose_types` helpers with `cose2` and `ed25519-dalek` for Ed25519 COSE key import/export and CWT Sign1 token generation.
 - **Makefile fix target formats before applying clippy fixes**: `make fix` now runs `cargo fmt --all` before `cargo clippy --fix`.
+- **Version synchronized for the 0.9.11 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.9.11`.
 
 ### Fixed
 
+- **Model tool discovery compatibility is reused per model**: the agent now applies known `merge_discovered_tools` policies for DeepSeek and GPT-family models and caches successful probe results for unknown models across future completion runners.
 - **Stopped background tasks no longer keep sessions alive**: session state now counts only running background tasks, clears stopped task progress output, and ignores late background results after `/stop`.
 
 ## [0.9.10] — 2026-06-14
