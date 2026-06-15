@@ -120,7 +120,8 @@ anda --home /path/to/.anda
 - Ctrl+A / Ctrl+E 跳到输入开头或结尾。
 - 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 launcher / 浏览器侧边栏点击刷新模型。
 - 修改仍需要重启的 daemon 设置后，再输入 `/reload`。
-- 输入 `/stop` 或 `/cancel` 中断当前回复。
+- 输入 `/stop` 停止当前任务，并让会话回到 idle 状态。
+- 输入 `/cancel` 退出当前活动会话任务。
 - 输入 `/steer ...` 可以给正在生成的回复追加引导。
 - Esc 查看状态，Ctrl+C 退出。
 

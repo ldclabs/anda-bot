@@ -41,6 +41,8 @@ anda_kip = "0.8"
 base64 = "0.22"
 cpal = { version = "0.17" }
 cbor2 = "1"
+cose2 = "0.3"
+ed25519-dalek = "2"
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
   "std",
@@ -60,7 +62,6 @@ serde_json = { version = "1" }
 serde-saphyr = "0.0"
 sha3 = "0.12"
 sha2 = "0.11"
-ic_cose_types = "0.10"
 ic_auth_types = "0.9"
 ic-ed25519 = "0.6"
 infer2 = { version = "0.21" }

@@ -1,5 +1,5 @@
 export type PromptCommand = {
-  kind: 'new' | 'side' | 'steer' | 'stop'
+  kind: 'new' | 'side' | 'steer' | 'stop' | 'cancel'
   prompt: string
 }
 
@@ -24,13 +24,19 @@ export function parsePromptCommand(prompt: string): PromptCommand | null {
     case 'steer':
       return { kind: 'steer', prompt: trimmed }
     case 'stop':
-    case 'cancel':
       return { kind: 'stop', prompt: trimmed }
+    case 'cancel':
+      return { kind: 'cancel', prompt: trimmed }
     default:
       return null
   }
 }
 
 export function isImmediatePromptCommand(command: PromptCommand | null): boolean {
-  return command?.kind === 'new' || command?.kind === 'steer' || command?.kind === 'stop'
+  return (
+    command?.kind === 'new' ||
+    command?.kind === 'steer' ||
+    command?.kind === 'stop' ||
+    command?.kind === 'cancel'
+  )
 }

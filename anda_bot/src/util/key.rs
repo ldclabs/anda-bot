@@ -1,17 +1,15 @@
 use anda_core::{BoxError, Principal};
 use anda_web3_client::client::{Identity, identity_from_secret};
+use cose2::{Key as CoseKey, Label, Sign1Message};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use ic_auth_types::ByteBufB64;
-use ic_cose_types::cose::{
-    CborSerializable, CoseKey,
-    ed25519::{Signer, SigningKey, VerifyingKey},
-    get_cose_key_public, get_cose_key_secret,
-    sign1::cose_sign1,
-};
 use ic_ed25519::PublicKey;
 use std::{path::Path, str::FromStr, sync::Arc};
 
-pub use ic_cose_types::cose::cwt::{ClaimsSet, ClaimsSetBuilder};
-pub use ic_cose_types::cose::iana;
+pub use cose2::{cwt::Claims, iana};
+
+#[cfg(test)]
+use cose2::Value;
 
 #[derive(Clone)]
 pub struct Ed25519Key {
@@ -51,12 +49,14 @@ impl Ed25519Key {
         self.identity.clone()
     }
 
-    pub fn sign_cwt(&self, mut claims: ClaimsSet) -> Result<String, BoxError> {
+    pub fn sign_cwt(&self, mut claims: Claims) -> Result<String, BoxError> {
         claims.subject = self.identity.sender().map(|s| s.to_string()).ok();
-        let mut sign1 = cose_sign1(claims.to_vec()?, iana::Algorithm::EdDSA, None)?;
-        let tbs_data = sign1.tbs_data(&[]);
+        let tagged_payload = claims.to_vec()?;
+        let payload = cose2::tag::skip_tag(cose2::tag::CWT_PREFIX, &tagged_payload).to_vec();
+        let mut sign1 = Sign1Message::new(Some(payload));
+        let tbs_data = sign1.prepare_signature(Some(iana::AlgorithmEdDSA.into()), None, None)?;
         let sig = self.key.sign(&tbs_data);
-        sign1.signature = sig.to_vec();
+        sign1.set_signature(sig.to_vec())?;
         let cose_bytes = sign1.to_vec()?;
         Ok(ByteBufB64(cose_bytes).to_string())
     }
@@ -125,9 +125,10 @@ pub fn parse_ed25519_pubkey(input: &str) -> Result<[u8; 32], BoxError> {
         return Ok(bytes);
     }
 
-    ensure_okp_key(data.as_slice())?;
-    let cose_key = CoseKey::from_slice(data.as_slice())?;
-    let public_key = get_cose_key_public(cose_key)?;
+    let cose_key = okp_cose_key(data.as_slice())?;
+    let public_key = cose_key
+        .get_bytes(iana::OKPKeyParameterX)?
+        .ok_or("missing public key")?;
     let bytes: [u8; 32] = public_key.try_into().map_err(|_err| "invalid key length")?;
     Ok(bytes)
 }
@@ -141,38 +142,36 @@ pub fn parse_ed25519_privkey(input: &str) -> Result<[u8; 32], BoxError> {
         return Ok(bytes);
     }
 
-    ensure_okp_key(data.as_slice())?;
-    let cose_key = CoseKey::from_slice(data.as_slice())?;
-    let secret = get_cose_key_secret(cose_key)?;
+    let cose_key = okp_cose_key(data.as_slice())?;
+    let secret = cose_key
+        .get_bytes(iana::OKPKeyParameterD)?
+        .ok_or("missing secret key")?;
     let bytes: [u8; 32] = secret.try_into().map_err(|_err| "invalid key length")?;
     Ok(bytes)
 }
 
-fn ensure_okp_key(data: &[u8]) -> Result<(), BoxError> {
-    let value: cbor2::Value = cbor2::from_slice(data)?;
-    let map = value.as_map().ok_or("invalid COSE key")?;
-    for (k, v) in map {
-        if k.as_integer() == Some(1.into()) {
-            if v.as_integer() == Some((iana::KeyType::OKP as i64).into()) {
-                return Ok(());
-            }
-            return Err("invalid key type".into());
-        }
+fn okp_cose_key(data: &[u8]) -> Result<CoseKey, BoxError> {
+    let key = CoseKey::from_slice(data)?;
+    ensure_okp_key(&key)?;
+    Ok(key)
+}
+
+fn ensure_okp_key(key: &CoseKey) -> Result<(), BoxError> {
+    match key.kty()? {
+        Some(Label::Int(iana::KeyTypeOKP)) => Ok(()),
+        _ => Err("invalid key type".into()),
     }
-    Err("invalid key type".into())
 }
 
 pub fn encode_ed25519_privkey(secret: &[u8; 32]) -> Result<String, BoxError> {
-    use cbor2::Value;
-
     // COSE Key: {1: kty, 3: alg, -1: crv, -4: d}
-    let cose_key = cbor2::cbor!({
-        1 => iana::KeyType::OKP as i64,
-        3 => iana::Algorithm::EdDSA as i64,
-        -1 => iana::EllipticCurve::Ed25519 as i64,
-        -4 => Value::Bytes(secret.to_vec()),
-    })?;
-    let cose_bytes = cbor2::to_vec(&cose_key)?;
+    let mut cose_key = CoseKey::new();
+    cose_key
+        .set_kty(iana::KeyTypeOKP)
+        .set_alg(iana::AlgorithmEdDSA);
+    cose_key.insert(iana::OKPKeyParameterCrv, iana::EllipticCurveEd25519);
+    cose_key.insert(iana::OKPKeyParameterD, secret.to_vec());
+    let cose_bytes = cose_key.to_vec()?;
     Ok(ByteBufB64(cose_bytes).to_string())
 }
 
@@ -250,7 +249,6 @@ pub fn random_ed25519_privkey() -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cbor2::Value;
 
     const SECRET: [u8; 32] = [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -327,8 +325,8 @@ mod tests {
     fn cose_keys_with_wrong_key_type_are_rejected() {
         // EC2 public key: {1: 2(EC2), -1: 1(P-256), -2: x, -3: y}
         let ec2 = cbor2::cbor!({
-            1 => iana::KeyType::EC2 as i64,
-            -1 => iana::EllipticCurve::P_256 as i64,
+            1 => iana::KeyTypeEC2,
+            -1 => iana::EllipticCurveP_256,
             -2 => Value::Bytes(vec![1u8; 32]),
             -3 => Value::Bytes(vec![2u8; 32]),
         })
@@ -344,10 +342,10 @@ mod tests {
         let key = Ed25519Key::new(SECRET);
         // OKP public key: {1: 1(OKP), 3: -8(EdDSA), -1: 6(Ed25519), -2: x}
         let cose_key = cbor2::cbor!({
-            1 => iana::KeyType::OKP as i64,
-            3 => iana::Algorithm::EdDSA as i64,
-            iana::OkpKeyParameter::Crv as i64 => iana::EllipticCurve::Ed25519 as i64,
-            iana::OkpKeyParameter::X as i64 => Value::Bytes(key.pubkey().as_bytes().to_vec()),
+            1 => iana::KeyTypeOKP,
+            3 => iana::AlgorithmEdDSA,
+            iana::OKPKeyParameterCrv => iana::EllipticCurveEd25519,
+            iana::OKPKeyParameterX => Value::Bytes(key.pubkey().as_bytes().to_vec()),
         })
         .unwrap();
         let encoded = ByteBufB64(cbor2::to_vec(&cose_key).unwrap()).to_string();
@@ -361,7 +359,7 @@ mod tests {
     #[test]
     fn sign_cwt_produces_decodable_cose_sign1() {
         let key = Ed25519Key::new(SECRET);
-        let claims = ClaimsSet::default();
+        let claims = Claims::default();
 
         let token = key.sign_cwt(claims).unwrap();
         let bytes = ByteBufB64::from_str(&token).unwrap();
@@ -373,6 +371,8 @@ mod tests {
         };
         let sig = arr[3].as_bytes().unwrap();
         assert_eq!(sig.len(), 64);
+        let payload: Value = cbor2::from_slice(arr[2].as_bytes().unwrap()).unwrap();
+        assert!(matches!(payload, Value::Map(_)));
     }
 
     #[tokio::test]

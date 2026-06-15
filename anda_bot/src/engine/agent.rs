@@ -770,6 +770,9 @@ impl Agent<AgentCtx> for AndaBot {
             PromptCommand::Stop { .. } => {
                 return Err("/stop requires an active conversation".into());
             }
+            PromptCommand::Cancel { .. } => {
+                return Err("/cancel requires an active conversation".into());
+            }
             PromptCommand::Skill { skill, prompt } => {
                 if let Some(subagent) = skill_subagent(&self.inner.skills_manager, &skill) {
                     instructions = format!(

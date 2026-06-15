@@ -44,9 +44,16 @@ pub enum PromptCommand {
         skill: String,
         prompt: String,
     },
-    // '/stop' | '/cancel', case-insensitive.
-    // Cancels immediately. If a prompt is provided, it becomes the failed_reason.
+    // '/stop', case-insensitive.
+    // Stops the current in-flight task while keeping the conversation runner idle
+    // and reusable for later input.
     Stop {
+        prompt: String,
+    },
+    // '/cancel', case-insensitive.
+    // Cancels the active conversation runner. If a message is provided, it
+    // becomes the failed_reason.
+    Cancel {
         prompt: String,
     },
     // '/new' | '/clear', case-insensitive.
@@ -92,7 +99,10 @@ impl From<String> for PromptCommand {
                 prompt: prompt.trim().to_string(),
             }),
             "skill" => parse_skill_command(rest, trimmed),
-            "stop" | "cancel" => Self::Stop {
+            "stop" => Self::Stop {
+                prompt: prompt.trim().to_string(),
+            },
+            "cancel" => Self::Cancel {
                 prompt: prompt.trim().to_string(),
             },
             "new" | "clear" => Self::New {
@@ -223,6 +233,12 @@ mod tests {
             }
         );
         assert_eq!(
+            PromptCommand::from("/cancel because it is wrong".to_string()),
+            PromptCommand::Cancel {
+                prompt: "/cancel because it is wrong".to_string()
+            }
+        );
+        assert_eq!(
             PromptCommand::from("/new fresh start".to_string()),
             PromptCommand::New {
                 prompt: Some("/new fresh start".to_string())
@@ -284,7 +300,7 @@ mod tests {
         ));
         assert!(matches!(
             PromptCommand::from("/cancel everything".to_string()),
-            PromptCommand::Stop { .. }
+            PromptCommand::Cancel { .. }
         ));
         assert!(matches!(
             PromptCommand::from("/clear".to_string()),

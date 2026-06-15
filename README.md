@@ -129,7 +129,8 @@ When the terminal UI is running:
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
 - Use `anda models reload`, or the launcher/browser refresh models button, after editing model providers in `config.yaml`.
 - Use `/reload` after changing daemon settings that still require a restart.
-- Use `/stop` or `/cancel` to interrupt the current response.
+- Use `/stop` to stop the current task and leave the conversation idle.
+- Use `/cancel` to exit the active conversation task.
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 

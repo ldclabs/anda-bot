@@ -248,7 +248,9 @@ describe('AndaSidePanelClient.stopActiveTask', () => {
 describe('AndaSidePanelClient.sendPrompt', () => {
   it.each([
     ['steer', '/steer correct course'],
-    ['new', '/new fresh start']
+    ['new', '/new fresh start'],
+    ['stop', '/stop wrong branch'],
+    ['cancel', '/cancel abandon session']
   ])('allows %s commands through the global sending lock', async (_name, prompt) => {
     const chromeApi = createChromeApi({
       settings: { token: 'token' }

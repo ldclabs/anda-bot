@@ -9,6 +9,16 @@ All notable changes to Anda Bot.
 - **Trusted user key management CLI**: added `anda user list`, `anda user create`, `anda user import`, and `anda user pubkey` to generate, inspect, and register Ed25519 keys for channel-bound trusted users.
 - **Multi-user and Discord setup documentation**: documented the `anda user` workflow, channel `user` binding, and Discord bot installation/configuration steps across the README and localized docsite channel guides.
 
+### Changed
+
+- **Stop and cancel commands now have distinct behavior**: `/stop` stops the current task and leaves the conversation idle, while `/cancel` exits the active conversation session; the TUI, browser extension, README, and docsite command help now document the split semantics.
+- **COSE key and token handling now uses `cose2` directly**: replaced `ic_cose_types` helpers with `cose2` and `ed25519-dalek` for Ed25519 COSE key import/export and CWT Sign1 token generation.
+- **Makefile fix target formats before applying clippy fixes**: `make fix` now runs `cargo fmt --all` before `cargo clippy --fix`.
+
+### Fixed
+
+- **Stopped background tasks no longer keep sessions alive**: session state now counts only running background tasks, clears stopped task progress output, and ignores late background results after `/stop`.
+
 ## [0.9.10] — 2026-06-14
 
 ### Added

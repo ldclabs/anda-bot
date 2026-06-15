@@ -179,7 +179,38 @@ impl Session {
     // A live session is idle when its completion runner has no pending work
     // and no background tasks are running.
     pub(super) fn is_idle(&self) -> bool {
-        self.runner_idle.load(Ordering::SeqCst) && self.background_tasks.read().is_empty()
+        self.runner_idle.load(Ordering::SeqCst) && !self.has_running_background_tasks()
+    }
+
+    pub(super) fn has_running_background_tasks(&self) -> bool {
+        self.background_tasks
+            .read()
+            .values()
+            .any(|task| !task.stopped)
+    }
+
+    fn running_background_task_count(&self) -> usize {
+        self.background_tasks
+            .read()
+            .values()
+            .filter(|task| !task.stopped)
+            .count()
+    }
+
+    fn is_background_task_stopped(&self, task_id: &str) -> bool {
+        self.background_tasks
+            .read()
+            .get(task_id)
+            .is_some_and(|task| task.stopped)
+    }
+
+    pub(super) fn stop_background_tasks(&self) {
+        let mut progress_outputs = self.background_progress_outputs.write();
+        for (task_id, task) in self.background_tasks.write().iter_mut() {
+            task.stopped = true;
+            progress_outputs.remove(&subagent_background_output_key(task_id));
+            progress_outputs.remove(&shell_background_output_key(task_id));
+        }
     }
 
     pub(super) fn summary(&self, now_ms: u64) -> SessionSummary {
@@ -193,7 +224,7 @@ impl Session {
             active_at,
             idle_ms: now_ms.saturating_sub(active_at),
             has_goal: self.goal.read().is_some(),
-            background_task_count: self.background_tasks.read().len() as u64,
+            background_task_count: self.running_background_task_count() as u64,
         }
     }
 
@@ -237,6 +268,7 @@ impl AgentHook for Session {
                 agent_name: ctx.base.agent.clone(),
                 tool_name: None,
                 progress_message: None,
+                stopped: false,
             },
         );
         self.background_progress_outputs
@@ -250,6 +282,10 @@ impl AgentHook for Session {
         session_id: String,
         output: AgentOutput,
     ) {
+        if self.is_background_task_stopped(&session_id) {
+            return;
+        }
+
         let prompt = if !output.content.is_empty() {
             self.background_progress_outputs.write().insert(
                 subagent_background_output_key(&session_id),
@@ -285,14 +321,19 @@ impl AgentHook for Session {
     }
 
     async fn on_background_end(&self, ctx: &AgentCtx, session_id: String, output: AgentOutput) {
-        {
-            self.background_tasks.write().remove(&session_id);
-        }
-
+        let stopped = self
+            .background_tasks
+            .write()
+            .remove(&session_id)
+            .is_some_and(|task| task.stopped);
         let last_progress_content = self
             .background_progress_outputs
             .write()
             .remove(&subagent_background_output_key(&session_id));
+        if stopped {
+            return;
+        }
+
         let prompt =
             subagent_final_output_prompt(&session_id, &output, last_progress_content.as_deref());
         self.sender
@@ -316,6 +357,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 agent_name: ctx.agent.clone(),
                 tool_name: Some(ShellTool::NAME.to_string()),
                 progress_message: None,
+                stopped: false,
             },
         );
         self.background_progress_outputs
@@ -329,6 +371,10 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         task_id: String,
         output: ToolOutput<ExecOutput>,
     ) {
+        if self.is_background_task_stopped(&task_id) {
+            return;
+        }
+
         let output_json = background_shell_output_json(&output.output);
         self.background_progress_outputs
             .write()
@@ -358,15 +404,20 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         task_id: String,
         output: ToolOutput<ExecOutput>,
     ) {
-        {
-            self.background_tasks.write().remove(&task_id);
-        }
-
+        let stopped = self
+            .background_tasks
+            .write()
+            .remove(&task_id)
+            .is_some_and(|task| task.stopped);
         let output_json = background_shell_output_json(&output.output);
         let last_progress_output = self
             .background_progress_outputs
             .write()
             .remove(&shell_background_output_key(&task_id));
+        if stopped {
+            return;
+        }
+
         let prompt =
             background_shell_end_prompt(&task_id, &output_json, last_progress_output.as_deref());
         self.sender
@@ -386,6 +437,8 @@ pub struct BackgroundTaskInfo {
     pub agent_name: String,
     pub tool_name: Option<String>,
     pub progress_message: Option<String>,
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 #[derive(Default, Clone)]
@@ -435,6 +488,21 @@ mod tests {
             .write()
             .insert("task-1".to_string(), BackgroundTaskInfo::default());
         assert!(!session.is_idle());
+
+        session.background_progress_outputs.write().insert(
+            shell_background_output_key("task-1"),
+            "old output".to_string(),
+        );
+        session.stop_background_tasks();
+
+        assert!(session.is_idle());
+        assert_eq!(session.summary(0).background_task_count, 0);
+        assert!(
+            !session
+                .background_progress_outputs
+                .read()
+                .contains_key(&shell_background_output_key("task-1"))
+        );
     }
 
     #[test]

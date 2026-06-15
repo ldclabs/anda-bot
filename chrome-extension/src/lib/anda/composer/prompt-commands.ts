@@ -75,16 +75,14 @@ const promptCommandItems: PromptCommandSuggestion[] = [
     id: 'command:stop',
     label: '/stop',
     insertText: '/stop ',
-    description: 'Cancel the current task with an optional reason.',
-    detail: 'alias: /cancel',
+    description: 'Stop the current task and keep the conversation idle.',
     kind: 'command'
   },
   {
     id: 'command:cancel',
     label: '/cancel',
     insertText: '/cancel ',
-    description: 'Cancel the current task with an optional reason.',
-    detail: 'alias: /stop',
+    description: 'Cancel the active conversation session with an optional reason.',
     kind: 'command'
   },
   {

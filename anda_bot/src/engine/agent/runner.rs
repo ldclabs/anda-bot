@@ -26,7 +26,10 @@ use crate::engine::{
     goal::{self},
     model_retry, multimodal,
     prompt::{PromptCommand, skill_subagent},
-    system::{mark_special_user_messages, system_extra_user_context, system_user_message},
+    system::{
+        mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
+        system_user_message,
+    },
 };
 
 const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
@@ -113,7 +116,7 @@ impl AndaBot {
                                 pending_inputs.push(input);
                             }
 
-                            let has_background_tasks = !session.background_tasks.read().is_empty();
+                            let has_background_tasks = session.has_running_background_tasks();
                             if should_continue_session_runner_after_stop(
                                 &sess_runner.conversation.status,
                                 !pending_inputs.is_empty(),
@@ -190,6 +193,41 @@ impl SessionRunner {
         {
             log::error!("Failed to accumulate_tool_usage: {:?}", err);
         }
+    }
+
+    async fn stop_current_task(
+        &mut self,
+        reason: String,
+        now_ms: u64,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) {
+        self.persist_tools_usage_snapshot(tools_usage_snapshot)
+            .await;
+        self.submit_pending_formation(self.runner.chat_history(), now_ms)
+            .await;
+
+        let content = task_stopped_message(&reason);
+        self.session.stop_background_tasks();
+        self.runner.append_chat_history(vec![system_user_message(
+            system_runtime_prompt("task stopped", &content),
+            now_ms,
+        )]);
+
+        let mut output = self.runner.stop_current_task(anda_core::AgentOutput {
+            content,
+            conversation: Some(self.conversation._id),
+            ..Default::default()
+        });
+        mark_special_user_messages(&mut output.chat_history);
+
+        self.session.runner_idle.store(true, Ordering::SeqCst);
+        self.conversation.messages.clear();
+        self.conversation.append_messages(output.chat_history);
+        self.conversation.failed_reason = None;
+        self.conversation.status = ConversationStatus::Idle;
+        self.conversation.usage = output.usage;
+        self.conversation.updated_at = now_ms;
+        self.persist_conversation_state().await;
     }
 
     fn rebuild_runner_after_model_error(&mut self) {
@@ -281,6 +319,7 @@ impl SessionRunner {
         inputs: Vec<ConversationInput>,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<bool, BoxError> {
+        let mut stop_requested: Option<String> = None;
         let mut cancellation_requested: Option<String> = None;
         if !inputs.is_empty() {
             self.session.active_at.store(unix_ms(), Ordering::SeqCst);
@@ -327,7 +366,11 @@ impl SessionRunner {
                     );
                 }
                 PromptCommand::Stop { prompt } => {
-                    cancellation_requested = Some(prompt);
+                    stop_requested = Some(control_command_reason(&prompt, "stop"));
+                    break;
+                }
+                PromptCommand::Cancel { prompt } => {
+                    cancellation_requested = Some(cancel_reason(&prompt));
                     break;
                 }
                 PromptCommand::New { .. } => {
@@ -370,6 +413,12 @@ impl SessionRunner {
         }
 
         let now_ms = unix_ms();
+        if let Some(reason) = stop_requested {
+            self.stop_current_task(reason, now_ms, tools_usage_snapshot)
+                .await;
+            return Ok(true);
+        }
+
         if let Some(failed_reason) = cancellation_requested {
             self.persist_tools_usage_snapshot(tools_usage_snapshot)
                 .await;
@@ -616,7 +665,7 @@ impl SessionRunner {
 
                 let now_ms = unix_ms();
                 let idle = now_ms.saturating_sub(self.session.active_at.load(Ordering::SeqCst));
-                let has_background_tasks = !self.session.background_tasks.read().is_empty();
+                let has_background_tasks = self.session.has_running_background_tasks();
 
                 if self.session.finish_when_idle.load(Ordering::SeqCst) && !has_background_tasks {
                     self.conversation.status = ConversationStatus::Completed;
@@ -718,7 +767,7 @@ impl SessionRunner {
                 )
                 .await;
 
-                let has_background_tasks = !self.session.background_tasks.read().is_empty();
+                let has_background_tasks = self.session.has_running_background_tasks();
                 if has_background_tasks {
                     log::warn!(
                         "Session {} hit a model error while background tasks are running; keeping the session alive to receive background results",
@@ -751,6 +800,38 @@ fn prepend_prompt_content(content: &mut Vec<ContentPart>, prompt: String) {
         return;
     }
     content.insert(0, prompt.into());
+}
+
+fn control_command_reason(prompt: &str, command: &str) -> String {
+    let trimmed = prompt.trim();
+    let Some(body) = trimmed.strip_prefix('/') else {
+        return trimmed.to_string();
+    };
+    let command_end = body.find(char::is_whitespace).unwrap_or(body.len());
+    let parsed_command = &body[..command_end];
+    if !parsed_command.eq_ignore_ascii_case(command) {
+        return trimmed.to_string();
+    }
+
+    body[command_end..].trim().to_string()
+}
+
+fn cancel_reason(prompt: &str) -> String {
+    let reason = control_command_reason(prompt, "cancel");
+    if reason.trim().is_empty() {
+        "conversation cancelled".to_string()
+    } else {
+        reason
+    }
+}
+
+fn task_stopped_message(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        "Current task stopped. The conversation is idle and ready for the next message.".to_string()
+    } else {
+        format!("Current task stopped: {reason}")
+    }
 }
 
 fn should_continue_session_runner_after_stop(
@@ -860,6 +941,40 @@ mod tests {
             true,
             true,
         ));
+    }
+
+    #[test]
+    fn control_command_reason_strips_known_command_prefix() {
+        assert_eq!(
+            control_command_reason("/stop because it is wrong", "stop"),
+            "because it is wrong"
+        );
+        assert_eq!(control_command_reason("/STOP", "stop"), "");
+        assert_eq!(
+            control_command_reason("/cancel because it is wrong", "stop"),
+            "/cancel because it is wrong"
+        );
+    }
+
+    #[test]
+    fn cancel_reason_defaults_when_reason_is_empty() {
+        assert_eq!(
+            cancel_reason("/cancel because it is wrong"),
+            "because it is wrong"
+        );
+        assert_eq!(cancel_reason("/cancel"), "conversation cancelled");
+    }
+
+    #[test]
+    fn task_stopped_message_reports_idle_state() {
+        assert_eq!(
+            task_stopped_message(""),
+            "Current task stopped. The conversation is idle and ready for the next message."
+        );
+        assert_eq!(
+            task_stopped_message("wrong branch"),
+            "Current task stopped: wrong branch"
+        );
     }
 
     #[test]

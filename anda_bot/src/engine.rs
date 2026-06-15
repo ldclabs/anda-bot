@@ -47,7 +47,7 @@ mod system;
 
 use crate::util::{
     http_client::{NO_PROXY, build_http_client},
-    key::{ClaimsSetBuilder, Ed25519Key, Ed25519PubKey, iana},
+    key::{Claims, Ed25519Key, Ed25519PubKey, iana},
 };
 use crate::{
     auto_update::AutoUpdater, brain, channel, config, cron, transcription::TranscriptionManager,
@@ -277,12 +277,12 @@ impl Engines {
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();
 
-        let brain_token = cfg.id_key.sign_cwt(
-            ClaimsSetBuilder::new()
-                .audience("*".to_string())
-                .claim(iana::CwtClaimName::Scope, "*".into())
-                .build(),
-        )?;
+        let mut claims = Claims {
+            audience: Some("*".to_string()),
+            ..Default::default()
+        };
+        claims.extra.insert(iana::CWTClaimScope, "*");
+        let brain_token = cfg.id_key.sign_cwt(claims)?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
             .with_http_client(brain_http_client);

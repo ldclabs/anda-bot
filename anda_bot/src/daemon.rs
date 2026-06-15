@@ -878,13 +878,9 @@ mod tests {
 
         let id_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
         let user_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
-        let token = user_key
-            .sign_cwt(
-                util::key::ClaimsSetBuilder::new()
-                    .claim(util::key::iana::CwtClaimName::Scope, "*".into())
-                    .build(),
-            )
-            .unwrap();
+        let mut claims = util::key::Claims::default();
+        claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+        let token = user_key.sign_cwt(claims).unwrap();
         let user_pubkey = user_key.pubkey();
 
         let serve_handle = tokio::spawn(daemon.serve(id_key, user_pubkey));

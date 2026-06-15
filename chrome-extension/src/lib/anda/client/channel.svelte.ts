@@ -246,8 +246,11 @@ export class Channel extends EventTarget {
             timestamp
           }
         ]
-      } else if (command && (command.kind === 'stop' || command.kind === 'steer')) {
-        // Anchor to the displayed conversation: both commands target the
+      } else if (
+        command &&
+        (command.kind === 'stop' || command.kind === 'cancel' || command.kind === 'steer')
+      ) {
+        // Anchor to the displayed conversation: these commands target the
         // session that the user is looking at, even when the local status is
         // stale. A failed delivery removes the message again below.
         localMessageIds.push(

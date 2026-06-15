@@ -1,6 +1,5 @@
 use anda_core::{BoxError, Json, ToolInput};
 use clap::{Args, Parser, Subcommand};
-use ic_cose_types::cose::cwt::Timestamp;
 use mimalloc::MiMalloc;
 use serde::Serialize;
 use std::{
@@ -619,11 +618,9 @@ async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client
     let user_secret =
         util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
-    let gateway_token = user_key.sign_cwt(
-        util::key::ClaimsSetBuilder::new()
-            .claim(util::key::iana::CwtClaimName::Scope, "*".into())
-            .build(),
-    )?;
+    let mut claims = util::key::Claims::default();
+    claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+    let gateway_token = user_key.sign_cwt(claims)?;
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
 
     Ok(gateway::Client::new(daemon.base_url(), gateway_token).with_http_client(http_client))
@@ -638,18 +635,18 @@ async fn build_browser_extension_token(
     let user_secret =
         util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let days = days.clamp(1, 3650);
-    let expires_secs = now_secs.saturating_add((days * 24 * 60 * 60) as i64);
+    let expires_secs = now_secs.saturating_add(days * 24 * 60 * 60);
 
-    user_key.sign_cwt(
-        util::key::ClaimsSetBuilder::new()
-            .issued_at(Timestamp::WholeSeconds(now_secs))
-            .expiration_time(Timestamp::WholeSeconds(expires_secs))
-            .claim(util::key::iana::CwtClaimName::Scope, "*".into())
-            .text_claim("client".to_string(), "chrome_extension".into())
-            .build(),
-    )
+    let mut claims = util::key::Claims {
+        issued_at: Some(now_secs),
+        expiration: Some(expires_secs),
+        ..Default::default()
+    };
+    claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+    claims.extra.insert("client", "chrome_extension");
+    user_key.sign_cwt(claims)
 }
 
 #[cfg(test)]

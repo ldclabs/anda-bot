@@ -162,7 +162,8 @@ Useful top-level settings:
 - Ctrl+U clears the input.
 - Ctrl+A and Ctrl+E move to the start and end of the input.
 - `/reload` reloads `config.yaml` and reconnects.
-- `/stop` or `/cancel` interrupts the current response.
+- `/stop` stops the current task and leaves the conversation idle.
+- `/cancel` exits the active conversation task.
 - `/steer ...` gives an in-progress response extra guidance.
 - Esc shows status.
 - Ctrl+C quits.
