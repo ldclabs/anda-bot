@@ -433,4 +433,156 @@ channels: {}
         assert!(validate_new_user_id("../alice").is_err());
         assert!(validate_new_user_id("alice/team").is_err());
     }
+
+    fn temp_daemon() -> (tempfile::TempDir, Daemon) {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(dir.path().to_path_buf(), Config::default());
+        (dir, daemon)
+    }
+
+    #[test]
+    fn default_user_key_path_lives_under_keys_users() {
+        let (_dir, daemon) = temp_daemon();
+        let path = default_user_key_path(&daemon, "alice");
+        assert!(path.ends_with("keys/users/alice.key"));
+    }
+
+    #[test]
+    fn ensure_user_id_available_detects_duplicates() {
+        let cfg = Config::from_contents(
+            "users:\n  - id: \"alice\"\n    pubkey: \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n",
+        )
+        .unwrap();
+        assert!(ensure_user_id_available(&cfg, "bob").is_ok());
+        assert!(ensure_user_id_available(&cfg, "alice").is_err());
+    }
+
+    #[tokio::test]
+    async fn run_defaults_to_listing_users() {
+        let (_dir, daemon) = temp_daemon();
+        run(&daemon, UserCommand { command: None })
+            .await
+            .expect("list users should succeed");
+    }
+
+    #[tokio::test]
+    async fn create_then_list_and_reject_duplicate_key() {
+        let (_dir, daemon) = temp_daemon();
+
+        create_user(
+            &daemon,
+            UserCreateCommand {
+                id: "alice".to_string(),
+                key_path: None,
+                overwrite_key: false,
+            },
+        )
+        .await
+        .expect("create should succeed");
+
+        // The config now contains the new user and the key file exists.
+        let cfg = load_cli_config(&daemon).await.unwrap();
+        assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("alice")));
+        assert!(default_user_key_path(&daemon, "alice").exists());
+
+        // Listing now iterates the configured users.
+        run(
+            &daemon,
+            UserCommand {
+                command: Some(UserSubcommand::List),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Re-creating with the same id is rejected (already in config).
+        let err = create_user(
+            &daemon,
+            UserCreateCommand {
+                id: "alice".to_string(),
+                key_path: None,
+                overwrite_key: false,
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn create_user_rejects_existing_key_without_overwrite() {
+        let (_dir, daemon) = temp_daemon();
+        let key_path = daemon.home.join("preexisting.key");
+        tokio::fs::write(&key_path, "dummy").await.unwrap();
+
+        let err = create_user(
+            &daemon,
+            UserCreateCommand {
+                id: "carol".to_string(),
+                key_path: Some(key_path),
+                overwrite_key: false,
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn import_user_adds_pubkey_and_validates_input() {
+        let (_dir, daemon) = temp_daemon();
+
+        import_user(
+            &daemon,
+            UserImportCommand {
+                id: "dave".to_string(),
+                pubkey: test_pubkey(),
+            },
+        )
+        .await
+        .expect("import should succeed");
+
+        let cfg = load_cli_config(&daemon).await.unwrap();
+        assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("dave")));
+
+        // An invalid public key is rejected.
+        let err = import_user(
+            &daemon,
+            UserImportCommand {
+                id: "eve".to_string(),
+                pubkey: "not-a-valid-key".to_string(),
+            },
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn print_pubkey_reads_private_key_file() {
+        let (_dir, daemon) = temp_daemon();
+        let key_path = daemon.home.join("owner.key");
+        let secret = random_ed25519_privkey();
+        write_ed25519_secret_file(&key_path, &secret, false)
+            .await
+            .unwrap();
+
+        print_pubkey(UserPubkeyCommand {
+            key_path: key_path.clone(),
+        })
+        .await
+        .expect("print pubkey should succeed");
+
+        // A missing file surfaces an error.
+        assert!(
+            print_pubkey(UserPubkeyCommand {
+                key_path: daemon.home.join("missing.key"),
+            })
+            .await
+            .is_err()
+        );
+    }
 }

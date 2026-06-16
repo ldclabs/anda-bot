@@ -552,4 +552,203 @@ mod tests {
         assert!(prompt.contains("Background task task-1 completed"));
         assert!(prompt.contains("new final body"));
     }
+
+    fn test_session() -> (Session, tokio::sync::mpsc::Receiver<ConversationInput>) {
+        let (sender, rx) = tokio::sync::mpsc::channel(8);
+        let session = Session {
+            id: Xid::new(),
+            caller: "caller".to_string(),
+            workspace: "/tmp".to_string(),
+            source_key: "test".to_string(),
+            conversation_id: AtomicU64::new(3),
+            sender,
+            background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
+            goal: Arc::new(RwLock::new(None)),
+            request_meta: SessionRequestMeta::new(RequestMeta::default()),
+            completion_hooks: Arc::new(Vec::new()),
+            submit_formation_at: AtomicU64::new(42),
+            formation_backoff_until: AtomicU64::new(0),
+            goal_check_backoff_until: AtomicU64::new(0),
+            active_at: Arc::new(AtomicU64::new(10)),
+            finish_when_idle: AtomicBool::new(false),
+            runner_idle: AtomicBool::new(true),
+            formation_context: Some(InputContext {
+                counterparty: Some("user".to_string()),
+                agent: Some("anda_bot".to_string()),
+                source: Some("cli".to_string()),
+                topic: None,
+            }),
+        };
+        (session, rx)
+    }
+
+    #[test]
+    fn session_formation_context_converts_from_input_context() {
+        let context = InputContext {
+            counterparty: Some("alice".to_string()),
+            agent: Some("anda_bot".to_string()),
+            source: Some("cli".to_string()),
+            topic: Some("topic".to_string()),
+        };
+        let converted = SessionFormationContext::from(&context);
+        assert_eq!(converted.counterparty.as_deref(), Some("alice"));
+        assert_eq!(converted.topic.as_deref(), Some("topic"));
+    }
+
+    #[test]
+    fn session_request_meta_set_replaces_value() {
+        let meta = SessionRequestMeta::new(RequestMeta::default());
+        let updated = RequestMeta {
+            user: Some("bob".to_string()),
+            ..Default::default()
+        };
+        meta.set(updated);
+        assert_eq!(meta.get().user.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn session_state_includes_summary_and_formation_context() {
+        let (session, _rx) = test_session();
+        let state = session.state(100);
+        assert_eq!(state.summary.conversation_id, 3);
+        assert_eq!(state.summary.idle_ms, 90);
+        assert_eq!(state.submit_formation_at, 42);
+        assert_eq!(
+            state.formation_context.unwrap().counterparty.as_deref(),
+            Some("user")
+        );
+    }
+
+    #[test]
+    fn subagent_final_output_prompt_reports_failure_and_completion() {
+        let failed = AgentOutput {
+            failed_reason: Some("boom".to_string()),
+            ..Default::default()
+        };
+        let prompt = subagent_final_output_prompt("s1", &failed, None);
+        assert!(prompt.contains("failed with reason"));
+
+        let empty = AgentOutput::default();
+        let prompt = subagent_final_output_prompt("s1", &empty, None);
+        assert!(prompt.contains("Subagent session s1 completed"));
+    }
+
+    #[test]
+    fn background_shell_output_json_serializes_output() {
+        let output = ExecOutput {
+            stdout: Some("hi".to_string()),
+            ..Default::default()
+        };
+        assert!(background_shell_output_json(&output).contains("hi"));
+    }
+
+    #[tokio::test]
+    async fn completion_hook_fans_out_to_inner_hooks() {
+        let (session, _rx) = test_session();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        // No inner hooks: the call completes without panicking.
+        session.on_completion(&ctx, &AgentOutput::default()).await;
+    }
+
+    #[tokio::test]
+    async fn agent_hook_background_lifecycle_emits_prompts() {
+        let (session, mut rx) = test_session();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+
+        AgentHook::on_background_start(&session, &ctx, "sub-1", &CompletionRequest::default())
+            .await;
+        assert!(session.background_tasks.read().contains_key("sub-1"));
+
+        // Progress with content sends an intermediate prompt.
+        AgentHook::on_background_progress(
+            &session,
+            &ctx,
+            "sub-1".to_string(),
+            AgentOutput {
+                content: "progress body".to_string(),
+                ..Default::default()
+            },
+        )
+        .await;
+        let msg = rx.try_recv().expect("progress prompt should be queued");
+        match msg.command {
+            PromptCommand::Plain { prompt } => assert!(prompt.contains("progress body")),
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        // End sends a final prompt and removes the task.
+        AgentHook::on_background_end(
+            &session,
+            &ctx,
+            "sub-1".to_string(),
+            AgentOutput {
+                content: "final body".to_string(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(!session.background_tasks.read().contains_key("sub-1"));
+        let msg = rx.try_recv().expect("final prompt should be queued");
+        match msg.command {
+            PromptCommand::Plain { prompt } => assert!(prompt.contains("final body")),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_hook_progress_skips_stopped_tasks() {
+        let (session, mut rx) = test_session();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        session.background_tasks.write().insert(
+            "sub-2".to_string(),
+            BackgroundTaskInfo {
+                stopped: true,
+                ..Default::default()
+            },
+        );
+        AgentHook::on_background_progress(
+            &session,
+            &ctx,
+            "sub-2".to_string(),
+            AgentOutput {
+                content: "ignored".to_string(),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn tool_hook_shell_lifecycle_emits_prompts() {
+        let (session, mut rx) = test_session();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+
+        ToolHook::on_background_start(&session, &ctx, "task-1", &ExecArgs::default()).await;
+        assert!(session.background_tasks.read().contains_key("task-1"));
+
+        let output = ToolOutput::new(ExecOutput {
+            stdout: Some("shell progress".to_string()),
+            ..Default::default()
+        });
+        ToolHook::on_background_progress(&session, &ctx, "task-1".to_string(), output).await;
+        let msg = rx.try_recv().expect("shell progress should be queued");
+        match msg.command {
+            PromptCommand::Plain { prompt } => assert!(prompt.contains("shell progress")),
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let end = ToolOutput::new(ExecOutput {
+            stdout: Some("shell final".to_string()),
+            ..Default::default()
+        });
+        ToolHook::on_background_end(&session, &ctx, "task-1".to_string(), end).await;
+        assert!(!session.background_tasks.read().contains_key("task-1"));
+        let msg = rx.try_recv().expect("shell final should be queued");
+        match msg.command {
+            PromptCommand::Plain { prompt } => assert!(prompt.contains("shell final")),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }

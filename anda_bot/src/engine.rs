@@ -151,7 +151,7 @@ struct DaemonConfigUpdateRequest {
 }
 
 impl RuntimeModels {
-    fn new(
+    pub(crate) fn new(
         models: Arc<Models>,
         brain_models: Arc<Models>,
         config_path: PathBuf,
@@ -960,5 +960,293 @@ mod tests {
             tokio::fs::read(&second_backup_path).await.unwrap(),
             existing
         );
+    }
+
+    const VALID_CONFIG_YAML: &str = r#"
+model:
+  active: gpt-test
+  providers:
+    - family: openai
+      model: gpt-test
+      api_base: http://127.0.0.1:1/v1
+      api_key: test-key
+      labels: ["memory"]
+"#;
+
+    fn runtime_models_at(config_path: PathBuf) -> RuntimeModels {
+        let http_client = crate::util::http_client::new_reqwest_client();
+        let models = Arc::new(Models::from_configs(
+            &[test_model_config("gpt-test", &["memory"])],
+            http_client.clone(),
+        ));
+        let active = models.get("gpt-test").unwrap();
+        models.set_model(active);
+        let brain_models = Arc::new(Models::from_configs(
+            &[test_model_config("gpt-test", &["memory"])],
+            http_client.clone(),
+        ));
+        RuntimeModels::new(models, brain_models, config_path, http_client)
+    }
+
+    #[tokio::test]
+    async fn runtime_models_tracks_active_model() {
+        let home = tempfile::tempdir().unwrap();
+        let runtime = runtime_models_at(home.path().join(config::CONFIG_FILE_NAME));
+
+        let current = runtime.current().await;
+        assert_eq!(current.active_model.as_deref(), Some("gpt-test"));
+
+        let updated = runtime.set_active_model("brand-new".to_string()).await;
+        assert_eq!(updated.active_model.as_deref(), Some("brand-new"));
+        assert!(updated.model_names.iter().any(|name| name == "brand-new"));
+    }
+
+    #[tokio::test]
+    async fn runtime_models_reload_from_config_success_and_failure() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join(config::CONFIG_FILE_NAME);
+        tokio::fs::write(&config_path, VALID_CONFIG_YAML)
+            .await
+            .unwrap();
+
+        let runtime = runtime_models_at(config_path.clone());
+        let reloaded = runtime.reload_from_config().await.unwrap();
+        assert_eq!(reloaded.active_model.as_deref(), Some("gpt-test"));
+
+        // An empty model section yields setup issues, surfacing an error.
+        tokio::fs::write(&config_path, "addr: 127.0.0.1:8042\n")
+            .await
+            .unwrap();
+        assert!(runtime.reload_from_config().await.is_err());
+    }
+
+    #[test]
+    fn model_setup_issues_filters_model_prefixed_issues() {
+        let config = config::Config::from_contents("addr: 127.0.0.1:8042\n").unwrap();
+        let issues = model_setup_issues(&config);
+        assert!(issues.iter().all(|issue| issue.starts_with("model.")));
+        assert!(!issues.is_empty());
+
+        let ok = config::Config::from_contents(VALID_CONFIG_YAML).unwrap();
+        assert!(model_setup_issues(&ok).is_empty());
+    }
+
+    #[test]
+    fn daemon_config_response_parses_valid_and_rejects_invalid() {
+        let response = daemon_config_response(
+            std::path::Path::new("/tmp/config.yaml"),
+            VALID_CONFIG_YAML.to_string(),
+        )
+        .unwrap();
+        assert_eq!(response.path, "/tmp/config.yaml");
+        assert!(response.config.is_object());
+
+        assert!(
+            daemon_config_response(std::path::Path::new("/tmp/x"), "\tnot: [valid".to_string())
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_version_reports_app_metadata() {
+        use axum::response::IntoResponse;
+        let response = get_version().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    use crate::auto_update::AutoUpdater;
+    use crate::util::key::{Claims, Ed25519Key, iana};
+    use anda_db::storage::StorageConfig;
+    use axum::extract::State;
+    use ed25519_dalek::VerifyingKey;
+
+    async fn route_test_db() -> Arc<AndaDB> {
+        let object_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        Arc::new(
+            AndaDB::connect(
+                object_store,
+                anda_db::database::DBConfig {
+                    name: "route_test".to_string(),
+                    description: "route test".to_string(),
+                    storage: StorageConfig {
+                        cache_max_capacity: 1024,
+                        compress_level: 1,
+                        object_chunk_size: 256 * 1024,
+                        bucket_overload_size: 256 * 1024,
+                        max_small_object_size: 1024 * 1024,
+                    },
+                    lock: None,
+                },
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    fn minimal_app(pubkeys: Vec<VerifyingKey>) -> AppState {
+        AppState {
+            engines: Arc::new(BTreeMap::new()),
+            default_engine: Principal::management_canister(),
+            start_time_ms: 0,
+            extra_info: Arc::new(BTreeMap::new()),
+            ed25519_pubkeys: Arc::new(pubkeys),
+        }
+    }
+
+    fn authed_headers(key: &Ed25519Key) -> HeaderMap {
+        let mut claims = Claims::default();
+        claims.extra.insert(iana::CWTClaimScope, "*");
+        let token = key.sign_cwt(claims).unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        headers
+    }
+
+    fn dead_proxy_http() -> reqwest::Client {
+        reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn verify_authenticated_request_rejects_anonymous() {
+        let app = minimal_app(vec![]);
+        let err = verify_authenticated_request(&app, &HeaderMap::new());
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn auto_update_routes_require_auth_and_return_state() {
+        let db = route_test_db().await;
+        let key = Ed25519Key::new([5u8; 32]);
+        let app = minimal_app(vec![key.pubkey().into()]);
+        let auto_updater = Arc::new(AutoUpdater::new(
+            db,
+            std::env::temp_dir(),
+            dead_proxy_http(),
+        ));
+        let state = AutoUpdateRouteState { app, auto_updater };
+
+        // Without a token, the status route is unauthorized.
+        let resp = auto_update_status(State(state.clone()), HeaderMap::new())
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // With a valid bearer token, the status route returns the persisted state.
+        let resp = auto_update_status(State(state.clone()), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // The check route runs a (failing, dead-proxy) check and still responds 200.
+        let resp = auto_update_check(State(state.clone()), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Install with no downloaded update is a bad request.
+        let resp = auto_update_install_and_restart(State(state), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    async fn build_route_bot(db: Arc<AndaDB>, home: PathBuf) -> Arc<AndaBot> {
+        let http = dead_proxy_http();
+        let brain_client = crate::brain::Client::new(
+            "http://127.0.0.1:1/v1/anda_bot".to_string(),
+            Some("t".to_string()),
+        )
+        .with_http_client(http);
+        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+            .await
+            .unwrap();
+        let conversations_tool = Arc::new(ConversationsTool::new(
+            conversations,
+            home.to_string_lossy().to_string(),
+        ));
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
+        let skills = Arc::new(skill::SkillManager::new(home.join("skills")));
+        let bridge = Arc::new(BrowserBridge::new());
+        Arc::new(AndaBot::new(
+            brain_client,
+            home,
+            conversations_tool,
+            resource_store,
+            vec![],
+            vec![],
+            skills,
+            Arc::new(ChromeBrowserTool::tabs(bridge)),
+            None,
+            None,
+            vec![],
+        ))
+    }
+
+    #[tokio::test]
+    async fn daemon_control_routes_serve_config_and_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(config::CONFIG_FILE_NAME);
+        tokio::fs::write(&config_path, VALID_CONFIG_YAML)
+            .await
+            .unwrap();
+        let db = route_test_db().await;
+        let key = Ed25519Key::new([6u8; 32]);
+        let app = minimal_app(vec![key.pubkey().into()]);
+        let bot = build_route_bot(db, dir.path().to_path_buf()).await;
+        let runtime_models = runtime_models_at(config_path.clone());
+        let state = DaemonControlRouteState {
+            app,
+            bot,
+            cancel_token: CancellationToken::new(),
+            runtime_models,
+            config_write_lock: Arc::new(Mutex::new(())),
+        };
+
+        // get_status hits the (dead-proxy) brain and surfaces an error.
+        let resp = get_status(State(state.clone())).await.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Reading the config requires auth and returns the parsed config.
+        let resp = get_daemon_config(State(state.clone()), HeaderMap::new())
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = get_daemon_config(State(state.clone()), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Updating the config writes it and reloads the models.
+        let resp = update_daemon_config(
+            State(state.clone()),
+            authed_headers(&key),
+            AxumJson(DaemonConfigUpdateRequest {
+                content: VALID_CONFIG_YAML.to_string(),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Reloading models from the on-disk config succeeds.
+        let resp = reload_daemon_models(State(state.clone()), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Shutdown cancels the token.
+        assert!(!state.cancel_token.is_cancelled());
+        let resp = daemon_shutdown(State(state.clone()), authed_headers(&key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(state.cancel_token.is_cancelled());
     }
 }

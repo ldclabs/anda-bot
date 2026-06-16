@@ -636,4 +636,58 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             None
         );
     }
+
+    #[tokio::test]
+    async fn auto_update_install_and_execute_kip_round_trip() {
+        let app = Router::new()
+            .route(
+                "/auto_update/install_and_restart",
+                routing::post(|| async {
+                    axum::Json(serde_json::to_value(AutoUpdateState::default()).unwrap())
+                }),
+            )
+            .route(
+                "/v1/anda_bot/execute_kip_readonly",
+                routing::post(|| async {
+                    axum::Json(json!({"result": {"ok": true}, "next_cursor": null}))
+                }),
+            );
+        let base_url = spawn_gateway_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+
+        let state = client.auto_update_install_and_restart().await.unwrap();
+        assert!(state.latest_tag.is_none());
+
+        let kip = client
+            .execute_kip_readonly(&anda_kip::Request::default())
+            .await
+            .unwrap();
+        assert!(matches!(kip, anda_kip::Response::Ok { .. }));
+    }
+
+    #[tokio::test]
+    async fn ensure_daemon_running_returns_already_running_when_status_ok() {
+        let base_url = spawn_gateway_mock(status_app()).await;
+        let client =
+            Client::new(base_url, "token-1".to_string()).with_http_client(new_reqwest_client());
+        let dir = tempfile::tempdir().unwrap();
+        let daemon =
+            crate::daemon::Daemon::new(dir.path().to_path_buf(), crate::config::Config::default());
+
+        let state = client.ensure_daemon_running(&daemon).await.unwrap();
+        assert!(matches!(state, LaunchState::AlreadyRunning));
+    }
+
+    #[tokio::test]
+    async fn wait_for_daemon_ready_times_out_without_daemon() {
+        // No server listening: the readiness wait times out quickly.
+        let client = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string())
+            .with_http_client(new_reqwest_client());
+        let err = client
+            .wait_for_daemon_ready(Duration::from_millis(300))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("not ready"));
+    }
 }

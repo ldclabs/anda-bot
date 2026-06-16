@@ -1016,4 +1016,121 @@ mod tests {
         );
         assert!(result.is_array());
     }
+
+    #[tokio::test]
+    async fn conversation_tool_get_delta_batch_and_list_variants() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let caller = *ctx.caller();
+
+        let conv = Conversation {
+            user: caller,
+            messages: vec![json!(anda_core::Message {
+                role: "user".to_string(),
+                content: vec![anda_core::ContentPart::Text {
+                    text: "hi".to_string()
+                }],
+                ..Default::default()
+            })],
+            created_at: 1,
+            updated_at: 1,
+            ..Default::default()
+        };
+        let id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+
+        // Fetch by explicit id and by 0 (latest).
+        tool.call(
+            ctx.clone(),
+            ConversationsToolArgs::GetConversation { _id: id },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            ctx.clone(),
+            ConversationsToolArgs::GetConversation { _id: 0 },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // Delta, batch, and list variants.
+        tool.call(
+            ctx.clone(),
+            ConversationsToolArgs::GetConversationDelta {
+                _id: id,
+                messages_offset: 0,
+                artifacts_offset: 0,
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            ctx.clone(),
+            ConversationsToolArgs::BatchGetConversations { ids: vec![id] },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            ctx.clone(),
+            ConversationsToolArgs::ListPrevConversations {
+                cursor: None,
+                limit: Some(10),
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // Agent-facing variants render Document/display forms.
+        let agent_ctx = ctx.clone();
+        agent_ctx.set_state(AgentInfo {
+            name: "anda".to_string(),
+        });
+        tool.call(
+            agent_ctx.clone(),
+            ConversationsToolArgs::GetConversation { _id: id },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            agent_ctx,
+            ConversationsToolArgs::ListPrevConversations {
+                cursor: None,
+                limit: Some(5),
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        // A conversation owned by someone else is permission-denied.
+        let other = Conversation {
+            user: anda_core::Principal::management_canister(),
+            created_at: 1,
+            updated_at: 1,
+            ..Default::default()
+        };
+        let other_id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&other))
+            .await
+            .unwrap();
+        assert!(
+            tool.call(
+                ctx,
+                ConversationsToolArgs::GetConversation { _id: other_id },
+                Vec::new()
+            )
+            .await
+            .is_err()
+        );
+    }
 }

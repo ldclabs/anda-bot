@@ -935,6 +935,370 @@ fn is_zero_usage(usage: &Usage) -> bool {
 mod tests {
     use super::*;
 
+    use crate::brain;
+    use crate::engine::agent::session::SessionRequestMeta;
+    use crate::engine::browser::{BrowserBridge, ChromeBrowserTool};
+    use crate::engine::conversation::ConversationsTool;
+    use crate::engine::prompt::PromptCommand;
+    use crate::engine::resources::ResourceStore;
+    use anda_brain::types::InputContext;
+    use anda_core::RequestMeta;
+    use anda_db::{
+        database::{AndaDB, DBConfig},
+        storage::StorageConfig,
+    };
+    use anda_engine::{
+        engine::EngineBuilder, extension::skill::SkillManager, memory::Conversations, model::Model,
+    };
+    use ic_auth_types::Xid;
+    use parking_lot::RwLock;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+
+    async fn spawn_runner_brain_mock() -> String {
+        use axum::{Router, routing};
+        let app = Router::new()
+            .route(
+                "/v1/anda_bot/formation",
+                routing::post(|| async {
+                    axum::Json(serde_json::json!({"result": {"content": ""}}))
+                }),
+            )
+            .route(
+                "/v1/anda_bot/execute_kip_readonly",
+                routing::post(|| async {
+                    axum::Json(serde_json::json!({"result": {"identity": "panda"}}))
+                }),
+            )
+            .route(
+                "/v1/anda_bot/get_or_init_user",
+                routing::post(|| async { axum::Json(serde_json::json!({"name": "u"})) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/v1/anda_bot")
+    }
+
+    async fn build_runner_bot_with_brain(brain_url: String) -> AndaBot {
+        let object_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let db = Arc::new(
+            AndaDB::connect(
+                object_store,
+                DBConfig {
+                    name: "runner_brain_test".to_string(),
+                    description: "runner brain test".to_string(),
+                    storage: StorageConfig {
+                        cache_max_capacity: 1024,
+                        compress_level: 1,
+                        object_chunk_size: 256 * 1024,
+                        bucket_overload_size: 256 * 1024,
+                        max_small_object_size: 1024 * 1024,
+                    },
+                    lock: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let brain_client = brain::Client::new(brain_url, Some("t".to_string()))
+            .with_http_client(crate::util::http_client::new_reqwest_client());
+        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+            .await
+            .unwrap();
+        let conversations_tool =
+            Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
+        let skills = Arc::new(SkillManager::new(
+            std::env::temp_dir().join("runner_skills2"),
+        ));
+        let bridge = Arc::new(BrowserBridge::new());
+        AndaBot::new(
+            brain_client,
+            std::env::temp_dir(),
+            conversations_tool,
+            resource_store,
+            vec![],
+            vec![],
+            skills,
+            Arc::new(ChromeBrowserTool::tabs(bridge)),
+            None,
+            None,
+            vec![],
+        )
+    }
+
+    #[tokio::test]
+    async fn session_runner_plain_input_submits_formation_and_checks_goal() {
+        let brain_url = spawn_runner_brain_mock().await;
+        let bot = build_runner_bot_with_brain(brain_url).await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        // Install a goal so the post-completion goal supervision path runs.
+        *sess_runner.session.goal.write() =
+            Some(crate::engine::goal::GoalState::new("ship it".to_string()));
+        let mut snapshot = HashMap::new();
+
+        // A plain prompt produces chat history, so formation is submitted to the
+        // brain mock and the goal supervisor evaluation runs.
+        let result = sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "make progress".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    async fn build_runner_bot() -> AndaBot {
+        let object_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let db = Arc::new(
+            AndaDB::connect(
+                object_store,
+                DBConfig {
+                    name: "runner_test".to_string(),
+                    description: "runner test".to_string(),
+                    storage: StorageConfig {
+                        cache_max_capacity: 1024,
+                        compress_level: 1,
+                        object_chunk_size: 256 * 1024,
+                        bucket_overload_size: 256 * 1024,
+                        max_small_object_size: 1024 * 1024,
+                    },
+                    lock: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        // Dead-proxy brain client: formation submission fails fast (the stop
+        // path tolerates the error) without needing a live brain.
+        let http = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .build()
+            .unwrap();
+        let brain_client = brain::Client::new(
+            "http://127.0.0.1:1/v1/anda_bot".to_string(),
+            Some("t".to_string()),
+        )
+        .with_http_client(http);
+        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+            .await
+            .unwrap();
+        let conversations_tool =
+            Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
+        let skills = Arc::new(SkillManager::new(
+            std::env::temp_dir().join("runner_skills"),
+        ));
+        let bridge = Arc::new(BrowserBridge::new());
+
+        AndaBot::new(
+            brain_client,
+            std::env::temp_dir(),
+            conversations_tool,
+            resource_store,
+            vec![],
+            vec![],
+            skills,
+            Arc::new(ChromeBrowserTool::tabs(bridge)),
+            None,
+            None,
+            vec![],
+        )
+    }
+
+    fn build_session() -> (Arc<Session>, tokio::sync::mpsc::Receiver<ConversationInput>) {
+        let (sender, rx) = tokio::sync::mpsc::channel(8);
+        let session = Arc::new(Session {
+            id: Xid::new(),
+            caller: "caller".to_string(),
+            workspace: "/tmp".to_string(),
+            source_key: "test".to_string(),
+            conversation_id: AtomicU64::new(1),
+            sender,
+            background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
+            goal: Arc::new(RwLock::new(None)),
+            request_meta: SessionRequestMeta::new(RequestMeta::default()),
+            completion_hooks: Arc::new(Vec::new()),
+            submit_formation_at: AtomicU64::new(0),
+            formation_backoff_until: AtomicU64::new(0),
+            goal_check_backoff_until: AtomicU64::new(0),
+            active_at: Arc::new(AtomicU64::new(0)),
+            finish_when_idle: AtomicBool::new(false),
+            runner_idle: AtomicBool::new(false),
+            formation_context: Some(InputContext {
+                counterparty: Some("caller".to_string()),
+                agent: Some(AndaBot::NAME.to_string()),
+                source: Some("test".to_string()),
+                topic: None,
+            }),
+        });
+        (session, rx)
+    }
+
+    fn mock_runner_ctx() -> AgentCtx {
+        EngineBuilder::new()
+            .with_model(Model::mock_implemented())
+            .mock_ctx()
+    }
+
+    fn input(command: PromptCommand) -> ConversationInput {
+        ConversationInput {
+            command,
+            resources: vec![],
+            extra: serde_json::Map::new(),
+            usage: Usage::default(),
+        }
+    }
+
+    async fn build_session_runner(
+        bot: &AndaBot,
+    ) -> (
+        SessionRunner,
+        tokio::sync::mpsc::Receiver<ConversationInput>,
+    ) {
+        let ctx = mock_runner_ctx();
+        let (session, rx) = build_session();
+        let req = CompletionRequest::default();
+        let runner = ctx.clone().completion_iter(req.clone(), vec![]);
+        let sess_runner = SessionRunner {
+            ctx,
+            req,
+            assistant: bot.clone(),
+            session,
+            conversation: Conversation {
+                _id: 1,
+                ..Default::default()
+            },
+            runner,
+            first_round: true,
+            extra_user_context: None,
+            last_extra_user_context: None,
+        };
+        (sess_runner, rx)
+    }
+
+    #[tokio::test]
+    async fn session_runner_stop_input_idles_conversation() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+
+        let cont = sess_runner
+            .run(
+                vec![input(PromptCommand::Stop {
+                    prompt: "/stop please".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        assert!(cont);
+        assert_eq!(sess_runner.conversation.status, ConversationStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn session_runner_cancel_input_marks_cancelled() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+
+        let cont = sess_runner
+            .run(
+                vec![input(PromptCommand::Cancel {
+                    prompt: "/cancel".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        assert!(!cont);
+        assert_eq!(
+            sess_runner.conversation.status,
+            ConversationStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn session_runner_ping_runs_completion_round() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+
+        // A ping falls through to a completion round driven by the mock model.
+        let result = sess_runner
+            .run(vec![input(PromptCommand::Ping)], &mut snapshot)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn session_runner_plain_and_goal_inputs_drive_completion() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+
+        // Plain + Goal inputs append follow-up content, set the session goal,
+        // and run a completion round with the mock model.
+        let result = sess_runner
+            .run(
+                vec![
+                    input(PromptCommand::Plain {
+                        prompt: "do a thing".to_string(),
+                    }),
+                    input(PromptCommand::Goal {
+                        prompt: "finish the task".to_string(),
+                    }),
+                ],
+                &mut snapshot,
+            )
+            .await;
+        assert!(result.is_ok());
+        // The goal command installs an objective on the session.
+        assert!(sess_runner.session.goal.read().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_runner_skill_and_steer_inputs_are_handled() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+
+        let result = sess_runner
+            .run(
+                vec![
+                    input(PromptCommand::Skill {
+                        skill: "coder".to_string(),
+                        prompt: "build it".to_string(),
+                    }),
+                    input(PromptCommand::Steer {
+                        prompt: "actually do this instead".to_string(),
+                    }),
+                ],
+                &mut snapshot,
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn session_runner_persist_helpers_run() {
+        let bot = build_runner_bot().await;
+        let (sess_runner, _rx) = build_session_runner(&bot).await;
+        // The persistence helpers operate on the in-memory conversation store.
+        sess_runner.persist_conversation_state().await;
+        let mut snapshot = HashMap::new();
+        sess_runner
+            .persist_tools_usage_snapshot(&mut snapshot)
+            .await;
+    }
+
     #[test]
     fn session_runner_stop_policy_keeps_background_work() {
         assert!(should_continue_session_runner_after_stop(

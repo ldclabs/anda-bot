@@ -425,4 +425,38 @@ mod tests {
             Some("设置向导")
         );
     }
+
+    #[test]
+    fn parse_settings_payload_handles_missing_and_unsupported_providers() {
+        // No provider line -> the wizard was cancelled (None).
+        assert!(parse_settings_payload("ANDA_MODEL=x\n").unwrap().is_none());
+
+        // An unknown provider id surfaces an error.
+        let err = parse_settings_payload("ANDA_PROVIDER=does-not-exist\n")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn ps_single_doubles_single_quotes() {
+        assert_eq!(ps_single("it's a 'test'"), "it''s a ''test''");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn applescript_string_escapes_quotes_and_backslashes() {
+        assert_eq!(applescript_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_settings_script_lists_providers() {
+        let script = macos_settings_script();
+        assert!(!script.is_empty());
+        // The generated AppleScript references the configured providers.
+        for id in provider_ids() {
+            assert!(script.contains(id), "script missing provider {id}");
+        }
+    }
 }

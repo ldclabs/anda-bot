@@ -225,4 +225,116 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].name.as_deref(), Some(SYSTEM_PERSON_NAME));
     }
+
+    #[test]
+    fn conversation_extra_without_id_drops_conversation_key() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("conversation".to_string(), 9.into());
+        extra.insert("source".to_string(), "cli".into());
+        let meta = RequestMeta {
+            extra,
+            ..Default::default()
+        };
+
+        let stripped = conversation_extra_without_id(&meta);
+        assert!(!stripped.contains_key("conversation"));
+        assert!(stripped.contains_key("source"));
+    }
+
+    #[test]
+    fn request_meta_from_conversation_keeps_existing_source() {
+        let conversation = Conversation {
+            _id: 5,
+            extra: Some(json!({"source": "preset"})),
+            ..Default::default()
+        };
+        let meta =
+            request_meta_from_conversation(&conversation, "telegram:reply_target:c:thread:t");
+        // The pre-existing source is preserved and route keys are not applied.
+        assert_eq!(
+            meta.get_extra_as::<String>("source"),
+            Some("preset".to_string())
+        );
+        assert_eq!(meta.get_extra_as::<String>("reply_target"), None);
+    }
+
+    #[test]
+    fn request_meta_from_conversation_handles_plain_and_empty_thread() {
+        // Plain source key (no reply_target marker) lands in `source`.
+        let plain = request_meta_from_conversation(&Conversation::default(), "lark");
+        assert_eq!(
+            plain.get_extra_as::<String>("source"),
+            Some("lark".to_string())
+        );
+
+        // A reply target with an empty thread omits the thread key.
+        let empty_thread =
+            request_meta_from_conversation(&Conversation::default(), "tg:reply_target:c:thread:");
+        assert_eq!(
+            empty_thread.get_extra_as::<String>("reply_target"),
+            Some("c".to_string())
+        );
+        assert_eq!(empty_thread.get_extra_as::<String>("thread"), None);
+
+        // An empty source key inserts nothing.
+        let empty = request_meta_from_conversation(&Conversation::default(), "");
+        assert_eq!(empty.get_extra_as::<String>("source"), None);
+    }
+
+    #[test]
+    fn conversation_chat_history_pops_trailing_tool_calls_and_skips_malformed() {
+        use anda_core::ContentPart;
+
+        let tool_call_message = Message {
+            role: "assistant".to_string(),
+            content: vec![ContentPart::ToolCall {
+                name: "shell".to_string(),
+                args: json!({}),
+                call_id: Some("call-1".to_string()),
+            }],
+            ..Default::default()
+        };
+        let conversation = Conversation {
+            _id: 12,
+            messages: vec![
+                json!(Message {
+                    role: "user".to_string(),
+                    content: vec![ContentPart::Text {
+                        text: "hello".to_string()
+                    }],
+                    ..Default::default()
+                }),
+                json!(tool_call_message),
+                // A malformed message that cannot deserialize into Message.
+                json!({"role": 12345}),
+            ],
+            ..Default::default()
+        };
+
+        let messages = conversation_chat_history(&conversation);
+        // The trailing tool-call message is dropped; the malformed one is skipped.
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text().as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn conversation_status_predicates_cover_every_variant() {
+        assert!(should_continue_conversation(&ConversationStatus::Submitted));
+        assert!(should_continue_conversation(&ConversationStatus::Working));
+        assert!(should_continue_conversation(&ConversationStatus::Idle));
+        assert!(!should_continue_conversation(
+            &ConversationStatus::Completed
+        ));
+
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Completed
+        ));
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Cancelled
+        ));
+        assert!(is_terminal_conversation_status(&ConversationStatus::Failed));
+        assert!(!is_terminal_conversation_status(
+            &ConversationStatus::Working
+        ));
+    }
 }

@@ -1790,6 +1790,68 @@ mod tests {
         args
     }
 
+    #[tokio::test]
+    async fn tool_call_runs_action_via_connected_session() {
+        use anda_engine::engine::EngineBuilder;
+
+        let bridge = Arc::new(BrowserBridge::new());
+        let (connection_id, sender, mut receiver) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(
+                connection_id,
+                sender,
+                "chrome:tab:1".to_string(),
+                Some(1),
+                Some("https://example.com".to_string()),
+                Some("Example".to_string()),
+            )
+            .unwrap();
+
+        let tool = ChromeBrowserTool::page(bridge.clone());
+        let ctx = EngineBuilder::new().mock_ctx().base;
+
+        // A connected session avoids launching a real browser; the action is
+        // sent over the bridge and we complete it from the test side.
+        let worker =
+            tokio::spawn(async move { Tool::call(&tool, ctx, snapshot_args(), vec![]).await });
+
+        let command = receiver
+            .recv()
+            .await
+            .expect("browser command should be sent");
+        assert_eq!(command.args.action, BrowserAction::Snapshot);
+        bridge
+            .complete(
+                "chrome:tab:1".to_string(),
+                command.request_id,
+                BrowserActionResult {
+                    ok: true,
+                    value: json!({ "title": "Example" }),
+                    error: None,
+                    error_code: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let output = worker.await.unwrap().unwrap();
+        assert!(matches!(output.output, Response::Ok { .. }));
+    }
+
+    #[tokio::test]
+    async fn tool_call_rejects_unsupported_action_for_tool() {
+        use anda_engine::engine::EngineBuilder;
+        let bridge = Arc::new(BrowserBridge::new());
+        let tool = ChromeBrowserTool::tabs(bridge);
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        // A page-only action submitted to the tabs tool is rejected before any launch.
+        let err = Tool::call(&tool, ctx, snapshot_args(), vec![])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("not supported"));
+    }
+
     fn schema_has_action(actions: &[Value], action: &str) -> bool {
         actions.iter().any(|value| value.as_str() == Some(action))
     }
@@ -2245,5 +2307,251 @@ mod tests {
         let result = action.await.unwrap();
         assert!(result.ok);
         assert_eq!(result.value["title"], "Example");
+    }
+
+    #[test]
+    fn normalize_session_rejects_empty_and_overlong() {
+        assert_eq!(normalize_session(" cli ".to_string()).unwrap(), "cli");
+        assert!(normalize_session("   ".to_string()).is_err());
+        assert!(normalize_session("x".repeat(300)).is_err());
+    }
+
+    #[test]
+    fn normalize_optional_string_trims_and_drops_empty() {
+        assert_eq!(
+            normalize_optional_string(Some("  hi  ".to_string())).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(normalize_optional_string(Some("   ".to_string())), None);
+        assert_eq!(normalize_optional_string(None), None);
+    }
+
+    #[test]
+    fn browser_scope_helpers() {
+        assert_eq!(browser_scope_from_session("browser:edge:abc"), Some("edge"));
+        assert_eq!(
+            browser_scope_from_session("browser:incognito_chrome:x"),
+            Some("chrome")
+        );
+        assert_eq!(browser_scope_from_session("cli:/tmp"), None);
+    }
+
+    #[test]
+    fn require_helpers_validate_presence() {
+        assert!(require_field(&Some("x".to_string()), "f", "a").is_ok());
+        assert!(require_field(&Some("  ".to_string()), "f", "a").is_err());
+        assert!(require_field(&None, "f", "a").is_err());
+
+        assert!(require_present(&Some(String::new()), "f", "a").is_ok());
+        assert!(require_present(&None, "f", "a").is_err());
+
+        assert!(require_files(&Some(vec!["a.txt".to_string()]), "a").is_ok());
+        assert!(require_files(&Some(vec![]), "a").is_err());
+        assert!(require_files(&Some(vec!["  ".to_string()]), "a").is_err());
+        assert!(require_files(&None, "a").is_err());
+
+        assert!(require_i64(&Some(1), "f", "a").is_ok());
+        assert!(require_i64(&None, "f", "a").is_err());
+    }
+
+    #[test]
+    fn require_path_or_url_and_selector_or_coordinates() {
+        let mut args = browser_args(BrowserAction::OpenFile);
+        assert!(require_path_or_url(&args).is_err());
+        args.path = Some("/tmp/x".to_string());
+        assert!(require_path_or_url(&args).is_ok());
+
+        let mut click = browser_args(BrowserAction::Click);
+        assert!(require_selector_or_coordinates(&click).is_err());
+        click.x = Some(1.0);
+        click.y = Some(2.0);
+        assert!(require_selector_or_coordinates(&click).is_ok());
+    }
+
+    #[test]
+    fn validate_viewport_options_bounds() {
+        let mut args = browser_args(BrowserAction::Screenshot);
+        assert!(validate_viewport_options(&args).is_ok());
+
+        args.viewport_width = Some(800);
+        // Width set without height is rejected.
+        assert!(validate_viewport_options(&args).is_err());
+        args.viewport_height = Some(600);
+        assert!(validate_viewport_options(&args).is_ok());
+
+        args.viewport_width = Some(0);
+        assert!(validate_viewport_options(&args).is_err());
+
+        let mut scaled = browser_args(BrowserAction::Screenshot);
+        scaled.device_scale_factor = Some(10.0);
+        assert!(validate_viewport_options(&scaled).is_err());
+        scaled.device_scale_factor = Some(2.0);
+        assert!(validate_viewport_options(&scaled).is_ok());
+    }
+
+    #[test]
+    fn validate_script_world_and_same_site() {
+        assert!(validate_script_world(&None).is_ok());
+        assert!(validate_script_world(&Some("MAIN".to_string())).is_ok());
+        assert!(validate_script_world(&Some("bogus".to_string())).is_err());
+
+        assert!(validate_same_site(&None).is_ok());
+        assert!(validate_same_site(&Some("Lax".to_string())).is_ok());
+        assert!(validate_same_site(&Some("nope".to_string())).is_err());
+    }
+
+    #[test]
+    fn normalized_action_timeout_clamps_range() {
+        assert_eq!(
+            normalized_action_timeout(Some(0)),
+            MIN_BROWSER_ACTION_TIMEOUT_MS
+        );
+        assert_eq!(
+            normalized_action_timeout(Some(u64::MAX)),
+            MAX_BROWSER_ACTION_TIMEOUT_MS
+        );
+        assert_eq!(
+            normalized_action_timeout(None),
+            DEFAULT_BROWSER_ACTION_TIMEOUT_MS
+        );
+    }
+
+    #[test]
+    fn validate_action_covers_representative_actions() {
+        let mut type_text = browser_args(BrowserAction::TypeText);
+        assert!(
+            validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &type_text).is_err()
+        );
+        type_text.text = Some("hi".to_string());
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &type_text).is_ok());
+
+        let mut set_cookie = browser_args(BrowserAction::SetCookie);
+        set_cookie.name = Some("c".to_string());
+        set_cookie.value = Some("v".to_string());
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Tabs, &set_cookie).is_ok());
+
+        let mut drag = browser_args(BrowserAction::DragAndDrop);
+        drag.from_selector = Some("#a".to_string());
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &drag).is_err());
+        drag.to_selector = Some("#b".to_string());
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &drag).is_ok());
+
+        // A page action submitted to the tabs tool is rejected.
+        let snapshot = browser_args(BrowserAction::Snapshot);
+        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Tabs, &snapshot).is_err());
+    }
+
+    #[test]
+    fn mime_type_and_extension_helpers() {
+        assert_eq!(mime_type_for_extension("md"), Some("text/markdown"));
+        assert_eq!(mime_type_for_extension("svg"), Some("image/svg+xml"));
+        assert_eq!(mime_type_for_extension("rs"), Some("text/plain"));
+        assert_eq!(mime_type_for_extension("zzz"), None);
+
+        assert_eq!(
+            file_extension_lower(Path::new("a/B.HTML")).as_deref(),
+            Some("html")
+        );
+        assert_eq!(file_extension_lower(Path::new("noext")), None);
+
+        assert_eq!(browser_file_mime_type(Path::new("doc.md")), "text/markdown");
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(browser_file_mime_type(dir.path()), "inode/directory");
+    }
+
+    #[test]
+    fn screenshot_data_url_parsing_and_extensions() {
+        let (mime, encoded) = parse_screenshot_data_url("data:image/png;base64,QUJD").unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(encoded, "QUJD");
+
+        assert!(parse_screenshot_data_url("notdata").is_err());
+        assert!(parse_screenshot_data_url("data:image/png,QUJD").is_err());
+        assert!(parse_screenshot_data_url("data:text/plain;base64,QUJD").is_err());
+
+        assert_eq!(screenshot_extension_for_mime("image/jpeg"), "jpg");
+        assert_eq!(screenshot_extension_for_mime("image/webp"), "webp");
+        assert_eq!(screenshot_extension_for_mime("application/pdf"), "pdf");
+        assert_eq!(screenshot_extension_for_mime("image/png"), "png");
+    }
+
+    #[test]
+    fn local_path_from_reference_resolves_relative_and_absolute() {
+        let workspace = Path::new("/tmp/workspace");
+        assert_eq!(
+            local_path_from_reference("/abs/path.txt", Some(workspace)).unwrap(),
+            PathBuf::from("/abs/path.txt")
+        );
+        assert_eq!(
+            local_path_from_reference("rel.txt", Some(workspace)).unwrap(),
+            PathBuf::from("/tmp/workspace/rel.txt")
+        );
+    }
+
+    #[test]
+    fn is_local_file_access_error_matches_code() {
+        assert!(is_local_file_access_error(Some(
+            LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE
+        )));
+        assert!(!is_local_file_access_error(Some("OTHER")));
+        assert!(!is_local_file_access_error(None));
+    }
+
+    #[test]
+    fn open_file_result_with_fallback_launches_on_access_error() {
+        let file = LocalBrowserFile {
+            path: PathBuf::from("/tmp/x.html"),
+            path_string: "/tmp/x.html".to_string(),
+            mime_type: "text/html".to_string(),
+        };
+
+        // Success annotates the value.
+        let ok = open_file_result_with_fallback(
+            "browser:chrome:1",
+            &file,
+            "file:///tmp/x.html",
+            BrowserActionResult {
+                ok: true,
+                value: json!({}),
+                error: None,
+                error_code: None,
+            },
+            |_url, _session| Ok(json!({"launched": true})),
+        )
+        .unwrap();
+        assert_eq!(ok.value["opened_file"], json!(true));
+
+        // A local-file-access error triggers the fallback launch.
+        let fallback = open_file_result_with_fallback(
+            "browser:chrome:1",
+            &file,
+            "file:///tmp/x.html",
+            BrowserActionResult {
+                ok: false,
+                value: json_null(),
+                error: Some("blocked".to_string()),
+                error_code: Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE.to_string()),
+            },
+            |_url, _session| Ok(json!({"launched": true})),
+        )
+        .unwrap();
+        assert!(fallback.ok);
+        assert_eq!(fallback.value["fallback_launch"], json!(true));
+
+        // A different error is returned unchanged.
+        let other = open_file_result_with_fallback(
+            "browser:chrome:1",
+            &file,
+            "file:///tmp/x.html",
+            BrowserActionResult {
+                ok: false,
+                value: json_null(),
+                error: Some("boom".to_string()),
+                error_code: Some("OTHER".to_string()),
+            },
+            |_url, _session| Ok(json!({"launched": true})),
+        )
+        .unwrap();
+        assert!(!other.ok);
     }
 }

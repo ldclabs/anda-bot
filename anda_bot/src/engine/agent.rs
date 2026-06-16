@@ -1267,4 +1267,610 @@ mod tests {
 
         assert_eq!(selected, vec!["read_file".to_string(), "todo".to_string()]);
     }
+
+    use crate::engine::ACTIVE_MODEL_LABEL;
+    use crate::engine::browser::BrowserBridge;
+    use crate::engine::multimodal::MediaUnderstandingAgent;
+    use crate::engine::resources::ResourceStore;
+    use crate::util::http_client::new_reqwest_client;
+    use anda_core::{AgentInput, RequestMeta};
+    use anda_db::{database::DBConfig, storage::StorageConfig};
+    use anda_engine::{
+        engine::{AgentInfo, Engine, EngineRef},
+        management::{BaseManagement, Visibility},
+        memory::Conversations,
+        model::Model,
+    };
+    use anda_kip::Response as KipResp;
+    use axum::{Router, routing};
+    use object_store::memory::InMemory;
+    use std::collections::BTreeSet;
+
+    struct FakeShellTool;
+
+    impl Tool<BaseCtx> for FakeShellTool {
+        type Args = Value;
+        type Output = Value;
+
+        fn name(&self) -> String {
+            ShellTool::NAME.to_string()
+        }
+
+        fn description(&self) -> String {
+            "fake shell".to_string()
+        }
+
+        fn definition(&self) -> FunctionDefinition {
+            FunctionDefinition {
+                name: self.name(),
+                description: self.description(),
+                parameters: json!({"type": "object"}),
+                strict: Some(false),
+            }
+        }
+
+        async fn call(
+            &self,
+            _ctx: BaseCtx,
+            _args: Self::Args,
+            _resources: Vec<Resource>,
+        ) -> Result<ToolOutput<Self::Output>, BoxError> {
+            Ok(ToolOutput::new(json!({"ok": true})))
+        }
+    }
+
+    async fn build_test_db() -> Arc<anda_db::database::AndaDB> {
+        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        Arc::new(
+            anda_db::database::AndaDB::connect(
+                object_store,
+                DBConfig {
+                    name: "anda_bot_run_test".to_string(),
+                    description: "run test".to_string(),
+                    storage: StorageConfig {
+                        cache_max_capacity: 1024,
+                        compress_level: 1,
+                        object_chunk_size: 256 * 1024,
+                        bucket_overload_size: 256 * 1024,
+                        max_small_object_size: 1024 * 1024,
+                    },
+                    lock: None,
+                },
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    async fn spawn_brain_mock() -> String {
+        let app = Router::new()
+            .route(
+                "/v1/anda_bot/execute_kip_readonly",
+                routing::post(|| async {
+                    axum::Json(
+                        serde_json::to_value(KipResp::ok(json!({"identity": "panda"}))).unwrap(),
+                    )
+                }),
+            )
+            .route(
+                "/v1/anda_bot/get_or_init_user",
+                routing::post(|| async { axum::Json(json!({"name": "tester"})) }),
+            )
+            .route(
+                "/v1/anda_bot/formation",
+                routing::post(|| async { axum::Json(json!({"result": {"content": ""}})) }),
+            )
+            .route(
+                "/v1/anda_bot/formation_status",
+                routing::get(|| async {
+                    axum::Json(json!({
+                        "result": {
+                            "id": "anda_bot",
+                            "concepts": 3,
+                            "propositions": 5,
+                            "conversations": 2,
+                            "formation_processing": false,
+                            "maintenance_processing": false,
+                            "formation_processed_id": 0,
+                            "maintenance_processed_id": 0,
+                            "maintenance_at": {"daydream": 0, "full": 0, "quick": 0, "start_at": 0}
+                        }
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/v1/anda_bot")
+    }
+
+    async fn build_bot_engine(home: PathBuf) -> (Arc<Engine>, Arc<AndaBot>) {
+        let db = build_test_db().await;
+        let brain_url = spawn_brain_mock().await;
+        let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
+            .with_http_client(new_reqwest_client());
+
+        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+            .await
+            .unwrap();
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
+        let conversations_tool = Arc::new(ConversationsTool::new(
+            conversations,
+            home.to_string_lossy().to_string(),
+        ));
+        let bridge = Arc::new(BrowserBridge::new());
+        let skills = Arc::new(SkillManager::new_with_dirs(home.join("skills"), vec![]));
+        let cron_runtime = Arc::new(
+            crate::cron::CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())
+                .await
+                .unwrap(),
+        );
+
+        let bot = Arc::new(AndaBot::new(
+            brain_client.clone(),
+            home,
+            conversations_tool.clone(),
+            resource_store.clone(),
+            vec![],
+            vec![],
+            skills.clone(),
+            Arc::new(ChromeBrowserTool::tabs(bridge.clone())),
+            None,
+            None,
+            vec![],
+        ));
+
+        let image = Arc::new(MediaUnderstandingAgent::image(vec![]));
+        let audio = Arc::new(MediaUnderstandingAgent::audio(vec![]));
+        let video = Arc::new(MediaUnderstandingAgent::video(vec![]));
+        let other = Arc::new(MediaUnderstandingAgent::other(vec![]));
+
+        let engine = Engine::builder()
+            .with_info(AgentInfo {
+                handle: "anda".to_string(),
+                name: "Anda".to_string(),
+                description: "test".to_string(),
+                endpoint: "https://example.com/engine".to_string(),
+                ..Default::default()
+            })
+            .with_management(Arc::new(BaseManagement {
+                controller: Principal::management_canister(),
+                managers: BTreeSet::new(),
+                visibility: Visibility::Public,
+            }))
+            .with_model(Model::mock_implemented())
+            .register_tool(Arc::new(brain_client.clone()))
+            .unwrap()
+            .register_tool(Arc::new(FakeShellTool))
+            .unwrap()
+            .register_tool(Arc::new(NoteTool::new()))
+            .unwrap()
+            .register_tool(Arc::new(GoalTool::new()))
+            .unwrap()
+            .register_tool(Arc::new(TodoTool::new()))
+            .unwrap()
+            .register_tool(Arc::new(ReadFileTool::with_workspaces(vec![])))
+            .unwrap()
+            .register_tool(Arc::new(SearchFileTool::with_workspaces(vec![])))
+            .unwrap()
+            .register_tool(Arc::new(EditFileTool::with_workspaces(vec![])))
+            .unwrap()
+            .register_tool(Arc::new(WriteFileTool::with_workspaces(vec![])))
+            .unwrap()
+            .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))
+            .unwrap()
+            .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))
+            .unwrap()
+            .register_tool(Arc::new(cron::UpdateCronJobTool::new(cron_runtime.clone())))
+            .unwrap()
+            .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))
+            .unwrap()
+            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime.clone())))
+            .unwrap()
+            .register_tool(Arc::new(ChromeBrowserTool::tabs(bridge.clone())))
+            .unwrap()
+            .register_tool(Arc::new(ChromeBrowserTool::page(bridge.clone())))
+            .unwrap()
+            .register_tool(Arc::new(ChromeBrowserTool::input(bridge.clone())))
+            .unwrap()
+            .register_tool(Arc::new(ChromeBrowserTool::script(bridge.clone())))
+            .unwrap()
+            .register_tool(skills.clone())
+            .unwrap()
+            .register_tool(resource_store.clone())
+            .unwrap()
+            .register_tool(conversations_tool.clone())
+            .unwrap()
+            .register_tool(bot.clone())
+            .unwrap()
+            .register_agent(image, Some("image".to_string()))
+            .unwrap()
+            .register_agent(audio, Some("audio".to_string()))
+            .unwrap()
+            .register_agent(video, Some("video".to_string()))
+            .unwrap()
+            .register_agent(other, Some("other".to_string()))
+            .unwrap()
+            .register_agent(bot.clone(), Some(ACTIVE_MODEL_LABEL.to_string()))
+            .unwrap()
+            .export_tools(vec![
+                ConversationsTool::NAME.to_string(),
+                ResourceStore::NAME.to_string(),
+                Tool::name(bot.as_ref()),
+            ])
+            .build(AndaBot::NAME.to_string())
+            .await
+            .unwrap();
+
+        (Arc::new(engine), bot)
+    }
+
+    fn test_caller() -> Principal {
+        Principal::from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9])
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_creates_conversation_via_full_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        // A non-anonymous caller drives the full AndaBot::run path: building
+        // system instructions (brain mock), conversation creation (in-memory
+        // DB), and spawning the session runner. The detached runner uses the
+        // deterministic mock model.
+        let input = AgentInput::new(AndaBot::NAME.to_string(), "hello there".to_string());
+        let output = engine.agent_run(test_caller(), input).await.unwrap();
+        assert!(output.conversation.is_some() || output.session.is_some());
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_rejects_anonymous_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let input = AgentInput::new(AndaBot::NAME.to_string(), "hi".to_string());
+        let err = engine
+            .agent_run(ANONYMOUS, input)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("anonymous"));
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_handles_command_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+
+        // Each prompt exercises a different command branch of AndaBot::run.
+        for prompt in [
+            "/goal finish the report",
+            "/side quick aside",
+            "plain message",
+        ] {
+            let mut input = AgentInput::new(AndaBot::NAME.to_string(), prompt.to_string());
+            // Distinct source keys avoid joining the same in-memory session.
+            let mut meta = RequestMeta::default();
+            meta.extra
+                .insert("source".to_string(), json!(format!("cli:{prompt}")));
+            input.meta = Some(meta);
+            let result = engine.agent_run(caller, input).await;
+            assert!(result.is_ok(), "command {prompt} failed: {result:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_rejects_control_commands_without_active_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+
+        for prompt in ["/stop", "/cancel"] {
+            let mut input = AgentInput::new(AndaBot::NAME.to_string(), prompt.to_string());
+            let mut meta = RequestMeta::default();
+            meta.extra
+                .insert("source".to_string(), json!(format!("cli:ctrl:{prompt}")));
+            input.meta = Some(meta);
+            let err = engine
+                .agent_run(caller, input)
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert!(err.to_string().contains("requires an active conversation"));
+        }
+    }
+
+    #[tokio::test]
+    async fn anda_bot_status_and_api_tool_report_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+
+        // status() queries the brain mock for memory counts.
+        let status = bot.status().await.unwrap();
+        assert_eq!(status.memory_nodes, 3);
+        assert_eq!(status.memory_links, 5);
+
+        // The anda_bot_api tool surfaces sessions and skills.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let sessions = Tool::call(
+            bot.as_ref(),
+            ctx.clone(),
+            AndaBotToolArgs::ListSessions {},
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert!(matches!(sessions.output, Response::Ok { .. }));
+
+        let skills = Tool::call(
+            bot.as_ref(),
+            ctx.clone(),
+            AndaBotToolArgs::ListSkills {},
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert!(matches!(skills.output, Response::Ok { .. }));
+
+        // A missing session id is reported as an error.
+        let missing = Tool::call(
+            bot.as_ref(),
+            ctx,
+            AndaBotToolArgs::GetSession {
+                session_id: "nope".to_string(),
+            },
+            vec![],
+        )
+        .await;
+        assert!(missing.is_err());
+    }
+
+    fn input_for_source(prompt: &str, source: &str) -> AgentInput {
+        let mut input = AgentInput::new(AndaBot::NAME.to_string(), prompt.to_string());
+        let mut meta = RequestMeta::default();
+        meta.extra.insert("source".to_string(), json!(source));
+        input.meta = Some(meta);
+        input
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_joins_session_and_handles_new_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+
+        // First message creates a session for this source.
+        let first = engine
+            .agent_run(caller, input_for_source("first message", "cli:join"))
+            .await
+            .unwrap();
+        assert!(first.conversation.is_some());
+
+        // Give the detached session runner a moment to process a round so the
+        // runner loop, formation submission, and persistence paths execute.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // A follow-up to the same source joins the existing session or starts a
+        // fresh one; either way the run path succeeds.
+        let second = engine
+            .agent_run(caller, input_for_source("follow up", "cli:join"))
+            .await;
+        assert!(second.is_ok());
+
+        // A /new command starts a standalone conversation.
+        let new_conv = engine
+            .agent_run(caller, input_for_source("/new fresh start", "cli:join"))
+            .await;
+        assert!(new_conv.is_ok());
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_accepts_resources_and_skill_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+
+        // A message carrying a text resource exercises the media/resource path.
+        let mut with_resource = input_for_source("look at this", "cli:res");
+        with_resource.resources = vec![Resource {
+            name: "note.txt".to_string(),
+            mime_type: Some("text/plain".to_string()),
+            blob: Some(ic_auth_types::ByteBufB64(b"hello".to_vec())),
+            tags: vec!["text".to_string()],
+            ..Default::default()
+        }];
+        assert!(engine.agent_run(caller, with_resource).await.is_ok());
+
+        // A /skill command augments instructions and tools.
+        let skill = engine
+            .agent_run(
+                caller,
+                input_for_source("/skill coder build it", "cli:skill"),
+            )
+            .await;
+        assert!(skill.is_ok());
+
+        // Let the detached runners settle.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    fn mock_agent_ctx() -> AgentCtx {
+        anda_engine::engine::EngineBuilder::new()
+            .with_model(Model::mock_implemented())
+            .mock_ctx()
+    }
+
+    async fn build_test_bot_with_channels(home: PathBuf, channels: Vec<String>) -> Arc<AndaBot> {
+        let db = build_test_db().await;
+        let brain_url = spawn_brain_mock().await;
+        let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
+            .with_http_client(new_reqwest_client());
+        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+            .await
+            .unwrap();
+        let conversations_tool = Arc::new(ConversationsTool::new(
+            conversations,
+            home.to_string_lossy().to_string(),
+        ));
+        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
+        let bridge = Arc::new(BrowserBridge::new());
+        let skills = Arc::new(SkillManager::new_with_dirs(home.join("skills"), vec![]));
+        Arc::new(AndaBot::new(
+            brain_client,
+            home,
+            conversations_tool,
+            resource_store,
+            vec![],
+            vec![],
+            skills,
+            Arc::new(ChromeBrowserTool::tabs(bridge)),
+            None,
+            None,
+            channels,
+        ))
+    }
+
+    #[tokio::test]
+    async fn startup_self_check_resumes_active_im_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        // The bot treats "telegram" as an active IM channel, so a resumable
+        // telegram conversation reaches the deep continue path (instructions +
+        // session runner spawn) instead of bailing at the channel check.
+        let bot =
+            build_test_bot_with_channels(dir.path().to_path_buf(), vec!["telegram".to_string()])
+                .await;
+        let now_ms = unix_ms();
+        let caller = test_caller();
+
+        let conv = Conversation {
+            user: caller,
+            messages: vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![anda_core::ContentPart::Text {
+                    text: "resume me".to_string()
+                }],
+                timestamp: Some(now_ms),
+                ..Default::default()
+            })],
+            status: ConversationStatus::Working,
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            extra: Some(json!({"workspace": dir.path().to_string_lossy(), "source": "telegram"})),
+            ..Default::default()
+        };
+        let conv_id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+        bot.inner
+            .conversations
+            .update_source_state(
+                "telegram:reply_target:chat-9".to_string(),
+                SourceState {
+                    conv_id,
+                    status: ConversationStatus::Working,
+                    timestamp: now_ms,
+                },
+            )
+            .await
+            .unwrap();
+
+        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+        // Let the spawned session runner settle.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    #[tokio::test]
+    async fn startup_self_check_is_noop_with_empty_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        // No source-bound conversations to resume: returns Ok after scanning.
+        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_self_check_scans_resumable_source_conversations() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+        let now_ms = unix_ms();
+
+        // Seed a recent, resumable conversation with saved history and a source
+        // mapping so the startup scan finds and processes it. The bot has no
+        // active IM channels, so the resume bails out before re-running, which
+        // still exercises startup_source_candidates + continue_startup_conversation.
+        let conv = Conversation {
+            user: caller,
+            messages: vec![json!(Message {
+                role: "user".to_string(),
+                content: vec![anda_core::ContentPart::Text {
+                    text: "earlier request".to_string()
+                }],
+                timestamp: Some(now_ms),
+                ..Default::default()
+            })],
+            status: ConversationStatus::Working,
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            ..Default::default()
+        };
+        let conv_id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+        bot.inner
+            .conversations
+            .update_source_state(
+                "telegram:reply_target:chat-1".to_string(),
+                SourceState {
+                    conv_id,
+                    status: ConversationStatus::Working,
+                    timestamp: now_ms,
+                },
+            )
+            .await
+            .unwrap();
+
+        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn anda_bot_run_stops_and_cancels_active_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, _bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+
+        // Establish an active session, then stop it; the stop is routed into the
+        // running session and processed by the session runner.
+        engine
+            .agent_run(caller, input_for_source("start work", "cli:stop"))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let stopped = engine
+            .agent_run(caller, input_for_source("/stop done", "cli:stop"))
+            .await;
+        assert!(stopped.is_ok());
+
+        engine
+            .agent_run(caller, input_for_source("start again", "cli:cancel"))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let cancelled = engine
+            .agent_run(caller, input_for_source("/cancel abort", "cli:cancel"))
+            .await;
+        assert!(cancelled.is_ok());
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
 }

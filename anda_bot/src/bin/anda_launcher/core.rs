@@ -2751,4 +2751,298 @@ Logs: /tmp/anda.log
             api_key: "sk-test".to_string(),
         }
     }
+
+    #[cfg(unix)]
+    fn context_with_fake_anda(home: &Path, succeed: bool) -> LauncherContext {
+        use std::os::unix::fs::PermissionsExt;
+        let anda_exe = home.join("anda");
+        let script = if succeed {
+            r#"#!/bin/sh
+if [ "$1" = "update" ] && [ "$2" = "--check" ]; then
+  echo '{"status":"downloaded","current_tag":"v1.0.0","latest_tag":"v2.0.0","downloaded_path":"/tmp/anda-update"}'
+  exit 0
+fi
+if [ "$1" = "update" ] && [ "$2" = "--check-if-due" ]; then
+  echo '{"status":"current","current_tag":"v1.0.0"}'
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  if [ "$2" = "--json" ]; then
+    echo '{"summary":"anda daemon is running (pid 111)","pid":111,"gateway_url":"http://127.0.0.1:8042","conversations":1,"memory_nodes":2,"memory_links":3}'
+  else
+    echo "anda daemon is running (pid 111)"
+  fi
+  exit 0
+fi
+echo "ok: $@"
+exit 0
+"#
+        } else {
+            r#"#!/bin/sh
+echo "boom" 1>&2
+exit 1
+"#
+        };
+        fs::write(&anda_exe, script).unwrap();
+        fs::set_permissions(&anda_exe, fs::Permissions::from_mode(0o755)).unwrap();
+        LauncherContext {
+            launcher_exe: home.join("anda_launcher"),
+            anda_exe,
+            home: home.to_path_buf(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_anda_commands_dispatch_to_fake_binary() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), true);
+
+        assert!(start_daemon(&ctx).unwrap().success);
+        assert!(stop_daemon(&ctx).unwrap().success);
+        assert!(restart_daemon(&ctx).unwrap().success);
+        assert!(reload_models(&ctx).unwrap().success);
+        assert!(daemon_status(&ctx).unwrap().success);
+        assert!(daemon_status_json(&ctx).unwrap().success);
+        assert!(generate_browser_extension_token(&ctx).unwrap().success);
+        assert!(reload_models_or_start_daemon(&ctx).success);
+
+        let status = refresh_daemon_status_cache(&ctx);
+        assert_eq!(status.pid.as_deref(), Some("111"));
+        // The cache now returns the refreshed value.
+        assert_eq!(cached_daemon_status().pid.as_deref(), Some("111"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_update_now_and_if_due_parse_json_state() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), true);
+
+        let now = check_update_now(&ctx).unwrap();
+        assert_eq!(now.status, "downloaded");
+        assert!(now.downloaded_update_available());
+
+        let due = check_update_if_due(&ctx).unwrap();
+        assert_eq!(due.status, "current");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_anda_surfaces_failure_exit_status() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), false);
+        let result = start_daemon(&ctx).unwrap();
+        assert!(!result.success);
+        assert_eq!(result.message, "boom");
+
+        // run_update_check returns Err for non-success commands.
+        assert!(check_update_now(&ctx).is_err());
+    }
+
+    #[test]
+    fn run_anda_errors_when_binary_is_missing() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = launcher_context(home.path());
+        // The configured anda_exe does not exist, so spawning fails.
+        assert!(run_anda(&ctx, &["status"]).is_err());
+    }
+
+    #[test]
+    fn launcher_auto_update_state_status_messages() {
+        let downloaded = LauncherAutoUpdateState {
+            status: "downloaded".to_string(),
+            current_tag: "v1.0.0".to_string(),
+            latest_tag: Some("v2.0.0".to_string()),
+            downloaded_path: Some("/tmp/anda".to_string()),
+            error: None,
+        };
+        assert!(downloaded.downloaded_update_available());
+        assert_eq!(downloaded.current_tag_label(), "v1.0.0");
+        assert_eq!(downloaded.latest_tag_label(), "v2.0.0");
+        assert!(!downloaded.check_message().is_empty());
+
+        // Same current and latest tag is not an update.
+        let current = LauncherAutoUpdateState {
+            status: "downloaded".to_string(),
+            current_tag: "v2.0.0".to_string(),
+            latest_tag: Some("v2.0.0".to_string()),
+            downloaded_path: Some("/tmp/anda".to_string()),
+            error: None,
+        };
+        assert!(!current.downloaded_update_available());
+
+        for status in [
+            "failed",
+            "checking",
+            "downloading",
+            "idle",
+            "current",
+            "weird",
+        ] {
+            let state = LauncherAutoUpdateState {
+                status: status.to_string(),
+                current_tag: "v1.0.0".to_string(),
+                error: Some("oops".to_string()),
+                ..Default::default()
+            };
+            assert!(!state.check_message().is_empty());
+        }
+
+        // Missing latest tag uses the localized fallback label.
+        let no_latest = LauncherAutoUpdateState::default();
+        assert!(!no_latest.latest_tag_label().is_empty());
+    }
+
+    #[test]
+    fn check_update_menu_label_reflects_ui_state() {
+        reset_update_ui_state_for_test();
+        // Default (no state) shows the check label.
+        assert!(!check_update_menu_label().is_empty());
+
+        // While checking, the label includes the spinner.
+        assert!(begin_update_check());
+        assert!(!check_update_menu_label().is_empty());
+        finish_update_check(Some(downloaded_test_update_state()));
+
+        // A downloaded update surfaces the restart message.
+        assert!(!check_update_menu_label().is_empty());
+        reset_update_ui_state_for_test();
+    }
+
+    #[test]
+    fn launcher_text_formatters_render_for_default_locale() {
+        let copy = text();
+        assert!(!copy.unsupported_provider("x").is_empty());
+        assert!(!copy.unsupported_provider_from_wizard("x").is_empty());
+        assert!(!copy.env_required("OPENAI_API_KEY").is_empty());
+        assert!(!copy.settings_wizard_failed("d").is_empty());
+        assert!(!copy.powershell_launch_failed("d").is_empty());
+        assert!(!copy.launcher_exe_detect_failed("d").is_empty());
+        assert!(!copy.run_anda_failed("/p", "d").is_empty());
+        assert!(!copy.command_failed("d").is_empty());
+        assert!(!copy.schtasks_failed("d").is_empty());
+        assert!(!copy.check_update_label("v1").is_empty());
+        assert!(!copy.checking_update_label("|", "v1").is_empty());
+        assert!(!copy.update_downloaded_restart_message("v2").is_empty());
+        assert!(!copy.update_ready_message("v2").is_empty());
+        assert!(!copy.update_restart_confirm("v2").is_empty());
+        assert!(!copy.update_current_message("v1").is_empty());
+        assert!(!copy.update_check_failed_message("d").is_empty());
+        assert!(!copy.update_restart_failed_message("d").is_empty());
+        assert!(!copy.restart_recovery("m").is_empty());
+        assert!(!copy.missing_home_arg().is_empty());
+    }
+
+    #[test]
+    fn launcher_text_renders_for_every_language() {
+        for language in [
+            LauncherLanguage::En,
+            LauncherLanguage::ZhHans,
+            LauncherLanguage::Ru,
+            LauncherLanguage::Ar,
+            LauncherLanguage::Fr,
+            LauncherLanguage::Es,
+        ] {
+            let copy = text_for_language(language);
+            assert!(!copy.app_title.is_empty());
+            assert!(!copy.start_daemon.is_empty());
+        }
+    }
+
+    #[test]
+    fn api_key_env_candidates_route_by_api_base_and_family() {
+        assert_eq!(
+            api_key_env_candidates("openai", "deepseek-chat", "https://api.deepseek.com/v1"),
+            vec!["DEEPSEEK_API_KEY"]
+        );
+        assert!(
+            api_key_env_candidates("x", "kimi-k2", "https://api.moonshot.cn")
+                .contains(&"MOONSHOT_API_KEY")
+        );
+        assert!(
+            api_key_env_candidates("x", "m", "https://openrouter.ai/api/v1")
+                .contains(&"OPENROUTER_API_KEY")
+        );
+        assert_eq!(
+            api_key_env_candidates("anthropic", "claude", "https://api.anthropic.com"),
+            vec!["ANTHROPIC_API_KEY"]
+        );
+        assert_eq!(
+            api_key_env_candidates("openai", "gpt", "https://api.openai.com/v1"),
+            vec!["OPENAI_API_KEY"]
+        );
+        // Family fallback when api_base/model are unrecognized.
+        assert_eq!(
+            api_key_env_candidates("anthropic", "custom", "https://example.invalid"),
+            vec!["ANTHROPIC_API_KEY"]
+        );
+        assert!(api_key_env_candidates("unknown", "model", "https://example.invalid").is_empty());
+    }
+
+    #[test]
+    fn codex_auth_file_available_requires_codex_api_base() {
+        assert!(!codex_auth_file_available("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn yaml_scalar_helpers_quote_and_unquote() {
+        assert_eq!(yaml_string("a\"b"), "\"a\\\"b\"");
+        assert_eq!(yaml_bare_or_string("simple-id_1"), "simple-id_1");
+        assert_eq!(yaml_bare_or_string("has space"), "\"has space\"");
+
+        assert_eq!(unquote_yaml_scalar("\"hi\\\"there\""), "hi\"there");
+        assert_eq!(unquote_yaml_scalar("'it''s'"), "it's");
+        assert_eq!(unquote_yaml_scalar("bare"), "bare");
+
+        assert_eq!(leading_spaces("    x"), 4);
+        assert_eq!(leading_spaces("y"), 0);
+    }
+
+    #[test]
+    fn parse_existing_config_detects_setup_completeness() {
+        let complete = parse_existing_config(
+            r#"
+model:
+  active: gpt-test
+  providers:
+    - family: openai
+      model: gpt-test
+      api_base: https://api.openai.com/v1
+      api_key: sk-test
+"#,
+        )
+        .unwrap();
+        assert!(!complete.needs_setup());
+
+        let missing_key = parse_existing_config(
+            r#"
+model:
+  active: gpt-test
+  providers:
+    - family: openai
+      model: gpt-test
+      api_base: https://api.openai.com/v1
+      api_key: ""
+"#,
+        )
+        .unwrap();
+        assert!(missing_key.needs_setup());
+
+        // Empty content needs setup.
+        assert!(parse_existing_config("").unwrap().needs_setup());
+    }
+
+    #[test]
+    fn spinner_frame_returns_a_frame() {
+        let frame = spinner_frame(std::time::Instant::now());
+        assert!(!frame.is_empty());
+    }
+
+    #[test]
+    fn locale_tag_collectors_return_lists() {
+        // These just read the environment/platform; they must not panic.
+        let _ = system_locale_tags();
+        let _ = environment_locale_tags();
+    }
 }

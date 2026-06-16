@@ -3104,4 +3104,329 @@ mod tests {
         // Style preserved on the body cells.
         assert_eq!(buf[(2, 0)].fg, theme::body_style().fg.unwrap());
     }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn app_accessors_report_paths_and_state() {
+        let app = ready_app();
+        assert_eq!(app.config_file_path(), PathBuf::from("./config.yaml"));
+        assert!(app.log_file_path().to_string_lossy().contains("logs"));
+        assert!(!app.setup_required());
+        assert!(app.chat_enabled());
+        let daemon = app.runtime_daemon();
+        assert_eq!(daemon.home, PathBuf::from("."));
+    }
+
+    #[test]
+    fn insert_input_text_tracks_cursor() {
+        let mut app = ready_app();
+        app.insert_input_text("hello");
+        assert_eq!(app.input_buf, "hello");
+        assert_eq!(app.input_cursor, 5);
+        app.input_cursor = 0;
+        app.insert_input_text("X");
+        assert_eq!(app.input_buf, "Xhello");
+        // Empty insert is a no-op.
+        app.insert_input_text("");
+        assert_eq!(app.input_buf, "Xhello");
+    }
+
+    #[test]
+    fn handle_paste_inserts_only_when_enabled() {
+        let mut app = ready_app();
+        app.handle_paste("pasted\r\ntext".to_string());
+        assert!(app.input_buf.contains("pasted"));
+
+        // While sending, paste is ignored.
+        let mut busy = ready_app();
+        busy.chat.sending = true;
+        busy.handle_paste("ignored".to_string());
+        assert!(busy.input_buf.is_empty());
+    }
+
+    #[test]
+    fn apply_update_state_sets_notice_once() {
+        let mut app = ready_app();
+        let state = AutoUpdateState {
+            status: crate::auto_update::AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9.9.9".to_string()),
+            downloaded_path: Some("/tmp/anda".to_string()),
+            ..Default::default()
+        };
+        assert!(app.apply_update_state(state.clone()));
+        assert!(app.notice.contains("v9.9.9"));
+        // Applying the same notice again is a no-op.
+        assert!(!app.apply_update_state(state));
+
+        // A state without a CLI notice does not set anything.
+        let mut clean = ready_app();
+        assert!(!clean.apply_update_state(AutoUpdateState::default()));
+    }
+
+    #[test]
+    fn finish_pending_update_check_handles_closed_and_empty_channels() {
+        let mut app = ready_app();
+        // No pending check.
+        assert!(!app.finish_pending_update_check());
+
+        // A dropped sender closes the channel.
+        let (tx, rx) = oneshot::channel::<Result<AutoUpdateState, String>>();
+        drop(tx);
+        app.pending_update_check = Some(rx);
+        assert!(!app.finish_pending_update_check());
+        assert!(app.pending_update_check.is_none());
+
+        // A delivered Ok update applies its notice.
+        let (tx, rx) = oneshot::channel();
+        tx.send(Ok(AutoUpdateState {
+            status: crate::auto_update::AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v8.0.0".to_string()),
+            downloaded_path: Some("/tmp/anda".to_string()),
+            ..Default::default()
+        }))
+        .unwrap();
+        app.pending_update_check = Some(rx);
+        assert!(app.finish_pending_update_check());
+        assert!(app.notice.contains("v8.0.0"));
+    }
+
+    #[tokio::test]
+    async fn handle_key_edits_input_buffer() {
+        let mut app = ready_app();
+        let w = 40;
+
+        app.handle_key(key(KeyCode::Char('a')), w).await.unwrap();
+        app.handle_key(key(KeyCode::Char('b')), w).await.unwrap();
+        app.handle_key(key(KeyCode::Char('c')), w).await.unwrap();
+        assert_eq!(app.input_buf, "abc");
+
+        app.handle_key(key(KeyCode::Left), w).await.unwrap();
+        assert_eq!(app.input_cursor, 2);
+        app.handle_key(key(KeyCode::Backspace), w).await.unwrap();
+        assert_eq!(app.input_buf, "ac");
+        app.handle_key(key(KeyCode::Delete), w).await.unwrap();
+        assert_eq!(app.input_buf, "a");
+
+        app.handle_key(key(KeyCode::Right), w).await.unwrap();
+        app.handle_key(key(KeyCode::Home), w).await.unwrap();
+        assert_eq!(app.input_cursor, 0);
+        app.handle_key(key(KeyCode::End), w).await.unwrap();
+        assert_eq!(app.input_cursor, 1);
+
+        // Up/Down cursor movement does not panic.
+        app.handle_key(key(KeyCode::Up), w).await.unwrap();
+        app.handle_key(key(KeyCode::Down), w).await.unwrap();
+
+        // Shift+Enter inserts a newline.
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), w)
+            .await
+            .unwrap();
+        assert!(app.input_buf.contains('\n'));
+    }
+
+    #[tokio::test]
+    async fn handle_key_control_shortcuts() {
+        let mut app = ready_app();
+        app.insert_input_text("hello world");
+
+        app.handle_key(ctrl(KeyCode::Char('a')), 40).await.unwrap();
+        assert_eq!(app.input_cursor, 0);
+        app.handle_key(ctrl(KeyCode::Char('e')), 40).await.unwrap();
+        assert_eq!(app.input_cursor, app.input_buf.chars().count());
+        app.handle_key(ctrl(KeyCode::Char('u')), 40).await.unwrap();
+        assert!(app.input_buf.is_empty());
+
+        app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn handle_key_escape_toggles_input_focus() {
+        let mut app = ready_app();
+        app.notice = "something".to_string();
+        app.handle_key(key(KeyCode::Esc), 40).await.unwrap();
+        assert!(app.notice.is_empty());
+        assert!(!app.input_focused);
+
+        // With input unfocused, a non-esc key refocuses.
+        app.handle_key(key(KeyCode::Char('x')), 40).await.unwrap();
+        assert!(app.input_focused);
+    }
+
+    #[tokio::test]
+    async fn handle_key_ignored_while_sending() {
+        let mut app = ready_app();
+        app.chat.sending = true;
+        app.handle_key(key(KeyCode::Char('z')), 40).await.unwrap();
+        assert!(app.input_buf.is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_input_handles_empty_and_text() {
+        let mut app = ready_app();
+        // Empty input does nothing.
+        app.submit_input().await.unwrap();
+        assert!(!app.chat.sending);
+
+        app.insert_input_text("hello there");
+        app.submit_input().await.unwrap();
+        // The input buffer is cleared after submission.
+        assert!(app.input_buf.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_reports_setup_or_daemon_state() {
+        let home = tempfile::tempdir().unwrap();
+        let mut app = App::new(home.path().to_path_buf(), Config::default(), test_client());
+        app.bootstrap().await;
+        // Either a setup notice or a daemon connection notice is produced.
+        assert!(!app.notice.is_empty());
+    }
+
+    #[test]
+    fn render_draws_full_frame_without_panicking() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut app = ready_app();
+        push_text_message(&mut app, "user", "hello");
+        push_text_message(&mut app, "assistant", "hi there");
+        app.notice = "a notice".to_string();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+
+        // Render again after focusing out to exercise alternate layout.
+        app.input_focused = false;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    }
+
+    #[test]
+    fn render_draws_setup_screen_when_not_ready() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut app = App::new(PathBuf::from("."), Config::default(), test_client());
+        app.daemon_running = false;
+        app.setup.issues = vec!["model.active".to_string()];
+        app.notice = "fill in config".to_string();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    }
+
+    fn diverse_message(role: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: vec![
+                ContentPart::Text {
+                    text: "# Heading\n\nbody text with `code` and a long line that should wrap across the available width nicely".to_string(),
+                },
+                ContentPart::Reasoning {
+                    text: "thinking about it".to_string(),
+                },
+                ContentPart::ToolCall {
+                    name: "shell".to_string(),
+                    args: serde_json::json!({"command": "ls"}),
+                    call_id: Some("c1".to_string()),
+                },
+                ContentPart::ToolOutput {
+                    name: "shell".to_string(),
+                    output: serde_json::json!({"stdout": "ok"}),
+                    call_id: Some("c1".to_string()),
+                    is_error: None,
+                    remote_id: None,
+                },
+                ContentPart::FileData {
+                    file_uri: "file:///tmp/a.png".to_string(),
+                    mime_type: Some("image/png".to_string()),
+                },
+                ContentPart::InlineData {
+                    mime_type: "image/png".to_string(),
+                    data: anda_core::ByteBufB64(vec![1, 2, 3]),
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn chat_message_lines_render_all_roles_and_parts() {
+        for role in ["user", "assistant", "system", "tool", "other"] {
+            let lines = chat_message_lines_for_message(&diverse_message(role), 60);
+            assert!(!lines.is_empty(), "role {role} produced no lines");
+        }
+
+        let mut app = ready_app();
+        app.chat.messages = vec![diverse_message("user"), diverse_message("assistant")];
+        assert!(!chat_message_lines(&app, 60).is_empty());
+    }
+
+    #[test]
+    fn render_helpers_cover_state_variants() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+
+        // Ready app with content and a notice.
+        let mut ready = ready_app();
+        push_text_message(&mut ready, "user", "hi");
+        ready.notice = "a notice".to_string();
+        ready.input_buf = "draft input".to_string();
+        ready.input_cursor = 3;
+
+        assert!(!status_footer_lines(&ready, 80).is_empty());
+        let _ = status_line(&ready, 80);
+        let _ = input_display_text(&ready);
+        let _ = input_placeholder(&ready);
+        let _ = build_prompt_lines(&ready, input_placeholder(&ready), 80);
+        let _ = panel_lines(&ready);
+        let _ = panel_header_line(&ready);
+        let _ = dynamic_layout_heights(&ready, area);
+        let _ = dynamic_viewport_height(&ready, 80, 24);
+        let _ = status_panel_height(&ready, area);
+        let _ = static_panel_height(&ready, 80);
+        let _ = status_footer_height(&ready, 80);
+        let _ = input_height(&ready, area);
+        let _ = thinking_lines(&ready);
+
+        // Not-ready app (setup required) exercises the alternate branches.
+        let mut setup = App::new(PathBuf::from("."), Config::default(), test_client());
+        setup.daemon_running = false;
+        setup.setup.issues = vec!["model.active".to_string()];
+        let _ = status_line(&setup, 80);
+        let _ = input_placeholder(&setup);
+        let _ = status_footer_lines(&setup, 80);
+
+        // Daemon down (ready setup, not running).
+        let mut down = ready_app();
+        down.daemon_running = false;
+        let _ = status_line(&down, 80);
+        let _ = input_placeholder(&down);
+    }
+
+    #[test]
+    fn centered_area_constrains_width() {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 10,
+        };
+        let centered = centered_area(area, 40);
+        assert!(centered.width <= 40);
+        assert!(centered.x >= area.x);
+        // A max wider than the area keeps the full width.
+        assert_eq!(centered_area(area, 500).width, 100);
+    }
 }

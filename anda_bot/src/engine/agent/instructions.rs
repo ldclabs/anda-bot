@@ -161,4 +161,26 @@ mod tests {
         println!("Formatted local date: {}", result);
         // 2026-05-12 01PM +08:00
     }
+
+    #[test]
+    fn format_available_tools_renders_none_when_empty() {
+        assert_eq!(format_available_tools(&[]), "none");
+        assert_eq!(
+            format_available_tools(&["a".to_string(), "b".to_string()]),
+            "a, b"
+        );
+    }
+
+    #[test]
+    fn format_local_date_handles_invalid_timestamp() {
+        // i64::MAX milliseconds is far outside the representable DateTime range.
+        assert_eq!(format_local_date(i64::MAX as u64), "invalid timestamp");
+    }
+
+    #[tokio::test]
+    async fn available_tool_names_excludes_self_and_collects_definitions() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let names = available_tool_names(&ctx).await;
+        assert!(!names.iter().any(|name| name == AndaBot::NAME));
+    }
 }
