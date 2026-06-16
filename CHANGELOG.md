@@ -4,6 +4,20 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.12] — 2026-06-16
+
+### Changed
+
+- **CLI updates now keep launcher sidecars synchronized**: `anda update` now downloads and installs the macOS or Windows `anda_launcher` sidecar when it is already present, including already-current CLI runs where only the launcher may need refreshing.
+- **Launcher self-updates restart into the refreshed binary**: macOS and Windows launchers now relaunch themselves after successfully installing an update so the new launcher binary is used immediately.
+- **Version synchronized for the 0.9.12 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.12`.
+
+### Fixed
+
+- **HTTP clients no longer panic when multiple rustls crypto providers are linked**: startup and shared reqwest client construction now install the rustls `aws-lc` default provider before TLS handshakes.
+- **Telegram bot tokens are redacted from request and API error logs**: Telegram polling, sending, attachment, and health-check paths now scrub bot tokens from logged request URLs and API responses.
+- **Active session listing is stable under concurrent activity updates**: session summaries now snapshot activity timestamps before sorting, avoiding comparator panics while sessions update their `active_at` values.
+
 ## [0.9.11] — 2026-06-15
 
 ### Added
