@@ -156,6 +156,7 @@ dependencies = [
  "ratatui",
  "reqwest 0.13.4",
  "rust-i18n",
+ "rustls",
  "serde",
  "serde-saphyr",
  "serde_json",

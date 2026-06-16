@@ -159,6 +159,7 @@ enum DaemonStatusState {
 /// ```
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
+    util::http_client::install_default_crypto_provider();
     let result = run().await;
     if let Err(err) = &result {
         log::error!("{err}");

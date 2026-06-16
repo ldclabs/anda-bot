@@ -48,6 +48,7 @@ parking_lot = { workspace = true }
 prost = { workspace = true }
 reqwest = { workspace = true }
 rust-i18n = { workspace = true }
+rustls = { workspace = true }
 tokio-util = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }

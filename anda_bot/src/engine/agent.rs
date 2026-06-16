@@ -289,16 +289,20 @@ impl AndaBot {
     fn active_sessions(&self) -> Vec<Arc<Session>> {
         let mut sessions = self.inner.sessions.write();
         sessions.retain(|_, session| !session.sender.is_closed());
-        let mut active = sessions.values().cloned().collect::<Vec<_>>();
+        // Snapshot `active_at` once per session up front. It is a shared atomic that running
+        // session tasks update concurrently; reading it inside the comparator would let the
+        // observed order change mid-sort, which makes the comparison a non-total order and
+        // panics with "comparison function does not correctly implement a total order".
+        let mut active = sessions
+            .values()
+            .map(|session| (session.active_at.load(Ordering::SeqCst), session.clone()))
+            .collect::<Vec<_>>();
         drop(sessions);
 
-        active.sort_by(|a, b| {
-            b.active_at
-                .load(Ordering::SeqCst)
-                .cmp(&a.active_at.load(Ordering::SeqCst))
-                .then_with(|| a.id.to_string().cmp(&b.id.to_string()))
+        active.sort_by(|(a_active_at, a), (b_active_at, b)| {
+            b_active_at.cmp(a_active_at).then_with(|| a.id.cmp(&b.id))
         });
-        active
+        active.into_iter().map(|(_, session)| session).collect()
     }
 
     fn session_summaries(&self, now_ms: u64) -> Vec<SessionSummary> {

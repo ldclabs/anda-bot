@@ -6,6 +6,17 @@ use std::time::Duration;
 pub static NO_PROXY: &str =
     "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.local";
 
+/// Install the rustls process-level crypto provider used by all reqwest clients.
+///
+/// rustls links `aws-lc-rs` through reqwest and may also link `ring` through
+/// other transitive deps. With more than one provider compiled in, rustls cannot
+/// choose automatically and panics on the first TLS handshake unless a default
+/// provider is installed first. Ignoring the error is fine: it only fails if a
+/// default provider was already installed.
+pub fn install_default_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 /// The default local/private exemptions merged with the `NO_PROXY` env var.
 fn no_proxy_with_env() -> Option<reqwest::NoProxy> {
     let merged = match std::env::var("no_proxy").or_else(|_| std::env::var("NO_PROXY")) {
@@ -59,6 +70,7 @@ fn env_proxies() -> Vec<Proxy> {
 /// Drop-in replacement for `reqwest::Client::new()` that keeps proxy env vars
 /// working for external hosts but never proxies local or private addresses.
 pub fn new_reqwest_client() -> reqwest::Client {
+    install_default_crypto_provider();
     let mut builder = reqwest::Client::builder().no_proxy();
     for proxy in env_proxies() {
         builder = builder.proxy(proxy);
@@ -79,6 +91,7 @@ pub fn build_http_client<F>(https_proxy: Option<String>, f: F) -> Result<reqwest
 where
     F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
 {
+    install_default_crypto_provider();
     let mut http_client = request_client_builder()
         .no_proxy()
         .https_only(false)

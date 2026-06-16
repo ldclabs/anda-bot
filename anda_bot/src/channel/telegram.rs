@@ -2,7 +2,7 @@ use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
 use reqwest::{
-    Client,
+    Client, RequestBuilder, Response,
     multipart::{Form, Part},
 };
 use serde_json::Value;
@@ -119,6 +119,20 @@ impl TelegramChannel {
 
     fn file_url(&self, file_path: &str) -> String {
         format!("{}/file/bot{}/{file_path}", self.api_base, self.bot_token)
+    }
+
+    /// Redacts the bot token before logging. reqwest errors embed the request URL, which
+    /// contains the token (`.../bot<token>/...`), so error messages must be scrubbed to
+    /// avoid leaking credentials into logs.
+    fn scrub(&self, text: &str) -> String {
+        scrub_token(text, &self.bot_token)
+    }
+
+    async fn send_request(&self, request: RequestBuilder) -> Result<Response, BoxError> {
+        request
+            .send()
+            .await
+            .map_err(|err| -> BoxError { self.scrub(&err.to_string()).into() })
     }
 
     fn parse_reply_target(reply_target: &str) -> (String, Option<String>) {
@@ -311,11 +325,13 @@ impl TelegramChannel {
     }
 
     async fn fetch_bot_username(&self) -> Result<String, BoxError> {
-        let response = self.client.get(self.api_url("getMe")).send().await?;
+        let response = self
+            .send_request(self.client.get(self.api_url("getMe")))
+            .await?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(format!("Telegram getMe failed ({status}): {body}").into());
+            return Err(format!("Telegram getMe failed ({status}): {}", self.scrub(&body)).into());
         }
 
         let data: Value = serde_json::from_str(&body)?;
@@ -343,7 +359,10 @@ impl TelegramChannel {
                 Some(username)
             }
             Err(err) => {
-                log::warn!("Telegram failed to fetch bot username: {err}");
+                log::warn!(
+                    "Telegram failed to fetch bot username: {}",
+                    self.scrub(&err.to_string())
+                );
                 None
             }
         }
@@ -556,14 +575,20 @@ impl TelegramChannel {
         let telegram_path = match self.get_file_path(&attachment.file_id).await {
             Ok(path) => path,
             Err(err) => {
-                log::warn!("Telegram failed to get attachment file path: {err}");
+                log::warn!(
+                    "Telegram failed to get attachment file path: {}",
+                    self.scrub(&err.to_string())
+                );
                 return None;
             }
         };
         let bytes = match self.download_file(&telegram_path).await {
             Ok(bytes) => bytes,
             Err(err) => {
-                log::warn!("Telegram failed to download attachment: {err}");
+                log::warn!(
+                    "Telegram failed to download attachment: {}",
+                    self.scrub(&err.to_string())
+                );
                 return None;
             }
         };
@@ -599,15 +624,18 @@ impl TelegramChannel {
 
     async fn get_file_path(&self, file_id: &str) -> Result<String, BoxError> {
         let response = self
-            .client
-            .post(self.api_url("getFile"))
-            .json(&serde_json::json!({ "file_id": file_id }))
-            .send()
+            .send_request(
+                self.client
+                    .post(self.api_url("getFile"))
+                    .json(&serde_json::json!({ "file_id": file_id })),
+            )
             .await?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(format!("Telegram getFile failed ({status}): {body}").into());
+            return Err(
+                format!("Telegram getFile failed ({status}): {}", self.scrub(&body)).into(),
+            );
         }
 
         let data: Value = serde_json::from_str(&body)?;
@@ -619,14 +647,24 @@ impl TelegramChannel {
     }
 
     async fn download_file(&self, file_path: &str) -> Result<Vec<u8>, BoxError> {
-        let response = self.client.get(self.file_url(file_path)).send().await?;
+        let response = self
+            .send_request(self.client.get(self.file_url(file_path)))
+            .await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("Telegram file download failed ({status}): {body}").into());
+            return Err(format!(
+                "Telegram file download failed ({status}): {}",
+                self.scrub(&body)
+            )
+            .into());
         }
 
-        Ok(response.bytes().await?.to_vec())
+        Ok(response
+            .bytes()
+            .await
+            .map_err(|err| -> BoxError { self.scrub(&err.to_string()).into() })?
+            .to_vec())
     }
 
     fn extract_update_message_target(update: &Value) -> Option<(String, i64)> {
@@ -643,6 +681,7 @@ impl TelegramChannel {
     fn try_add_ack_reaction_nonblocking(&self, chat_id: String, message_id: i64) {
         let client = self.client.clone();
         let url = self.api_url("setMessageReaction");
+        let token = self.bot_token.clone();
         let emoji = random_telegram_ack_reaction().to_string();
         let body = serde_json::json!({
             "chat_id": chat_id,
@@ -657,7 +696,10 @@ impl TelegramChannel {
             let response = match client.post(url).json(&body).send().await {
                 Ok(response) => response,
                 Err(err) => {
-                    log::debug!("Telegram failed to add ACK reaction: {err}");
+                    log::debug!(
+                        "Telegram failed to add ACK reaction: {}",
+                        scrub_token(&err.to_string(), &token)
+                    );
                     return;
                 }
             };
@@ -682,10 +724,7 @@ impl TelegramChannel {
         }
 
         let _ = self
-            .client
-            .post(self.api_url("sendChatAction"))
-            .json(&body)
-            .send()
+            .send_request(self.client.post(self.api_url("sendChatAction")).json(&body))
             .await?;
         Ok(())
     }
@@ -757,26 +796,23 @@ impl TelegramChannel {
 
     async fn post_json_checked(&self, method: &str, body: &Value) -> Result<(), BoxError> {
         let response = self
-            .client
-            .post(self.api_url(method))
-            .json(body)
-            .send()
+            .send_request(self.client.post(self.api_url(method)).json(body))
             .await?;
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(format!("{status}: {text}").into());
+            return Err(format!("{status}: {}", self.scrub(&text)).into());
         }
 
         if let Ok(data) = serde_json::from_str::<Value>(&text)
             && !data.get("ok").and_then(Value::as_bool).unwrap_or(true)
         {
-            return Err(data
+            let description = data
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or("Telegram API returned ok=false")
-                .to_string()
-                .into());
+                .to_string();
+            return Err(self.scrub(&description).into());
         }
 
         Ok(())
@@ -850,15 +886,14 @@ impl TelegramChannel {
         }
 
         let response = self
-            .client
-            .post(self.api_url(method))
-            .multipart(form)
-            .send()
+            .send_request(self.client.post(self.api_url(method)).multipart(form))
             .await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("Telegram {method} failed ({status}): {body}").into());
+            return Err(
+                format!("Telegram {method} failed ({status}): {}", self.scrub(&body)).into(),
+            );
         }
 
         Ok(())
@@ -1086,13 +1121,13 @@ impl Channel for TelegramChannel {
 
             let response = tokio::select! {
                 _ = cancel_token.cancelled() => return Ok(()),
-                response = self.client.post(self.api_url("getUpdates")).json(&body).send() => response,
+                response = self.send_request(self.client.post(self.api_url("getUpdates")).json(&body)) => response,
             };
 
             let response = match response {
                 Ok(response) => response,
                 Err(err) => {
-                    log::warn!("Telegram poll error: {err}");
+                    log::warn!("Telegram poll error: {}", self.scrub(&err.to_string()));
                     if Self::wait_or_cancel(&cancel_token, TELEGRAM_RETRY_DELAY).await {
                         return Ok(());
                     }
@@ -1104,7 +1139,10 @@ impl Channel for TelegramChannel {
             let data = match response.json::<Value>().await {
                 Ok(data) => data,
                 Err(err) => {
-                    log::warn!("Telegram poll parse error ({status}): {err}");
+                    log::warn!(
+                        "Telegram poll parse error ({status}): {}",
+                        self.scrub(&err.to_string())
+                    );
                     if Self::wait_or_cancel(&cancel_token, TELEGRAM_RETRY_DELAY).await {
                         return Ok(());
                     }
@@ -1175,7 +1213,11 @@ impl Channel for TelegramChannel {
 
     async fn health_check(&self) -> bool {
         matches!(
-            tokio::time::timeout(Duration::from_secs(5), self.client.get(self.api_url("getMe")).send()).await,
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                self.send_request(self.client.get(self.api_url("getMe")))
+            )
+            .await,
             Ok(Ok(response)) if response.status().is_success()
         )
     }
@@ -1213,6 +1255,14 @@ impl Channel for TelegramChannel {
         }
         Ok(())
     }
+}
+
+/// Replaces every occurrence of the bot token with a placeholder so it never reaches logs.
+fn scrub_token(text: &str, token: &str) -> String {
+    if token.is_empty() {
+        return text.to_string();
+    }
+    text.replace(token, "<redacted>")
 }
 
 fn random_telegram_ack_reaction() -> &'static str {
@@ -1280,6 +1330,22 @@ mod tests {
         assert_eq!(channel.name(), "telegram");
         assert_eq!(channel.username(), "anda_bot");
         assert_eq!(channel.id(), "telegram:test");
+    }
+
+    #[test]
+    fn scrub_token_redacts_bot_token_from_error_text() {
+        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
+        // Mirrors what reqwest's error Display embeds: the full request URL with the token.
+        let leaked = format!(
+            "error sending request for url (https://api.telegram.org/bot{}/getUpdates)",
+            channel.bot_token
+        );
+        let scrubbed = channel.scrub(&leaked);
+        assert!(!scrubbed.contains(&channel.bot_token), "{scrubbed}");
+        assert!(scrubbed.contains("<redacted>"), "{scrubbed}");
+
+        // The free function leaves text untouched when no token is configured.
+        assert_eq!(scrub_token("nothing to hide", ""), "nothing to hide");
     }
 
     #[test]
