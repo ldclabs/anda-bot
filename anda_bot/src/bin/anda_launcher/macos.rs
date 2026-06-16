@@ -734,6 +734,12 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
         core::finish_update_restart_success(&state);
+        if let Err(err) = restart_launcher_after_update(&ctx) {
+            show_background_dialog(
+                &text().update_restart_title,
+                &text().update_restart_failed_message(&err.to_string()),
+            );
+        }
     } else {
         show_background_dialog(
             &text().update_restart_title,
@@ -741,6 +747,20 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
         );
         core::finish_update_restart_prompt(&state);
     }
+}
+
+fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 0.75; exec \"$1\"")
+        .arg("anda-launcher-restart")
+        .arg(&ctx.launcher_exe)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to restart launcher: {err}"))?;
+    std::process::exit(0);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {

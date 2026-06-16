@@ -14,6 +14,7 @@ use crate::{auto_update, daemon::Daemon};
 
 pub(crate) const REPO: &str = "ldclabs/anda-bot";
 pub(crate) const BINARY_NAME: &str = "anda";
+pub(crate) const LAUNCHER_BINARY_NAME: &str = "anda_launcher";
 const SKILLS_ARCHIVE_NAME: &str = "anda-skills.zip";
 
 #[derive(Args)]
@@ -140,7 +141,19 @@ impl ReleaseTarget {
     }
 
     pub(crate) fn asset_name(&self) -> String {
-        format!("{BINARY_NAME}-{}{}", self.name(), self.exe_ext)
+        self.binary_asset_name(BINARY_NAME)
+    }
+
+    pub(crate) fn launcher_asset_name(&self) -> String {
+        self.binary_asset_name(LAUNCHER_BINARY_NAME)
+    }
+
+    fn binary_asset_name(&self, binary_name: &str) -> String {
+        format!("{binary_name}-{}{}", self.name(), self.exe_ext)
+    }
+
+    fn supports_launcher_sidecar_update(&self) -> bool {
+        matches!(self.os, "macos" | "windows")
     }
 }
 
@@ -170,18 +183,24 @@ pub async fn run(
         return Ok(());
     }
 
-    if !cmd.force && latest_tag == current_tag {
-        install_release_skills(client, &base_url, home_dir).await?;
-        println!("anda is already up to date ({current_tag}).");
-        return Ok(());
-    }
-
     let target = ReleaseTarget::detect()?;
     let current_exe = std::env::current_exe()?;
     let install_dir = current_exe
         .parent()
         .ok_or("Could not detect the current executable directory")?
         .to_path_buf();
+
+    if !cmd.force && latest_tag == current_tag {
+        if let Some(finish) =
+            install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
+        {
+            print_launcher_update_finish(latest_tag.as_str(), finish);
+        }
+        install_release_skills(client, &base_url, home_dir).await?;
+        println!("anda is already up to date ({current_tag}).");
+        return Ok(());
+    }
+
     let asset_name = target.asset_name();
     let checksum_name = format!("{asset_name}.sha256");
     let asset_url = format!("{base_url}/{asset_name}");
@@ -207,6 +226,11 @@ pub async fn run(
         }
 
         install_release_skills(client, &base_url, home_dir).await?;
+        if let Some(finish) =
+            install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
+        {
+            print_launcher_update_finish(latest_tag.as_str(), finish);
+        }
         auto_update::mark_installed(daemon, &latest_tag).await;
         print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
         return Ok(());
@@ -230,6 +254,11 @@ pub async fn run(
     }
 
     install_release_skills(client, &base_url, home_dir).await?;
+    if let Some(finish) =
+        install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
+    {
+        print_launcher_update_finish(latest_tag.as_str(), finish);
+    }
     auto_update::mark_installed(daemon, &latest_tag).await;
 
     print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
@@ -311,6 +340,18 @@ fn print_update_finish(current_tag: &str, latest_tag: &str, finish: UpdateFinish
             println!("Update staged for {latest_tag}.");
             println!("The Windows helper will replace anda after this process exits.");
             println!("If replacement fails, close running anda processes and rerun `anda update`.");
+        }
+    }
+}
+
+fn print_launcher_update_finish(latest_tag: &str, finish: UpdateFinish) {
+    match finish {
+        UpdateFinish::Installed => {
+            println!("{LAUNCHER_BINARY_NAME} synchronized with {latest_tag}.");
+        }
+        #[cfg(windows)]
+        UpdateFinish::Scheduled => {
+            println!("{LAUNCHER_BINARY_NAME} update staged for {latest_tag}.");
         }
     }
 }
@@ -551,6 +592,56 @@ fn install_skills_from_staging(staging_dir: &Path, skills_dir: &Path) -> Result<
     Ok(installed)
 }
 
+async fn install_release_launcher_if_present(
+    client: &reqwest::Client,
+    base_url: &str,
+    target: ReleaseTarget,
+    install_dir: &Path,
+) -> Result<Option<UpdateFinish>, BoxError> {
+    if !target.supports_launcher_sidecar_update() {
+        return Ok(None);
+    }
+
+    let launcher_exe = sidecar_launcher_path(install_dir, target);
+    if !launcher_exe.exists() {
+        return Ok(None);
+    }
+
+    let asset_name = target.launcher_asset_name();
+    let checksum_name = format!("{asset_name}.sha256");
+    let asset_url = format!("{base_url}/{asset_name}");
+    let checksum_url = format!("{base_url}/{checksum_name}");
+    let download = StagedFile::new(temporary_download_path(&asset_name));
+    let staged_path = staged_update_path(install_dir, &launcher_exe);
+    #[cfg(windows)]
+    let mut staged = StagedFile::new(staged_path);
+    #[cfg(not(windows))]
+    let staged = StagedFile::new(staged_path);
+
+    println!("Downloading {asset_name}...");
+    let actual_hash = download_binary(client, &asset_url, download.path()).await?;
+
+    match fetch_expected_checksum(client, &checksum_url).await? {
+        Some(expected_hash) => verify_checksum(&asset_name, &expected_hash, &actual_hash)?,
+        None => println!("Checksum file not found; skipping checksum verification."),
+    }
+
+    stage_update(download.path(), staged.path()).await?;
+    prepare_executable(staged.path(), &launcher_exe).await?;
+    let finish = install_update(staged.path(), &launcher_exe).await?;
+
+    #[cfg(windows)]
+    if finish == UpdateFinish::Scheduled {
+        staged.keep();
+    }
+
+    Ok(Some(finish))
+}
+
+fn sidecar_launcher_path(install_dir: &Path, target: ReleaseTarget) -> PathBuf {
+    install_dir.join(format!("{LAUNCHER_BINARY_NAME}{}", target.exe_ext))
+}
+
 fn remove_path_if_exists(path: &Path) -> Result<(), BoxError> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -786,12 +877,54 @@ mod tests {
             "anda-macos-arm64"
         );
         assert_eq!(
+            ReleaseTarget::from_parts("macos", "arm64")
+                .unwrap()
+                .launcher_asset_name(),
+            "anda_launcher-macos-arm64"
+        );
+        assert_eq!(
             ReleaseTarget::from_parts("windows", "x86_64")
                 .unwrap()
                 .asset_name(),
             "anda-windows-x86_64.exe"
         );
+        assert_eq!(
+            ReleaseTarget::from_parts("windows", "x86_64")
+                .unwrap()
+                .launcher_asset_name(),
+            "anda_launcher-windows-x86_64.exe"
+        );
         assert!(ReleaseTarget::from_parts("windows", "arm64").is_none());
+    }
+
+    #[test]
+    fn release_target_marks_launcher_sidecar_update_platforms() {
+        assert!(
+            ReleaseTarget::from_parts("macos", "arm64")
+                .unwrap()
+                .supports_launcher_sidecar_update()
+        );
+        assert!(
+            ReleaseTarget::from_parts("windows", "x86_64")
+                .unwrap()
+                .supports_launcher_sidecar_update()
+        );
+        assert!(
+            !ReleaseTarget::from_parts("linux", "x86_64")
+                .unwrap()
+                .supports_launcher_sidecar_update()
+        );
+
+        let macos = ReleaseTarget::from_parts("macos", "x86_64").unwrap();
+        assert_eq!(
+            sidecar_launcher_path(Path::new("/install"), macos),
+            Path::new("/install").join("anda_launcher")
+        );
+        let windows = ReleaseTarget::from_parts("windows", "x86_64").unwrap();
+        assert_eq!(
+            sidecar_launcher_path(Path::new("C:/Anda"), windows),
+            Path::new("C:/Anda").join("anda_launcher.exe")
+        );
     }
 
     #[test]
@@ -1292,6 +1425,70 @@ mod tests {
         // Create the bot db so `open_bot_db` succeeds inside the updater.
         daemon.connect_bot_db().await.unwrap();
         (dir, daemon)
+    }
+
+    #[tokio::test]
+    async fn install_release_launcher_skips_without_supported_sidecar() {
+        let client = dead_proxy_client();
+        let temp = tempfile::tempdir().unwrap();
+        let macos = ReleaseTarget::from_parts("macos", "arm64").unwrap();
+        let missing = install_release_launcher_if_present(
+            &client,
+            "https://example.invalid",
+            macos,
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        assert!(missing.is_none());
+
+        std::fs::write(temp.path().join("anda_launcher"), "old").unwrap();
+        let linux = ReleaseTarget::from_parts("linux", "x86_64").unwrap();
+        let unsupported = install_release_launcher_if_present(
+            &client,
+            "https://example.invalid",
+            linux,
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        assert!(unsupported.is_none());
+    }
+
+    #[tokio::test]
+    async fn install_release_launcher_replaces_existing_macos_sidecar() {
+        let body = b"new-launcher";
+        let hash = sha256_hex(body);
+        let checksum = hash.clone();
+        let app = Router::new()
+            .route(
+                "/anda_launcher-macos-arm64",
+                get(|| async { "new-launcher" }),
+            )
+            .route(
+                "/anda_launcher-macos-arm64.sha256",
+                get(move || {
+                    let value = format!("{checksum}  anda_launcher-macos-arm64\n");
+                    async move { value }
+                }),
+            );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let temp = tempfile::tempdir().unwrap();
+        let launcher = temp.path().join("anda_launcher");
+        std::fs::write(&launcher, "old-launcher").unwrap();
+
+        let finish = install_release_launcher_if_present(
+            &client,
+            &base,
+            ReleaseTarget::from_parts("macos", "arm64").unwrap(),
+            temp.path(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(finish, Some(UpdateFinish::Installed));
+        assert_eq!(std::fs::read(&launcher).unwrap(), body);
     }
 
     #[tokio::test]

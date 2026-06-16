@@ -895,6 +895,13 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
     if result.success {
         core::finish_update_restart_success(&state);
+        if let Err(err) = restart_launcher_after_update(&ctx) {
+            message_box(
+                &text().update_restart_title,
+                &text().update_restart_failed_message(&err.to_string()),
+                MB_OK | MB_ICONERROR,
+            );
+        }
     } else {
         message_box(
             &text().update_restart_title,
@@ -903,6 +910,52 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
         );
         core::finish_update_restart_prompt(&state);
     }
+}
+
+fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
+    let launcher = ps_single(&ctx.launcher_exe.to_string_lossy());
+    let current_pid = std::process::id();
+    let script = format!(
+        r#"$ErrorActionPreference = 'SilentlyContinue'
+$launcher = '{launcher}'
+$launcherPid = {current_pid}
+$previousWrite = $null
+try {{ $previousWrite = (Get-Item -LiteralPath $launcher).LastWriteTimeUtc }} catch {{}}
+try {{ Wait-Process -Id $launcherPid -Timeout 30 }} catch {{}}
+$replaceDeadline = (Get-Date).AddSeconds(30)
+while ($null -ne $previousWrite -and (Get-Date) -lt $replaceDeadline) {{
+  try {{
+    $currentWrite = (Get-Item -LiteralPath $launcher).LastWriteTimeUtc
+    if ($currentWrite -ne $previousWrite) {{ break }}
+  }} catch {{}}
+  Start-Sleep -Milliseconds 500
+}}
+$deadline = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $deadline) {{
+  try {{
+    Start-Process -FilePath $launcher -ErrorAction Stop | Out-Null
+    exit 0
+  }} catch {{
+    Start-Sleep -Milliseconds 500
+  }}
+}}
+"#,
+    );
+
+    let mut command = Command::new("powershell.exe");
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to restart launcher: {err}"))?;
+    std::process::exit(0);
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {
