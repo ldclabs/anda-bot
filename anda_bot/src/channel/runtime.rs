@@ -1601,4 +1601,152 @@ mod tests {
         cancel_token.cancel();
         handle.await.unwrap();
     }
+
+    #[tokio::test]
+    async fn prepare_channel_workspace_migrates_legacy_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path();
+        // A channel id with special characters has a distinct safe path.
+        let channel_id = "telegram:chat-1";
+        let legacy = legacy_channel_workspace_path(work, channel_id);
+        tokio::fs::create_dir_all(&legacy).await.unwrap();
+        tokio::fs::write(legacy.join("note.txt"), b"hi")
+            .await
+            .unwrap();
+
+        let safe = prepare_channel_workspace(work, channel_id).await;
+        assert!(safe.join("note.txt").is_file());
+        // The legacy directory was migrated (renamed) into the safe path.
+        assert!(!legacy.exists());
+    }
+
+    #[tokio::test]
+    async fn merge_workspace_dirs_moves_non_conflicting_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        tokio::fs::create_dir_all(src.join("sub")).await.unwrap();
+        tokio::fs::write(src.join("a.txt"), b"a").await.unwrap();
+        tokio::fs::write(src.join("sub/b.txt"), b"b").await.unwrap();
+        tokio::fs::create_dir_all(&dst).await.unwrap();
+        // Existing destination entry is preserved; conflicting source is left behind.
+        tokio::fs::write(dst.join("a.txt"), b"keep").await.unwrap();
+
+        merge_workspace_dirs(&src, &dst).await.unwrap();
+
+        assert_eq!(tokio::fs::read(dst.join("a.txt")).await.unwrap(), b"keep");
+        assert!(dst.join("sub/b.txt").is_file());
+    }
+
+    #[test]
+    fn channel_route_from_message_and_key_round_trip() {
+        let message = ChannelMessage {
+            channel: "telegram".to_string(),
+            reply_target: "chat-1".to_string(),
+            thread: Some("topic-2".to_string()),
+            ..Default::default()
+        };
+        let route = ChannelRoute::from_message(&message);
+        assert_eq!(route.channel, "telegram");
+        assert_eq!(
+            route.key(),
+            (
+                "telegram".to_string(),
+                "chat-1".to_string(),
+                Some("topic-2".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn channel_workspace_paths_distinguish_layouts() {
+        let work_dir = Path::new("/tmp/channels");
+        let safe = channel_workspace_path(work_dir, "telegram:chat/1");
+        let legacy = legacy_channel_workspace_path(work_dir, "telegram:chat/1");
+        let percent = legacy_percent_encoded_channel_workspace_path(work_dir, "telegram:chat/1");
+        assert!(safe.starts_with(work_dir));
+        assert_eq!(legacy, work_dir.join("telegram:chat/1"));
+        assert_ne!(safe, percent);
+    }
+
+    #[test]
+    fn build_conversation_routes_inverts_channel_map() {
+        let mut map = ChannelConversationMap::new();
+        map.insert(("tg".to_string(), "c1".to_string(), None), 7);
+        let routes = build_conversation_routes(&map);
+        assert_eq!(routes.get(&7).map(|r| r.channel.as_str()), Some("tg"));
+    }
+
+    #[test]
+    fn normalize_non_empty_trims() {
+        assert_eq!(normalize_non_empty("  x  ").as_deref(), Some("x"));
+        assert_eq!(normalize_non_empty("   "), None);
+    }
+
+    #[test]
+    fn agent_prompt_from_message_scopes_external_users() {
+        let internal = ChannelMessage {
+            content: "hello".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(agent_prompt_from_message(&internal), "hello");
+
+        let external = ChannelMessage {
+            content: "hi".to_string(),
+            channel: "wechat".to_string(),
+            sender: "wxid".to_string(),
+            external_user: Some(true),
+            ..Default::default()
+        };
+        // External prompts are wrapped with scoping context, not the raw text.
+        assert_ne!(agent_prompt_from_message(&external), "hi");
+    }
+
+    #[test]
+    fn channel_new_prompt_command_detects_new_for_internal_only() {
+        let new_cmd = ChannelMessage {
+            content: "/new plan the week".to_string(),
+            ..Default::default()
+        };
+        // A `/new` message is recognized as a new-conversation command.
+        assert!(channel_new_prompt_command(&new_cmd).is_some());
+
+        let plain = ChannelMessage {
+            content: "just chatting".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(channel_new_prompt_command(&plain), None);
+
+        // External users never trigger control commands.
+        let external = ChannelMessage {
+            content: "/new x".to_string(),
+            external_user: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(channel_new_prompt_command(&external), None);
+    }
+
+    #[test]
+    fn completion_message_includes_cron_and_stale_markers() {
+        let mut meta = RequestMeta::default();
+        meta.extra.insert("cron_job_id".to_string(), 42u64.into());
+        meta.extra
+            .insert("cron_job_name".to_string(), "nightly".into());
+        meta.extra
+            .insert("cron_job_kind".to_string(), "shell".into());
+        let output = AgentOutput {
+            content: "done".to_string(),
+            conversation: Some(9),
+            ..Default::default()
+        };
+        let route = ChannelRoute {
+            channel: "tg".to_string(),
+            reply_target: "c1".to_string(),
+            thread: None,
+        };
+        let message = completion_message(&meta, &output, route, true);
+        assert!(message.content.contains("Previous conversation #9"));
+        assert!(message.content.contains("Cron Job (shell): nightly"));
+        assert!(message.content.contains("done"));
+    }
 }

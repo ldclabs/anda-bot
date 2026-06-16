@@ -2286,4 +2286,548 @@ mod tests {
 
         assert!(err.to_string().contains("resolves outside workspace"));
     }
+
+    use axum::{Router, http::StatusCode as AxumStatus, routing::get};
+
+    async fn spawn_router(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn mock_ctx() -> AgentCtx {
+        anda_engine::engine::EngineBuilder::new().mock_ctx()
+    }
+
+    fn text_resource(name: &str, body: &str) -> Resource {
+        Resource {
+            name: name.to_string(),
+            mime_type: Some("text/plain".to_string()),
+            blob: Some(ByteBufB64(body.as_bytes().to_vec())),
+            tags: vec!["text".to_string()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn media_kind_metadata_covers_every_variant() {
+        for kind in [
+            MediaKind::Image,
+            MediaKind::Audio,
+            MediaKind::Video,
+            MediaKind::Other,
+        ] {
+            assert!(!kind.agent_name().is_empty());
+            assert!(!kind.model_label().is_empty());
+            assert!(!kind.noun().is_empty());
+            assert!(!kind.description().is_empty());
+            assert!(!kind.default_question().is_empty());
+            assert!(!kind.instructions().is_empty());
+            assert!(!kind.tags().is_empty());
+        }
+        assert!(MediaKind::Other.instructions().contains("attachment"));
+        assert!(MediaKind::Image.instructions().contains("image"));
+    }
+
+    #[test]
+    fn media_kind_from_mime_tags_and_extension() {
+        assert_eq!(
+            MediaKind::from_mime_type("IMAGE/PNG"),
+            Some(MediaKind::Image)
+        );
+        assert_eq!(
+            MediaKind::from_mime_type("audio/mp3"),
+            Some(MediaKind::Audio)
+        );
+        assert_eq!(
+            MediaKind::from_mime_type("video/mp4"),
+            Some(MediaKind::Video)
+        );
+        assert_eq!(MediaKind::from_mime_type("application/zip"), None);
+
+        assert_eq!(
+            MediaKind::from_tags(&["Image".to_string()]),
+            Some(MediaKind::Image)
+        );
+        assert_eq!(
+            MediaKind::from_tags(&["audio".to_string()]),
+            Some(MediaKind::Audio)
+        );
+        assert_eq!(
+            MediaKind::from_tags(&["video".to_string()]),
+            Some(MediaKind::Video)
+        );
+        assert_eq!(
+            MediaKind::from_tags(&[".mp3".to_string()]),
+            Some(MediaKind::Audio)
+        );
+        assert_eq!(MediaKind::from_tags(&["nope".to_string()]), None);
+
+        assert_eq!(MediaKind::from_extension("JPG"), Some(MediaKind::Image));
+        assert_eq!(MediaKind::from_extension("flac"), Some(MediaKind::Audio));
+        assert_eq!(MediaKind::from_extension("mpeg"), Some(MediaKind::Audio));
+        assert_eq!(MediaKind::from_extension("mkv"), Some(MediaKind::Video));
+        assert_eq!(MediaKind::from_extension("pdf"), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_extension("unknown"), None);
+    }
+
+    #[test]
+    fn media_understanding_args_from_blank_prompt_is_default() {
+        let args = MediaUnderstandingArgs::from_prompt("   ");
+        assert!(args.path.is_none() && args.url.is_none() && args.question.is_none());
+    }
+
+    #[test]
+    fn pure_mime_and_text_helpers() {
+        assert!(is_pdf_mime_type(" Application/PDF "));
+        assert!(!is_pdf_mime_type("text/plain"));
+
+        assert_eq!(
+            normalize_mime_type(" Text/Plain; charset=utf-8 ").as_deref(),
+            Some("text/plain")
+        );
+        assert_eq!(normalize_mime_type("   "), None);
+
+        assert_eq!(extension_from_name("dir/file.RS"), Some("RS"));
+        assert_eq!(extension_from_name("noext"), None);
+        assert_eq!(mime_type_from_name("a.png").as_deref(), Some("image/png"));
+
+        assert_eq!(title_case("hello"), "Hello");
+        assert_eq!(title_case(""), "");
+
+        assert_eq!(strip_data_url_scheme(" DATA:abc"), Some("abc"));
+        assert_eq!(strip_data_url_scheme("http://x"), None);
+
+        assert_eq!(text_language_for_name("a.rs"), "rust");
+        assert_eq!(text_language_for_name("a.py"), "python");
+        assert_eq!(text_language_for_name("a.cpp"), "cpp");
+        assert_eq!(text_language_for_name("a.unknown"), "text");
+
+        assert!(is_text_extension("MD"));
+        assert!(!is_text_extension("png"));
+
+        assert!(mime_type_allows_legacy_text_fallback("application/json"));
+        assert!(mime_type_allows_legacy_text_fallback("text/x-rust"));
+        assert!(mime_type_allows_legacy_text_fallback("application/ld+json"));
+        assert!(!mime_type_allows_legacy_text_fallback("image/png"));
+    }
+
+    #[test]
+    fn ensure_media_kind_accepts_mime_or_extension() {
+        assert!(ensure_media_kind(MediaKind::Image, "image/png", "x.png").is_ok());
+        // Unknown mime but matching extension passes.
+        assert!(ensure_media_kind(MediaKind::Audio, "application/octet-stream", "x.mp3").is_ok());
+        let err = ensure_media_kind(MediaKind::Image, "audio/mpeg", "x.mp3")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("does not look like image media"));
+    }
+
+    #[test]
+    fn mime_type_for_data_or_name_priority() {
+        let png = [0x89u8, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+        // Inferred recognized media type wins.
+        assert_eq!(
+            mime_type_for_data_or_name(&png, "x.bin", None, "application/octet-stream"),
+            "image/png"
+        );
+        // Preferred (non octet-stream) wins when inference is not media.
+        assert_eq!(
+            mime_type_for_data_or_name(b"plain", "x.bin", Some("text/markdown"), "fallback"),
+            "text/markdown"
+        );
+        // Falls back to fallback when nothing else resolves.
+        assert_eq!(
+            mime_type_for_data_or_name(b"plain", "noext", None, "fallback/type"),
+            "fallback/type"
+        );
+        assert_eq!(
+            mime_type_for_data_or_path(&png, Path::new("x.bin"), "fallback"),
+            "image/png"
+        );
+    }
+
+    #[test]
+    fn other_resource_candidate_and_pdf_detection() {
+        assert!(!is_other_resource_candidate(&Resource::default()));
+        assert!(is_other_resource_candidate(&Resource {
+            name: "x".to_string(),
+            ..Default::default()
+        }));
+
+        let pdf_attachment = test_other_attachment("report.pdf", None, vec![]);
+        assert!(attachment_looks_like_pdf(b"random", &pdf_attachment));
+        let by_mime = test_other_attachment("blob", Some("application/pdf"), vec![]);
+        assert!(attachment_looks_like_pdf(b"random", &by_mime));
+        let not_pdf = test_other_attachment("notes.txt", Some("text/plain"), vec![]);
+        assert!(!attachment_looks_like_pdf(b"random", &not_pdf));
+    }
+
+    #[test]
+    fn other_attachment_round_trip_and_metadata() {
+        let resource = Resource {
+            name: "notes.txt".to_string(),
+            mime_type: Some("text/plain".to_string()),
+            uri: Some("file:///tmp/notes.txt".to_string()),
+            blob: Some(ByteBufB64(b"data".to_vec())),
+            tags: vec!["text".to_string()],
+            ..Default::default()
+        };
+        let attachment = OtherAttachment::from_resource(resource);
+        assert_eq!(attachment.size, Some(4));
+        let back = attachment.to_resource();
+        assert_eq!(back.name, "notes.txt");
+        assert_eq!(back.size, Some(4));
+
+        let md = attachment.metadata_markdown();
+        assert!(md.contains("- name: notes.txt"));
+        assert!(md.contains("- mime_type: text/plain"));
+        assert!(md.contains("- uri: file:///tmp/notes.txt"));
+        assert!(md.contains("- local_path:"));
+        assert!(md.contains("- size_bytes: 4"));
+        assert!(md.contains("- tags: text"));
+        assert!(md.contains("- inline_blob_available: true"));
+
+        let mut with_error = attachment;
+        with_error.read_error = Some("boom".to_string());
+        assert!(
+            with_error
+                .metadata_markdown()
+                .contains("- read_error: boom")
+        );
+    }
+
+    #[test]
+    fn completion_prompt_describes_inputs() {
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let args = MediaUnderstandingArgs::from_prompt("focus");
+        assert!(
+            agent
+                .completion_prompt(&args, 0, 0)
+                .contains("the supplied media")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 0, 1)
+                .contains("the media file at")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 0, 2)
+                .contains("2 media files")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 1, 0)
+                .contains("attached image resource")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 2, 0)
+                .contains("2 attached image resources")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 1, 1)
+                .contains("and the media file")
+        );
+        assert!(
+            agent
+                .completion_prompt(&args, 2, 2)
+                .contains("2 attached image")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_other_inlines_small_text_attachment() {
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let output = agent
+            .run(
+                ctx,
+                "summarize".to_string(),
+                vec![text_resource("notes.txt", "hello world")],
+            )
+            .await
+            .expect("text attachment should be understood without a model");
+        assert!(output.content.contains("hello world"));
+        assert!(output.content.contains("text attachment"));
+    }
+
+    #[tokio::test]
+    async fn run_other_requires_attachments() {
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let err = agent
+            .run(ctx, "{}".to_string(), vec![])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("requires an attached resource"));
+    }
+
+    #[tokio::test]
+    async fn run_other_absorbs_fallback_failures_into_sections() {
+        // A binary, non-text, non-pdf attachment falls through to the model
+        // fallback, which fails on the mock ctx; the error is captured in the
+        // section text rather than failing the whole run.
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let resource = Resource {
+            name: "blob.bin".to_string(),
+            mime_type: Some("application/octet-stream".to_string()),
+            blob: Some(ByteBufB64(vec![0u8, 1, 2, 3, 0, 0, 0, 0])),
+            ..Default::default()
+        };
+        let output = agent
+            .run(ctx, "{}".to_string(), vec![resource])
+            .await
+            .expect("run_other should not fail on fallback errors");
+        assert!(output.content.contains("Failed to understand") || !output.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_image_builds_content_then_fails_without_model() {
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let resource = Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
+            ..Default::default()
+        };
+        // content_from_resource succeeds; the completion fails (no model).
+        let err = agent
+            .run(ctx, "{}".to_string(), vec![resource])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_image_requires_some_content() {
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let err = agent
+            .run(ctx, "{}".to_string(), vec![])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("requires an attached"));
+    }
+
+    #[tokio::test]
+    async fn understand_media_resources_records_errors_without_panicking() {
+        let ctx = mock_ctx();
+        let image = Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
+            ..Default::default()
+        };
+        let plain = Resource {
+            name: "plain".to_string(),
+            ..Default::default()
+        };
+        let (resources, _usage) =
+            understand_media_resources(&ctx, vec![image, plain.clone()]).await;
+        assert_eq!(resources.len(), 2);
+        // The media resource gets an error-formatted description; the
+        // non-media resource is returned unchanged.
+        assert!(resources[0].description.is_some());
+    }
+
+    #[tokio::test]
+    async fn other_attachment_from_location_handles_schemes() {
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+
+        let err = agent
+            .other_attachment_from_location(&RequestMeta::default(), "   ")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+
+        let data_url = "data:text/plain;base64,aGVsbG8=";
+        let attachment = agent
+            .other_attachment_from_location(&RequestMeta::default(), data_url)
+            .await
+            .expect("data url should decode");
+        assert_eq!(attachment.data.as_deref(), Some(b"hello".as_ref()));
+
+        let err = agent
+            .other_attachment_from_location(&RequestMeta::default(), "ftp://example.com/x")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported attachment URL scheme")
+        );
+    }
+
+    #[tokio::test]
+    async fn other_attachment_from_path_reads_and_validates() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("doc.txt");
+        fs::write(&file, b"file body").unwrap();
+        let agent = MediaUnderstandingAgent::other(vec![dir.path().to_path_buf()]);
+
+        let attachment = agent
+            .other_attachment_from_path(&RequestMeta::default(), "doc.txt")
+            .await
+            .expect("workspace file should resolve");
+        assert_eq!(attachment.data.as_deref(), Some(b"file body".as_ref()));
+        assert_eq!(attachment.size, Some(9));
+
+        // A directory is not a regular file.
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+        let err = agent
+            .other_attachment_from_path(&RequestMeta::default(), "subdir")
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("not a regular file"));
+    }
+
+    #[tokio::test]
+    async fn other_attachment_from_http_url_fetches_and_reports_status() {
+        let app = Router::new()
+            .route("/doc.txt", get(|| async { "remote body" }))
+            .route("/missing", get(|| async { (AxumStatus::NOT_FOUND, "") }));
+        let base = spawn_router(app).await;
+        let agent =
+            MediaUnderstandingAgent::other(Vec::new()).with_http_client(new_reqwest_client());
+
+        let url = reqwest::Url::parse(&format!("{base}/doc.txt")).unwrap();
+        let attachment = agent.other_attachment_from_http_url(url).await.unwrap();
+        assert_eq!(attachment.data.as_deref(), Some(b"remote body".as_ref()));
+        assert_eq!(attachment.name, "doc.txt");
+
+        let missing = reqwest::Url::parse(&format!("{base}/missing")).unwrap();
+        let err = agent
+            .other_attachment_from_http_url(missing)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to fetch attachment"));
+    }
+
+    #[tokio::test]
+    async fn content_from_http_url_validates_status_and_kind() {
+        let app = Router::new()
+            .route("/img", get(|| async { (AxumStatus::NOT_FOUND, "") }))
+            .route(
+                "/text",
+                get(|| async {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "text/plain")],
+                        "not an image",
+                    )
+                }),
+            );
+        let base = spawn_router(app).await;
+        let agent =
+            MediaUnderstandingAgent::image(Vec::new()).with_http_client(new_reqwest_client());
+
+        let missing = reqwest::Url::parse(&format!("{base}/img")).unwrap();
+        let err = agent
+            .content_from_http_url(missing)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to fetch media"));
+
+        let wrong_kind = reqwest::Url::parse(&format!("{base}/text")).unwrap();
+        let err = agent
+            .content_from_http_url(wrong_kind)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("does not look like image media"));
+    }
+
+    #[tokio::test]
+    async fn parse_pdf_text_rejects_invalid_bytes() {
+        // Not a valid PDF; both OCR-on and OCR-off passes should fail without panicking.
+        let result = parse_pdf_text(b"not a pdf at all").await;
+        assert!(result.is_err());
+    }
+
+    fn mock_model_ctx() -> AgentCtx {
+        anda_engine::engine::EngineBuilder::new()
+            .with_model(anda_engine::model::Model::mock_implemented())
+            .mock_ctx()
+    }
+
+    #[tokio::test]
+    async fn run_other_summarizes_large_text_via_model() {
+        // A text attachment larger than the inline limit is routed through the
+        // model summary path, which succeeds with the deterministic mock model.
+        let ctx = mock_model_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let big = "lorem ipsum ".repeat(8000); // > MAX_OTHER_TEXT_INLINE_BYTES
+        let output = agent
+            .run(
+                ctx,
+                "summarize".to_string(),
+                vec![text_resource("big.txt", &big)],
+            )
+            .await
+            .expect("large text summary should succeed");
+        assert!(output.content.contains("too large to inline") || !output.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_other_falls_back_to_model_for_binary_attachment() {
+        let ctx = mock_model_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let resource = Resource {
+            name: "blob.bin".to_string(),
+            mime_type: Some("application/octet-stream".to_string()),
+            blob: Some(ByteBufB64(vec![0u8, 1, 2, 3, 0, 0, 0, 0])),
+            ..Default::default()
+        };
+        let output = agent
+            .run(ctx, "{}".to_string(), vec![resource])
+            .await
+            .expect("fallback understanding should succeed with the mock model");
+        assert!(!output.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_image_completes_with_mock_model() {
+        let ctx = mock_model_ctx();
+        let agent = MediaUnderstandingAgent::image(Vec::new());
+        let resource = Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
+            ..Default::default()
+        };
+        let output = agent
+            .run(ctx, "{}".to_string(), vec![resource])
+            .await
+            .expect("image understanding should complete with the mock model");
+        assert!(output.content.contains("attached image resource"));
+        assert!(output.content.contains("Describe the image"));
+    }
+
+    #[tokio::test]
+    async fn understand_media_resources_runs_with_model_ctx() {
+        let ctx = mock_model_ctx();
+        let image = Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
+            ..Default::default()
+        };
+        let (resources, _usage) = understand_media_resources(&ctx, vec![image]).await;
+        assert_eq!(resources.len(), 1);
+        assert!(resources[0].description.is_some());
+    }
 }

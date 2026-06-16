@@ -718,4 +718,124 @@ mod tests {
             })
         );
     }
+
+    use crate::util::http_client::new_reqwest_client;
+    use axum::{Router, routing};
+
+    async fn spawn_status_mock() -> String {
+        let app = Router::new().route(
+            "/daemon/status",
+            routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "conversations": 1u64,
+                    "memory_nodes": 2u64,
+                    "memory_links": 3u64
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn temp_daemon() -> (tempfile::TempDir, daemon::Daemon) {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = daemon::Daemon::new(dir.path().to_path_buf(), config::Config::default());
+        (dir, daemon)
+    }
+
+    #[test]
+    fn default_home_appends_anda_dir() {
+        assert!(default_home().ends_with(".anda"));
+    }
+
+    #[test]
+    fn print_daemon_status_text_handles_all_optional_fields() {
+        // Full report exercises every optional branch.
+        print_daemon_status_text(&DaemonStatusReport {
+            state: DaemonStatusState::Running,
+            summary: "running".to_string(),
+            pid: Some(1),
+            pid_file: Some("missing".to_string()),
+            gateway_url: Some("http://x".to_string()),
+            log_file: Some("/tmp/x.log".to_string()),
+            conversations: Some(1),
+            memory_nodes: Some(2),
+            memory_links: Some(3),
+        });
+        // Empty report exercises the None branches.
+        print_daemon_status_text(&DaemonStatusReport {
+            state: DaemonStatusState::NotRunning,
+            summary: "not running".to_string(),
+            pid: None,
+            pid_file: None,
+            gateway_url: None,
+            log_file: None,
+            conversations: None,
+            memory_nodes: None,
+            memory_links: None,
+        });
+    }
+
+    #[tokio::test]
+    async fn daemon_status_report_reflects_gateway_and_pid_state() {
+        // Gateway responds, no pid file -> GatewayRunning.
+        let base = spawn_status_mock().await;
+        let (_dir, daemon) = temp_daemon();
+        let client =
+            gateway::Client::new(base, "t".to_string()).with_http_client(new_reqwest_client());
+        let report = daemon_status_report(&daemon, &client).await.unwrap();
+        assert!(matches!(report.state, DaemonStatusState::GatewayRunning));
+
+        // No gateway, no pid -> NotRunning.
+        let (_dir2, daemon2) = temp_daemon();
+        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string())
+            .with_http_client(new_reqwest_client());
+        let report = daemon_status_report(&daemon2, &dead).await.unwrap();
+        assert!(matches!(report.state, DaemonStatusState::NotRunning));
+
+        // No gateway, alive pid -> ProcessUnresponsive.
+        let (_dir3, daemon3) = temp_daemon();
+        tokio::fs::write(daemon3.pid_file_path(), std::process::id().to_string())
+            .await
+            .unwrap();
+        let report = daemon_status_report(&daemon3, &dead).await.unwrap();
+        assert!(matches!(
+            report.state,
+            DaemonStatusState::ProcessUnresponsive
+        ));
+    }
+
+    #[tokio::test]
+    async fn wait_for_gateway_down_returns_when_unreachable() {
+        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string())
+            .with_http_client(new_reqwest_client());
+        wait_for_gateway_down(&dead, Duration::from_millis(500))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn load_daemon_and_clients_build_from_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = load_daemon(dir.path().to_path_buf()).await.unwrap();
+        assert_eq!(daemon.home, dir.path());
+
+        // Building the control client provisions the user key and succeeds.
+        let _client = build_control_client(&daemon).await.unwrap();
+
+        let token = build_browser_extension_token(&daemon, 9999).await.unwrap();
+        assert!(!token.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_autostart_status_is_read_only() {
+        let (_dir, daemon) = temp_daemon();
+        run_autostart_command(&daemon, autostart::AutostartCommand::Status)
+            .await
+            .unwrap();
+    }
 }

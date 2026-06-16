@@ -1112,4 +1112,153 @@ mod tests {
 
         assert_eq!(chunks, vec![format!("{line}\n{line}"), line.to_string()]);
     }
+
+    #[test]
+    fn prepare_voice_tts_text_strips_markdown_and_emoji() {
+        let input = "# Heading\n> quote\n- bullet item\n1. numbered\n`code` **bold** 🎉\n\n   spaced   out   ";
+        let out = prepare_voice_tts_text(input);
+        assert!(out.contains("Heading"));
+        assert!(out.contains("quote"));
+        assert!(out.contains("bullet item"));
+        assert!(out.contains("numbered"));
+        assert!(!out.contains('#'));
+        assert!(!out.contains('`'));
+        assert!(!out.contains('*'));
+        assert!(!out.contains('🎉'));
+        assert!(out.contains("spaced out"));
+    }
+
+    #[test]
+    fn strip_markdown_line_prefix_handles_list_and_numbered_markers() {
+        assert_eq!(strip_markdown_line_prefix("  > # quoted"), "quoted");
+        assert_eq!(strip_markdown_line_prefix("- item"), "item");
+        assert_eq!(strip_markdown_line_prefix("* item"), "item");
+        assert_eq!(strip_markdown_line_prefix("12. step"), "step");
+        assert_eq!(strip_markdown_line_prefix("3、列表"), "列表");
+        // Non-numeric prefix before a separator is left intact.
+        assert_eq!(strip_markdown_line_prefix("一、列表"), "一、列表");
+        assert_eq!(strip_markdown_line_prefix("v1.0 release"), "v1.0 release");
+    }
+
+    #[test]
+    fn normalize_voice_tts_char_rewrites_punctuation() {
+        assert_eq!(normalize_voice_tts_char('`'), None);
+        assert_eq!(normalize_voice_tts_char('#'), None);
+        assert_eq!(normalize_voice_tts_char('\u{00a0}'), Some(' '));
+        assert_eq!(normalize_voice_tts_char('—'), Some('，'));
+        assert_eq!(normalize_voice_tts_char('a'), Some('a'));
+        assert!(normalize_voice_tts_char('🎉').is_none());
+    }
+
+    #[test]
+    fn emoji_and_sentence_boundary_predicates() {
+        assert!(is_emoji_or_format_control('🎉'));
+        assert!(is_emoji_or_format_control('\u{200D}'));
+        assert!(!is_emoji_or_format_control('a'));
+
+        assert!(is_tts_sentence_boundary('。'));
+        assert!(is_tts_sentence_boundary('?'));
+        assert!(!is_tts_sentence_boundary('x'));
+    }
+
+    #[test]
+    fn split_long_voice_tts_line_breaks_on_sentences_and_hard_limit() {
+        let line = "First sentence. Second sentence! Third?";
+        let chunks = split_long_voice_tts_line(line, 16);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 16));
+        assert!(!chunks.is_empty());
+
+        // A single oversized token is hard-split.
+        let hard = split_long_voice_tts_line(&"x".repeat(50), 10);
+        assert!(hard.iter().all(|chunk| chunk.chars().count() <= 10));
+    }
+
+    #[test]
+    fn split_voice_tts_text_returns_empty_for_zero_max() {
+        assert!(split_voice_tts_text("anything", 0).is_empty());
+    }
+
+    #[test]
+    fn reset_voice_cursor_clears_counters_on_new_conversation() {
+        let mut cursor = VoiceConversationCursor {
+            conversation_id: Some(1),
+            seen_messages: 5,
+            seen_artifacts: 2,
+        };
+        reset_voice_cursor_if_needed(&mut cursor, 1);
+        assert_eq!(cursor.seen_messages, 5);
+
+        reset_voice_cursor_if_needed(&mut cursor, 2);
+        assert_eq!(cursor.conversation_id, Some(2));
+        assert_eq!(cursor.seen_messages, 0);
+        assert_eq!(cursor.seen_artifacts, 0);
+    }
+
+    #[test]
+    fn is_terminal_conversation_status_covers_variants() {
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Completed
+        ));
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Cancelled
+        ));
+        assert!(is_terminal_conversation_status(&ConversationStatus::Failed));
+        assert!(!is_terminal_conversation_status(
+            &ConversationStatus::Working
+        ));
+    }
+
+    #[test]
+    fn assistant_text_from_messages_joins_assistant_replies() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": [{"type": "Text", "text": "hi"}]}),
+            serde_json::json!({"role": "assistant", "content": [{"type": "Text", "text": "hello"}]}),
+            serde_json::json!({"role": "assistant", "content": [{"type": "Text", "text": "again"}]}),
+        ];
+        let text = assistant_text_from_messages(&messages);
+        assert_eq!(text, "hello\n\nagain");
+    }
+
+    #[test]
+    fn parse_request_meta_handles_valid_invalid_and_none() {
+        assert!(parse_request_meta(None).unwrap().is_none());
+        assert!(
+            parse_request_meta(Some("{\"user\":\"alice\"}".to_string()))
+                .unwrap()
+                .is_some()
+        );
+        assert!(parse_request_meta(Some("not json".to_string())).is_err());
+    }
+
+    #[test]
+    fn add_cli_voice_context_sets_source_and_workspace() {
+        let mut meta = RequestMeta::default();
+        add_cli_voice_context(&mut meta);
+        assert!(meta.extra.contains_key("source"));
+
+        // Existing source is preserved.
+        let mut preset = RequestMeta::default();
+        preset.extra.insert("source".to_string(), "preset".into());
+        add_cli_voice_context(&mut preset);
+        assert_eq!(
+            preset.extra.get("source").and_then(|v| v.as_str()),
+            Some("preset")
+        );
+    }
+
+    #[test]
+    fn voice_status_spinner_ticks_and_finishes() {
+        let mut spinner = VoiceStatusSpinner::new("working");
+        spinner.tick();
+        spinner.tick();
+        spinner.finish();
+        // Finishing twice is safe.
+        spinner.finish();
+    }
+
+    #[test]
+    fn voice_channel_constructs() {
+        let _ = VoiceChannel::new();
+        let _ = VoiceChannel;
+    }
 }

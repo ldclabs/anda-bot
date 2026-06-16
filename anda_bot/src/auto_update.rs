@@ -607,4 +607,185 @@ mod tests {
             "got: {err}"
         );
     }
+
+    fn write_file(path: &Path, bytes: &[u8]) -> String {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, bytes).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        updater::hex_lower(&hasher.finalize())
+    }
+
+    #[test]
+    fn auto_download_path_sanitizes_tag() {
+        let path = auto_download_path(Path::new("/home"), "v1/2", "anda-macos-arm64");
+        assert_eq!(
+            path,
+            Path::new("/home/updates/v1_2/anda-macos-arm64").to_path_buf()
+        );
+    }
+
+    #[test]
+    fn parse_release_version_handles_prerelease_and_garbage() {
+        assert_eq!(parse_release_version("v1.2.3-rc.1"), Some(vec![1, 2, 3]));
+        assert_eq!(parse_release_version("0.4.0+build"), Some(vec![0, 4, 0]));
+        assert!(parse_release_version("v").is_none());
+        assert!(parse_release_version("not-a-version").is_none());
+    }
+
+    #[test]
+    fn is_newer_release_falls_back_when_unparseable() {
+        // When either side cannot be parsed but they differ, treat as newer.
+        assert!(is_newer_release("nightly", "v0.1.0"));
+        assert!(!is_newer_release("same", "same"));
+    }
+
+    #[tokio::test]
+    async fn sha256_file_hashes_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blob.bin");
+        let expected = write_file(&path, b"hello anda update");
+        assert_eq!(sha256_file(&path).await.unwrap(), expected);
+        assert!(sha256_file(&dir.path().join("missing")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn usable_downloaded_file_validates_state_and_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anda-macos-arm64");
+        let hash = write_file(&path, b"binary contents");
+
+        let mut state = AutoUpdateState {
+            status: AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9.9.9".to_string()),
+            asset_name: Some("anda-macos-arm64".to_string()),
+            sha256: Some(hash.clone()),
+            checksum_verified: true,
+            ..AutoUpdateState::default()
+        };
+        assert!(usable_downloaded_file(&state, "v9.9.9", "anda-macos-arm64", &path).await);
+
+        // Tag mismatch is rejected.
+        assert!(!usable_downloaded_file(&state, "v0.0.1", "anda-macos-arm64", &path).await);
+
+        // Missing file is rejected.
+        assert!(
+            !usable_downloaded_file(
+                &state,
+                "v9.9.9",
+                "anda-macos-arm64",
+                &dir.path().join("nope")
+            )
+            .await
+        );
+
+        // Unverified checksum is rejected.
+        state.checksum_verified = false;
+        assert!(!usable_downloaded_file(&state, "v9.9.9", "anda-macos-arm64", &path).await);
+        state.checksum_verified = true;
+
+        // Missing recorded hash is rejected.
+        state.sha256 = None;
+        assert!(!usable_downloaded_file(&state, "v9.9.9", "anda-macos-arm64", &path).await);
+
+        // Wrong recorded hash is rejected.
+        state.sha256 = Some("0".repeat(64));
+        assert!(!usable_downloaded_file(&state, "v9.9.9", "anda-macos-arm64", &path).await);
+    }
+
+    async fn daemon_with_db() -> (tempfile::TempDir, crate::daemon::Daemon) {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon =
+            crate::daemon::Daemon::new(dir.path().to_path_buf(), crate::config::Config::default());
+        daemon.connect_bot_db().await.unwrap();
+        (dir, daemon)
+    }
+
+    #[tokio::test]
+    async fn mark_installed_updates_matching_tag_only() {
+        let (_dir, daemon) = daemon_with_db().await;
+        let db = daemon.open_bot_db().await.unwrap();
+
+        let mut state = AutoUpdateState {
+            status: AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9.9.9".to_string()),
+            ..AutoUpdateState::default()
+        };
+        db.save_extension_from(AUTO_UPDATE_EXTENSION_KEY.to_string(), &state)
+            .await
+            .unwrap();
+
+        // A non-matching tag leaves the state untouched.
+        mark_installed(&daemon, "v0.0.1").await;
+        let after = read_state(daemon.open_bot_db().await.unwrap().as_ref());
+        assert_eq!(after.status, AutoUpdateStatus::Downloaded);
+
+        // The matching tag flips it to Installed.
+        mark_installed(&daemon, "v9.9.9").await;
+        let installed = read_state(daemon.open_bot_db().await.unwrap().as_ref());
+        assert_eq!(installed.status, AutoUpdateStatus::Installed);
+        assert!(installed.installed_at_ms.is_some());
+
+        state.status = AutoUpdateStatus::Idle;
+        let _ = state;
+    }
+
+    #[tokio::test]
+    async fn downloaded_update_path_requires_usable_file() {
+        let (dir, daemon) = daemon_with_db().await;
+        let db = daemon.open_bot_db().await.unwrap();
+
+        let asset = "anda-macos-arm64";
+        let path = dir.path().join("updates/v9.9.9").join(asset);
+        let hash = write_file(&path, b"the new binary");
+
+        let state = AutoUpdateState {
+            status: AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9.9.9".to_string()),
+            asset_name: Some(asset.to_string()),
+            downloaded_path: Some(path.to_string_lossy().to_string()),
+            sha256: Some(hash),
+            checksum_verified: true,
+            ..AutoUpdateState::default()
+        };
+        db.save_extension_from(AUTO_UPDATE_EXTENSION_KEY.to_string(), &state)
+            .await
+            .unwrap();
+
+        let resolved = downloaded_update_path(&daemon, "v9.9.9", asset).await;
+        assert_eq!(resolved, Some(path));
+
+        // A different tag is not usable.
+        assert!(
+            downloaded_update_path(&daemon, "v0.0.1", asset)
+                .await
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn install_and_restart_rejects_invalid_downloaded_file() {
+        let updater = test_updater().await;
+        // State claims a downloaded update, but the file/checksum is not usable,
+        // so the install bails out before touching the running executable.
+        let state = AutoUpdateState {
+            status: AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9999.0.0".to_string()),
+            asset_name: Some("anda-macos-arm64".to_string()),
+            downloaded_path: Some("/nonexistent/anda-macos-arm64".to_string()),
+            sha256: Some("0".repeat(64)),
+            checksum_verified: true,
+            ..AutoUpdateState::default()
+        };
+        updater.save_state(&state).await.unwrap();
+
+        let err = updater.install_and_restart().await.map(|_| ()).unwrap_err();
+        assert!(
+            err.to_string().contains("missing or failed checksum"),
+            "got: {err}"
+        );
+    }
 }

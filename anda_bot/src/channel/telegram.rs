@@ -1771,4 +1771,91 @@ mod tests {
         assert!(!actions.is_empty());
         assert_eq!(actions[0]["message_thread_id"], "777");
     }
+
+    #[test]
+    fn format_forward_attribution_covers_channel_user_and_hidden() {
+        use serde_json::json;
+        let from_channel = json!({"forward_from_chat": {"title": "News"}});
+        assert_eq!(
+            TelegramChannel::format_forward_attribution(&from_channel).as_deref(),
+            Some("[Forwarded from channel: News] ")
+        );
+
+        let from_user = json!({"forward_from": {"username": "bob"}});
+        assert_eq!(
+            TelegramChannel::format_forward_attribution(&from_user).as_deref(),
+            Some("[Forwarded from @bob] ")
+        );
+
+        let from_first_name = json!({"forward_from": {"first_name": "Alice"}});
+        assert_eq!(
+            TelegramChannel::format_forward_attribution(&from_first_name).as_deref(),
+            Some("[Forwarded from Alice] ")
+        );
+
+        let hidden = json!({"forward_sender_name": "Hidden"});
+        assert_eq!(
+            TelegramChannel::format_forward_attribution(&hidden).as_deref(),
+            Some("[Forwarded from Hidden] ")
+        );
+
+        assert!(TelegramChannel::format_forward_attribution(&json!({})).is_none());
+    }
+
+    #[test]
+    fn extract_reply_context_quotes_text_and_media() {
+        use serde_json::json;
+        let text_reply = json!({
+            "reply_to_message": {"from": {"username": "carol"}, "text": "line one\nline two"}
+        });
+        let quoted = TelegramChannel::extract_reply_context(&text_reply).unwrap();
+        assert!(quoted.contains("> @carol:"));
+        assert!(quoted.contains("> line one"));
+        assert!(quoted.contains("> line two"));
+
+        for (field, label) in [
+            ("photo", "[Photo]"),
+            ("document", "[Document]"),
+            ("voice", "[Voice]"),
+            ("video", "[Video]"),
+        ] {
+            let reply = json!({"reply_to_message": {"from": {"first_name": "Dave"}, field: {}}});
+            assert!(
+                TelegramChannel::extract_reply_context(&reply)
+                    .unwrap()
+                    .contains(label)
+            );
+        }
+
+        assert!(TelegramChannel::extract_reply_context(&json!({})).is_none());
+    }
+
+    #[test]
+    fn parse_attachment_metadata_handles_each_media_kind() {
+        use serde_json::json;
+        let photo = json!({
+            "photo": [{"file_id": "small"}, {"file_id": "big", "file_size": 100}],
+            "caption": "a pic"
+        });
+        let meta = TelegramChannel::parse_attachment_metadata(&photo).unwrap();
+        assert_eq!(meta.file_id, "big");
+        assert_eq!(meta.mime_type.as_deref(), Some("image/jpeg"));
+        assert_eq!(meta.caption.as_deref(), Some("a pic"));
+
+        let voice = json!({"voice": {"file_id": "v1", "mime_type": "audio/ogg", "file_size": 5}});
+        let meta = TelegramChannel::parse_attachment_metadata(&voice).unwrap();
+        assert_eq!(meta.file_id, "v1");
+        assert_eq!(meta.mime_type.as_deref(), Some("audio/ogg"));
+
+        assert!(TelegramChannel::parse_attachment_metadata(&json!({"text": "x"})).is_none());
+    }
+
+    #[test]
+    fn markdown_to_telegram_html_renders_common_markup() {
+        let html = TelegramChannel::markdown_to_telegram_html(
+            "# Title\n\n**bold** and *italic* and `code`\n\n- item\n\n[link](https://x.com)",
+        );
+        assert!(html.contains("<b>") || html.contains("bold"));
+        assert!(!html.is_empty());
+    }
 }

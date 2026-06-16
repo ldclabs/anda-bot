@@ -1402,4 +1402,41 @@ mod tests {
         assert!(channel.should_retry_send("HTTP 503"));
         assert!(!channel.should_retry_send("400 bad request"));
     }
+
+    #[test]
+    fn attachment_fallback_text_labels_by_tag() {
+        let image = Resource {
+            name: "pic.png".to_string(),
+            tags: vec!["Image".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&image), "[Image: pic.png]");
+
+        let video = Resource {
+            name: "clip.mp4".to_string(),
+            tags: vec!["video".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&video), "[Video: clip.mp4]");
+
+        let audio = Resource {
+            name: "a.mp3".to_string(),
+            tags: vec!["audio".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&audio), "[Audio: a.mp3]");
+
+        let doc = Resource {
+            name: "report.pdf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(attachment_fallback_text(&doc), "[Document: report.pdf]");
+    }
+
+    #[test]
+    fn context_token_is_stale_respects_max_age() {
+        assert!(!context_token_is_stale(None));
+        assert!(!context_token_is_stale(Some(unix_ms())));
+        assert!(context_token_is_stale(Some(1)));
+    }
 }

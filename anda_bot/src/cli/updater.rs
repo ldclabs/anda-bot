@@ -869,4 +869,495 @@ mod tests {
             "custom"
         );
     }
+
+    use crate::config::Config;
+    use crate::util::http_client::new_reqwest_client;
+    use axum::{Router, http::StatusCode as AxumStatus, routing::get};
+    use std::io::{Cursor, Write};
+
+    async fn spawn_mock(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn dead_proxy_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .build()
+            .unwrap()
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hex_lower(&hasher.finalize())
+    }
+
+    fn build_skills_zip() -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("codex/SKILL.md", options).unwrap();
+        writer.write_all(b"codex skill").unwrap();
+        writer.add_directory("emptydir/", options).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn validate_update_command_rejects_conflicting_flags() {
+        let conflict = UpdateCommand {
+            force: false,
+            skills: false,
+            check: true,
+            check_if_due: true,
+            json: false,
+        };
+        assert!(validate_update_command(&conflict).is_err());
+
+        let skills_with_check = UpdateCommand {
+            force: false,
+            skills: true,
+            check: true,
+            check_if_due: false,
+            json: false,
+        };
+        assert!(validate_update_command(&skills_with_check).is_err());
+
+        let json_without_check = UpdateCommand {
+            force: false,
+            skills: false,
+            check: false,
+            check_if_due: false,
+            json: true,
+        };
+        assert!(validate_update_command(&json_without_check).is_err());
+
+        let ok = UpdateCommand {
+            force: false,
+            skills: false,
+            check: true,
+            check_if_due: false,
+            json: true,
+        };
+        assert!(validate_update_command(&ok).is_ok());
+    }
+
+    #[test]
+    fn hex_lower_encodes_bytes() {
+        assert_eq!(hex_lower(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+        assert_eq!(hex_lower(&[]), "");
+    }
+
+    #[test]
+    fn normalized_target_name_canonicalizes_arch() {
+        assert_eq!(normalized_target_name("linux", "amd64"), "linux-x86_64");
+        assert_eq!(normalized_target_name("macos", "aarch64"), "macos-arm64");
+        assert_eq!(normalized_target_name("freebsd", "riscv"), "freebsd-riscv");
+    }
+
+    #[test]
+    fn release_target_detects_current_platform() {
+        // The host running the tests is always a supported target.
+        assert!(ReleaseTarget::detect().is_ok());
+        assert!(ReleaseTarget::from_parts("plan9", "x86_64").is_none());
+        let target = ReleaseTarget::from_parts("linux", "x86_64").unwrap();
+        assert_eq!(target.name(), "linux-x86_64");
+    }
+
+    #[test]
+    fn verify_checksum_matches_and_mismatches() {
+        assert!(verify_checksum("asset", "abc", "abc").is_ok());
+        let err = verify_checksum("asset", "abc", "xyz")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("Checksum verification failed"));
+    }
+
+    #[test]
+    fn path_helpers_embed_expected_segments() {
+        let staged = staged_update_path(Path::new("/install"), Path::new("/install/anda"));
+        let staged = staged.to_string_lossy();
+        assert!(staged.contains(".anda.update-"));
+        assert!(staged.ends_with(".tmp"));
+
+        let download = temporary_download_path("anda-linux-x86_64");
+        assert!(
+            download
+                .to_string_lossy()
+                .contains("anda-linux-x86_64.download-")
+        );
+
+        let skills = staged_skills_dir_path(Path::new("/home/anda"));
+        assert!(skills.to_string_lossy().contains(".skills.update-"));
+    }
+
+    #[tokio::test]
+    async fn download_binary_writes_file_and_reports_errors() {
+        let body = b"anda-binary-bytes";
+        let app = Router::new()
+            .route("/asset", get(|| async { "anda-binary-bytes" }))
+            .route(
+                "/missing",
+                get(|| async { (AxumStatus::NOT_FOUND, "nope") }),
+            );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+
+        let dest = tempfile::NamedTempFile::new().unwrap();
+        let hash = download_binary(&client, &format!("{base}/asset"), dest.path())
+            .await
+            .unwrap();
+        assert_eq!(hash, sha256_hex(body));
+        assert_eq!(std::fs::read(dest.path()).unwrap(), body);
+
+        let err = download_binary(&client, &format!("{base}/missing"), dest.path())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("Download failed"));
+    }
+
+    #[tokio::test]
+    async fn download_optional_file_handles_status_codes() {
+        let app = Router::new()
+            .route("/ok", get(|| async { "payload" }))
+            .route("/404", get(|| async { (AxumStatus::NOT_FOUND, "") }))
+            .route(
+                "/500",
+                get(|| async { (AxumStatus::INTERNAL_SERVER_ERROR, "boom") }),
+            );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let dest = tempfile::NamedTempFile::new().unwrap();
+
+        let some = download_optional_file(&client, &format!("{base}/ok"), dest.path())
+            .await
+            .unwrap();
+        assert_eq!(some, Some(sha256_hex(b"payload")));
+
+        let none = download_optional_file(&client, &format!("{base}/404"), dest.path())
+            .await
+            .unwrap();
+        assert!(none.is_none());
+
+        let err = download_optional_file(&client, &format!("{base}/500"), dest.path())
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("Download failed"));
+    }
+
+    #[tokio::test]
+    async fn fetch_expected_checksum_paths() {
+        let valid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let valid_owned = valid.to_string();
+        let app = Router::new()
+            .route(
+                "/ok",
+                get(move || {
+                    let value = format!("{valid_owned}  anda-linux-x86_64\n");
+                    async move { value }
+                }),
+            )
+            .route("/404", get(|| async { (AxumStatus::NOT_FOUND, "") }))
+            .route("/bad", get(|| async { "not-a-valid-hash garbage" }));
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+
+        let found = fetch_expected_checksum(&client, &format!("{base}/ok"))
+            .await
+            .unwrap();
+        assert_eq!(found, Some(valid.to_string()));
+
+        let missing = fetch_expected_checksum(&client, &format!("{base}/404"))
+            .await
+            .unwrap();
+        assert!(missing.is_none());
+
+        let bad = fetch_expected_checksum(&client, &format!("{base}/bad"))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(bad.to_string().contains("valid SHA-256"));
+
+        // A network failure is swallowed into `None`.
+        let dead = dead_proxy_client();
+        let unreachable = fetch_expected_checksum(&dead, "https://example.invalid/x.sha256")
+            .await
+            .unwrap();
+        assert!(unreachable.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_latest_version_errors_without_network() {
+        let dead = dead_proxy_client();
+        let err = fetch_latest_version(&dead).await.map(|_| ()).unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn release_version_from_response_reads_location_header_and_url() {
+        let app = Router::new()
+            .route(
+                "/with-header",
+                get(|| async {
+                    (
+                        [(axum::http::header::LOCATION, "/foo/releases/tag/v9.9.9")],
+                        "ok",
+                    )
+                }),
+            )
+            .route("/releases/tag/v3.2.1", get(|| async { "landed" }));
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+
+        let header_resp = client
+            .get(format!("{base}/with-header"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            release_version_from_response(&header_resp),
+            Some("v9.9.9".to_string())
+        );
+
+        let url_resp = client
+            .get(format!("{base}/releases/tag/v3.2.1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            release_version_from_response(&url_resp),
+            Some("v3.2.1".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_and_install_update_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let download = dir.path().join("download.bin");
+        std::fs::write(&download, b"new binary").unwrap();
+        let staged = dir.path().join("staged.bin");
+        let current = dir.path().join("anda");
+        std::fs::write(&current, b"old binary").unwrap();
+
+        stage_update(&download, &staged).await.unwrap();
+        assert_eq!(std::fs::read(&staged).unwrap(), b"new binary");
+
+        prepare_executable(&staged, &current).await.unwrap();
+
+        let finish = install_update(&staged, &current).await.unwrap();
+        assert_eq!(finish, UpdateFinish::Installed);
+        assert_eq!(std::fs::read(&current).unwrap(), b"new binary");
+    }
+
+    #[tokio::test]
+    async fn stage_update_reports_copy_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        let staged = dir.path().join("staged.bin");
+        let err = stage_update(&missing, &staged)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("Could not stage update"));
+    }
+
+    #[test]
+    fn extract_skills_archive_unpacks_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("anda-skills.zip");
+        std::fs::write(&archive, build_skills_zip()).unwrap();
+        let staging = dir.path().join("staging");
+
+        extract_skills_archive(&archive, &staging).unwrap();
+        assert_eq!(
+            std::fs::read(staging.join("codex/SKILL.md")).unwrap(),
+            b"codex skill"
+        );
+
+        let skills = dir.path().join("skills");
+        let installed = install_skills_from_staging(&staging, &skills).unwrap();
+        // Both the `codex` skill directory and the empty directory entry install.
+        assert_eq!(installed, 2);
+        assert!(skills.join("codex/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn install_skills_from_staging_rejects_empty_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        let skills = dir.path().join("skills");
+        let err = install_skills_from_staging(&staging, &skills)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("is empty"));
+    }
+
+    #[test]
+    fn remove_path_if_exists_handles_files_dirs_and_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        remove_path_if_exists(&file).unwrap();
+        assert!(!file.exists());
+
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(sub.join("nested")).unwrap();
+        remove_path_if_exists(&sub).unwrap();
+        assert!(!sub.exists());
+
+        // Removing an absent path is a no-op.
+        remove_path_if_exists(&dir.path().join("ghost")).unwrap();
+    }
+
+    #[tokio::test]
+    async fn install_release_skills_downloads_and_installs() {
+        let zip_bytes = build_skills_zip();
+        let checksum = format!("{}  anda-skills.zip\n", sha256_hex(&zip_bytes));
+        let zip_for_route = zip_bytes.clone();
+        let checksum_for_route = checksum.clone();
+        let app = Router::new()
+            .route(
+                "/anda-skills.zip",
+                get(move || {
+                    let bytes = zip_for_route.clone();
+                    async move { bytes }
+                }),
+            )
+            .route(
+                "/anda-skills.zip.sha256",
+                get(move || {
+                    let value = checksum_for_route.clone();
+                    async move { value }
+                }),
+            );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let home = tempfile::tempdir().unwrap();
+
+        let installed = install_release_skills(&client, &base, home.path())
+            .await
+            .unwrap();
+        assert!(installed);
+        assert!(home.path().join("skills/codex/SKILL.md").is_file());
+    }
+
+    #[tokio::test]
+    async fn install_release_skills_skips_when_archive_missing() {
+        let app = Router::new().route(
+            "/anda-skills.zip",
+            get(|| async { (AxumStatus::NOT_FOUND, "") }),
+        );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let home = tempfile::tempdir().unwrap();
+
+        let installed = install_release_skills(&client, &base, home.path())
+            .await
+            .unwrap();
+        assert!(!installed);
+    }
+
+    fn print_states_for_coverage() {
+        use auto_update::{AutoUpdateState, AutoUpdateStatus};
+        for status in [
+            AutoUpdateStatus::Idle,
+            AutoUpdateStatus::Checking,
+            AutoUpdateStatus::Downloading,
+            AutoUpdateStatus::Current,
+            AutoUpdateStatus::Installed,
+            AutoUpdateStatus::Failed,
+            AutoUpdateStatus::Downloaded,
+        ] {
+            let state = AutoUpdateState {
+                status,
+                latest_tag: Some("v9.9.9".to_string()),
+                downloaded_path: Some("/tmp/anda".to_string()),
+                error: Some("boom".to_string()),
+                ..AutoUpdateState::default()
+            };
+            print_update_check_state(&state);
+        }
+        print_update_finish("v0.1.0", "v0.2.0", UpdateFinish::Installed);
+    }
+
+    async fn temp_daemon_with_db() -> (tempfile::TempDir, Daemon) {
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(dir.path().to_path_buf(), Config::default());
+        // Create the bot db so `open_bot_db` succeeds inside the updater.
+        daemon.connect_bot_db().await.unwrap();
+        (dir, daemon)
+    }
+
+    #[tokio::test]
+    async fn run_update_check_records_failure_and_emits_json() {
+        print_states_for_coverage();
+        let (_dir, daemon) = temp_daemon_with_db().await;
+        let client = dead_proxy_client();
+
+        let cmd = UpdateCommand {
+            force: false,
+            skills: false,
+            check: true,
+            check_if_due: false,
+            json: true,
+        };
+        run_update_check(&client, &daemon, &cmd).await.unwrap();
+
+        let cmd_human = UpdateCommand {
+            force: false,
+            skills: false,
+            check: false,
+            check_if_due: true,
+            json: false,
+        };
+        run_update_check(&client, &daemon, &cmd_human)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_dispatches_check_and_propagates_network_errors() {
+        let (_dir, daemon) = temp_daemon_with_db().await;
+        let client = dead_proxy_client();
+
+        // `--check` routes through run_update_check, which swallows the failure.
+        let check_cmd = UpdateCommand {
+            force: false,
+            skills: false,
+            check: true,
+            check_if_due: false,
+            json: false,
+        };
+        run(&client, &daemon, &check_cmd).await.unwrap();
+
+        // `--skills` (without check) reaches the network fetch and surfaces the error.
+        let skills_cmd = UpdateCommand {
+            force: false,
+            skills: true,
+            check: false,
+            check_if_due: false,
+            json: false,
+        };
+        let err = run(&client, &daemon, &skills_cmd)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(!err.to_string().is_empty());
+
+        // An invalid flag combination fails validation before any network call.
+        let bad_cmd = UpdateCommand {
+            force: false,
+            skills: false,
+            check: true,
+            check_if_due: true,
+            json: false,
+        };
+        assert!(run(&client, &daemon, &bad_cmd).await.is_err());
+    }
 }

@@ -1149,4 +1149,335 @@ mod tests {
             Some("E:\\中文\r\n")
         );
     }
+
+    use super::*;
+    use anda_core::{Agent, AgentOutput, FunctionDefinition, Resource, Tool, ToolOutput};
+    use anda_db::{
+        database::{AndaDB, DBConfig},
+        storage::StorageConfig,
+    };
+    use anda_engine::{
+        context::{AgentCtx, BaseCtx},
+        engine::{AgentInfo, Engine},
+        management::{BaseManagement, Visibility},
+        model::{Model, ModelConfig, Models},
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    struct EchoAgent;
+
+    impl Agent<AgentCtx> for EchoAgent {
+        fn name(&self) -> String {
+            "echo_agent".to_string()
+        }
+        fn description(&self) -> String {
+            "echo".to_string()
+        }
+        async fn run(
+            &self,
+            _ctx: AgentCtx,
+            prompt: String,
+            _resources: Vec<Resource>,
+        ) -> Result<AgentOutput, BoxError> {
+            Ok(AgentOutput {
+                content: prompt,
+                ..Default::default()
+            })
+        }
+    }
+
+    struct EchoTool;
+
+    impl Tool<BaseCtx> for EchoTool {
+        type Args = Json;
+        type Output = Json;
+        fn name(&self) -> String {
+            "echo_tool".to_string()
+        }
+        fn description(&self) -> String {
+            "echo".to_string()
+        }
+        fn definition(&self) -> FunctionDefinition {
+            FunctionDefinition {
+                name: self.name(),
+                description: self.description(),
+                parameters: json!({"type": "object"}),
+                strict: Some(false),
+            }
+        }
+        async fn call(
+            &self,
+            _ctx: BaseCtx,
+            args: Json,
+            _resources: Vec<Resource>,
+        ) -> Result<ToolOutput<Json>, BoxError> {
+            Ok(ToolOutput::new(args))
+        }
+    }
+
+    fn dead_http() -> reqwest::Client {
+        reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .build()
+            .unwrap()
+    }
+
+    async fn build_ws_state(
+        home: PathBuf,
+    ) -> (
+        BrowserWebSocketState,
+        Principal,
+        crate::util::key::Ed25519Key,
+    ) {
+        let auth_key = crate::util::key::Ed25519Key::new([9u8; 32]);
+        let object_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let db = Arc::new(
+            AndaDB::connect(
+                object_store,
+                DBConfig {
+                    name: "ws_test".to_string(),
+                    description: "ws".to_string(),
+                    storage: StorageConfig {
+                        cache_max_capacity: 1024,
+                        compress_level: 1,
+                        object_chunk_size: 256 * 1024,
+                        bucket_overload_size: 256 * 1024,
+                        max_small_object_size: 1024 * 1024,
+                    },
+                    lock: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+
+        let engine = Arc::new(
+            Engine::builder()
+                .with_info(AgentInfo {
+                    handle: "e".to_string(),
+                    name: "E".to_string(),
+                    description: "test".to_string(),
+                    endpoint: "https://example.com/engine".to_string(),
+                    ..Default::default()
+                })
+                .with_management(Arc::new(BaseManagement {
+                    controller: Principal::management_canister(),
+                    managers: BTreeSet::new(),
+                    visibility: Visibility::Public,
+                }))
+                .with_model(Model::mock_implemented())
+                .register_tool(Arc::new(EchoTool))
+                .unwrap()
+                .register_agent(Arc::new(EchoAgent), None)
+                .unwrap()
+                .export_tools(vec!["echo_tool".to_string()])
+                .build("echo_agent".to_string())
+                .await
+                .unwrap(),
+        );
+        let engine_id = engine.id();
+
+        let app = AppState {
+            engines: Arc::new(BTreeMap::from([(engine_id, engine)])),
+            default_engine: engine_id,
+            start_time_ms: 0,
+            extra_info: Arc::new(BTreeMap::new()),
+            ed25519_pubkeys: Arc::new(vec![auth_key.pubkey().into()]),
+        };
+
+        let http = dead_http();
+        let brain = brain::Client::new(
+            "http://127.0.0.1:1/v1/anda_bot".to_string(),
+            Some("t".to_string()),
+        )
+        .with_http_client(http.clone());
+
+        let config_path = home.join("config.yaml");
+        let models = Arc::new(Models::from_configs(
+            &[ModelConfig {
+                family: "openai".to_string(),
+                model: "gpt-test".to_string(),
+                api_base: "http://127.0.0.1:1/v1".to_string(),
+                api_key: "k".to_string(),
+                labels: vec!["memory".to_string()],
+                ..Default::default()
+            }],
+            http.clone(),
+        ));
+        let runtime_models = RuntimeModels::new(models.clone(), models, config_path, http.clone());
+        let auto_updater = Arc::new(AutoUpdater::new(db, home.clone(), http));
+
+        let state = BrowserWebSocketState {
+            app,
+            brain,
+            bridge: Arc::new(BrowserBridge::new()),
+            voice_capabilities: BrowserVoiceCapabilities::default(),
+            auto_updater,
+            home_dir: home,
+            runtime_models,
+        };
+        (state, engine_id, auth_key)
+    }
+
+    #[tokio::test]
+    async fn browser_ws_request_dispatches_all_methods() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, engine_id, _key) = build_ws_state(dir.path().to_path_buf()).await;
+        let caller = Principal::management_canister();
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<BrowserCommand>(8);
+        let connection = BrowserWsConnection {
+            id: 1,
+            sender: cmd_tx,
+        };
+        let (write_tx, mut write_rx) = mpsc::channel::<String>(64);
+
+        let call = |method: &str, params: Value| {
+            serde_json::from_value::<BrowserWsIncoming>(json!({
+                "id": 1,
+                "method": method,
+                "params": params,
+            }))
+            .unwrap()
+        };
+
+        // Methods that do not need a live network/engine response.
+        for (method, params) in [
+            ("ping", json!({})),
+            (
+                "browser_register",
+                json!([{"session": "chrome:tab:1", "tab_id": 1}]),
+            ),
+            ("ui_language", json!({})),
+            ("information", json!({})),
+            ("capabilities", json!({})),
+            ("model_names", json!({})),
+            ("auto_update_status", json!({})),
+            ("auto_update_check", json!({})),
+            ("auto_update_install_and_restart", json!({})),
+            ("brain_status", json!({})),
+            (
+                "brain_kip_readonly",
+                json!([{"command": "DESCRIBE PRIMER"}]),
+            ),
+            ("agent_run", json!([{"name": "echo_agent", "prompt": "hi"}])),
+            ("tool_call", json!([{"name": "echo_tool", "args": {}}])),
+            ("reload_models", json!({})),
+            ("set_model", json!(["missing-model"])),
+            ("unknown_method", json!({})),
+        ] {
+            handle_browser_ws_request(
+                call(method, params),
+                &state,
+                caller,
+                engine_id,
+                &connection,
+                &write_tx,
+            )
+            .await;
+        }
+
+        // Every request carried an id, so each produced a response frame.
+        let mut responses = 0;
+        while write_rx.try_recv().is_ok() {
+            responses += 1;
+        }
+        assert!(responses >= 10, "expected response frames, got {responses}");
+
+        // handle_browser_ws_text parses raw frames and routes method calls,
+        // responses, and rejects malformed input.
+        handle_browser_ws_text(
+            "{\"id\":2,\"method\":\"ping\"}",
+            &state,
+            caller,
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+        handle_browser_ws_text(
+            "{\"id\":3,\"result\":{\"ok\":true},\"session\":\"chrome:tab:1\"}",
+            &state,
+            caller,
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+        handle_browser_ws_text(
+            "not-json",
+            &state,
+            caller,
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn browser_websocket_upgrades_and_round_trips_a_message() {
+        use crate::util::key::{Claims, iana};
+        use tokio_tungstenite::tungstenite::Message as TMessage;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
+
+        let app = axum::Router::new()
+            .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut claims = Claims::default();
+        claims.extra.insert(iana::CWTClaimScope, "*");
+        let token = key.sign_cwt(claims).unwrap();
+
+        let url = format!("ws://{addr}/{}/browser_ws", engine_id.to_text());
+        let mut request = url.into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(request)
+            .await
+            .expect("websocket handshake should succeed with a valid token");
+
+        ws.send(TMessage::Text("{\"id\":1,\"method\":\"ping\"}".into()))
+            .await
+            .unwrap();
+        let reply = ws.next().await.expect("a reply frame").unwrap();
+        assert!(reply.is_text());
+
+        ws.close(None).await.ok();
+    }
+
+    #[tokio::test]
+    async fn browser_websocket_rejects_missing_token() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (state, engine_id, _key) = build_ws_state(dir.path().to_path_buf()).await;
+        let app = axum::Router::new()
+            .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let url = format!("ws://{addr}/{}/browser_ws", engine_id.to_text());
+        let request = url.into_client_request().unwrap();
+        // No Authorization header -> the upgrade is rejected (401), so the
+        // handshake fails.
+        assert!(tokio_tungstenite::connect_async(request).await.is_err());
+    }
 }
