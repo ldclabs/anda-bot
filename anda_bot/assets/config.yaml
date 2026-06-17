@@ -62,7 +62,7 @@ model:
       api_base: "https://chatgpt.com/backend-api/codex"
       api_key: ""
       effort: high
-      context_window: 400000
+      context_window: 320000
       max_output: 128000
       labels: ["memory", "image", "audio", "video"]
       stream: true

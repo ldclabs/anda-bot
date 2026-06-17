@@ -338,6 +338,20 @@ impl SessionRunner {
             .await
     }
 
+    async fn compact_idle_context_if_needed(
+        &mut self,
+        pending_tokens: u64,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) -> Result<bool, BoxError> {
+        if self.runner.is_idle() && needs_compaction_with_pending(&self.runner, pending_tokens) {
+            return self
+                .compact_idle_context(CompactionContinuation::Continue(None), tools_usage_snapshot)
+                .await;
+        }
+
+        Ok(true)
+    }
+
     async fn apply_compaction_output(
         &mut self,
         mut output: anda_core::AgentOutput,
@@ -546,18 +560,23 @@ impl SessionRunner {
         let mut cancellation_requested: Option<String> = None;
         if !inputs.is_empty() {
             self.session.active_at.store(unix_ms(), Ordering::SeqCst);
-            if self.runner.is_idle() && needs_compaction(&self.runner) {
-                let continue_active = self
-                    .compact_idle_context(
-                        CompactionContinuation::Continue(None),
-                        tools_usage_snapshot,
-                    )
-                    .await?;
-                if !continue_active {
-                    return Ok(false);
-                }
-            }
         }
+
+        // Accumulate all follow-up content for this batch instead of queueing
+        // it input-by-input. Background subagent/shell results arrive as
+        // separate inputs and are drained into a single run() call (the channel
+        // buffers many of them), so the batch can be far larger than any single
+        // input. Queueing each one immediately defeated compaction: only the
+        // first input was size-checked, because attaching it made the runner
+        // report not-idle and the estimate never saw the already-queued tail.
+        // Sizing the whole batch up front lets idle compaction run before the
+        // content is attached — and it must run first, because compaction
+        // drains queued follow-ups into its own request and would overflow too.
+        let mut batch: Vec<ContentPart> = Vec::new();
+        // Steering is delivered through the runner's separate steering channel: it interrupts the
+        // current run and skips pending tool calls, unlike follow-up content which waits for the
+        // next safe turn. Keep it out of the follow-up batch so /steer keeps its redirect semantics.
+        let mut steer_batch: Vec<ContentPart> = Vec::new();
 
         for input in inputs {
             let ConversationInput {
@@ -616,14 +635,17 @@ impl SessionRunner {
                 }
                 PromptCommand::Plain { prompt }
                 | PromptCommand::Side { prompt }
-                | PromptCommand::Steer { prompt }
                 | PromptCommand::Loop { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
-                    self.runner.follow_up_content(content);
+                    batch.append(&mut content);
+                }
+                PromptCommand::Steer { prompt } => {
+                    prepend_prompt_content(&mut content, prompt);
+                    steer_batch.append(&mut content);
                 }
                 PromptCommand::Goal { prompt } => {
                     prepend_prompt_content(&mut content, prompt.clone());
-                    self.runner.follow_up_content(content);
+                    batch.append(&mut content);
 
                     let mut next_goal = self.session.goal.write();
                     if let Some(existing_goal) = next_goal.as_mut() {
@@ -642,8 +664,31 @@ impl SessionRunner {
                         &mut content,
                         format!("Use the {skill} skill to handle this request:\n\n{prompt}"),
                     );
-                    self.runner.follow_up_content(content);
+                    batch.append(&mut content);
                 }
+            }
+        }
+
+        // Compact the idle context before attaching anything if doing so would exceed the window,
+        // sizing the decision against the follow-up and steering content combined (both land in the
+        // next request). Skip when stopping or cancelling: that input discards queued content anyway.
+        if stop_requested.is_none()
+            && cancellation_requested.is_none()
+            && (!batch.is_empty() || !steer_batch.is_empty())
+        {
+            let pending_tokens = estimated_content_tokens(&batch)
+                .saturating_add(estimated_content_tokens(&steer_batch));
+            if !self
+                .compact_idle_context_if_needed(pending_tokens, tools_usage_snapshot)
+                .await?
+            {
+                return Ok(false);
+            }
+            if !batch.is_empty() {
+                self.runner.follow_up_content(batch);
+            }
+            if !steer_batch.is_empty() {
+                self.runner.steer_content(steer_batch);
             }
         }
 
@@ -716,6 +761,11 @@ impl SessionRunner {
         match next_result {
             Ok(None) => {
                 let now_ms = unix_ms();
+
+                // The turn completed without error: clear any stale failure so a
+                // later Working/Idle/Completed transition below can never persist
+                // a non-Failed status alongside a leftover failed_reason.
+                self.conversation.failed_reason = None;
 
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
@@ -893,8 +943,21 @@ impl SessionRunner {
                         "Session {} hit context length error; attempting session compaction before continuing",
                         self.session.id
                     );
+                    // The committed history is kept under the compaction
+                    // threshold, so an overflow comes from the in-flight request
+                    // (a large tool output or a batch of background results).
+                    // Rebuilding the runner drops that in-flight content and any
+                    // dangling tool-call request, leaving a history that fits;
+                    // compacting *that* cannot overflow again the way re-sending
+                    // the offending request (compact_pending_context) would. On
+                    // success the session continues with the compacted context
+                    // and its background tasks intact.
+                    self.rebuild_runner_after_model_error();
                     match self
-                        .compact_pending_context(None, tools_usage_snapshot)
+                        .compact_idle_context(
+                            CompactionContinuation::Continue(None),
+                            tools_usage_snapshot,
+                        )
                         .await
                     {
                         Ok(continue_active) => return Ok(continue_active),
@@ -916,21 +979,7 @@ impl SessionRunner {
                 )
                 .await;
 
-                let has_background_tasks = self.session.has_running_background_tasks();
-                if has_background_tasks {
-                    log::warn!(
-                        "Session {} hit a model error while background tasks are running; keeping the session alive to receive background results",
-                        self.session.id
-                    );
-                    self.conversation.failed_reason = None;
-                    self.conversation.status = ConversationStatus::Idle;
-                    self.conversation.usage = self.runner.total_usage().clone();
-                    self.conversation.updated_at = unix_ms();
-                    self.persist_conversation_state().await;
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    return Ok(true);
-                }
-
+                self.session.stop_background_tasks();
                 self.conversation.failed_reason = Some(failed_reason.clone());
                 self.conversation.status = ConversationStatus::Failed;
                 self.conversation.updated_at = unix_ms();
@@ -1041,7 +1090,10 @@ fn should_continue_session_runner_after_stop(
     has_pending_inputs: bool,
     has_background_tasks: bool,
 ) -> bool {
-    !matches!(status, ConversationStatus::Cancelled) && (has_pending_inputs || has_background_tasks)
+    !matches!(
+        status,
+        ConversationStatus::Cancelled | ConversationStatus::Failed
+    ) && (has_pending_inputs || has_background_tasks)
 }
 
 fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
@@ -1062,18 +1114,105 @@ fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
 }
 
 fn needs_compaction(runner: &CompletionRunner) -> bool {
-    let current_usage = runner.current_usage();
+    needs_compaction_with_pending(runner, 0)
+}
+
+fn needs_compaction_with_pending(runner: &CompletionRunner, pending_tokens: u64) -> bool {
+    let threshold = compaction_threshold(runner);
+
+    // Cheap signals first. These run on the hot path — once per loop iteration
+    // before a model call and after every completion — so they must not pay for
+    // a history walk. current_usage is the model-reported size of the last
+    // request and tracks the committed context as it grows.
+    if runner.current_usage().input_tokens >= threshold || runner.turns() >= MAX_TURNS_TO_COMPACT {
+        return true;
+    }
+
+    if pending_tokens == 0 {
+        return false;
+    }
+
+    // A batch of new content is about to be attached (typically background
+    // subagent/shell results drained together). Estimate whether attaching it
+    // would push the next request over the threshold, so idle compaction can
+    // run before the content is queued. Use the larger of the model-reported
+    // size of the current context (which already counts the system prompt and
+    // tool schemas) and a char-based history estimate (a fallback for resumed
+    // sessions whose first turn has not reported usage yet).
+    let current = runner
+        .current_usage()
+        .input_tokens
+        .max(estimated_history_tokens(runner));
+    current.saturating_add(pending_tokens) >= threshold
+}
+
+fn compaction_threshold(runner: &CompletionRunner) -> u64 {
     // context_window is 0 when the model config does not declare it; only then
     // fall back to a conservative default. A floor above a small declared
     // window would disable token-based compaction until the context overflows.
     let context_window = runner.model().context_window as u64;
-    let threshold = if context_window == 0 {
+    if context_window == 0 {
         100_000
     } else {
-        context_window.saturating_mul(8).saturating_div(10)
-    };
+        context_window.saturating_mul(8).saturating_div(10).max(1)
+    }
+}
 
-    current_usage.input_tokens >= threshold || runner.turns() >= MAX_TURNS_TO_COMPACT
+fn estimated_history_tokens(runner: &CompletionRunner) -> u64 {
+    let now_ms = unix_ms();
+    runner
+        .chat_history()
+        .iter()
+        .chain(pending_request_messages(runner.req(), now_ms).iter())
+        .map(estimated_message_tokens)
+        .sum()
+}
+
+fn estimated_message_tokens(message: &Message) -> u64 {
+    8u64.saturating_add(estimated_content_tokens(&message.content))
+}
+
+fn estimated_content_tokens(content: &[ContentPart]) -> u64 {
+    content.iter().map(estimated_content_part_tokens).sum()
+}
+
+fn estimated_content_part_tokens(content: &ContentPart) -> u64 {
+    match content {
+        ContentPart::Text { text } | ContentPart::Reasoning { text } => estimated_text_tokens(text),
+        ContentPart::FileData {
+            file_uri,
+            mime_type,
+        } => estimated_text_tokens(file_uri)
+            .saturating_add(mime_type.as_deref().map_or(0, estimated_text_tokens)),
+        ContentPart::InlineData { mime_type, data } => estimated_text_tokens(mime_type)
+            .saturating_add((data.len() as u64).saturating_add(3) / 4),
+        ContentPart::ToolCall {
+            name,
+            args,
+            call_id,
+        } => estimated_text_tokens(name)
+            .saturating_add(estimated_text_tokens(&args.to_string()))
+            .saturating_add(call_id.as_deref().map_or(0, estimated_text_tokens)),
+        ContentPart::ToolOutput {
+            name,
+            output,
+            is_error,
+            call_id,
+            remote_id,
+        } => estimated_text_tokens(name)
+            .saturating_add(estimated_text_tokens(&output.to_string()))
+            .saturating_add(is_error.map_or(0, |_| 1))
+            .saturating_add(call_id.as_deref().map_or(0, estimated_text_tokens))
+            .saturating_add(remote_id.map_or(0, |id| estimated_text_tokens(&id.to_text()))),
+        ContentPart::Action { name, payload, .. } => {
+            estimated_text_tokens(name).saturating_add(estimated_text_tokens(&payload.to_string()))
+        }
+        ContentPart::Any(value) => estimated_text_tokens(&value.to_string()),
+    }
+}
+
+fn estimated_text_tokens(text: &str) -> u64 {
+    (text.chars().count() as u64).saturating_add(3) / 4
 }
 
 fn compute_tools_usage_delta(
@@ -1122,7 +1261,7 @@ mod tests {
     use super::*;
 
     use crate::brain;
-    use crate::engine::agent::session::SessionRequestMeta;
+    use crate::engine::agent::session::{BackgroundTaskInfo, SessionRequestMeta};
     use crate::engine::browser::{BrowserBridge, ChromeBrowserTool};
     use crate::engine::conversation::ConversationsTool;
     use crate::engine::prompt::PromptCommand;
@@ -1386,6 +1525,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct RecordingUsageCompleter {
         requests: Arc<Mutex<Vec<CompletionRequest>>>,
+        usage_input_tokens: u64,
     }
 
     impl CompletionFeaturesDyn for RecordingUsageCompleter {
@@ -1412,7 +1552,7 @@ mod tests {
                 content: content.to_string(),
                 chat_history,
                 usage: Usage {
-                    input_tokens: 100_000,
+                    input_tokens: self.usage_input_tokens,
                     output_tokens: 10,
                     cached_tokens: 0,
                     requests: 1,
@@ -1423,9 +1563,109 @@ mod tests {
     }
 
     fn recording_usage_ctx(requests: Arc<Mutex<Vec<CompletionRequest>>>) -> AgentCtx {
-        let mut model = Model::new(Arc::new(RecordingUsageCompleter { requests }));
+        recording_usage_ctx_with_input_tokens(requests, 100_000)
+    }
+
+    fn recording_usage_ctx_with_input_tokens(
+        requests: Arc<Mutex<Vec<CompletionRequest>>>,
+        usage_input_tokens: u64,
+    ) -> AgentCtx {
+        let mut model = Model::new(Arc::new(RecordingUsageCompleter {
+            requests,
+            usage_input_tokens,
+        }));
         model.context_window = 1_000;
         EngineBuilder::new().with_model(model).mock_ctx()
+    }
+
+    #[derive(Clone, Debug)]
+    struct ContextLengthErrorCompleter;
+
+    impl CompletionFeaturesDyn for ContextLengthErrorCompleter {
+        fn model_name(&self) -> String {
+            "context-length-error".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(futures::future::ready(Err(
+                "{\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"}".into(),
+            )))
+        }
+    }
+
+    fn context_length_error_ctx() -> AgentCtx {
+        EngineBuilder::new()
+            .with_model(Model::new(Arc::new(ContextLengthErrorCompleter)))
+            .mock_ctx()
+    }
+
+    // Normal turns overflow the window; the smaller compaction request (sent
+    // after the runner is rebuilt) succeeds. This models a real context-length
+    // spike where re-sending the offending request would overflow again but
+    // compacting the committed history fits.
+    #[derive(Clone, Debug)]
+    struct ContextLengthThenCompactCompleter {
+        requests: Arc<Mutex<Vec<CompletionRequest>>>,
+    }
+
+    impl CompletionFeaturesDyn for ContextLengthThenCompactCompleter {
+        fn model_name(&self) -> String {
+            "context-length-then-compact".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            self.requests.lock().push(req.clone());
+            if request_text(&req).trim() == COMPACTION_PROMPT.trim() {
+                let mut chat_history = pending_request_messages(&req, 42);
+                chat_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: vec!["compacted handoff".to_string().into()],
+                    ..Default::default()
+                });
+                return Box::pin(futures::future::ready(Ok(AgentOutput {
+                    content: "compacted handoff".to_string(),
+                    chat_history,
+                    usage: Usage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                        cached_tokens: 0,
+                        requests: 1,
+                    },
+                    ..Default::default()
+                })));
+            }
+
+            Box::pin(futures::future::ready(Err(
+                "{\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model.\"}".into(),
+            )))
+        }
+    }
+
+    fn context_length_then_compact_ctx(requests: Arc<Mutex<Vec<CompletionRequest>>>) -> AgentCtx {
+        EngineBuilder::new()
+            .with_model(Model::new(Arc::new(ContextLengthThenCompactCompleter {
+                requests,
+            })))
+            .mock_ctx()
+    }
+
+    #[derive(Clone, Debug)]
+    struct GenericModelErrorCompleter;
+
+    impl CompletionFeaturesDyn for GenericModelErrorCompleter {
+        fn model_name(&self) -> String {
+            "generic-model-error".to_string()
+        }
+
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(futures::future::ready(Err("model failed".into())))
+        }
+    }
+
+    fn generic_model_error_ctx() -> AgentCtx {
+        EngineBuilder::new()
+            .with_model(Model::new(Arc::new(GenericModelErrorCompleter)))
+            .mock_ctx()
     }
 
     fn request_text(req: &CompletionRequest) -> String {
@@ -1574,6 +1814,253 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_runner_ignores_background_usage_for_compaction() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        let mut background_input = input(PromptCommand::Plain {
+            prompt: "follow up after background usage".to_string(),
+        });
+        background_input.usage = Usage {
+            input_tokens: 100_000,
+            output_tokens: 0,
+            cached_tokens: 0,
+            requests: 1,
+        };
+
+        sess_runner
+            .run(vec![background_input], &mut snapshot)
+            .await
+            .unwrap();
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            request_text(&recorded[0]),
+            "follow up after background usage"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_runner_compacts_oversized_follow_up_before_queueing() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+        let oversized_prompt = "x".repeat(4_000);
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: oversized_prompt.clone(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(request_text(&recorded[0]).trim(), COMPACTION_PROMPT.trim());
+        let continuation_history = recorded[1]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(continuation_history.contains("compacted handoff"));
+        assert_eq!(request_text(&recorded[1]), oversized_prompt);
+    }
+
+    #[tokio::test]
+    async fn session_runner_compacts_oversized_input_batch_before_queueing() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        // Per-completion usage stays tiny, so only the batch-size estimate can
+        // trigger compaction. Each input is well under the 800-token threshold;
+        // batched together (as background results are) they exceed it. This is
+        // the case the per-input check missed: queueing the first follow-up made
+        // the runner report not-idle, so the rest bypassed the size check.
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+        let chunk = "x".repeat(1_600); // ~400 tokens each, ~1200 for the batch
+
+        sess_runner
+            .run(
+                vec![
+                    input(PromptCommand::Plain {
+                        prompt: chunk.clone(),
+                    }),
+                    input(PromptCommand::Plain {
+                        prompt: chunk.clone(),
+                    }),
+                    input(PromptCommand::Plain {
+                        prompt: chunk.clone(),
+                    }),
+                ],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let recorded = requests.lock();
+        // Compaction runs once up front, then the whole batch is queued on top
+        // of the compacted handoff in a single follow-up request.
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(request_text(&recorded[0]).trim(), COMPACTION_PROMPT.trim());
+        let continuation_history = recorded[1]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(continuation_history.contains("compacted handoff"));
+        assert_eq!(request_text(&recorded[1]).matches(chunk.as_str()).count(), 3);
+    }
+
+    #[tokio::test]
+    async fn session_runner_delivers_steer_through_steering_channel() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        // A /steer input is routed to the runner's steering channel (not the follow-up batch), so
+        // its prompt must still reach the model rather than being dropped by the batch split.
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Steer {
+                    prompt: "redirect the approach".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(request_text(&recorded[0]), "redirect the approach");
+    }
+
+    #[tokio::test]
+    async fn session_runner_recovers_from_context_length_error_via_compaction() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = context_length_then_compact_ctx(requests.clone());
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        sess_runner.session.background_tasks.write().insert(
+            "task-1".to_string(),
+            BackgroundTaskInfo {
+                agent_name: "runner-test".to_string(),
+                tool_name: None,
+                progress_message: None,
+                stopped: false,
+            },
+        );
+        let mut snapshot = HashMap::new();
+
+        let cont = sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "trigger context length".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        // The session keeps running on a compacted context instead of failing,
+        // and its background tasks are left intact.
+        assert!(cont);
+        assert_ne!(sess_runner.conversation.status, ConversationStatus::Failed);
+        assert!(sess_runner.conversation.failed_reason.is_none());
+        assert!(sess_runner.session.has_running_background_tasks());
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(request_text(&recorded[1]).trim(), COMPACTION_PROMPT.trim());
+    }
+
+    #[tokio::test]
+    async fn session_runner_marks_context_length_error_failed_with_background_tasks() {
+        let bot = build_runner_bot().await;
+        let ctx = context_length_error_ctx();
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        sess_runner.session.background_tasks.write().insert(
+            "task-1".to_string(),
+            BackgroundTaskInfo {
+                agent_name: "runner-test".to_string(),
+                tool_name: None,
+                progress_message: None,
+                stopped: false,
+            },
+        );
+        let mut snapshot = HashMap::new();
+
+        let cont = sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "trigger context length".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        assert!(!cont);
+        assert_eq!(sess_runner.conversation.status, ConversationStatus::Failed);
+        assert!(
+            sess_runner
+                .conversation
+                .failed_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("context_length_exceeded"))
+        );
+        assert!(!sess_runner.session.has_running_background_tasks());
+    }
+
+    #[tokio::test]
+    async fn session_runner_marks_model_error_failed_with_background_tasks() {
+        let bot = build_runner_bot().await;
+        let ctx = generic_model_error_ctx();
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        sess_runner.session.background_tasks.write().insert(
+            "task-1".to_string(),
+            BackgroundTaskInfo {
+                agent_name: "runner-test".to_string(),
+                tool_name: None,
+                progress_message: None,
+                stopped: false,
+            },
+        );
+        let mut snapshot = HashMap::new();
+
+        let cont = sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "trigger model error".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        assert!(!cont);
+        assert_eq!(sess_runner.conversation.status, ConversationStatus::Failed);
+        assert_eq!(
+            sess_runner.conversation.failed_reason.as_deref(),
+            Some("model failed")
+        );
+        assert!(!sess_runner.session.has_running_background_tasks());
+    }
+
+    #[tokio::test]
     async fn session_runner_skill_and_steer_inputs_are_handled() {
         let bot = build_runner_bot().await;
         let (mut sess_runner, _rx) = build_session_runner(&bot).await;
@@ -1610,7 +2097,7 @@ mod tests {
 
     #[test]
     fn session_runner_stop_policy_keeps_background_work() {
-        assert!(should_continue_session_runner_after_stop(
+        assert!(!should_continue_session_runner_after_stop(
             &ConversationStatus::Failed,
             true,
             false,

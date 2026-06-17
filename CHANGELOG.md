@@ -4,6 +4,19 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.14] — 2026-06-17
+
+### Changed
+
+- **Version synchronized for the 0.9.14 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.14`, and aligned the bundled Anda engine dependency with `0.13.4`.
+- **Default Codex context budget is more conservative**: reduced the bundled Codex `context_window` from `400000` to `320000` so session compaction triggers before provider-side limits are hit.
+
+### Fixed
+
+- **Oversized input batches compact before being attached**: session follow-up and steering inputs are now sized as a batch before queueing, so bursts of background results cannot bypass idle compaction and overflow the next model request.
+- **Context-length recovery compacts committed history instead of replaying the failing request**: when a model reports a context-length error, the runner rebuilds around the committed history and compacts that smaller context, preserving background tasks when recovery succeeds.
+- **Failed sessions no longer keep background work alive or retain stale errors**: unrecoverable model failures now stop background tasks, failed conversations stop their runner loop, and successful turns clear leftover `failed_reason` state.
+
 ## [0.9.13] — 2026-06-17
 
 ### Changed
