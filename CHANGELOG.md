@@ -4,6 +4,16 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.13] — 2026-06-17
+
+### Changed
+
+- **Version synchronized for the 0.9.13 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.13`.
+
+### Fixed
+
+- **Pending user input is preserved during session compaction**: context compaction now includes the active pending prompt, content, and documents in the handoff, then continues in a child conversation so long-running sessions do not lose the user request when the model context window is reached.
+
 ## [0.9.12] — 2026-06-16
 
 ### Changed
