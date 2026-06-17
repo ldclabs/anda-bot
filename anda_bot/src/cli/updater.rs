@@ -1283,8 +1283,17 @@ mod tests {
         prepare_executable(&staged, &current).await.unwrap();
 
         let finish = install_update(&staged, &current).await.unwrap();
-        assert_eq!(finish, UpdateFinish::Installed);
-        assert_eq!(std::fs::read(&current).unwrap(), b"new binary");
+        #[cfg(not(windows))]
+        {
+            assert_eq!(finish, UpdateFinish::Installed);
+            assert_eq!(std::fs::read(&current).unwrap(), b"new binary");
+        }
+        #[cfg(windows)]
+        {
+            // On Windows the replacement is handed off to an async PowerShell
+            // helper, so the swap is scheduled rather than applied inline.
+            assert_eq!(finish, UpdateFinish::Scheduled);
+        }
     }
 
     #[tokio::test]
@@ -1487,8 +1496,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(finish, Some(UpdateFinish::Installed));
-        assert_eq!(std::fs::read(&launcher).unwrap(), body);
+        #[cfg(not(windows))]
+        {
+            assert_eq!(finish, Some(UpdateFinish::Installed));
+            assert_eq!(std::fs::read(&launcher).unwrap(), body);
+        }
+        #[cfg(windows)]
+        {
+            // On Windows the swap is deferred to an async PowerShell helper.
+            assert_eq!(finish, Some(UpdateFinish::Scheduled));
+        }
     }
 
     #[tokio::test]
