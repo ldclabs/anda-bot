@@ -1602,6 +1602,11 @@ mod tests {
         handle.await.unwrap();
     }
 
+    // The raw legacy layout names the directory after the channel id verbatim,
+    // so it only exists (and is only migrated) on platforms where `:` is a valid
+    // path character. On Windows that path can't be created, matching the
+    // `!cfg!(windows)` guard in `migrate_legacy_channel_workspace`.
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn prepare_channel_workspace_migrates_legacy_layout() {
         let dir = tempfile::tempdir().unwrap();

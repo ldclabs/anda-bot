@@ -43,7 +43,8 @@ const FORMATION_RETRY_BACKOFF_MS: u64 = 60 * 1000;
 // The idle loop reaches the goal check about once per second; without a
 // backoff a failing supervisor model would be hammered continuously.
 const GOAL_CHECK_RETRY_BACKOFF_MS: u64 = 60 * 1000;
-static COMPACTION_PROMPT: &str = include_str!("../../../assets/CompactionPrompt.md");
+const COMPACTION_PROMPT: &str = include_str!("../../../assets/CompactionPrompt.md");
+const COMPACTION_CONTINUE_PROMPT: &str = "Continue the active work from the compaction handoff. The handoff includes the conversation state and any pending user or tool messages captured immediately before compaction.";
 
 impl AndaBot {
     #[allow(clippy::too_many_arguments)]
@@ -170,6 +171,11 @@ struct SessionRunner {
     last_extra_user_context: Option<Message>,
 }
 
+enum CompactionContinuation {
+    Finish,
+    Continue(Option<String>),
+}
+
 impl SessionRunner {
     async fn persist_conversation_state(&self) {
         self.assistant
@@ -258,6 +264,218 @@ impl SessionRunner {
         self.runner = runner;
     }
 
+    fn compaction_snapshot_chat_history(&self, now_ms: u64) -> Vec<Message> {
+        let mut chat_history = self.runner.chat_history().clone();
+        chat_history.extend(pending_request_messages(self.runner.req(), now_ms));
+        mark_special_user_messages(&mut chat_history);
+        chat_history
+    }
+
+    async fn compact_pending_context(
+        &mut self,
+        continuation_prompt: Option<String>,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) -> Result<bool, BoxError> {
+        let now_ms = unix_ms();
+        let handoff_req = self.runner.req().clone();
+        let chat_history = self.compaction_snapshot_chat_history(now_ms);
+
+        let mut compaction_runner = self
+            .ctx
+            .clone()
+            .completion_iter(
+                CompletionRequest {
+                    prompt: COMPACTION_PROMPT.to_string(),
+                    chat_history,
+                    model: handoff_req.model,
+                    effort: handoff_req.effort,
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .unbound();
+        self.assistant
+            .inner
+            .apply_merge_discovered_tools(&mut compaction_runner);
+
+        let mut output = model_retry::runner_finalize_with_retry(
+            &mut compaction_runner,
+            None,
+            "session compaction",
+        )
+        .await?;
+
+        let mut carried = self
+            .runner
+            .stop_current_task(anda_core::AgentOutput::default());
+        carried.usage.accumulate(&output.usage);
+        output.usage = carried.usage;
+        output.tools_usage = carried.tools_usage;
+        output.artifacts.append(&mut carried.artifacts);
+
+        let continuation_prompt = continuation_prompt.unwrap_or_else(compaction_continue_prompt);
+        self.apply_compaction_output(
+            output,
+            CompactionContinuation::Continue(Some(continuation_prompt)),
+            tools_usage_snapshot,
+        )
+        .await
+    }
+
+    async fn compact_idle_context(
+        &mut self,
+        continuation: CompactionContinuation,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) -> Result<bool, BoxError> {
+        let output = model_retry::runner_finalize_with_retry(
+            &mut self.runner,
+            Some(COMPACTION_PROMPT.to_string()),
+            "session compaction",
+        )
+        .await?;
+
+        self.apply_compaction_output(output, continuation, tools_usage_snapshot)
+            .await
+    }
+
+    async fn apply_compaction_output(
+        &mut self,
+        mut output: anda_core::AgentOutput,
+        continuation: CompactionContinuation,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) -> Result<bool, BoxError> {
+        mark_special_user_messages(&mut output.chat_history);
+
+        let now_ms = unix_ms();
+        if let Some(failed_reason) = output.failed_reason {
+            self.persist_tools_usage_snapshot(tools_usage_snapshot)
+                .await;
+
+            self.conversation.failed_reason = Some(format!("Compaction failed: {failed_reason}"));
+            self.conversation.status = ConversationStatus::Failed;
+            self.conversation.usage = output.usage;
+            self.conversation.updated_at = now_ms;
+            self.persist_conversation_state().await;
+            return Ok(false);
+        }
+
+        // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
+        // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
+
+        // 前一轮压缩总结的内容作为新 conversation 的第一条消息，继续后续的交互
+        let compaction_msg = Message {
+            role: "assistant".into(),
+            content: vec![output.content.into()],
+            timestamp: Some(now_ms),
+            ..Default::default()
+        };
+        let child = match continuation {
+            CompactionContinuation::Finish => None,
+            CompactionContinuation::Continue(prompt) => {
+                let mut ancestors = self.conversation.ancestors.clone().unwrap_or_default();
+                ancestors.push(self.conversation._id);
+
+                let mut messages = vec![serde_json::json!(compaction_msg.clone())];
+                if let Some(prompt) = prompt.as_ref() {
+                    messages.push(serde_json::json!(system_user_message(
+                        prompt.clone(),
+                        now_ms
+                    )));
+                }
+
+                let mut conversation = Conversation {
+                    user: self.conversation.user,
+                    thread: Some(self.session.id.clone()),
+                    messages,
+                    ancestors: Some(ancestors),
+                    period: now_ms / 3600 / 1000,
+                    created_at: now_ms,
+                    updated_at: now_ms,
+                    extra: Some(json!(self.ctx.meta().extra)),
+                    ..Default::default()
+                };
+
+                let conv_id = self
+                    .assistant
+                    .inner
+                    .conversations
+                    .conversations
+                    .add_conversation(ConversationRef::from(&conversation))
+                    .await?;
+                conversation._id = conv_id;
+
+                let mut req = CompletionRequest {
+                    chat_history: vec![compaction_msg.clone()],
+                    ..self.req.clone()
+                };
+                if let Some(prompt) = prompt {
+                    req.prompt = prompt;
+                }
+
+                Some((conversation, req))
+            }
+        };
+
+        self.persist_tools_usage_snapshot(tools_usage_snapshot)
+            .await;
+        self.submit_pending_formation(&output.chat_history, now_ms)
+            .await;
+        let artifacts = self
+            .assistant
+            .persist_resources_for_message(&self.conversation.user, output.artifacts)
+            .await?;
+
+        self.conversation.messages.clear();
+        self.conversation.append_messages(output.chat_history);
+        self.conversation.status = ConversationStatus::Completed;
+        self.conversation.usage = output.usage;
+        self.conversation.artifacts = artifacts;
+        self.conversation.updated_at = now_ms;
+        // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
+        self.conversation.child = child.as_ref().map(|(conv, _)| conv._id);
+        self.persist_conversation_state().await;
+        match child {
+            Some((conv, req)) => {
+                self.first_round = true;
+                self.session.submit_formation_at.store(0, Ordering::SeqCst);
+                self.conversation = conv;
+                self.session
+                    .conversation_id
+                    .store(self.conversation._id, Ordering::SeqCst);
+                if !self.session.finish_when_idle.load(Ordering::SeqCst)
+                    && let Err(err) = self
+                        .assistant
+                        .inner
+                        .conversations
+                        .update_source_state(
+                            self.session.source_key.clone(),
+                            SourceState {
+                                conv_id: self.conversation._id,
+                                status: self.conversation.status.clone(),
+                                timestamp: now_ms,
+                            },
+                        )
+                        .await
+                {
+                    log::error!("Failed to update_source_state: {:?}", err);
+                }
+                // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
+                let mut runner = self
+                    .ctx
+                    .clone()
+                    .completion_iter(req, Vec::new())
+                    .reserve_chat_history(vec![compaction_msg])
+                    .unbound();
+                self.assistant
+                    .inner
+                    .apply_merge_discovered_tools(&mut runner);
+                self.runner = runner;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
         if now_ms < self.session.formation_backoff_until.load(Ordering::SeqCst) {
             return;
@@ -328,6 +546,17 @@ impl SessionRunner {
         let mut cancellation_requested: Option<String> = None;
         if !inputs.is_empty() {
             self.session.active_at.store(unix_ms(), Ordering::SeqCst);
+            if self.runner.is_idle() && needs_compaction(&self.runner) {
+                let continue_active = self
+                    .compact_idle_context(
+                        CompactionContinuation::Continue(None),
+                        tools_usage_snapshot,
+                    )
+                    .await?;
+                if !continue_active {
+                    return Ok(false);
+                }
+            }
         }
 
         for input in inputs {
@@ -470,6 +699,14 @@ impl SessionRunner {
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
 
+        if needs_compaction(&self.runner)
+            && has_pending_request_messages(self.runner.req(), unix_ms())
+        {
+            return self
+                .compact_pending_context(None, tools_usage_snapshot)
+                .await;
+        }
+
         let next_result =
             model_retry::runner_next_with_retry(&mut self.runner, "session runner").await;
         self.assistant
@@ -543,136 +780,13 @@ impl SessionRunner {
                 }
 
                 if needs_compaction(&self.runner) {
-                    // 上下文过长，先进行一次压缩总结，更新conversation状态和历史消息，再继续后续的处理
-                    let mut output = model_retry::runner_finalize_with_retry(
-                        &mut self.runner,
-                        Some(COMPACTION_PROMPT.to_string()),
-                        "session compaction",
-                    )
-                    .await?;
-                    mark_special_user_messages(&mut output.chat_history);
-
-                    let now_ms = unix_ms();
-                    if let Some(failed_reason) = output.failed_reason {
-                        self.persist_tools_usage_snapshot(tools_usage_snapshot)
-                            .await;
-
-                        self.conversation.failed_reason =
-                            Some(format!("Compaction failed: {failed_reason}"));
-                        self.conversation.status = ConversationStatus::Failed;
-                        self.conversation.usage = output.usage;
-                        self.conversation.updated_at = now_ms;
-                        self.persist_conversation_state().await;
-                        return Ok(false);
-                    }
-
-                    // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
-                    // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
-
-                    // 前一轮压缩总结的内容作为新 conversation 的第一条消息，继续后续的交互
-                    let compaction_msg = Message {
-                        role: "assistant".into(),
-                        content: vec![output.content.into()],
-                        timestamp: Some(now_ms),
-                        ..Default::default()
+                    let continuation = match goal_continue_prompt {
+                        Some(prompt) => CompactionContinuation::Continue(Some(prompt)),
+                        None => CompactionContinuation::Finish,
                     };
-                    let child = if let Some(prompt) = goal_continue_prompt {
-                        let mut ancestors = self.conversation.ancestors.clone().unwrap_or_default();
-                        ancestors.push(self.conversation._id);
-
-                        let mut conversation = Conversation {
-                            user: self.conversation.user,
-                            thread: Some(self.session.id.clone()),
-                            messages: vec![
-                                serde_json::json!(compaction_msg),
-                                serde_json::json!(system_user_message(prompt.clone(), now_ms)),
-                            ],
-                            ancestors: Some(ancestors),
-                            period: now_ms / 3600 / 1000,
-                            created_at: now_ms,
-                            updated_at: now_ms,
-                            extra: Some(json!(self.ctx.meta().extra)),
-                            ..Default::default()
-                        };
-
-                        let conv_id = self
-                            .assistant
-                            .inner
-                            .conversations
-                            .conversations
-                            .add_conversation(ConversationRef::from(&conversation))
-                            .await?;
-                        conversation._id = conv_id;
-
-                        let req = CompletionRequest {
-                            prompt,
-                            chat_history: vec![compaction_msg.clone()],
-                            ..self.req.clone()
-                        };
-
-                        Some((conversation, req))
-                    } else {
-                        None
-                    };
-
-                    self.persist_tools_usage_snapshot(tools_usage_snapshot)
+                    return self
+                        .compact_idle_context(continuation, tools_usage_snapshot)
                         .await;
-                    self.submit_pending_formation(&output.chat_history, now_ms)
-                        .await;
-                    let artifacts = self
-                        .assistant
-                        .persist_resources_for_message(&self.conversation.user, output.artifacts)
-                        .await?;
-
-                    self.conversation.messages.clear();
-                    self.conversation.append_messages(output.chat_history);
-                    self.conversation.status = ConversationStatus::Completed;
-                    self.conversation.usage = output.usage;
-                    self.conversation.artifacts = artifacts;
-                    self.conversation.updated_at = now_ms;
-                    // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
-                    self.conversation.child = child.as_ref().map(|(conv, _)| conv._id);
-                    self.persist_conversation_state().await;
-                    match child {
-                        Some((conv, req)) => {
-                            self.first_round = true;
-                            self.session.submit_formation_at.store(0, Ordering::SeqCst);
-                            self.conversation = conv;
-                            self.session
-                                .conversation_id
-                                .store(self.conversation._id, Ordering::SeqCst);
-                            if !self.session.finish_when_idle.load(Ordering::SeqCst)
-                                && let Err(err) = self
-                                    .assistant
-                                    .inner
-                                    .conversations
-                                    .update_source_state(
-                                        self.session.source_key.clone(),
-                                        SourceState {
-                                            conv_id: self.conversation._id,
-                                            status: self.conversation.status.clone(),
-                                            timestamp: now_ms,
-                                        },
-                                    )
-                                    .await
-                            {
-                                log::error!("Failed to update_source_state: {:?}", err);
-                            }
-                            // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
-                            let mut runner = self
-                                .ctx
-                                .clone()
-                                .completion_iter(req, Vec::new())
-                                .reserve_chat_history(vec![compaction_msg])
-                                .unbound();
-                            self.assistant
-                                .inner
-                                .apply_merge_discovered_tools(&mut runner);
-                            self.runner = runner;
-                            return Ok(true);
-                        }
-                        None => return Ok(false),
-                    }
                 }
 
                 if let Some(prompt) = goal_continue_prompt {
@@ -774,6 +888,25 @@ impl SessionRunner {
                     self.session.id,
                     err
                 );
+                if is_context_length_error(&err) {
+                    log::warn!(
+                        "Session {} hit context length error; attempting session compaction before continuing",
+                        self.session.id
+                    );
+                    match self
+                        .compact_pending_context(None, tools_usage_snapshot)
+                        .await
+                    {
+                        Ok(continue_active) => return Ok(continue_active),
+                        Err(compaction_err) => {
+                            log::error!(
+                                "Session {} failed to compact after context length error: {:?}",
+                                self.session.id,
+                                compaction_err
+                            );
+                        }
+                    }
+                }
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
                 self.rebuild_runner_after_model_error();
@@ -816,6 +949,59 @@ fn prepend_prompt_content(content: &mut Vec<ContentPart>, prompt: String) {
         return;
     }
     content.insert(0, prompt.into());
+}
+
+fn compaction_continue_prompt() -> String {
+    system_runtime_prompt(
+        "context compaction continuation",
+        COMPACTION_CONTINUE_PROMPT,
+    )
+}
+
+fn has_pending_request_messages(req: &CompletionRequest, now_ms: u64) -> bool {
+    !pending_request_messages(req, now_ms).is_empty()
+}
+
+fn pending_request_messages(req: &CompletionRequest, now_ms: u64) -> Vec<Message> {
+    let mut messages = req.chat_history.clone();
+
+    if let Some(datetime) = rfc3339_datetime(now_ms)
+        && let Some(message) = req.documents.to_message(&datetime)
+    {
+        messages.push(message);
+    }
+
+    let mut content = Vec::new();
+    if !req.prompt.is_empty() {
+        content.push(req.prompt.clone().into());
+    }
+    content.extend(req.content.clone());
+    if !content.is_empty() {
+        messages.push(Message {
+            role: req.role.clone().unwrap_or_else(|| "user".to_string()),
+            content,
+            timestamp: Some(now_ms),
+            ..Default::default()
+        });
+    }
+
+    messages
+}
+
+fn is_context_length_error(err: &BoxError) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err.as_ref());
+    while let Some(error) = current {
+        let message = error.to_string().to_ascii_lowercase();
+        if message.contains("context_length_exceeded")
+            || message.contains("input exceeds the context window")
+            || message.contains("context window")
+        {
+            return true;
+        }
+        current = error.source();
+    }
+
+    false
 }
 
 fn control_command_reason(prompt: &str, command: &str) -> String {
@@ -942,16 +1128,19 @@ mod tests {
     use crate::engine::prompt::PromptCommand;
     use crate::engine::resources::ResourceStore;
     use anda_brain::types::InputContext;
-    use anda_core::RequestMeta;
+    use anda_core::{AgentOutput, BoxPinFut, RequestMeta};
     use anda_db::{
         database::{AndaDB, DBConfig},
         storage::StorageConfig,
     };
     use anda_engine::{
-        engine::EngineBuilder, extension::skill::SkillManager, memory::Conversations, model::Model,
+        engine::EngineBuilder,
+        extension::skill::SkillManager,
+        memory::Conversations,
+        model::{CompletionFeaturesDyn, Model},
     };
     use ic_auth_types::Xid;
-    use parking_lot::RwLock;
+    use parking_lot::{Mutex, RwLock};
     use std::sync::atomic::{AtomicBool, AtomicU64};
 
     async fn spawn_runner_brain_mock() -> String {
@@ -1164,9 +1353,19 @@ mod tests {
         tokio::sync::mpsc::Receiver<ConversationInput>,
     ) {
         let ctx = mock_runner_ctx();
+        build_session_runner_with_ctx(bot, ctx).await
+    }
+
+    async fn build_session_runner_with_ctx(
+        bot: &AndaBot,
+        ctx: AgentCtx,
+    ) -> (
+        SessionRunner,
+        tokio::sync::mpsc::Receiver<ConversationInput>,
+    ) {
         let (session, rx) = build_session();
         let req = CompletionRequest::default();
-        let runner = ctx.clone().completion_iter(req.clone(), vec![]);
+        let runner = ctx.clone().completion_iter(req.clone(), vec![]).unbound();
         let sess_runner = SessionRunner {
             ctx,
             req,
@@ -1182,6 +1381,63 @@ mod tests {
             last_extra_user_context: None,
         };
         (sess_runner, rx)
+    }
+
+    #[derive(Clone, Debug)]
+    struct RecordingUsageCompleter {
+        requests: Arc<Mutex<Vec<CompletionRequest>>>,
+    }
+
+    impl CompletionFeaturesDyn for RecordingUsageCompleter {
+        fn model_name(&self) -> String {
+            "recording-usage".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            self.requests.lock().push(req.clone());
+            let is_compaction = request_text(&req).trim() == COMPACTION_PROMPT.trim();
+            let content = if is_compaction {
+                "compacted handoff"
+            } else {
+                "normal output"
+            };
+            let mut chat_history = pending_request_messages(&req, 42);
+            chat_history.push(Message {
+                role: "assistant".to_string(),
+                content: vec![content.to_string().into()],
+                ..Default::default()
+            });
+
+            Box::pin(futures::future::ready(Ok(AgentOutput {
+                content: content.to_string(),
+                chat_history,
+                usage: Usage {
+                    input_tokens: 100_000,
+                    output_tokens: 10,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+                ..Default::default()
+            })))
+        }
+    }
+
+    fn recording_usage_ctx(requests: Arc<Mutex<Vec<CompletionRequest>>>) -> AgentCtx {
+        let mut model = Model::new(Arc::new(RecordingUsageCompleter { requests }));
+        model.context_window = 1_000;
+        EngineBuilder::new().with_model(model).mock_ctx()
+    }
+
+    fn request_text(req: &CompletionRequest) -> String {
+        let mut text = Vec::new();
+        if !req.prompt.is_empty() {
+            text.push(req.prompt.clone());
+        }
+        text.extend(req.content.iter().filter_map(|part| match part {
+            ContentPart::Text { text } | ContentPart::Reasoning { text } => Some(text.clone()),
+            _ => None,
+        }));
+        text.join("\n\n")
     }
 
     #[tokio::test]
@@ -1262,6 +1518,59 @@ mod tests {
         assert!(result.is_ok());
         // The goal command installs an objective on the session.
         assert!(sess_runner.session.goal.read().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_runner_compacts_pending_request_before_next_model_call() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx(requests.clone());
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "seed enough usage".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        assert_eq!(requests.lock().len(), 1);
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "pending user message after threshold".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(request_text(&recorded[1]).trim(), COMPACTION_PROMPT.trim());
+        let continuation_history = recorded[2]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(continuation_history.contains("compacted handoff"));
+        assert!(request_text(&recorded[2]).contains("pending user message after threshold"));
+
+        let conversation_text = sess_runner
+            .conversation
+            .messages
+            .iter()
+            .filter_map(|message| serde_json::from_value::<Message>(message.clone()).ok())
+            .filter_map(|message| message.text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(conversation_text.contains("compacted handoff"));
+        assert!(conversation_text.contains("pending user message after threshold"));
     }
 
     #[tokio::test]
