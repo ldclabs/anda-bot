@@ -1,4 +1,6 @@
-use anda_core::{BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolOutput};
+use anda_core::{
+    BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolGroupInfo, ToolOutput,
+};
 use anda_engine::context::BaseCtx;
 use anda_kip::Response;
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,25 @@ use super::types::SendMessage;
 use crate::cron::deserialize_optional_usize_from_number_or_string;
 use crate::engine::SessionRequestMeta;
 use crate::util::request_meta::request_meta_extra_as;
+
+/// Stable id of the IM channel messaging capability group.
+pub const CHANNEL_TOOL_GROUP_ID: &str = "im_channel";
+
+/// Returns the shared [`ToolGroupInfo`] for the IM channel messaging tools.
+///
+/// Both `send_im_message` and `list_im_channels` report this so the registry
+/// presents them as one bundle. The registry fills in the member list from the
+/// tools actually registered.
+pub fn channel_tool_group_info() -> ToolGroupInfo {
+    ToolGroupInfo {
+        id: CHANNEL_TOOL_GROUP_ID.to_string(),
+        title: "IM channels".to_string(),
+        description: "Send messages to recipients on configured IM channels (Telegram, WeChat, Discord, Lark), independent of where the current conversation originated.".to_string(),
+        instructions: Some(
+            "These tools share one set of configured IM channels. Typical flow: use `list_im_channels` first to discover channel ids and recently active recipient ids, then `send_im_message` to deliver a message to a recipient on a chosen channel (optionally in a thread).".to_string(),
+        ),
+    }
+}
 
 /// Sends a message to a recipient on a configured IM channel, regardless of
 /// where the current conversation originated (any -> agent -> IM).
@@ -59,6 +80,10 @@ impl Tool<BaseCtx> for SendImMessageTool {
             parameters: send_im_message_parameters(),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(channel_tool_group_info())
     }
 
     async fn call(
@@ -157,6 +182,10 @@ impl Tool<BaseCtx> for ListImChannelsTool {
             parameters: list_im_channels_parameters(),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(channel_tool_group_info())
     }
 
     async fn call(
@@ -508,5 +537,34 @@ mod tests {
             assert_eq!(definition.strict, Some(true));
             assert!(!definition.description.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn im_tools_form_one_capability_group() {
+        use anda_core::ToolSet;
+
+        let channel = Arc::new(RecordingChannel::new("wechat:test"));
+        let sender = test_sender(channel).await;
+
+        let mut tools = ToolSet::<BaseCtx>::new();
+        tools
+            .add(Arc::new(SendImMessageTool::new(sender.clone())))
+            .unwrap();
+        tools
+            .add(Arc::new(ListImChannelsTool::new(sender)))
+            .unwrap();
+
+        let groups = tools.groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, CHANNEL_TOOL_GROUP_ID);
+        // Both registered tools land in the group, sorted by name.
+        assert_eq!(
+            groups[0].members,
+            vec![
+                "list_im_channels".to_string(),
+                "send_im_message".to_string(),
+            ]
+        );
+        assert!(groups[0].instructions.is_some());
     }
 }

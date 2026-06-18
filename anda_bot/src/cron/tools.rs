@@ -1,4 +1,6 @@
-use anda_core::{BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolOutput};
+use anda_core::{
+    BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolGroupInfo, ToolOutput,
+};
 use anda_engine::context::BaseCtx;
 use anda_kip::Response;
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,26 @@ use super::{
     },
 };
 use crate::engine::SessionRequestMeta;
+
+/// Stable id of the cron scheduler capability group.
+pub const CRON_TOOL_GROUP_ID: &str = "cron_scheduler";
+
+/// Returns the shared [`ToolGroupInfo`] for the cron scheduler tools.
+///
+/// Every `create_cron_job` / `update_cron_job` / `manage_cron_job` /
+/// `list_cron_jobs` / `list_cron_runs` tool reports this so the registry
+/// presents them as one bundle. The registry fills in the member list from the
+/// tools actually registered.
+pub fn cron_tool_group_info() -> ToolGroupInfo {
+    ToolGroupInfo {
+        id: CRON_TOOL_GROUP_ID.to_string(),
+        title: "Cron scheduler".to_string(),
+        description: "Schedule, inspect, and manage recurring or one-off background jobs that run shell commands or agent prompts.".to_string(),
+        instructions: Some(
+            "These tools share one cron job store. Typical flow: use `create_cron_job` to schedule a shell command or agent prompt (with a cron expression, RFC3339 timestamp, or interval/once duration), `list_cron_jobs` to discover existing jobs and their ids, and `list_cron_runs` to review run history. Use `update_cron_job` to change a job's schedule or payload in place, and `manage_cron_job` to get, pause, resume, or remove a job by id.".to_string(),
+        ),
+    }
+}
 
 #[derive(Clone)]
 pub struct CreateCronTool {
@@ -53,6 +75,10 @@ impl Tool<BaseCtx> for CreateCronTool {
             parameters: create_cron_job_parameters(),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(cron_tool_group_info())
     }
 
     async fn call(
@@ -113,6 +139,10 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
             parameters: update_cron_job_parameters(),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(cron_tool_group_info())
     }
 
     async fn call(
@@ -356,6 +386,10 @@ impl Tool<BaseCtx> for ManageCronJobTool {
         }
     }
 
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(cron_tool_group_info())
+    }
+
     async fn call(
         &self,
         _ctx: BaseCtx,
@@ -426,6 +460,10 @@ impl Tool<BaseCtx> for ListCronJobsTool {
         }
     }
 
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(cron_tool_group_info())
+    }
+
     async fn call(
         &self,
         _ctx: BaseCtx,
@@ -473,6 +511,10 @@ impl Tool<BaseCtx> for ListCronRunsTool {
             parameters: list_cron_runs_parameters(),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(cron_tool_group_info())
     }
 
     async fn call(
@@ -792,5 +834,42 @@ mod tests {
             assert_eq!(definition.strict, Some(true));
             assert!(!definition.description.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn cron_tools_form_one_capability_group() {
+        use anda_core::ToolSet;
+
+        let cron = test_cron_runtime().await;
+        let mut tools = ToolSet::<BaseCtx>::new();
+        tools
+            .add(Arc::new(CreateCronTool::new(cron.clone())))
+            .unwrap();
+        tools
+            .add(Arc::new(UpdateCronJobTool::new(cron.clone())))
+            .unwrap();
+        tools
+            .add(Arc::new(ManageCronJobTool::new(cron.clone())))
+            .unwrap();
+        tools
+            .add(Arc::new(ListCronJobsTool::new(cron.clone())))
+            .unwrap();
+        tools.add(Arc::new(ListCronRunsTool::new(cron))).unwrap();
+
+        let groups = tools.groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, CRON_TOOL_GROUP_ID);
+        // All five registered tools land in the group, sorted by name.
+        assert_eq!(
+            groups[0].members,
+            vec![
+                "create_cron_job".to_string(),
+                "list_cron_jobs".to_string(),
+                "list_cron_runs".to_string(),
+                "manage_cron_job".to_string(),
+                "update_cron_job".to_string(),
+            ]
+        );
+        assert!(groups[0].instructions.is_some());
     }
 }

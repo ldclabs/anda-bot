@@ -130,13 +130,19 @@ mod tests {
         assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$external_user" }"#));
         assert!(SELF_INSTRUCTIONS.contains("external untrusted user"));
         assert!(SELF_INSTRUCTIONS.contains("Available Callable Names"));
+        assert!(SELF_INSTRUCTIONS.contains("tools_groups"));
         assert!(SELF_INSTRUCTIONS.contains("tools_select"));
+        assert!(SELF_INSTRUCTIONS.contains(r#"{ "group": "group_id" }"#));
         assert!(SELF_INSTRUCTIONS.contains("Never invent tool parameters"));
     }
 
     #[test]
     fn render_system_instructions_groups_runtime_context() {
-        let tools = vec!["shell".to_string(), "tools_select".to_string()];
+        let tools = vec![
+            "shell".to_string(),
+            "tools_groups".to_string(),
+            "tools_select".to_string(),
+        ];
         let prompt = render_system_instructions(SystemInstructionSections {
             self_knowledge: "{}",
             notes: "[]",
@@ -149,7 +155,7 @@ mod tests {
 
         assert!(prompt.contains("# Runtime Context"));
         assert!(prompt.contains("## Available Callable Names"));
-        assert!(prompt.contains("shell, tools_select"));
+        assert!(prompt.contains("shell, tools_groups, tools_select"));
         assert!(prompt.contains("schemas are intentionally omitted"));
         assert!(prompt.contains("current workspace (authoritative): /workspace/current"));
     }

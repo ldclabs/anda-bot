@@ -379,6 +379,7 @@ impl Engines {
                     "read_file".to_string(),
                     "search_file".to_string(),
                     "note".to_string(),
+                    "tools_groups".to_string(),
                     "tools_select".to_string(),
                 ]),
         );

@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.9.15"
+version = "0.9.16"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -253,9 +253,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffc3bb58c95082c76dae0b66ee9a153b9ede15071e9085dc64716390542de562"
+checksum = "847e3fa746904b811f25ee9193dbfe417bbe8e1f63908ed7161f3e70c84b2e8d"
 dependencies = [
  "anda_db_schema",
  "async-trait",
@@ -406,9 +406,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.13.5"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3feb49b76d4def18eb7dd01f4375221791c8c2adaafa4dc11cd7a57d2088fbf8"
+checksum = "589d4e78861133c5c40b8db0532c139c15704e9db710b8e1d2e6bbb45cd0556b"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -451,7 +451,7 @@ dependencies = [
  "structured-logger",
  "tokio",
  "tokio-util",
- "url",
+ "unicode-segmentation",
  "windows-sys 0.52.0",
 ]
 
@@ -1070,9 +1070,9 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "bytes"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "bzip2"

@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.16] — 2026-06-18
+
+### Added
+
+- **Built-in tools now advertise capability groups**: cron scheduler tools and IM channel messaging tools now report shared `ToolGroupInfo` metadata so tool selection can present related tools as coherent bundles with usage guidance.
+
+### Changed
+
+- **Agent instructions now expose capability group discovery**: the runtime prompt and default skill tool set now surface `tools_groups`, so agents can list bundles before expanding them through `tools_select`.
+- **Version synchronized for the 0.9.16 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.16`, and aligned bundled Anda dependencies with `anda_core`/`anda_engine` `0.13.6`.
+- **Shared HTTP requests can run longer before timing out**: increased the shared HTTP client timeout from 120 seconds to 300 seconds for slow network or long-running remote API calls.
+
 ## [0.9.15] — 2026-06-18
 
 ### Added
