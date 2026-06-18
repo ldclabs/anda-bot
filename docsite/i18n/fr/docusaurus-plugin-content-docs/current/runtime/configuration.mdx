@@ -6,7 +6,7 @@ description: Configurer fournisseurs de modèles, dossiers locaux, proxy, confid
 
 # Configuration du runtime
 
-Anda stocke son état dans `~/.anda` par défaut. Le fichier principal est `~/.anda/config.yaml`.
+Anda stocke son état dans `~/.anda` par défaut. Le fichier principal est `~/.anda/config.yaml`. La configuration MCP optionnelle se trouve dans `~/.anda/mcp.json`.
 
 ## Fournisseurs de modèles
 
@@ -52,11 +52,54 @@ GLM_API_KEY
 | `tts` | Lecture vocale. |
 | `channels` | Telegram, WeChat, Discord, Lark/Feishu. |
 
+## Serveurs MCP
+
+Anda Bot peut se connecter à des serveurs MCP via des processus stdio ou des
+endpoints HTTP. Placez une configuration MCP portable dans `~/.anda/mcp.json`,
+puis redémarrez le daemon. Le fichier accepte `mcpServers` et `servers` comme
+root key afin de coller des configurations venant d'autres outils MCP avec peu
+de changements.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Les outils MCP distants apparaissent comme des outils Anda nommés
+`mcp_<server_id>_<remote_tool>`. Les chaînes de configuration prennent en
+charge l'expansion `$VAR` et `${VAR}`. `ANDA_HOME` et `ANDA_WORKSPACE` sont
+intégrées. Pour les serveurs stdio, `command` est lancé directement sans shell ;
+si `cwd` est omis, le premier workspace Anda est utilisé. Si `type` est omis,
+Anda infère `stdio` depuis `command` ou `http` depuis `url`.
+
+L'agent peut aussi ajouter un serveur au moment de l'exécution avec
+`add_mcp_server`. Utilisez `persist: false` uniquement pour le daemon courant,
+ou `persist: true` pour enregistrer le serveur dans `~/.anda/mcp.json` et le
+conserver après les redémarrages. Ses champs de serveur reflètent une entrée
+`mcp.json` : `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
+`enabled`, `include` et `exclude`, plus les champs propres à l'outil `id` et
+`persist`.
+
 ## Dossiers locaux
 
 ```text
 ~/.anda/
   config.yaml
+  mcp.json
   channels/
   db/
   keys/

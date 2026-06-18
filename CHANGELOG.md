@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.9.15] — 2026-06-18
+
+### Added
+
+- **MCP servers can be exposed as dynamic Anda tools**: the daemon now loads optional MCP server definitions from `ANDA_HOME/mcp.json`, registers `anda_engine` MCP tool providers, and makes remote MCP tools discoverable through the normal tool-selection flow.
+- **Runtime MCP server registration tool**: added `add_mcp_server` so agents can connect stdio or Streamable HTTP MCP servers at runtime, optionally persist them to `mcp.json`, and use include/exclude filters for remote tools.
+- **MCP configuration documentation**: documented the standalone `mcp.json` format, supported transports, environment/path expansion, persistence behavior, and examples across the README and runtime configuration docs.
+
+### Changed
+
+- **Version synchronized for the 0.9.15 release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.9.15`, and aligned bundled Anda dependencies with `anda_core`/`anda_engine` `0.13.5`.
+
 ## [0.9.14] — 2026-06-17
 
 ### Changed

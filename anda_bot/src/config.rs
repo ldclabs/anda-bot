@@ -11,12 +11,14 @@ use std::{
 use crate::util::text::read_text_file;
 
 mod channel;
+mod mcp;
 mod model;
 mod transcription;
 mod tts;
 mod user;
 
 pub use channel::*;
+pub use mcp::*;
 pub use model::*;
 pub use transcription::*;
 pub use tts::*;

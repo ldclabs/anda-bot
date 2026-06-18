@@ -6,7 +6,7 @@ description: Configure model providers, local directories, proxies, privacy boun
 
 # Runtime Configuration
 
-Anda stores runtime state in `~/.anda` by default. The configuration file is `~/.anda/config.yaml`, created automatically on first launch.
+Anda stores runtime state in `~/.anda` by default. The main configuration file is `~/.anda/config.yaml`, created automatically on first launch. Optional MCP server configuration lives in `~/.anda/mcp.json`.
 
 ## Model Providers
 
@@ -52,11 +52,52 @@ GLM_API_KEY
 | `tts` | Provider for voice playback. |
 | `channels` | Telegram, WeChat, Discord, Lark/Feishu, and other channel configuration. |
 
+## MCP Servers
+
+Anda Bot can connect to MCP servers through stdio child processes or HTTP
+endpoints. Put a portable MCP configuration in `~/.anda/mcp.json`, then restart
+the daemon. The file accepts both `mcpServers` and `servers` as the root key so
+you can paste configs from other MCP-compatible tools with minimal changes.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Remote MCP tools appear as Anda tools named like
+`mcp_<server_id>_<remote_tool>`. Config strings support `$VAR` and `${VAR}`
+environment expansion. `ANDA_HOME` and `ANDA_WORKSPACE` are built in. For stdio
+servers, `command` is spawned directly without a shell; when `cwd` is omitted,
+the first Anda workspace is used. If `type` is omitted, Anda infers `stdio` from
+`command` or `http` from `url`.
+
+The agent can also add a server at runtime with `add_mcp_server`. Set
+`persist: false` for the current daemon only, or `persist: true` to save the
+server into `~/.anda/mcp.json` for future restarts. Its server fields mirror one
+`mcp.json` entry: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
+`enabled`, `include`, and `exclude`, plus the tool-only `id` and `persist`
+fields.
+
 ## Local Directory Structure
 
 ```text
 ~/.anda/
   config.yaml
+  mcp.json
   anda-daemon.pid
   channels/
   db/

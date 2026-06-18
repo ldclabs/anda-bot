@@ -32,7 +32,11 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::{auto_update, brain, channel, config::Config, cron, engine, gateway, logger, util};
+use crate::{
+    auto_update, brain, channel,
+    config::{Config, McpSettings},
+    cron, engine, gateway, logger, util,
+};
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
 
@@ -291,6 +295,7 @@ impl Daemon {
         let outer_http_client =
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
         let models = Arc::new(self.cfg.models(outer_http_client.clone()));
+        let mcp = McpSettings::from_file(&self.home).await?;
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_registry = self.cfg.user_registry(user_pubkey.clone())?;
         let default_user = user_registry.default_user();
@@ -325,6 +330,7 @@ impl Daemon {
             workspaces: self.workspaces(),
             tts: self.cfg.tts.clone(),
             transcription: self.cfg.transcription.clone(),
+            mcp,
             https_proxy: self.cfg.https_proxy.clone(),
             auto_updater,
         };

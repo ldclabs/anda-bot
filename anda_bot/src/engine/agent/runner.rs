@@ -1920,7 +1920,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(continuation_history.contains("compacted handoff"));
-        assert_eq!(request_text(&recorded[1]).matches(chunk.as_str()).count(), 3);
+        assert_eq!(
+            request_text(&recorded[1]).matches(chunk.as_str()).count(),
+            3
+        );
     }
 
     #[tokio::test]

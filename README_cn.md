@@ -191,6 +191,41 @@ anda browser token --days 30
 
 然后在 `chrome://extensions` 开启开发者模式，加载 [chrome_extension](chrome_extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
 
+### MCP 服务
+
+Anda Bot 可以连接 MCP 服务，并把远端工具暴露给 agent。把可移植 MCP 配置放到
+`~/.anda/mcp.json`，然后重启 daemon。`mcp.json` 同时支持 `mcpServers` 和
+`servers` 两种 root key，方便直接粘贴其它 MCP 工具里的配置。
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+配置字符串支持 `$VAR` 和 `${VAR}` 环境变量展开。`ANDA_HOME` 和
+`ANDA_WORKSPACE` 是内置变量；未配置 `cwd` 时，stdio 服务默认在第一个 Anda
+workspace 中启动。
+
+智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
+表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，
+重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、
+`command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和
+`exclude`，另外再加 tool 专用的 `id` 和 `persist`。
+
 当前支持：
 
 - Telegram
@@ -250,7 +285,7 @@ channels:
 
 设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
 
-更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
+MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
 
 ## 文件、技能与自动化
 

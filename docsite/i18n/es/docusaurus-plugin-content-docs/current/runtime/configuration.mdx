@@ -6,7 +6,7 @@ description: Configura proveedores de modelos, directorios locales, proxy, priva
 
 # Configuración del runtime
 
-Anda guarda su estado en `~/.anda` por defecto. El archivo principal es `~/.anda/config.yaml`, creado en el primer arranque.
+Anda guarda su estado en `~/.anda` por defecto. El archivo principal es `~/.anda/config.yaml`, creado en el primer arranque. La configuración MCP opcional vive en `~/.anda/mcp.json`.
 
 ## Proveedores de modelos
 
@@ -52,11 +52,52 @@ GLM_API_KEY
 | `tts` | Proveedor para reproducción de voz. |
 | `channels` | Configuración de Telegram, WeChat, Discord y Lark/Feishu. |
 
+## Servidores MCP
+
+Anda Bot puede conectarse a servidores MCP mediante procesos stdio o endpoints
+HTTP. Pon una configuración MCP portable en `~/.anda/mcp.json` y reinicia el
+daemon. El archivo acepta `mcpServers` y `servers` como root key para pegar
+configuraciones de otras herramientas MCP con pocos cambios.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Las herramientas MCP remotas aparecen como herramientas de Anda con nombres como
+`mcp_<server_id>_<remote_tool>`. Las cadenas de configuración admiten expansión
+de variables `$VAR` y `${VAR}`. `ANDA_HOME` y `ANDA_WORKSPACE` están integradas.
+Para servidores stdio, `command` se inicia directamente sin shell; si `cwd` se
+omite, se usa el primer workspace de Anda. Si `type` se omite, Anda infiere
+`stdio` desde `command` o `http` desde `url`.
+
+El agente también puede añadir un servidor en tiempo de ejecución con
+`add_mcp_server`. Usa `persist: false` solo para el daemon actual, o
+`persist: true` para guardar el servidor en `~/.anda/mcp.json` y conservarlo
+tras reinicios. Sus campos de servidor reflejan una entrada de `mcp.json`:
+`type`, `command`, `args`, `env`, `cwd`, `url`, `headers`, `enabled`, `include`
+y `exclude`, más los campos propios de la herramienta `id` y `persist`.
+
 ## Directorios locales
 
 ```text
 ~/.anda/
   config.yaml
+  mcp.json
   channels/
   db/
   keys/

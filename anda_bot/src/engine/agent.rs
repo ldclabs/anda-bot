@@ -51,7 +51,7 @@ use meta::{
 use session::{ConversationInput, Session};
 
 use super::{
-    CompletionHook,
+    CompletionHook, McpServerTool,
     browser::ChromeBrowserTool,
     conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalTool, GoalToolState},
@@ -142,6 +142,7 @@ fn base_tool_dependencies() -> Vec<String> {
         EditFileTool::NAME.to_string(),
         WriteFileTool::NAME.to_string(),
         TodoTool::NAME.to_string(),
+        McpServerTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
         cron::CreateCronTool::NAME.to_string(),
@@ -166,6 +167,7 @@ fn base_tools() -> Vec<String> {
         GoalTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         TodoTool::NAME.to_string(),
+        McpServerTool::NAME.to_string(),
         ShellTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
@@ -1194,6 +1196,8 @@ mod tests {
     fn base_agent_tools_include_goal_tool() {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(base_tools().contains(&GoalTool::NAME.to_string()));
+        assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
+        assert!(base_tools().contains(&McpServerTool::NAME.to_string()));
     }
 
     #[test]
@@ -1406,6 +1410,15 @@ mod tests {
         ));
         let bridge = Arc::new(BrowserBridge::new());
         let skills = Arc::new(SkillManager::new_with_dirs(home.join("skills"), vec![]));
+        let mcp_provider =
+            Arc::new(anda_engine::extension::mcp::McpToolProvider::new(Vec::new()).unwrap());
+        let add_mcp_server = Arc::new(McpServerTool::new(
+            mcp_provider.clone(),
+            home.clone(),
+            Some(home.join("workspace")),
+            crate::config::McpSettings::file_path(&home),
+            Arc::new(tokio::sync::Mutex::new(())),
+        ));
         let cron_runtime = Arc::new(
             crate::cron::CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())
                 .await
@@ -1414,7 +1427,7 @@ mod tests {
 
         let bot = Arc::new(AndaBot::new(
             brain_client.clone(),
-            home,
+            home.clone(),
             conversations_tool.clone(),
             resource_store.clone(),
             vec![],
@@ -1483,11 +1496,15 @@ mod tests {
             .unwrap()
             .register_tool(skills.clone())
             .unwrap()
+            .register_tool(add_mcp_server)
+            .unwrap()
             .register_tool(resource_store.clone())
             .unwrap()
             .register_tool(conversations_tool.clone())
             .unwrap()
             .register_tool(bot.clone())
+            .unwrap()
+            .register_tool_provider(mcp_provider)
             .unwrap()
             .register_agent(image, Some("image".to_string()))
             .unwrap()

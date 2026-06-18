@@ -3,7 +3,7 @@ use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
     engine::{Engine, EngineRef},
-    extension::{fs, note, shell, skill, todo},
+    extension::{fs, mcp, note, shell, skill, todo},
     management::{BaseManagement, Visibility},
     memory::Conversations,
     model::{Model, Models, reqwest},
@@ -37,6 +37,7 @@ mod browser_ws;
 mod conversation;
 mod goal;
 mod idle;
+mod mcp_server;
 mod model_retry;
 mod multimodal;
 mod prompt;
@@ -62,6 +63,7 @@ pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub use idle::{BrainSleepIdleHook, IdleHook};
+pub(crate) use mcp_server::McpServerTool;
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
@@ -78,6 +80,7 @@ pub struct Engines {
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
     runtime_models: RuntimeModels,
+    config_write_lock: Arc<Mutex<()>>,
     home_dir: PathBuf,
 }
 
@@ -97,6 +100,7 @@ pub struct EngineConfig {
     pub workspaces: Vec<PathBuf>,
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
+    pub mcp: config::McpSettings,
     pub https_proxy: Option<String>,
     pub auto_updater: Arc<AutoUpdater>,
 }
@@ -243,6 +247,8 @@ impl Engines {
     ) -> Result<Self, BoxError> {
         let active_im_channels = channel_sender.channels();
         let config_path = config::Config::file_path(&cfg.home_dir);
+        let mcp_config_path = config::McpSettings::file_path(&cfg.home_dir);
+        let config_write_lock = Arc::new(Mutex::new(()));
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
             hasher.update(cfg.id_key.as_bytes());
@@ -328,8 +334,9 @@ impl Engines {
         };
 
         let shell_tool = {
-            let runtime =
-                Arc::new(shell_runtime::NativeShellRuntime::new(default_workspace).insecure());
+            let runtime = Arc::new(
+                shell_runtime::NativeShellRuntime::new(default_workspace.clone()).insecure(),
+            );
             let mut envs = vec![shell::CustomEnv {
                 key: "ANDA_HOME".to_string(),
                 value: cfg.home_dir.to_string_lossy().to_string(),
@@ -418,6 +425,19 @@ impl Engines {
                 .map(|manager| manager.supported_audio_formats())
                 .unwrap_or_default(),
         };
+        let mcp_provider = {
+            let servers = cfg
+                .mcp
+                .server_configs(&cfg.home_dir, Some(default_workspace.as_path()))?;
+            Arc::new(mcp::McpToolProvider::new(servers)?)
+        };
+        let add_mcp_server_tool = Arc::new(McpServerTool::new(
+            mcp_provider.clone(),
+            cfg.home_dir.clone(),
+            Some(default_workspace.clone()),
+            mcp_config_path,
+            config_write_lock.clone(),
+        ));
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
@@ -450,6 +470,7 @@ impl Engines {
             .register_tool(browser_input_tool)?
             .register_tool(browser_script_tool)?
             .register_tool(skills_tool.clone())?
+            .register_tool(add_mcp_server_tool)?
             .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
             .register_tool(bot.clone())?;
@@ -467,6 +488,7 @@ impl Engines {
                 )))?
                 .register_tool(Arc::new(channel::ListImChannelsTool::new(channel_sender)))?;
         }
+        engine_builder = engine_builder.register_tool_provider(mcp_provider)?;
 
         let engine = engine_builder
             .register_agent(
@@ -523,6 +545,7 @@ impl Engines {
             voice_capabilities,
             auto_updater: cfg.auto_updater,
             runtime_models,
+            config_write_lock,
             home_dir: cfg.home_dir,
         })
     }
@@ -537,7 +560,7 @@ impl Engines {
             bot: self.bot.clone(),
             cancel_token,
             runtime_models: self.runtime_models.clone(),
-            config_write_lock: Arc::new(Mutex::new(())),
+            config_write_lock: self.config_write_lock.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),

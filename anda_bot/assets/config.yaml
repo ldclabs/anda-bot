@@ -22,6 +22,10 @@ log_level: warn
 # The first configured workspace becomes the default workspace for file and shell tools.
 # workspaces: [/path/to/project]
 
+# Optional MCP servers live in ANDA_HOME/mcp.json, not in config.yaml.
+# The agent can also add MCP servers at runtime with add_mcp_server.
+# Use persist: true in that tool call to write the server to mcp.json.
+
 # Optional trusted users that can share this daemon and the same Anda agent.
 # Run `anda user create alice` to generate a private key and register the
 # matching Ed25519 public key here. Channel entries can set `user:` to one of

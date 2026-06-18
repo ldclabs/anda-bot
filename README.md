@@ -200,6 +200,43 @@ anda browser token --days 30
 
 Then load [chrome_extension](chrome_extension) from `chrome://extensions` with Developer mode enabled, paste the printed Gateway URL and token into the side panel settings, and start chatting from any webpage.
 
+### MCP Servers
+
+Anda Bot can connect to MCP servers and expose their tools to the agent. Put a
+portable MCP configuration in `~/.anda/mcp.json`, then restart the daemon.
+`mcp.json` accepts both `mcpServers` and `servers` as the root key so you can
+paste configs from other MCP-compatible tools with minimal changes.
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Configured strings support `$VAR` and `${VAR}` environment expansion. `ANDA_HOME`
+and `ANDA_WORKSPACE` are built in, and stdio servers default to the first Anda
+workspace as their working directory.
+
+The agent can also connect a new MCP server during a conversation by calling
+`add_mcp_server`. Use `persist: false` for the current daemon only, or
+`persist: true` to write the server to `~/.anda/mcp.json` for future restarts.
+Its server fields mirror one `mcp.json` entry: `type`, `command`, `args`,
+`env`, `cwd`, `url`, `headers`, `enabled`, `include`, and `exclude`, plus the
+tool-only `id` and `persist` fields.
+
 Supported channel families:
 
 - Telegram
@@ -259,7 +296,7 @@ channels:
 
 Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
 
-See [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for full channel, transcription, and TTS examples.
+See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for channel, transcription, and TTS examples.
 
 ## Files, Skills, And Automations
 
