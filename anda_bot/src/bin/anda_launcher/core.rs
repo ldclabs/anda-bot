@@ -883,7 +883,9 @@ pub fn acquire_launcher_instance_lock(
 }
 
 #[cfg(unix)]
-fn acquire_unix_launcher_instance_lock(home: &Path) -> LauncherResult<Option<LauncherInstanceLock>> {
+fn acquire_unix_launcher_instance_lock(
+    home: &Path,
+) -> LauncherResult<Option<LauncherInstanceLock>> {
     // The lock lives in the app-owned home directory rather than $TMPDIR.
     // macOS purges files under $TMPDIR (/var/folders/.../T) that have not been
     // accessed for a few days, and holding an flock fd never refreshes the

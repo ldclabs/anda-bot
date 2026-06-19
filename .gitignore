@@ -35,4 +35,4 @@ claw
 __pycache__/
 *.pyc
 .DS_Store
-video
+chrome-extension/video/

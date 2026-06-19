@@ -282,16 +282,20 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
 // single-instance lock. The user most likely relaunched because the menu bar
 // icon vanished while the launcher kept running, so restore it before exiting.
 pub fn activate_running_instance() {
-    // A launchd kickstart restarts the launcher in the proper GUI session and
-    // reliably brings the icon back — this is exactly the manual
-    // `launchctl kickstart -k gui/<uid>/<label>` recovery. Prefer it whenever
-    // the LaunchAgent is installed (the common launch-at-login case).
-    if launch_agent_installed() && kickstart_launch_agent() {
+    // Only force-restart the LaunchAgent when launchd says it is currently
+    // managing a running launcher process. A plist can exist while the active
+    // lock holder is a manually started launcher; kickstarting in that state
+    // starts a second launchd job that immediately loses the same lock.
+    if launch_agent_running() && kickstart_launch_agent() {
         return;
     }
 
-    // No LaunchAgent to restart (launch-at-login disabled): fall back to asking
-    // the running instance to rebuild its status item in place.
+    // No launchd-managed process to restart: ask the lock holder to rebuild
+    // its status item in place.
+    post_reactivation_notification();
+}
+
+fn post_reactivation_notification() {
     let center = NSDistributedNotificationCenter::defaultCenter();
     unsafe {
         center.postNotificationName_object(nsstring(REACTIVATE_NOTIFICATION).as_ref(), None);
@@ -917,6 +921,27 @@ fn launch_agent_installed() -> bool {
     launch_agent_path().is_ok_and(|path| path.exists())
 }
 
+fn launch_agent_running() -> bool {
+    Command::new("launchctl")
+        .arg("print")
+        .arg(format!(
+            "gui/{}/{}",
+            unsafe { libc::geteuid() },
+            LAUNCH_AGENT_LABEL
+        ))
+        .output()
+        .is_ok_and(|output| output.status.success() && launchctl_print_has_pid(&output.stdout))
+}
+
+fn launchctl_print_has_pid(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output).lines().any(|line| {
+        let Some(pid) = line.trim().strip_prefix("pid = ") else {
+            return false;
+        };
+        pid.trim().parse::<u32>().is_ok_and(|pid| pid != 0)
+    })
+}
+
 fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
     let app_path = launcher_app_path()?;
     let contents = app_path.join("Contents");
@@ -1168,6 +1193,20 @@ mod tests {
 
         assert!(plist.contains("<key>CFBundleIconFile</key>"));
         assert!(plist.contains("<string>AndaBot</string>"));
+    }
+
+    #[test]
+    fn launchctl_print_has_pid_detects_running_job() {
+        let output = b"gui/501/ai.anda.anda-bot.launcher = {\n\tpid = 12345\n}";
+
+        assert!(launchctl_print_has_pid(output));
+    }
+
+    #[test]
+    fn launchctl_print_has_pid_rejects_stopped_or_missing_job() {
+        assert!(!launchctl_print_has_pid(b"state = waiting\n"));
+        assert!(!launchctl_print_has_pid(b"pid = 0\n"));
+        assert!(!launchctl_print_has_pid(b"pid = not-a-number\n"));
     }
 
     #[test]

@@ -200,7 +200,10 @@ unsafe extern "system" fn wnd_proc(
 // The registered "TaskbarCreated" id, or None if registration failed — the
 // filter keeps a failed (zero) registration from ever matching WM_NULL.
 fn taskbar_created_message() -> Option<u32> {
-    TASKBAR_CREATED.get().copied().filter(|&message| message != 0)
+    TASKBAR_CREATED
+        .get()
+        .copied()
+        .filter(|&message| message != 0)
 }
 
 fn handle_command(hwnd: HWND, id: usize) {
