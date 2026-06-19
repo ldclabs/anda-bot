@@ -1,4 +1,4 @@
-Anda Bot brings your local Anda agent into Edge, so you can ask for help while you browse and let the agent work with the pages, tabs, files, command-line tools, and Skills on your own computer.
+Anda Bot adds an AI assistant to the Microsoft Edge side panel that can read and act on the page and tabs you are browsing — summarize the current tab, gather information across tabs, fill forms, click, navigate, and take screenshots. The AI itself runs locally on your own computer (a companion app you install and connect with a Gateway URL and token), so your prompts and page content are processed by software you control.
 
 What it is for
 
@@ -37,6 +37,8 @@ anda start
 anda browser token --days 365
 
 Copy the printed Gateway URL and Bearer token into the extension settings. Once connected, you can chat with Anda from the Edge side panel.
+
+Full setup guide: https://docs.anda.bot/docs/quick-start/browser-extension
 
 Privacy and permissions in plain language
 

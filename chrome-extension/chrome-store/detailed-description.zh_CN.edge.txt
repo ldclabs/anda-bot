@@ -1,4 +1,4 @@
-Anda Bot 会把你本机运行的 Anda 智能体带进 Edge。你可以一边浏览网页，一边在侧边栏和它对话，让它结合当前网页、浏览器标签页、本地文件、命令行工具和 Skills，帮你推进真正需要多步骤完成的电脑工作。
+Anda Bot 在 Microsoft Edge 侧边栏里加入一个 AI 助手，它能读取并操作你正在浏览的网页和标签页——总结当前标签、跨标签页收集信息、填写表单、点击、导航、截图。真正的 AI 跑在你自己的电脑上（一个你自行安装、并用 Gateway URL 和令牌连接的本地配套程序），所以你的提示词和网页内容都由你掌控的软件处理。
 
 它有什么用途
 
@@ -37,6 +37,8 @@ anda start
 anda browser token --days 365
 
 把命令输出的 Gateway URL 和 Bearer token 粘贴到扩展设置中。连接成功后，就可以在 Edge 侧边栏里与 Anda 对话。
+
+完整安装指南：https://docs.anda.bot/docs/quick-start/browser-extension
 
 隐私和权限说明
 

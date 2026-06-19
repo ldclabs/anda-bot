@@ -6,17 +6,20 @@ description: Use the Anda Bot browser side panel with your local Anda daemon.
 
 # Browser Extension
 
-The Anda Bot browser extension opens Anda in Chrome's native side panel today. It is a bridge to the local Anda daemon running on your own computer, so browser context, terminal tools, project files, Skills, subagents, channels, and Brain memory can stay in one runtime.
+The Anda Bot browser extension opens Anda in the native side panel of Chromium-based browsers — Google Chrome and Microsoft Edge. It is a bridge to the local Anda daemon running on your own computer, so browser context, terminal tools, project files, Skills, subagents, channels, and Brain memory can stay in one runtime.
 
 ## Requirements
 
-- Chrome 116 or newer.
+- Google Chrome or Microsoft Edge 116 or newer (any Chromium-based browser).
 - Anda installed and configured with at least one model provider API key.
 - The local Anda daemon running on the computer you control.
 
-Install the extension from the Chrome Web Store:
+Install the extension from your browser's add-on store:
 
-[Anda Bot on Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+- [Anda Bot on the Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd) — Google Chrome and other Chromium browsers.
+- Microsoft Edge: open **Edge Add-ons** (`edge://extensions` → "Get extensions from Microsoft Edge Add-ons") and search for **Anda Bot**.
+
+The same extension and setup steps work in both browsers.
 
 ## Connect the Side Panel
 
@@ -32,7 +35,7 @@ Generate a browser token:
 anda browser token --days 365
 ```
 
-Copy the printed Gateway URL and Bearer token. Open the Anda Bot side panel in Chrome, open settings, paste both values, and save. Once the connection succeeds, you can chat with the same local agent from any webpage.
+Copy the printed Gateway URL and Bearer token. Open the Anda Bot side panel in Chrome or Edge, open settings, paste both values, and save. Once the connection succeeds, you can chat with the same local agent from any webpage.
 
 ## Work from a Page
 
@@ -56,11 +59,11 @@ The extension exposes browser tools to the local daemon. Common actions include:
 
 Page and input actions target the active tab. If the task needs another tab, ask Anda to switch tabs first.
 
-To open local files or folders with `open_file`, enable `Allow access to file URLs` in the browser's extension details page for Anda Bot.
+To open local files or folders with `open_file`, enable `Allow access to file URLs` in the browser's extension details page for Anda Bot (in Edge, open `edge://extensions` → Anda Bot → Details).
 
 ## Local Runtime and Data
 
-The extension stores the Gateway URL, Bearer token, browser session id, and settings in Chrome local storage. It sends prompts, selected attachments, browser session metadata, and relevant tab information to the Anda daemon you connect.
+The extension stores the Gateway URL, Bearer token, browser session id, and settings in the browser's local storage. It sends prompts, selected attachments, browser session metadata, and relevant tab information to the Anda daemon you connect.
 
 The daemon and the model providers configured in your Anda setup may process the prompt and task data. Use the extension only with a daemon and model configuration you trust, especially on sensitive pages.
 
@@ -73,5 +76,5 @@ See [Channels and Voice](../runtime/channels) for channel setup.
 ## Troubleshooting
 
 - If the side panel cannot connect, confirm that `anda start` is still running and that the Gateway URL and Bearer token were pasted exactly.
-- If browser actions fail on `chrome://` pages or the Chrome Web Store, open a normal webpage. Chrome blocks extension scripts on protected pages.
+- If browser actions fail on protected pages such as `chrome://` or `edge://` URLs, or the browser's add-on store, open a normal webpage. Chromium browsers block extension scripts on protected pages.
 - If a model error appears, verify your model provider key in `~/.anda/config.yaml` or the environment variable used to start the daemon.

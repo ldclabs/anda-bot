@@ -6,17 +6,20 @@ description: 使用 Anda Bot 浏览器侧边栏连接本机 Anda daemon。
 
 # 浏览器扩展
 
-Anda Bot 浏览器扩展目前会把 Anda 打开在 Chrome 原生侧边栏中。它是浏览器和你本机 Anda daemon 之间的桥梁，让网页上下文、终端工具、项目文件、Skills、子智能体、频道和 Brain 记忆都留在同一个本地运行时里。
+Anda Bot 浏览器扩展会把 Anda 打开在 Chromium 内核浏览器（Google Chrome 和 Microsoft Edge）的原生侧边栏中。它是浏览器和你本机 Anda daemon 之间的桥梁，让网页上下文、终端工具、项目文件、Skills、子智能体、频道和 Brain 记忆都留在同一个本地运行时里。
 
 ## 准备条件
 
-- Chrome 116 或更新版本。
+- Google Chrome 或 Microsoft Edge 116 或更新版本（任意 Chromium 内核浏览器）。
 - 已安装 Anda，并至少配置一个模型服务商 API key。
 - 本机 Anda daemon 正在你控制的电脑上运行。
 
-从 Chrome Web Store 安装扩展：
+从你浏览器的扩展商店安装扩展：
 
-[Chrome Web Store 上的 Anda Bot](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+- [Chrome Web Store 上的 Anda Bot](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd) —— Google Chrome 及其他 Chromium 浏览器。
+- Microsoft Edge：打开 **Edge 加载项**（`edge://extensions` →“从 Microsoft Edge 外接程序获取扩展”）并搜索 **Anda Bot**。
+
+同一个扩展、同一套设置步骤在两个浏览器中通用。
 
 ## 连接侧边栏
 
@@ -32,7 +35,7 @@ anda start
 anda browser token --days 365
 ```
 
-复制命令输出的 Gateway URL 和 Bearer token。打开 Chrome 中的 Anda Bot 侧边栏，进入设置，粘贴这两个值并保存。连接成功后，你就可以从任意网页和同一个本机智能体对话。
+复制命令输出的 Gateway URL 和 Bearer token。打开 Chrome 或 Edge 中的 Anda Bot 侧边栏，进入设置，粘贴这两个值并保存。连接成功后，你就可以从任意网页和同一个本机智能体对话。
 
 ## 从网页开始工作
 
@@ -58,7 +61,7 @@ anda browser token --days 365
 
 ## 本地运行时和数据
 
-扩展会把 Gateway URL、Bearer token、浏览器 session id 和设置保存在 Chrome 本地存储中。它会把提示词、你选择的附件、浏览器 session 元数据和相关标签页信息发送给你连接的 Anda daemon。
+扩展会把 Gateway URL、Bearer token、浏览器 session id 和设置保存在浏览器本地存储中。它会把提示词、你选择的附件、浏览器 session 元数据和相关标签页信息发送给你连接的 Anda daemon。
 
 你本机的 daemon 以及 Anda 配置里的模型服务商可能会处理提示词和任务数据。尤其在敏感页面上，请只连接你信任的 daemon 和模型配置。
 
@@ -71,5 +74,5 @@ anda browser token --days 365
 ## 故障排查
 
 - 如果侧边栏无法连接，请确认 `anda start` 仍在运行，并且 Gateway URL 和 Bearer token 粘贴准确。
-- 如果浏览器动作在 `chrome://` 页面或 Chrome Web Store 失败，请切换到普通网页。Chrome 会阻止扩展脚本访问受保护页面。
+- 如果浏览器动作在 `chrome://` 或 `edge://` 等受保护页面、或浏览器的扩展商店失败，请切换到普通网页。Chromium 浏览器会阻止扩展脚本访问受保护页面。
 - 如果出现模型错误，请检查 `~/.anda/config.yaml` 中的模型服务商 key，或启动 daemon 时使用的环境变量。

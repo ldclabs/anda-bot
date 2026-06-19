@@ -1,4 +1,4 @@
-Anda Bot integra su agente local de Anda en Edge, para que pueda pedir ayuda mientras navega y permitir que el agente trabaje con las páginas, pestañas, archivos, herramientas de línea de comandos y habilidades (Skills) en su propia computadora.
+Anda Bot añade un asistente de IA al panel lateral de Microsoft Edge que puede leer y actuar sobre la página y las pestañas que está navegando: resumir la pestaña actual, recopilar información entre varias pestañas, rellenar formularios, hacer clic, navegar y tomar capturas de pantalla. La propia IA se ejecuta localmente en su propia computadora (una aplicación complementaria que usted instala y conecta con una Gateway URL y un token), por lo que sus instrucciones y el contenido de las páginas son procesados por software que usted controla.
 
 Para qué sirve
 
@@ -37,6 +37,8 @@ anda start
 anda browser token --days 365
 
 Copie la URL de Gateway y el token Bearer impresos en la configuración de la extensión. Una vez conectado, puede chatear con Anda desde el panel lateral de Edge.
+
+Guía de configuración completa: https://docs.anda.bot/docs/quick-start/browser-extension
 
 Privacidad y permisos en lenguaje sencillo
 

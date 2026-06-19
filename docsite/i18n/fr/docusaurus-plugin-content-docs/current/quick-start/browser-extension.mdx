@@ -6,17 +6,20 @@ description: Utiliser le panneau latéral d'Anda Bot avec votre daemon Anda loca
 
 # Extension navigateur
 
-L'extension navigateur d'Anda Bot ouvre aujourd'hui Anda dans le panneau latéral natif de Chrome. C'est un pont vers le daemon Anda local exécuté sur votre ordinateur, afin que le contexte du navigateur, les outils terminal, les fichiers de projet, les Skills, les subagents, les canaux et la mémoire Brain restent dans le même runtime.
+L'extension navigateur d'Anda Bot ouvre Anda dans le panneau latéral natif des navigateurs basés sur Chromium — Google Chrome et Microsoft Edge. C'est un pont vers le daemon Anda local exécuté sur votre ordinateur, afin que le contexte du navigateur, les outils terminal, les fichiers de projet, les Skills, les subagents, les canaux et la mémoire Brain restent dans le même runtime.
 
 ## Prérequis
 
-- Chrome 116 ou plus récent.
+- Google Chrome ou Microsoft Edge 116 ou plus récent (tout navigateur basé sur Chromium).
 - Anda installé et configuré avec au moins une clé API de fournisseur de modèle.
 - Le daemon Anda local lancé sur l'ordinateur que vous contrôlez.
 
-Installez l'extension depuis le Chrome Web Store :
+Installez l'extension depuis la boutique de modules de votre navigateur :
 
-[Anda Bot sur le Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd)
+- [Anda Bot sur le Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd) — Google Chrome et autres navigateurs Chromium.
+- Microsoft Edge : ouvrez **Edge Add-ons** (`edge://extensions` → « Obtenir des extensions depuis Microsoft Edge Add-ons ») et recherchez **Anda Bot**.
+
+La même extension et les mêmes étapes de configuration fonctionnent dans les deux navigateurs.
 
 ## Connecter le panneau latéral
 
@@ -32,11 +35,11 @@ Générez un token navigateur :
 anda browser token --days 365
 ```
 
-Copiez la Gateway URL et le jeton Bearer affichés. Ouvrez le panneau latéral Anda Bot dans Chrome, ouvrez les réglages, collez les deux valeurs et enregistrez. Une fois la connexion établie, vous pouvez discuter avec le même agent local depuis n'importe quelle page Web.
+Copiez la Gateway URL et le jeton Bearer affichés. Ouvrez le panneau latéral Anda Bot dans Chrome ou Edge, ouvrez les réglages, collez les deux valeurs et enregistrez. Une fois la connexion établie, vous pouvez discuter avec le même agent local depuis n'importe quelle page Web.
 
 ## Travailler depuis une page
 
-Lorsque vous envoyez un message depuis le panneau latéral, Anda reçoit le titre et l'URL de l'onglet actuel comme contexte de requête. Si vous demandez un travail dans le navigateur, l'agent peut utiliser les actions Chrome pour inspecter les pages et manipuler les onglets.
+Lorsque vous envoyez un message depuis le panneau latéral, Anda reçoit le titre et l'URL de l'onglet actuel comme contexte de requête. Si vous demandez un travail dans le navigateur, l'agent peut utiliser les actions de navigateur pour inspecter les pages et manipuler les onglets.
 
 Exemples utiles :
 
@@ -58,18 +61,18 @@ Les actions de page et de saisie ciblent l'onglet actif. Si la tâche nécessite
 
 ## Runtime local et données
 
-L'extension stocke la Gateway URL, le jeton Bearer, l'id de session navigateur et les réglages dans le stockage local de Chrome. Elle envoie les prompts, pièces jointes choisies, métadonnées de session navigateur et informations d'onglets pertinentes au daemon Anda connecté.
+L'extension stocke la Gateway URL, le jeton Bearer, l'id de session navigateur et les réglages dans le stockage local du navigateur. Elle envoie les prompts, pièces jointes choisies, métadonnées de session navigateur et informations d'onglets pertinentes au daemon Anda connecté.
 
 Le daemon et les fournisseurs de modèles configurés dans Anda peuvent traiter le prompt et les données de tâche. Utilisez l'extension uniquement avec un daemon et une configuration de modèles de confiance, surtout sur des pages sensibles.
 
 ## Canaux distants
 
-Le panneau latéral Chrome n'est qu'une surface. Si vous configurez WeChat, Telegram, Discord ou Lark / Feishu, ces messages peuvent atteindre le même daemon local pendant qu'il continue de tourner sur votre ordinateur.
+Le panneau latéral du navigateur n'est qu'une surface. Si vous configurez WeChat, Telegram, Discord ou Lark / Feishu, ces messages peuvent atteindre le même daemon local pendant qu'il continue de tourner sur votre ordinateur.
 
 Voir [Canaux et voix](../runtime/channels) pour la configuration des canaux.
 
 ## Dépannage
 
 - Si le panneau latéral ne se connecte pas, confirmez que `anda start` tourne toujours et que la Gateway URL et le jeton Bearer ont été collés exactement.
-- Si les actions de navigateur échouent sur les pages `chrome://` ou le Chrome Web Store, ouvrez une page Web ordinaire. Chrome bloque les scripts d'extension sur les pages protégées.
+- Si les actions de navigateur échouent sur des pages protégées comme les URL `chrome://` ou `edge://`, ou la boutique de modules du navigateur, ouvrez une page Web ordinaire. Les navigateurs Chromium bloquent les scripts d'extension sur les pages protégées.
 - Si une erreur de modèle apparaît, vérifiez la clé du fournisseur dans `~/.anda/config.yaml` ou la variable d'environnement utilisée pour lancer le daemon.
