@@ -74,7 +74,7 @@
   const windowsInstallerUrl =
     'https://github.com/ldclabs/anda-bot/releases/latest/download/AndaBotSetup-windows-x86_64.exe'
   const tokenCommand = 'anda browser token --days 365'
-  const configPageUrl = chrome.runtime.getURL('config.html')
+  const configPageUrl = chrome.runtime.getURL('dashboard.html#config')
 
   function markSettingsDirty() {
     settingsDirty = true
@@ -330,14 +330,8 @@
                     </p>
                   </div>
                   <div class="grid gap-2">
-                    {@render downloadBlock(
-                      getMessage('windowsInstaller'),
-                      windowsInstallerUrl
-                    )}
-                    {@render commandBlock(
-                      getMessage('macosInstaller'),
-                      installScriptCommand
-                    )}
+                    {@render downloadBlock(getMessage('windowsInstaller'), windowsInstallerUrl)}
+                    {@render commandBlock(getMessage('macosInstaller'), installScriptCommand)}
                   </div>
                 </div>
               </div>
@@ -369,9 +363,7 @@
                     target="_blank"
                     rel="noreferrer"
                   >
-                    <span class="min-w-0 truncate"
-                      >{getMessage('openConfigEditor')}</span
-                    >
+                    <span class="min-w-0 truncate">{getMessage('openConfigEditor')}</span>
                     <ExternalLink class="size-3.5" />
                   </a>
                 </div>

@@ -229,9 +229,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5432f871ade85f61243b082790a55408809054c2ca4e441739b8381efbe840"
+checksum = "5d66acc63abfb38a112742015e16487bb6503b653b87c289d15c39075cf83bf5"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -283,9 +283,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7940bf55c6428ff93e427ecb98849507e0b1fe03b92de8a5cecb0a1107f2c39"
+checksum = "a29713247834ff335054d57c5e0d96c553213833a8b32f8ca841df5b022b1ca1"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -330,9 +330,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_derive"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5890596d958d2a0555eca42c4080037afef2b09d010c3e2d09d7f4b51ff76940"
+checksum = "c22b47878d31321eeb4d566b6b48ad997b7f1cd0546cf5c5b10424ba530c0778"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -362,9 +362,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee22c025acdac67ad88c0f6c04c763187d5e068f89e44bf3e8068d7881e86980"
+checksum = "b00510793007856eba736442b420af4864efcee646624d49e8daaf896db41e36"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",
@@ -4022,9 +4022,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "liteparse"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6cd137198044a91b3722e13890f9e1c00a3e00ee236a46b8d1835b4a6f9c762"
+checksum = "4f48250bfe3a99b8a2af7aff98e0fa9958e35c488573fa8cd2ceeda9ac69a2eb"
 dependencies = [
  "clap",
  "image",

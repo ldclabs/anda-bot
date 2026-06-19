@@ -5,18 +5,24 @@ import {
   errorToMessage,
   normalizeSettings
 } from '$lib/service-worker/settings'
-import { SvelteMap } from 'svelte/reactivity'
+import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import { Channel, type API } from './channel.svelte'
 import { getChromeApi } from './chrome'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
+import { normalizeMessage } from './conversations'
 import { normalizePromptSkills } from './helper'
 import { getMessage, normalizeUiLanguage, uiLanguageStorageKey } from '$lib/i18n'
 import type {
   AppearanceTheme,
+  Bookmark,
+  BookmarkFolders,
+  BookmarkedMessage,
   ChatAttachment,
+  ChatMessage,
   ChromeApi,
   ChromeTabChangeInfo,
   ChromeTabInfo,
+  Conversation,
   DaemonModelState,
   DaemonVoiceCapabilities,
   ExtensionMessage,
@@ -53,6 +59,15 @@ const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
 // the `ui_language` RPC, so a modest poll keeps an open panel in sync.
 const uiLanguageSyncIntervalMs = 30_000
 
+function emptyBookmarkFolders(): BookmarkFolders {
+  return {
+    version: 1,
+    next_folder_id: 1,
+    folders: {},
+    updated_at: 0
+  }
+}
+
 export class AndaSidePanelClient extends EventTarget {
   readonly chrome: ChromeApi
 
@@ -61,6 +76,8 @@ export class AndaSidePanelClient extends EventTarget {
   sending = $state(false)
   activeChannel = $state<Channel | null>(null)
   channels = new SvelteMap<string, Channel>()
+  // Message ids the caller has bookmarked, kept in sync for star state.
+  bookmarkedIds = new SvelteSet<string>()
   status = $state('starting')
   systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
   voiceCapabilities = $state<VoiceCapabilities>({
@@ -74,6 +91,8 @@ export class AndaSidePanelClient extends EventTarget {
   #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
   #resourceCache = new Map<number, Resource>()
   #resourceRequests = new Map<number, Promise<Resource>>()
+  #bookmarkCache = new Map<number, Bookmark | null>()
+  #bookmarkRequests = new Map<number, Promise<Bookmark | null>>()
   #localChannelSource = ''
   #workspaceChannelSources = new Set<string>()
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
@@ -718,14 +737,331 @@ export class AndaSidePanelClient extends EventTarget {
   private async toolCall<Result>(
     name: string,
     args: Record<string, unknown>,
-    resources: Resource[] = []
+    resources: Resource[] = [],
+    meta?: Record<string, unknown>
   ): Promise<ToolOutput<Result>> {
-    const rt = await this.rpc<ToolOutput<Result>>('tool_call', [{ name, args, resources }])
+    const input: Record<string, unknown> = { name, args, resources }
+    if (meta) {
+      input.meta = meta
+    }
+    const rt = await this.rpc<ToolOutput<Result>>('tool_call', [input])
     const error = (rt.output as any).error
     if (error != null) {
       throw errorToError(error)
     }
     return rt
+  }
+
+  /** Loads marked message ids for visible conversations into the star-state set. */
+  async loadConversationBookmarks(
+    conversations: number[],
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    if (!this.settings.token) {
+      return
+    }
+    const ids = Array.from(
+      new Set(
+        conversations.filter((conversation) => Number.isFinite(conversation) && conversation > 0)
+      )
+    )
+    await Promise.all(
+      ids.map((conversation) => this.loadConversationBookmark(conversation, options))
+    )
+  }
+
+  async loadConversationBookmark(
+    conversation: number,
+    options: { force?: boolean } = {}
+  ): Promise<Bookmark | null> {
+    if (!this.settings.token || !Number.isFinite(conversation) || conversation <= 0) {
+      return null
+    }
+    if (!options.force && this.#bookmarkCache.has(conversation)) {
+      return this.#bookmarkCache.get(conversation) || null
+    }
+
+    let request = this.#bookmarkRequests.get(conversation)
+    if (!request) {
+      request = this.toolCall<RpcOutput<Bookmark | null>>('bookmarks_api', {
+        type: 'GetConversationBookmark',
+        conversation
+      })
+        .then(({ output: { result } }) => result || null)
+        .finally(() => {
+          this.#bookmarkRequests.delete(conversation)
+        })
+      this.#bookmarkRequests.set(conversation, request)
+    }
+
+    const bookmark = await request
+    this.updateBookmarkCache(conversation, bookmark)
+    return bookmark
+  }
+
+  isBookmarked(messageId: string): boolean {
+    return this.bookmarkedIds.has(messageId)
+  }
+
+  async toggleBookmark(message: ChatMessage): Promise<void> {
+    if (!this.settings.token || !message.id) {
+      return
+    }
+    if (this.bookmarkedIds.has(message.id)) {
+      await this.removeBookmark(message.id)
+    } else {
+      await this.addBookmark(message)
+    }
+  }
+
+  async addBookmark(message: ChatMessage): Promise<void> {
+    const messageId = message.id
+    if (!this.settings.token || !messageId || this.bookmarkedIds.has(messageId)) {
+      return
+    }
+    // Optimistic: show the star immediately, roll back if the daemon rejects.
+    this.bookmarkedIds.add(messageId)
+    try {
+      await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
+        type: 'AddBookmark',
+        message_id: messageId,
+        conversation: message.conversation,
+        source: this.activeSource || '',
+        role: message.role,
+        text: message.text,
+        folder_ids: []
+      }).then(({ output: { result } }) => {
+        this.updateBookmarkCache(result.conversation, result)
+      })
+    } catch (error) {
+      this.bookmarkedIds.delete(messageId)
+      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
+    }
+  }
+
+  async removeBookmark(messageId: string): Promise<boolean> {
+    if (!this.settings.token || !messageId) {
+      return false
+    }
+    const had = this.bookmarkedIds.delete(messageId)
+    try {
+      const {
+        output: { result }
+      } = await this.toolCall<
+        RpcOutput<{ removed: boolean; conversation?: number; bookmark?: Bookmark | null }>
+      >('bookmarks_api', {
+        type: 'RemoveBookmark',
+        message_id: messageId
+      })
+      const conversation = result.conversation || conversationFromMessageId(messageId)
+      if (conversation > 0) {
+        this.updateBookmarkCache(conversation, result.bookmark || null)
+      }
+      return true
+    } catch (error) {
+      if (had) {
+        this.bookmarkedIds.add(messageId)
+      }
+      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
+      return false
+    }
+  }
+
+  private updateBookmarkCache(conversation: number, bookmark: Bookmark | null): void {
+    for (const id of Array.from(this.bookmarkedIds)) {
+      if (conversationFromMessageId(id) === conversation) {
+        this.bookmarkedIds.delete(id)
+      }
+    }
+    this.#bookmarkCache.set(conversation, bookmark)
+    if (!bookmark) {
+      return
+    }
+    for (const message of bookmark.messages || []) {
+      if (Number.isInteger(message.index) && message.index >= 0) {
+        this.bookmarkedIds.add(`m-${bookmark.conversation}-${message.index}`)
+      }
+    }
+  }
+
+  /** Fetches one newest-first page of bookmarks for the panel. */
+  async listBookmarks(
+    cursor?: string,
+    limit?: number
+  ): Promise<{ items: Bookmark[]; nextCursor: string | null }> {
+    if (!this.settings.token) {
+      return { items: [], nextCursor: null }
+    }
+    const args: Record<string, unknown> = { type: 'ListBookmarks' }
+    if (cursor) {
+      args.cursor = cursor
+    }
+    if (limit) {
+      args.limit = limit
+    }
+    const {
+      output: { result, next_cursor }
+    } = await this.toolCall<RpcOutput<Bookmark[]>>('bookmarks_api', args)
+    return { items: result || [], nextCursor: next_cursor || null }
+  }
+
+  async listBookmarkFolders(): Promise<BookmarkFolders> {
+    if (!this.settings.token) {
+      return emptyBookmarkFolders()
+    }
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
+      type: 'ListBookmarkFolders'
+    })
+    return result || emptyBookmarkFolders()
+  }
+
+  async getConversationMarkdownForBookmark(bookmark: BookmarkedMessage): Promise<string> {
+    if (
+      !this.settings.token ||
+      !Number.isFinite(bookmark.conversation) ||
+      bookmark.conversation <= 0 ||
+      !Number.isInteger(bookmark.message_index) ||
+      bookmark.message_index < 0
+    ) {
+      return ''
+    }
+
+    const meta = await this.requestMetaForBookmark(bookmark)
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<Conversation>>(
+      'conversations_api',
+      {
+        type: 'GetConversation',
+        _id: bookmark.conversation
+      },
+      [],
+      meta
+    )
+    const rawMessage = result.messages?.[bookmark.message_index]
+    if (!rawMessage) {
+      return ''
+    }
+
+    const message = normalizeMessage(rawMessage, {
+      conversation: result._id,
+      index: bookmark.message_index,
+      fallbackTimestamp: result.updated_at
+    })
+    return message?.text || ''
+  }
+
+  async createBookmarkFolder(
+    name: string,
+    parentId: number | null = null
+  ): Promise<BookmarkFolders> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
+      type: 'CreateBookmarkFolder',
+      name,
+      parent_id: parentId
+    })
+    return result || emptyBookmarkFolders()
+  }
+
+  async renameBookmarkFolder(folderId: number, name: string): Promise<BookmarkFolders> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
+      type: 'RenameBookmarkFolder',
+      folder_id: folderId,
+      name
+    })
+    return result || emptyBookmarkFolders()
+  }
+
+  async deleteBookmarkFolder(folderId: number): Promise<BookmarkFolders> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
+      type: 'DeleteBookmarkFolder',
+      folder_id: folderId
+    })
+    return result || emptyBookmarkFolders()
+  }
+
+  async moveBookmarkFolder(
+    folderId: number,
+    parentId: number | null = null,
+    order: number | null = null
+  ): Promise<BookmarkFolders> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
+      type: 'MoveBookmarkFolder',
+      folder_id: folderId,
+      parent_id: parentId,
+      order
+    })
+    return result || emptyBookmarkFolders()
+  }
+
+  async setBookmarkFolders(messageId: string, folderIds: number[]): Promise<Bookmark> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
+      type: 'SetBookmarkFolders',
+      message_id: messageId,
+      folder_ids: folderIds
+    })
+    this.updateBookmarkCache(result.conversation, result)
+    return result
+  }
+
+  async addBookmarkToFolder(messageId: string, folderId: number): Promise<Bookmark> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
+      type: 'AddBookmarkToFolder',
+      message_id: messageId,
+      folder_id: folderId
+    })
+    this.updateBookmarkCache(result.conversation, result)
+    return result
+  }
+
+  async removeBookmarkFromFolder(messageId: string, folderId: number): Promise<Bookmark> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
+      type: 'RemoveBookmarkFromFolder',
+      message_id: messageId,
+      folder_id: folderId
+    })
+    this.updateBookmarkCache(result.conversation, result)
+    return result
+  }
+
+  async listBookmarksInFolder(
+    folderId: number,
+    cursor?: string,
+    limit?: number
+  ): Promise<{ items: Bookmark[]; nextCursor: string | null }> {
+    if (!this.settings.token) {
+      return { items: [], nextCursor: null }
+    }
+    const args: Record<string, unknown> = {
+      type: 'ListBookmarksInFolder',
+      folder_id: folderId
+    }
+    if (cursor) {
+      args.cursor = cursor
+    }
+    if (limit) {
+      args.limit = limit
+    }
+    const {
+      output: { result, next_cursor }
+    } = await this.toolCall<RpcOutput<Bookmark[]>>('bookmarks_api', args)
+    return { items: result || [], nextCursor: next_cursor || null }
   }
 
   private async transcribeVoiceRecording(
@@ -873,6 +1209,19 @@ export class AndaSidePanelClient extends EventTarget {
     return extra
   }
 
+  private async requestMetaForBookmark(
+    bookmark: BookmarkedMessage
+  ): Promise<Record<string, unknown>> {
+    const extra = await this.requestExtra()
+    extra.source = bookmark.source
+    const workspace = workspaceFromCliSource(bookmark.source)
+    if (workspace) {
+      extra.workspace = workspace
+    }
+    extra.conversation = bookmark.conversation
+    return extra
+  }
+
   async rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result> {
     if (!this.settings.token) {
       throw new Error(getMessage('tokenMissing'))
@@ -944,6 +1293,20 @@ function normalizeAbsoluteWorkspace(value: unknown): string {
 
 function isAbsoluteWorkspacePath(value: string): boolean {
   return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
+}
+
+function conversationFromMessageId(messageId: string): number {
+  const match = /^m-(\d+)-\d+$/.exec(messageId)
+  return match ? Number(match[1]) : 0
+}
+
+function workspaceFromCliSource(source: string): string {
+  if (!source.startsWith('cli:')) {
+    return ''
+  }
+
+  const raw = source.slice(4).trim()
+  return normalizeAbsoluteWorkspace(raw.startsWith('voice:') ? raw.slice(6) : raw)
 }
 
 function normalizeModelState(state: DaemonModelState | null | undefined): ModelState {

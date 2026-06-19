@@ -86,9 +86,6 @@
   "settings": {
     "message": "设置"
   },
-  "brainGraph": {
-    "message": "记忆图谱"
-  },
   "gatewayUrl": {
     "message": "网关 URL"
   },
@@ -691,5 +688,128 @@
   },
   "configOneItemPerLine": {
     "message": "每行一项"
+  },
+  "bookmark": {
+    "message": "收藏"
+  },
+  "removeBookmark": {
+    "message": "取消收藏"
+  },
+  "bookmarks": {
+    "message": "收藏夹"
+  },
+  "bookmarksDescription": {
+    "message": "你收藏的智能体消息。点击可跳回原消息。"
+  },
+  "bookmarksEmpty": {
+    "message": "还没有收藏"
+  },
+  "allBookmarks": {
+    "message": "全部"
+  },
+  "unfiledBookmarks": {
+    "message": "未归档"
+  },
+  "createBookmarkFolder": {
+    "message": "新建文件夹"
+  },
+  "deleteBookmarkFolder": {
+    "message": "删除文件夹"
+  },
+  "bookmarkFolderNamePlaceholder": {
+    "message": "新文件夹"
+  },
+  "addToBookmarkFolder": {
+    "message": "加入文件夹"
+  },
+  "removeFromBookmarkFolder": {
+    "message": "移出文件夹"
+  },
+  "bookmarkJump": {
+    "message": "跳转到消息"
+  },
+  "dashboardPageTitle": {
+    "message": "Anda 仪表盘"
+  },
+  "dashboardTitle": {
+    "message": "Anda 仪表盘"
+  },
+  "dashboardBrainDetail": {
+    "message": "记忆图谱工作台"
+  },
+  "dashboardBookmarksDetail": {
+    "message": "已保存的对话"
+  },
+  "dashboardConfigDetail": {
+    "message": "守护进程配置"
+  },
+  "dashboardNoConnection": {
+    "message": "未连接"
+  },
+  "dashboardConnectionSettings": {
+    "message": "连接设置"
+  },
+  "dashboardCollapseNavigation": {
+    "message": "收起导航"
+  },
+  "dashboardExpandNavigation": {
+    "message": "展开导航"
+  },
+  "dashboardGraphCrumb": {
+    "message": "图谱"
+  },
+  "dashboardLibraryCrumb": {
+    "message": "资料库"
+  },
+  "dashboardStudioCrumb": {
+    "message": "配置台"
+  },
+  "dashboardSaveInConfig": {
+    "message": "保存"
+  },
+  "dashboardNoPendingSave": {
+    "message": "配置"
+  },
+  "bookmarksDashboardDescription": {
+    "message": "文件夹和已保存的智能体消息。"
+  },
+  "bookmarksLibraryTitle": {
+    "message": "收藏资料库"
+  },
+  "bookmarksLibrarySubtitle": {
+    "message": "浏览已保存消息，整理文件夹，并重新打开聊天上下文。"
+  },
+  "bookmarksSearchPlaceholder": {
+    "message": "搜索收藏"
+  },
+  "bookmarkContextTitle": {
+    "message": "上下文"
+  },
+  "bookmarkContextSubtitle": {
+    "message": "当前收藏的元数据和 Brain 关联。"
+  },
+  "bookmarkSelected": {
+    "message": "当前收藏"
+  },
+  "bookmarkOpenChat": {
+    "message": "打开聊天"
+  },
+  "bookmarkCopyMarkdown": {
+    "message": "复制 Markdown"
+  },
+  "bookmarkCopiedMarkdown": {
+    "message": "已复制 Markdown"
+  },
+  "bookmarkNotLocated": {
+    "message": "无法定位该消息，其所属会话可能不可用。"
+  },
+  "bookmarkFolders": {
+    "message": "文件夹"
+  },
+  "bookmarkLinkedBrain": {
+    "message": "关联的 Brain 概念"
+  },
+  "loadMore": {
+    "message": "加载更多"
   }
 }

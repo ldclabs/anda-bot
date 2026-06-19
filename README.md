@@ -190,7 +190,9 @@ You can keep me in the terminal, open me from Chrome, or connect me to chat chan
 
 ### Chrome Side Panel
 
-The repository includes an unpacked Chrome extension in [chrome_extension](chrome_extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through split browser tools while keeping one stable browser session as you switch tabs.
+The repository includes an unpacked Chrome extension in [chrome-extension](chrome-extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through split browser tools while keeping one stable browser session as you switch tabs.
+
+The side panel can also bookmark assistant messages. Bookmarks are saved in the local daemon, can be organized into folders, and can jump back to the original conversation from the side panel or dashboard.
 
 Generate a local bearer token for the extension:
 
@@ -198,7 +200,7 @@ Generate a local bearer token for the extension:
 anda browser token --days 30
 ```
 
-Then load [chrome_extension](chrome_extension) from `chrome://extensions` with Developer mode enabled, paste the printed Gateway URL and token into the side panel settings, and start chatting from any webpage.
+Then load [chrome-extension](chrome-extension) from `chrome://extensions` with Developer mode enabled, paste the printed Gateway URL and token into the side panel settings, and start chatting from any webpage.
 
 ### MCP Servers
 

@@ -32,6 +32,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 mod agent;
+mod bookmark;
 mod browser;
 mod browser_ws;
 mod conversation;
@@ -59,6 +60,7 @@ use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websoc
 pub use agent::{
     AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,
 };
+pub use bookmark::{BookmarkStore, BookmarksTool};
 pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
@@ -304,6 +306,10 @@ impl Engines {
             conversations.clone(),
             default_workspace.to_string_lossy().to_string(),
         ));
+        let bookmarks_tool = Arc::new(BookmarksTool::with_models(
+            BookmarkStore::connect(db.clone()).await?,
+            cfg.models.clone(),
+        ));
         let browser_bridge = Arc::new(BrowserBridge::new());
         let browser_tabs_tool = Arc::new(
             ChromeBrowserTool::tabs(browser_bridge.clone())
@@ -474,6 +480,7 @@ impl Engines {
             .register_tool(add_mcp_server_tool)?
             .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
+            .register_tool(bookmarks_tool.clone())?
             .register_tool(bot.clone())?;
 
         if let Some(manager) = tts_manager {
@@ -512,6 +519,7 @@ impl Engines {
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
                 ResourceStore::NAME.to_string(),
+                BookmarksTool::NAME.to_string(),
                 Tool::name(bot.as_ref()),
             ]);
 

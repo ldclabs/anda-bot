@@ -86,9 +86,6 @@
   "settings": {
     "message": "Paramètres"
   },
-  "brainGraph": {
-    "message": "Graphe mémoire"
-  },
   "gatewayUrl": {
     "message": "URL de la passerelle"
   },
@@ -691,5 +688,128 @@
   },
   "configOneItemPerLine": {
     "message": "Un élément par ligne"
+  },
+  "bookmark": {
+    "message": "Favori"
+  },
+  "removeBookmark": {
+    "message": "Retirer le favori"
+  },
+  "bookmarks": {
+    "message": "Favoris"
+  },
+  "bookmarksDescription": {
+    "message": "Vos messages d’assistant enregistrés. Cliquez pour y revenir."
+  },
+  "bookmarksEmpty": {
+    "message": "Aucun favori pour l’instant"
+  },
+  "allBookmarks": {
+    "message": "Tous"
+  },
+  "unfiledBookmarks": {
+    "message": "Non classés"
+  },
+  "createBookmarkFolder": {
+    "message": "Créer un dossier"
+  },
+  "deleteBookmarkFolder": {
+    "message": "Supprimer le dossier"
+  },
+  "bookmarkFolderNamePlaceholder": {
+    "message": "Nouveau dossier"
+  },
+  "addToBookmarkFolder": {
+    "message": "Ajouter au dossier"
+  },
+  "removeFromBookmarkFolder": {
+    "message": "Retirer du dossier"
+  },
+  "bookmarkJump": {
+    "message": "Aller au message"
+  },
+  "dashboardPageTitle": {
+    "message": "Anda Dashboard"
+  },
+  "dashboardTitle": {
+    "message": "Anda Dashboard"
+  },
+  "dashboardBrainDetail": {
+    "message": "Memory graph workspace"
+  },
+  "dashboardBookmarksDetail": {
+    "message": "Saved conversations"
+  },
+  "dashboardConfigDetail": {
+    "message": "Daemon configuration"
+  },
+  "dashboardNoConnection": {
+    "message": "No connection"
+  },
+  "dashboardConnectionSettings": {
+    "message": "Connection settings"
+  },
+  "dashboardCollapseNavigation": {
+    "message": "Collapse navigation"
+  },
+  "dashboardExpandNavigation": {
+    "message": "Expand navigation"
+  },
+  "dashboardGraphCrumb": {
+    "message": "Graph"
+  },
+  "dashboardLibraryCrumb": {
+    "message": "Library"
+  },
+  "dashboardStudioCrumb": {
+    "message": "Studio"
+  },
+  "dashboardSaveInConfig": {
+    "message": "Save"
+  },
+  "dashboardNoPendingSave": {
+    "message": "Config"
+  },
+  "bookmarksDashboardDescription": {
+    "message": "Folders and saved assistant messages."
+  },
+  "bookmarksLibraryTitle": {
+    "message": "Bookmark library"
+  },
+  "bookmarksLibrarySubtitle": {
+    "message": "Browse saved messages, organize folders, and reopen chat context."
+  },
+  "bookmarksSearchPlaceholder": {
+    "message": "Search bookmarks"
+  },
+  "bookmarkContextTitle": {
+    "message": "Context"
+  },
+  "bookmarkContextSubtitle": {
+    "message": "Selected bookmark metadata and Brain links."
+  },
+  "bookmarkSelected": {
+    "message": "Selected bookmark"
+  },
+  "bookmarkOpenChat": {
+    "message": "Open chat"
+  },
+  "bookmarkCopyMarkdown": {
+    "message": "Copy Markdown"
+  },
+  "bookmarkCopiedMarkdown": {
+    "message": "Copied Markdown"
+  },
+  "bookmarkNotLocated": {
+    "message": "Could not locate the message; its conversation may be unavailable."
+  },
+  "bookmarkFolders": {
+    "message": "Folders"
+  },
+  "bookmarkLinkedBrain": {
+    "message": "Linked Brain concepts"
+  },
+  "loadMore": {
+    "message": "Charger plus"
   }
 }

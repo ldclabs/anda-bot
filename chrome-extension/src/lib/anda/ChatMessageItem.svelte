@@ -5,9 +5,12 @@
 <script lang="ts">
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
+  import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import {
+    Bookmark,
+    BookmarkCheck,
     Check,
     Clipboard,
     Copy,
@@ -40,6 +43,12 @@
   const hasMainText = $derived(Boolean(mainText))
   const hasAttachments = $derived(Boolean(message.attachments?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
+  // Only settled assistant messages with a stable server id can be bookmarked
+  // (excludes optimistic/local, side, and compacted tool/thinking-only items).
+  const canBookmark = $derived(
+    isAssistant && hasMainText && !message.pending && /^m-\d+-\d+$/.test(message.id)
+  )
+  const bookmarked = $derived(canBookmark && andaClient.isBookmarked(message.id))
   const messageTimeLabel = $derived(timeLabel(message.timestamp))
   const externalUserSenderLabel = $derived(
     message.externalUser?.sender || message.externalUser?.scope || 'External user'
@@ -685,6 +694,23 @@
         >
           <Printer class="size-3.5" />
         </button>
+        {#if canBookmark}
+          <button
+            type="button"
+            class={messageActionButtonClass}
+            class:chat-message-bookmarked={bookmarked}
+            aria-label={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
+            aria-pressed={bookmarked}
+            title={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
+            onclick={() => andaClient.toggleBookmark(message)}
+          >
+            {#if bookmarked}
+              <BookmarkCheck class="size-3.5" />
+            {:else}
+              <Bookmark class="size-3.5" />
+            {/if}
+          </button>
+        {/if}
       {/if}
       {#if messageTimeLabel}
         <span class="chat-message-time px-1">{messageTimeLabel}</span>
@@ -772,6 +798,16 @@
   .chat-message-details-button:hover {
     background: var(--message-surface-hover, #eeeeee);
     color: var(--message-text, #171717);
+  }
+
+  .chat-message-action.chat-message-bookmarked,
+  .chat-message-action.chat-message-bookmarked:hover {
+    color: #047857;
+  }
+
+  :global(.dark) .chat-message-action.chat-message-bookmarked,
+  :global(.dark) .chat-message-action.chat-message-bookmarked:hover {
+    color: #34d399;
   }
 
   .chat-message-attachment {

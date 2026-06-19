@@ -62,6 +62,8 @@
   type EdgeMode = 'focus' | 'all' | 'none'
   type LabelMode = 'smart' | 'all' | 'none'
 
+  let { embedded = false }: { embedded?: boolean } = $props()
+
   interface RenderedDataset {
     nodes: NodeData[]
     edges: EdgeData[]
@@ -1066,44 +1068,46 @@ LIMIT 6000`)
   <title>{getMessage('brainPageTitle') || 'Anda Brain Graph'}</title>
 </svelte:head>
 
-<div class="brain-shell">
-  <header class="brain-topbar">
-    <div class="flex min-w-0 items-center gap-3">
-      <div
-        class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card"
-      >
-        <BrainCircuit class="size-4" />
+<div class={embedded ? 'brain-shell brain-shell-embedded' : 'brain-shell'}>
+  {#if !embedded}
+    <header class="brain-topbar">
+      <div class="flex min-w-0 items-center gap-3">
+        <div
+          class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-card"
+        >
+          <BrainCircuit class="size-4" />
+        </div>
+        <div class="min-w-0">
+          <h1 class="truncate text-sm font-semibold">Anda Brain</h1>
+          <p class="truncate text-xs text-muted-foreground">
+            {settings.baseUrl}/v1/{settings.spaceId}
+          </p>
+        </div>
       </div>
-      <div class="min-w-0">
-        <h1 class="truncate text-sm font-semibold">Anda Brain</h1>
-        <p class="truncate text-xs text-muted-foreground">
-          {settings.baseUrl}/v1/{settings.spaceId}
-        </p>
+
+      <div class="flex items-center gap-2">
+        <span class={badgeClass(loading ? 'secondary' : errorMessage ? 'destructive' : 'outline')}>
+          {#if loading}
+            <LoaderCircle class="size-3 animate-spin" />
+          {/if}
+          {statusText}
+        </span>
+        <button
+          class={buttonClass('ghost', 'icon-sm')}
+          title={getMessage('settings')}
+          onclick={() => (settingsOpen = !settingsOpen)}
+        >
+          <Settings class="size-4" />
+        </button>
+        <button class={buttonClass('outline', 'sm')} onclick={loadGraph} disabled={loading}>
+          <RefreshCw class={cn('size-4', loading && 'animate-spin')} />
+          {getMessage('refresh')}
+        </button>
       </div>
-    </div>
+    </header>
+  {/if}
 
-    <div class="flex items-center gap-2">
-      <span class={badgeClass(loading ? 'secondary' : errorMessage ? 'destructive' : 'outline')}>
-        {#if loading}
-          <LoaderCircle class="size-3 animate-spin" />
-        {/if}
-        {statusText}
-      </span>
-      <button
-        class={buttonClass('ghost', 'icon-sm')}
-        title={getMessage('settings')}
-        onclick={() => (settingsOpen = !settingsOpen)}
-      >
-        <Settings class="size-4" />
-      </button>
-      <button class={buttonClass('outline', 'sm')} onclick={loadGraph} disabled={loading}>
-        <RefreshCw class={cn('size-4', loading && 'animate-spin')} />
-        {getMessage('refresh')}
-      </button>
-    </div>
-  </header>
-
-  {#if errorMessage}
+  {#if errorMessage && !embedded}
     <div
       class="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive"
     >
@@ -1170,7 +1174,11 @@ LIMIT 6000`)
               }
             }}
           />
-          <button class={buttonClass('outline', 'icon-sm')} onclick={runSearch} title={getMessage('search')}>
+          <button
+            class={buttonClass('outline', 'icon-sm')}
+            onclick={runSearch}
+            title={getMessage('search')}
+          >
             <Search class="size-4" />
           </button>
         </div>
@@ -1178,9 +1186,12 @@ LIMIT 6000`)
           <div class="flex items-center justify-between text-xs text-muted-foreground">
             <span>{searchIndex + 1}/{searchResults.length}</span>
             <div class="flex gap-1">
-              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(-1)}>{getMessage('brainPrev')}</button
+              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(-1)}
+                >{getMessage('brainPrev')}</button
               >
-              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(1)}>{getMessage('brainNext')}</button>
+              <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(1)}
+                >{getMessage('brainNext')}</button
+              >
             </div>
           </div>
         {/if}
@@ -1330,7 +1341,11 @@ LIMIT 6000`)
         >
           <ZoomOut class="size-4" />
         </button>
-        <button class={buttonClass('outline', 'icon-sm')} onclick={fitView} title={getMessage('brainFitView')}>
+        <button
+          class={buttonClass('outline', 'icon-sm')}
+          onclick={fitView}
+          title={getMessage('brainFitView')}
+        >
           <Maximize2 class="size-4" />
         </button>
         <button
@@ -1454,7 +1469,9 @@ LIMIT 6000`)
           <div class="space-y-3">
             <div>
               <span class={badgeClass(selectedEdge._virtual ? 'outline' : 'secondary')}>
-                {selectedEdge._virtual ? getMessage('brainVirtual') : getMessage('brainProposition')}
+                {selectedEdge._virtual
+                  ? getMessage('brainVirtual')
+                  : getMessage('brainProposition')}
               </span>
               <h2 class="mt-2 break-words text-sm font-semibold">{selectedEdge.predicate}</h2>
               <p class="mt-1 break-all text-xs text-muted-foreground">{selectedEdge.id}</p>
@@ -1573,6 +1590,17 @@ LIMIT 6000`)
       radial-gradient(circle at 90% 20%, rgba(245, 158, 11, 0.07), transparent 22rem),
       var(--background);
     color: var(--foreground);
+  }
+
+  .brain-shell-embedded {
+    width: 100%;
+    height: 100%;
+    grid-template-rows: minmax(0, 1fr);
+    background: var(--background);
+  }
+
+  .brain-shell-embedded .brain-workspace {
+    height: 100%;
   }
 
   .brain-topbar {

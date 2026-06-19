@@ -181,7 +181,9 @@ anda voice --record-secs 8
 
 ### Chrome 侧边栏
 
-仓库里提供了一个可直接加载的 Chrome 扩展：[chrome_extension](chrome_extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过拆分后的浏览器工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
+仓库里提供了一个可直接加载的 Chrome 扩展：[chrome-extension](chrome-extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过拆分后的浏览器工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
+
+侧边栏也可以收藏 assistant 消息。收藏会保存在本机 daemon 中，可以放进文件夹，并能从侧边栏或 dashboard 跳回原始对话。
 
 为扩展生成本地 bearer token：
 
@@ -189,7 +191,7 @@ anda voice --record-secs 8
 anda browser token --days 30
 ```
 
-然后在 `chrome://extensions` 开启开发者模式，加载 [chrome_extension](chrome_extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
+然后在 `chrome://extensions` 开启开发者模式，加载 [chrome-extension](chrome-extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
 
 ### MCP 服务
 

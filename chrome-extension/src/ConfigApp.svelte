@@ -60,6 +60,8 @@
 
   type SectionId = 'runtime' | 'models' | 'tts' | 'transcription' | 'channels' | 'users'
 
+  let { embedded = false }: { embedded?: boolean } = $props()
+
   const sections: { id: SectionId; label: string; detail: string }[] = [
     {
       id: 'runtime',
@@ -326,8 +328,7 @@
         spellcheck={false}
         placeholder={getMessage('configOneItemPerLine')}
         value={stringListValue(target, field.key)}
-        oninput={(event) => updateStringList(target, field, event)}
-      ></textarea>
+        oninput={(event) => updateStringList(target, field, event)}></textarea>
     {:else if field.kind === 'object'}
       <div class="grid gap-3 rounded-md border bg-muted/20 p-3">
         {#each field.fields || [] as child}
@@ -384,58 +385,66 @@
   <title>Anda config.yaml</title>
 </svelte:head>
 
-<div class="min-h-screen bg-background text-foreground">
-  <header class="border-b bg-muted/25">
-    <div
-      class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between"
-    >
-      <div class="grid min-w-0 gap-1">
-        <div class="flex min-w-0 items-center gap-2">
-          <FileCode2 class="size-5 shrink-0 text-emerald-800" />
-          <h1 class="truncate text-lg font-bold">config.yaml</h1>
+<div
+  class={embedded
+    ? 'flex h-full min-h-0 flex-col bg-background text-foreground'
+    : 'min-h-screen bg-background text-foreground'}
+>
+  {#if !embedded}
+    <header class="border-b bg-muted/25">
+      <div
+        class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between"
+      >
+        <div class="grid min-w-0 gap-1">
+          <div class="flex min-w-0 items-center gap-2">
+            <FileCode2 class="size-5 shrink-0 text-emerald-800" />
+            <h1 class="truncate text-lg font-bold">config.yaml</h1>
+          </div>
+          <p class="truncate text-xs text-muted-foreground">
+            {configPath || getMessage('configHeaderHint')}
+          </p>
         </div>
-        <p class="truncate text-xs text-muted-foreground">
-          {configPath || getMessage('configHeaderHint')}
-        </p>
-      </div>
 
-      <div class="grid gap-2 sm:grid-cols-[14rem_16rem_auto]">
-        <input
-          class={inputClass('h-8 text-xs')}
-          value={settings.baseUrl}
-          spellcheck={false}
-          aria-label={getMessage('gatewayUrl')}
-          oninput={(event) => updateSettingsString('baseUrl', event)}
-        />
-        <input
-          class={inputClass('h-8 text-xs')}
-          value={settings.token}
-          type="password"
-          autocomplete="off"
-          spellcheck={false}
-          aria-label={getMessage('bearerToken')}
-          placeholder={getMessage('bearerToken')}
-          oninput={(event) => updateSettingsString('token', event)}
-        />
-        <button
-          type="button"
-          class={buttonClass('outline', 'sm', 'bg-background')}
-          onclick={reconnect}
-          disabled={loading}
-        >
-          {#if loading}
-            <LoaderCircle class="size-3.5 animate-spin" />
-          {:else}
-            <RefreshCw class="size-3.5" />
-          {/if}
-          {getMessage('configLoad')}
-        </button>
+        <div class="grid gap-2 sm:grid-cols-[14rem_16rem_auto]">
+          <input
+            class={inputClass('h-8 text-xs')}
+            value={settings.baseUrl}
+            spellcheck={false}
+            aria-label={getMessage('gatewayUrl')}
+            oninput={(event) => updateSettingsString('baseUrl', event)}
+          />
+          <input
+            class={inputClass('h-8 text-xs')}
+            value={settings.token}
+            type="password"
+            autocomplete="off"
+            spellcheck={false}
+            aria-label={getMessage('bearerToken')}
+            placeholder={getMessage('bearerToken')}
+            oninput={(event) => updateSettingsString('token', event)}
+          />
+          <button
+            type="button"
+            class={buttonClass('outline', 'sm', 'bg-background')}
+            onclick={reconnect}
+            disabled={loading}
+          >
+            {#if loading}
+              <LoaderCircle class="size-3.5 animate-spin" />
+            {:else}
+              <RefreshCw class="size-3.5" />
+            {/if}
+            {getMessage('configLoad')}
+          </button>
+        </div>
       </div>
-    </div>
-  </header>
+    </header>
+  {/if}
 
   <main
-    class="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-5 lg:h-[calc(100vh-6rem)] lg:min-h-0 lg:grid-cols-[15rem_minmax(0,1fr)_minmax(24rem,0.8fr)]"
+    class={embedded
+      ? 'grid min-h-0 flex-1 gap-4 overflow-hidden p-3 lg:grid-cols-[15rem_minmax(0,1fr)_minmax(24rem,0.8fr)]'
+      : 'mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-5 lg:h-[calc(100vh-6rem)] lg:min-h-0 lg:grid-cols-[15rem_minmax(0,1fr)_minmax(24rem,0.8fr)]'}
   >
     <aside class="min-w-0 lg:sticky lg:top-4 lg:self-start">
       <nav class="grid gap-1 rounded-lg border bg-background p-1 shadow-xs">
@@ -503,7 +512,8 @@
                     <div class="flex items-center justify-between gap-3">
                       <div class="min-w-0">
                         <h3 class="truncate text-sm font-bold">
-                          {stringValue(provider, 'model') || getMessage('configProviderFallback', String(index + 1))}
+                          {stringValue(provider, 'model') ||
+                            getMessage('configProviderFallback', String(index + 1))}
                         </h3>
                         <p class="truncate text-xs text-muted-foreground">
                           {stringValue(provider, 'family') || 'provider'}
@@ -537,7 +547,9 @@
                     <label class="flex items-center justify-between gap-3">
                       <span class="grid gap-0.5">
                         <span class="text-sm font-bold">{provider}</span>
-                        <span class="text-xs text-muted-foreground">{getMessage('configProviderBlock')}</span>
+                        <span class="text-xs text-muted-foreground"
+                          >{getMessage('configProviderBlock')}</span
+                        >
                       </span>
                       <input
                         type="checkbox"
@@ -572,7 +584,9 @@
                     <label class="flex items-center justify-between gap-3">
                       <span class="grid gap-0.5">
                         <span class="text-sm font-bold">{provider}</span>
-                        <span class="text-xs text-muted-foreground">{getMessage('configProviderBlock')}</span>
+                        <span class="text-xs text-muted-foreground"
+                          >{getMessage('configProviderBlock')}</span
+                        >
                       </span>
                       <input
                         type="checkbox"
@@ -604,7 +618,10 @@
                 <div class="grid gap-3 rounded-lg border bg-muted/15 p-3">
                   {@render arraySection(
                     channel,
-                    getMessage('configCountConfigured', String(objectArray(channels, channel).length)),
+                    getMessage(
+                      'configCountConfigured',
+                      String(objectArray(channels, channel).length)
+                    ),
                     getMessage('configAddChannel', channel),
                     () => addObjectItem(channels, channel, createChannel(channel))
                   )}
@@ -652,7 +669,8 @@
                   <div class="grid gap-3 rounded-lg border bg-muted/15 p-3">
                     <div class="flex items-center justify-between gap-3">
                       <h3 class="truncate text-sm font-bold">
-                        {stringValue(user, 'id') || getMessage('configUserFallback', String(index + 1))}
+                        {stringValue(user, 'id') ||
+                          getMessage('configUserFallback', String(index + 1))}
                       </h3>
                       <button
                         type="button"
@@ -709,8 +727,7 @@
           class="min-h-[34rem] w-full resize-y bg-transparent p-3 font-mono text-xs leading-relaxed outline-none"
           spellcheck={false}
           value={source}
-          oninput={markSourceDirty}
-        ></textarea>
+          oninput={markSourceDirty}></textarea>
       </div>
 
       {#if statusMessage}

@@ -1,7 +1,7 @@
 import { mount } from 'svelte'
 import { initI18n, watchUiLanguage } from '$lib/i18n'
 import './app.css'
-import ConfigApp from './ConfigApp.svelte'
+import DashboardApp from './DashboardApp.svelte'
 
 const target = document.getElementById('app')
 if (!target) {
@@ -13,5 +13,5 @@ watchUiLanguage(() => {
 })
 
 initI18n().finally(() => {
-  mount(ConfigApp, { target })
+  mount(DashboardApp, { target })
 })

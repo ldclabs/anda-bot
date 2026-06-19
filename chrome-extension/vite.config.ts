@@ -27,8 +27,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: path.resolve('index.html'),
-        brain: path.resolve('brain.html'),
-        config: path.resolve('config.html'),
+        dashboard: path.resolve('dashboard.html'),
         service_worker: path.resolve('src/service_worker.ts')
       },
       output: {

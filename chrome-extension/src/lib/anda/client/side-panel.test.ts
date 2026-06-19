@@ -24,6 +24,23 @@ function message(id: string, text: string) {
   }
 }
 
+function bookmark(
+  conversation = 1,
+  messages: Array<{ index: number; role: 'assistant'; text: string }> = [
+    { index: 0, role: 'assistant', text: 'hello' }
+  ]
+) {
+  return {
+    _id: conversation,
+    user: 'alice',
+    conversation,
+    source: 'cli:/tmp/ws',
+    folder_ids: [],
+    messages,
+    created_at: 1
+  }
+}
+
 function createChromeApi(
   options: {
     settings?: Partial<SettingsState>
@@ -320,6 +337,340 @@ describe('AndaSidePanelClient.bindChromeEvents', () => {
       title: 'After',
       url: 'https://after.example'
     })
+  })
+})
+
+describe('AndaSidePanelClient bookmarks', () => {
+  const tokenSettings: SettingsState = {
+    baseUrl: 'http://127.0.0.1:8042',
+    token: 'token',
+    submitKeyMode: 'enter',
+    appearanceTheme: 'system'
+  }
+
+  it('adds a bookmark optimistically and calls the daemon', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    client.activeChannel = { source: 'cli:/tmp/ws' } as any
+    const rpc = vi
+      .spyOn(client, 'rpc')
+      .mockResolvedValue({ output: { result: bookmark(), next_cursor: null } } as any)
+
+    await client.toggleBookmark(message('m-1-0', 'hello'))
+
+    expect(client.isBookmarked('m-1-0')).toBe(true)
+    expect(rpc).toHaveBeenCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: expect.objectContaining({
+          type: 'AddBookmark',
+          message_id: 'm-1-0',
+          source: 'cli:/tmp/ws',
+          text: 'hello',
+          folder_ids: []
+        })
+      })
+    ])
+  })
+
+  it('rolls back the optimistic star when the daemon rejects the add', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    client.activeChannel = { source: 'cli:/tmp/ws' } as any
+    vi.spyOn(client, 'rpc').mockRejectedValue(new Error('boom'))
+
+    await client.toggleBookmark(message('m-1-0', 'hello'))
+
+    expect(client.isBookmarked('m-1-0')).toBe(false)
+  })
+
+  it('removes an existing bookmark', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    client.bookmarkedIds.add('m-1-0')
+    const rpc = vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: { result: { removed: true, conversation: 1, bookmark: null } }
+    } as any)
+
+    const removed = await client.removeBookmark('m-1-0')
+
+    expect(removed).toBe(true)
+    expect(client.isBookmarked('m-1-0')).toBe(false)
+    expect(rpc).toHaveBeenCalledWith('tool_call', [
+      expect.objectContaining({
+        args: expect.objectContaining({ type: 'RemoveBookmark', message_id: 'm-1-0' })
+      })
+    ])
+  })
+
+  it('keeps the star when removing a bookmark fails', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    client.bookmarkedIds.add('m-1-0')
+    vi.spyOn(client, 'rpc').mockRejectedValue(new Error('boom'))
+
+    const removed = await client.removeBookmark('m-1-0')
+
+    expect(removed).toBe(false)
+    expect(client.isBookmarked('m-1-0')).toBe(true)
+  })
+
+  it('loads one conversation bookmark into the star set and caches it', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    const rpc = vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: {
+        result: bookmark(1, [
+          { index: 0, role: 'assistant', text: 'first' },
+          { index: 2, role: 'assistant', text: 'third' }
+        ])
+      }
+    } as any)
+
+    await client.loadConversationBookmarks([1])
+    await client.loadConversationBookmarks([1])
+
+    expect(client.isBookmarked('m-1-0')).toBe(true)
+    expect(client.isBookmarked('m-1-1')).toBe(false)
+    expect(client.isBookmarked('m-1-2')).toBe(true)
+    expect(rpc).toHaveBeenCalledTimes(1)
+    expect(rpc).toHaveBeenCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: { type: 'GetConversationBookmark', conversation: 1 }
+      })
+    ])
+  })
+
+  it('returns a paginated bookmark page with its next cursor', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: { result: [bookmark()], next_cursor: 'cursor-1' }
+    } as any)
+
+    const page = await client.listBookmarks()
+
+    expect(page.items).toHaveLength(1)
+    expect(page.nextCursor).toBe('cursor-1')
+  })
+
+  it('loads bookmark markdown from the source conversation message', async () => {
+    const chromeApi = createChromeApi({
+      settings: { token: 'token' },
+      activeTabs: [{ id: 1, url: 'https://example.com', title: 'Example', windowId: 1 }]
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    const rpc = vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: {
+        result: {
+          _id: 7,
+          user: 'alice',
+          messages: [
+            { role: 'user', content: [{ type: 'Text', text: 'prompt' }] },
+            { role: 'assistant', content: [{ type: 'Text', text: '**conversation markdown**' }] }
+          ],
+          status: 'completed',
+          usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 0 },
+          created_at: 1,
+          updated_at: 2
+        }
+      }
+    } as any)
+
+    const markdown = await client.getConversationMarkdownForBookmark({
+      bookmark: bookmark(7, [{ index: 1, role: 'assistant', text: 'snapshot text' }]),
+      message_id: 'm-7-1',
+      message_index: 1,
+      conversation: 7,
+      source: 'cli:/tmp/ws/',
+      role: 'assistant',
+      folder_ids: [],
+      text: 'snapshot text',
+      created_at: 1
+    })
+
+    expect(markdown).toBe('**conversation markdown**')
+    expect(rpc).toHaveBeenCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'conversations_api',
+        args: { type: 'GetConversation', _id: 7 },
+        meta: expect.objectContaining({
+          source: 'cli:/tmp/ws/',
+          workspace: '/tmp/ws',
+          conversation: 7,
+          browser_client: 'chrome_extension'
+        })
+      })
+    ])
+  })
+
+  it('calls bookmark folder operations with daemon tool variants', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    const rpc = vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: {
+        result: {
+          version: 1,
+          next_folder_id: 2,
+          folders: {
+            '1': {
+              id: 1,
+              name: 'Work',
+              parent_id: null,
+              order: 1,
+              created_at: 1,
+              updated_at: 1
+            }
+          },
+          updated_at: 1
+        }
+      }
+    } as any)
+
+    const folders = await client.createBookmarkFolder('Work')
+
+    expect(folders.folders['1'].name).toBe('Work')
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: {
+          type: 'CreateBookmarkFolder',
+          name: 'Work',
+          parent_id: null
+        }
+      })
+    ])
+
+    await client.renameBookmarkFolder(1, 'Reading')
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: {
+          type: 'RenameBookmarkFolder',
+          folder_id: 1,
+          name: 'Reading'
+        }
+      })
+    ])
+
+    await client.moveBookmarkFolder(1, null, 10)
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: {
+          type: 'MoveBookmarkFolder',
+          folder_id: 1,
+          parent_id: null,
+          order: 10
+        }
+      })
+    ])
+
+    await client.deleteBookmarkFolder(1)
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: {
+          type: 'DeleteBookmarkFolder',
+          folder_id: 1
+        }
+      })
+    ])
+  })
+
+  it('updates bookmark folder membership and lists a folder page', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...tokenSettings }
+    const rpc = vi.spyOn(client, 'rpc').mockResolvedValue({
+      output: {
+        result: [{ ...bookmark(), folder_ids: [1] }],
+        next_cursor: 'cursor-2'
+      }
+    } as any)
+
+    const page = await client.listBookmarksInFolder(1)
+
+    expect(page.nextCursor).toBe('cursor-2')
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        name: 'bookmarks_api',
+        args: {
+          type: 'ListBookmarksInFolder',
+          folder_id: 1
+        }
+      })
+    ])
+
+    vi.mocked(rpc).mockResolvedValue({
+      output: { result: { ...bookmark(), folder_ids: [1, 2] } }
+    } as any)
+
+    await client.addBookmarkToFolder('m-1-0', 2)
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        args: {
+          type: 'AddBookmarkToFolder',
+          message_id: 'm-1-0',
+          folder_id: 2
+        }
+      })
+    ])
+
+    await client.setBookmarkFolders('m-1-0', [2])
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        args: {
+          type: 'SetBookmarkFolders',
+          message_id: 'm-1-0',
+          folder_ids: [2]
+        }
+      })
+    ])
+
+    await client.removeBookmarkFromFolder('m-1-0', 1)
+
+    expect(rpc).toHaveBeenLastCalledWith('tool_call', [
+      expect.objectContaining({
+        args: {
+          type: 'RemoveBookmarkFromFolder',
+          message_id: 'm-1-0',
+          folder_id: 1
+        }
+      })
+    ])
   })
 })
 

@@ -114,6 +114,55 @@ export interface ExternalUserMessageInfo {
   scope?: string
 }
 
+export interface BookmarkMessageInfo {
+  index: number
+  role: MessageRole
+  text: string
+}
+
+/**
+ * A bookmarked conversation. Fields match the daemon `bookmarks_api` JSON shape
+ * (snake_case) to avoid a mapping layer. Individual marked messages carry the
+ * message index from `m-<conversation>-<index>`.
+ */
+export interface Bookmark {
+  _id: number
+  user: string
+  conversation: number
+  source: string
+  folder_ids: number[]
+  messages: BookmarkMessageInfo[]
+  created_at: number
+}
+
+export interface BookmarkedMessage {
+  bookmark: Bookmark
+  message_id: string
+  message_index: number
+  conversation: number
+  source: string
+  role: MessageRole
+  folder_ids: number[]
+  text: string
+  created_at: number
+}
+
+export interface BookmarkFolder {
+  _id: number
+  name: string
+  parent_id: number | null
+  order: number
+  created_at: number
+  updated_at: number
+}
+
+export interface BookmarkFolders {
+  version: number
+  next_folder_id: number
+  folders: Record<string, BookmarkFolder>
+  updated_at: number
+}
+
 export interface MessageGroup {
   _id: number
   status: ConversationStatus

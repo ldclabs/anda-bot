@@ -9,11 +9,18 @@
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
+    type BookmarkedMessage,
     type ChatMessage,
     type MessageGroup,
     type PageAudioResult,
     type PromptSkill
   } from '$lib/anda/client/types'
+  import {
+    bookmarkJumpRequestMaxAgeMs,
+    bookmarkJumpRequestStorageKey,
+    isBookmarkJumpRequest,
+    type BookmarkJumpRequest
+  } from '$lib/anda/bookmark-jump'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
@@ -24,8 +31,8 @@
     ChevronUp,
     CircleAlert,
     History,
+    LayoutDashboard,
     LoaderCircle,
-    BrainCircuit,
     Radio,
     Settings
   } from '@lucide/svelte'
@@ -37,6 +44,9 @@
   let messagesElement: HTMLElement | null = null
   let sideMessagesElement: HTMLElement | null = $state(null)
   let observedSideMessageCount = 0
+  let lastBookmarkJumpRequestId = ''
+  let sidePanelReadyForBookmarkJumps = false
+  let queuedBookmarkJumpRequest: BookmarkJumpRequest | null = null
 
   const status = $derived(andaClient.status)
   const syncing = $derived(andaClient.activeChannel?.syncing || false)
@@ -67,14 +77,43 @@
 
   $effect(() => applyAppearanceTheme(andaClient.settings.appearanceTheme))
 
+  let bookmarkConversationKey = $state('')
+  $effect(() => {
+    const conversations = visibleMessageGroups
+      .map((group) => group._id)
+      .filter((conversation) => conversation > 0)
+    const nextKey = conversations.join(',')
+    if (nextKey && nextKey !== bookmarkConversationKey) {
+      bookmarkConversationKey = nextKey
+      void andaClient.loadConversationBookmarks(conversations)
+    }
+  })
+
   onMount(() => {
+    const handleBookmarkJumpChange = (
+      changes: Record<string, { newValue?: unknown }>,
+      areaName: string
+    ) => {
+      if (areaName !== 'local') {
+        return
+      }
+      consumeBookmarkJumpRequest(changes[bookmarkJumpRequestStorageKey]?.newValue)
+    }
+
+    chrome.storage.onChanged.addListener(handleBookmarkJumpChange)
+
     andaClient
       .init()
       .then(() => {
+        sidePanelReadyForBookmarkJumps = true
         if (!andaClient.settings.token) {
           settingsOpen = true
           setupGuideOpen = true
         }
+        flushQueuedBookmarkJumpRequest()
+        void chrome.storage.local
+          .get([bookmarkJumpRequestStorageKey])
+          .then((stored) => consumeBookmarkJumpRequest(stored[bookmarkJumpRequestStorageKey]))
       })
       .catch((error) => {
         andaClient.status = 'extension unavailable'
@@ -84,6 +123,7 @@
       })
 
     return () => {
+      chrome.storage.onChanged.removeListener(handleBookmarkJumpChange)
       andaClient.destroy()
     }
   })
@@ -133,8 +173,8 @@
     }
   }
 
-  function openBrainGraphPage() {
-    const url = new URL('brain.html', window.location.href).toString()
+  function openDashboardPage() {
+    const url = new URL('dashboard.html#brain', window.location.href).toString()
     chrome.tabs.create({ url, active: true }).catch(() => {
       window.open(url, '_blank', 'noopener,noreferrer')
     })
@@ -155,6 +195,77 @@
 
   async function switchChannel(source: string) {
     await andaClient.switchChannel(source)
+  }
+
+  function consumeBookmarkJumpRequest(value: unknown) {
+    if (!isBookmarkJumpRequest(value) || value.id === lastBookmarkJumpRequestId) {
+      return
+    }
+
+    if (Date.now() - value.createdAt > bookmarkJumpRequestMaxAgeMs) {
+      void chrome.storage.local.remove(bookmarkJumpRequestStorageKey)
+      return
+    }
+
+    lastBookmarkJumpRequestId = value.id
+    void chrome.storage.local.remove(bookmarkJumpRequestStorageKey)
+
+    if (!sidePanelReadyForBookmarkJumps) {
+      queuedBookmarkJumpRequest = value
+      return
+    }
+
+    void jumpToBookmark(value.bookmark)
+  }
+
+  function flushQueuedBookmarkJumpRequest() {
+    const request = queuedBookmarkJumpRequest
+    queuedBookmarkJumpRequest = null
+    if (request) {
+      void jumpToBookmark(request.bookmark)
+    }
+  }
+
+  async function jumpToBookmark(bookmark: BookmarkedMessage) {
+    if (bookmark.source && bookmark.source !== activeSource) {
+      await switchChannel(bookmark.source)
+    }
+
+    await tick()
+    if (scrollToBookmarkMessage(bookmark.message_id)) {
+      return
+    }
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (!andaClient.activeChannel?.hasPreviousConversations) {
+        break
+      }
+      const loaded = await andaClient.activeChannel.loadPreviousConversations()
+      await tick()
+      if (scrollToBookmarkMessage(bookmark.message_id) || !loaded) {
+        return
+      }
+    }
+
+    andaClient.systemMessage = {
+      kind: 'info',
+      text: getMessage('bookmarkNotLocated')
+    }
+  }
+
+  function scrollToBookmarkMessage(messageId: string): boolean {
+    const element = document.getElementById(messageId)
+    if (!element) {
+      return false
+    }
+    element.classList.remove('bookmark-jump-highlight')
+    void element.getBoundingClientRect()
+    element.classList.add('bookmark-jump-highlight')
+    window.setTimeout(() => {
+      element.classList.remove('bookmark-jump-highlight')
+    }, 1800)
+    scrollIntoView(messageId, 'smooth', 'center')
+    return true
   }
 
   async function openFolderChannel() {
@@ -373,11 +484,11 @@
         <button
           type="button"
           class={buttonClass('ghost', 'icon')}
-          aria-label={getMessage('brainGraph')}
-          title={getMessage('brainGraph')}
-          onclick={openBrainGraphPage}
+          aria-label={getMessage('dashboardTitle')}
+          title={getMessage('dashboardTitle')}
+          onclick={openDashboardPage}
         >
-          <BrainCircuit class="size-4" />
+          <LayoutDashboard class="size-4" />
         </button>
         <button
           type="button"
@@ -477,9 +588,7 @@
             'message-side-toggle flex h-10 w-full gap-2 px-3 text-left transition'
           )}
           aria-expanded={sideMessagesOpen}
-          aria-label={getMessage(
-            sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks'
-          )}
+          aria-label={getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
           title={getMessage(sideMessagesOpen ? 'collapseSideTasks' : 'expandSideTasks')}
           onclick={toggleSideMessagesPanel}
         >
@@ -614,6 +723,23 @@
 
   .message-separator {
     background: var(--message-border-soft);
+  }
+
+  :global(.bookmark-jump-highlight) {
+    border-radius: 0.75rem;
+    animation: bookmark-jump-highlight 1800ms ease-out;
+  }
+
+  @keyframes bookmark-jump-highlight {
+    0%,
+    45% {
+      background: color-mix(in srgb, #047857 14%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, #047857 18%, transparent);
+    }
+    100% {
+      background: transparent;
+      box-shadow: 0 0 0 0 transparent;
+    }
   }
 
   .message-side-tasks {
