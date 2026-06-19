@@ -4,6 +4,7 @@
     ChatAttachment,
     PageAudioResult,
     PromptSkill,
+    QuickPrompt,
     SubmitKeyMode,
     VoiceCapabilities,
     VoiceProvider,
@@ -64,8 +65,10 @@
     Paperclip,
     SendHorizontal,
     Square,
+    Trash2,
     Volume2,
-    VolumeX
+    VolumeX,
+    X
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick } from 'svelte'
@@ -88,6 +91,10 @@
     onBrowserAudioStop,
     onBrowserAudioCancel,
     onLoadSkills,
+    quickPrompts = [],
+    onUseQuickPrompt,
+    onRemoveQuickPrompt,
+    onClearQuickPrompts,
     submitKeyMode = 'enter'
   }: {
     disabled?: boolean
@@ -108,6 +115,10 @@
     onBrowserAudioStop?: () => Promise<PageAudioResult>
     onBrowserAudioCancel?: () => Promise<void>
     onLoadSkills?: () => Promise<PromptSkill[]>
+    quickPrompts?: QuickPrompt[]
+    onUseQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
+    onRemoveQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
+    onClearQuickPrompts?: () => Promise<void> | void
   } = $props()
 
   let text = $state('')
@@ -371,6 +382,36 @@
     textareaFocused = true
     caretIndex = nextCaret
     resizeTextarea()
+  }
+
+  async function applyQuickPrompt(prompt: QuickPrompt) {
+    if (disabled || inputMode !== 'text') {
+      return
+    }
+    text = prompt.text
+    promptCommandDismissedKey = ''
+    caretIndex = text.length
+    await onUseQuickPrompt?.(prompt)
+    await tick()
+    textareaElement?.focus()
+    textareaElement?.setSelectionRange(caretIndex, caretIndex)
+    textareaFocused = true
+    resizeTextarea()
+  }
+
+  async function removeQuickPrompt(prompt: QuickPrompt) {
+    await onRemoveQuickPrompt?.(prompt)
+  }
+
+  async function clearQuickPrompts() {
+    if (!onClearQuickPrompts) {
+      return
+    }
+    const confirmMessage = getMessage('clearQuickPromptsConfirm') || 'Clear all quick inputs?'
+    if (!window.confirm(confirmMessage)) {
+      return
+    }
+    await onClearQuickPrompts()
   }
 
   function handlePromptCommandKeydown(event: KeyboardEvent): boolean {
@@ -1119,6 +1160,47 @@
           onSelectVoiceProvider={selectVoiceProvider}
         />
       {:else}
+        {#if quickPrompts.length}
+          <div class="quick-prompts-row" aria-label={getMessage('quickPromptsLabel')}>
+            <div class="quick-prompts-scroll">
+              {#each quickPrompts as prompt (prompt.id)}
+                <span class="quick-prompt-chip">
+                  <button
+                    type="button"
+                    class="quick-prompt-main"
+                    aria-label={getMessage('useQuickPrompt', prompt.text)}
+                    title={getMessage('useQuickPrompt', prompt.text)}
+                    {disabled}
+                    onclick={() => applyQuickPrompt(prompt)}
+                  >
+                    {prompt.text}
+                  </button>
+                  <button
+                    type="button"
+                    class="quick-prompt-remove"
+                    disabled={disabled || !onRemoveQuickPrompt}
+                    aria-label={getMessage('removeQuickPromptItem', prompt.text)}
+                    title={getMessage('removeQuickPromptItem', prompt.text)}
+                    onclick={() => removeQuickPrompt(prompt)}
+                  >
+                    <X class="size-3" />
+                  </button>
+                </span>
+              {/each}
+            </div>
+            {#if onClearQuickPrompts && quickPrompts.length > 1}
+              <button
+                type="button"
+                class={buttonClass('ghost', 'icon-xs', 'quick-prompts-clear composer-icon-button')}
+                aria-label={getMessage('clearQuickPrompts')}
+                title={getMessage('clearQuickPrompts')}
+                onclick={clearQuickPrompts}
+              >
+                <Trash2 class="size-3" />
+              </button>
+            {/if}
+          </div>
+        {/if}
         <div class="prompt-input-wrap">
           {#if promptCommandPanelOpen}
             <PromptCommandPanel
@@ -1152,8 +1234,7 @@
               onblur={handleTextareaBlur}
               onclick={updateTextareaCaret}
               onkeyup={updateTextareaCaret}
-              onselect={updateTextareaCaret}
-            ></textarea>
+              onselect={updateTextareaCaret}></textarea>
           </div>
         </div>
       {/if}
@@ -1379,6 +1460,84 @@
   .prompt-input-wrap {
     position: relative;
     min-width: 0;
+  }
+
+  .quick-prompts-row {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 0.375rem;
+  }
+
+  .quick-prompts-scroll {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    overflow: visible;
+  }
+
+  .quick-prompt-chip {
+    display: inline-flex;
+    max-width: min(15rem, 100%);
+    flex: 0 0 auto;
+    align-items: center;
+    overflow: hidden;
+    border: 1px solid var(--message-border, #e6e6e6);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 88%, var(--message-surface, #f7f7f7));
+    color: var(--message-muted, #737373);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--message-bg, #ffffff) 70%, transparent);
+  }
+
+  .quick-prompt-main,
+  .quick-prompt-remove {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    outline: none;
+    transition:
+      background-color 120ms ease-out,
+      color 120ms ease-out;
+  }
+
+  .quick-prompt-main {
+    min-width: 0;
+    max-width: 13rem;
+    overflow: hidden;
+    padding: 0.25rem 0.55rem 0.25rem 0.65rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1rem;
+  }
+
+  .quick-prompt-remove {
+    display: inline-grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+  }
+
+  .quick-prompt-main:hover,
+  .quick-prompt-main:focus-visible,
+  .quick-prompt-remove:hover,
+  .quick-prompt-remove:focus-visible {
+    background: var(--message-surface-hover, #eeeeee);
+    color: var(--message-text, #171717);
+  }
+
+  .quick-prompt-main:disabled,
+  .quick-prompt-remove:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .quick-prompts-clear {
+    flex: 0 0 auto;
   }
 
   :global(.composer-textarea) {

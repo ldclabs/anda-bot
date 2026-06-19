@@ -248,6 +248,30 @@
   "send": {
     "message": "Enviar"
   },
+  "quickPromptsLabel": {
+    "message": "Entradas rápidas"
+  },
+  "addQuickPrompt": {
+    "message": "Guardar como entrada rápida"
+  },
+  "removeQuickPrompt": {
+    "message": "Eliminar entrada rápida"
+  },
+  "removeQuickPromptItem": {
+    "message": "Eliminar entrada rápida: $1"
+  },
+  "useQuickPrompt": {
+    "message": "Usar entrada rápida: $1"
+  },
+  "clearQuickPrompts": {
+    "message": "Borrar entradas rápidas"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "¿Borrar todas las entradas rápidas?"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "No se pudieron actualizar las entradas rápidas: $1"
+  },
   "stopTask": {
     "message": "Detener tarea actual"
   },

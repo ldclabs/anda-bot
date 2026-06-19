@@ -248,6 +248,30 @@
   "send": {
     "message": "إرسال"
   },
+  "quickPromptsLabel": {
+    "message": "إدخالات سريعة"
+  },
+  "addQuickPrompt": {
+    "message": "حفظ كإدخال سريع"
+  },
+  "removeQuickPrompt": {
+    "message": "إزالة الإدخال السريع"
+  },
+  "removeQuickPromptItem": {
+    "message": "إزالة الإدخال السريع: $1"
+  },
+  "useQuickPrompt": {
+    "message": "استخدام الإدخال السريع: $1"
+  },
+  "clearQuickPrompts": {
+    "message": "مسح الإدخالات السريعة"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "مسح كل الإدخالات السريعة؟"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "تعذّر تحديث الإدخالات السريعة: $1"
+  },
   "stopTask": {
     "message": "إيقاف المهمة الحالية"
   },

@@ -280,6 +280,22 @@
     await andaClient.deleteChannel(source)
   }
 
+  async function toggleQuickPrompt(text: string) {
+    await andaClient.toggleQuickPrompt(text)
+  }
+
+  async function useQuickPrompt(text: string) {
+    await andaClient.useQuickPrompt(text)
+  }
+
+  async function removeQuickPrompt(text: string) {
+    await andaClient.removeQuickPrompt(text)
+  }
+
+  async function clearQuickPrompts() {
+    await andaClient.clearQuickPrompts()
+  }
+
   async function sendPrompt(payload: ComposerSubmitPayload) {
     const command = parsePromptCommand(payload.text)
     if (sending && !isImmediatePromptCommand(command)) {
@@ -571,7 +587,11 @@
             {/if}
 
             {#each group.messages as message (message.id)}
-              <ChatMessageItem {message} />
+              <ChatMessageItem
+                {message}
+                quickPromptActive={andaClient.isQuickPrompt(message.text)}
+                onToggleQuickPrompt={toggleQuickPrompt}
+              />
             {/each}
           </section>
         {/each}
@@ -622,7 +642,11 @@
           >
             <div class="grid gap-2">
               {#each visibleSideMessages as message (message.id)}
-                <ChatMessageItem {message} />
+                <ChatMessageItem
+                  {message}
+                  quickPromptActive={andaClient.isQuickPrompt(message.text)}
+                  onToggleQuickPrompt={toggleQuickPrompt}
+                />
               {/each}
             </div>
           </div>
@@ -651,6 +675,10 @@
         onBrowserAudioStop={stopBrowserAudioCapture}
         onBrowserAudioCancel={cancelBrowserAudioCapture}
         onLoadSkills={loadPromptSkills}
+        quickPrompts={andaClient.quickPrompts}
+        onUseQuickPrompt={(prompt) => useQuickPrompt(prompt.text)}
+        onRemoveQuickPrompt={(prompt) => removeQuickPrompt(prompt.text)}
+        onClearQuickPrompts={clearQuickPrompts}
       />
     </footer>
   </div>

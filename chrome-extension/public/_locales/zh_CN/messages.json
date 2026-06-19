@@ -248,6 +248,30 @@
   "send": {
     "message": "发送"
   },
+  "quickPromptsLabel": {
+    "message": "快捷输入"
+  },
+  "addQuickPrompt": {
+    "message": "加入快捷输入"
+  },
+  "removeQuickPrompt": {
+    "message": "移除快捷输入"
+  },
+  "removeQuickPromptItem": {
+    "message": "移除快捷输入：$1"
+  },
+  "useQuickPrompt": {
+    "message": "使用快捷输入：$1"
+  },
+  "clearQuickPrompts": {
+    "message": "清空快捷输入"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "清空所有快捷输入？"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "无法更新快捷输入：$1"
+  },
   "stopTask": {
     "message": "停止当前任务"
   },

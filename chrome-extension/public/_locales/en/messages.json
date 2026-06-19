@@ -248,6 +248,30 @@
   "send": {
     "message": "Send"
   },
+  "quickPromptsLabel": {
+    "message": "Quick inputs"
+  },
+  "addQuickPrompt": {
+    "message": "Save as quick input"
+  },
+  "removeQuickPrompt": {
+    "message": "Remove quick input"
+  },
+  "removeQuickPromptItem": {
+    "message": "Remove quick input: $1"
+  },
+  "useQuickPrompt": {
+    "message": "Use quick input: $1"
+  },
+  "clearQuickPrompts": {
+    "message": "Clear quick inputs"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "Clear all quick inputs?"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "Could not update quick inputs: $1"
+  },
   "stopTask": {
     "message": "Stop current task"
   },

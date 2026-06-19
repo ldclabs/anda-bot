@@ -248,6 +248,30 @@
   "send": {
     "message": "Envoyer"
   },
+  "quickPromptsLabel": {
+    "message": "Saisies rapides"
+  },
+  "addQuickPrompt": {
+    "message": "Enregistrer comme saisie rapide"
+  },
+  "removeQuickPrompt": {
+    "message": "Supprimer la saisie rapide"
+  },
+  "removeQuickPromptItem": {
+    "message": "Supprimer la saisie rapide : $1"
+  },
+  "useQuickPrompt": {
+    "message": "Utiliser la saisie rapide : $1"
+  },
+  "clearQuickPrompts": {
+    "message": "Effacer les saisies rapides"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "Effacer toutes les saisies rapides ?"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "Impossible de mettre à jour les saisies rapides : $1"
+  },
   "stopTask": {
     "message": "Arrêter la tâche en cours"
   },

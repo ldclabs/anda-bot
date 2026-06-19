@@ -18,12 +18,21 @@
     FileText,
     Image,
     LoaderCircle,
+    Plus,
     Printer,
     Wrench
   } from '@lucide/svelte'
   import { onDestroy, onMount, tick } from 'svelte'
 
-  let { message }: { message: ChatMessage } = $props()
+  let {
+    message,
+    quickPromptActive = false,
+    onToggleQuickPrompt
+  }: {
+    message: ChatMessage
+    quickPromptActive?: boolean
+    onToggleQuickPrompt?: (text: string) => Promise<void> | void
+  } = $props()
 
   let copied = $state(false)
   let richCopied = $state(false)
@@ -49,6 +58,7 @@
     isAssistant && hasMainText && !message.pending && /^m-\d+-\d+$/.test(message.id)
   )
   const bookmarked = $derived(canBookmark && andaClient.isBookmarked(message.id))
+  const canToggleQuickPrompt = $derived(isUser && hasMainText && Boolean(onToggleQuickPrompt))
   const messageTimeLabel = $derived(timeLabel(message.timestamp))
   const externalUserSenderLabel = $derived(
     message.externalUser?.sender || message.externalUser?.scope || 'External user'
@@ -666,6 +676,25 @@
             <Check class="size-3.5" />
           {:else}
             <Copy class="size-3.5" />
+          {/if}
+        </button>
+      {/if}
+      {#if canToggleQuickPrompt}
+        <button
+          type="button"
+          class={messageActionButtonClass}
+          class:chat-message-bookmarked={quickPromptActive}
+          aria-label={quickPromptActive
+            ? getMessage('removeQuickPrompt')
+            : getMessage('addQuickPrompt')}
+          aria-pressed={quickPromptActive}
+          title={quickPromptActive ? getMessage('removeQuickPrompt') : getMessage('addQuickPrompt')}
+          onclick={() => onToggleQuickPrompt?.(mainText)}
+        >
+          {#if quickPromptActive}
+            <Check class="size-3.5" />
+          {:else}
+            <Plus class="size-3.5" />
           {/if}
         </button>
       {/if}

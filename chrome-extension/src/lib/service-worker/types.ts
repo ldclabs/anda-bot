@@ -8,10 +8,20 @@ export interface SettingsState {
   appearanceTheme: AppearanceTheme
 }
 
+export interface QuickPrompt {
+  id: string
+  text: string
+  createdAt: number
+  updatedAt: number
+  usedAt: number
+  useCount: number
+}
+
 export type StorageState = Partial<SettingsState> & {
   browserSessionId?: string
   workspaceChannelSources?: string[]
   uiLanguage?: string
+  quickPrompts?: QuickPrompt[]
 }
 
 export type ChromeTabInfo = {

@@ -31,6 +31,7 @@ import type {
   PageAudioResult,
   PageSpeechResult,
   PromptSkill,
+  QuickPrompt,
   Resource,
   RpcOutput,
   SettingsState,
@@ -55,6 +56,9 @@ import {
 } from './voice'
 
 const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
+export const quickPromptsStorageKey = 'quickPrompts'
+export const quickPromptsMaxItems = 20
+const quickPromptMaxTextChars = 2_000
 // The launcher persists language switches on disk; the daemon serves them via
 // the `ui_language` RPC, so a modest poll keeps an open panel in sync.
 const uiLanguageSyncIntervalMs = 30_000
@@ -66,6 +70,107 @@ function emptyBookmarkFolders(): BookmarkFolders {
     folders: {},
     updated_at: 0
   }
+}
+
+function numericTimestamp(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function normalizeQuickPromptText(value: unknown): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  return value.replace(/\r\n/g, '\n').trim().slice(0, quickPromptMaxTextChars).trim()
+}
+
+function quickPromptId(text: string): string {
+  let hash = 2166136261
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `qp-${(hash >>> 0).toString(36)}-${text.length.toString(36)}`
+}
+
+function sortQuickPromptsForDisplay(items: QuickPrompt[]): QuickPrompt[] {
+  return [...items].sort(
+    (left, right) =>
+      right.usedAt - left.usedAt ||
+      right.updatedAt - left.updatedAt ||
+      right.useCount - left.useCount ||
+      left.text.localeCompare(right.text)
+  )
+}
+
+function limitQuickPrompts(items: QuickPrompt[]): QuickPrompt[] {
+  if (items.length <= quickPromptsMaxItems) {
+    return sortQuickPromptsForDisplay(items)
+  }
+  return sortQuickPromptsForDisplay(
+    [...items]
+      .sort(
+        (left, right) =>
+          right.useCount - left.useCount ||
+          right.usedAt - left.usedAt ||
+          right.updatedAt - left.updatedAt ||
+          right.createdAt - left.createdAt
+      )
+      .slice(0, quickPromptsMaxItems)
+  )
+}
+
+function normalizeQuickPrompts(value: unknown): QuickPrompt[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const byText = new Map<string, QuickPrompt>()
+  for (const item of value) {
+    const raw = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+    const text = normalizeQuickPromptText(raw.text)
+    if (!text) {
+      continue
+    }
+    const now = Date.now()
+    const next: QuickPrompt = {
+      id: quickPromptId(text),
+      text,
+      createdAt: numericTimestamp(raw.createdAt, now),
+      updatedAt: numericTimestamp(raw.updatedAt, now),
+      usedAt: numericTimestamp(raw.usedAt, 0),
+      useCount: Math.max(0, Math.floor(numericTimestamp(raw.useCount, 0)))
+    }
+    const existing = byText.get(text)
+    if (existing) {
+      byText.set(text, {
+        ...next,
+        createdAt: Math.min(existing.createdAt, next.createdAt),
+        updatedAt: Math.max(existing.updatedAt, next.updatedAt),
+        usedAt: Math.max(existing.usedAt, next.usedAt),
+        useCount: Math.max(existing.useCount, next.useCount)
+      })
+    } else {
+      byText.set(text, next)
+    }
+  }
+  return limitQuickPrompts(Array.from(byText.values()))
+}
+
+function quickPromptStorageSnapshot(items: QuickPrompt[]): QuickPrompt[] {
+  return items.map((prompt) => ({
+    id: prompt.id,
+    text: prompt.text,
+    createdAt: prompt.createdAt,
+    updatedAt: prompt.updatedAt,
+    usedAt: prompt.usedAt,
+    useCount: prompt.useCount
+  }))
+}
+
+function quickPromptsUpdateErrorMessage(error: unknown): string {
+  const detail = errorToMessage(error)
+  return (
+    getMessage('quickPromptsUpdateFailed', [detail]) || `Could not update quick inputs: ${detail}`
+  )
 }
 
 export class AndaSidePanelClient extends EventTarget {
@@ -86,6 +191,7 @@ export class AndaSidePanelClient extends EventTarget {
     chromeTts: false
   })
   modelState = $state<ModelState>(emptyModelState())
+  quickPrompts = $state<QuickPrompt[]>([])
 
   #initPromise: Promise<void> | null = null
   #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
@@ -93,6 +199,7 @@ export class AndaSidePanelClient extends EventTarget {
   #resourceRequests = new Map<number, Promise<Resource>>()
   #bookmarkCache = new Map<number, Bookmark | null>()
   #bookmarkRequests = new Map<number, Promise<Bookmark | null>>()
+  #quickPromptWrite: Promise<void> = Promise.resolve()
   #localChannelSource = ''
   #workspaceChannelSources = new Set<string>()
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
@@ -113,6 +220,7 @@ export class AndaSidePanelClient extends EventTarget {
 
   async #init(): Promise<void> {
     await this.loadSettings()
+    await this.loadQuickPrompts()
     await this.loadWorkspaceChannels()
     const localChannel = await browserSession(this.chrome)
     this.#localChannelSource = localChannel
@@ -327,6 +435,91 @@ export class AndaSidePanelClient extends EventTarget {
     }
     await this.chrome.storage.local.set({ appearanceTheme: this.settings.appearanceTheme })
     this.syncServiceWorker().catch(() => undefined)
+  }
+
+  async loadQuickPrompts(): Promise<void> {
+    const saved = await this.chrome.storage.local.get([quickPromptsStorageKey])
+    this.quickPrompts = normalizeQuickPrompts(saved.quickPrompts)
+  }
+
+  isQuickPrompt(text: string): boolean {
+    const normalized = normalizeQuickPromptText(text)
+    return Boolean(normalized && this.quickPrompts.some((prompt) => prompt.text === normalized))
+  }
+
+  async toggleQuickPrompt(text: string): Promise<void> {
+    if (this.isQuickPrompt(text)) {
+      await this.removeQuickPrompt(text)
+      return
+    }
+    await this.addQuickPrompt(text)
+  }
+
+  async addQuickPrompt(text: string): Promise<void> {
+    const normalized = normalizeQuickPromptText(text)
+    if (!normalized) {
+      return
+    }
+    await this.applyQuickPromptUpdate((quickPrompts) => {
+      const now = Date.now()
+      const existing = quickPrompts.find((prompt) => prompt.text === normalized)
+      const next: QuickPrompt = existing
+        ? {
+            ...existing,
+            updatedAt: now
+          }
+        : {
+            id: quickPromptId(normalized),
+            text: normalized,
+            createdAt: now,
+            updatedAt: now,
+            usedAt: now,
+            useCount: 0
+          }
+      return limitQuickPrompts([
+        next,
+        ...quickPrompts.filter((prompt) => prompt.text !== normalized)
+      ])
+    })
+  }
+
+  async useQuickPrompt(text: string): Promise<void> {
+    const normalized = normalizeQuickPromptText(text)
+    if (!normalized) {
+      return
+    }
+    await this.applyQuickPromptUpdate((quickPrompts) => {
+      const prompt = quickPrompts.find((item) => item.text === normalized)
+      if (!prompt) {
+        return quickPrompts
+      }
+      const now = Date.now()
+      return limitQuickPrompts([
+        {
+          ...prompt,
+          usedAt: now,
+          useCount: prompt.useCount + 1
+        },
+        ...quickPrompts.filter((item) => item.text !== normalized)
+      ])
+    })
+  }
+
+  async removeQuickPrompt(text: string): Promise<void> {
+    const normalized = normalizeQuickPromptText(text)
+    if (!normalized) {
+      return
+    }
+    await this.applyQuickPromptUpdate((quickPrompts) =>
+      quickPrompts.filter((prompt) => prompt.text !== normalized)
+    )
+  }
+
+  async clearQuickPrompts(): Promise<void> {
+    if (this.quickPrompts.length === 0) {
+      return
+    }
+    await this.applyQuickPromptUpdate(() => [])
   }
 
   async testConnection(settings: SettingsState): Promise<void> {
@@ -689,6 +882,38 @@ export class AndaSidePanelClient extends EventTarget {
       token: saved.token || '',
       submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
       appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
+    })
+  }
+
+  private async updateQuickPrompts(
+    updater: (quickPrompts: QuickPrompt[]) => QuickPrompt[]
+  ): Promise<void> {
+    const write = this.#quickPromptWrite.then(async () => {
+      const current = quickPromptStorageSnapshot(this.quickPrompts)
+      const next = limitQuickPrompts(updater(current))
+      if (JSON.stringify(next) === JSON.stringify(current)) {
+        return
+      }
+      await this.persistQuickPrompts(next)
+      this.quickPrompts = next
+    })
+    this.#quickPromptWrite = write.catch(() => undefined)
+    await write
+  }
+
+  private async applyQuickPromptUpdate(
+    updater: (quickPrompts: QuickPrompt[]) => QuickPrompt[]
+  ): Promise<void> {
+    try {
+      await this.updateQuickPrompts(updater)
+    } catch (error) {
+      this.systemMessage = { kind: 'error', text: quickPromptsUpdateErrorMessage(error) }
+    }
+  }
+
+  private async persistQuickPrompts(items: QuickPrompt[]): Promise<void> {
+    await this.chrome.storage.local.set({
+      [quickPromptsStorageKey]: quickPromptStorageSnapshot(items)
     })
   }
 

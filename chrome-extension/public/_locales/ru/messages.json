@@ -248,6 +248,30 @@
   "send": {
     "message": "Отправить"
   },
+  "quickPromptsLabel": {
+    "message": "Быстрые фразы"
+  },
+  "addQuickPrompt": {
+    "message": "Сохранить как быструю фразу"
+  },
+  "removeQuickPrompt": {
+    "message": "Удалить быструю фразу"
+  },
+  "removeQuickPromptItem": {
+    "message": "Удалить быструю фразу: $1"
+  },
+  "useQuickPrompt": {
+    "message": "Использовать быструю фразу: $1"
+  },
+  "clearQuickPrompts": {
+    "message": "Очистить быстрые фразы"
+  },
+  "clearQuickPromptsConfirm": {
+    "message": "Очистить все быстрые фразы?"
+  },
+  "quickPromptsUpdateFailed": {
+    "message": "Не удалось обновить быстрые фразы: $1"
+  },
   "stopTask": {
     "message": "Остановить текущую задачу"
   },

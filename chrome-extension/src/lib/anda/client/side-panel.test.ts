@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PollConversation } from './poll-conversation'
-import type { ChromeApi, ChromeTabInfo, SettingsState } from './types'
+import type { ChromeApi, ChromeTabInfo, QuickPrompt, SettingsState } from './types'
 
 type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void
 type TabUpdatedListener = (
@@ -47,6 +47,8 @@ function createChromeApi(
     activeTabs?: ChromeTabInfo[]
     browserSessionId?: string
     workspaceChannelSources?: string[]
+    quickPrompts?: QuickPrompt[]
+    storageSetError?: Error
   } = {}
 ): MockChromeApi {
   const tabActivatedListeners: TabActivatedListener[] = []
@@ -58,6 +60,7 @@ function createChromeApi(
     appearanceTheme: 'system' as const,
     browserSessionId: options.browserSessionId || '1700000000000',
     workspaceChannelSources: options.workspaceChannelSources || [],
+    quickPrompts: options.quickPrompts || [],
     ...options.settings
   }
 
@@ -109,7 +112,10 @@ function createChromeApi(
           return result
         }),
         set: vi.fn(async (items: Record<string, unknown>) => {
-          Object.assign(state, items)
+          if (options.storageSetError) {
+            throw options.storageSetError
+          }
+          Object.assign(state, structuredClone(items))
         })
       }
     },
@@ -160,6 +166,7 @@ async function importSidePanelModule() {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -196,6 +203,107 @@ describe('AndaSidePanelClient.saveAppearanceTheme', () => {
         })
       })
     )
+  })
+})
+
+describe('AndaSidePanelClient quick prompts', () => {
+  it('loads, uses, removes, and clears local quick prompts', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-19T00:00:00Z'))
+    const chromeApi = createChromeApi({
+      quickPrompts: [
+        {
+          id: 'old',
+          text: '  提交变更  ',
+          createdAt: 1,
+          updatedAt: 2,
+          usedAt: 3,
+          useCount: 4
+        },
+        {
+          id: 'object',
+          text: { bad: true },
+          createdAt: 1,
+          updatedAt: 1,
+          usedAt: 0,
+          useCount: 0
+        } as unknown as QuickPrompt,
+        { id: 'blank', text: '   ', createdAt: 1, updatedAt: 1, usedAt: 0, useCount: 0 }
+      ]
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    await client.loadQuickPrompts()
+
+    expect(client.quickPrompts).toHaveLength(1)
+    expect(client.quickPrompts[0]).toMatchObject({ text: '提交变更', useCount: 4 })
+    expect(client.isQuickPrompt('提交变更')).toBe(true)
+
+    await client.addQuickPrompt('写测试')
+    expect(client.isQuickPrompt('写测试')).toBe(true)
+    expect(chromeApi.storage.local.set).toHaveBeenLastCalledWith({
+      quickPrompts: expect.arrayContaining([expect.objectContaining({ text: '写测试' })])
+    })
+
+    const reloaded = new AndaSidePanelClient()
+    await reloaded.loadQuickPrompts()
+    expect(reloaded.isQuickPrompt('提交变更')).toBe(true)
+    expect(reloaded.isQuickPrompt('写测试')).toBe(true)
+
+    await client.useQuickPrompt('提交变更')
+
+    expect(client.quickPrompts.find((prompt) => prompt.text === '提交变更')).toMatchObject({
+      text: '提交变更',
+      useCount: 5
+    })
+
+    await client.removeQuickPrompt('写测试')
+    expect(client.isQuickPrompt('写测试')).toBe(false)
+
+    await client.clearQuickPrompts()
+    expect(client.quickPrompts).toEqual([])
+    expect(chromeApi.storage.local.set).toHaveBeenLastCalledWith({ quickPrompts: [] })
+  })
+
+  it('evicts the least-used quick prompt when the limit is exceeded', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-19T00:00:00Z'))
+    const chromeApi = createChromeApi()
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient, quickPromptsMaxItems } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.quickPrompts = Array.from({ length: quickPromptsMaxItems }, (_, index) => ({
+      id: `prompt-${index}`,
+      text: `prompt ${index}`,
+      createdAt: index,
+      updatedAt: index,
+      usedAt: index,
+      useCount: index === 0 ? 0 : 1
+    }))
+
+    await client.addQuickPrompt('new prompt')
+
+    expect(client.quickPrompts).toHaveLength(quickPromptsMaxItems)
+    expect(client.quickPrompts.some((prompt) => prompt.text === 'prompt 0')).toBe(false)
+    expect(client.quickPrompts.some((prompt) => prompt.text === 'new prompt')).toBe(true)
+  })
+
+  it('does not show a quick prompt when local storage rejects the write', async () => {
+    const chromeApi = createChromeApi({ storageSetError: new Error('storage unavailable') })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    await client.addQuickPrompt('提交变更')
+
+    expect(client.quickPrompts).toEqual([])
+    expect(client.isQuickPrompt('提交变更')).toBe(false)
+    expect(client.systemMessage).toEqual({
+      kind: 'error',
+      text: 'quickPromptsUpdateFailed:storage unavailable'
+    })
   })
 })
 

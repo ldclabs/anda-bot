@@ -1,11 +1,12 @@
 import type {
   AppearanceTheme,
   ChromeApi,
+  QuickPrompt,
   SettingsState,
   SubmitKeyMode
 } from '$lib/service-worker/types'
 
-export type { AppearanceTheme, ChromeApi, SettingsState, SubmitKeyMode }
+export type { AppearanceTheme, ChromeApi, QuickPrompt, SettingsState, SubmitKeyMode }
 
 export type Principal = string
 export type Xid = string
@@ -16,6 +17,7 @@ export interface StorageState extends Partial<SettingsState> {
   browserSessionId?: string
   workspaceChannelSources?: string[]
   uiLanguage?: string
+  quickPrompts?: QuickPrompt[]
 }
 
 export interface ChromeTabInfo {
