@@ -10,6 +10,7 @@ use anda_engine::{
         shell::ShellTool,
         skill::SkillManager,
     },
+    grapheme_safe_cutoff,
     subagent::SubAgentManager,
 };
 use futures_util::{StreamExt, stream};
@@ -21,6 +22,7 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::model_retry;
 use crate::util::file_uri::{
@@ -1476,8 +1478,9 @@ fn bounded_text_for_summary(text: &str) -> (String, bool) {
         return (text.to_string(), false);
     }
 
-    let head_len = previous_char_boundary(text, MAX_OTHER_TEXT_SUMMARY_BYTES / 2);
-    let tail_start = next_char_boundary(text, text.len() - (MAX_OTHER_TEXT_SUMMARY_BYTES / 2));
+    let excerpt_bytes = MAX_OTHER_TEXT_SUMMARY_BYTES / 2;
+    let head_len = grapheme_safe_cutoff(text, excerpt_bytes);
+    let tail_start = grapheme_safe_suffix_start(text, excerpt_bytes);
     let omitted = tail_start.saturating_sub(head_len);
     (
         format!(
@@ -1489,20 +1492,19 @@ fn bounded_text_for_summary(text: &str) -> (String, bool) {
     )
 }
 
-fn previous_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
+fn grapheme_safe_suffix_start(text: &str, max_bytes: usize) -> usize {
+    if text.len() <= max_bytes {
+        return 0;
     }
-    index
-}
 
-fn next_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
+    let mut start = text.len();
+    for (idx, _) in UnicodeSegmentation::grapheme_indices(text, true).rev() {
+        if text.len() - idx > max_bytes {
+            break;
+        }
+        start = idx;
     }
-    index
+    start
 }
 
 pub async fn understand_media_resources(
@@ -2016,6 +2018,48 @@ mod tests {
         assert!(truncated);
         assert!(bounded.contains("omitted"));
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn bounded_text_for_summary_preserves_grapheme_boundaries() {
+        fn summary_parts(bounded: &str) -> (&str, &str) {
+            let (head, rest) = bounded
+                .split_once("\n\n[... omitted ")
+                .expect("bounded summary should include omission marker");
+            let (_, tail) = rest
+                .split_once(" ...]\n\n")
+                .expect("bounded summary should include marker terminator");
+            (head, tail)
+        }
+
+        let excerpt_bytes = MAX_OTHER_TEXT_SUMMARY_BYTES / 2;
+        let emoji = "👩‍💻";
+
+        let head_split_text = format!(
+            "{}{}{}",
+            "a".repeat(excerpt_bytes - '👩'.len_utf8()),
+            emoji,
+            "b".repeat(MAX_OTHER_TEXT_SUMMARY_BYTES)
+        );
+        let (bounded, truncated) = bounded_text_for_summary(&head_split_text);
+        let (head, _) = summary_parts(&bounded);
+
+        assert!(truncated);
+        assert_eq!(head.len(), excerpt_bytes - '👩'.len_utf8());
+        assert!(!head.contains('👩'));
+
+        let tail_split_text = format!(
+            "{}{}{}",
+            "a".repeat(excerpt_bytes),
+            emoji,
+            "b".repeat(excerpt_bytes - emoji.len() + '👩'.len_utf8())
+        );
+        let (bounded, truncated) = bounded_text_for_summary(&tail_split_text);
+        let (_, tail) = summary_parts(&bounded);
+
+        assert!(truncated);
+        assert!(tail.starts_with('b'));
+        assert!(tail.len() <= excerpt_bytes);
     }
 
     #[test]
