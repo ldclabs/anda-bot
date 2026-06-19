@@ -1,5 +1,5 @@
 use std::{
-    cell::OnceCell,
+    cell::RefCell,
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -21,7 +21,8 @@ use objc2_app_kit::{
     NSStatusBarButton, NSStatusItem, NSVariableStatusItemLength,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSNotification, NSObject, NSObjectProtocol, NSSize, NSString,
+    MainThreadMarker, NSData, NSDistributedNotificationCenter, NSNotification,
+    NSNotificationSuspensionBehavior, NSObject, NSObjectProtocol, NSSize, NSString,
 };
 
 use crate::{
@@ -30,6 +31,9 @@ use crate::{
 };
 
 const LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot.launcher";
+// Posted by a second launch so the already-running instance can rebuild a
+// status-bar icon that the system dropped from the menu bar.
+const REACTIVATE_NOTIFICATION: &str = "ai.anda.anda-bot.launcher.reactivate";
 const LAUNCHER_ICON_PNG: &[u8] = include_bytes!("../../../assets/logo-tray.png");
 const LAUNCHER_APP_ICON_ICNS: &[u8] = include_bytes!("../../../assets/logo.icns");
 const LAUNCHER_APP_NAME: &str = "Anda Bot.app";
@@ -48,7 +52,7 @@ static CTX: OnceLock<LauncherContext> = OnceLock::new();
 
 #[derive(Debug, Default)]
 struct DelegateIvars {
-    status_bar: OnceCell<StatusBarState>,
+    status_bar: RefCell<Option<StatusBarState>>,
 }
 
 #[derive(Debug)]
@@ -71,6 +75,7 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.install_status_bar();
+            self.register_reactivation_observer();
         }
     }
 
@@ -175,6 +180,13 @@ define_class!(
             refresh_status_menu_items(menu);
             refresh_update_menu_item(menu);
         }
+
+        // Triggered by a second launch (see `activate_running_instance`) when
+        // the menu bar dropped our status item but this process is still alive.
+        #[unsafe(method(reactivateStatusBar:))]
+        fn reactivate_status_bar(&self, _notification: &NSNotification) {
+            self.replace_status_bar();
+        }
     }
 );
 
@@ -185,14 +197,26 @@ impl Delegate {
     }
 
     fn install_status_bar(&self) {
-        if self.ivars().status_bar.get().is_some() {
+        if self.ivars().status_bar.borrow().is_some() {
             return;
+        }
+        self.replace_status_bar();
+    }
+
+    // Tears down any existing status item and vends a fresh one. Used for the
+    // initial install and to recover when macOS drops the item from the menu
+    // bar (e.g. after a menu-bar rebuild), which leaves the launcher running
+    // but invisible. Recreating — rather than toggling visibility on the stale
+    // item — is what reliably brings the icon back.
+    fn replace_status_bar(&self) {
+        let status_bar = NSStatusBar::systemStatusBar();
+        if let Some(old) = self.ivars().status_bar.borrow_mut().take() {
+            status_bar.removeStatusItem(&old._status_item);
         }
 
         let mtm = self.mtm();
         let menu = build_menu(mtm, self);
-        let status_item =
-            NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+        let status_item = status_bar.statusItemWithLength(NSVariableStatusItemLength);
         let status_button = status_item.button(mtm);
         let status_image = status_bar_icon();
 
@@ -200,7 +224,7 @@ impl Delegate {
         status_item.setMenu(Some(&menu));
         status_item.setVisible(true);
 
-        let _ = self.ivars().status_bar.set(StatusBarState {
+        *self.ivars().status_bar.borrow_mut() = Some(StatusBarState {
             _menu: menu,
             _status_item: status_item,
             _status_button: status_button,
@@ -208,10 +232,27 @@ impl Delegate {
         });
     }
 
+    // Lets a second launch reach this process so it can rebuild a dropped
+    // status item. Delivered on the main run loop, so the handler can safely
+    // touch AppKit.
+    fn register_reactivation_observer(&self) {
+        let center = NSDistributedNotificationCenter::defaultCenter();
+        unsafe {
+            center.addObserver_selector_name_object_suspensionBehavior(
+                self.as_ref(),
+                sel!(reactivateStatusBar:),
+                Some(nsstring(REACTIVATE_NOTIFICATION).as_ref()),
+                None,
+                NSNotificationSuspensionBehavior::DeliverImmediately,
+            );
+        }
+    }
+
     // Rebuilds every menu item in place so a language switch retitles the
     // whole menu without replacing the status item.
     fn rebuild_menu(&self) {
-        let Some(state) = self.ivars().status_bar.get() else {
+        let guard = self.ivars().status_bar.borrow();
+        let Some(state) = guard.as_ref() else {
             return;
         };
         let menu = &state._menu;
@@ -235,6 +276,29 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     start_startup_tasks(ctx.clone());
     app.run();
     Ok(())
+}
+
+// Called from a second launch while another launcher already holds the
+// single-instance lock. The user most likely relaunched because the menu bar
+// icon vanished while the launcher kept running, so restore it before exiting.
+pub fn activate_running_instance() {
+    // A launchd kickstart restarts the launcher in the proper GUI session and
+    // reliably brings the icon back — this is exactly the manual
+    // `launchctl kickstart -k gui/<uid>/<label>` recovery. Prefer it whenever
+    // the LaunchAgent is installed (the common launch-at-login case).
+    if launch_agent_installed() && kickstart_launch_agent() {
+        return;
+    }
+
+    // No LaunchAgent to restart (launch-at-login disabled): fall back to asking
+    // the running instance to rebuild its status item in place.
+    let center = NSDistributedNotificationCenter::defaultCenter();
+    unsafe {
+        center.postNotificationName_object(nsstring(REACTIVATE_NOTIFICATION).as_ref(), None);
+    }
+    // The post hands off to distnoted synchronously, but give it a brief moment
+    // to fan out before this short-lived process tears down.
+    thread::sleep(std::time::Duration::from_millis(200));
 }
 
 fn configure_status_item(
@@ -988,6 +1052,21 @@ fn launchctl_bootout(path: &std::path::Path) -> LauncherResult<()> {
             .arg(format!("gui/{}", unsafe { libc::geteuid() }))
             .arg(path),
     )
+}
+
+// Kills and restarts the launcher service so it comes back up cleanly in the
+// GUI session. `-k` restarts a running job and simply starts a stopped one.
+fn kickstart_launch_agent() -> bool {
+    Command::new("launchctl")
+        .arg("kickstart")
+        .arg("-k")
+        .arg(format!(
+            "gui/{}/{}",
+            unsafe { libc::geteuid() },
+            LAUNCH_AGENT_LABEL
+        ))
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn run_command(command: &mut Command) -> LauncherResult<()> {

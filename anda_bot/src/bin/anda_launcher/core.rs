@@ -39,6 +39,8 @@ const ANDA_EXE_ENV: &str = "ANDA_EXE";
 const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
 const BROWSER_EXTENSION_TOKEN_DAYS: &str = "365";
 const UPDATE_SPINNER_FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+#[cfg(unix)]
+const LAUNCHER_LOCK_FILE: &str = "launcher.lock";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LauncherLanguage {
@@ -859,34 +861,39 @@ pub fn default_model_for_provider(provider_id: &str) -> &'static str {
         .model
 }
 
-pub fn acquire_launcher_instance_lock() -> LauncherResult<Option<LauncherInstanceLock>> {
+pub fn acquire_launcher_instance_lock(
+    ctx: &LauncherContext,
+) -> LauncherResult<Option<LauncherInstanceLock>> {
     #[cfg(unix)]
     {
-        acquire_unix_launcher_instance_lock()
+        acquire_unix_launcher_instance_lock(&ctx.home)
     }
 
     #[cfg(windows)]
     {
+        let _ = ctx;
         acquire_windows_launcher_instance_lock()
     }
 
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = ctx;
         Ok(Some(LauncherInstanceLock { _private: () }))
     }
 }
 
 #[cfg(unix)]
-fn acquire_unix_launcher_instance_lock() -> LauncherResult<Option<LauncherInstanceLock>> {
-    let lock_path = env::temp_dir().join(format!("ai.anda.anda-bot.launcher.{}.lock", unsafe {
-        libc::geteuid()
-    }));
-    #[allow(clippy::suspicious_open_options)]
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(lock_path)?;
+fn acquire_unix_launcher_instance_lock(home: &Path) -> LauncherResult<Option<LauncherInstanceLock>> {
+    // The lock lives in the app-owned home directory rather than $TMPDIR.
+    // macOS purges files under $TMPDIR (/var/folders/.../T) that have not been
+    // accessed for a few days, and holding an flock fd never refreshes the
+    // access time. A temp-dir lock therefore gets deleted out from under a
+    // long-running launcher — silently breaking the single-instance guarantee —
+    // and a relaunch can fail to even open it with ENOENT when the per-user
+    // temp directory is stale.
+    fs::create_dir_all(home)?;
+    let lock_path = home.join(LAUNCHER_LOCK_FILE);
+    let file = open_launcher_lock_file(home, &lock_path)?;
 
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
@@ -899,6 +906,24 @@ fn acquire_unix_launcher_instance_lock() -> LauncherResult<Option<LauncherInstan
         return Ok(None);
     }
     Err(err.into())
+}
+
+#[cfg(unix)]
+fn open_launcher_lock_file(home: &Path, lock_path: &Path) -> io::Result<fs::File> {
+    #[allow(clippy::suspicious_open_options)]
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    match options.open(lock_path) {
+        Ok(file) => Ok(file),
+        // The home directory can disappear while the launcher is offline (manual
+        // cleanup, a half-removed install). Recreate it and retry once so a
+        // missing parent never surfaces as a raw ENOENT dialog.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(home)?;
+            options.open(lock_path)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[cfg(windows)]
@@ -2733,6 +2758,35 @@ Logs: /tmp/anda.log
         assert_eq!(
             detect_anda_exe_from_candidates(&launcher, [fallback.clone()]),
             fallback
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launcher_lock_lives_in_home_and_enforces_single_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        // A not-yet-created, nested home exercises the create_dir_all path so a
+        // missing parent never surfaces as the ENOENT the temp-dir lock hit.
+        let home = dir.path().join("nested").join(".anda");
+
+        let first = acquire_unix_launcher_instance_lock(&home).unwrap();
+        assert!(first.is_some(), "first acquisition should succeed");
+        assert!(
+            home.join(LAUNCHER_LOCK_FILE).exists(),
+            "lock file must be created under the app-owned home, not $TMPDIR"
+        );
+
+        let second = acquire_unix_launcher_instance_lock(&home).unwrap();
+        assert!(
+            second.is_none(),
+            "a second instance must observe the held lock"
+        );
+
+        drop(first);
+        let third = acquire_unix_launcher_instance_lock(&home).unwrap();
+        assert!(
+            third.is_some(),
+            "the lock must be reacquirable once the holder releases it"
         );
     }
 

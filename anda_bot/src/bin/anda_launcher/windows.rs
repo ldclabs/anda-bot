@@ -38,10 +38,10 @@ use windows_sys::Win32::{
             DestroyWindow, DispatchMessageW, FindWindowExW, GetCursorPos, GetMessageW, HICON,
             HMENU, ICONINFO, IDI_APPLICATION, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
             MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW,
-            PostMessageW, PostQuitMessage, RegisterClassW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
-            SW_SHOWNORMAL, SendMessageTimeoutW, SetForegroundWindow, TPM_RIGHTBUTTON,
-            TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP,
-            WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+            PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+            SMTO_ABORTIFHUNG, SMTO_BLOCK, SW_SHOWNORMAL, SendMessageTimeoutW, SetForegroundWindow,
+            TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP, WM_COMMAND, WM_DESTROY,
+            WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPEDWINDOW,
         },
     },
 };
@@ -79,6 +79,11 @@ const ID_LANGUAGE_BASE: usize = 1100;
 
 static CTX: OnceLock<LauncherContext> = OnceLock::new();
 static LAUNCHER_ICON: OnceLock<(usize, bool)> = OnceLock::new();
+// `RegisterWindowMessage("TaskbarCreated")` id. The shell broadcasts this to
+// every top-level window when the taskbar is (re)created — most notably after
+// Explorer.exe restarts, which destroys all tray icons. Receiving it is the
+// signal to re-add ours.
+static TASKBAR_CREATED: OnceLock<u32> = OnceLock::new();
 
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     CTX.set(ctx.clone()).ok();
@@ -86,6 +91,11 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
     unsafe {
         let class_name = wide_null(CLASS_NAME);
         let hinstance = GetModuleHandleW(ptr::null());
+        // Register before the window exists so wnd_proc can recognize the
+        // broadcast as soon as it can arrive.
+        TASKBAR_CREATED
+            .set(RegisterWindowMessageW(wide_null("TaskbarCreated").as_ptr()))
+            .ok();
         let wndclass = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wnd_proc),
@@ -154,8 +164,18 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if Some(msg) == taskbar_created_message() {
+        // Explorer restarted and wiped the tray; vend our icon again.
+        add_tray_icon(hwnd);
+        return 0;
+    }
+
     match msg {
         WM_LAUNCHER_ACTIVATE => {
+            // A second launch (the user reopening the shortcut) — make sure the
+            // icon is present before showing the menu, so reopening also
+            // restores an icon that went missing for any other reason.
+            add_tray_icon(hwnd);
             show_tray_menu(hwnd);
             0
         }
@@ -175,6 +195,12 @@ unsafe extern "system" fn wnd_proc(
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+// The registered "TaskbarCreated" id, or None if registration failed — the
+// filter keeps a failed (zero) registration from ever matching WM_NULL.
+fn taskbar_created_message() -> Option<u32> {
+    TASKBAR_CREATED.get().copied().filter(|&message| message != 0)
 }
 
 fn handle_command(hwnd: HWND, id: usize) {

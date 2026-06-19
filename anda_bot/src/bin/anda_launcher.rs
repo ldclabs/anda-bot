@@ -34,7 +34,7 @@ fn run() -> core::LauncherResult<()> {
         return Ok(());
     }
 
-    let _lock = match core::acquire_launcher_instance_lock()? {
+    let _lock = match core::acquire_launcher_instance_lock(&ctx)? {
         Some(lock) => Some(lock),
         None => {
             #[cfg(windows)]
@@ -49,6 +49,11 @@ fn run() -> core::LauncherResult<()> {
 
             #[cfg(not(windows))]
             {
+                // Another launcher already owns the single-instance lock. The
+                // user most likely relaunched because the menu bar icon
+                // vanished, so ask the running instance to restore it before
+                // exiting.
+                platform::activate_running_instance();
                 return Ok(());
             }
         }

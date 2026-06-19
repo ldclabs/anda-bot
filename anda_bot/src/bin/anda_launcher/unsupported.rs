@@ -7,3 +7,5 @@ pub fn run(_ctx: LauncherContext) -> LauncherResult<()> {
 pub fn show_error(title: &str, message: &str) {
     eprintln!("{title}: {message}");
 }
+
+pub fn activate_running_instance() {}
