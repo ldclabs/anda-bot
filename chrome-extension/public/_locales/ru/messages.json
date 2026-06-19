@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "Субагент навыков"
   },
+  "promptCommandNewDescription": {
+    "message": "Начать новый разговор с необязательным первым запросом."
+  },
+  "promptCommandGoalDescription": {
+    "message": "Запустить контролируемую длительную задачу."
+  },
+  "promptCommandLoopDescription": {
+    "message": "Повторно выполнять запрос или слэш-команду. Опишите интервал своими словами или не указывайте его, чтобы модель сама задавала темп."
+  },
+  "promptCommandSideDescription": {
+    "message": "Выполнить временный побочный запрос в субагенте."
+  },
+  "promptCommandSteerDescription": {
+    "message": "Перенаправить следующий шаг модели новой инструкцией."
+  },
+  "promptCommandSkillDescription": {
+    "message": "Направить запрос указанному субагенту-навыку."
+  },
+  "promptCommandStopDescription": {
+    "message": "Остановить текущую задачу и оставить разговор без действий."
+  },
+  "promptCommandCancelDescription": {
+    "message": "Отменить активный сеанс разговора с необязательной причиной."
+  },
+  "promptCommandPingDescription": {
+    "message": "Отправить лёгкий пинг."
+  },
+  "promptCommandAliasDetail": {
+    "message": "псевдоним: $1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "ярлык: $1"
+  },
   "syncing": {
     "message": "Синхронизация"
   },

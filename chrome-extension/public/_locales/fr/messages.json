@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "Sous-agent de compétences"
   },
+  "promptCommandNewDescription": {
+    "message": "Démarrer une nouvelle conversation avec un premier message facultatif."
+  },
+  "promptCommandGoalDescription": {
+    "message": "Démarrer une tâche supervisée de longue durée."
+  },
+  "promptCommandLoopDescription": {
+    "message": "Exécuter une invite ou une commande slash de façon répétée. Décrivez un intervalle avec vos propres mots, ou omettez-le pour laisser le modèle gérer son rythme."
+  },
+  "promptCommandSideDescription": {
+    "message": "Exécuter une requête secondaire temporaire dans un sous-agent."
+  },
+  "promptCommandSteerDescription": {
+    "message": "Réorienter la prochaine étape du modèle avec une nouvelle instruction."
+  },
+  "promptCommandSkillDescription": {
+    "message": "Acheminer l'invite vers un sous-agent de compétence nommé."
+  },
+  "promptCommandStopDescription": {
+    "message": "Arrêter la tâche en cours et laisser la conversation inactive."
+  },
+  "promptCommandCancelDescription": {
+    "message": "Annuler la session de conversation active avec un motif facultatif."
+  },
+  "promptCommandPingDescription": {
+    "message": "Envoyer un ping léger."
+  },
+  "promptCommandAliasDetail": {
+    "message": "alias : $1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "raccourci : $1"
+  },
   "syncing": {
     "message": "Synchronisation"
   },

@@ -31,75 +31,78 @@ export const emptyPromptCommandContext: PromptCommandContext = {
 
 export const promptSkillsCacheMs = 60_000
 
-const promptCommandItems: PromptCommandSuggestion[] = [
-  {
-    id: 'command:new',
-    label: '/new',
-    insertText: '/new ',
-    description: 'Start a fresh conversation with an optional first prompt.',
-    detail: 'alias: /clear',
-    kind: 'command'
-  },
-  {
-    id: 'command:goal',
-    label: '/goal',
-    insertText: '/goal ',
-    description: 'Start a supervised long-running task.',
-    kind: 'command'
-  },
-  {
-    id: 'command:loop',
-    label: '/loop',
-    insertText: '/loop ',
-    description:
-      'Run a prompt or slash command repeatedly. Describe an interval in your own words, or omit it to let the model self-pace.',
-    kind: 'command'
-  },
-  {
-    id: 'command:side',
-    label: '/side',
-    insertText: '/side ',
-    description: 'Run a temporary side request in a subagent.',
-    detail: 'alias: /btw',
-    kind: 'command'
-  },
-  {
-    id: 'command:steer',
-    label: '/steer',
-    insertText: '/steer ',
-    description: 'Redirect the next model step with a new instruction.',
-    kind: 'command'
-  },
-  {
-    id: 'command:skill',
-    label: '/skill',
-    insertText: '/skill ',
-    description: 'Route the prompt to a named skill subagent.',
-    detail: 'shortcut: $skill-name',
-    kind: 'command'
-  },
-  {
-    id: 'command:stop',
-    label: '/stop',
-    insertText: '/stop ',
-    description: 'Stop the current task and keep the conversation idle.',
-    kind: 'command'
-  },
-  {
-    id: 'command:cancel',
-    label: '/cancel',
-    insertText: '/cancel ',
-    description: 'Cancel the active conversation session with an optional reason.',
-    kind: 'command'
-  },
-  {
-    id: 'command:ping',
-    label: '/ping',
-    insertText: '/ping ',
-    description: 'Send a lightweight ping.',
-    kind: 'command'
-  }
-]
+// Built fresh on each call so descriptions and details follow the active UI
+// language (the launcher can switch it after this module loads).
+function promptCommandItems(): PromptCommandSuggestion[] {
+  return [
+    {
+      id: 'command:new',
+      label: '/new',
+      insertText: '/new ',
+      description: getMessage('promptCommandNewDescription'),
+      detail: getMessage('promptCommandAliasDetail', '/clear'),
+      kind: 'command'
+    },
+    {
+      id: 'command:goal',
+      label: '/goal',
+      insertText: '/goal ',
+      description: getMessage('promptCommandGoalDescription'),
+      kind: 'command'
+    },
+    {
+      id: 'command:loop',
+      label: '/loop',
+      insertText: '/loop ',
+      description: getMessage('promptCommandLoopDescription'),
+      kind: 'command'
+    },
+    {
+      id: 'command:side',
+      label: '/side',
+      insertText: '/side ',
+      description: getMessage('promptCommandSideDescription'),
+      detail: getMessage('promptCommandAliasDetail', '/btw'),
+      kind: 'command'
+    },
+    {
+      id: 'command:steer',
+      label: '/steer',
+      insertText: '/steer ',
+      description: getMessage('promptCommandSteerDescription'),
+      kind: 'command'
+    },
+    {
+      id: 'command:skill',
+      label: '/skill',
+      insertText: '/skill ',
+      description: getMessage('promptCommandSkillDescription'),
+      detail: getMessage('promptCommandShortcutDetail', '$skill-name'),
+      kind: 'command'
+    },
+    {
+      id: 'command:stop',
+      label: '/stop',
+      insertText: '/stop ',
+      description: getMessage('promptCommandStopDescription'),
+      kind: 'command'
+    },
+    {
+      id: 'command:cancel',
+      label: '/cancel',
+      insertText: '/cancel ',
+      description: getMessage('promptCommandCancelDescription'),
+      kind: 'command'
+    },
+    {
+      id: 'command:ping',
+      label: '/ping',
+      insertText: '/ping ',
+      description: getMessage('promptCommandPingDescription'),
+      kind: 'command'
+    }
+  ]
+}
 
 export function readPromptCommandContext(value: string, caret: number): PromptCommandContext {
   const safeCaret = Math.max(0, Math.min(caret, value.length))
@@ -252,7 +255,7 @@ function buildCommandModeSuggestions(
   skillsLoading: boolean
 ): PromptCommandSuggestion[] {
   const entries: Array<{ suggestion: PromptCommandSuggestion; tier: number }> = []
-  for (const item of promptCommandItems) {
+  for (const item of promptCommandItems()) {
     const tier = commandMatchTier(item, query)
     if (tier >= 0) {
       entries.push({ suggestion: item, tier })

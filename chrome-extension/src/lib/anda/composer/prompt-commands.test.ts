@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { formatUiMessage } from '$lib/i18n'
+import enMessages from '../../../../public/_locales/en/messages.json'
 import {
   buildPromptCommandSuggestions,
   readPromptCommandContext,
   type PromptCommandContext
 } from './prompt-commands'
 
+const messages = enMessages as Record<string, { message?: string }>
+
 beforeEach(() => {
+  // Mirror chrome.i18n.getMessage against the bundled English strings so
+  // command descriptions and details resolve exactly as they ship.
   vi.stubGlobal('chrome', {
     i18n: {
-      getMessage: vi.fn((key: string) => key)
+      getMessage: vi.fn((key: string, substitutions?: string | string[]) => {
+        const message = messages[key]?.message
+        return message === undefined ? '' : formatUiMessage(message, substitutions)
+      })
     }
   })
 })

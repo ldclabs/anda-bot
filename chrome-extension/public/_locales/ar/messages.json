@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "وكيل المهارات الفرعي"
   },
+  "promptCommandNewDescription": {
+    "message": "ابدأ محادثة جديدة مع مطالبة أولى اختيارية."
+  },
+  "promptCommandGoalDescription": {
+    "message": "ابدأ مهمة طويلة الأمد خاضعة للإشراف."
+  },
+  "promptCommandLoopDescription": {
+    "message": "شغّل مطالبة أو أمرًا مائلًا بشكل متكرر. صِف الفاصل الزمني بكلماتك الخاصة، أو اتركه فارغًا ليحدد النموذج وتيرته بنفسه."
+  },
+  "promptCommandSideDescription": {
+    "message": "شغّل طلبًا جانبيًا مؤقتًا في وكيل فرعي."
+  },
+  "promptCommandSteerDescription": {
+    "message": "أعد توجيه خطوة النموذج التالية بتعليمات جديدة."
+  },
+  "promptCommandSkillDescription": {
+    "message": "وجّه المطالبة إلى وكيل مهارة فرعي محدد."
+  },
+  "promptCommandStopDescription": {
+    "message": "أوقف المهمة الحالية وأبقِ المحادثة خاملة."
+  },
+  "promptCommandCancelDescription": {
+    "message": "ألغِ جلسة المحادثة النشطة مع سبب اختياري."
+  },
+  "promptCommandPingDescription": {
+    "message": "أرسل اختبار اتصال خفيفًا."
+  },
+  "promptCommandAliasDetail": {
+    "message": "اسم مستعار: $1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "اختصار: $1"
+  },
   "syncing": {
     "message": "مزامنة"
   },

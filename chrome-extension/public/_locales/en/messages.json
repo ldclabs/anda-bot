@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "Skill subagent"
   },
+  "promptCommandNewDescription": {
+    "message": "Start a fresh conversation with an optional first prompt."
+  },
+  "promptCommandGoalDescription": {
+    "message": "Start a supervised long-running task."
+  },
+  "promptCommandLoopDescription": {
+    "message": "Run a prompt or slash command repeatedly. Describe an interval in your own words, or omit it to let the model self-pace."
+  },
+  "promptCommandSideDescription": {
+    "message": "Run a temporary side request in a subagent."
+  },
+  "promptCommandSteerDescription": {
+    "message": "Redirect the next model step with a new instruction."
+  },
+  "promptCommandSkillDescription": {
+    "message": "Route the prompt to a named skill subagent."
+  },
+  "promptCommandStopDescription": {
+    "message": "Stop the current task and keep the conversation idle."
+  },
+  "promptCommandCancelDescription": {
+    "message": "Cancel the active conversation session with an optional reason."
+  },
+  "promptCommandPingDescription": {
+    "message": "Send a lightweight ping."
+  },
+  "promptCommandAliasDetail": {
+    "message": "alias: $1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "shortcut: $1"
+  },
   "syncing": {
     "message": "Syncing"
   },

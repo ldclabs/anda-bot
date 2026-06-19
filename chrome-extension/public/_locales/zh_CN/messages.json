@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "技能子智能体"
   },
+  "promptCommandNewDescription": {
+    "message": "开始一段新对话，可选填首条提示。"
+  },
+  "promptCommandGoalDescription": {
+    "message": "开始一个受监督的长时间运行任务。"
+  },
+  "promptCommandLoopDescription": {
+    "message": "重复运行一条提示或斜杠命令。用自己的话描述间隔，或留空让模型自行把控节奏。"
+  },
+  "promptCommandSideDescription": {
+    "message": "在子智能体中运行一个临时的旁路请求。"
+  },
+  "promptCommandSteerDescription": {
+    "message": "用新指令重新引导模型的下一步。"
+  },
+  "promptCommandSkillDescription": {
+    "message": "将提示路由到指定的技能子智能体。"
+  },
+  "promptCommandStopDescription": {
+    "message": "停止当前任务并让对话保持空闲。"
+  },
+  "promptCommandCancelDescription": {
+    "message": "取消当前对话会话，可选填原因。"
+  },
+  "promptCommandPingDescription": {
+    "message": "发送一次轻量探测。"
+  },
+  "promptCommandAliasDetail": {
+    "message": "别名：$1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "快捷方式：$1"
+  },
   "syncing": {
     "message": "同步中"
   },

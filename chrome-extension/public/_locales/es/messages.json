@@ -176,6 +176,39 @@
   "promptSkillDescription": {
     "message": "Subagente de habilidades"
   },
+  "promptCommandNewDescription": {
+    "message": "Inicia una conversación nueva con un primer mensaje opcional."
+  },
+  "promptCommandGoalDescription": {
+    "message": "Inicia una tarea supervisada de larga duración."
+  },
+  "promptCommandLoopDescription": {
+    "message": "Ejecuta un mensaje o un comando de barra de forma repetida. Describe un intervalo con tus propias palabras u omítelo para que el modelo marque su propio ritmo."
+  },
+  "promptCommandSideDescription": {
+    "message": "Ejecuta una solicitud secundaria temporal en un subagente."
+  },
+  "promptCommandSteerDescription": {
+    "message": "Redirige el siguiente paso del modelo con una nueva instrucción."
+  },
+  "promptCommandSkillDescription": {
+    "message": "Enruta el mensaje a un subagente de habilidad indicado."
+  },
+  "promptCommandStopDescription": {
+    "message": "Detén la tarea actual y deja la conversación inactiva."
+  },
+  "promptCommandCancelDescription": {
+    "message": "Cancela la sesión de conversación activa con un motivo opcional."
+  },
+  "promptCommandPingDescription": {
+    "message": "Envía un ping ligero."
+  },
+  "promptCommandAliasDetail": {
+    "message": "alias: $1"
+  },
+  "promptCommandShortcutDetail": {
+    "message": "atajo: $1"
+  },
   "syncing": {
     "message": "Sincronizando"
   },
