@@ -4,6 +4,28 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-20
+
+### Added
+
+- **Chat messages can be bookmarked from the browser extension**: assistant messages now offer local bookmarks that are saved in the daemon, can be organized into folders, and can jump back to the original conversation from the side panel or dashboard.
+- **Bookmarks API and dashboard workspace**: added the daemon-side bookmark store/tooling plus a dedicated browser extension dashboard workspace for browsing and managing bookmarked messages.
+- **Quick prompt shortcuts in the browser composer**: user messages can be saved as reusable quick inputs, shown as composer chips, inserted with one click, removed individually, or cleared together with localized confirmation text.
+- **Prompt command suggestions follow the active UI language**: slash-command suggestion descriptions and details now use localized extension strings instead of fixed English copy.
+- **Teaching and grilling skill definitions**: bundled new `teach` and `grilling` skills, including teaching workspace formats for missions, resources, learning records, and glossaries.
+- **Edge browser extension guidance**: added Edge-specific browser extension installation and store-description guidance across the docs and localized store copy.
+
+### Changed
+
+- **Browser extension dashboard entrypoint replaces the old Brain/config split**: the extension now builds a dashboard page that hosts bookmark management while preserving access to existing configuration and Brain views.
+- **Version synchronized for the 0.10.0 release**: updated the `anda_bot` crate, Cargo lock metadata, and browser extension package/manifests to advertise `0.10.0`.
+
+### Fixed
+
+- **Launcher tray icons recover more reliably**: macOS launcher single-instance locking now lives under the app-owned home directory instead of a purgeable temp directory, and relaunches can ask the running instance to rebuild a dropped status-bar item.
+- **Launcher relaunch recovery avoids unnecessary kickstarts**: macOS only force-restarts the LaunchAgent when `launchctl` reports a running managed job, falling back to in-process status-bar reactivation for manually started launchers.
+- **Multimodal text summaries preserve grapheme boundaries**: long text summaries now truncate head and tail excerpts on Unicode grapheme boundaries so emoji and ZWJ sequences are not split.
+
 ## [0.9.16] — 2026-06-18
 
 ### Added

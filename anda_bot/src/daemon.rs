@@ -413,6 +413,10 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
                     let _ = tokio::fs::remove_file(&pid_path).await;
                     return Err(err.into());
                 }
+                if let Err(err) = file.flush().await {
+                    let _ = tokio::fs::remove_file(&pid_path).await;
+                    return Err(err.into());
+                }
                 return Ok(PidFileGuard { path: pid_path });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
