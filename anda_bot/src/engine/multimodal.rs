@@ -1,7 +1,7 @@
 use anda_core::{
     Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionFeatures,
     CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
-    Usage, inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
+    ToolGroupInfo, Usage, inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
 };
 use anda_engine::{
     context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -34,6 +34,9 @@ pub const AUDIO_UNDERSTANDING_AGENT_NAME: &str = "audio_understanding";
 pub const VIDEO_UNDERSTANDING_AGENT_NAME: &str = "video_understanding";
 pub const OTHER_UNDERSTANDING_AGENT_NAME: &str = "attachment_understanding";
 
+/// Stable id of the multimodal media-understanding capability group.
+pub const MEDIA_UNDERSTANDING_TOOL_GROUP_ID: &str = "media_understanding";
+
 pub const IMAGE_MODEL_LABEL: &str = "image";
 pub const AUDIO_MODEL_LABEL: &str = "audio";
 pub const VIDEO_MODEL_LABEL: &str = "video";
@@ -45,6 +48,22 @@ const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
 const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 256 * 1024;
 #[cfg(windows)]
 const PDFIUM_DLL_NAME: &str = "pdfium.dll";
+
+/// Returns the shared [`ToolGroupInfo`] for the media-understanding agents.
+///
+/// The image, audio, video, and generic attachment understanding agents report
+/// this so discovery presents them as one bundle. The registry fills in the
+/// member list from the agents actually registered.
+pub fn media_understanding_tool_group_info() -> ToolGroupInfo {
+    ToolGroupInfo {
+        id: MEDIA_UNDERSTANDING_TOOL_GROUP_ID.to_string(),
+        title: "Media understanding".to_string(),
+        description: "Understand image, audio, video, and document/file attachments or workspace/URL media for downstream text-only reasoning.".to_string(),
+        instructions: Some(
+            "These agents share one media-understanding workflow. Pick `image_understanding`, `audio_understanding`, or `video_understanding` for matching visual/audio/video inputs, and `attachment_understanding` for PDFs, text files, documents, spreadsheets, slides, logs, or other non-media attachments. Provide `path` or `url` for workspace files and URLs, or pass attached resources directly; use `question` for the caller's focus.".to_string(),
+        ),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaKind {
@@ -924,6 +943,10 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             }),
             strict: Some(true),
         }
+    }
+
+    fn group(&self) -> Option<ToolGroupInfo> {
+        Some(media_understanding_tool_group_info())
     }
 
     fn supported_resource_tags(&self) -> Vec<String> {
@@ -1867,6 +1890,26 @@ mod tests {
             let definition = agent.definition();
             assert_eq!(definition.strict, Some(true));
             assert_openai_strict_parameters(&definition.parameters);
+        }
+    }
+
+    #[test]
+    fn media_understanding_agents_share_tool_group() {
+        for agent in [
+            MediaUnderstandingAgent::image(Vec::new()),
+            MediaUnderstandingAgent::audio(Vec::new()),
+            MediaUnderstandingAgent::video(Vec::new()),
+            MediaUnderstandingAgent::other(Vec::new()),
+        ] {
+            let group = agent.group().expect("media agent should report a group");
+            assert_eq!(group.id, MEDIA_UNDERSTANDING_TOOL_GROUP_ID);
+            assert_eq!(group.title, "Media understanding");
+            assert!(
+                group
+                    .instructions
+                    .as_deref()
+                    .is_some_and(|instructions| instructions.contains("attachment_understanding"))
+            );
         }
     }
 

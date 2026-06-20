@@ -6,27 +6,27 @@ All notable changes to Anda Bot.
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.10.1] — 2026-06-20
+
+### Added
+
+- **Media-understanding tools advertise a shared capability group**: grouped image, audio, video, and generic attachment understanding agents under one discovery bundle with shared usage guidance for file, URL, and attached-resource workflows.
 - **Auto-research skill for long-horizon work**: bundled an `auto-research` skill that defines a file-backed ledger, stall/pivot rules, worker prompt shape, and patrol boundaries for autonomous research or unattended follow-up loops.
 
 ### Changed
 
-- **Bundled engine dependency resolves to `anda_engine` `0.13.9`**: updated the lockfile so child agent contexts use the corrected agent namespace behavior from the shared engine.
-
-### Fixed
-
-- **Goal activation is restricted to the main Anda Bot session**: subagents that inherit session state now receive a clear error and must report requested goal changes back to their caller instead of mutating the main session goal directly.
-
-## [0.10.1] — 2026-06-20
-
-### Changed
-
 - **Session compaction now uses reusable engine handoffs**: replaced bot-local compaction continuation/retry plumbing with `CompletionRunner::handoff`, keeping long sessions in child conversations while preserving accumulated usage, artifacts, tool usage, discovered-tool settings, and runner state.
-- **Version synchronized for the 0.10.1 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.1`, and aligned bundled Anda dependencies with `anda_brain` `0.8.1`, `anda_core` `0.13.7`, and `anda_engine` `0.13.8`.
+- **Version synchronized for the 0.10.1 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.1`, and aligned bundled Anda dependencies with `anda_brain` `0.8.1`, `anda_core` `0.13.7`, and `anda_engine` `0.13.9`.
 
 ### Fixed
 
 - **Idle compaction keeps active sessions alive**: compaction now refreshes the session activity clock and continues in a child conversation even without immediately pending user work, including sessions that still have background tasks.
 - **Pending follow-up and steering batches are compacted before attachment**: queued follow-up and steer content now participates in the engine compaction threshold check before it is attached to the runner, avoiding oversized next requests.
+- **Goal activation is restricted to the main Anda Bot session**: subagents that inherit session state now receive a clear error and must report requested goal changes back to their caller instead of mutating the main session goal directly.
 
 ## [0.10.0] — 2026-06-20
 
