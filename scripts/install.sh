@@ -505,40 +505,60 @@ EOF
     success "Launcher autostart registered."
 }
 
-start_daemon() {
+restart_daemon() {
     if [ "${ANDA_NO_START:-0}" = "1" ]; then
         return 0
     fi
 
-    if [ "$OS" = "macos" ] && [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ]; then
-        info "Starting Anda launcher..."
-        APP_DIR=$(macos_launcher_app_path)
-        if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
-            open -gj "$APP_DIR" >/dev/null 2>&1
-            START_STATUS=$?
-        else
-            nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
-            START_STATUS=$?
+    info "Restarting Anda daemon..."
+    if RESTART_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" restart 2>&1); then
+        success "Anda daemon restarted."
+    else
+        info "Anda is installed, but the daemon did not restart yet. Configure ${ANDA_HOME_DIR}/config.yaml, then run:"
+        printf '    %s --home "%s" restart\n' "$BINARY_NAME" "$ANDA_HOME_DIR"
+        if [ -n "$RESTART_OUTPUT" ]; then
+            printf '%s\n' "$RESTART_OUTPUT"
         fi
-        if [ "$START_STATUS" -eq 0 ]; then
-            success "Anda launcher started."
-        else
-            info "Anda is installed, but the launcher did not start yet. Run:"
-            printf '    open "%s"\n' "$APP_DIR"
-        fi
+    fi
+}
+
+restart_macos_launcher() {
+    if [ "${ANDA_NO_START:-0}" = "1" ]; then
         return 0
     fi
 
-    info "Starting Anda daemon..."
-    if START_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" start 2>&1); then
-        success "Anda daemon started."
-    else
-        info "Anda is installed, but the daemon did not start yet. Configure ${ANDA_HOME_DIR}/config.yaml, then run:"
-        printf '    %s --home "%s" start\n' "$BINARY_NAME" "$ANDA_HOME_DIR"
-        if [ -n "$START_OUTPUT" ]; then
-            printf '%s\n' "$START_OUTPUT"
-        fi
+    [ "$OS" = "macos" ] || return 0
+    [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
+
+    info "Restarting Anda launcher..."
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -x "$LAUNCHER_INSTALL_NAME" >/dev/null 2>&1 || true
+        sleep 1
     fi
+
+    APP_DIR=$(macos_launcher_app_path)
+    if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
+        open -gj "$APP_DIR" >/dev/null 2>&1
+        START_STATUS=$?
+    else
+        nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
+        START_STATUS=$?
+    fi
+    if [ "$START_STATUS" -eq 0 ]; then
+        success "Anda launcher restarted."
+    else
+        info "Anda is installed, but the launcher did not start yet. Run:"
+        printf '    open "%s"\n' "$APP_DIR"
+    fi
+}
+
+restart_runtime() {
+    if [ "${ANDA_NO_START:-0}" = "1" ]; then
+        return 0
+    fi
+
+    restart_daemon
+    restart_macos_launcher
 }
 
 # Detect OS
@@ -654,11 +674,12 @@ if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     INSTALLED_VERSION=$("${INSTALL_DIR}/${INSTALL_NAME}" --version 2>/dev/null || echo "unknown")
     success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
     register_autostart
-    start_daemon
+    restart_runtime
     echo ""
     echo "  Manage Anda:"
     echo "    ${BINARY_NAME} status"
     echo "    ${BINARY_NAME} start"
+    echo "    ${BINARY_NAME} restart"
     echo "    ${BINARY_NAME} stop"
     if [ "$OS" = "macos" ]; then
         echo "    open \"$(macos_launcher_app_path)\""

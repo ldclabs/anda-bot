@@ -268,6 +268,10 @@ function Stop-ExistingAndaInstall {
     }
 }
 
+function Restart-AndaDaemon {
+    Start-HiddenProcess (Join-Path $InstallDir "anda.exe") @("--home", $AndaHome, "restart") -IgnoreExitCode
+}
+
 function Install-Skills($ArchivePath) {
     $skillsDir = Join-Path $AndaHome "skills"
     $tmp = Join-Path $env:TEMP ("anda-skills-" + [guid]::NewGuid().ToString("N"))
@@ -388,11 +392,14 @@ try {
     Remove-LegacyScheduledTasks
     Register-LauncherAutostart
 
-    Set-InstallProgress 94 "Starting Anda Bot..."
+    Set-InstallProgress 92 "Restarting Anda daemon..."
+    Restart-AndaDaemon
+
+    Set-InstallProgress 96 "Starting Anda Bot launcher..."
     Start-HiddenProcess (Join-Path $InstallDir "anda_launcher.exe") @() -NoWait
 
-    Set-InstallProgress 100 "Anda Bot has been installed."
-    [System.Windows.Forms.MessageBox]::Show("Anda Bot has been installed and started in the system tray.", "Anda Bot Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    Set-InstallProgress 100 "Anda Bot has been installed and restarted."
+    [System.Windows.Forms.MessageBox]::Show("Anda Bot has been installed, restarted, and started in the system tray.", "Anda Bot Setup", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
     $script:InstallUi.Form.Close()
     exit 0
 } catch {

@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -53,6 +53,7 @@ static CTX: OnceLock<LauncherContext> = OnceLock::new();
 #[derive(Debug, Default)]
 struct DelegateIvars {
     status_bar: RefCell<Option<StatusBarState>>,
+    reactivation_observer_registered: Cell<bool>,
 }
 
 #[derive(Debug)]
@@ -76,6 +77,16 @@ define_class!(
         fn did_finish_launching(&self, _notification: &NSNotification) {
             self.install_status_bar();
             self.register_reactivation_observer();
+        }
+
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn should_handle_reopen(
+            &self,
+            _sender: &NSApplication,
+            has_visible_windows: bool,
+        ) -> bool {
+            self.replace_status_bar();
+            has_visible_windows
         }
     }
 
@@ -236,6 +247,9 @@ impl Delegate {
     // status item. Delivered on the main run loop, so the handler can safely
     // touch AppKit.
     fn register_reactivation_observer(&self) {
+        if self.ivars().reactivation_observer_registered.replace(true) {
+            return;
+        }
         let center = NSDistributedNotificationCenter::defaultCenter();
         unsafe {
             center.addObserver_selector_name_object_suspensionBehavior(
@@ -271,6 +285,7 @@ pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
 
     let delegate = Delegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    app.finishLaunching();
 
     let _keep_alive = delegate;
     start_startup_tasks(ctx.clone());

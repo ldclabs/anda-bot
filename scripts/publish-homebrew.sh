@@ -110,6 +110,9 @@ class ${FORMULA_CLASS} < Formula
       "Homebrew does not write runtime files into ~/.anda during install.",
       "To install or refresh curated skills, run:",
       "  anda update --skills",
+      "",
+      "After upgrading an already running daemon, restart it to use the new binary:",
+      "  anda restart",
     ]
 
     if OS.mac?

@@ -291,6 +291,31 @@ function Stop-ExistingAndaInstall($Directory, $HomeDir) {
     }
 }
 
+function Restart-AndaDaemon($AndaPath, $HomeDir) {
+    Write-Info "Restarting Anda daemon..."
+    $restartOutput = @()
+    $exitCode = 1
+    try {
+        $restartOutput = & $AndaPath --home $HomeDir restart 2>&1
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $restartOutput = @($_.Exception.Message)
+    }
+
+    if ($exitCode -eq 0) {
+        Write-Success "Anda daemon restarted."
+        return
+    }
+
+    Write-Info "Anda is installed, but the daemon did not restart yet. Configure $HomeDir\config.yaml, then run:"
+    Write-Host "    $BinaryName --home `"$HomeDir`" restart"
+    foreach ($line in $restartOutput) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            Write-Host $line
+        }
+    }
+}
+
 function Remove-LegacyScheduledTasks {
     try {
         & schtasks.exe /Delete /TN $DaemonTaskName /F 2>$null | Out-Null
@@ -481,6 +506,7 @@ try {
     }
 
     if (-not $NoStart) {
+        Restart-AndaDaemon $installPath $AndaHome
         Write-Info "Starting Anda launcher..."
         Start-Process -FilePath $launcherInstallPath -WorkingDirectory $InstallDir -WindowStyle Hidden
         Write-Success "Anda launcher started."
@@ -490,6 +516,7 @@ try {
     Write-Host "  Manage Anda:"
     Write-Host "    $BinaryName status"
     Write-Host "    $BinaryName start"
+    Write-Host "    $BinaryName restart"
     Write-Host "    $BinaryName stop"
     Write-Host "    $LauncherInstallName"
     Write-Host "    reg.exe query HKCU\$RunKeyPath /v $LauncherRunValueName"
