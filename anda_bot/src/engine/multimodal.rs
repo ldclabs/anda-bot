@@ -1,7 +1,7 @@
 use anda_core::{
-    Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionRequest,
-    ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures, Usage,
-    inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
+    Agent, AgentContext, AgentInput, AgentOutput, BoxError, ByteBufB64, CompletionFeatures,
+    CompletionRequest, ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures,
+    Usage, inline_data_from_data_url, text_from_bytes, utf8_text_from_bytes,
 };
 use anda_engine::{
     context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -24,7 +24,6 @@ use std::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::model_retry;
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
@@ -625,8 +624,7 @@ impl MediaUnderstandingAgent {
         }
 
         let (summary_input, truncated) = bounded_text_for_summary(text);
-        let mut output = model_retry::completion_with_retry(
-            ctx,
+        let mut output = ctx.completion(
             CompletionRequest {
                 instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
                 prompt: format!(
@@ -644,9 +642,7 @@ impl MediaUnderstandingAgent {
                 ..Default::default()
             },
             Vec::new(),
-            "attachment text summary",
-        )
-        .await?;
+        ).await?;
 
         let summary = output.content.trim();
         output.content = format!(
@@ -676,8 +672,7 @@ impl MediaUnderstandingAgent {
         let tools = ctx
             .definitions(Some(&other_understanding_tool_names()))
             .await;
-        let mut output = model_retry::completion_with_retry(
-            ctx,
+        let mut output = ctx.completion(
             CompletionRequest {
                 instructions: self.kind.instructions(),
                 prompt: format!(
@@ -688,9 +683,7 @@ impl MediaUnderstandingAgent {
                 ..Default::default()
             },
             vec![attachment.to_resource()],
-            "attachment fallback understanding",
-        )
-        .await?;
+        ).await?;
 
         if output.content.trim().is_empty() {
             output.content = format!(
@@ -993,8 +986,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             .into());
         }
 
-        model_retry::completion_with_retry(
-            &ctx,
+        ctx.completion(
             CompletionRequest {
                 instructions: self.kind.instructions(),
                 prompt: self.completion_prompt(&args, resources_len, locations_len),
@@ -1002,7 +994,6 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
                 ..Default::default()
             },
             Vec::new(),
-            self.kind.agent_name(),
         )
         .await
     }

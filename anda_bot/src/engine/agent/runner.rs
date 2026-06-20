@@ -24,7 +24,7 @@ use crate::engine::{
     CompletionHook,
     conversation::SourceState,
     goal::{self},
-    model_retry, multimodal,
+    multimodal,
     prompt::{PromptCommand, skill_subagent},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -339,23 +339,22 @@ impl SessionRunner {
         follow_up_batch: &[ContentPart],
         steer_batch: &[ContentPart],
     ) -> bool {
-        (!follow_up_batch.is_empty() || !steer_batch.is_empty())
-            && self.runner.needs_compaction_with(|| {
-                estimated_content_tokens(follow_up_batch)
-                    .saturating_add(estimated_content_tokens(steer_batch))
-                    .saturating_add(
-                        self.runner
-                            .steering_message_iter()
-                            .map(|c| c.estimated_tokens() as u64)
-                            .sum(),
-                    )
-                    .saturating_add(
-                        self.runner
-                            .follow_up_message_iter()
-                            .map(|c| c.estimated_tokens() as u64)
-                            .sum(),
-                    )
-            })
+        self.runner.needs_compaction_with(|| {
+            estimated_content_tokens(follow_up_batch)
+                .saturating_add(estimated_content_tokens(steer_batch))
+                .saturating_add(
+                    self.runner
+                        .steering_message_iter()
+                        .map(|c| c.estimated_tokens() as u64)
+                        .sum(),
+                )
+                .saturating_add(
+                    self.runner
+                        .follow_up_message_iter()
+                        .map(|c| c.estimated_tokens() as u64)
+                        .sum(),
+                )
+        })
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
@@ -609,8 +608,7 @@ impl SessionRunner {
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
 
-        let next_result =
-            model_retry::runner_next_with_retry(&mut self.runner, "session runner").await;
+        let next_result = self.runner.next().await;
         self.assistant
             .inner
             .cache_merge_discovered_tools(&self.runner);
@@ -1256,6 +1254,25 @@ mod tests {
         (sess_runner, rx)
     }
 
+    async fn persist_runner_conversation(sess_runner: &mut SessionRunner) -> u64 {
+        let mut conversation = sess_runner.conversation.clone();
+        conversation._id = 0;
+        let parent_id = sess_runner
+            .assistant
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+        sess_runner.conversation._id = parent_id;
+        sess_runner
+            .session
+            .conversation_id
+            .store(parent_id, Ordering::SeqCst);
+        parent_id
+    }
+
     #[derive(Clone, Debug)]
     struct RecordingUsageCompleter {
         requests: Arc<Mutex<Vec<CompletionRequest>>>,
@@ -1666,11 +1683,7 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let ctx = recording_usage_ctx(requests.clone());
         let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
-        sess_runner.conversation._id = 100;
-        sess_runner
-            .session
-            .conversation_id
-            .store(100, Ordering::SeqCst);
+        let parent_id = persist_runner_conversation(&mut sess_runner).await;
         let mut snapshot = HashMap::new();
 
         sess_runner
@@ -1686,8 +1699,12 @@ mod tests {
         let cont = sess_runner.run(vec![], &mut snapshot).await.unwrap();
 
         assert!(cont);
-        assert_ne!(sess_runner.conversation._id, 100);
-        assert_eq!(sess_runner.conversation.ancestors, Some(vec![100]));
+        assert_ne!(sess_runner.conversation._id, parent_id);
+        assert_eq!(sess_runner.conversation.ancestors, Some(vec![parent_id]));
+        assert_eq!(
+            sess_runner.session.conversation_id.load(Ordering::SeqCst),
+            sess_runner.conversation._id
+        );
 
         let recorded = requests.lock();
         assert_eq!(recorded.len(), 3);
@@ -1711,11 +1728,7 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let ctx = recording_usage_ctx(requests.clone());
         let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
-        sess_runner.conversation._id = 100;
-        sess_runner
-            .session
-            .conversation_id
-            .store(100, Ordering::SeqCst);
+        let parent_id = persist_runner_conversation(&mut sess_runner).await;
         sess_runner.session.background_tasks.write().insert(
             "subagent-session".to_string(),
             BackgroundTaskInfo {
@@ -1740,8 +1753,12 @@ mod tests {
         let cont = sess_runner.run(vec![], &mut snapshot).await.unwrap();
 
         assert!(cont);
-        assert_ne!(sess_runner.conversation._id, 100);
-        assert_eq!(sess_runner.conversation.ancestors, Some(vec![100]));
+        assert_ne!(sess_runner.conversation._id, parent_id);
+        assert_eq!(sess_runner.conversation.ancestors, Some(vec![parent_id]));
+        assert_eq!(
+            sess_runner.session.conversation_id.load(Ordering::SeqCst),
+            sess_runner.conversation._id
+        );
 
         let recorded = requests.lock();
         assert_eq!(recorded.len(), 3);

@@ -39,7 +39,6 @@ mod conversation;
 mod goal;
 mod idle;
 mod mcp_server;
-mod model_retry;
 mod multimodal;
 mod prompt;
 mod resources;
