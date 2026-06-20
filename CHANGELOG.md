@@ -6,8 +6,6 @@ All notable changes to Anda Bot.
 
 ### Added
 
-- **Learn skill for concept anatomy**: bundled a `learn` skill for one-shot deep concept dissection with anchors, eight analytical cuts, introspection, compression, org-mode output, and optional saved notes.
-
 ### Changed
 
 ### Fixed
@@ -18,6 +16,8 @@ All notable changes to Anda Bot.
 
 - **Media-understanding tools advertise a shared capability group**: grouped image, audio, video, and generic attachment understanding agents under one discovery bundle with shared usage guidance for file, URL, and attached-resource workflows.
 - **Auto-research skill for long-horizon work**: bundled an `auto-research` skill that defines a file-backed ledger, stall/pivot rules, worker prompt shape, and patrol boundaries for autonomous research or unattended follow-up loops.
+- **Handoff skill for session transfer**: bundled a `handoff` skill that writes a redacted temporary handoff document with focus-specific context, suggested skills, and references to existing artifacts instead of duplicating them.
+- **Learn skill for concept anatomy**: bundled a `learn` skill for one-shot deep concept dissection with anchors, eight analytical cuts, introspection, compression, org-mode output, and optional saved notes.
 
 ### Changed
 
