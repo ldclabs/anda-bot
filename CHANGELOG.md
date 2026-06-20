@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-research skill for long-horizon work**: bundled an `auto-research` skill that defines a file-backed ledger, stall/pivot rules, worker prompt shape, and patrol boundaries for autonomous research or unattended follow-up loops.
+
+### Changed
+
+- **Bundled engine dependency resolves to `anda_engine` `0.13.9`**: updated the lockfile so child agent contexts use the corrected agent namespace behavior from the shared engine.
+
+### Fixed
+
+- **Goal activation is restricted to the main Anda Bot session**: subagents that inherit session state now receive a clear error and must report requested goal changes back to their caller instead of mutating the main session goal directly.
+
 ## [0.10.1] — 2026-06-20
 
 ### Changed

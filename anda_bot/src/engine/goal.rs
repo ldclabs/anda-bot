@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::system::system_runtime_prompt;
+use super::{agent::AndaBot, system::system_runtime_prompt};
 
 const EVALUATION_HISTORY_LIMIT: usize = 21;
 pub const SUPERVISOR_AGENT_NAME: &str = "supervisor_agent";
@@ -152,6 +152,12 @@ impl Tool<BaseCtx> for GoalTool {
         let Some(state) = ctx.get_state::<GoalToolState>() else {
             return Err("goal tool requires an active AndaBot session".into());
         };
+        if ctx.agent != AndaBot::NAME {
+            return Err(
+                "goal tool can only be called by the main AndaBot session; subagents should report requested goal changes to their caller"
+                    .into(),
+            );
+        }
 
         let result = state.activate(objective.to_string(), normalize_goal_reason(args.reason));
 
@@ -516,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn goal_tool_call_starts_and_updates_goals() {
         let tool = GoalTool::new();
-        let ctx = EngineBuilder::new().mock_ctx().base;
+        let mut ctx = EngineBuilder::new().mock_ctx().base;
 
         let err = tool
             .call(
@@ -554,6 +560,22 @@ mod tests {
             Arc::new(RwLock::new(None)),
             Arc::new(AtomicU64::new(0)),
         ));
+
+        let err = tool
+            .call(
+                ctx.clone(),
+                GoalToolArgs {
+                    objective: "ship the feature".to_string(),
+                    reason: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("main AndaBot session"));
+
+        ctx.agent = AndaBot::NAME.to_string();
 
         let output = tool
             .call(
@@ -594,6 +616,34 @@ mod tests {
             }
             other => panic!("expected ok response, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn goal_tool_rejects_child_agent_even_with_inherited_session_state() {
+        let tool = GoalTool::new();
+        let mut ctx = EngineBuilder::new().mock_ctx();
+        ctx.base.agent = AndaBot::NAME.to_string();
+        ctx.base.set_state(GoalToolState::new(
+            Arc::new(RwLock::new(None)),
+            Arc::new(AtomicU64::new(0)),
+        ));
+
+        let child = ctx.child("worker_agent", "worker").unwrap();
+        assert_eq!(child.base.agent, "worker_agent");
+
+        let err = tool
+            .call(
+                child.base,
+                GoalToolArgs {
+                    objective: "change the caller goal".to_string(),
+                    reason: None,
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("main AndaBot session"));
     }
 
     #[test]
