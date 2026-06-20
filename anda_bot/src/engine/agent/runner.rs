@@ -709,15 +709,16 @@ impl SessionRunner {
                     }
                 }
 
-                if (!is_idle || has_background_tasks)
-                    && self.conversation.status != ConversationStatus::Working
-                {
-                    self.conversation.status = ConversationStatus::Working;
-                    self.conversation.usage = self.runner.total_usage().clone();
-                    self.conversation.updated_at = now_ms;
-                    self.persist_conversation_state().await;
-                } else if self.conversation.status != ConversationStatus::Idle {
-                    self.conversation.status = ConversationStatus::Idle;
+                let next_status = if !is_idle || has_background_tasks {
+                    ConversationStatus::Working
+                } else {
+                    ConversationStatus::Idle
+                };
+                if self.conversation.status != next_status {
+                    if next_status == ConversationStatus::Working {
+                        self.conversation.usage = self.runner.total_usage().clone();
+                    }
+                    self.conversation.status = next_status;
                     self.conversation.updated_at = now_ms;
                     self.persist_conversation_state().await;
                 }

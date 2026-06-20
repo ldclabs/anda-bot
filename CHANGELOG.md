@@ -8,10 +8,18 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+### Fixed
+
+## [0.10.2] — 2026-06-20
+
+### Changed
+
 - **Installers restart the daemon after upgrades**: Unix, Windows, and Homebrew install flows now guide users to restart the Anda daemon so upgraded binaries are picked up by already-running sessions.
+- **Version synchronized for the 0.10.2 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.2`.
 
 ### Fixed
 
+- **Active conversations keep their working status**: sessions that are already marked as working now stay in the working state while requests or background tasks are still active, instead of being persisted as idle on the next activity tick.
 - **macOS launcher restores the tray item when reopened**: the launcher now finishes AppKit startup explicitly, avoids duplicate reactivation observers, and rebuilds the status-bar item when macOS reopens the app.
 
 ## [0.10.1] — 2026-06-20
