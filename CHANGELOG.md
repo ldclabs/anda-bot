@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-20
+
+### Changed
+
+- **Session compaction now uses reusable engine handoffs**: replaced bot-local compaction continuation/retry plumbing with `CompletionRunner::handoff`, keeping long sessions in child conversations while preserving accumulated usage, artifacts, tool usage, discovered-tool settings, and runner state.
+- **Version synchronized for the 0.10.1 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.1`, and aligned bundled Anda dependencies with `anda_brain` `0.8.1`, `anda_core` `0.13.7`, and `anda_engine` `0.13.8`.
+
+### Fixed
+
+- **Idle compaction keeps active sessions alive**: compaction now refreshes the session activity clock and continues in a child conversation even without immediately pending user work, including sessions that still have background tasks.
+- **Pending follow-up and steering batches are compacted before attachment**: queued follow-up and steer content now participates in the engine compaction threshold check before it is attached to the runner, avoiding oversized next requests.
+
 ## [0.10.0] — 2026-06-20
 
 ### Added

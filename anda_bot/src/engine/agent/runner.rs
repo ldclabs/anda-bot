@@ -32,7 +32,6 @@ use crate::engine::{
     },
 };
 
-const MAX_TURNS_TO_COMPACT: usize = 81; // The number of turns after which the conversation history will be compacted. This is to prevent the conversation history from growing indefinitely and causing performance issues. The optimal value may depend on the typical length of conversations and the token limits of the language model.
 const CONVERSATION_IDLE_MS: u64 = 10 * 60 * 1000; // 10 minutes
 const CONVERSATION_WAIT_BACKGROUND_TASK_MS: u64 = 12 * 60 * 60 * 1000; // 12 hours
 // Wait this long after a failed memory formation submission before retrying.
@@ -93,7 +92,6 @@ impl AndaBot {
             let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
             let mut sess_runner = SessionRunner {
                 ctx,
-                req,
                 assistant: assistant.clone(),
                 session: session.clone(),
                 conversation,
@@ -161,7 +159,6 @@ impl AndaBot {
 
 struct SessionRunner {
     ctx: AgentCtx,
-    req: CompletionRequest,
     assistant: AndaBot,
     session: Arc<Session>,
     conversation: Conversation,
@@ -169,11 +166,6 @@ struct SessionRunner {
     first_round: bool,
     extra_user_context: Option<Message>,
     last_extra_user_context: Option<Message>,
-}
-
-enum CompactionContinuation {
-    Finish,
-    Continue(Option<String>),
 }
 
 impl SessionRunner {
@@ -237,201 +229,56 @@ impl SessionRunner {
         self.persist_conversation_state().await;
     }
 
-    fn rebuild_runner_after_model_error(&mut self) {
-        let mut chat_history = self.runner.chat_history().clone();
-        while let Some(last) = chat_history.last() {
-            if last.tool_calls().is_empty() {
-                break;
-            }
-            chat_history.pop();
-        }
-        mark_special_user_messages(&mut chat_history);
-
-        let mut runner = self
-            .ctx
-            .clone()
-            .completion_iter(
-                CompletionRequest {
-                    chat_history,
-                    ..self.req.clone()
-                },
-                Vec::new(),
-            )
-            .unbound();
-        self.assistant
-            .inner
-            .apply_merge_discovered_tools(&mut runner);
-        self.runner = runner;
-    }
-
-    fn compaction_snapshot_chat_history(&self, now_ms: u64) -> Vec<Message> {
-        let mut chat_history = self.runner.chat_history().clone();
-        chat_history.extend(pending_request_messages(self.runner.req(), now_ms));
-        mark_special_user_messages(&mut chat_history);
-        chat_history
-    }
-
-    async fn compact_pending_context(
+    async fn compact(
         &mut self,
         continuation_prompt: Option<String>,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<bool, BoxError> {
-        let now_ms = unix_ms();
-        let handoff_req = self.runner.req().clone();
-        let chat_history = self.compaction_snapshot_chat_history(now_ms);
+        self.persist_tools_usage_snapshot(tools_usage_snapshot)
+            .await;
 
-        let mut compaction_runner = self
-            .ctx
-            .clone()
-            .completion_iter(
-                CompletionRequest {
-                    prompt: COMPACTION_PROMPT.to_string(),
-                    chat_history,
-                    model: handoff_req.model,
-                    effort: handoff_req.effort,
-                    ..Default::default()
-                },
-                Vec::new(),
-            )
-            .unbound();
-        self.assistant
-            .inner
-            .apply_merge_discovered_tools(&mut compaction_runner);
-
-        let mut output = model_retry::runner_finalize_with_retry(
-            &mut compaction_runner,
-            None,
-            "session compaction",
-        )
-        .await?;
-
-        let mut carried = self
+        let (mut runner, output) = match self
             .runner
-            .stop_current_task(anda_core::AgentOutput::default());
-        carried.usage.accumulate(&output.usage);
-        output.usage = carried.usage;
-        output.tools_usage = carried.tools_usage;
-        output.artifacts.append(&mut carried.artifacts);
-
-        let continuation_prompt = continuation_prompt.unwrap_or_else(compaction_continue_prompt);
-        self.apply_compaction_output(
-            output,
-            CompactionContinuation::Continue(Some(continuation_prompt)),
-            tools_usage_snapshot,
-        )
-        .await
-    }
-
-    async fn compact_idle_context(
-        &mut self,
-        continuation: CompactionContinuation,
-        tools_usage_snapshot: &mut HashMap<String, Usage>,
-    ) -> Result<bool, BoxError> {
-        let output = model_retry::runner_finalize_with_retry(
-            &mut self.runner,
-            Some(COMPACTION_PROMPT.to_string()),
-            "session compaction",
-        )
-        .await?;
-
-        self.apply_compaction_output(output, continuation, tools_usage_snapshot)
+            .handoff(Some(COMPACTION_PROMPT.to_string()))
             .await
-    }
-
-    async fn compact_idle_context_if_needed(
-        &mut self,
-        pending_tokens: u64,
-        tools_usage_snapshot: &mut HashMap<String, Usage>,
-    ) -> Result<bool, BoxError> {
-        if self.runner.is_idle() && needs_compaction_with_pending(&self.runner, pending_tokens) {
-            return self
-                .compact_idle_context(CompactionContinuation::Continue(None), tools_usage_snapshot)
-                .await;
-        }
-
-        Ok(true)
-    }
-
-    async fn apply_compaction_output(
-        &mut self,
-        mut output: anda_core::AgentOutput,
-        continuation: CompactionContinuation,
-        tools_usage_snapshot: &mut HashMap<String, Usage>,
-    ) -> Result<bool, BoxError> {
-        mark_special_user_messages(&mut output.chat_history);
-
-        let now_ms = unix_ms();
-        if let Some(failed_reason) = output.failed_reason {
-            self.persist_tools_usage_snapshot(tools_usage_snapshot)
-                .await;
-
-            self.conversation.failed_reason = Some(format!("Compaction failed: {failed_reason}"));
-            self.conversation.status = ConversationStatus::Failed;
-            self.conversation.usage = output.usage;
-            self.conversation.updated_at = now_ms;
-            self.persist_conversation_state().await;
-            return Ok(false);
-        }
-
-        // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
-        // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
-
-        // 前一轮压缩总结的内容作为新 conversation 的第一条消息，继续后续的交互
-        let compaction_msg = Message {
-            role: "assistant".into(),
-            content: vec![output.content.into()],
-            timestamp: Some(now_ms),
-            ..Default::default()
-        };
-        let child = match continuation {
-            CompactionContinuation::Finish => None,
-            CompactionContinuation::Continue(prompt) => {
-                let mut ancestors = self.conversation.ancestors.clone().unwrap_or_default();
-                ancestors.push(self.conversation._id);
-
-                let mut messages = vec![serde_json::json!(compaction_msg.clone())];
-                if let Some(prompt) = prompt.as_ref() {
-                    messages.push(serde_json::json!(system_user_message(
-                        prompt.clone(),
-                        now_ms
-                    )));
-                }
-
-                let mut conversation = Conversation {
-                    user: self.conversation.user,
-                    thread: Some(self.session.id.clone()),
-                    messages,
-                    ancestors: Some(ancestors),
-                    period: now_ms / 3600 / 1000,
-                    created_at: now_ms,
-                    updated_at: now_ms,
-                    extra: Some(json!(self.ctx.meta().extra)),
-                    ..Default::default()
-                };
-
-                let conv_id = self
-                    .assistant
-                    .inner
-                    .conversations
-                    .conversations
-                    .add_conversation(ConversationRef::from(&conversation))
-                    .await?;
-                conversation._id = conv_id;
-
-                let mut req = CompletionRequest {
-                    chat_history: vec![compaction_msg.clone()],
-                    ..self.req.clone()
-                };
-                if let Some(prompt) = prompt {
-                    req.prompt = prompt;
-                }
-
-                Some((conversation, req))
+        {
+            Ok((runner, output)) => (runner, output),
+            Err(err) => {
+                self.session.stop_background_tasks();
+                self.conversation.failed_reason = Some(format!("Compaction failed: {err}"));
+                self.conversation.status = ConversationStatus::Failed;
+                self.conversation.updated_at = unix_ms();
+                self.persist_conversation_state().await;
+                return Ok(false);
             }
         };
 
-        self.persist_tools_usage_snapshot(tools_usage_snapshot)
-            .await;
+        // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
+        // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
+        // 前一轮压缩总结的内容作为新 conversation 的第一条消息，继续后续的交互
+        let now_ms = unix_ms();
+        let mut ancestors = self.conversation.ancestors.clone().unwrap_or_default();
+        ancestors.push(self.conversation._id);
+        let mut child_conversation = Conversation {
+            user: self.conversation.user,
+            thread: Some(self.session.id.clone()),
+            ancestors: Some(ancestors),
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            extra: Some(json!(self.ctx.meta().extra)),
+            ..Default::default()
+        };
+
+        let child_id = self
+            .assistant
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&child_conversation))
+            .await?;
+        child_conversation._id = child_id;
+
         self.submit_pending_formation(&output.chat_history, now_ms)
             .await;
         let artifacts = self
@@ -446,48 +293,69 @@ impl SessionRunner {
         self.conversation.artifacts = artifacts;
         self.conversation.updated_at = now_ms;
         // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
-        self.conversation.child = child.as_ref().map(|(conv, _)| conv._id);
+        self.conversation.child = Some(child_id);
         self.persist_conversation_state().await;
-        match child {
-            Some((conv, req)) => {
-                self.first_round = true;
-                self.session.submit_formation_at.store(0, Ordering::SeqCst);
-                self.conversation = conv;
-                self.session
-                    .conversation_id
-                    .store(self.conversation._id, Ordering::SeqCst);
-                if !self.session.finish_when_idle.load(Ordering::SeqCst)
-                    && let Err(err) = self
-                        .assistant
-                        .inner
-                        .conversations
-                        .update_source_state(
-                            self.session.source_key.clone(),
-                            SourceState {
-                                conv_id: self.conversation._id,
-                                status: self.conversation.status.clone(),
-                                timestamp: now_ms,
-                            },
-                        )
-                        .await
-                {
-                    log::error!("Failed to update_source_state: {:?}", err);
-                }
-                // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
-                let mut runner = self
-                    .ctx
-                    .clone()
-                    .completion_iter(req, Vec::new())
-                    .reserve_chat_history(vec![compaction_msg])
-                    .unbound();
-                self.assistant
-                    .inner
-                    .apply_merge_discovered_tools(&mut runner);
-                self.runner = runner;
-                Ok(true)
-            }
-            None => Ok(false),
+
+        self.first_round = true;
+        self.session.submit_formation_at.store(0, Ordering::SeqCst);
+        self.conversation = child_conversation;
+        self.session
+            .conversation_id
+            .store(self.conversation._id, Ordering::SeqCst);
+        if !self.session.finish_when_idle.load(Ordering::SeqCst)
+            && let Err(err) = self
+                .assistant
+                .inner
+                .conversations
+                .update_source_state(
+                    self.session.source_key.clone(),
+                    SourceState {
+                        conv_id: self.conversation._id,
+                        status: self.conversation.status.clone(),
+                        timestamp: now_ms,
+                    },
+                )
+                .await
+        {
+            log::error!("Failed to update_source_state: {:?}", err);
         }
+        // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
+        self.assistant
+            .inner
+            .apply_merge_discovered_tools(&mut runner);
+        self.runner = runner;
+        if let Some(prompt) = continuation_prompt {
+            self.runner.follow_up(prompt);
+        }
+
+        // Compaction is real work: refresh the activity clock so the idle-timeout check on the
+        // turn that follows does not mistake the session for stale.
+        self.session.active_at.store(unix_ms(), Ordering::SeqCst);
+        Ok(true)
+    }
+
+    async fn needed_compact(
+        &self,
+        follow_up_batch: &[ContentPart],
+        steer_batch: &[ContentPart],
+    ) -> bool {
+        (!follow_up_batch.is_empty() || !steer_batch.is_empty())
+            && self.runner.needs_compaction_with(|| {
+                estimated_content_tokens(follow_up_batch)
+                    .saturating_add(estimated_content_tokens(steer_batch))
+                    .saturating_add(
+                        self.runner
+                            .steering_message_iter()
+                            .map(|c| c.estimated_tokens() as u64)
+                            .sum(),
+                    )
+                    .saturating_add(
+                        self.runner
+                            .follow_up_message_iter()
+                            .map(|c| c.estimated_tokens() as u64)
+                            .sum(),
+                    )
+            })
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
@@ -572,7 +440,7 @@ impl SessionRunner {
         // Sizing the whole batch up front lets idle compaction run before the
         // content is attached — and it must run first, because compaction
         // drains queued follow-ups into its own request and would overflow too.
-        let mut batch: Vec<ContentPart> = Vec::new();
+        let mut follow_up_batch: Vec<ContentPart> = Vec::new();
         // Steering is delivered through the runner's separate steering channel: it interrupts the
         // current run and skips pending tool calls, unlike follow-up content which waits for the
         // next safe turn. Keep it out of the follow-up batch so /steer keeps its redirect semantics.
@@ -637,7 +505,7 @@ impl SessionRunner {
                 | PromptCommand::Side { prompt }
                 | PromptCommand::Loop { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
-                    batch.append(&mut content);
+                    follow_up_batch.append(&mut content);
                 }
                 PromptCommand::Steer { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
@@ -645,7 +513,7 @@ impl SessionRunner {
                 }
                 PromptCommand::Goal { prompt } => {
                     prepend_prompt_content(&mut content, prompt.clone());
-                    batch.append(&mut content);
+                    follow_up_batch.append(&mut content);
 
                     let mut next_goal = self.session.goal.write();
                     if let Some(existing_goal) = next_goal.as_mut() {
@@ -664,31 +532,8 @@ impl SessionRunner {
                         &mut content,
                         format!("Use the {skill} skill to handle this request:\n\n{prompt}"),
                     );
-                    batch.append(&mut content);
+                    follow_up_batch.append(&mut content);
                 }
-            }
-        }
-
-        // Compact the idle context before attaching anything if doing so would exceed the window,
-        // sizing the decision against the follow-up and steering content combined (both land in the
-        // next request). Skip when stopping or cancelling: that input discards queued content anyway.
-        if stop_requested.is_none()
-            && cancellation_requested.is_none()
-            && (!batch.is_empty() || !steer_batch.is_empty())
-        {
-            let pending_tokens = estimated_content_tokens(&batch)
-                .saturating_add(estimated_content_tokens(&steer_batch));
-            if !self
-                .compact_idle_context_if_needed(pending_tokens, tools_usage_snapshot)
-                .await?
-            {
-                return Ok(false);
-            }
-            if !batch.is_empty() {
-                self.runner.follow_up_content(batch);
-            }
-            if !steer_batch.is_empty() {
-                self.runner.steer_content(steer_batch);
             }
         }
 
@@ -736,6 +581,26 @@ impl SessionRunner {
             self.runner.implicit_context(extra_user_context);
         }
 
+        // Compact the idle context before attaching anything if doing so would exceed the window,
+        // sizing the decision against the follow-up and steering content combined (both land in the
+        // next request). Skip when stopping or cancelling: that input discards queued content anyway.
+        if self.needed_compact(&follow_up_batch, &steer_batch).await {
+            self.session.runner_idle.store(false, Ordering::SeqCst);
+            if !self
+                .compact(Some(compaction_continue_prompt()), tools_usage_snapshot)
+                .await?
+            {
+                return Ok(false);
+            }
+        }
+
+        if !follow_up_batch.is_empty() {
+            self.runner.follow_up_content(follow_up_batch);
+        }
+        if !steer_batch.is_empty() {
+            self.runner.steer_content(steer_batch);
+        }
+
         // Mirror the runner's idle state onto the session for the bot-level
         // idle monitor. The flag refreshes on every loop iteration: about
         // once per second while idle, and per completed turn while working
@@ -743,14 +608,6 @@ impl SessionRunner {
         self.session
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
-
-        if needs_compaction(&self.runner)
-            && has_pending_request_messages(self.runner.req(), unix_ms())
-        {
-            return self
-                .compact_pending_context(None, tools_usage_snapshot)
-                .await;
-        }
 
         let next_result =
             model_retry::runner_next_with_retry(&mut self.runner, "session runner").await;
@@ -779,7 +636,6 @@ impl SessionRunner {
                         None
                     };
                 let mut goal_continue_prompt: Option<String> = None;
-                let mut active = false;
                 if let Some(mut goal) = maybe_goal {
                     match goal.check_progress(&self.runner, &self.ctx).await {
                         Ok(check) => {
@@ -801,7 +657,6 @@ impl SessionRunner {
                                 goal::GoalAction::Continue(prompt) => {
                                     let now_ms = unix_ms();
                                     goal_continue_prompt = Some(prompt);
-                                    active = true;
                                     self.session.active_at.store(now_ms, Ordering::SeqCst);
                                     *self.session.goal.write() = Some(goal);
                                 }
@@ -829,41 +684,36 @@ impl SessionRunner {
                     }
                 }
 
-                if needs_compaction(&self.runner) {
-                    let continuation = match goal_continue_prompt {
-                        Some(prompt) => CompactionContinuation::Continue(Some(prompt)),
-                        None => CompactionContinuation::Finish,
-                    };
-                    return self
-                        .compact_idle_context(continuation, tools_usage_snapshot)
-                        .await;
-                }
-
                 if let Some(prompt) = goal_continue_prompt {
                     self.runner.follow_up(prompt);
                 }
 
                 let now_ms = unix_ms();
-                let idle = now_ms.saturating_sub(self.session.active_at.load(Ordering::SeqCst));
                 let has_background_tasks = self.session.has_running_background_tasks();
+                let is_idle = self.runner.is_idle();
+                if is_idle {
+                    let idle = now_ms.saturating_sub(self.session.active_at.load(Ordering::SeqCst));
+                    if !has_background_tasks && self.session.finish_when_idle.load(Ordering::SeqCst)
+                    {
+                        self.conversation.status = ConversationStatus::Completed;
+                        self.conversation.updated_at = now_ms;
+                        self.persist_conversation_state().await;
+                        return Ok(false);
+                    }
 
-                if self.session.finish_when_idle.load(Ordering::SeqCst) && !has_background_tasks {
-                    self.conversation.status = ConversationStatus::Completed;
-                    self.conversation.updated_at = now_ms;
-                    self.persist_conversation_state().await;
-                    return Ok(false);
+                    if idle > CONVERSATION_IDLE_MS && !has_background_tasks
+                        || (idle > CONVERSATION_WAIT_BACKGROUND_TASK_MS && has_background_tasks)
+                    {
+                        self.conversation.status = ConversationStatus::Completed;
+                        self.conversation.updated_at = now_ms;
+                        self.persist_conversation_state().await;
+                        return Ok(false);
+                    }
                 }
 
-                if idle > CONVERSATION_IDLE_MS && !has_background_tasks
-                    || (idle > CONVERSATION_WAIT_BACKGROUND_TASK_MS && has_background_tasks)
+                if (!is_idle || has_background_tasks)
+                    && self.conversation.status != ConversationStatus::Working
                 {
-                    self.conversation.status = ConversationStatus::Completed;
-                    self.conversation.updated_at = now_ms;
-                    self.persist_conversation_state().await;
-                    return Ok(false);
-                }
-
-                if active {
                     self.conversation.status = ConversationStatus::Working;
                     self.conversation.usage = self.runner.total_usage().clone();
                     self.conversation.updated_at = now_ms;
@@ -943,21 +793,9 @@ impl SessionRunner {
                         "Session {} hit context length error; attempting session compaction before continuing",
                         self.session.id
                     );
-                    // The committed history is kept under the compaction
-                    // threshold, so an overflow comes from the in-flight request
-                    // (a large tool output or a batch of background results).
-                    // Rebuilding the runner drops that in-flight content and any
-                    // dangling tool-call request, leaving a history that fits;
-                    // compacting *that* cannot overflow again the way re-sending
-                    // the offending request (compact_pending_context) would. On
-                    // success the session continues with the compacted context
-                    // and its background tasks intact.
-                    self.rebuild_runner_after_model_error();
+                    self.runner.discard_in_flight_request();
                     match self
-                        .compact_idle_context(
-                            CompactionContinuation::Continue(None),
-                            tools_usage_snapshot,
-                        )
+                        .compact(Some(compaction_continue_prompt()), tools_usage_snapshot)
                         .await
                     {
                         Ok(continue_active) => return Ok(continue_active),
@@ -972,7 +810,6 @@ impl SessionRunner {
                 }
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
-                self.rebuild_runner_after_model_error();
                 self.submit_pending_formation(
                     self.runner.chat_history(),
                     self.conversation.updated_at,
@@ -1005,36 +842,6 @@ fn compaction_continue_prompt() -> String {
         "context compaction continuation",
         COMPACTION_CONTINUE_PROMPT,
     )
-}
-
-fn has_pending_request_messages(req: &CompletionRequest, now_ms: u64) -> bool {
-    !pending_request_messages(req, now_ms).is_empty()
-}
-
-fn pending_request_messages(req: &CompletionRequest, now_ms: u64) -> Vec<Message> {
-    let mut messages = req.chat_history.clone();
-
-    if let Some(datetime) = rfc3339_datetime(now_ms)
-        && let Some(message) = req.documents.to_message(&datetime)
-    {
-        messages.push(message);
-    }
-
-    let mut content = Vec::new();
-    if !req.prompt.is_empty() {
-        content.push(req.prompt.clone().into());
-    }
-    content.extend(req.content.clone());
-    if !content.is_empty() {
-        messages.push(Message {
-            role: req.role.clone().unwrap_or_else(|| "user".to_string()),
-            content,
-            timestamp: Some(now_ms),
-            ..Default::default()
-        });
-    }
-
-    messages
 }
 
 fn is_context_length_error(err: &BoxError) -> bool {
@@ -1113,106 +920,8 @@ fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
     }
 }
 
-fn needs_compaction(runner: &CompletionRunner) -> bool {
-    needs_compaction_with_pending(runner, 0)
-}
-
-fn needs_compaction_with_pending(runner: &CompletionRunner, pending_tokens: u64) -> bool {
-    let threshold = compaction_threshold(runner);
-
-    // Cheap signals first. These run on the hot path — once per loop iteration
-    // before a model call and after every completion — so they must not pay for
-    // a history walk. current_usage is the model-reported size of the last
-    // request and tracks the committed context as it grows.
-    if runner.current_usage().input_tokens >= threshold || runner.turns() >= MAX_TURNS_TO_COMPACT {
-        return true;
-    }
-
-    if pending_tokens == 0 {
-        return false;
-    }
-
-    // A batch of new content is about to be attached (typically background
-    // subagent/shell results drained together). Estimate whether attaching it
-    // would push the next request over the threshold, so idle compaction can
-    // run before the content is queued. Use the larger of the model-reported
-    // size of the current context (which already counts the system prompt and
-    // tool schemas) and a char-based history estimate (a fallback for resumed
-    // sessions whose first turn has not reported usage yet).
-    let current = runner
-        .current_usage()
-        .input_tokens
-        .max(estimated_history_tokens(runner));
-    current.saturating_add(pending_tokens) >= threshold
-}
-
-fn compaction_threshold(runner: &CompletionRunner) -> u64 {
-    // context_window is 0 when the model config does not declare it; only then
-    // fall back to a conservative default. A floor above a small declared
-    // window would disable token-based compaction until the context overflows.
-    let context_window = runner.model().context_window as u64;
-    if context_window == 0 {
-        100_000
-    } else {
-        context_window.saturating_mul(8).saturating_div(10).max(1)
-    }
-}
-
-fn estimated_history_tokens(runner: &CompletionRunner) -> u64 {
-    let now_ms = unix_ms();
-    runner
-        .chat_history()
-        .iter()
-        .chain(pending_request_messages(runner.req(), now_ms).iter())
-        .map(estimated_message_tokens)
-        .sum()
-}
-
-fn estimated_message_tokens(message: &Message) -> u64 {
-    8u64.saturating_add(estimated_content_tokens(&message.content))
-}
-
 fn estimated_content_tokens(content: &[ContentPart]) -> u64 {
-    content.iter().map(estimated_content_part_tokens).sum()
-}
-
-fn estimated_content_part_tokens(content: &ContentPart) -> u64 {
-    match content {
-        ContentPart::Text { text } | ContentPart::Reasoning { text } => estimated_text_tokens(text),
-        ContentPart::FileData {
-            file_uri,
-            mime_type,
-        } => estimated_text_tokens(file_uri)
-            .saturating_add(mime_type.as_deref().map_or(0, estimated_text_tokens)),
-        ContentPart::InlineData { mime_type, data } => estimated_text_tokens(mime_type)
-            .saturating_add((data.len() as u64).saturating_add(3) / 4),
-        ContentPart::ToolCall {
-            name,
-            args,
-            call_id,
-        } => estimated_text_tokens(name)
-            .saturating_add(estimated_text_tokens(&args.to_string()))
-            .saturating_add(call_id.as_deref().map_or(0, estimated_text_tokens)),
-        ContentPart::ToolOutput {
-            name,
-            output,
-            is_error,
-            call_id,
-            remote_id,
-        } => estimated_text_tokens(name)
-            .saturating_add(estimated_text_tokens(&output.to_string()))
-            .saturating_add(is_error.map_or(0, |_| 1))
-            .saturating_add(call_id.as_deref().map_or(0, estimated_text_tokens))
-            .saturating_add(remote_id.map_or(0, |id| estimated_text_tokens(&id.to_text()))),
-        ContentPart::Action { name, payload, .. } => {
-            estimated_text_tokens(name).saturating_add(estimated_text_tokens(&payload.to_string()))
-        }
-        ContentPart::Any(value) => estimated_text_tokens(&value.to_string()),
-    }
-}
-
-fn estimated_text_tokens(text: &str) -> u64 {
-    (text.chars().count() as u64).saturating_add(3) / 4
+    content.iter().map(|c| c.estimated_tokens() as u64).sum()
 }
 
 fn compute_tools_usage_delta(
@@ -1281,6 +990,32 @@ mod tests {
     use ic_auth_types::Xid;
     use parking_lot::{Mutex, RwLock};
     use std::sync::atomic::{AtomicBool, AtomicU64};
+
+    fn pending_request_messages(req: &CompletionRequest, now_ms: u64) -> Vec<Message> {
+        let mut messages = req.chat_history.clone();
+
+        if let Some(datetime) = rfc3339_datetime(now_ms)
+            && let Some(message) = req.documents.to_message(&datetime)
+        {
+            messages.push(message);
+        }
+
+        let mut content = Vec::new();
+        if !req.prompt.is_empty() {
+            content.push(req.prompt.clone().into());
+        }
+        content.extend(req.content.clone());
+        if !content.is_empty() {
+            messages.push(Message {
+                role: req.role.clone().unwrap_or_else(|| "user".to_string()),
+                content,
+                timestamp: Some(now_ms),
+                ..Default::default()
+            });
+        }
+
+        messages
+    }
 
     async fn spawn_runner_brain_mock() -> String {
         use axum::{Router, routing};
@@ -1507,7 +1242,6 @@ mod tests {
         let runner = ctx.clone().completion_iter(req.clone(), vec![]).unbound();
         let sess_runner = SessionRunner {
             ctx,
-            req,
             assistant: bot.clone(),
             session,
             conversation: Conversation {
@@ -1873,7 +1607,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(continuation_history.contains("compacted handoff"));
-        assert_eq!(request_text(&recorded[1]), oversized_prompt);
+        assert!(request_text(&recorded[1]).contains(&oversized_prompt));
     }
 
     #[tokio::test]
@@ -1924,6 +1658,142 @@ mod tests {
             request_text(&recorded[1]).matches(chunk.as_str()).count(),
             3
         );
+    }
+
+    #[tokio::test]
+    async fn session_runner_idle_compaction_without_pending_work_continues_in_child() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx(requests.clone());
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        sess_runner.conversation._id = 100;
+        sess_runner
+            .session
+            .conversation_id
+            .store(100, Ordering::SeqCst);
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "seed high context usage".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let cont = sess_runner.run(vec![], &mut snapshot).await.unwrap();
+
+        assert!(cont);
+        assert_ne!(sess_runner.conversation._id, 100);
+        assert_eq!(sess_runner.conversation.ancestors, Some(vec![100]));
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(request_text(&recorded[1]).trim(), COMPACTION_PROMPT.trim());
+        let continuation_history = recorded[2]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(continuation_history.contains("compacted handoff"));
+        assert!(
+            request_text(&recorded[2])
+                .contains("Continue the active work from the compaction handoff")
+        );
+    }
+
+    #[tokio::test]
+    async fn session_runner_idle_compaction_with_background_task_continues_in_child() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx(requests.clone());
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        sess_runner.conversation._id = 100;
+        sess_runner
+            .session
+            .conversation_id
+            .store(100, Ordering::SeqCst);
+        sess_runner.session.background_tasks.write().insert(
+            "subagent-session".to_string(),
+            BackgroundTaskInfo {
+                agent_name: "runner-test".to_string(),
+                tool_name: None,
+                progress_message: None,
+                stopped: false,
+            },
+        );
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "seed high context usage".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let cont = sess_runner.run(vec![], &mut snapshot).await.unwrap();
+
+        assert!(cont);
+        assert_ne!(sess_runner.conversation._id, 100);
+        assert_eq!(sess_runner.conversation.ancestors, Some(vec![100]));
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(request_text(&recorded[1]).trim(), COMPACTION_PROMPT.trim());
+        let continuation_history = recorded[2]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(continuation_history.contains("compacted handoff"));
+    }
+
+    #[tokio::test]
+    async fn session_runner_persists_tool_usage_before_compaction_handoff() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx(requests);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "seed high context usage".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        let tool_usage = Usage {
+            input_tokens: 7,
+            output_tokens: 11,
+            cached_tokens: 3,
+            requests: 2,
+        };
+        sess_runner.runner.accumulate_tools_usage(&HashMap::from([(
+            "browser_open".to_string(),
+            tool_usage.clone(),
+        )]));
+
+        sess_runner.run(vec![], &mut snapshot).await.unwrap();
+
+        let persisted = bot.inner.conversations.tools_usage();
+        let persisted_usage = persisted
+            .get("browser_open")
+            .expect("tool usage should survive compaction handoff");
+        assert_eq!(persisted_usage.input_tokens, tool_usage.input_tokens);
+        assert_eq!(persisted_usage.output_tokens, tool_usage.output_tokens);
+        assert_eq!(persisted_usage.cached_tokens, tool_usage.cached_tokens);
+        assert_eq!(persisted_usage.requests, tool_usage.requests);
     }
 
     #[tokio::test]

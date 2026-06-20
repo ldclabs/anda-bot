@@ -27,27 +27,6 @@ pub(crate) async fn runner_next_with_retry(
     }
 }
 
-pub(crate) async fn runner_finalize_with_retry(
-    runner: &mut CompletionRunner,
-    mut prompt: Option<String>,
-    operation: &str,
-) -> Result<AgentOutput, BoxError> {
-    loop {
-        match runner.finalize(prompt.take()).await {
-            Ok(output) => return Ok(output),
-            Err(err) => {
-                let Some(delay) = retry_delay_for_error(&err) else {
-                    return Err(err);
-                };
-                if wait_before_retry(runner, operation, delay, &err).await {
-                    continue;
-                }
-                return runner.finalize(None).await;
-            }
-        }
-    }
-}
-
 pub(crate) async fn completion_with_retry(
     ctx: &AgentCtx,
     req: CompletionRequest,
@@ -146,22 +125,5 @@ mod tests {
             .await
             .map(|_| ());
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn runner_next_with_retry_propagates_non_retryable_runner_errors() {
-        // The mock runner yields no steps: next() settles with Ok(None)
-        // without entering the retry loop.
-        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
-        let mut runner = ctx
-            .clone()
-            .completion_iter(CompletionRequest::default(), vec![]);
-        let result = runner_next_with_retry(&mut runner, "test").await.unwrap();
-        assert!(result.is_none());
-
-        // finalize may succeed (no pending steps) or fail depending on the
-        // mock runner; either way the retry wrapper must settle promptly.
-        let mut runner = ctx.completion_iter(CompletionRequest::default(), vec![]);
-        let _ = runner_finalize_with_retry(&mut runner, Some("done".to_string()), "test").await;
     }
 }
