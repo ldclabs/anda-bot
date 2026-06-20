@@ -6,6 +6,8 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Learn skill for concept anatomy**: bundled a `learn` skill for one-shot deep concept dissection with anchors, eight analytical cuts, introspection, compression, org-mode output, and optional saved notes.
+
 ### Changed
 
 ### Fixed
