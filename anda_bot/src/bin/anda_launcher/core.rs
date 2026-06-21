@@ -2164,6 +2164,11 @@ mod tests {
         *lock_update_ui_state() = LauncherUpdateUiState::default();
     }
 
+    fn install_script() -> String {
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/install.sh"))
+            .expect("install.sh should be readable")
+    }
+
     fn downloaded_test_update_state() -> LauncherAutoUpdateState {
         LauncherAutoUpdateState {
             status: "downloaded".to_string(),
@@ -2172,6 +2177,24 @@ mod tests {
             downloaded_path: Some("/tmp/anda-update".to_string()),
             error: None,
         }
+    }
+
+    #[test]
+    fn macos_install_script_restarts_visible_launch_agent_launcher() {
+        let script = install_script();
+
+        assert!(
+            script.contains("launchctl kickstart -k \"gui/$(id -u)/ai.anda.anda-bot.launcher\""),
+            "macOS install restart should prefer the registered LaunchAgent"
+        );
+        assert!(
+            script.contains("open -g \"$APP_DIR\""),
+            "fallback app launch should avoid hidden mode so the menu-bar item is visible"
+        );
+        assert!(
+            !script.contains("open -gj"),
+            "hidden app launch can leave the launcher running without a visible menu-bar item"
+        );
     }
 
     #[test]

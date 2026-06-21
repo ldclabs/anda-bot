@@ -10,6 +10,16 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+## [0.10.3] — 2026-06-21
+
+### Changed
+
+- **Version synchronized for the 0.10.3 launcher release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.3`.
+
+### Fixed
+
+- **macOS launcher restarts through its LaunchAgent after upgrades**: installer restarts now prefer `launchctl kickstart` for the registered launcher job and fall back to a visible `open -g` launch, avoiding hidden relaunches that can leave the menu-bar item missing.
+
 ## [0.10.2] — 2026-06-20
 
 ### Changed

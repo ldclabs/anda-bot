@@ -531,14 +531,23 @@ restart_macos_launcher() {
     [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
 
     info "Restarting Anda launcher..."
+    APP_DIR=$(macos_launcher_app_path)
+    PLIST_PATH="${HOME}/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist"
+
     if command -v pkill >/dev/null 2>&1; then
         pkill -x "$LAUNCHER_INSTALL_NAME" >/dev/null 2>&1 || true
         sleep 1
     fi
 
-    APP_DIR=$(macos_launcher_app_path)
+    if [ -f "$PLIST_PATH" ] && command -v launchctl >/dev/null 2>&1; then
+        if launchctl kickstart -k "gui/$(id -u)/ai.anda.anda-bot.launcher" >/dev/null 2>&1; then
+            success "Anda launcher restarted."
+            return 0
+        fi
+    fi
+
     if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
-        open -gj "$APP_DIR" >/dev/null 2>&1
+        open -g "$APP_DIR" >/dev/null 2>&1
         START_STATUS=$?
     else
         nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
