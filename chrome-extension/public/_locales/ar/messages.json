@@ -458,63 +458,6 @@
   "brainNext": {
     "message": "التالي"
   },
-  "brainViewPanel": {
-    "message": "العرض"
-  },
-  "brainFieldMode": {
-    "message": "الوضع"
-  },
-  "brainModeOverview": {
-    "message": "نظرة عامة"
-  },
-  "brainModeFocus": {
-    "message": "تركيز"
-  },
-  "brainModeFull": {
-    "message": "كامل"
-  },
-  "brainFieldEdges": {
-    "message": "الحواف"
-  },
-  "brainAll": {
-    "message": "الكل"
-  },
-  "brainNone": {
-    "message": "بلا"
-  },
-  "brainFieldLabels": {
-    "message": "التسميات"
-  },
-  "brainLabelsSmart": {
-    "message": "ذكي"
-  },
-  "brainFieldNodeCap": {
-    "message": "حد العقد $1"
-  },
-  "brainFieldRadius": {
-    "message": "نصف القطر $1"
-  },
-  "brainResetFilters": {
-    "message": "إعادة تعيين عوامل التصفية"
-  },
-  "brainFilters": {
-    "message": "عوامل التصفية"
-  },
-  "brainFieldType": {
-    "message": "النوع"
-  },
-  "brainAllTypes": {
-    "message": "كل الأنواع"
-  },
-  "brainFieldPredicate": {
-    "message": "المسند"
-  },
-  "brainAllPredicates": {
-    "message": "كل المسندات"
-  },
-  "brainCounts": {
-    "message": "الإحصاءات"
-  },
   "brainLoadedNodes": {
     "message": "العقد المحمّلة"
   },
@@ -545,9 +488,6 @@
   "brainFocusSelected": {
     "message": "تركيز على المحدد"
   },
-  "brainToggleEdges": {
-    "message": "إظهار/إخفاء الحواف"
-  },
   "brainInspector": {
     "message": "الفاحص"
   },
@@ -559,9 +499,6 @@
   },
   "brainCloseInspector": {
     "message": "إغلاق الفاحص"
-  },
-  "brainExpand": {
-    "message": "توسيع"
   },
   "brainAttributes": {
     "message": "السمات"
@@ -589,9 +526,6 @@
   },
   "brainRunReadonly": {
     "message": "تشغيل للقراءة فقط"
-  },
-  "brainTopTypes": {
-    "message": "الأنواع الرئيسية"
   },
   "configSectionRuntime": {
     "message": "بيئة التشغيل"
@@ -835,5 +769,83 @@
   },
   "loadMore": {
     "message": "تحميل المزيد"
+  },
+  "brainAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneFocus": {
+    "message": "تركيز"
+  },
+  "brainScenePath": {
+    "message": "مسار"
+  },
+  "brainAtlasClusters": {
+    "message": "مجموعات Atlas"
+  },
+  "brainFrequentHubs": {
+    "message": "عقد متكررة"
+  },
+  "brainRecentMemories": {
+    "message": "ذكريات حديثة"
+  },
+  "brainVisibleSummary": {
+    "message": "$1 عقد، $2 علاقات"
+  },
+  "brainBreadcrumb": {
+    "message": "مسار Brain"
+  },
+  "brainBudgetHidden": {
+    "message": "تم تلخيص $1 عقد و $2 علاقات"
+  },
+  "brainShowMoreRelated": {
+    "message": "إظهار مزيد من الذكريات المرتبطة"
+  },
+  "brainShowMoreRelatedWithCount": {
+    "message": "إظهار مزيد من الذكريات المرتبطة ($1 إضافية)"
+  },
+  "brainPin": {
+    "message": "تثبيت"
+  },
+  "brainUnpin": {
+    "message": "إلغاء التثبيت"
+  },
+  "brainRelatedMemories": {
+    "message": "ذكريات مرتبطة"
+  },
+  "brainSummaryNode": {
+    "message": "ملخص"
+  },
+  "brainRelatedCount": {
+    "message": "$1 ذكريات مرتبطة"
+  },
+  "brainAtlasSummary": {
+    "message": "ابحث أو اختر مدخلا لتركيز الرسم. يحافظ Atlas على بساطة اللوحة وينقل التفاصيل إلى القوائم."
+  },
+  "brainPath": {
+    "message": "مسار"
+  },
+  "brainClearPins": {
+    "message": "مسح التثبيتات"
+  },
+  "brainViewPinnedPath": {
+    "message": "عرض العلاقة بينها"
+  },
+  "brainNoPins": {
+    "message": "ثبّت الذكريات لمقارنة العلاقة بينها."
+  },
+  "brainAdvanced": {
+    "message": "متقدم"
+  },
+  "brainMoreInGroup": {
+    "message": "$1 أخرى في هذه المجموعة"
+  },
+  "brainMoreType": {
+    "message": "المزيد من $1"
+  },
+  "brainPinnedMemories": {
+    "message": "ذكريات مثبتة"
   }
 }

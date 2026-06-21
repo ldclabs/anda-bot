@@ -13,6 +13,15 @@
     type GraphSnapshot,
     type Proposition
   } from '$lib/anda/brain/graph.svelte'
+  import {
+    buildBrainGraphView,
+    isBrainSummaryNodeId,
+    type BrainGraphUiState,
+    type BrainGraphView,
+    type RelatedMemoryGroup,
+    type RelatedMemoryItem,
+    typeColor
+  } from '$lib/anda/brain/view-model'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import {
     badgeClass,
@@ -25,50 +34,31 @@
   import { cn } from '$lib/utils'
   import Prism from '$lib/utils/prismjs'
   import { defaultSettings, errorToMessage } from '$lib/service-worker/settings'
-  import {
-    CanvasEvent,
-    EdgeEvent,
-    Graph,
-    NodeEvent,
-    type ComboData,
-    type EdgeData,
-    type NodeData
-  } from '@antv/g6'
+  import { CanvasEvent, EdgeEvent, Graph, NodeEvent } from '@antv/g6'
   import { RadialLayout } from '@antv/layout'
   import {
     Braces,
     Check,
     Copy,
-    Database,
-    Eye,
-    EyeOff,
     GitFork,
     LoaderCircle,
     LocateFixed,
     Maximize2,
     BrainCircuit,
+    Pin,
+    PinOff,
     RefreshCw,
+    Route,
     Search,
     Settings,
     FileBracesCorner,
-    SlidersHorizontal,
     X,
     ZoomIn,
     ZoomOut
   } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
 
-  type ViewMode = 'overview' | 'focus' | 'full'
-  type EdgeMode = 'focus' | 'all' | 'none'
-  type LabelMode = 'smart' | 'all' | 'none'
-
   let { embedded = false }: { embedded?: boolean } = $props()
-
-  interface RenderedDataset {
-    nodes: NodeData[]
-    edges: EdgeData[]
-    combos: ComboData[]
-  }
 
   const initialSettings: BrainGraphSettings = {
     ...defaultSettings,
@@ -93,10 +83,15 @@
 
   let selectedNodeId = $state('')
   let selectedEdgeId = $state('')
+  let selectedSummaryId = $state('')
   let expandingNodeId = $state('')
   let searchQuery = $state('')
   let searchResults = $state<string[]>([])
   let searchIndex = $state(0)
+  let expandedNodeIds = $state<string[]>([])
+  let pinnedNodeIds = $state<string[]>([])
+  let pathRequested = $state(false)
+  let breadcrumb = $state<Array<{ id: string; label: string }>>([])
   let kipCommand = $state(`FIND(?link)
 WHERE {
   ?link (?s, "belongs_to_domain", ?o)
@@ -104,20 +99,24 @@ WHERE {
 LIMIT 6000`)
   let queryOutput = $state('')
 
-  let viewMode = $state<ViewMode>('overview')
-  let edgeMode = $state<EdgeMode>('focus')
-  let labelMode = $state<LabelMode>('smart')
-  let maxVisibleNodes = $state(260)
-  let focusRadius = $state(1)
-  let typeFilter = $state('')
-  let predicateFilter = $state('')
   let inspectorCopyTimer: ReturnType<typeof setTimeout> | null = null
 
   const snapshot = $derived.by<GraphSnapshot>(() => {
     return graphData.snapshot()
   })
-  const graphDataset = $derived.by<RenderedDataset>(() => {
-    return buildGraphDataset(snapshot)
+  const graphUiState = $derived.by<BrainGraphUiState>(() => {
+    return {
+      anchorNodeId: selectedNodeId,
+      selectedEdgeId,
+      searchResultIds: searchResults,
+      expandedNodeIds: new Set(expandedNodeIds),
+      pinnedNodeIds: new Set(pinnedNodeIds),
+      pathRequested,
+      breadcrumb
+    }
+  })
+  const graphDataset = $derived.by<BrainGraphView>(() => {
+    return buildBrainGraphView(graphData, snapshot, graphUiState)
   })
   const selectedNode = $derived.by<Concept | null>(() =>
     selectedNodeId ? graphData.nodes.get(selectedNodeId) || null : null
@@ -125,9 +124,30 @@ LIMIT 6000`)
   const selectedEdge = $derived.by<Proposition | null>(() =>
     selectedEdgeId ? graphData.links.get(selectedEdgeId) || null : null
   )
-  const summary = $derived.by(() =>
-    graphData.summary(graphDataset.nodes.length, graphDataset.edges.length)
+  const selectedSummaryGroup = $derived.by<RelatedMemoryGroup | null>(() => {
+    if (!selectedSummaryId) {
+      return null
+    }
+    const summaryNode = graphDataset.summaryNodes.find((node) => node.id === selectedSummaryId)
+    const groupId = selectedSummaryId.startsWith('brain-cluster:')
+      ? `atlas-type:${selectedSummaryId.slice('brain-cluster:'.length)}`
+      : summaryNode?.groupId || selectedSummaryId
+    return graphDataset.relatedGroups.find((group) => group.id === groupId) || null
+  })
+  const searchResultNodes = $derived.by<Concept[]>(() =>
+    searchResults
+      .map((id) => graphData.nodes.get(id))
+      .filter((node): node is Concept => Boolean(node))
   )
+  const pinnedNodes = $derived.by<Concept[]>(() =>
+    pinnedNodeIds
+      .map((id) => graphData.nodes.get(id))
+      .filter((node): node is Concept => Boolean(node))
+  )
+  const remainingRelatedCount = $derived.by(() =>
+    graphDataset.relatedGroups.reduce((total, group) => total + group.hidden, 0)
+  )
+  const summary = $derived.by(() => graphDataset.summary)
 
   $effect(() => applyAppearanceTheme(settings.appearanceTheme))
 
@@ -153,8 +173,10 @@ LIMIT 6000`)
   $effect(() => {
     void selectedNodeId
     void selectedEdgeId
+    void selectedSummaryId
     void expandingNodeId
     void searchResults
+    void pinnedNodeIds
     if (!graph || !graphRendered) {
       return
     }
@@ -321,7 +343,7 @@ LIMIT 6000`)
     graph.on(NodeEvent.CLICK, (event: any) => {
       const id = event.target?.id
       if (id) {
-        selectNode(id)
+        selectGraphNode(id)
       }
     })
     graph.on(NodeEvent.DBLCLICK, (event: any) => {
@@ -330,15 +352,39 @@ LIMIT 6000`)
         expandNode(id)
       }
     })
+    graph.on(NodeEvent.POINTER_ENTER, (event: any) => {
+      const id = event.target?.id
+      if (id) {
+        showHoverLabel('node', id)
+      }
+    })
+    graph.on(NodeEvent.POINTER_LEAVE, (event: any) => {
+      const id = event.target?.id
+      if (id) {
+        hideHoverLabel('node', id)
+      }
+    })
     graph.on(EdgeEvent.CLICK, (event: any) => {
       const id = event.target?.id
       if (id) {
         selectedEdgeId = id
-        selectedNodeId = ''
+        selectedSummaryId = ''
+      }
+    })
+    graph.on(EdgeEvent.POINTER_ENTER, (event: any) => {
+      const id = event.target?.id
+      if (id) {
+        showHoverLabel('edge', id)
+      }
+    })
+    graph.on(EdgeEvent.POINTER_LEAVE, (event: any) => {
+      const id = event.target?.id
+      if (id) {
+        hideHoverLabel('edge', id)
       }
     })
     graph.on(CanvasEvent.CLICK, () => {
-      selectedEdgeId = ''
+      handleCanvasClick()
     })
 
     if (import.meta.env.DEV) {
@@ -364,6 +410,7 @@ LIMIT 6000`)
   let renderedEdgeIds = new Set<string>()
   const appliedStates = new Map<string, string>()
   let pendingFocus: { id: string; at: number } | null = null
+  let hoveredLabel: { kind: 'node' | 'edge'; id: string } | null = null
 
   async function syncGraph() {
     if (!graph) {
@@ -380,6 +427,7 @@ LIMIT 6000`)
         const dataset = graphDataset
         const topologyKey = datasetTopologyKey(dataset)
         const topologyChanged = topologyKey !== lastTopologyKey
+        hoveredLabel = null
         graph.setData(dataset)
         if (topologyChanged) {
           lastTopologyKey = topologyKey
@@ -431,7 +479,7 @@ LIMIT 6000`)
     pendingFocus = { id, at: Date.now() }
   }
 
-  function datasetTopologyKey(dataset: RenderedDataset): string {
+  function datasetTopologyKey(dataset: BrainGraphView): string {
     const keys = dataset.nodes.map((node) => `${node.id}|${node.combo || ''}`)
     keys.sort()
     return keys.join(',')
@@ -466,7 +514,7 @@ LIMIT 6000`)
     }
   }
 
-  function buildLayoutOptions(dataset: RenderedDataset, stage = graphStageSize()) {
+  function buildLayoutOptions(dataset: BrainGraphView, stage = graphStageSize()) {
     const comboCount = Math.max(1, dataset.combos.length)
     const comboScale = Math.sqrt(comboCount)
     const innerWidth = Math.max(
@@ -500,6 +548,53 @@ LIMIT 6000`)
     }
   }
 
+  function showHoverLabel(kind: 'node' | 'edge', id: string) {
+    if (!graph) {
+      return
+    }
+    if (hoveredLabel && (hoveredLabel.kind !== kind || hoveredLabel.id !== id)) {
+      setElementLabel(hoveredLabel.kind, hoveredLabel.id, '')
+    }
+    const label = kind === 'node' ? nodeLabel(id) : edgeLabel(id)
+    if (!label) {
+      return
+    }
+    hoveredLabel = { kind, id }
+    setElementLabel(kind, id, label)
+  }
+
+  function hideHoverLabel(kind: 'node' | 'edge', id: string) {
+    if (!hoveredLabel || hoveredLabel.kind !== kind || hoveredLabel.id !== id) {
+      return
+    }
+    hoveredLabel = null
+    setElementLabel(kind, id, '')
+  }
+
+  function setElementLabel(kind: 'node' | 'edge', id: string, label: string) {
+    if (!graph) {
+      return
+    }
+    if (kind === 'node') {
+      graph.updateNodeData([{ id, style: { labelText: label } } as any])
+    } else {
+      graph.updateEdgeData([{ id, style: { labelText: label } } as any])
+    }
+    graph.draw().catch(() => undefined)
+  }
+
+  function nodeLabel(id: string): string {
+    const node = graphDataset.nodes.find((item) => String(item.id) === id)
+    const data = node?.data as Partial<Concept> | undefined
+    return data?.name || ''
+  }
+
+  function edgeLabel(id: string): string {
+    const edge = graphDataset.edges.find((item) => String(item.id) === id)
+    const data = edge?.data as Partial<Proposition> | undefined
+    return data?.predicate || ''
+  }
+
   function applyElementStates() {
     if (!graph) {
       return
@@ -522,12 +617,15 @@ LIMIT 6000`)
     }
     for (const id of renderedNodeIds) {
       const states: string[] = []
-      if (id === selectedNodeId) {
+      if (id === selectedNodeId || id === selectedSummaryId) {
         states.push('selected')
       } else if (searchSet.has(id)) {
         states.push('highlight')
       } else if (searchSet.size > 0) {
         states.push('dim')
+      }
+      if (pinnedNodeIds.includes(id) && id !== selectedNodeId) {
+        states.push('highlight')
       }
       if (id === expandingNodeId) {
         states.push('loading')
@@ -590,6 +688,9 @@ LIMIT 6000`)
       searchResults = []
       searchIndex = 0
       selectedNodeId = ''
+      selectedEdgeId = ''
+      selectedSummaryId = ''
+      pathRequested = false
       return
     }
 
@@ -601,10 +702,7 @@ LIMIT 6000`)
       searchResults = results.map((result) => result.id)
       searchIndex = 0
       if (results[0]) {
-        selectedNodeId = results[0].id
-        selectedEdgeId = ''
-        viewMode = 'focus'
-        requestFocus(results[0].id)
+        setAnchorNode(results[0].id)
         await graphData.expandConcept(results[0].id).catch(() => undefined)
       }
       statusText = getMessage('brainStatusSearchResults', String(results.length))
@@ -616,17 +714,22 @@ LIMIT 6000`)
     }
   }
 
-  function stepSearch(delta: number) {
+  async function stepSearch(delta: number) {
     if (!searchResults.length) {
       return
     }
     searchIndex = (searchIndex + delta + searchResults.length) % searchResults.length
-    selectedNodeId = searchResults[searchIndex] || ''
-    selectedEdgeId = ''
-    viewMode = 'focus'
-    if (selectedNodeId) {
-      requestFocus(selectedNodeId)
+    const id = searchResults[searchIndex] || ''
+    if (id) {
+      setAnchorNode(id)
+      await graphData.expandConcept(id).catch(() => undefined)
     }
+  }
+
+  async function selectSearchResult(id: string, index: number) {
+    searchIndex = index
+    setAnchorNode(id)
+    await graphData.expandConcept(id).catch(() => undefined)
   }
 
   async function runKipQuery() {
@@ -681,9 +784,10 @@ LIMIT 6000`)
     errorMessage = ''
     try {
       await graphData.expandConcept(id)
-      viewMode = 'focus'
-      selectedNodeId = id
-      selectedEdgeId = ''
+      setAnchorNode(id)
+      if (!expandedNodeIds.includes(id)) {
+        expandedNodeIds = [...expandedNodeIds, id]
+      }
       requestFocus(id)
     } catch (error) {
       errorMessage = errorToMessage(error)
@@ -692,12 +796,151 @@ LIMIT 6000`)
     }
   }
 
+  function selectGraphNode(id: string) {
+    if (graphData.nodes.has(id)) {
+      selectNode(id)
+      return
+    }
+    if (isBrainSummaryNodeId(id) || id.startsWith('brain-cluster:')) {
+      selectedSummaryId = id
+      selectedEdgeId = ''
+      return
+    }
+  }
+
   function selectNode(id: string) {
+    setAnchorNode(id)
+  }
+
+  function setAnchorNode(id: string) {
+    const node = graphData.nodes.get(id)
+    if (!node) {
+      return
+    }
     selectedNodeId = id
     selectedEdgeId = ''
-    if (viewMode === 'overview') {
-      edgeMode = 'focus'
+    selectedSummaryId = ''
+    pathRequested = false
+    pushBreadcrumb(node)
+    requestFocus(id)
+  }
+
+  function pushBreadcrumb(node: Concept) {
+    const previous = breadcrumb[breadcrumb.length - 1]
+    if (previous?.id === node.id) {
+      return
     }
+    breadcrumb = [
+      ...breadcrumb.filter((item) => item.id !== node.id),
+      { id: node.id, label: node.name }
+    ].slice(-8)
+  }
+
+  function goToBreadcrumb(index: number) {
+    const item = breadcrumb[index]
+    if (!item) {
+      return
+    }
+    selectedNodeId = item.id
+    selectedEdgeId = ''
+    selectedSummaryId = ''
+    pathRequested = false
+    breadcrumb = breadcrumb.slice(0, index + 1)
+    requestFocus(item.id)
+  }
+
+  function showAtlas() {
+    selectedNodeId = ''
+    selectedEdgeId = ''
+    selectedSummaryId = ''
+    pathRequested = false
+    breadcrumb = []
+  }
+
+  function handleCanvasClick() {
+    if (selectedEdgeId || selectedSummaryId) {
+      selectedEdgeId = ''
+      selectedSummaryId = ''
+      return
+    }
+    if (breadcrumb.length > 1) {
+      const next = breadcrumb[breadcrumb.length - 2]
+      breadcrumb = breadcrumb.slice(0, -1)
+      selectedNodeId = next?.id || ''
+      if (selectedNodeId) {
+        requestFocus(selectedNodeId)
+      }
+    }
+  }
+
+  function selectRelatedItem(item: RelatedMemoryItem) {
+    if (item.nodeId && graphData.nodes.has(item.nodeId)) {
+      setAnchorNode(item.nodeId)
+    }
+    if (item.edgeId && graphData.links.has(item.edgeId)) {
+      selectedEdgeId = item.edgeId
+      selectedSummaryId = ''
+    }
+  }
+
+  function selectRelatedGroup(group: RelatedMemoryGroup) {
+    selectedSummaryId = group.id
+    selectedEdgeId = ''
+  }
+
+  function relatedGroupTitle(group: RelatedMemoryGroup): string {
+    if (group.id === 'atlas-hubs') {
+      return getMessage('brainFrequentHubs')
+    }
+    if (group.id === 'atlas-recent') {
+      return getMessage('brainRecentMemories')
+    }
+    if (group.id === 'path:pinned') {
+      return getMessage('brainPinnedMemories')
+    }
+    if (group.kind === 'summary') {
+      return getMessage('brainMoreType', group.title.replace(/^More\s+/, ''))
+    }
+    return group.title
+  }
+
+  function focusTypeCluster(type: string) {
+    const group = graphDataset.relatedGroups.find((item) => item.id === `atlas-type:${type}`)
+    if (group) {
+      selectRelatedGroup(group)
+    }
+  }
+
+  function togglePin(id: string) {
+    if (!graphData.nodes.has(id)) {
+      return
+    }
+    if (pinnedNodeIds.includes(id)) {
+      pinnedNodeIds = pinnedNodeIds.filter((item) => item !== id)
+      if (pinnedNodeIds.length < 2) {
+        pathRequested = false
+      }
+      return
+    }
+    pinnedNodeIds = [...pinnedNodeIds, id].slice(-8)
+  }
+
+  function isPinned(id: string): boolean {
+    return pinnedNodeIds.includes(id)
+  }
+
+  function showPinnedPath() {
+    if (pinnedNodeIds.length < 2) {
+      return
+    }
+    selectedEdgeId = ''
+    selectedSummaryId = ''
+    pathRequested = true
+  }
+
+  function clearPinned() {
+    pinnedNodeIds = []
+    pathRequested = false
   }
 
   async function focusElement(id = selectedNodeId) {
@@ -724,242 +967,14 @@ LIMIT 6000`)
     graph.zoomTo(Math.max(0.08, Math.min(zoom * scale, 5)), false)
   }
 
-  function resetFilters() {
-    typeFilter = ''
-    predicateFilter = ''
-    maxVisibleNodes = 260
-    focusRadius = 1
-    edgeMode = 'focus'
-    labelMode = 'smart'
-  }
-
-  function buildGraphDataset(source: GraphSnapshot): RenderedDataset {
-    const degree = graphData.degreeByNode()
-    const searchSet = new Set(searchResults)
-    const typeFilteredNodes = source.nodes.filter((node) => !typeFilter || node.type === typeFilter)
-    const nodeIdsByFilter = new Set(typeFilteredNodes.map((node) => node.id))
-    const rawLinks = source.links.filter((link) => {
-      if (predicateFilter && link.predicate !== predicateFilter) {
-        return false
-      }
-      return nodeIdsByFilter.has(link.subject) && nodeIdsByFilter.has(link.object)
-    })
-
-    let keepIds: Set<string>
-    if (viewMode === 'focus' && selectedNodeId) {
-      keepIds = graphData.neighborIds(selectedNodeId, focusRadius)
-    } else if (searchSet.size > 0) {
-      keepIds = new Set<string>()
-      for (const id of searchSet) {
-        for (const neighbor of graphData.neighborIds(id, focusRadius)) {
-          keepIds.add(neighbor)
-        }
-      }
-    } else if (viewMode === 'full') {
-      keepIds = new Set(typeFilteredNodes.map((node) => node.id))
-    } else {
-      keepIds = new Set(
-        typeFilteredNodes
-          .slice()
-          .sort(
-            (left, right) =>
-              (degree.get(right.id) || 0) - (degree.get(left.id) || 0) ||
-              left.name.localeCompare(right.name)
-          )
-          .slice(0, maxVisibleNodes)
-          .map((node) => node.id)
-      )
-    }
-
-    if (selectedNodeId && nodeIdsByFilter.has(selectedNodeId)) {
-      keepIds.add(selectedNodeId)
-    }
-    for (const id of searchSet) {
-      if (nodeIdsByFilter.has(id)) {
-        keepIds.add(id)
-      }
-    }
-
-    keepIds = capNodeSet(keepIds, maxVisibleNodes, degree, searchSet)
-
-    const visibleNodes = typeFilteredNodes.filter((node) => keepIds.has(node.id))
-    const visibleIdSet = new Set(visibleNodes.map((node) => node.id))
-    const focusIds =
-      selectedNodeId && visibleIdSet.has(selectedNodeId)
-        ? graphData.neighborIds(selectedNodeId, focusRadius)
-        : new Set<string>()
-
-    let visibleLinks = rawLinks.filter(
-      (link) => visibleIdSet.has(link.subject) && visibleIdSet.has(link.object)
-    )
-    if (edgeMode === 'none') {
-      visibleLinks = []
-    } else if (edgeMode === 'focus' && selectedNodeId) {
-      visibleLinks = visibleLinks.filter(
-        (link) => focusIds.has(link.subject) || focusIds.has(link.object) || link._virtual
-      )
-    }
-    visibleLinks = visibleLinks
-      .slice()
-      .sort((left, right) => linkPriority(right, degree) - linkPriority(left, degree))
-      .slice(0, viewMode === 'full' ? 3200 : 1400)
-
-    const typeCounts = new Map<string, number>()
-    for (const node of visibleNodes) {
-      typeCounts.set(node.type, (typeCounts.get(node.type) || 0) + 1)
-    }
-    const combos = Array.from(typeCounts.entries())
-      .filter(([, count]) => count >= 2)
-      .slice(0, 28)
-      .map(([type, count]) => makeCombo(type, count))
-    const comboIds = new Set(combos.map((combo) => combo.id))
-
-    return {
-      nodes: visibleNodes.map((node) =>
-        makeNode(node, {
-          degree: degree.get(node.id) || 0,
-          selected: node.id === selectedNodeId,
-          searched: searchSet.has(node.id),
-          combo: comboIds.has(comboId(node.type)) ? comboId(node.type) : undefined,
-          visibleCount: visibleNodes.length
-        })
-      ),
-      edges: visibleLinks.map((link) =>
-        makeEdge(link, {
-          selected: link.id === selectedEdgeId,
-          focused:
-            selectedNodeId && (link.subject === selectedNodeId || link.object === selectedNodeId),
-          visibleCount: visibleNodes.length
-        })
-      ),
-      combos
-    }
-  }
-
-  function capNodeSet(
-    ids: Set<string>,
-    limit: number,
-    degree: Map<string, number>,
-    searchSet: Set<string>
-  ): Set<string> {
-    if (ids.size <= limit) {
-      return ids
-    }
-    return new Set(
-      Array.from(ids)
-        .sort((left, right) => {
-          const leftPriority =
-            (left === selectedNodeId ? 100000 : 0) + (searchSet.has(left) ? 50000 : 0)
-          const rightPriority =
-            (right === selectedNodeId ? 100000 : 0) + (searchSet.has(right) ? 50000 : 0)
-          return (
-            rightPriority - leftPriority ||
-            (degree.get(right) || 0) - (degree.get(left) || 0) ||
-            left.localeCompare(right)
-          )
-        })
-        .slice(0, limit)
-    )
-  }
-
-  function makeNode(
-    node: Concept,
-    options: {
-      degree: number
-      selected: boolean
-      searched: boolean
-      combo?: string
-      visibleCount: number
-    }
-  ): NodeData {
-    const typeDef = node.type === '$ConceptType' || node.type === '$PropositionType'
-    const color = typeColor(node.type)
-    const showLabel =
-      labelMode === 'all' ||
-      (labelMode === 'smart' &&
-        (options.selected ||
-          options.searched ||
-          typeDef ||
-          options.degree >= 4 ||
-          options.visibleCount < 90))
-    const size = typeDef ? [66, 42] : Math.max(18, Math.min(44, 18 + Math.sqrt(options.degree) * 6))
-    return {
-      id: node.id,
-      type: typeDef ? 'ellipse' : 'circle',
-      combo: options.combo,
-      data: node,
-      style: {
-        size,
-        fill: hexToRgba(color, typeDef ? 0.2 : 0.12),
-        stroke: color,
-        lineWidth: options.selected ? 3 : options.searched ? 2.5 : 1.2,
-        cursor: node._isExpanding ? 'wait' : 'pointer',
-        labelText: showLabel ? node.name : '',
-        labelFill: 'rgba(245, 245, 244, 0.9)',
-        labelBackgroundFill: 'rgba(28, 25, 23, 0.78)',
-        haloStroke: hexToRgba(color, 0.16)
-      }
-    } as unknown as NodeData
-  }
-
-  function makeEdge(
-    link: Proposition,
-    options: { selected: boolean; focused: boolean | ''; visibleCount: number }
-  ): EdgeData {
-    const color = link._virtual ? '#a78bfa' : predicateColor(link.predicate)
-    const showLabel =
-      labelMode !== 'none' && (options.selected || options.focused || options.visibleCount < 90)
-    return {
-      id: link.id,
-      source: link.subject,
-      target: link.object,
-      data: link,
-      style: {
-        stroke: color,
-        strokeOpacity: link._virtual ? 0.25 : options.focused ? 0.84 : 0.48,
-        lineWidth: options.selected ? 2.4 : options.focused ? 1.6 : 0.9,
-        lineDash: link._virtual ? [4, 4] : undefined,
-        endArrow: !link._virtual,
-        labelText: showLabel ? link.predicate : '',
-        labelFontSize: 9,
-        labelFill: 'rgba(245, 245, 244, 0.64)',
-        labelBackground: true,
-        labelBackgroundFill: 'rgba(28, 25, 23, 0.62)',
-        labelBackgroundRadius: 3,
-        cursor: 'pointer'
-      }
-    } as unknown as EdgeData
-  }
-
-  function makeCombo(type: string, count: number): ComboData {
-    const color = typeColor(type)
-    return {
-      id: comboId(type),
-      type: 'circle',
-      style: {
-        labelText: `${type} ${count}`,
-        fill: hexToRgba(color, 0.06),
-        stroke: hexToRgba(color, 0.52),
-        labelFill: hexToRgba(color, 0.92),
-        cursor: 'default'
-      }
-    } as ComboData
-  }
-
-  function linkPriority(link: Proposition, degree: Map<string, number>): number {
-    return (
-      (link._virtual ? -1000 : 0) +
-      (link.subject === selectedNodeId || link.object === selectedNodeId ? 10000 : 0) +
-      (degree.get(link.subject) || 0) +
-      (degree.get(link.object) || 0)
-    )
-  }
-
   function buildTooltip(item: unknown): string {
     if (!item || typeof item !== 'object') {
       return ''
     }
     const record = item as Partial<Concept & Proposition>
+    if (record.metadata && (record.metadata as Record<string, unknown>).summary) {
+      return `<div class="brain-tooltip"><strong>${escapeHtml(record.name || '')}</strong><span>${escapeHtml(getMessage('brainSummaryNode'))}</span></div>`
+    }
     if (record.predicate) {
       return `<div class="brain-tooltip"><strong>${escapeHtml(record.predicate)}</strong><span>${escapeHtml(getMessage('brainProposition'))}</span></div>`
     }
@@ -989,43 +1004,6 @@ LIMIT 6000`)
     }
   }
 
-  function typeColor(type: string): string {
-    const fixed: Record<string, string> = {
-      $ConceptType: '#7c3aed',
-      $PropositionType: '#4f46e5',
-      Domain: '#65a30d',
-      Person: '#0f766e',
-      Project: '#2563eb',
-      Preference: '#c2410c',
-      Conversation: '#be185d',
-      Event: '#ca8a04',
-      Insight: '#0891b2'
-    }
-    if (fixed[type]) {
-      return fixed[type]
-    }
-    return paletteHash(type, typePalette)
-  }
-
-  function predicateColor(predicate: string): string {
-    return paletteHash(predicate, predicatePalette)
-  }
-
-  function paletteHash(value: string, palette: string[]): string {
-    let hash = 0
-    for (let i = 0; i < value.length; i += 1) {
-      hash = (hash * 31 + value.charCodeAt(i)) >>> 0
-    }
-    return palette[hash % palette.length] || palette[0]!
-  }
-
-  function hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16)
-    const g = parseInt(hex.slice(3, 5), 16)
-    const b = parseInt(hex.slice(5, 7), 16)
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`
-  }
-
   function escapeHtml(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -1033,35 +1011,6 @@ LIMIT 6000`)
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
   }
-
-  function comboId(type: string): string {
-    return `type:${type}`
-  }
-
-  const typePalette = [
-    '#0f766e',
-    '#2563eb',
-    '#c2410c',
-    '#be185d',
-    '#65a30d',
-    '#7c3aed',
-    '#0891b2',
-    '#b45309',
-    '#4338ca',
-    '#047857',
-    '#b91c1c',
-    '#6d28d9'
-  ]
-  const predicatePalette = [
-    '#38bdf8',
-    '#34d399',
-    '#f59e0b',
-    '#fb7185',
-    '#a78bfa',
-    '#22c55e',
-    '#f97316',
-    '#06b6d4'
-  ]
 </script>
 
 <svelte:head>
@@ -1157,9 +1106,14 @@ LIMIT 6000`)
       {/if}
 
       <section class="brain-panel">
-        <div class="brain-panel-heading">
-          <Search class="size-4" />
-          {getMessage('search')}
+        <div class="brain-panel-heading justify-between">
+          <span class="flex items-center gap-2">
+            <Search class="size-4" />
+            {getMessage('search')}
+          </span>
+          {#if searchResults.length}
+            <span class={badgeClass('outline')}>{searchResults.length}</span>
+          {/if}
         </div>
         <div class="flex gap-2">
           <input
@@ -1171,6 +1125,7 @@ LIMIT 6000`)
               if (event.key === 'Escape') {
                 searchQuery = ''
                 searchResults = []
+                searchIndex = 0
               }
             }}
           />
@@ -1182,8 +1137,42 @@ LIMIT 6000`)
             <Search class="size-4" />
           </button>
         </div>
-        {#if searchResults.length}
-          <div class="flex items-center justify-between text-xs text-muted-foreground">
+        {#if searchResultNodes.length}
+          <div class="brain-list mt-3">
+            {#each searchResultNodes as result, index}
+              <div
+                class={cn(
+                  'brain-list-row',
+                  result.id === selectedNodeId && 'brain-list-row-active'
+                )}
+              >
+                <button
+                  class="brain-list-main"
+                  onclick={() => selectSearchResult(result.id, index)}
+                >
+                  <span class="min-w-0">
+                    <span class="block truncate font-medium">{result.name}</span>
+                    <span class="block truncate text-[0.68rem] text-muted-foreground"
+                      >{result.type}</span
+                    >
+                  </span>
+                  <span class="text-[0.68rem] text-muted-foreground">{index + 1}</span>
+                </button>
+                <button
+                  class={buttonClass('ghost', 'icon-xs')}
+                  title={isPinned(result.id) ? getMessage('brainUnpin') : getMessage('brainPin')}
+                  onclick={() => togglePin(result.id)}
+                >
+                  {#if isPinned(result.id)}
+                    <PinOff class="size-3" />
+                  {:else}
+                    <Pin class="size-3" />
+                  {/if}
+                </button>
+              </div>
+            {/each}
+          </div>
+          <div class="mt-2 flex items-center justify-between text-xs text-muted-foreground">
             <span>{searchIndex + 1}/{searchResults.length}</span>
             <div class="flex gap-1">
               <button class={buttonClass('ghost', 'xs')} onclick={() => stepSearch(-1)}
@@ -1198,115 +1187,76 @@ LIMIT 6000`)
       </section>
 
       <section class="brain-panel">
-        <div class="brain-panel-heading">
-          <SlidersHorizontal class="size-4" />
-          {getMessage('brainViewPanel')}
+        <div class="brain-panel-heading justify-between">
+          <span class="flex items-center gap-2">
+            <BrainCircuit class="size-4" />
+            {getMessage('brainAtlas')}
+          </span>
+          <button class={buttonClass('ghost', 'xs')} onclick={showAtlas}>
+            {getMessage('brainSceneAtlas')}
+          </button>
         </div>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldMode')}</span>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={viewMode}>
-            <option value="overview">{getMessage('brainModeOverview')}</option>
-            <option value="focus">{getMessage('brainModeFocus')}</option>
-            <option value="full">{getMessage('brainModeFull')}</option>
-          </select>
-        </label>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldEdges')}</span>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={edgeMode}>
-            <option value="focus">{getMessage('brainModeFocus')}</option>
-            <option value="all">{getMessage('brainAll')}</option>
-            <option value="none">{getMessage('brainNone')}</option>
-          </select>
-        </label>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldLabels')}</span>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={labelMode}>
-            <option value="smart">{getMessage('brainLabelsSmart')}</option>
-            <option value="all">{getMessage('brainAll')}</option>
-            <option value="none">{getMessage('brainNone')}</option>
-          </select>
-        </label>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldNodeCap', String(maxVisibleNodes))}</span>
-          <input
-            class="w-full accent-primary"
-            bind:value={maxVisibleNodes}
-            min="80"
-            max="1200"
-            step="20"
-            type="range"
-          />
-        </label>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldRadius', String(focusRadius))}</span>
-          <input
-            class="w-full accent-primary"
-            bind:value={focusRadius}
-            min="1"
-            max="3"
-            step="1"
-            type="range"
-          />
-        </label>
-        <button class={buttonClass('ghost', 'sm', 'w-full')} onclick={resetFilters}
-          >{getMessage('brainResetFilters')}</button
-        >
+        <div class="brain-compact-stats">
+          <span>{getMessage('brainVisibleNodes')}: {summary.visibleNodeCount}</span>
+          <span>{getMessage('brainVisibleLinks')}: {summary.visibleLinkCount}</span>
+          <span>{getMessage('brainLoadedNodes')}: {summary.nodeCount}</span>
+          <span>{getMessage('brainLoadedLinks')}: {summary.linkCount}</span>
+        </div>
+        {#if snapshot.status}
+          <p class="mt-2 text-[0.68rem] text-muted-foreground">
+            {getMessage('brainTotalConcepts', String(snapshot.status.concepts))}
+            ·
+            {getMessage('brainTotalProps', String(snapshot.status.propositions))}
+          </p>
+        {/if}
       </section>
 
       <section class="brain-panel">
         <div class="brain-panel-heading">
           <GitFork class="size-4" />
-          {getMessage('brainFilters')}
+          {getMessage('brainAtlasClusters')}
         </div>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldType')}</span>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={typeFilter}>
-            <option value="">{getMessage('brainAllTypes')}</option>
-            {#each summary.typeCounts as [type, count]}
-              <option value={type}>{type} ({count})</option>
-            {/each}
-          </select>
-        </label>
-        <label class="brain-field">
-          <span>{getMessage('brainFieldPredicate')}</span>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={predicateFilter}>
-            <option value="">{getMessage('brainAllPredicates')}</option>
-            {#each summary.predicateCounts as [predicate, count]}
-              <option value={predicate}>{predicate} ({count})</option>
-            {/each}
-          </select>
-        </label>
+        <div class="brain-list">
+          {#each summary.atlasClusters.slice(0, 10) as cluster}
+            <button class="brain-list-row" onclick={() => focusTypeCluster(cluster.type)}>
+              <span class="min-w-0 truncate" style={`color: ${cluster.color}`}>{cluster.type}</span>
+              <span class="text-muted-foreground">{cluster.count}</span>
+            </button>
+          {/each}
+        </div>
       </section>
 
       <section class="brain-panel">
         <div class="brain-panel-heading">
-          <Database class="size-4" />
-          {getMessage('brainCounts')}
+          <Route class="size-4" />
+          {getMessage('brainFrequentHubs')}
         </div>
-        <dl class="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <dt class="text-muted-foreground">{getMessage('brainLoadedNodes')}</dt>
-            <dd class="font-medium">{summary.nodeCount}</dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">{getMessage('brainLoadedLinks')}</dt>
-            <dd class="font-medium">{summary.linkCount}</dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">{getMessage('brainVisibleNodes')}</dt>
-            <dd class="font-medium">{summary.visibleNodeCount}</dd>
-          </div>
-          <div>
-            <dt class="text-muted-foreground">{getMessage('brainVisibleLinks')}</dt>
-            <dd class="font-medium">{summary.visibleLinkCount}</dd>
-          </div>
-        </dl>
-        {#if snapshot.status}
-          <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-            <span>{getMessage('brainTotalConcepts', String(snapshot.status.concepts))}</span>
-            <span>{getMessage('brainTotalProps', String(snapshot.status.propositions))}</span>
-          </div>
-        {/if}
+        <div class="brain-list">
+          {#each summary.hubs.slice(0, 8) as hub}
+            <button class="brain-list-row" onclick={() => selectNode(hub.id)}>
+              <span class="min-w-0">
+                <span class="block truncate font-medium">{hub.name}</span>
+                <span class="block truncate text-[0.68rem] text-muted-foreground">{hub.type}</span>
+              </span>
+              <span class="text-muted-foreground">{hub.degree}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <section class="brain-panel">
+        <div class="brain-panel-heading">
+          <Search class="size-4" />
+          {getMessage('brainRecentMemories')}
+        </div>
+        <div class="brain-list">
+          {#each summary.recentNodes as node}
+            <button class="brain-list-row" onclick={() => selectNode(node.id)}>
+              <span class="min-w-0 truncate">{node.name}</span>
+              <span class="text-muted-foreground">{node.type}</span>
+            </button>
+          {/each}
+        </div>
       </section>
     </aside>
 
@@ -1356,39 +1306,48 @@ LIMIT 6000`)
         >
           <LocateFixed class="size-4" />
         </button>
-        <button
-          class={buttonClass('outline', 'icon-sm')}
-          onclick={() => (edgeMode = edgeMode === 'none' ? 'focus' : 'none')}
-          title={getMessage('brainToggleEdges')}
-        >
-          {#if edgeMode === 'none'}
-            <EyeOff class="size-4" />
-          {:else}
-            <Eye class="size-4" />
-          {/if}
-        </button>
       </div>
 
-      <div class="brain-mode-tabs" data-slot="button-group">
-        <button
-          class={buttonClass(viewMode === 'overview' ? 'default' : 'outline', 'xs')}
-          onclick={() => (viewMode = 'overview')}
+      <div class="brain-scene-chip">
+        <span class={badgeClass('secondary')}>
+          {#if graphDataset.scene === 'atlas'}
+            {getMessage('brainSceneAtlas')}
+          {:else if graphDataset.scene === 'path'}
+            {getMessage('brainScenePath')}
+          {:else}
+            {getMessage('brainSceneFocus')}
+          {/if}
+        </span>
+        <span
+          >{getMessage('brainVisibleSummary', [
+            String(summary.visibleNodeCount),
+            String(summary.visibleLinkCount)
+          ])}</span
         >
-          {getMessage('brainModeOverview')}
-        </button>
-        <button
-          class={buttonClass(viewMode === 'focus' ? 'default' : 'outline', 'xs')}
-          onclick={() => (viewMode = 'focus')}
-        >
-          {getMessage('brainModeFocus')}
-        </button>
-        <button
-          class={buttonClass(viewMode === 'full' ? 'default' : 'outline', 'xs')}
-          onclick={() => (viewMode = 'full')}
-        >
-          {getMessage('brainModeFull')}
-        </button>
       </div>
+
+      {#if breadcrumb.length}
+        <nav class="brain-breadcrumb" aria-label={getMessage('brainBreadcrumb')}>
+          <button class={buttonClass('ghost', 'xs')} onclick={showAtlas}>
+            {getMessage('brainSceneAtlas')}
+          </button>
+          {#each breadcrumb as item, index}
+            <span class="text-muted-foreground">/</span>
+            <button class={buttonClass('ghost', 'xs')} onclick={() => goToBreadcrumb(index)}>
+              <span class="max-w-28 truncate">{item.label}</span>
+            </button>
+          {/each}
+        </nav>
+      {/if}
+
+      {#if summary.hiddenNodeCount || summary.hiddenEdgeCount}
+        <div class="brain-budget-note">
+          {getMessage('brainBudgetHidden', [
+            String(summary.hiddenNodeCount),
+            String(summary.hiddenEdgeCount)
+          ])}
+        </div>
+      {/if}
     </section>
 
     <aside class="brain-inspector">
@@ -1398,29 +1357,36 @@ LIMIT 6000`)
             <FileBracesCorner class="size-4" />
             {getMessage('brainInspector')}
           </span>
-          {#if selectedNode || selectedEdge}
+          {#if selectedNode || selectedEdge || selectedSummaryGroup}
             <div class="flex items-center gap-1">
-              <button
-                class={buttonClass('ghost', 'icon-xs')}
-                onclick={() => copyInspectorJson()}
-                title={inspectorCopyState === 'copied'
-                  ? getMessage('brainCopiedJson')
-                  : getMessage('brainCopyJson')}
-                aria-label={inspectorCopyState === 'copied'
-                  ? getMessage('brainCopiedJson')
-                  : getMessage('brainCopyJson')}
-              >
-                {#if inspectorCopyState === 'copied'}
-                  <Check class="size-3" />
-                {:else}
-                  <Copy class="size-3" />
-                {/if}
-              </button>
+              {#if selectedNode || selectedEdge}
+                <button
+                  class={buttonClass('ghost', 'icon-xs')}
+                  onclick={() => copyInspectorJson(selectedEdge || selectedNode)}
+                  title={inspectorCopyState === 'copied'
+                    ? getMessage('brainCopiedJson')
+                    : getMessage('brainCopyJson')}
+                  aria-label={inspectorCopyState === 'copied'
+                    ? getMessage('brainCopiedJson')
+                    : getMessage('brainCopyJson')}
+                >
+                  {#if inspectorCopyState === 'copied'}
+                    <Check class="size-3" />
+                  {:else}
+                    <Copy class="size-3" />
+                  {/if}
+                </button>
+              {/if}
               <button
                 class={buttonClass('ghost', 'icon-xs')}
                 onclick={() => {
-                  selectedNodeId = ''
-                  selectedEdgeId = ''
+                  if (selectedEdgeId) {
+                    selectedEdgeId = ''
+                  } else if (selectedSummaryId) {
+                    selectedSummaryId = ''
+                  } else {
+                    showAtlas()
+                  }
                   inspectorCopyState = 'idle'
                 }}
                 title={getMessage('close')}
@@ -1432,40 +1398,7 @@ LIMIT 6000`)
           {/if}
         </div>
 
-        {#if selectedNode}
-          <div class="space-y-3">
-            <div>
-              <span class={badgeClass('secondary')}>{selectedNode.type}</span>
-              <h2 class="mt-2 break-words text-sm font-semibold">{selectedNode.name}</h2>
-              <p class="mt-1 break-all text-xs text-muted-foreground">{selectedNode.id}</p>
-            </div>
-            <div class="flex gap-2">
-              <button
-                class={buttonClass('outline', 'xs')}
-                onclick={() => expandNode(selectedNode.id)}
-                disabled={expandingNodeId === selectedNode.id}
-              >
-                {#if expandingNodeId === selectedNode.id}
-                  <LoaderCircle class="size-3 animate-spin" />
-                {/if}
-                {getMessage('brainExpand')}
-              </button>
-              <button
-                class={buttonClass('ghost', 'xs')}
-                onclick={() => {
-                  viewMode = 'focus'
-                  requestFocus(selectedNode.id)
-                  focusElement(selectedNode.id)
-                }}
-              >
-                {getMessage('brainModeFocus')}
-              </button>
-            </div>
-            <div class={separatorClass()}></div>
-            {@render DetailBlock(getMessage('brainAttributes'), selectedNode.attributes)}
-            {@render DetailBlock(getMessage('brainMetadata'), selectedNode.metadata || {})}
-          </div>
-        {:else if selectedEdge}
+        {#if selectedEdge}
           <div class="space-y-3">
             <div>
               <span class={badgeClass(selectedEdge._virtual ? 'outline' : 'secondary')}>
@@ -1500,22 +1433,111 @@ LIMIT 6000`)
             {@render DetailBlock(getMessage('brainAttributes'), selectedEdge.attributes)}
             {@render DetailBlock(getMessage('brainMetadata'), selectedEdge.metadata || {})}
           </div>
-        {:else}
-          <div class="space-y-2 text-xs text-muted-foreground">
-            {#each summary.hubs.slice(0, 8) as hub}
+        {:else if selectedNode}
+          <div class="space-y-3">
+            <div>
+              <span class={badgeClass('secondary')}>{selectedNode.type}</span>
+              <h2 class="mt-2 break-words text-sm font-semibold">{selectedNode.name}</h2>
+              <p class="mt-1 break-all text-xs text-muted-foreground">{selectedNode.id}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
               <button
-                class={buttonClass('ghost', 'xs', 'w-full justify-between')}
-                onclick={() => {
-                  selectNode(hub.id)
-                  viewMode = 'focus'
-                  requestFocus(hub.id)
-                }}
+                class={buttonClass('outline', 'xs')}
+                onclick={() => expandNode(selectedNode.id)}
+                disabled={expandingNodeId === selectedNode.id}
               >
-                <span class="min-w-0 truncate">{hub.name}</span>
-                <span class="shrink-0 text-muted-foreground">{hub.degree}</span>
+                {#if expandingNodeId === selectedNode.id}
+                  <LoaderCircle class="size-3 animate-spin" />
+                {/if}
+                {#if remainingRelatedCount > 0}
+                  {getMessage('brainShowMoreRelatedWithCount', String(remainingRelatedCount))}
+                {:else}
+                  {getMessage('brainShowMoreRelated')}
+                {/if}
               </button>
+              <button class={buttonClass('ghost', 'xs')} onclick={() => togglePin(selectedNode.id)}>
+                {#if isPinned(selectedNode.id)}
+                  <PinOff class="size-3" />
+                  {getMessage('brainUnpin')}
+                {:else}
+                  <Pin class="size-3" />
+                  {getMessage('brainPin')}
+                {/if}
+              </button>
+            </div>
+            {#if graphDataset.relatedGroups.length}
+              <div class={separatorClass()}></div>
+              <div>
+                <div class="mb-2 text-xs font-medium text-muted-foreground">
+                  {getMessage('brainRelatedMemories')}
+                </div>
+                {@render RelatedGroups(graphDataset.relatedGroups)}
+              </div>
+            {/if}
+            <div class={separatorClass()}></div>
+            {@render DetailBlock(getMessage('brainAttributes'), selectedNode.attributes)}
+            {@render DetailBlock(getMessage('brainMetadata'), selectedNode.metadata || {})}
+          </div>
+        {:else if selectedSummaryGroup}
+          <div class="space-y-3">
+            <div>
+              <span class={badgeClass('outline')}>{getMessage('brainSummaryNode')}</span>
+              <h2 class="mt-2 break-words text-sm font-semibold">
+                {relatedGroupTitle(selectedSummaryGroup)}
+              </h2>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {getMessage('brainRelatedCount', String(selectedSummaryGroup.total))}
+              </p>
+            </div>
+            {@render RelatedGroups([selectedSummaryGroup])}
+          </div>
+        {:else}
+          <div class="space-y-3 text-xs text-muted-foreground">
+            <p>{getMessage('brainAtlasSummary')}</p>
+            {@render RelatedGroups(graphDataset.relatedGroups.slice(0, 3))}
+          </div>
+        {/if}
+      </section>
+
+      <section class="brain-panel">
+        <div class="brain-panel-heading justify-between">
+          <span class="flex items-center gap-2">
+            <Route class="size-4" />
+            {getMessage('brainPath')}
+          </span>
+          {#if pinnedNodes.length}
+            <button class={buttonClass('ghost', 'xs')} onclick={clearPinned}>
+              {getMessage('brainClearPins')}
+            </button>
+          {/if}
+        </div>
+        {#if pinnedNodes.length}
+          <div class="brain-list">
+            {#each pinnedNodes as node}
+              <div
+                class={cn('brain-list-row', node.id === selectedNodeId && 'brain-list-row-active')}
+              >
+                <button class="brain-list-main" onclick={() => selectNode(node.id)}>
+                  <span class="min-w-0 truncate">{node.name}</span>
+                </button>
+                <button
+                  class={buttonClass('ghost', 'icon-xs')}
+                  title={getMessage('brainUnpin')}
+                  onclick={() => togglePin(node.id)}
+                >
+                  <PinOff class="size-3" />
+                </button>
+              </div>
             {/each}
           </div>
+          {#if pinnedNodes.length >= 2}
+            <button class={buttonClass('outline', 'sm', 'mt-3 w-full')} onclick={showPinnedPath}>
+              <Route class="size-4" />
+              {getMessage('brainViewPinnedPath')}
+            </button>
+          {/if}
+        {:else}
+          <p class="text-xs text-muted-foreground">{getMessage('brainNoPins')}</p>
         {/if}
       </section>
 
@@ -1526,7 +1548,7 @@ LIMIT 6000`)
         >
           <span class="flex items-center gap-2">
             <Braces class="size-4" />
-            KIP
+            {getMessage('brainAdvanced')}
           </span>
           <span>{queryOpen ? getMessage('brainHide') : getMessage('brainShow')}</span>
         </button>
@@ -1547,24 +1569,6 @@ LIMIT 6000`)
           {/if}
         {/if}
       </section>
-
-      <section class="brain-panel">
-        <div class="brain-panel-heading">
-          <GitFork class="size-4" />
-          {getMessage('brainTopTypes')}
-        </div>
-        <div class="space-y-1">
-          {#each summary.typeCounts.slice(0, 8) as [type, count]}
-            <button
-              class={buttonClass('ghost', 'xs', 'w-full justify-between')}
-              onclick={() => (typeFilter = type)}
-            >
-              <span class="truncate" style={`color: ${typeColor(type)}`}>{type}</span>
-              <span class="text-muted-foreground">{count}</span>
-            </button>
-          {/each}
-        </div>
-      </section>
     </aside>
   </main>
 </div>
@@ -1575,6 +1579,44 @@ LIMIT 6000`)
     <pre class="brain-json language-json"><code class="language-json"
         >{@html highlightJson(value)}</code
       ></pre>
+  </div>
+{/snippet}
+
+{#snippet RelatedGroups(groups: RelatedMemoryGroup[])}
+  <div class="space-y-3">
+    {#each groups as group}
+      <div class="brain-related-group">
+        <button class="brain-related-heading" onclick={() => selectRelatedGroup(group)}>
+          <span class="min-w-0 truncate">{relatedGroupTitle(group)}</span>
+          <span class="text-muted-foreground">{group.total}</span>
+        </button>
+        <div class="brain-list mt-1">
+          {#each group.items as item}
+            <button class="brain-list-row" onclick={() => selectRelatedItem(item)}>
+              <span class="min-w-0">
+                <span class="block truncate font-medium">{item.label}</span>
+                <span class="block truncate text-[0.68rem] text-muted-foreground">
+                  {item.detail}
+                </span>
+              </span>
+              {#if item.type}
+                <span class="shrink-0 text-[0.68rem]" style={`color: ${typeColor(item.type)}`}>
+                  {item.type}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+        {#if group.hidden > 0}
+          <button
+            class={buttonClass('ghost', 'xs', 'mt-1 w-full justify-start')}
+            onclick={() => selectRelatedGroup(group)}
+          >
+            {getMessage('brainMoreInGroup', String(group.hidden))}
+          </button>
+        {/if}
+      </div>
+    {/each}
   </div>
 {/snippet}
 
@@ -1667,6 +1709,69 @@ LIMIT 6000`)
     color: var(--muted-foreground);
   }
 
+  .brain-list {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .brain-list-row {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border-radius: 0.375rem;
+    padding: 0.38rem 0.45rem;
+    color: var(--foreground);
+    font-size: 0.72rem;
+    text-align: left;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      transform 180ms ease;
+  }
+
+  button.brain-list-row,
+  .brain-list-main,
+  .brain-related-heading {
+    cursor: pointer;
+  }
+
+  .brain-list-main {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    text-align: left;
+  }
+
+  .brain-list-row:hover,
+  .brain-related-heading:hover {
+    background: color-mix(in oklch, var(--muted) 56%, transparent);
+  }
+
+  .brain-list-row:active,
+  .brain-related-heading:active {
+    transform: translateY(1px);
+  }
+
+  .brain-list-row-active {
+    background: color-mix(in oklch, var(--primary) 16%, transparent);
+    color: var(--primary);
+  }
+
+  .brain-compact-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    font-size: 0.68rem;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+
   .brain-stage {
     position: relative;
     min-width: 0;
@@ -1705,17 +1810,72 @@ LIMIT 6000`)
     backdrop-filter: blur(12px);
   }
 
-  .brain-mode-tabs {
+  .brain-scene-chip {
     position: absolute;
     left: 0.75rem;
     top: 0.75rem;
     display: flex;
+    max-width: calc(100% - 7rem);
+    align-items: center;
     gap: 0.35rem;
     border: 1px solid var(--border);
     border-radius: 0.5rem;
     background: color-mix(in oklch, var(--background) 88%, transparent);
     padding: 0.35rem;
+    font-size: 0.72rem;
+    color: var(--muted-foreground);
     backdrop-filter: blur(12px);
+  }
+
+  .brain-breadcrumb {
+    position: absolute;
+    left: 0.75rem;
+    top: 3.55rem;
+    display: flex;
+    max-width: min(34rem, calc(100% - 1.5rem));
+    align-items: center;
+    gap: 0.15rem;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: color-mix(in oklch, var(--background) 88%, transparent);
+    padding: 0.28rem;
+    backdrop-filter: blur(12px);
+  }
+
+  .brain-budget-note {
+    position: absolute;
+    left: 0.75rem;
+    bottom: 0.75rem;
+    max-width: min(26rem, calc(100% - 12rem));
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: color-mix(in oklch, var(--background) 88%, transparent);
+    padding: 0.45rem 0.6rem;
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+    backdrop-filter: blur(12px);
+  }
+
+  .brain-related-group {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .brain-related-heading {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border-radius: 0.375rem;
+    padding: 0.28rem 0.42rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-align: left;
+    transition:
+      background-color 180ms ease,
+      transform 180ms ease;
   }
 
   .brain-json {
@@ -1811,7 +1971,9 @@ LIMIT 6000`)
     }
 
     .brain-floating-toolbar,
-    .brain-mode-tabs {
+    .brain-scene-chip,
+    .brain-breadcrumb,
+    .brain-budget-note {
       max-width: calc(100% - 1rem);
       flex-wrap: wrap;
     }
@@ -1820,8 +1982,14 @@ LIMIT 6000`)
       right: 0.5rem;
     }
 
-    .brain-mode-tabs {
+    .brain-scene-chip,
+    .brain-breadcrumb,
+    .brain-budget-note {
       left: 0.5rem;
+    }
+
+    .brain-breadcrumb {
+      top: 3.5rem;
     }
   }
 </style>

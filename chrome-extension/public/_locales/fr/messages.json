@@ -458,63 +458,6 @@
   "brainNext": {
     "message": "Suiv."
   },
-  "brainViewPanel": {
-    "message": "Affichage"
-  },
-  "brainFieldMode": {
-    "message": "Mode"
-  },
-  "brainModeOverview": {
-    "message": "Aperçu"
-  },
-  "brainModeFocus": {
-    "message": "Focus"
-  },
-  "brainModeFull": {
-    "message": "Complet"
-  },
-  "brainFieldEdges": {
-    "message": "Arêtes"
-  },
-  "brainAll": {
-    "message": "Toutes"
-  },
-  "brainNone": {
-    "message": "Aucune"
-  },
-  "brainFieldLabels": {
-    "message": "Étiquettes"
-  },
-  "brainLabelsSmart": {
-    "message": "Intelligentes"
-  },
-  "brainFieldNodeCap": {
-    "message": "Limite de nœuds $1"
-  },
-  "brainFieldRadius": {
-    "message": "Rayon $1"
-  },
-  "brainResetFilters": {
-    "message": "Réinitialiser les filtres"
-  },
-  "brainFilters": {
-    "message": "Filtres"
-  },
-  "brainFieldType": {
-    "message": "Type"
-  },
-  "brainAllTypes": {
-    "message": "Tous les types"
-  },
-  "brainFieldPredicate": {
-    "message": "Prédicat"
-  },
-  "brainAllPredicates": {
-    "message": "Tous les prédicats"
-  },
-  "brainCounts": {
-    "message": "Statistiques"
-  },
   "brainLoadedNodes": {
     "message": "Nœuds chargés"
   },
@@ -545,9 +488,6 @@
   "brainFocusSelected": {
     "message": "Centrer la sélection"
   },
-  "brainToggleEdges": {
-    "message": "Afficher/masquer les arêtes"
-  },
   "brainInspector": {
     "message": "Inspecteur"
   },
@@ -559,9 +499,6 @@
   },
   "brainCloseInspector": {
     "message": "Fermer l'inspecteur"
-  },
-  "brainExpand": {
-    "message": "Développer"
   },
   "brainAttributes": {
     "message": "Attributs"
@@ -589,9 +526,6 @@
   },
   "brainRunReadonly": {
     "message": "Exécuter en lecture seule"
-  },
-  "brainTopTypes": {
-    "message": "Types principaux"
   },
   "configSectionRuntime": {
     "message": "Exécution"
@@ -835,5 +769,83 @@
   },
   "loadMore": {
     "message": "Charger plus"
+  },
+  "brainAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneFocus": {
+    "message": "Focus"
+  },
+  "brainScenePath": {
+    "message": "Chemin"
+  },
+  "brainAtlasClusters": {
+    "message": "Clusters Atlas"
+  },
+  "brainFrequentHubs": {
+    "message": "Hubs frequents"
+  },
+  "brainRecentMemories": {
+    "message": "Souvenirs recents"
+  },
+  "brainVisibleSummary": {
+    "message": "$1 noeuds, $2 relations"
+  },
+  "brainBreadcrumb": {
+    "message": "Fil d Ariane Brain"
+  },
+  "brainBudgetHidden": {
+    "message": "$1 noeuds et $2 relations sont resumes"
+  },
+  "brainShowMoreRelated": {
+    "message": "Afficher plus de souvenirs lies"
+  },
+  "brainShowMoreRelatedWithCount": {
+    "message": "Afficher plus de souvenirs lies ($1 restants)"
+  },
+  "brainPin": {
+    "message": "Epingler"
+  },
+  "brainUnpin": {
+    "message": "Retirer"
+  },
+  "brainRelatedMemories": {
+    "message": "Souvenirs lies"
+  },
+  "brainSummaryNode": {
+    "message": "Resume"
+  },
+  "brainRelatedCount": {
+    "message": "$1 souvenirs lies"
+  },
+  "brainAtlasSummary": {
+    "message": "Recherchez ou choisissez une entree pour focaliser le graphe. Atlas garde le canevas leger et place les details dans des listes."
+  },
+  "brainPath": {
+    "message": "Chemin"
+  },
+  "brainClearPins": {
+    "message": "Effacer les epingles"
+  },
+  "brainViewPinnedPath": {
+    "message": "Voir leur relation"
+  },
+  "brainNoPins": {
+    "message": "Epinglez des souvenirs pour comparer leur relation."
+  },
+  "brainAdvanced": {
+    "message": "Avance"
+  },
+  "brainMoreInGroup": {
+    "message": "$1 de plus dans ce groupe"
+  },
+  "brainMoreType": {
+    "message": "Plus de $1"
+  },
+  "brainPinnedMemories": {
+    "message": "Souvenirs epingles"
   }
 }

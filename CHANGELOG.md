@@ -6,7 +6,12 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Brain graph atlas, focus, and path views**: the browser extension Brain view now summarizes large memory graphs into bounded atlas clusters, focused neighborhoods, pinned-memory relationship paths, related-memory lists, and breadcrumb navigation instead of rendering every node directly.
+
 ### Changed
+
+- **Brain graph rendering is extracted into a tested view model**: graph budgeting, summary nodes, colors, related groups, and pinned/search handling now live in a dedicated view-model module with regression coverage.
+- **Browser extension version metadata synchronized with 0.10.3**: extension package and manifest metadata now advertise `0.10.3`.
 
 ### Fixed
 

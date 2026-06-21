@@ -458,63 +458,6 @@
   "brainNext": {
     "message": "Далее"
   },
-  "brainViewPanel": {
-    "message": "Вид"
-  },
-  "brainFieldMode": {
-    "message": "Режим"
-  },
-  "brainModeOverview": {
-    "message": "Обзор"
-  },
-  "brainModeFocus": {
-    "message": "Фокус"
-  },
-  "brainModeFull": {
-    "message": "Полный"
-  },
-  "brainFieldEdges": {
-    "message": "Рёбра"
-  },
-  "brainAll": {
-    "message": "Все"
-  },
-  "brainNone": {
-    "message": "Нет"
-  },
-  "brainFieldLabels": {
-    "message": "Подписи"
-  },
-  "brainLabelsSmart": {
-    "message": "Умные"
-  },
-  "brainFieldNodeCap": {
-    "message": "Лимит узлов $1"
-  },
-  "brainFieldRadius": {
-    "message": "Радиус $1"
-  },
-  "brainResetFilters": {
-    "message": "Сбросить фильтры"
-  },
-  "brainFilters": {
-    "message": "Фильтры"
-  },
-  "brainFieldType": {
-    "message": "Тип"
-  },
-  "brainAllTypes": {
-    "message": "Все типы"
-  },
-  "brainFieldPredicate": {
-    "message": "Предикат"
-  },
-  "brainAllPredicates": {
-    "message": "Все предикаты"
-  },
-  "brainCounts": {
-    "message": "Статистика"
-  },
   "brainLoadedNodes": {
     "message": "Загружено узлов"
   },
@@ -545,9 +488,6 @@
   "brainFocusSelected": {
     "message": "Фокус на выбранном"
   },
-  "brainToggleEdges": {
-    "message": "Показать или скрыть рёбра"
-  },
   "brainInspector": {
     "message": "Инспектор"
   },
@@ -559,9 +499,6 @@
   },
   "brainCloseInspector": {
     "message": "Закрыть инспектор"
-  },
-  "brainExpand": {
-    "message": "Развернуть"
   },
   "brainAttributes": {
     "message": "Атрибуты"
@@ -589,9 +526,6 @@
   },
   "brainRunReadonly": {
     "message": "Выполнить (только чтение)"
-  },
-  "brainTopTypes": {
-    "message": "Основные типы"
   },
   "configSectionRuntime": {
     "message": "Среда выполнения"
@@ -835,5 +769,83 @@
   },
   "loadMore": {
     "message": "Загрузить ещё"
+  },
+  "brainAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneFocus": {
+    "message": "Фокус"
+  },
+  "brainScenePath": {
+    "message": "Путь"
+  },
+  "brainAtlasClusters": {
+    "message": "Кластеры Atlas"
+  },
+  "brainFrequentHubs": {
+    "message": "Частые узлы"
+  },
+  "brainRecentMemories": {
+    "message": "Недавние воспоминания"
+  },
+  "brainVisibleSummary": {
+    "message": "$1 узлов, $2 связей"
+  },
+  "brainBreadcrumb": {
+    "message": "Навигация Brain"
+  },
+  "brainBudgetHidden": {
+    "message": "$1 узлов и $2 связей свернуты в сводку"
+  },
+  "brainShowMoreRelated": {
+    "message": "Показать больше связанных воспоминаний"
+  },
+  "brainShowMoreRelatedWithCount": {
+    "message": "Показать больше связанных воспоминаний (еще $1)"
+  },
+  "brainPin": {
+    "message": "Закрепить"
+  },
+  "brainUnpin": {
+    "message": "Открепить"
+  },
+  "brainRelatedMemories": {
+    "message": "Связанные воспоминания"
+  },
+  "brainSummaryNode": {
+    "message": "Сводка"
+  },
+  "brainRelatedCount": {
+    "message": "$1 связанных воспоминаний"
+  },
+  "brainAtlasSummary": {
+    "message": "Ищите или выберите вход, чтобы сфокусировать граф. Atlas держит холст компактным, а детали показывает списками."
+  },
+  "brainPath": {
+    "message": "Путь"
+  },
+  "brainClearPins": {
+    "message": "Очистить закрепления"
+  },
+  "brainViewPinnedPath": {
+    "message": "Показать их связь"
+  },
+  "brainNoPins": {
+    "message": "Закрепите воспоминания, чтобы сравнить их связь."
+  },
+  "brainAdvanced": {
+    "message": "Дополнительно"
+  },
+  "brainMoreInGroup": {
+    "message": "Еще $1 в этой группе"
+  },
+  "brainMoreType": {
+    "message": "Еще $1"
+  },
+  "brainPinnedMemories": {
+    "message": "Закрепленные воспоминания"
   }
 }

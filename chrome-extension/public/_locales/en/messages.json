@@ -458,63 +458,6 @@
   "brainNext": {
     "message": "Next"
   },
-  "brainViewPanel": {
-    "message": "View"
-  },
-  "brainFieldMode": {
-    "message": "Mode"
-  },
-  "brainModeOverview": {
-    "message": "Overview"
-  },
-  "brainModeFocus": {
-    "message": "Focus"
-  },
-  "brainModeFull": {
-    "message": "Full"
-  },
-  "brainFieldEdges": {
-    "message": "Edges"
-  },
-  "brainAll": {
-    "message": "All"
-  },
-  "brainNone": {
-    "message": "None"
-  },
-  "brainFieldLabels": {
-    "message": "Labels"
-  },
-  "brainLabelsSmart": {
-    "message": "Smart"
-  },
-  "brainFieldNodeCap": {
-    "message": "Node cap $1"
-  },
-  "brainFieldRadius": {
-    "message": "Radius $1"
-  },
-  "brainResetFilters": {
-    "message": "Reset filters"
-  },
-  "brainFilters": {
-    "message": "Filters"
-  },
-  "brainFieldType": {
-    "message": "Type"
-  },
-  "brainAllTypes": {
-    "message": "All types"
-  },
-  "brainFieldPredicate": {
-    "message": "Predicate"
-  },
-  "brainAllPredicates": {
-    "message": "All predicates"
-  },
-  "brainCounts": {
-    "message": "Counts"
-  },
   "brainLoadedNodes": {
     "message": "Loaded nodes"
   },
@@ -545,9 +488,6 @@
   "brainFocusSelected": {
     "message": "Focus selected"
   },
-  "brainToggleEdges": {
-    "message": "Toggle edges"
-  },
   "brainInspector": {
     "message": "Inspector"
   },
@@ -559,9 +499,6 @@
   },
   "brainCloseInspector": {
     "message": "Close inspector"
-  },
-  "brainExpand": {
-    "message": "Expand"
   },
   "brainAttributes": {
     "message": "Attributes"
@@ -589,9 +526,6 @@
   },
   "brainRunReadonly": {
     "message": "Run readonly"
-  },
-  "brainTopTypes": {
-    "message": "Top Types"
   },
   "configSectionRuntime": {
     "message": "Runtime"
@@ -835,5 +769,83 @@
   },
   "loadMore": {
     "message": "Load more"
+  },
+  "brainAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneFocus": {
+    "message": "Focus"
+  },
+  "brainScenePath": {
+    "message": "Path"
+  },
+  "brainAtlasClusters": {
+    "message": "Atlas clusters"
+  },
+  "brainFrequentHubs": {
+    "message": "Frequent hubs"
+  },
+  "brainRecentMemories": {
+    "message": "Recent memories"
+  },
+  "brainVisibleSummary": {
+    "message": "$1 nodes, $2 relations"
+  },
+  "brainBreadcrumb": {
+    "message": "Brain breadcrumb"
+  },
+  "brainBudgetHidden": {
+    "message": "$1 nodes and $2 relations are summarized"
+  },
+  "brainShowMoreRelated": {
+    "message": "Show more related memories"
+  },
+  "brainShowMoreRelatedWithCount": {
+    "message": "Show more related memories ($1 more)"
+  },
+  "brainPin": {
+    "message": "Pin"
+  },
+  "brainUnpin": {
+    "message": "Unpin"
+  },
+  "brainRelatedMemories": {
+    "message": "Related memories"
+  },
+  "brainSummaryNode": {
+    "message": "Summary"
+  },
+  "brainRelatedCount": {
+    "message": "$1 related memories"
+  },
+  "brainAtlasSummary": {
+    "message": "Search or choose an entry to focus the graph. Atlas keeps the canvas small and moves details into lists."
+  },
+  "brainPath": {
+    "message": "Path"
+  },
+  "brainClearPins": {
+    "message": "Clear pins"
+  },
+  "brainViewPinnedPath": {
+    "message": "View their relationship"
+  },
+  "brainNoPins": {
+    "message": "Pin memories to compare their relationship."
+  },
+  "brainAdvanced": {
+    "message": "Advanced"
+  },
+  "brainMoreInGroup": {
+    "message": "$1 more in this group"
+  },
+  "brainMoreType": {
+    "message": "More $1"
+  },
+  "brainPinnedMemories": {
+    "message": "Pinned memories"
   }
 }

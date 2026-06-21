@@ -458,63 +458,6 @@
   "brainNext": {
     "message": "下一个"
   },
-  "brainViewPanel": {
-    "message": "视图"
-  },
-  "brainFieldMode": {
-    "message": "模式"
-  },
-  "brainModeOverview": {
-    "message": "概览"
-  },
-  "brainModeFocus": {
-    "message": "聚焦"
-  },
-  "brainModeFull": {
-    "message": "全部"
-  },
-  "brainFieldEdges": {
-    "message": "边"
-  },
-  "brainAll": {
-    "message": "全部"
-  },
-  "brainNone": {
-    "message": "无"
-  },
-  "brainFieldLabels": {
-    "message": "标签"
-  },
-  "brainLabelsSmart": {
-    "message": "智能"
-  },
-  "brainFieldNodeCap": {
-    "message": "节点上限 $1"
-  },
-  "brainFieldRadius": {
-    "message": "半径 $1"
-  },
-  "brainResetFilters": {
-    "message": "重置筛选"
-  },
-  "brainFilters": {
-    "message": "筛选"
-  },
-  "brainFieldType": {
-    "message": "类型"
-  },
-  "brainAllTypes": {
-    "message": "所有类型"
-  },
-  "brainFieldPredicate": {
-    "message": "谓词"
-  },
-  "brainAllPredicates": {
-    "message": "所有谓词"
-  },
-  "brainCounts": {
-    "message": "统计"
-  },
   "brainLoadedNodes": {
     "message": "已加载节点"
   },
@@ -545,9 +488,6 @@
   "brainFocusSelected": {
     "message": "聚焦所选"
   },
-  "brainToggleEdges": {
-    "message": "显示/隐藏边"
-  },
   "brainInspector": {
     "message": "检查器"
   },
@@ -559,9 +499,6 @@
   },
   "brainCloseInspector": {
     "message": "关闭检查器"
-  },
-  "brainExpand": {
-    "message": "展开"
   },
   "brainAttributes": {
     "message": "属性"
@@ -589,9 +526,6 @@
   },
   "brainRunReadonly": {
     "message": "只读执行"
-  },
-  "brainTopTypes": {
-    "message": "主要类型"
   },
   "configSectionRuntime": {
     "message": "运行时"
@@ -835,5 +769,83 @@
   },
   "loadMore": {
     "message": "加载更多"
+  },
+  "brainAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneAtlas": {
+    "message": "Atlas"
+  },
+  "brainSceneFocus": {
+    "message": "聚焦"
+  },
+  "brainScenePath": {
+    "message": "路径"
+  },
+  "brainAtlasClusters": {
+    "message": "Atlas 分组"
+  },
+  "brainFrequentHubs": {
+    "message": "高频入口"
+  },
+  "brainRecentMemories": {
+    "message": "最近记忆"
+  },
+  "brainVisibleSummary": {
+    "message": "$1 个节点，$2 条关系"
+  },
+  "brainBreadcrumb": {
+    "message": "记忆面包屑"
+  },
+  "brainBudgetHidden": {
+    "message": "已汇总 $1 个节点和 $2 条关系"
+  },
+  "brainShowMoreRelated": {
+    "message": "显示更多相关记忆"
+  },
+  "brainShowMoreRelatedWithCount": {
+    "message": "显示更多相关记忆（还有 $1 条）"
+  },
+  "brainPin": {
+    "message": "Pin"
+  },
+  "brainUnpin": {
+    "message": "取消 Pin"
+  },
+  "brainRelatedMemories": {
+    "message": "相关记忆"
+  },
+  "brainSummaryNode": {
+    "message": "汇总"
+  },
+  "brainRelatedCount": {
+    "message": "$1 条相关记忆"
+  },
+  "brainAtlasSummary": {
+    "message": "搜索或选择入口即可聚焦图谱。Atlas 会控制画布规模，把细节放到列表中。"
+  },
+  "brainPath": {
+    "message": "路径"
+  },
+  "brainClearPins": {
+    "message": "清空 Pin"
+  },
+  "brainViewPinnedPath": {
+    "message": "查看它们的关系"
+  },
+  "brainNoPins": {
+    "message": "Pin 记忆后可以比较它们之间的关系。"
+  },
+  "brainAdvanced": {
+    "message": "高级"
+  },
+  "brainMoreInGroup": {
+    "message": "本组还有 $1 条"
+  },
+  "brainMoreType": {
+    "message": "更多 $1"
+  },
+  "brainPinnedMemories": {
+    "message": "已 Pin 记忆"
   }
 }
