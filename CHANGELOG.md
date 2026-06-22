@@ -4,6 +4,8 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.10.4] — 2026-06-22
+
 ### Added
 
 - **Dashboard skill library management**: added a Skills workspace for browsing personal, bundled, and shared skills; inspecting complete skill directories and file contents; cloning, enabling, disabling, validating, deleting, and reloading skills; sending personal-skill optimization requests to the chat composer; and refreshing prompt completions after skill changes.
@@ -14,7 +16,7 @@ All notable changes to Anda Bot.
 
 - **Release-managed skills install separately from personal skills**: curated release skills now live under `~/.anda/bundled-skills`, while `~/.anda/skills` remains the personal skill library and shared `~/.agents/skills` entries can be imported from the Dashboard.
 - **Brain graph rendering is extracted into a tested view model**: graph budgeting, summary nodes, colors, related groups, and pinned/search handling now live in a dedicated view-model module with regression coverage.
-- **Browser extension version metadata synchronized with 0.10.3**: extension package and manifest metadata now advertise `0.10.3`.
+- **Version metadata synchronized for the 0.10.4 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.10.4`.
 
 ### Fixed
 
