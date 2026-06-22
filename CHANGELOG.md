@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Browser extension can attach page elements from the context menu**: right-clicked page content is captured through a content script, forwarded from the service worker, and inserted into the chat composer as a structured JSON attachment.
 - **Brain graph atlas, focus, and path views**: the browser extension Brain view now summarizes large memory graphs into bounded atlas clusters, focused neighborhoods, pinned-memory relationship paths, related-memory lists, and breadcrumb navigation instead of rendering every node directly.
 
 ### Changed

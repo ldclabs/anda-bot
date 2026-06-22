@@ -28,7 +28,8 @@ export default defineConfig({
       input: {
         index: path.resolve('index.html'),
         dashboard: path.resolve('dashboard.html'),
-        service_worker: path.resolve('src/service_worker.ts')
+        service_worker: path.resolve('src/service_worker.ts'),
+        page_element_content: path.resolve('src/page_element_content.ts')
       },
       output: {
         entryFileNames: (chunkInfo) =>

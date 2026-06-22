@@ -8,6 +8,7 @@
   "permissions": [
     "activeTab",
     "browsingData",
+    "contextMenus",
     "cookies",
     "debugger",
     "downloads",
@@ -27,6 +28,19 @@
     "service_worker": "service_worker.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "assets/page_element_content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http: https: ws: wss:;"
   },

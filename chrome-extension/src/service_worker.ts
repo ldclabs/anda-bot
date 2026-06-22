@@ -17,8 +17,20 @@ import {
   websocketUrl
 } from '$lib/service-worker/settings'
 import { chromeTtsAvailable, speakWithChromeTts } from '$lib/service-worker/tts'
+import {
+  isPageElementInfo,
+  pageElementAttachmentMessageType,
+  pageElementAttachmentRequestStorageKey,
+  pageElementCaptureMessageType,
+  pageElementContextMenuId,
+  pageElementMemoryKey,
+  pageElementStorageKey,
+  type PageElementAttachmentRequest,
+  type PageElementInfo
+} from '$lib/anda/page-element'
 import type {
   BrowserCommand,
+  ChromeContextMenuClickInfo,
   ChromeTabInfo,
   ChromeWebNavigationDetails,
   ChromeWebNavigationTabReplacedDetails,
@@ -33,6 +45,7 @@ import type {
 const keepAliveIntervalMs = 20_000
 const reconnectDelayMs = 3_000
 const rpcTimeoutMs = 30 * 60 * 1000
+const pageElementCaptureMaxAgeMs = 5 * 60 * 1000
 
 const chromeApi = getChromeApi()
 const isDevelopmentModePromise = isDevelopmentMode()
@@ -60,6 +73,8 @@ chromeApi.runtime.onInstalled.addListener((details) => {
   if (chromeApi.sidePanel?.setPanelBehavior) {
     chromeApi.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {})
   }
+  createPageElementContextMenu().catch(() => undefined)
+  injectPageElementContentScriptIntoOpenTabs().catch(() => undefined)
   loadSettingsAndConnect()
   if (details.reason === 'install') {
     chromeApi.tabs.create({
@@ -69,6 +84,7 @@ chromeApi.runtime.onInstalled.addListener((details) => {
 })
 
 chromeApi.runtime.onStartup.addListener(() => {
+  injectPageElementContentScriptIntoOpenTabs().catch(() => undefined)
   loadSettingsAndConnect()
 })
 
@@ -105,6 +121,7 @@ chromeApi.windows?.onFocusChanged?.addListener((windowId) => {
 })
 
 registerWebNavigationSessionRefreshListeners()
+registerPageElementContextMenuListener()
 
 chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleExtensionMessage(message)
@@ -208,6 +225,10 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
       const result = await handlePageAudioCapture(chromeApi, { action: 'cancel' })
       return { ok: true, result, status }
     }
+    case pageElementCaptureMessageType: {
+      await storeCapturedPageElement(message.pageElementInfo)
+      return { ok: true, status }
+    }
     default:
       throw new Error(`unsupported extension message: ${message.type || 'unknown'}`)
   }
@@ -255,8 +276,196 @@ function extensionMessageLogSummary(message: ExtensionMessage): Record<string, u
     params_count: Array.isArray(message.params) ? message.params.length : undefined,
     has_text: typeof message.text === 'string' ? message.text.length > 0 : undefined,
     language: message.language,
-    mime_type: message.mimeType
+    mime_type: message.mimeType,
+    has_page_element_request: Boolean(message.pageElementRequest),
+    has_page_element_info: Boolean(message.pageElementInfo)
   }
+}
+
+function registerPageElementContextMenuListener(): void {
+  const contextMenus = chromeApi.contextMenus
+  if (!contextMenus) {
+    return
+  }
+  contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== pageElementContextMenuId) {
+      return
+    }
+    if (tab) {
+      void openSidePanel(tab)
+    }
+    handlePageElementContextMenuClick(info, tab).catch((error) => {
+      console.warn('Failed to send page element to side panel', error)
+    })
+  })
+}
+
+async function injectPageElementContentScriptIntoOpenTabs(): Promise<void> {
+  const tabs = await chromeApi.tabs.query({})
+  await Promise.all(tabs.map((tab) => injectPageElementContentScript(tab)))
+}
+
+async function injectPageElementContentScript(tab: ChromeTabInfo): Promise<void> {
+  if (typeof tab.id !== 'number' || !isPageElementInjectableUrl(tab.url)) {
+    return
+  }
+  await Promise.resolve(
+    chromeApi.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      files: ['assets/page_element_content.js']
+    })
+  ).catch(() => undefined)
+}
+
+function isPageElementInjectableUrl(url: string | undefined): boolean {
+  return /^(https?|file):\/\//i.test(url || '')
+}
+
+async function createPageElementContextMenu(): Promise<void> {
+  const contextMenus = chromeApi.contextMenus
+  if (!contextMenus) {
+    return
+  }
+
+  await Promise.resolve(contextMenus.remove?.(pageElementContextMenuId)).catch(() => undefined)
+  await Promise.resolve(
+    contextMenus.create({
+      id: pageElementContextMenuId,
+      title: chromeApi.i18n.getMessage('sendPageElementToChat') || 'Send this content to Anda',
+      contexts: ['all']
+    })
+  )
+}
+
+async function handlePageElementContextMenuClick(
+  info: ChromeContextMenuClickInfo,
+  tab?: ChromeTabInfo
+): Promise<void> {
+  const element = await loadLastRightClickedElement(info, tab)
+  if (!element) {
+    console.warn('No recent page element was captured for the context menu click.')
+    return
+  }
+
+  const request: PageElementAttachmentRequest = {
+    id: createRequestId(),
+    createdAt: Date.now(),
+    element
+  }
+  await chromeApi.storage.session?.set({
+    [pageElementAttachmentRequestStorageKey]: request
+  })
+
+  await chromeApi.runtime
+    .sendMessage({
+      type: pageElementAttachmentMessageType,
+      pageElementRequest: request
+    })
+    .catch(() => ({ ok: false, error: 'side panel unavailable' }))
+}
+
+async function loadLastRightClickedElement(
+  clickInfo: ChromeContextMenuClickInfo,
+  tab?: ChromeTabInfo
+): Promise<PageElementInfo | null> {
+  const injectedElement = await readLastRightClickedElementFromTab(clickInfo, tab)
+  if (injectedElement) {
+    return injectedElement
+  }
+
+  const storage = chromeApi.storage.session
+  if (!storage) {
+    return null
+  }
+
+  const saved = await storage.get(pageElementStorageKey)
+  const element = saved[pageElementStorageKey]
+  if (!isPageElementInfo(element) || !isFreshPageElementForClick(element, clickInfo)) {
+    return null
+  }
+  return element
+}
+
+async function readLastRightClickedElementFromTab(
+  clickInfo: ChromeContextMenuClickInfo,
+  tab?: ChromeTabInfo
+): Promise<PageElementInfo | null> {
+  if (typeof tab?.id !== 'number') {
+    return null
+  }
+
+  let results: Array<{ result: unknown }> = []
+  try {
+    results =
+      (await Promise.resolve(
+        chromeApi.scripting.executeScript<unknown, { key: string }>({
+          target: pageElementScriptTarget(tab.id, clickInfo),
+          func: ({ key }) => (globalThis as Record<string, unknown>)[key] || null,
+          args: [{ key: pageElementMemoryKey }]
+        })
+      ).catch(() => [])) || []
+  } catch (_error) {
+    results = []
+  }
+
+  for (const result of results) {
+    const element = result.result
+    if (isPageElementInfo(element) && isFreshPageElementForClick(element, clickInfo)) {
+      return element
+    }
+  }
+  return null
+}
+
+function pageElementScriptTarget(
+  tabId: number,
+  clickInfo: ChromeContextMenuClickInfo
+): { tabId: number; frameIds?: number[]; allFrames?: boolean } {
+  return typeof clickInfo.frameId === 'number' && clickInfo.frameId >= 0
+    ? { tabId, frameIds: [clickInfo.frameId] }
+    : { tabId, allFrames: true }
+}
+
+async function storeCapturedPageElement(value: unknown): Promise<void> {
+  if (!isPageElementInfo(value)) {
+    throw new Error('invalid page element capture')
+  }
+  await chromeApi.storage.session?.set({
+    [pageElementStorageKey]: value
+  })
+}
+
+function isFreshPageElementForClick(
+  element: PageElementInfo,
+  clickInfo: ChromeContextMenuClickInfo
+): boolean {
+  const ageMs = Date.now() - element.capturedAt
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > pageElementCaptureMaxAgeMs) {
+    return false
+  }
+
+  const clickUrl = clickInfo.frameUrl || clickInfo.pageUrl || ''
+  if (!clickUrl) {
+    return true
+  }
+  return sameDocumentUrl(element.frameUrl, clickUrl) || sameDocumentUrl(element.pageUrl, clickUrl)
+}
+
+function sameDocumentUrl(left: string, right: string): boolean {
+  return stripHash(left) === stripHash(right)
+}
+
+function stripHash(url: string): string {
+  const index = url.indexOf('#')
+  return index >= 0 ? url.slice(0, index) : url
+}
+
+function createRequestId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID
+  if (randomUUID) {
+    return randomUUID.call(globalThis.crypto)
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function extensionResponseLogSummary(response: ExtensionResponse): Record<string, unknown> {

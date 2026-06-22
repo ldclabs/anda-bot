@@ -215,6 +215,12 @@
   "attachFiles": {
     "message": "Adjuntar archivos"
   },
+  "sendPageElementToChat": {
+    "message": "Enviar este contenido a Anda"
+  },
+  "pageElementAttached": {
+    "message": "Contenido adjuntado al mensaje."
+  },
   "removeAttachment": {
     "message": "Eliminar archivo adjunto"
   },

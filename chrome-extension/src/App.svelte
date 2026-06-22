@@ -10,11 +10,19 @@
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
     type BookmarkedMessage,
+    type ChatAttachment,
     type ChatMessage,
     type MessageGroup,
     type PageAudioResult,
     type PromptSkill
   } from '$lib/anda/client/types'
+  import {
+    isPageElementAttachmentRequest,
+    pageElementAttachmentMessageType,
+    pageElementAttachmentRequestStorageKey,
+    pageElementInfoToAttachment,
+    type PageElementAttachmentRequest
+  } from '$lib/anda/page-element'
   import {
     bookmarkJumpRequestMaxAgeMs,
     bookmarkJumpRequestStorageKey,
@@ -47,6 +55,10 @@
   let lastBookmarkJumpRequestId = ''
   let sidePanelReadyForBookmarkJumps = false
   let queuedBookmarkJumpRequest: BookmarkJumpRequest | null = null
+  let lastPageElementRequestId = ''
+  let sidePanelReadyForPageElements = false
+  let queuedPageElementRequest: PageElementAttachmentRequest | null = null
+  let pageElementComposerAttachment: ChatAttachment | null = $state(null)
 
   const status = $derived(andaClient.status)
   const syncing = $derived(andaClient.activeChannel?.syncing || false)
@@ -90,30 +102,58 @@
   })
 
   onMount(() => {
-    const handleBookmarkJumpChange = (
+    const handleStorageChange = (
       changes: Record<string, { newValue?: unknown }>,
       areaName: string
     ) => {
-      if (areaName !== 'local') {
-        return
+      if (areaName === 'local') {
+        consumeBookmarkJumpRequest(changes[bookmarkJumpRequestStorageKey]?.newValue)
       }
-      consumeBookmarkJumpRequest(changes[bookmarkJumpRequestStorageKey]?.newValue)
+      if (areaName === 'session') {
+        consumePageElementAttachmentRequest(
+          changes[pageElementAttachmentRequestStorageKey]?.newValue
+        )
+      }
+    }
+    const handleRuntimeMessage = (
+      message: unknown,
+      _sender: unknown,
+      sendResponse: (response?: unknown) => void
+    ) => {
+      const requestMessage =
+        message && typeof message === 'object'
+          ? (message as { type?: string; pageElementRequest?: unknown })
+          : null
+      if (requestMessage?.type !== pageElementAttachmentMessageType) {
+        return false
+      }
+      consumePageElementAttachmentRequest(requestMessage.pageElementRequest)
+      sendResponse({ ok: true })
+      return false
     }
 
-    chrome.storage.onChanged.addListener(handleBookmarkJumpChange)
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage)
 
     andaClient
       .init()
       .then(() => {
         sidePanelReadyForBookmarkJumps = true
+        sidePanelReadyForPageElements = true
         if (!andaClient.settings.token) {
           settingsOpen = true
           setupGuideOpen = true
         }
         flushQueuedBookmarkJumpRequest()
+        flushQueuedPageElementRequest()
         void chrome.storage.local
           .get([bookmarkJumpRequestStorageKey])
           .then((stored) => consumeBookmarkJumpRequest(stored[bookmarkJumpRequestStorageKey]))
+        void chrome.storage.session
+          ?.get([pageElementAttachmentRequestStorageKey])
+          .then((stored) =>
+            consumePageElementAttachmentRequest(stored[pageElementAttachmentRequestStorageKey])
+          )
       })
       .catch((error) => {
         andaClient.status = 'extension unavailable'
@@ -123,7 +163,8 @@
       })
 
     return () => {
-      chrome.storage.onChanged.removeListener(handleBookmarkJumpChange)
+      chrome.storage.onChanged.removeListener(handleStorageChange)
+      chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
       andaClient.destroy()
     }
   })
@@ -223,6 +264,38 @@
     queuedBookmarkJumpRequest = null
     if (request) {
       void jumpToBookmark(request.bookmark)
+    }
+  }
+
+  function consumePageElementAttachmentRequest(value: unknown) {
+    if (!isPageElementAttachmentRequest(value) || value.id === lastPageElementRequestId) {
+      return
+    }
+
+    lastPageElementRequestId = value.id
+    void chrome.storage.session?.remove(pageElementAttachmentRequestStorageKey)
+
+    if (!sidePanelReadyForPageElements) {
+      queuedPageElementRequest = value
+      return
+    }
+
+    attachPageElementRequest(value)
+  }
+
+  function flushQueuedPageElementRequest() {
+    const request = queuedPageElementRequest
+    queuedPageElementRequest = null
+    if (request) {
+      attachPageElementRequest(request)
+    }
+  }
+
+  function attachPageElementRequest(request: PageElementAttachmentRequest) {
+    pageElementComposerAttachment = pageElementInfoToAttachment(request)
+    andaClient.systemMessage = {
+      kind: 'info',
+      text: getMessage('pageElementAttached') || 'Content attached to the message.'
     }
   }
 
@@ -524,7 +597,7 @@
 
     <main
       bind:this={messagesElement}
-      class="message-scroll scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-y-auto px-3 py-4"
+      class="message-scroll scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-3 py-4"
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
         <div class="message-empty m-auto grid max-w-64 place-items-center gap-2 text-center">
@@ -676,6 +749,7 @@
         onBrowserAudioCancel={cancelBrowserAudioCapture}
         onLoadSkills={loadPromptSkills}
         quickPrompts={andaClient.quickPrompts}
+        incomingAttachment={pageElementComposerAttachment}
         onUseQuickPrompt={(prompt) => useQuickPrompt(prompt.text)}
         onRemoveQuickPrompt={(prompt) => removeQuickPrompt(prompt.text)}
         onClearQuickPrompts={clearQuickPrompts}

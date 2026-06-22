@@ -95,7 +95,8 @@
     onUseQuickPrompt,
     onRemoveQuickPrompt,
     onClearQuickPrompts,
-    submitKeyMode = 'enter'
+    submitKeyMode = 'enter',
+    incomingAttachment = null
   }: {
     disabled?: boolean
     sending?: boolean
@@ -119,6 +120,7 @@
     onUseQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onRemoveQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onClearQuickPrompts?: () => Promise<void> | void
+    incomingAttachment?: ChatAttachment | null
   } = $props()
 
   let text = $state('')
@@ -160,6 +162,7 @@
   let analyserNode: AnalyserNode | null = null
   let levelAnimationFrame: number | null = null
   let ignoreNextRecording = false
+  let lastIncomingAttachmentId = ''
 
   const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
   const draftCommand = $derived(parsePromptCommand(text))
@@ -261,6 +264,26 @@
       void cancelRecording()
       inputMode = 'text'
     }
+  })
+
+  $effect(() => {
+    const attachment = incomingAttachment
+    if (!attachment || attachment.id === lastIncomingAttachmentId) {
+      return
+    }
+    lastIncomingAttachmentId = attachment.id
+    attachmentError = ''
+    if (inputMode === 'voice') {
+      void cancelRecording()
+      inputMode = 'text'
+    }
+    if (!attachments.some((item) => item.id === attachment.id)) {
+      attachments = [...attachments, attachment]
+    }
+    void tick().then(() => {
+      textareaElement?.focus()
+      resizeTextarea()
+    })
   })
 
   $effect(() => {
@@ -389,13 +412,15 @@
       return
     }
     text = prompt.text
+    const nextCaret = text.length
     promptCommandDismissedKey = ''
-    caretIndex = text.length
+    caretIndex = nextCaret
     await onUseQuickPrompt?.(prompt)
     await tick()
     textareaElement?.focus()
-    textareaElement?.setSelectionRange(caretIndex, caretIndex)
+    textareaElement?.setSelectionRange(nextCaret, nextCaret)
     textareaFocused = true
+    caretIndex = nextCaret
     resizeTextarea()
   }
 

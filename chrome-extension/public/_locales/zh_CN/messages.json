@@ -215,6 +215,12 @@
   "attachFiles": {
     "message": "附加文件"
   },
+  "sendPageElementToChat": {
+    "message": "发送到 Anda"
+  },
+  "pageElementAttached": {
+    "message": "内容已附加到消息发送区"
+  },
   "removeAttachment": {
     "message": "移除附件"
   },

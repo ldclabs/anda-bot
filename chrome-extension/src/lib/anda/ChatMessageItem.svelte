@@ -489,7 +489,7 @@
 
 <article
   id={message.id}
-  class="grid w-full gap-1 {isUser
+  class="grid min-w-0 w-full gap-1 {isUser
     ? 'justify-items-end'
     : isTool || (!hasMainText && !hasAttachments)
       ? 'justify-items-center'
@@ -513,7 +513,7 @@
   {#if hasMainText || hasAttachments}
     <div
       class={cardClass(
-        `relative max-w-[92%] min-w-0 gap-0 overflow-visible rounded-lg py-0 leading-relaxed shadow-2xs ${
+        `relative max-w-[92%] min-w-0 gap-0 overflow-hidden rounded-lg py-0 leading-relaxed shadow-2xs ${
           isUser
             ? 'chat-message-card-user rounded-br-none'
             : isExternalUser
@@ -526,7 +526,7 @@
         }`
       )}
     >
-      <div class={cardContentClass(isAssistant ? 'px-0 py-0' : 'px-3 py-2')}>
+      <div class={cardContentClass(`min-w-0 ${isAssistant ? 'px-0 py-0' : 'px-3 py-2'}`)}>
         {#if isExternalUser}
           <div
             class="{hasMainText || hasAttachments
@@ -552,9 +552,11 @@
         {/if}
 
         {#if message.attachments?.length}
-          <div class="{hasMainText ? 'mt-2' : ''} grid gap-1.5">
+          <div class="{hasMainText ? 'mt-2' : ''} grid min-w-0 gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
-              <div class="chat-message-attachment max-w-full rounded-md border p-1.5 text-xs">
+              <div
+                class="chat-message-attachment min-w-0 max-w-full overflow-hidden rounded-md border p-1.5 text-xs"
+              >
                 <div class="flex min-w-0 items-center gap-2">
                   <div
                     class="chat-message-attachment-icon grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border text-emerald-700"
@@ -612,7 +614,7 @@
 
                 {#if attachmentDescription(attachment)}
                   <div
-                    class="chat-message-attachment-description mt-1.5 max-h-44 overflow-y-auto rounded-sm border px-2 py-1.5 whitespace-pre-wrap text-xs leading-relaxed"
+                    class="chat-message-attachment-description mt-1.5 max-h-44 overflow-x-hidden overflow-y-auto rounded-sm border px-2 py-1.5 whitespace-pre-wrap text-xs leading-relaxed wrap-break-word"
                   >
                     {attachmentDescription(attachment)}
                   </div>

@@ -215,6 +215,12 @@
   "attachFiles": {
     "message": "إرفاق ملفات"
   },
+  "sendPageElementToChat": {
+    "message": "إرسال هذا المحتوى إلى Anda"
+  },
+  "pageElementAttached": {
+    "message": "تم إرفاق المحتوى بالرسالة."
+  },
   "removeAttachment": {
     "message": "إزالة المرفق"
   },

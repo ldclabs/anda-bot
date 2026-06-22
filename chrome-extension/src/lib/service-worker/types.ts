@@ -42,6 +42,13 @@ export type ChromeRuntimeOnInstalledDetails = {
   id?: string
 }
 
+export type ChromeContextMenuClickInfo = {
+  menuItemId?: string | number
+  pageUrl?: string
+  frameUrl?: string
+  frameId?: number
+}
+
 export type ChromeCookieSameSite = 'no_restriction' | 'lax' | 'strict'
 
 export type ChromeDownloadItem = {
@@ -141,6 +148,8 @@ export type ExtensionMessage = {
   text?: string
   language?: string
   mimeType?: string
+  pageElementRequest?: unknown
+  pageElementInfo?: unknown
 }
 
 export type ExtensionResponse<Result = unknown> =
@@ -251,6 +260,11 @@ export interface ChromeApi {
       get(keys: string[]): Promise<StorageState>
       set(items: StorageState): Promise<void>
     }
+    session?: {
+      get(keys: string[] | string): Promise<Record<string, unknown>>
+      set(items: Record<string, unknown>): Promise<void>
+      remove(keys: string[] | string): Promise<void>
+    }
     onChanged?: {
       addListener?(
         callback: (
@@ -259,6 +273,13 @@ export interface ChromeApi {
         ) => void
       ): void
     }
+  }
+  contextMenus?: {
+    create(properties: { id: string; title: string; contexts: string[] }): void | Promise<void>
+    remove?(menuItemId: string): void | Promise<void>
+    onClicked: ChromeEvent<
+      (info: ChromeContextMenuClickInfo, tab?: ChromeTabInfo | undefined) => void
+    >
   }
   tabs: {
     query(queryInfo: {
@@ -375,11 +396,19 @@ export interface ChromeApi {
   }
   scripting: {
     executeScript<Result, Args>(details: {
-      target: { tabId: number; frameIds?: number[] }
+      target: { tabId: number; frameIds?: number[]; allFrames?: boolean }
       world?: 'ISOLATED' | 'MAIN'
       func: (args: Args) => Result | Promise<Result>
       args: [Args]
+      files?: never
     }): Promise<Array<{ result: Awaited<Result> }>>
+    executeScript(details: {
+      target: { tabId: number; frameIds?: number[]; allFrames?: boolean }
+      world?: 'ISOLATED' | 'MAIN'
+      files: string[]
+      func?: never
+      args?: never
+    }): Promise<Array<{ result: unknown }>>
   }
 }
 

@@ -215,6 +215,12 @@
   "attachFiles": {
     "message": "Прикрепить файлы"
   },
+  "sendPageElementToChat": {
+    "message": "Отправить это содержимое в Anda"
+  },
+  "pageElementAttached": {
+    "message": "Содержимое прикреплено к сообщению."
+  },
   "removeAttachment": {
     "message": "Удалить вложение"
   },

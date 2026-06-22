@@ -1,12 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  pageElementAttachmentMessageType,
+  pageElementAttachmentRequestStorageKey,
+  pageElementContextMenuId,
+  type PageElementInfo
+} from '$lib/anda/page-element'
 import type {
   ChromeApi,
+  ChromeContextMenuClickInfo,
   ChromeRuntimeOnInstalledDetails,
+  ChromeTabInfo,
   ExtensionMessage,
   ExtensionResponse
 } from '$lib/service-worker/types'
 
 type InstalledListener = (details: ChromeRuntimeOnInstalledDetails) => void
+type ContextMenuClickListener = (
+  info: ChromeContextMenuClickInfo,
+  tab?: ChromeTabInfo | undefined
+) => void
 type MessageListener = (
   message: ExtensionMessage,
   sender: unknown,
@@ -33,6 +45,7 @@ function createChromeApi(options: { development?: boolean } = {}) {
   const onInstalled = createChromeEvent<InstalledListener>()
   const onStartup = createChromeEvent<() => void>()
   const onActionClicked = createChromeEvent<(tab: { id?: number; windowId?: number }) => void>()
+  const onContextMenuClicked = createChromeEvent<ContextMenuClickListener>()
   const onTabActivated =
     createChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>()
   const onTabUpdated =
@@ -40,12 +53,24 @@ function createChromeApi(options: { development?: boolean } = {}) {
       (tabId: number, changeInfo: { title?: string; url?: string }, tab: { id?: number }) => void
     >()
   const onMessageListeners: MessageListener[] = []
+  const sessionState: Record<string, unknown> = {}
+
+  const storageGet = async (keys: string[] | string) => {
+    const list = Array.isArray(keys) ? keys : [keys]
+    const result: Record<string, unknown> = {}
+    for (const key of list) {
+      if (key in sessionState) {
+        result[key] = sessionState[key]
+      }
+    }
+    return result
+  }
 
   const chromeApi = {
     runtime: {
       onInstalled,
       onStartup,
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn(async () => ({ ok: true })),
       onMessage: {
         addListener: vi.fn((listener: MessageListener) => {
           onMessageListeners.push(listener)
@@ -59,6 +84,11 @@ function createChromeApi(options: { development?: boolean } = {}) {
       : undefined,
     action: {
       onClicked: onActionClicked
+    },
+    contextMenus: {
+      create: vi.fn(),
+      remove: vi.fn(),
+      onClicked: onContextMenuClicked
     },
     sidePanel: {
       setPanelBehavior: vi.fn(async () => undefined),
@@ -76,6 +106,17 @@ function createChromeApi(options: { development?: boolean } = {}) {
           appearanceTheme: 'system'
         })),
         set: vi.fn(async () => undefined)
+      },
+      session: {
+        get: vi.fn(storageGet),
+        set: vi.fn(async (items: Record<string, unknown>) => {
+          Object.assign(sessionState, structuredClone(items))
+        }),
+        remove: vi.fn(async (keys: string[] | string) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            delete sessionState[key]
+          }
+        })
       }
     },
     tabs: {
@@ -90,12 +131,16 @@ function createChromeApi(options: { development?: boolean } = {}) {
       onUpdated: onTabUpdated
     },
     scripting: {
-      executeScript: vi.fn()
+      executeScript: vi.fn(async () => [])
     },
     __onInstalledListeners: onInstalled.listeners,
+    __contextMenuClickedListeners: onContextMenuClicked.listeners,
+    __sessionState: sessionState,
     __onMessageListeners: onMessageListeners
   } as unknown as ChromeApi & {
     __onInstalledListeners: InstalledListener[]
+    __contextMenuClickedListeners: ContextMenuClickListener[]
+    __sessionState: Record<string, unknown>
     __onMessageListeners: MessageListener[]
   }
 
@@ -134,6 +179,78 @@ describe('service worker install handling', () => {
     chromeApi.__onInstalledListeners[0]({ reason: 'update', previousVersion: '0.8.11' })
 
     expect(chromeApi.tabs.create).not.toHaveBeenCalled()
+  })
+
+  it('creates the page element context menu on install', async () => {
+    const chromeApi = createChromeApi()
+    await importServiceWorker(chromeApi)
+
+    chromeApi.__onInstalledListeners[0]({ reason: 'install' })
+
+    await vi.waitFor(() =>
+      expect(chromeApi.contextMenus?.create).toHaveBeenCalledWith({
+        id: pageElementContextMenuId,
+        title: 'sendPageElementToChat',
+        contexts: ['all']
+      })
+    )
+  })
+})
+
+describe('service worker page element context menu', () => {
+  it('opens the side panel and forwards the captured element as an attachment request', async () => {
+    const chromeApi = createChromeApi()
+    await importServiceWorker(chromeApi)
+    const element: PageElementInfo = {
+      tagName: 'BUTTON',
+      id: 'submit',
+      className: 'primary',
+      role: 'button',
+      innerText: 'Submit',
+      textContent: 'Submit',
+      outerHTML: '<button id="submit">Submit</button>',
+      attributes: { id: 'submit', type: 'button' },
+      xpath: '//*[@id="submit"]',
+      cssPath: '#submit',
+      pageUrl: 'https://example.com/form',
+      pageTitle: 'Example form',
+      frameUrl: 'https://example.com/form',
+      selectedText: '',
+      rect: null,
+      capturedAt: Date.now()
+    }
+    const openSidePanel = vi.mocked(chromeApi.sidePanel?.open)
+    const executeScript = vi.fn(async () => [{ result: element }])
+    chromeApi.scripting.executeScript = executeScript
+
+    chromeApi.__contextMenuClickedListeners[0](
+      { menuItemId: pageElementContextMenuId, pageUrl: 'https://example.com/form', frameId: 0 },
+      { id: 7, windowId: 3 }
+    )
+
+    await vi.waitFor(() => expect(chromeApi.sidePanel?.open).toHaveBeenCalledWith({ tabId: 7 }))
+    expect(openSidePanel?.mock.invocationCallOrder[0]).toBeLessThan(
+      executeScript.mock.invocationCallOrder[0]
+    )
+
+    await vi.waitFor(() =>
+      expect(chromeApi.__sessionState[pageElementAttachmentRequestStorageKey]).toMatchObject({
+        element: {
+          tagName: 'BUTTON',
+          outerHTML: '<button id="submit">Submit</button>'
+        }
+      })
+    )
+    const request = chromeApi.__sessionState[pageElementAttachmentRequestStorageKey]
+    expect(chromeApi.scripting.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { tabId: 7, frameIds: [0] }
+      })
+    )
+    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith({
+      type: pageElementAttachmentMessageType,
+      pageElementRequest: request
+    })
   })
 })
 

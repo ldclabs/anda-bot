@@ -215,6 +215,12 @@
   "attachFiles": {
     "message": "Joindre des fichiers"
   },
+  "sendPageElementToChat": {
+    "message": "Envoyer ce contenu à Anda"
+  },
+  "pageElementAttached": {
+    "message": "Contenu joint au message."
+  },
   "removeAttachment": {
     "message": "Supprimer la pièce jointe"
   },
