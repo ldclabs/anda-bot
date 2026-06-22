@@ -1872,16 +1872,14 @@ mod tests {
         let temp = tempdir().unwrap();
         let lib = library(temp.path());
         write_skill(&temp.path().join("skills"), "learn", "Learning workflow");
-        let references = temp.path().join("skills/learn/references");
+        let skill_dir = temp.path().join("skills").join("learn");
+        let references = skill_dir.join("references");
         fs::create_dir_all(&references).unwrap();
         fs::write(references.join("guide.md"), "# Guide\n").unwrap();
         lib.reload().await.unwrap();
 
         let detail = lib.get_skill_detail("personal:learn").unwrap();
-        assert_eq!(
-            detail.skill.directory,
-            temp.path().join("skills/learn").display().to_string()
-        );
+        assert_eq!(detail.skill.directory, skill_dir.display().to_string());
         assert_eq!(detail.skill.file_count, 2);
         assert!(
             detail
