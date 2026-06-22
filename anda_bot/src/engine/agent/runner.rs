@@ -563,7 +563,9 @@ impl SessionRunner {
             return Ok(false);
         }
 
-        if self.conversation.status != ConversationStatus::Working && !self.runner.is_idle() {
+        if self.conversation.status != ConversationStatus::Working
+            && (!follow_up_batch.is_empty() || !steer_batch.is_empty() || !self.runner.is_idle())
+        {
             self.conversation.status = ConversationStatus::Working;
             self.conversation.failed_reason = None;
             self.conversation.updated_at = now_ms;

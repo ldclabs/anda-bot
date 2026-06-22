@@ -15,6 +15,9 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Generic attachment fallback exposes inline blobs to tools**: non-image/audio/video attachment understanding now writes inline attachment bytes to a temporary local file when needed, redacts large data URLs from metadata, and tells fallback agents exactly how to inspect the available path or URL.
+- **Pending session work restores working status**: conversations now return to the working state when follow-up or steering batches are queued, even before the runner reports active background work.
+
 ## [0.10.3] — 2026-06-21
 
 ### Changed

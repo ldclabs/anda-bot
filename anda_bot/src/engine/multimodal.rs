@@ -14,6 +14,7 @@ use anda_engine::{
     subagent::SubAgentManager,
 };
 use futures_util::{StreamExt, stream};
+use ic_auth_types::Xid;
 use liteparse::{LiteParse, LiteParseConfig, types::PdfInput};
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
@@ -44,8 +45,8 @@ pub const OTHER_MODEL_LABEL: &str = "flash";
 
 const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_MEDIA_UNDERSTANDING_CONCURRENCY: usize = 8;
-const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
-const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 256 * 1024;
+const MAX_OTHER_TEXT_INLINE_BYTES: usize = 256 * 1024;
+const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 1024 * 1024;
 #[cfg(windows)]
 const PDFIUM_DLL_NAME: &str = "pdfium.dll";
 
@@ -687,24 +688,32 @@ impl MediaUnderstandingAgent {
         attachment: OtherAttachment,
         question: &str,
     ) -> Result<AgentOutput, BoxError> {
-        let metadata = attachment.metadata_markdown();
+        let fallback_file = fallback_other_attachment_file(&attachment).await;
+        let prompt = fallback_other_attachment_prompt(question, &attachment, &fallback_file);
+        let mut resource = attachment.to_resource();
+        if let Some(path) = fallback_file.path.as_deref()
+            && let Ok(uri) = file_uri_for_path(path)
+        {
+            resource.uri = Some(uri);
+        }
         let tools = ctx
             .definitions(Some(&other_understanding_tool_names()))
             .await;
-        let mut output = ctx.completion(
-            CompletionRequest {
-                instructions: self.kind.instructions(),
-                prompt: format!(
-                    "Understand this non-image/audio/video attachment for the main agent.\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. If no skill fits, use safe shell or read-only file inspection to extract text or metadata when the attachment has an accessible local path or URL.\n3. If local tools are insufficient, use network-capable tools or shell commands to research a practical extraction method, then report the best next action.\n\nDo not invent attachment contents. If extraction is impossible, explain what was tried or what capability is missing.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
-                ),
-                model: Some("".to_string()), // ACTIVE_MODEL_LABEL
-                tools,
-                ..Default::default()
-            },
-            vec![attachment.to_resource()],
-        ).await?;
+        let mut output = ctx
+            .completion(
+                CompletionRequest {
+                    instructions: self.kind.instructions(),
+                    prompt,
+                    model: Some("".to_string()), // ACTIVE_MODEL_LABEL
+                    tools,
+                    ..Default::default()
+                },
+                vec![resource],
+            )
+            .await?;
 
         if output.content.trim().is_empty() {
+            let metadata = attachment.metadata_markdown();
             output.content = format!(
                 "No automatic parser produced output for this attachment.\n\nAttachment metadata:\n{metadata}"
             );
@@ -1063,6 +1072,219 @@ fn other_understanding_tool_names() -> Vec<String> {
     ]
 }
 
+#[derive(Clone, Debug, Default)]
+struct FallbackAttachmentFile {
+    path: Option<PathBuf>,
+    temporary: bool,
+    error: Option<String>,
+}
+
+async fn fallback_other_attachment_file(attachment: &OtherAttachment) -> FallbackAttachmentFile {
+    let existing_file = fallback_existing_attachment_file(attachment).await;
+    match existing_file {
+        FallbackAttachmentFile { path: Some(_), .. } => existing_file,
+        FallbackAttachmentFile { error, .. } => {
+            if let Some(data) = attachment.data.as_deref() {
+                match write_fallback_attachment_file(attachment, data).await {
+                    Ok(path) => FallbackAttachmentFile {
+                        path: Some(path),
+                        temporary: true,
+                        error,
+                    },
+                    Err(err) => FallbackAttachmentFile {
+                        path: None,
+                        temporary: false,
+                        error: Some(match error {
+                            Some(previous) => {
+                                format!("{previous}; failed to write temp file: {err}")
+                            }
+                            None => format!("failed to write temp file: {err}"),
+                        }),
+                    },
+                }
+            } else {
+                FallbackAttachmentFile {
+                    path: None,
+                    temporary: false,
+                    error,
+                }
+            }
+        }
+    }
+}
+
+async fn fallback_existing_attachment_file(attachment: &OtherAttachment) -> FallbackAttachmentFile {
+    let Some(uri) = attachment
+        .uri
+        .as_deref()
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+    else {
+        return FallbackAttachmentFile::default();
+    };
+
+    let path = if is_file_uri(uri) {
+        match path_from_file_uri(uri) {
+            Ok(path) => path,
+            Err(err) => {
+                return FallbackAttachmentFile {
+                    path: None,
+                    temporary: false,
+                    error: Some(format!(
+                        "file URI cannot be converted to a local path: {err}"
+                    )),
+                };
+            }
+        }
+    } else if reqwest::Url::parse(uri).is_ok() || strip_data_url_scheme(uri).is_some() {
+        return FallbackAttachmentFile::default();
+    } else {
+        PathBuf::from(uri)
+    };
+
+    match tokio::fs::metadata(&path).await {
+        Ok(metadata) if metadata.is_file() => FallbackAttachmentFile {
+            path: Some(path),
+            temporary: false,
+            error: None,
+        },
+        Ok(_) => FallbackAttachmentFile {
+            path: None,
+            temporary: false,
+            error: Some(format!(
+                "attachment path is not a regular file: {}",
+                path.display()
+            )),
+        },
+        Err(err) => FallbackAttachmentFile {
+            path: None,
+            temporary: false,
+            error: Some(format!(
+                "attachment path is not readable: {}: {err}",
+                path.display()
+            )),
+        },
+    }
+}
+
+async fn write_fallback_attachment_file(
+    attachment: &OtherAttachment,
+    data: &[u8],
+) -> Result<PathBuf, BoxError> {
+    let dir = std::env::temp_dir().join("anda-bot-attachments");
+    tokio::fs::create_dir_all(&dir).await?;
+    let file_name = fallback_attachment_file_name(attachment);
+    let path = dir.join(format!("{}-{file_name}", Xid::new()));
+    tokio::fs::write(&path, data).await?;
+    Ok(path)
+}
+
+fn fallback_attachment_file_name(attachment: &OtherAttachment) -> String {
+    let candidate: Cow<'_, str> = if !attachment.name.trim().is_empty() {
+        Cow::Borrowed(attachment.name.as_str())
+    } else {
+        Cow::Owned(
+            attachment
+                .uri
+                .as_deref()
+                .and_then(|uri| {
+                    reqwest::Url::parse(uri)
+                        .ok()
+                        .and_then(|url| url.path_segments()?.next_back().map(str::to_string))
+                })
+                .unwrap_or_else(|| "attachment.bin".to_string()),
+        )
+    };
+
+    sanitize_fallback_attachment_file_name(candidate.as_ref(), "attachment.bin")
+}
+
+fn sanitize_fallback_attachment_file_name(value: &str, fallback: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len().min(96));
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            sanitized.push(ch);
+        } else if !sanitized.ends_with('_') {
+            sanitized.push('_');
+        }
+        if sanitized.len() >= 96 {
+            break;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches(['.', '-', '_']).to_string();
+    if sanitized.is_empty() {
+        fallback.to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn fallback_other_attachment_prompt(
+    question: &str,
+    attachment: &OtherAttachment,
+    fallback_file: &FallbackAttachmentFile,
+) -> String {
+    let metadata = attachment.metadata_markdown();
+    let tool_access_note = fallback_tool_access_note(attachment, fallback_file);
+
+    format!(
+        "Understand this non-image/audio/video attachment for the main agent.\n\nInput boundary:\n- This fallback is used only after built-in text/PDF extraction and direct model-readable media handling were not sufficient.\n- Do not assume the model can directly read the attachment bytes from the prompt; inspect the file path or URL below with tools.\n{tool_access_note}\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. Use shell or read-only file inspection against the provided local path when available. Prefer safe commands that extract metadata/text over mutating the file.\n3. If there is no local path but metadata includes a URL, use network-capable tools or shell commands to refetch or research a practical extraction method, then report the best next action.\n4. If extraction is impossible, explain what was tried or what capability is missing.\n\nDo not invent attachment contents.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
+    )
+}
+
+fn fallback_tool_access_note(
+    attachment: &OtherAttachment,
+    fallback_file: &FallbackAttachmentFile,
+) -> String {
+    if let Some(path) = fallback_file.path.as_deref() {
+        let origin = if fallback_file.temporary {
+            "A temporary local copy has been written for shell/file tools"
+        } else {
+            "Metadata includes an existing local file path"
+        };
+        let mut note = format!("- {origin}: {}", user_path_string_for_path(path));
+        if let Some(err) = fallback_file.error.as_deref() {
+            note.push_str(&format!(
+                "\n- Earlier local-path preparation warning: {err}"
+            ));
+        }
+        return note;
+    }
+
+    if let Some(err) = fallback_file.error.as_deref() {
+        return format!(
+            "- No local file is available for shell/file tools. Local-path preparation failed: {err}"
+        );
+    }
+
+    let Some(uri) = attachment
+        .uri
+        .as_deref()
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty())
+    else {
+        return "- No local file path or external URL is available in metadata; shell/file tools cannot reach the attachment bytes.".to_string();
+    };
+
+    if strip_data_url_scheme(uri).is_some() {
+        return "- Metadata contains a data URL/inline blob, but no local temp file could be prepared for shell/file tools.".to_string();
+    }
+
+    if let Ok(url) = reqwest::Url::parse(uri) {
+        return match url.scheme() {
+            "http" | "https" => format!(
+                "- Metadata includes an http(s) URL. Network-capable tools or shell may refetch it if network access is available: {uri}"
+            ),
+            scheme => format!(
+                "- Metadata includes URI scheme `{scheme}`, which is not a shell-readable attachment path."
+            ),
+        };
+    }
+
+    "- Metadata includes a path-like value. File tools may use it only if it resolves to an accessible local file.".to_string()
+}
+
 #[derive(Clone, Debug)]
 struct OtherAttachment {
     label: String,
@@ -1120,7 +1342,7 @@ impl OtherAttachment {
             lines.push(format!("- mime_type: {}", mime_type.trim()));
         }
         if let Some(uri) = self.uri.as_deref().filter(|value| !value.trim().is_empty()) {
-            lines.push(format!("- uri: {}", uri.trim()));
+            lines.push(format!("- uri: {}", display_attachment_uri(uri)));
             if is_file_uri(uri)
                 && let Ok(path) = path_from_file_uri(uri)
             {
@@ -1144,6 +1366,19 @@ impl OtherAttachment {
         }
 
         lines.join("\n")
+    }
+}
+
+fn display_attachment_uri(uri: &str) -> String {
+    let trimmed = uri.trim();
+    if strip_data_url_scheme(trimmed).is_some() {
+        let prefix = trimmed
+            .split_once(',')
+            .map(|(prefix, _)| prefix)
+            .unwrap_or("data:");
+        format!("{prefix},... ({} chars)", trimmed.len())
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -2576,6 +2811,83 @@ mod tests {
                 .metadata_markdown()
                 .contains("- read_error: boom")
         );
+    }
+
+    #[test]
+    fn other_attachment_metadata_abbreviates_data_url() {
+        let mut attachment =
+            test_other_attachment("blob.bin", Some("application/octet-stream"), vec![]);
+        attachment.uri = Some("data:application/octet-stream;base64,AAAA".to_string());
+
+        let metadata = attachment.metadata_markdown();
+
+        assert!(metadata.contains("- uri: data:application/octet-stream;base64,..."));
+        assert!(!metadata.contains("AAAA"));
+    }
+
+    #[tokio::test]
+    async fn fallback_other_attachment_file_writes_blob_for_shell_tools() {
+        let mut attachment =
+            test_other_attachment("blob.bin", Some("application/octet-stream"), vec![]);
+        attachment.data = Some(vec![0u8, 1, 2, 3]);
+
+        let fallback_file = fallback_other_attachment_file(&attachment).await;
+
+        assert!(fallback_file.temporary);
+        let path = fallback_file
+            .path
+            .as_ref()
+            .expect("fallback should write a temp file");
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("blob.bin"))
+        );
+        assert_eq!(
+            fs::read(path).expect("temp file should be readable"),
+            vec![0u8, 1, 2, 3]
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn fallback_prompt_describes_attachment_access_boundary() {
+        let mut inline =
+            test_other_attachment("blob.bin", Some("application/octet-stream"), vec![]);
+        inline.data = Some(vec![0u8, 1, 2, 3]);
+        let inline_file = FallbackAttachmentFile {
+            path: Some(std::env::temp_dir().join("blob.bin")),
+            temporary: true,
+            error: None,
+        };
+        let inline_prompt = fallback_other_attachment_prompt("inspect", &inline, &inline_file);
+        assert!(inline_prompt.contains("Do not assume the model can directly read"));
+        assert!(inline_prompt.contains("temporary local copy"));
+        assert!(inline_prompt.contains("blob.bin"));
+
+        let mut file = test_other_attachment("docx.bin", Some("application/octet-stream"), vec![]);
+        file.uri = Some("file:///tmp/docx.bin".to_string());
+        let file_prompt = fallback_other_attachment_prompt(
+            "inspect",
+            &file,
+            &FallbackAttachmentFile {
+                path: Some(PathBuf::from("/tmp/docx.bin")),
+                temporary: false,
+                error: None,
+            },
+        );
+        assert!(file_prompt.contains("existing local file path"));
+
+        let mut remote =
+            test_other_attachment("docx.bin", Some("application/octet-stream"), vec![]);
+        remote.uri = Some("https://example.com/docx.bin".to_string());
+        let remote_prompt = fallback_other_attachment_prompt(
+            "inspect",
+            &remote,
+            &FallbackAttachmentFile::default(),
+        );
+        assert!(remote_prompt.contains("http(s) URL"));
+        assert!(remote_prompt.contains("https://example.com/docx.bin"));
     }
 
     #[test]
