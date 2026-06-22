@@ -304,7 +304,7 @@ See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.ya
 
 My local runtime creates a working area at `~/.anda/workspace`. File and shell tools operate there by default.
 
-You can also add runtime skills under `~/.anda/skills`. Skills let me load focused instructions and workflows as the system grows. Cron tools let me schedule shell commands or future agent prompts, with run history stored locally.
+You can add personal runtime skills under `~/.anda/skills`. Release-managed skills are installed under `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into your personal Anda library from the Dashboard. Cron tools let me schedule shell commands or future agent prompts, with run history stored locally.
 
 ## Local Data And Privacy
 
@@ -317,12 +317,16 @@ By default I store state under `~/.anda`:
   keys/
   logs/
   channels/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
-The memory graph, conversations, channel state, cron jobs, keys, logs, and workspace data live there. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
+The memory graph, conversations, channel state, cron jobs, keys, logs, personal skills, bundled skills, and workspace data live there. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
 
 ## Learn More
 

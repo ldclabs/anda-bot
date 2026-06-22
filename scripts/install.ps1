@@ -234,7 +234,7 @@ function Install-LauncherIcon($Version, $Directory, $TempRoot) {
 }
 
 function Install-Skills($ArchivePath, $HomeDir, $TempRoot) {
-    $skillsDir = Join-Path $HomeDir "skills"
+    $skillsDir = Join-Path $HomeDir "bundled-skills"
     $stagingDir = Join-Path $TempRoot "skills-staging"
 
     Remove-Item -Recurse -Force -LiteralPath $stagingDir -ErrorAction SilentlyContinue

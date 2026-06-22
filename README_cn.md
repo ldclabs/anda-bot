@@ -293,7 +293,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
 
 我的本地工作区默认在 `~/.anda/workspace`。文件工具和 shell 工具默认都在这里工作。
 
-你还可以把运行时技能放到 `~/.anda/skills`，让我加载更专门的工作流。cron 工具可以让我安排未来执行的 shell 任务或 agent prompt，并保存运行历史。
+你可以把个人运行时 Skills 放到 `~/.anda/skills`。随 Anda 发布的内置 Skills 会安装到 `~/.anda/bundled-skills`，共享的跨 Agent Skills（`~/.agents/skills`）可以在 Dashboard 里导入到个人 Anda 库。cron 工具可以让我安排未来执行的 shell 任务或 agent prompt，并保存运行历史。
 
 ## 本地数据与隐私
 
@@ -306,12 +306,16 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
   keys/
   logs/
   channels/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
-记忆图谱、会话、渠道状态、定时任务、密钥、日志和工作区数据都会放在这里。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
+记忆图谱、会话、渠道状态、定时任务、密钥、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
 
 ## 继续了解
 

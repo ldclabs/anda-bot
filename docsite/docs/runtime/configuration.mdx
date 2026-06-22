@@ -105,8 +105,12 @@ fields.
     anda_bot.key
     user.key
   logs/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
@@ -116,8 +120,12 @@ fields.
 | `keys/` | Local signing keys for the daemon and user. |
 | `logs/` | Daemon and CLI logs. |
 | `channels/` | Channel runtime state. |
+| `bundled-skills/` | Release-managed skills installed by Anda updates. |
 | `sandbox/` | Shell isolation directory when sandboxing is enabled. |
-| `skills/` | Runtime skills. |
+| `skills/` | Personal runtime skills created, cloned, or edited by the user. |
+| `skills-manifest.json` | Local enable/disable and reload metadata for the skill library. |
+| `skill-backups/` | Timestamped backups created before Dashboard skill edits. |
+| `skill-trash/` | Deleted Personal skills moved aside before removal. |
 | `workspace/` | Default workspace for file and shell tools. |
 
 ## Privacy Boundary

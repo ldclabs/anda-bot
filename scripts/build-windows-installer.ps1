@@ -273,7 +273,7 @@ function Restart-AndaDaemon {
 }
 
 function Install-Skills($ArchivePath) {
-    $skillsDir = Join-Path $AndaHome "skills"
+    $skillsDir = Join-Path $AndaHome "bundled-skills"
     $tmp = Join-Path $env:TEMP ("anda-skills-" + [guid]::NewGuid().ToString("N"))
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null

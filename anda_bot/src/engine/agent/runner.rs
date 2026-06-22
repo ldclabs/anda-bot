@@ -20,6 +20,8 @@ use super::{
     AndaBot,
     session::{ConversationInput, Session},
 };
+#[cfg(test)]
+use crate::engine::SkillLibrary;
 use crate::engine::{
     CompletionHook,
     conversation::SourceState,
@@ -523,7 +525,7 @@ impl SessionRunner {
                 }
                 PromptCommand::Skill { mut skill, prompt } => {
                     if let Some(subagent) =
-                        skill_subagent(&self.assistant.inner.skills_manager, &skill)
+                        skill_subagent(self.assistant.inner.skill_library.as_ref(), &skill)
                     {
                         skill = subagent.name;
                     }
@@ -984,7 +986,6 @@ mod tests {
     };
     use anda_engine::{
         engine::EngineBuilder,
-        extension::skill::SkillManager,
         memory::Conversations,
         model::{CompletionFeaturesDyn, Model},
     };
@@ -1075,9 +1076,7 @@ mod tests {
         let conversations_tool =
             Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
-        let skills = Arc::new(SkillManager::new(
-            std::env::temp_dir().join("runner_skills2"),
-        ));
+        let skills = SkillLibrary::for_test(std::env::temp_dir().join("runner_skills2_home"));
         let bridge = Arc::new(BrowserBridge::new());
         AndaBot::new(
             brain_client,
@@ -1156,9 +1155,7 @@ mod tests {
         let conversations_tool =
             Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
-        let skills = Arc::new(SkillManager::new(
-            std::env::temp_dir().join("runner_skills"),
-        ));
+        let skills = SkillLibrary::for_test(std::env::temp_dir().join("runner_skills_home"));
         let bridge = Arc::new(BrowserBridge::new());
 
         AndaBot::new(

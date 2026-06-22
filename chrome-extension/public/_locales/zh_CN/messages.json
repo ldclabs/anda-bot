@@ -404,6 +404,9 @@
   "search": {
     "message": "搜索"
   },
+  "clearSearch": {
+    "message": "清除搜索"
+  },
   "close": {
     "message": "关闭"
   },
@@ -853,5 +856,152 @@
   },
   "brainPinnedMemories": {
     "message": "已 Pin 记忆"
+  },
+  "dashboardSkillsDetail": {
+    "message": "个人工作流"
+  },
+  "dashboardSkillsCrumb": {
+    "message": "Skills"
+  },
+  "skills": {
+    "message": "Skills"
+  },
+  "skillsSearchPlaceholder": {
+    "message": "搜索 Skills"
+  },
+  "reloadSkills": {
+    "message": "重载 Skills"
+  },
+  "allSources": {
+    "message": "全部来源"
+  },
+  "allStatuses": {
+    "message": "全部状态"
+  },
+  "skillsEmpty": {
+    "message": "没有找到 Skills"
+  },
+  "skillImportToAnda": {
+    "message": "导入到 Anda"
+  },
+  "skillCustomize": {
+    "message": "自定义"
+  },
+  "skillCloned": {
+    "message": "Skill 已克隆到个人库。"
+  },
+  "skillsReloaded": {
+    "message": "Skills 已重载。"
+  },
+  "skillEnabled": {
+    "message": "Skill 已启用。"
+  },
+  "skillDisabled": {
+    "message": "Skill 已停用。"
+  },
+  "skillDeleted": {
+    "message": "Skill 已移到回收区。"
+  },
+  "skillOptimizationPromptReady": {
+    "message": "优化提示词已填入侧边栏输入框。"
+  },
+  "skillDeleteConfirm": {
+    "message": "要把这个个人 Skill 移到回收区吗？"
+  },
+  "enableSkill": {
+    "message": "启用"
+  },
+  "disableSkill": {
+    "message": "停用"
+  },
+  "deleteSkill": {
+    "message": "删除"
+  },
+  "skillStatusActive": {
+    "message": "活跃"
+  },
+  "skillStatusDisabled": {
+    "message": "已停用"
+  },
+  "skillStatusShadowed": {
+    "message": "被遮蔽"
+  },
+  "skillStatusError": {
+    "message": "错误"
+  },
+  "skillStatusInactive": {
+    "message": "未活跃"
+  },
+  "skillOverview": {
+    "message": "概览"
+  },
+  "skillFiles": {
+    "message": "文件"
+  },
+  "skillOptimize": {
+    "message": "优化"
+  },
+  "skillDirectory": {
+    "message": "目录"
+  },
+  "skillAgentName": {
+    "message": "Agent 名称"
+  },
+  "skillUpdated": {
+    "message": "更新时间"
+  },
+  "skillFileCount": {
+    "message": "$1 个文件"
+  },
+  "skillFolder": {
+    "message": "文件夹"
+  },
+  "skillFileTruncated": {
+    "message": "已截断"
+  },
+  "skillUsage": {
+    "message": "使用情况"
+  },
+  "skillUsageCalls": {
+    "message": "$1 次调用"
+  },
+  "skillUsageUnused": {
+    "message": "尚未使用"
+  },
+  "skillUsageTokensTitle": {
+    "message": "Token 用量"
+  },
+  "skillUsageTokens": {
+    "message": "$1 tokens"
+  },
+  "skillUsageTokenBreakdown": {
+    "message": "$1 输入 / $2 输出 / $3 缓存"
+  },
+  "skillAllowedTools": {
+    "message": "允许工具"
+  },
+  "skillDefaultTools": {
+    "message": "默认运行时工具"
+  },
+  "skillDiagnostics": {
+    "message": "诊断"
+  },
+  "skillDiagnosticsClear": {
+    "message": "无诊断"
+  },
+  "skillOptimizeGoal": {
+    "message": "希望 Anda 改进什么？"
+  },
+  "skillOptimizeAndaHint": {
+    "message": "Anda 会收到这个目录路径，并使用 skill-creator 检查和更新整个 skill。"
+  },
+  "skillOptimizePersonalOnly": {
+    "message": "只有个人库中的 Skill 才能优化。请先复制到个人库。"
+  },
+  "copySkillToPersonal": {
+    "message": "复制到个人库"
+  },
+  "optimizeSkillWithAnda": {
+    "message": "让 Anda 优化"
   }
 }

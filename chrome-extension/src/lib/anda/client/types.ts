@@ -75,6 +75,89 @@ export interface PromptSkill {
   description?: string
 }
 
+export type SkillSourceKind = 'personal' | 'bundled' | 'shared' | 'legacy'
+export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error'
+
+export interface SkillDiagnostic {
+  severity: SkillDiagnosticSeverity
+  code: string
+  message: string
+}
+
+export interface SkillSourceInfo {
+  source: SkillSourceKind
+  source_label: string
+  priority: number
+  path: string
+  editable: boolean
+  exists: boolean
+}
+
+export interface SkillUsageSummary {
+  callable: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cached_tokens: number
+  total_tokens: number
+}
+
+export interface ManagedSkill {
+  id: string
+  source: SkillSourceKind
+  source_label: string
+  priority: number
+  name: string
+  agent_name: string
+  description: string
+  compatibility?: string | null
+  allowed_tools: string[]
+  metadata: Record<string, unknown>
+  path: string
+  directory: string
+  editable: boolean
+  active: boolean
+  disabled: boolean
+  shadowed_by?: string | null
+  diagnostics: SkillDiagnostic[]
+  updated_at?: number | null
+  size?: number | null
+  file_count: number
+  usage?: SkillUsageSummary | null
+  version: string
+}
+
+export interface ManagedSkillDetail extends ManagedSkill {
+  content: string
+  files: SkillFileEntry[]
+}
+
+export type SkillFileKind = 'directory' | 'file'
+
+export interface SkillFileEntry {
+  path: string
+  name: string
+  kind: SkillFileKind
+  size?: number | null
+  updated_at?: number | null
+}
+
+export interface SkillFileContent {
+  id: string
+  path: string
+  content: string
+  size: number
+  updated_at?: number | null
+  truncated: boolean
+}
+
+export interface SkillValidationResult {
+  valid: boolean
+  diagnostics: SkillDiagnostic[]
+  name?: string
+  agent_name?: string
+}
+
 export type VoiceProvider = 'chrome' | 'anda'
 
 export type ConversationStatus =

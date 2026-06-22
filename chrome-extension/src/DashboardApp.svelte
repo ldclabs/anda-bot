@@ -2,6 +2,7 @@
   import BrainApp from './BrainApp.svelte'
   import ConfigApp from './ConfigApp.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
+  import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass, nativeSelectClass } from '$lib/anda/ui'
@@ -15,11 +16,12 @@
     PanelLeftOpen,
     RefreshCw,
     Save,
-    Settings
+    Settings,
+    WandSparkles
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
-  type WorkspaceId = 'brain' | 'bookmarks' | 'config'
+  type WorkspaceId = 'brain' | 'bookmarks' | 'skills' | 'config'
   const dashboardNavCollapsedStorageKey = 'andaDashboardNavCollapsed'
 
   interface Workspace {
@@ -41,6 +43,12 @@
       label: getMessage('bookmarks'),
       detail: getMessage('dashboardBookmarksDetail'),
       icon: Bookmark
+    },
+    {
+      id: 'skills',
+      label: getMessage('skills'),
+      detail: getMessage('dashboardSkillsDetail'),
+      icon: WandSparkles
     },
     {
       id: 'config',
@@ -81,7 +89,7 @@
 
   function workspaceFromHash(): WorkspaceId {
     const hash = window.location.hash.replace(/^#\/?/, '')
-    if (hash === 'bookmarks' || hash === 'config' || hash === 'brain') {
+    if (hash === 'bookmarks' || hash === 'skills' || hash === 'config' || hash === 'brain') {
       return hash
     }
     return 'brain'
@@ -256,7 +264,9 @@
                 ? getMessage('dashboardGraphCrumb')
                 : activeWorkspace === 'bookmarks'
                   ? getMessage('dashboardLibraryCrumb')
-                  : getMessage('dashboardStudioCrumb')}
+                  : activeWorkspace === 'skills'
+                    ? getMessage('dashboardSkillsCrumb')
+                    : getMessage('dashboardStudioCrumb')}
             </span>
           </div>
           <p class="truncate text-xs text-muted-foreground">{active.detail}</p>
@@ -284,6 +294,8 @@
         <BrainApp embedded />
       {:else if activeWorkspace === 'bookmarks'}
         <BookmarksWorkspace />
+      {:else if activeWorkspace === 'skills'}
+        <SkillsWorkspace />
       {:else}
         <ConfigApp embedded />
       {/if}

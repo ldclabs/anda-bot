@@ -6,12 +6,15 @@ use anda_core::{
 use anda_db_utils::UniqueVec;
 use anda_engine::{
     ANONYMOUS,
-    context::{AgentCtx, BaseCtx, CompletionRunner, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
+    context::{
+        AgentCtx, BaseCtx, CompletionRunner, TOOLS_GROUPS_NAME, TOOLS_SEARCH_NAME,
+        TOOLS_SELECT_NAME,
+    },
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
         note::NoteTool,
         shell::{ShellTool, ShellToolHook},
-        skill::{SkillFrontmatter, SkillManager},
+        skill::SkillManager,
         todo::TodoTool,
     },
     hook::DynAgentHook,
@@ -60,6 +63,7 @@ use super::{
     prompt::{PromptCommand, skill_subagent},
     resources::ResourceStore,
     side,
+    skill_library::SkillLibrary,
     system::{SYSTEM_PERSON_NAME, system_extra_user_context},
 };
 use crate::{
@@ -82,7 +86,7 @@ struct AndaBotInner {
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     idle_hooks: Vec<Arc<dyn IdleHook>>,
     home_dir: PathBuf,
-    skills_manager: Arc<SkillManager>,
+    skill_library: Arc<SkillLibrary>,
     browser_manager: Arc<ChromeBrowserTool>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
     active_im_channels: HashSet<String>,
@@ -136,6 +140,7 @@ fn base_tool_dependencies() -> Vec<String> {
         GoalTool::NAME.to_string(),
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
+        TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
@@ -164,8 +169,8 @@ fn base_tools() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
         NoteTool::NAME.to_string(),
-        GoalTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
+        TOOLS_GROUPS_NAME.to_string(),
         TodoTool::NAME.to_string(),
         McpServerTool::NAME.to_string(),
         ShellTool::NAME.to_string(),
@@ -185,7 +190,7 @@ impl AndaBot {
         resource_store: Arc<ResourceStore>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         idle_hooks: Vec<Arc<dyn IdleHook>>,
-        skills_manager: Arc<SkillManager>,
+        skill_library: Arc<SkillLibrary>,
         browser_manager: Arc<ChromeBrowserTool>,
         tts_manager: Option<Arc<TtsManager>>,
         transcription_manager: Option<Arc<TranscriptionManager>>,
@@ -214,7 +219,7 @@ impl AndaBot {
                 sessions: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 idle_hooks,
-                skills_manager,
+                skill_library,
                 browser_manager,
                 transcription_manager,
                 active_im_channels: active_im_channels.into_iter().collect(),
@@ -502,22 +507,7 @@ impl Tool<BaseCtx> for AndaBot {
                 json!(state)
             }
             AndaBotToolArgs::ListSkills {} => {
-                let skills: Vec<SkillFrontmatter> = self
-                    .inner
-                    .skills_manager
-                    .list()
-                    .into_values()
-                    .map(|skill| skill.frontmatter)
-                    .collect();
-                json!(
-                    skills
-                        .into_iter()
-                        .map(|skill| json!({
-                            "name": skill.name,
-                            "description": skill.description,
-                        }))
-                        .collect::<Vec<_>>()
-                )
+                json!(self.inner.skill_library.prompt_skills())
             }
         };
 
@@ -774,6 +764,7 @@ impl Agent<AgentCtx> for AndaBot {
             | PromptCommand::Loop { prompt } => prompt,
             PromptCommand::Goal { prompt } => {
                 initial_goal = Some(prompt.clone());
+                tools.push(GoalTool::NAME.to_string());
                 prompt
             }
             PromptCommand::Ping => return Err("prompt cannot be empty".into()),
@@ -784,7 +775,7 @@ impl Agent<AgentCtx> for AndaBot {
                 return Err("/cancel requires an active conversation".into());
             }
             PromptCommand::Skill { skill, prompt } => {
-                if let Some(subagent) = skill_subagent(&self.inner.skills_manager, &skill) {
+                if let Some(subagent) = skill_subagent(self.inner.skill_library.as_ref(), &skill) {
                     instructions = format!(
                         "{instructions}\n\nUse the {} skill to handle user's request",
                         subagent.name
@@ -1193,9 +1184,9 @@ mod tests {
     }
 
     #[test]
-    fn base_agent_tools_include_goal_tool() {
+    fn base_agent_tools_include_some_tools() {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
-        assert!(base_tools().contains(&GoalTool::NAME.to_string()));
+        assert!(!base_tools().contains(&GoalTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
         assert!(base_tools().contains(&McpServerTool::NAME.to_string()));
     }
@@ -1409,7 +1400,7 @@ mod tests {
             home.to_string_lossy().to_string(),
         ));
         let bridge = Arc::new(BrowserBridge::new());
-        let skills = Arc::new(SkillManager::new_with_dirs(home.join("skills"), vec![]));
+        let skills = SkillLibrary::for_test(home.clone());
         let mcp_provider =
             Arc::new(anda_engine::extension::mcp::McpToolProvider::new(Vec::new()).unwrap());
         let add_mcp_server = Arc::new(McpServerTool::new(
@@ -1493,6 +1484,8 @@ mod tests {
             .register_tool(Arc::new(ChromeBrowserTool::input(bridge.clone())))
             .unwrap()
             .register_tool(Arc::new(ChromeBrowserTool::script(bridge.clone())))
+            .unwrap()
+            .register_tool(skills.skill_manager())
             .unwrap()
             .register_tool(skills.clone())
             .unwrap()
@@ -1736,7 +1729,7 @@ mod tests {
         ));
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
         let bridge = Arc::new(BrowserBridge::new());
-        let skills = Arc::new(SkillManager::new_with_dirs(home.join("skills"), vec![]));
+        let skills = SkillLibrary::for_test(home.clone());
         Arc::new(AndaBot::new(
             brain_client,
             home,

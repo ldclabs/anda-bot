@@ -130,6 +130,10 @@ impl Daemon {
         self.home.join("skills")
     }
 
+    pub fn bundled_skills_dir_path(&self) -> PathBuf {
+        self.home.join("bundled-skills")
+    }
+
     pub fn sandbox_dir_path(&self) -> PathBuf {
         self.home.join("sandbox")
     }
@@ -185,6 +189,7 @@ impl Daemon {
         tokio::fs::create_dir_all(self.keys_dir_path()).await?;
         tokio::fs::create_dir_all(self.db_dir_path()).await?;
         tokio::fs::create_dir_all(self.skills_dir_path()).await?;
+        tokio::fs::create_dir_all(self.bundled_skills_dir_path()).await?;
         tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
         tokio::fs::create_dir_all(self.logs_dir_path()).await?;
         tokio::fs::create_dir_all(self.channels_dir_path()).await?;

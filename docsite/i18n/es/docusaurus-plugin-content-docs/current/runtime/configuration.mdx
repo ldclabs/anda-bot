@@ -102,12 +102,16 @@ y `exclude`, más los campos propios de la herramienta `id` y `persist`.
   db/
   keys/
   logs/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
-`db/` contiene memoria, conversaciones, estado de canales y cron. `keys/` contiene claves locales. `workspace/` es el espacio por defecto para shell y archivos.
+`db/` contiene memoria, conversaciones, estado de canales y cron. `keys/` contiene claves locales. `bundled-skills/` contiene skills gestionadas por las actualizaciones de Anda, mientras que `skills/` contiene skills personales creadas, clonadas o editadas por el usuario. `skills-manifest.json` guarda el estado local de activación, desactivación y recarga; `skill-backups/` y `skill-trash/` guardan copias previas a la edición y skills personales eliminadas. `workspace/` es el espacio por defecto para shell y archivos.
 
 ## Privacidad
 

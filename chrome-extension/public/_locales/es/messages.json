@@ -404,6 +404,9 @@
   "search": {
     "message": "Buscar"
   },
+  "clearSearch": {
+    "message": "Borrar búsqueda"
+  },
   "close": {
     "message": "Cerrar"
   },
@@ -853,5 +856,152 @@
   },
   "brainPinnedMemories": {
     "message": "Memorias fijadas"
+  },
+  "dashboardSkillsDetail": {
+    "message": "Personal workflows"
+  },
+  "dashboardSkillsCrumb": {
+    "message": "Skills"
+  },
+  "skills": {
+    "message": "Skills"
+  },
+  "skillsSearchPlaceholder": {
+    "message": "Search skills"
+  },
+  "reloadSkills": {
+    "message": "Reload skills"
+  },
+  "allSources": {
+    "message": "All sources"
+  },
+  "allStatuses": {
+    "message": "All statuses"
+  },
+  "skillsEmpty": {
+    "message": "No skills found"
+  },
+  "skillImportToAnda": {
+    "message": "Import to Anda"
+  },
+  "skillCustomize": {
+    "message": "Customize"
+  },
+  "skillCloned": {
+    "message": "Skill cloned to Personal."
+  },
+  "skillsReloaded": {
+    "message": "Skills reloaded."
+  },
+  "skillEnabled": {
+    "message": "Skill enabled."
+  },
+  "skillDisabled": {
+    "message": "Skill disabled."
+  },
+  "skillDeleted": {
+    "message": "Skill moved to trash."
+  },
+  "skillOptimizationPromptReady": {
+    "message": "Optimization prompt filled in the side panel."
+  },
+  "skillDeleteConfirm": {
+    "message": "Move this Personal skill to trash?"
+  },
+  "enableSkill": {
+    "message": "Enable"
+  },
+  "disableSkill": {
+    "message": "Disable"
+  },
+  "deleteSkill": {
+    "message": "Delete"
+  },
+  "skillStatusActive": {
+    "message": "Active"
+  },
+  "skillStatusDisabled": {
+    "message": "Disabled"
+  },
+  "skillStatusShadowed": {
+    "message": "Shadowed"
+  },
+  "skillStatusError": {
+    "message": "Error"
+  },
+  "skillStatusInactive": {
+    "message": "Inactive"
+  },
+  "skillOverview": {
+    "message": "Overview"
+  },
+  "skillFiles": {
+    "message": "Files"
+  },
+  "skillOptimize": {
+    "message": "Optimize"
+  },
+  "skillDirectory": {
+    "message": "Directory"
+  },
+  "skillAgentName": {
+    "message": "Agent name"
+  },
+  "skillUpdated": {
+    "message": "Updated"
+  },
+  "skillFileCount": {
+    "message": "$1 files"
+  },
+  "skillFolder": {
+    "message": "Folder"
+  },
+  "skillFileTruncated": {
+    "message": "Truncated"
+  },
+  "skillUsage": {
+    "message": "Uso"
+  },
+  "skillUsageCalls": {
+    "message": "$1 llamadas"
+  },
+  "skillUsageUnused": {
+    "message": "Aún sin uso"
+  },
+  "skillUsageTokensTitle": {
+    "message": "Uso de tokens"
+  },
+  "skillUsageTokens": {
+    "message": "$1 tokens"
+  },
+  "skillUsageTokenBreakdown": {
+    "message": "$1 entrada / $2 salida / $3 caché"
+  },
+  "skillAllowedTools": {
+    "message": "Allowed tools"
+  },
+  "skillDefaultTools": {
+    "message": "Default runtime tools"
+  },
+  "skillDiagnostics": {
+    "message": "Diagnostics"
+  },
+  "skillDiagnosticsClear": {
+    "message": "No diagnostics"
+  },
+  "skillOptimizeGoal": {
+    "message": "What should Anda improve?"
+  },
+  "skillOptimizeAndaHint": {
+    "message": "Anda will receive this directory path and use skill-creator to inspect and update the skill."
+  },
+  "skillOptimizePersonalOnly": {
+    "message": "Only Personal skills can be optimized. Copy this skill to Personal first."
+  },
+  "copySkillToPersonal": {
+    "message": "Copy to Personal"
+  },
+  "optimizeSkillWithAnda": {
+    "message": "Ask Anda to optimize"
   }
 }

@@ -6,11 +6,13 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Dashboard skill library management**: added a Skills workspace for browsing personal, bundled, and shared skills; inspecting complete skill directories and file contents; cloning, enabling, disabling, validating, deleting, and reloading skills; sending personal-skill optimization requests to the chat composer; and refreshing prompt completions after skill changes.
 - **Browser extension can attach page elements from the context menu**: right-clicked page content is captured through a content script, forwarded from the service worker, and inserted into the chat composer as a structured JSON attachment.
 - **Brain graph atlas, focus, and path views**: the browser extension Brain view now summarizes large memory graphs into bounded atlas clusters, focused neighborhoods, pinned-memory relationship paths, related-memory lists, and breadcrumb navigation instead of rendering every node directly.
 
 ### Changed
 
+- **Release-managed skills install separately from personal skills**: curated release skills now live under `~/.anda/bundled-skills`, while `~/.anda/skills` remains the personal skill library and shared `~/.agents/skills` entries can be imported from the Dashboard.
 - **Brain graph rendering is extracted into a tested view model**: graph budgeting, summary nodes, colors, related groups, and pinned/search handling now live in a dedicated view-model module with regression coverage.
 - **Browser extension version metadata synchronized with 0.10.3**: extension package and manifest metadata now advertise `0.10.3`.
 

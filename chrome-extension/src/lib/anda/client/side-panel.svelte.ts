@@ -27,6 +27,8 @@ import type {
   DaemonVoiceCapabilities,
   ExtensionMessage,
   ExtensionResponse,
+  ManagedSkill,
+  ManagedSkillDetail,
   ModelState,
   PageAudioResult,
   PageSpeechResult,
@@ -35,6 +37,9 @@ import type {
   Resource,
   RpcOutput,
   SettingsState,
+  SkillFileContent,
+  SkillSourceInfo,
+  SkillValidationResult,
   SourceStateMap,
   ToolOutput,
   TranscriptionToolOutput,
@@ -735,6 +740,108 @@ export class AndaSidePanelClient extends EventTarget {
       type: 'ListSkills'
     })
     return normalizePromptSkills(result)
+  }
+
+  async listSkillSources(): Promise<SkillSourceInfo[]> {
+    if (!this.settings.token) {
+      return []
+    }
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<SkillSourceInfo[]>>('skills_api', {
+      type: 'ListSkillSources'
+    })
+    return Array.isArray(result) ? result : []
+  }
+
+  async listManagedSkills(includeInactive = true): Promise<ManagedSkill[]> {
+    if (!this.settings.token) {
+      return []
+    }
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
+      type: 'ListSkills',
+      include_inactive: includeInactive
+    })
+    return Array.isArray(result) ? result : []
+  }
+
+  async getManagedSkill(id: string): Promise<ManagedSkillDetail> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<ManagedSkillDetail>>('skills_api', {
+      type: 'GetSkill',
+      id
+    })
+    return result
+  }
+
+  async getManagedSkillFile(id: string, path: string): Promise<SkillFileContent> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<SkillFileContent>>('skills_api', {
+      type: 'GetSkillFile',
+      id,
+      path
+    })
+    return result
+  }
+
+  async cloneSkill(id: string, newName?: string): Promise<ManagedSkillDetail> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<ManagedSkillDetail>>('skills_api', {
+      type: 'CloneSkill',
+      id,
+      new_name: newName || null
+    })
+    this.emitSkillsChanged()
+    return result
+  }
+
+  async setSkillEnabled(id: string, enabled: boolean): Promise<ManagedSkill[]> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
+      type: 'SetSkillEnabled',
+      id,
+      enabled
+    })
+    this.emitSkillsChanged()
+    return Array.isArray(result) ? result : []
+  }
+
+  async deletePersonalSkill(id: string): Promise<void> {
+    await this.toolCall<RpcOutput<{ deleted: boolean }>>('skills_api', {
+      type: 'DeletePersonalSkill',
+      id
+    })
+    this.emitSkillsChanged()
+  }
+
+  async validateSkillContent(content: string): Promise<SkillValidationResult> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<SkillValidationResult>>('skills_api', {
+      type: 'ValidateSkill',
+      content
+    })
+    return result
+  }
+
+  async reloadSkills(): Promise<ManagedSkill[]> {
+    const {
+      output: { result }
+    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
+      type: 'ReloadSkills'
+    })
+    this.emitSkillsChanged()
+    return Array.isArray(result) ? result : []
+  }
+
+  private emitSkillsChanged(): void {
+    this.dispatchEvent(new Event('skills-changed'))
   }
 
   async refreshModelState(options: { reload?: boolean } = {}): Promise<ModelState> {

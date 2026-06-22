@@ -1,5 +1,5 @@
 use anda_engine::{
-    extension::skill::{SkillManager, normalise_skill_agent_name},
+    extension::skill::normalise_skill_agent_name,
     subagent::{SubAgent, SubAgentSet},
 };
 
@@ -122,8 +122,8 @@ impl From<String> for PromptCommand {
     }
 }
 
-pub fn skill_subagent(skill_manager: &SkillManager, skill: &str) -> Option<SubAgent> {
-    skill_manager.get_lowercase(&normalise_skill_agent_name(
+pub fn skill_subagent(skill_set: &dyn SubAgentSet, skill: &str) -> Option<SubAgent> {
+    skill_set.get_lowercase(&normalise_skill_agent_name(
         skill.strip_prefix("skill_").unwrap_or(skill),
     ))
 }

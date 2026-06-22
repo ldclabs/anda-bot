@@ -8,6 +8,7 @@ use anda_engine::{
     memory::Conversations,
     model::{Model, Models, reqwest},
     store::Store,
+    subagent::SubAgentManager,
     unix_ms,
 };
 use anda_engine_server::handler::{AppState, anda_engine};
@@ -44,6 +45,7 @@ mod prompt;
 mod resources;
 mod shell_runtime;
 mod side;
+mod skill_library;
 mod system;
 
 use crate::util::{
@@ -68,6 +70,7 @@ pub(crate) use mcp_server::McpServerTool;
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
+pub use skill_library::SkillLibrary;
 pub(crate) use system::{external_user_prompt_with_space, system_runtime_prompt};
 
 // Empty model labels resolve through Models::get_model(), which tracks the active model.
@@ -374,19 +377,70 @@ impl Engines {
             }
             shell::ShellTool::new_with_custom_envs(runtime, envs, None)
         };
-        let additional_skills_dirs = std::env::home_dir()
+        let shared_skills_dirs = std::env::home_dir()
             .map(|home_dir| vec![home_dir.join(".agents").join("skills")])
             .unwrap_or_default();
+        let bundled_skills_dir = cfg.home_dir.join("bundled-skills");
+        let mut additional_skills_dirs = vec![bundled_skills_dir.clone()];
+        additional_skills_dirs.extend(shared_skills_dirs.clone());
+        let default_skill_tools = vec![
+            "shell".to_string(),
+            "read_file".to_string(),
+            "search_file".to_string(),
+            "note".to_string(),
+            "tools_groups".to_string(),
+            "tools_select".to_string(),
+        ];
         let skills_tool = Arc::new(
-            skill::SkillManager::new_with_dirs(cfg.skills_dir, additional_skills_dirs)
-                .with_default_skill_tools(vec![
-                    "shell".to_string(),
-                    "read_file".to_string(),
-                    "search_file".to_string(),
-                    "note".to_string(),
-                    "tools_groups".to_string(),
-                    "tools_select".to_string(),
-                ]),
+            skill::SkillManager::new_with_dirs(cfg.skills_dir.clone(), additional_skills_dirs)
+                .with_default_skill_tools(default_skill_tools.clone()),
+        );
+        let mut known_skill_tools = BTreeSet::from_iter(default_skill_tools.iter().cloned());
+        known_skill_tools.extend(
+            [
+                brain::Client::NAME,
+                note::NoteTool::NAME,
+                GoalTool::NAME,
+                todo::TodoTool::NAME,
+                fs::ReadFileTool::NAME,
+                fs::SearchFileTool::NAME,
+                fs::EditFileTool::NAME,
+                fs::WriteFileTool::NAME,
+                cron::CreateCronTool::NAME,
+                cron::ListCronJobsTool::NAME,
+                cron::UpdateCronJobTool::NAME,
+                cron::ManageCronJobTool::NAME,
+                cron::ListCronRunsTool::NAME,
+                ChromeBrowserTool::TABS_NAME,
+                ChromeBrowserTool::PAGE_NAME,
+                ChromeBrowserTool::INPUT_NAME,
+                ChromeBrowserTool::SCRIPT_NAME,
+                skill::SkillManager::NAME,
+                SkillLibrary::NAME,
+                McpServerTool::NAME,
+                ResourceStore::NAME,
+                ConversationsTool::NAME,
+                BookmarksTool::NAME,
+                SubAgentManager::NAME,
+                AndaBot::NAME,
+                TtsManager::NAME,
+                TranscriptionManager::NAME,
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        let tools_usage_conversations = conversations_tool.clone();
+        let skill_library = Arc::new(
+            SkillLibrary::new(
+                cfg.home_dir.clone(),
+                cfg.skills_dir.clone(),
+                bundled_skills_dir,
+                shared_skills_dirs,
+                skills_tool.clone(),
+                default_skill_tools,
+                known_skill_tools,
+            )
+            .with_tools_usage_reader(move || tools_usage_conversations.tools_usage()),
         );
         // Put the brain to sleep (full maintenance) once the bot has been
         // fully idle and the last sleep is more than 12 hours old.
@@ -399,7 +453,7 @@ impl Engines {
             resource_store.clone(),
             completion_hooks,
             idle_hooks,
-            skills_tool.clone(),
+            skill_library.clone(),
             browser_tabs_tool.clone(),
             tts_manager.clone(),
             transcription_manager.clone(),
@@ -476,6 +530,7 @@ impl Engines {
             .register_tool(browser_input_tool)?
             .register_tool(browser_script_tool)?
             .register_tool(skills_tool.clone())?
+            .register_tool(skill_library.clone())?
             .register_tool(add_mcp_server_tool)?
             .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
@@ -519,6 +574,7 @@ impl Engines {
                 ConversationsTool::NAME.to_string(),
                 ResourceStore::NAME.to_string(),
                 BookmarksTool::NAME.to_string(),
+                SkillLibrary::NAME.to_string(),
                 Tool::name(bot.as_ref()),
             ]);
 
@@ -528,10 +584,10 @@ impl Engines {
         engine_ref.bind(Arc::downgrade(&engine));
         // A failure scanning the skills directories (e.g. permissions on the
         // shared ~/.agents/skills) should not prevent the daemon from starting.
-        if let Err(err) = skills_tool.load().await {
+        if let Err(err) = skill_library.reload().await {
             log::error!("failed to load skills, continuing without them: {err}");
         }
-        engine.sub_agents_manager().insert(skills_tool);
+        engine.sub_agents_manager().insert(skill_library);
 
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
@@ -1203,7 +1259,7 @@ model:
             home.to_string_lossy().to_string(),
         ));
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
-        let skills = Arc::new(skill::SkillManager::new(home.join("skills")));
+        let skills = SkillLibrary::for_test(home.clone());
         let bridge = Arc::new(BrowserBridge::new());
         Arc::new(AndaBot::new(
             brain_client,

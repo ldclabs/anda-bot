@@ -29,6 +29,12 @@
     isBookmarkJumpRequest,
     type BookmarkJumpRequest
   } from '$lib/anda/bookmark-jump'
+  import {
+    isPromptDraftRequest,
+    promptDraftRequestMaxAgeMs,
+    promptDraftRequestStorageKey,
+    type PromptDraftRequest
+  } from '$lib/anda/prompt-draft'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
@@ -59,6 +65,9 @@
   let sidePanelReadyForPageElements = false
   let queuedPageElementRequest: PageElementAttachmentRequest | null = null
   let pageElementComposerAttachment: ChatAttachment | null = $state(null)
+  let promptDraftRequest: PromptDraftRequest | null = $state(null)
+  let lastPromptDraftRequestId = ''
+  let skillsRevision = $state(0)
 
   const status = $derived(andaClient.status)
   const syncing = $derived(andaClient.activeChannel?.syncing || false)
@@ -108,6 +117,7 @@
     ) => {
       if (areaName === 'local') {
         consumeBookmarkJumpRequest(changes[bookmarkJumpRequestStorageKey]?.newValue)
+        consumePromptDraftRequest(changes[promptDraftRequestStorageKey]?.newValue)
       }
       if (areaName === 'session') {
         consumePageElementAttachmentRequest(
@@ -134,6 +144,10 @@
 
     chrome.storage.onChanged.addListener(handleStorageChange)
     chrome.runtime.onMessage.addListener(handleRuntimeMessage)
+    const handleSkillsChanged = () => {
+      skillsRevision += 1
+    }
+    andaClient.addEventListener('skills-changed', handleSkillsChanged)
 
     andaClient
       .init()
@@ -149,6 +163,9 @@
         void chrome.storage.local
           .get([bookmarkJumpRequestStorageKey])
           .then((stored) => consumeBookmarkJumpRequest(stored[bookmarkJumpRequestStorageKey]))
+        void chrome.storage.local
+          .get([promptDraftRequestStorageKey])
+          .then((stored) => consumePromptDraftRequest(stored[promptDraftRequestStorageKey]))
         void chrome.storage.session
           ?.get([pageElementAttachmentRequestStorageKey])
           .then((stored) =>
@@ -165,6 +182,7 @@
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChange)
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
+      andaClient.removeEventListener('skills-changed', handleSkillsChanged)
       andaClient.destroy()
     }
   })
@@ -289,6 +307,21 @@
     if (request) {
       attachPageElementRequest(request)
     }
+  }
+
+  function consumePromptDraftRequest(value: unknown) {
+    if (!isPromptDraftRequest(value) || value.id === lastPromptDraftRequestId) {
+      return
+    }
+
+    if (Date.now() - value.createdAt > promptDraftRequestMaxAgeMs) {
+      void chrome.storage.local.remove(promptDraftRequestStorageKey)
+      return
+    }
+
+    lastPromptDraftRequestId = value.id
+    promptDraftRequest = value
+    void chrome.storage.local.remove(promptDraftRequestStorageKey)
   }
 
   function attachPageElementRequest(request: PageElementAttachmentRequest) {
@@ -748,8 +781,10 @@
         onBrowserAudioStop={stopBrowserAudioCapture}
         onBrowserAudioCancel={cancelBrowserAudioCapture}
         onLoadSkills={loadPromptSkills}
+        {skillsRevision}
         quickPrompts={andaClient.quickPrompts}
         incomingAttachment={pageElementComposerAttachment}
+        incomingDraft={promptDraftRequest}
         onUseQuickPrompt={(prompt) => useQuickPrompt(prompt.text)}
         onRemoveQuickPrompt={(prompt) => removeQuickPrompt(prompt.text)}
         onClearQuickPrompts={clearQuickPrompts}

@@ -404,7 +404,7 @@ PY
 
 install_skills_from_staging() {
     STAGING_DIR="$1"
-    SKILLS_DIR="${ANDA_HOME_DIR}/skills"
+    SKILLS_DIR="${ANDA_HOME_DIR}/bundled-skills"
     FOUND_SKILL=0
 
     mkdir -p "$SKILLS_DIR" || error "Could not create skills directory: ${SKILLS_DIR}"

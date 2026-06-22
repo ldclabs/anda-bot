@@ -103,12 +103,16 @@ stdio-серверов `command` запускается напрямую, без
   db/
   keys/
   logs/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
-`db/` хранит память, беседы, состояние каналов и cron. `workspace/` — рабочая область для shell и файлов.
+`db/` хранит память, беседы, состояние каналов и cron. `bundled-skills/` содержит skills, управляемые обновлениями Anda, а `skills/` содержит личные skills, созданные, клонированные или измененные пользователем. `skills-manifest.json` хранит локальное состояние включения, отключения и перезагрузки; `skill-backups/` и `skill-trash/` хранят резервные копии перед редактированием и удаленные личные skills. `workspace/` — рабочая область для shell и файлов.
 
 ## Приватность
 

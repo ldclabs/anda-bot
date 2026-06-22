@@ -104,12 +104,16 @@ conserver après les redémarrages. Ses champs de serveur reflètent une entrée
   db/
   keys/
   logs/
+  bundled-skills/
   sandbox/
   skills/
+  skills-manifest.json
+  skill-backups/
+  skill-trash/
   workspace/
 ```
 
-`db/` contient mémoire, conversations, états de canaux et cron. `workspace/` est l'espace par défaut pour shell et fichiers.
+`db/` contient mémoire, conversations, états de canaux et cron. `bundled-skills/` contient les skills gérées par les mises à jour d'Anda, tandis que `skills/` contient les skills personnelles créées, clonées ou modifiées par l'utilisateur. `skills-manifest.json` conserve l'état local d'activation, de désactivation et de rechargement ; `skill-backups/` et `skill-trash/` conservent les sauvegardes avant édition et les skills personnelles supprimées. `workspace/` est l'espace par défaut pour shell et fichiers.
 
 ## Confidentialité
 

@@ -526,11 +526,12 @@ async fn install_release_skills(
     }
 
     extract_skills_archive(download.path(), staging.path())?;
-    let installed = install_skills_from_staging(staging.path(), &home_dir.join("skills"))?;
+    let skills_dir = bundled_skills_dir(home_dir);
+    let installed = install_skills_from_staging(staging.path(), &skills_dir)?;
     println!(
         "Updated {installed} curated skill{} in {}.",
         if installed == 1 { "" } else { "s" },
-        home_dir.join("skills").display()
+        skills_dir.display()
     );
 
     Ok(true)
@@ -590,6 +591,10 @@ fn install_skills_from_staging(staging_dir: &Path, skills_dir: &Path) -> Result<
     }
 
     Ok(installed)
+}
+
+fn bundled_skills_dir(home_dir: &Path) -> PathBuf {
+    home_dir.join("bundled-skills")
 }
 
 async fn install_release_launcher_if_present(
@@ -855,6 +860,7 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::text::read_text_file_sync;
 
     #[test]
     fn release_target_matches_published_assets() {
@@ -976,8 +982,6 @@ mod tests {
 
     #[test]
     fn install_skills_replaces_curated_entries_and_keeps_custom_entries() {
-        use crate::util::text::read_text_file_sync;
-
         let temp = tempfile::tempdir().unwrap();
         let staging_dir = temp.path().join("staging");
         let skills_dir = temp.path().join("skills");
@@ -1381,12 +1385,18 @@ mod tests {
         let base = spawn_mock(app).await;
         let client = new_reqwest_client();
         let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("skills/codex")).unwrap();
+        std::fs::write(home.path().join("skills/codex/SKILL.md"), "personal codex").unwrap();
 
         let installed = install_release_skills(&client, &base, home.path())
             .await
             .unwrap();
         assert!(installed);
-        assert!(home.path().join("skills/codex/SKILL.md").is_file());
+        assert!(home.path().join("bundled-skills/codex/SKILL.md").is_file());
+        assert_eq!(
+            read_text_file_sync(home.path().join("skills/codex/SKILL.md")).unwrap(),
+            "personal codex"
+        );
     }
 
     #[tokio::test]

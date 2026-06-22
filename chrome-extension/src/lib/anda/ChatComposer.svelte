@@ -10,6 +10,7 @@
     VoiceProvider,
     VoiceRecordingInput
   } from '$lib/anda/client/types'
+  import type { PromptDraftRequest } from '$lib/anda/prompt-draft'
 
   export interface ComposerSubmitPayload {
     text: string
@@ -96,7 +97,9 @@
     onRemoveQuickPrompt,
     onClearQuickPrompts,
     submitKeyMode = 'enter',
-    incomingAttachment = null
+    incomingAttachment = null,
+    incomingDraft = null,
+    skillsRevision = 0
   }: {
     disabled?: boolean
     sending?: boolean
@@ -121,6 +124,8 @@
     onRemoveQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onClearQuickPrompts?: () => Promise<void> | void
     incomingAttachment?: ChatAttachment | null
+    incomingDraft?: PromptDraftRequest | null
+    skillsRevision?: number
   } = $props()
 
   let text = $state('')
@@ -163,6 +168,7 @@
   let levelAnimationFrame: number | null = null
   let ignoreNextRecording = false
   let lastIncomingAttachmentId = ''
+  let lastIncomingDraftId = ''
 
   const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
   const draftCommand = $derived(parsePromptCommand(text))
@@ -287,6 +293,29 @@
   })
 
   $effect(() => {
+    const draft = incomingDraft
+    if (!draft || draft.id === lastIncomingDraftId) {
+      return
+    }
+    lastIncomingDraftId = draft.id
+    text = draft.text
+    attachments = []
+    attachmentError = ''
+    promptCommandDismissedKey = ''
+    caretIndex = text.length
+    if (inputMode === 'voice') {
+      void cancelRecording()
+      inputMode = 'text'
+    }
+    void tick().then(() => {
+      resizeTextarea()
+      textareaElement?.focus()
+      textareaElement?.setSelectionRange(text.length, text.length)
+      updateTextareaCaret()
+    })
+  })
+
+  $effect(() => {
     if (!promptCommandPanelOpen) {
       return
     }
@@ -298,6 +327,14 @@
     }
     if (activePromptCommandIndex >= promptCommandSuggestions.length) {
       activePromptCommandIndex = firstEnabledPromptCommandIndex(promptCommandSuggestions)
+    }
+  })
+
+  $effect(() => {
+    skillsRevision
+    promptSkillsLoadedAt = 0
+    if (promptCommandPanelOpen) {
+      void ensurePromptSkillsLoaded()
     }
   })
 
