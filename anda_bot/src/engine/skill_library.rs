@@ -124,14 +124,6 @@ impl SkillDiagnostic {
             message: message.into(),
         }
     }
-
-    fn info(code: &str, message: impl Into<String>) -> Self {
-        Self {
-            severity: SkillDiagnosticSeverity::Info,
-            code: code.to_string(),
-            message: message.into(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,10 +566,7 @@ impl SkillLibrary {
 
         let manifest = self.load_manifest().await?;
         self.reload_locked(manifest).await?;
-        self.get_skill_detail(&personal_or_legacy_skill_id(
-            &new_name,
-            self.bundled_has_skill(&new_name),
-        ))
+        self.get_skill_detail(&personal_skill_id(&new_name))
     }
 
     pub async fn set_skill_enabled(
@@ -592,10 +581,18 @@ impl SkillLibrary {
         let mut manifest = self.load_manifest().await?;
         if enabled {
             manifest.disabled.remove(&id);
-            if record.managed.source == SkillSourceKind::Legacy {
-                manifest
-                    .disabled
-                    .remove(&personal_skill_id(&record.managed.name));
+            match record.managed.source {
+                SkillSourceKind::Personal => {
+                    manifest
+                        .disabled
+                        .remove(&skill_id(SkillSourceKind::Legacy, &record.managed.name));
+                }
+                SkillSourceKind::Legacy => {
+                    manifest
+                        .disabled
+                        .remove(&personal_skill_id(&record.managed.name));
+                }
+                SkillSourceKind::Bundled | SkillSourceKind::Shared => {}
             }
         } else {
             manifest.disabled.insert(
@@ -705,7 +702,6 @@ impl SkillLibrary {
                 records.push(self.scan_skill_file(&source, &path).await);
             }
         }
-        classify_legacy_personal_records(&mut records);
         for record in &mut records {
             record.managed.disabled = is_disabled(manifest, &record.managed);
         }
@@ -898,12 +894,6 @@ impl SkillLibrary {
             suffix += 1;
         }
         candidate
-    }
-
-    fn bundled_has_skill(&self, name: &str) -> bool {
-        self.state.read().records.iter().any(|record| {
-            record.managed.source == SkillSourceKind::Bundled && record.managed.name == name
-        })
     }
 
     fn active_record_for_agent(&self, lowercase_name: &str) -> Option<SkillRecord> {
@@ -1256,28 +1246,6 @@ fn skill_usage_key(agent_name: &str) -> String {
     format!("sa_{}", agent_name.to_ascii_lowercase())
 }
 
-fn classify_legacy_personal_records(records: &mut [SkillRecord]) {
-    let bundled_names = records
-        .iter()
-        .filter(|record| record.managed.source == SkillSourceKind::Bundled)
-        .map(|record| record.managed.name.clone())
-        .collect::<BTreeSet<_>>();
-    for record in records.iter_mut() {
-        if record.managed.source == SkillSourceKind::Personal
-            && bundled_names.contains(&record.managed.name)
-        {
-            record.managed.source = SkillSourceKind::Legacy;
-            record.managed.source_label = SkillSourceKind::Legacy.label().to_string();
-            record.managed.id = skill_id(SkillSourceKind::Legacy, &record.managed.name);
-            record.managed.editable = true;
-            record.managed.diagnostics.push(SkillDiagnostic::info(
-                "legacy_local_copy",
-                "This Personal skill shadows a bundled skill with the same name.",
-            ));
-        }
-    }
-}
-
 fn apply_effective_state(records: &mut [SkillRecord], manifest: &SkillManifest) {
     let mut winners: BTreeMap<String, String> = BTreeMap::new();
     for record in records.iter_mut() {
@@ -1302,10 +1270,15 @@ fn apply_effective_state(records: &mut [SkillRecord], manifest: &SkillManifest) 
 
 fn is_disabled(manifest: &SkillManifest, skill: &ManagedSkill) -> bool {
     manifest.disabled.contains_key(&skill.id)
-        || (skill.source == SkillSourceKind::Legacy
-            && manifest
+        || match skill.source {
+            SkillSourceKind::Personal => manifest
                 .disabled
-                .contains_key(&personal_skill_id(&skill.name)))
+                .contains_key(&skill_id(SkillSourceKind::Legacy, &skill.name)),
+            SkillSourceKind::Legacy => manifest
+                .disabled
+                .contains_key(&personal_skill_id(&skill.name)),
+            SkillSourceKind::Bundled | SkillSourceKind::Shared => false,
+        }
 }
 
 fn skill_id(source: SkillSourceKind, name: &str) -> String {
@@ -1314,14 +1287,6 @@ fn skill_id(source: SkillSourceKind, name: &str) -> String {
 
 fn personal_skill_id(name: &str) -> String {
     skill_id(SkillSourceKind::Personal, name)
-}
-
-fn personal_or_legacy_skill_id(name: &str, has_bundled: bool) -> String {
-    if has_bundled {
-        skill_id(SkillSourceKind::Legacy, name)
-    } else {
-        personal_skill_id(name)
-    }
 }
 
 fn normalize_skill_name(name: String) -> Result<String, BoxError> {
@@ -1705,18 +1670,25 @@ mod tests {
 
         lib.reload().await.unwrap();
         let skills = lib.list_managed_skills(true);
-        let legacy = skills
+        assert!(!skills.iter().any(|skill| skill.id == "legacy:learn"));
+        let personal = skills
             .iter()
-            .find(|skill| skill.id == "legacy:learn")
+            .find(|skill| skill.id == "personal:learn")
             .unwrap();
-        assert!(legacy.active);
-        assert_eq!(legacy.source, SkillSourceKind::Legacy);
+        assert!(personal.active);
+        assert_eq!(personal.source, SkillSourceKind::Personal);
+        assert!(
+            !personal
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "legacy_local_copy")
+        );
         let bundled = skills
             .iter()
             .find(|skill| skill.id == "bundled:learn")
             .unwrap();
         assert!(!bundled.active);
-        assert_eq!(bundled.shadowed_by.as_deref(), Some("legacy:learn"));
+        assert_eq!(bundled.shadowed_by.as_deref(), Some("personal:learn"));
         assert!(
             skills
                 .iter()
@@ -1783,7 +1755,7 @@ mod tests {
         write_skill(&temp.path().join("bundled-skills"), "learn", "bundled");
 
         lib.reload().await.unwrap();
-        lib.set_skill_enabled("legacy:learn".to_string(), false)
+        lib.set_skill_enabled("personal:learn".to_string(), false)
             .await
             .unwrap();
 
@@ -1791,7 +1763,7 @@ mod tests {
         assert!(
             !skills
                 .iter()
-                .find(|skill| skill.id == "legacy:learn")
+                .find(|skill| skill.id == "personal:learn")
                 .unwrap()
                 .active
         );
@@ -1808,6 +1780,60 @@ mod tests {
                 .any(|skill| skill.name == "learn")
         );
         assert_eq!(lib.definitions(None).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn legacy_disabled_manifest_entry_still_disables_personal_shadow() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_skill(&temp.path().join("skills"), "learn", "personal");
+        write_skill(&temp.path().join("bundled-skills"), "learn", "bundled");
+        fs::write(
+            temp.path().join(MANIFEST_FILE_NAME),
+            serde_json::to_string(&json!({
+                "version": 1,
+                "disabled": {
+                    "legacy:learn": {
+                        "disabled_at": 1,
+                        "reason": "disabled before source normalization"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let personal = skills
+            .iter()
+            .find(|skill| skill.id == "personal:learn")
+            .unwrap();
+        assert!(personal.disabled);
+        assert!(!personal.active);
+        assert!(
+            skills
+                .iter()
+                .any(|skill| skill.id == "bundled:learn" && skill.active)
+        );
+
+        lib.set_skill_enabled("personal:learn".to_string(), true)
+            .await
+            .unwrap();
+
+        let manifest: SkillManifest = serde_json::from_str(
+            &fs::read_to_string(temp.path().join(MANIFEST_FILE_NAME)).unwrap(),
+        )
+        .unwrap();
+        assert!(!manifest.disabled.contains_key("legacy:learn"));
+        let personal = lib
+            .list_managed_skills(true)
+            .into_iter()
+            .find(|skill| skill.id == "personal:learn")
+            .unwrap();
+        assert!(personal.active);
+        assert!(!personal.disabled);
     }
 
     #[tokio::test]
