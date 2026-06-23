@@ -724,12 +724,7 @@ impl LarkChannel {
             use axum::response::IntoResponse;
 
             if let Some(challenge) = payload.get("challenge").and_then(Value::as_str) {
-                let token_ok = state.verification_token.trim().is_empty()
-                    || payload
-                        .get("token")
-                        .and_then(Value::as_str)
-                        .is_some_and(|token| token == state.verification_token);
-                if !token_ok {
+                if !webhook_token_matches(&state.verification_token, &payload) {
                     return (StatusCode::FORBIDDEN, "invalid token").into_response();
                 }
                 return (
@@ -739,10 +734,7 @@ impl LarkChannel {
                     .into_response();
             }
 
-            if !state.verification_token.trim().is_empty()
-                && let Some(token) = payload.get("token").and_then(Value::as_str)
-                && token != state.verification_token
-            {
+            if !webhook_token_matches(&state.verification_token, &payload) {
                 return (StatusCode::FORBIDDEN, "invalid token").into_response();
             }
 
@@ -1851,6 +1843,15 @@ fn should_respond_in_group(
             .any(|open_id| open_id == bot_open_id)
 }
 
+fn webhook_token_matches(verification_token: &str, payload: &Value) -> bool {
+    let verification_token = verification_token.trim();
+    verification_token.is_empty()
+        || payload
+            .get("token")
+            .and_then(Value::as_str)
+            .is_some_and(|token| token == verification_token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1949,6 +1950,19 @@ mod tests {
             next_token_refresh_deadline(now, 60).duration_since(now),
             Duration::from_secs(1)
         );
+    }
+
+    #[test]
+    fn webhook_token_is_required_when_configured() {
+        let valid = serde_json::json!({ "token": "test_verification_token" });
+        let wrong = serde_json::json!({ "token": "wrong" });
+        let missing = serde_json::json!({});
+
+        assert!(webhook_token_matches("test_verification_token", &valid));
+        assert!(!webhook_token_matches("test_verification_token", &wrong));
+        assert!(!webhook_token_matches("test_verification_token", &missing));
+        assert!(webhook_token_matches("", &missing));
+        assert!(webhook_token_matches("   ", &missing));
     }
 
     #[test]
@@ -2397,6 +2411,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+
+        // Event with a missing token is also rejected before sender fields are trusted.
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "header": {"event_type": "im.message.receive_v1"},
+                "event": {
+                    "sender": {"sender_id": {"open_id": "ou_testuser123"}},
+                    "message": {
+                        "message_id": "om_missing_token",
+                        "message_type": "text",
+                        "content": "{\"text\":\"spoofed\"}",
+                        "chat_id": "oc_chat123",
+                        "chat_type": "p2p",
+                    },
+                },
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+        assert!(rx.try_recv().is_err());
 
         // A valid event is parsed and delivered.
         let response = client

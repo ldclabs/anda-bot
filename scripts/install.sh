@@ -358,8 +358,7 @@ verify_checksum() {
     fi
 
     if ! ACTUAL_HASH=$(sha256_file "$FILE_PATH"); then
-        info "No SHA-256 tool found; skipping checksum verification."
-        return 0
+        error "No SHA-256 tool found; cannot verify $(basename "$FILE_PATH")"
     fi
 
     if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
@@ -441,7 +440,7 @@ download_and_install_skills() {
     if curl -fsSL "$SKILLS_CHECKSUM_URL" -o "$SKILLS_CHECKSUM_PATH"; then
         verify_checksum "$SKILLS_ARCHIVE_PATH" "$SKILLS_CHECKSUM_PATH"
     else
-        info "Skills checksum file not found; skipping checksum verification."
+        error "Skills checksum file not found: ${SKILLS_CHECKSUM_URL}"
     fi
 
     if extract_skills_archive "$SKILLS_ARCHIVE_PATH" "$SKILLS_STAGING_DIR"; then
@@ -647,7 +646,7 @@ fi
 if curl -fsSL "$CHECKSUM_URL" -o "${TMPDIR}/${CHECKSUM_NAME}"; then
     verify_checksum "${TMPDIR}/${ASSET_NAME}" "${TMPDIR}/${CHECKSUM_NAME}"
 else
-    info "Checksum file not found; skipping checksum verification."
+    error "Checksum file not found: ${CHECKSUM_URL}"
 fi
 
 if [ "$OS" = "macos" ]; then
@@ -658,7 +657,7 @@ if [ "$OS" = "macos" ]; then
         if curl -fsSL "$LAUNCHER_CHECKSUM_URL" -o "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"; then
             verify_checksum "${TMPDIR}/${LAUNCHER_ASSET_NAME}" "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"
         else
-            info "Launcher checksum file not found; skipping checksum verification."
+            error "Launcher checksum file not found: ${LAUNCHER_CHECKSUM_URL}"
         fi
     else
         error "Download failed. Launcher binary may not exist for ${TARGET}.\nCheck: https://github.com/${REPO}/releases/tag/${VERSION}"

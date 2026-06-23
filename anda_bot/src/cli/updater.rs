@@ -239,10 +239,8 @@ pub async fn run(
     println!("Downloading {asset_name}...");
     let actual_hash = download_binary(client, &asset_url, download.path()).await?;
 
-    match fetch_expected_checksum(client, &checksum_url).await? {
-        Some(expected_hash) => verify_checksum(&asset_name, &expected_hash, &actual_hash)?,
-        None => println!("Checksum file not found; skipping checksum verification."),
-    }
+    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
+    verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
 
     stage_update(download.path(), staged.path()).await?;
     prepare_executable(staged.path(), &current_exe).await?;
@@ -520,10 +518,8 @@ async fn install_release_skills(
         return Ok(false);
     };
 
-    match fetch_expected_checksum(client, &checksum_url).await? {
-        Some(expected_hash) => verify_checksum(SKILLS_ARCHIVE_NAME, &expected_hash, &actual_hash)?,
-        None => println!("Skills checksum file not found; skipping checksum verification."),
-    }
+    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
+    verify_checksum(SKILLS_ARCHIVE_NAME, &expected_hash, &actual_hash)?;
 
     extract_skills_archive(download.path(), staging.path())?;
     let skills_dir = bundled_skills_dir(home_dir);
@@ -626,10 +622,8 @@ async fn install_release_launcher_if_present(
     println!("Downloading {asset_name}...");
     let actual_hash = download_binary(client, &asset_url, download.path()).await?;
 
-    match fetch_expected_checksum(client, &checksum_url).await? {
-        Some(expected_hash) => verify_checksum(&asset_name, &expected_hash, &actual_hash)?,
-        None => println!("Checksum file not found; skipping checksum verification."),
-    }
+    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
+    verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
 
     stage_update(download.path(), staged.path()).await?;
     prepare_executable(staged.path(), &launcher_exe).await?;
@@ -666,18 +660,26 @@ fn remove_path_if_exists(path: &Path) -> Result<(), BoxError> {
 pub(crate) async fn fetch_expected_checksum(
     client: &reqwest::Client,
     url: &str,
-) -> Result<Option<String>, BoxError> {
-    let response = match client.get(url).send().await {
-        Ok(response) => response,
-        Err(_) => return Ok(None),
-    };
+) -> Result<String, BoxError> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("Checksum download failed from {url}: {err}"))?;
 
-    if response.status() == StatusCode::NOT_FOUND || !response.status().is_success() {
-        return Ok(None);
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(format!("Checksum file not found: {url}").into());
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Checksum download failed (HTTP {}). Check: {url}",
+            response.status()
+        )
+        .into());
     }
 
     let content = response.text().await?;
-    Ok(Some(expected_hash_from_checksum(&content)?))
+    expected_hash_from_checksum(&content)
 }
 
 fn expected_hash_from_checksum(content: &str) -> Result<String, BoxError> {
@@ -1207,12 +1209,13 @@ mod tests {
         let found = fetch_expected_checksum(&client, &format!("{base}/ok"))
             .await
             .unwrap();
-        assert_eq!(found, Some(valid.to_string()));
+        assert_eq!(found, valid.to_string());
 
         let missing = fetch_expected_checksum(&client, &format!("{base}/404"))
             .await
-            .unwrap();
-        assert!(missing.is_none());
+            .map(|_| ())
+            .unwrap_err();
+        assert!(missing.to_string().contains("not found"));
 
         let bad = fetch_expected_checksum(&client, &format!("{base}/bad"))
             .await
@@ -1220,12 +1223,13 @@ mod tests {
             .unwrap_err();
         assert!(bad.to_string().contains("valid SHA-256"));
 
-        // A network failure is swallowed into `None`.
+        // A network failure is fatal because executable integrity cannot be verified.
         let dead = dead_proxy_client();
         let unreachable = fetch_expected_checksum(&dead, "https://example.invalid/x.sha256")
             .await
-            .unwrap();
-        assert!(unreachable.is_none());
+            .map(|_| ())
+            .unwrap_err();
+        assert!(unreachable.to_string().contains("Checksum download failed"));
     }
 
     #[tokio::test]
@@ -1516,6 +1520,32 @@ mod tests {
             // On Windows the swap is deferred to an async PowerShell helper.
             assert_eq!(finish, Some(UpdateFinish::Scheduled));
         }
+    }
+
+    #[tokio::test]
+    async fn install_release_launcher_requires_checksum() {
+        let app = Router::new().route(
+            "/anda_launcher-macos-arm64",
+            get(|| async { "new-launcher-without-checksum" }),
+        );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let temp = tempfile::tempdir().unwrap();
+        let launcher = temp.path().join("anda_launcher");
+        std::fs::write(&launcher, "old-launcher").unwrap();
+
+        let err = install_release_launcher_if_present(
+            &client,
+            &base,
+            ReleaseTarget::from_parts("macos", "arm64").unwrap(),
+            temp.path(),
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+
+        assert!(err.to_string().contains("Checksum file not found"));
+        assert_eq!(std::fs::read_to_string(&launcher).unwrap(), "old-launcher");
     }
 
     #[tokio::test]

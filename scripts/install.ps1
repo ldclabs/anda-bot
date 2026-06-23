@@ -428,13 +428,10 @@ try {
 
     try {
         Invoke-WebRequest -Uri $checksumUrl -OutFile $checksumPath -UseBasicParsing
-        Verify-Checksum $downloadPath $checksumPath
     } catch {
-        if ($_.Exception.Message -like "Checksum verification failed*") {
-            throw
-        }
-        Write-Info "Checksum file not found; skipping checksum verification."
+        Fail "Checksum file not found: $checksumUrl"
     }
+    Verify-Checksum $downloadPath $checksumPath
 
     Write-Info "Downloading $launcherAssetName..."
     try {
@@ -445,13 +442,10 @@ try {
 
     try {
         Invoke-WebRequest -Uri $launcherChecksumUrl -OutFile $launcherChecksumPath -UseBasicParsing
-        Verify-Checksum $launcherDownloadPath $launcherChecksumPath
     } catch {
-        if ($_.Exception.Message -like "Checksum verification failed*") {
-            throw
-        }
-        Write-Info "Launcher checksum file not found; skipping checksum verification."
+        Fail "Launcher checksum file not found: $launcherChecksumUrl"
     }
+    Verify-Checksum $launcherDownloadPath $launcherChecksumPath
 
     Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
@@ -471,13 +465,10 @@ try {
     if ($skillsDownloaded) {
         try {
             Invoke-WebRequest -Uri $skillsChecksumUrl -OutFile $skillsChecksumPath -UseBasicParsing
-            Verify-Checksum $skillsArchivePath $skillsChecksumPath
         } catch {
-            if ($_.Exception.Message -like "Checksum verification failed*") {
-                throw
-            }
-            Write-Info "Skills checksum file not found; skipping checksum verification."
+            Fail "Skills checksum file not found: $skillsChecksumUrl"
         }
+        Verify-Checksum $skillsArchivePath $skillsChecksumPath
 
         Install-Skills $skillsArchivePath $AndaHome $tempDir
     }

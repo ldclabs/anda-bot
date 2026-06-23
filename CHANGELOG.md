@@ -4,6 +4,19 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.10.5] — 2026-06-23
+
+### Changed
+
+- **Version synchronized for the 0.10.5 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.5`.
+- **Homebrew formula publishing avoids embedding tap tokens in clone URLs**: tap clones and pushes now use a temporary `GIT_ASKPASS` helper with non-interactive Git prompts disabled.
+
+### Fixed
+
+- **Release downloads now require checksum verification**: CLI updates, auto-updates, Unix installs, Windows installs, launcher downloads, and bundled-skill installs now fail if remote `.sha256` files or local SHA-256 tooling are unavailable instead of silently skipping integrity checks.
+- **Lark webhook token validation rejects missing configured tokens**: incoming events are now forbidden unless the configured verification token is present and matches, preventing token-less spoofed events from being processed.
+- **Personal skills keep their identity when shadowing bundled skills**: personal skills with the same name as bundled skills stay under `personal:*` identity while still honoring old `legacy:*` disabled manifest entries.
+
 ## [0.10.4] — 2026-06-22
 
 ### Added

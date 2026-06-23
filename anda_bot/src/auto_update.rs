@@ -393,22 +393,35 @@ async fn download_release_asset(
     asset_name: &str,
     destination: &Path,
 ) -> Result<String, BoxError> {
+    let base_url = updater::release_download_base_url(latest_tag);
+    download_release_asset_from_base_url(client, &base_url, asset_name, destination).await
+}
+
+async fn download_release_asset_from_base_url(
+    client: &reqwest::Client,
+    base_url: &str,
+    asset_name: &str,
+    destination: &Path,
+) -> Result<String, BoxError> {
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let base_url = updater::release_download_base_url(latest_tag);
     let asset_url = format!("{base_url}/{asset_name}");
     let checksum_url = format!("{asset_url}.sha256");
     let temp_path = updater::temporary_download_path(asset_name);
     let actual_hash = updater::download_binary(client, &asset_url, &temp_path).await?;
 
-    match updater::fetch_expected_checksum(client, &checksum_url).await? {
-        Some(expected_hash) if expected_hash != actual_hash => {
+    let expected_hash = match updater::fetch_expected_checksum(client, &checksum_url).await {
+        Ok(expected_hash) => expected_hash,
+        Err(err) => {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(format!("Checksum verification failed for {asset_name}").into());
+            return Err(err);
         }
-        Some(_) | None => {}
+    };
+    if expected_hash != actual_hash {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!("Checksum verification failed for {asset_name}").into());
     }
 
     if tokio::fs::rename(&temp_path, destination).await.is_err() {
@@ -516,7 +529,19 @@ mod tests {
     }
 
     use anda_db::{database::DBConfig, storage::StorageConfig};
+    use axum::{Router, routing::get};
     use object_store::memory::InMemory;
+
+    use crate::util::http_client::new_reqwest_client;
+
+    async fn spawn_mock(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
 
     async fn test_updater() -> AutoUpdater {
         let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
@@ -649,6 +674,30 @@ mod tests {
         let expected = write_file(&path, b"hello anda update");
         assert_eq!(sha256_file(&path).await.unwrap(), expected);
         assert!(sha256_file(&dir.path().join("missing")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn download_release_asset_requires_remote_checksum() {
+        let app = Router::new().route(
+            "/anda-macos-arm64",
+            get(|| async { (axum::http::StatusCode::OK, "new-binary") }),
+        );
+        let base = spawn_mock(app).await;
+        let client = new_reqwest_client();
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("anda-macos-arm64");
+
+        let err =
+            download_release_asset_from_base_url(&client, &base, "anda-macos-arm64", &destination)
+                .await
+                .map(|_| ())
+                .unwrap_err();
+
+        assert!(
+            err.to_string().contains("Checksum file not found"),
+            "got: {err}"
+        );
+        assert!(!destination.exists());
     }
 
     #[tokio::test]

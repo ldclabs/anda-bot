@@ -169,7 +169,18 @@ if [ -n "${HOMEBREW_TAP_DIR:-}" ]; then
 else
     [ -n "${HOMEBREW_TAP_TOKEN:-}" ] || error "Set HOMEBREW_TAP_TOKEN or HOMEBREW_TAP_DIR to publish the formula"
     TAP_DIR="${TMPDIR}/tap"
-    git clone --branch "$TAP_BRANCH" "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO}.git" "$TAP_DIR"
+    TAP_ASKPASS="${TMPDIR}/git-askpass.sh"
+    cat > "$TAP_ASKPASS" <<'EOF'
+#!/bin/sh
+case "$1" in
+    *Username*) printf '%s\n' "x-access-token" ;;
+    *Password*) printf '%s\n' "${HOMEBREW_TAP_TOKEN:?}" ;;
+    *) printf '\n' ;;
+esac
+EOF
+    chmod 700 "$TAP_ASKPASS"
+    GIT_ASKPASS="$TAP_ASKPASS" GIT_TERMINAL_PROMPT=0 \
+        git clone --branch "$TAP_BRANCH" "https://github.com/${TAP_REPO}.git" "$TAP_DIR"
 fi
 
 mkdir -p "${TAP_DIR}/$(dirname "$FORMULA_PATH")"
@@ -187,7 +198,12 @@ git -C "$TAP_DIR" add "$FORMULA_PATH"
 git -C "$TAP_DIR" commit -m "Update ${FORMULA_NAME} formula to ${TAG}"
 
 if [ "${PUSH:-1}" = "1" ]; then
-    git -C "$TAP_DIR" push origin "HEAD:${TAP_BRANCH}"
+    if [ -n "${TAP_ASKPASS:-}" ]; then
+        GIT_ASKPASS="$TAP_ASKPASS" GIT_TERMINAL_PROMPT=0 \
+            git -C "$TAP_DIR" push origin "HEAD:${TAP_BRANCH}"
+    else
+        git -C "$TAP_DIR" push origin "HEAD:${TAP_BRANCH}"
+    fi
     info "Published ${FORMULA_PATH} to ${TAP_REPO} ${TAP_BRANCH}."
 else
     info "Updated ${FORMULA_PATH} in ${TAP_DIR}; PUSH=0 so changes were not pushed."
