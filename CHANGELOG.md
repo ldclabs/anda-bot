@@ -4,6 +4,13 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.10.6] — 2026-06-24
+
+### Changed
+
+- **Version synchronized for the 0.10.6 daemon release**: updated the `anda_bot` crate and Cargo lock metadata to advertise `0.10.6`.
+- **Native shell commands receive a richer default PATH on Unix-like systems**: command execution now augments PATH with common tool directories such as the Anda binary directory, `~/.local/bin`, `~/.cargo/bin`, Homebrew paths, and standard system paths while preserving existing entries and avoiding duplicates.
+
 ## [0.10.5] — 2026-06-23
 
 ### Changed
