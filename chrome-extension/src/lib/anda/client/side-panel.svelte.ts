@@ -613,6 +613,7 @@ export class AndaSidePanelClient extends EventTarget {
     actionId: string
     approve?: boolean
     choiceId?: string
+    choiceText?: string
   }): Promise<ActionApiOutput> {
     if (!this.settings.token) {
       this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
@@ -623,7 +624,8 @@ export class AndaSidePanelClient extends EventTarget {
       type: 'RespondAction',
       action_id: input.actionId,
       approve: input.approve ?? null,
-      choice_id: input.choiceId ?? null
+      choice_id: input.choiceId ?? null,
+      choice_text: input.choiceText ?? null
     })
     this.activeChannel?.applyActionResponse(output)
     this.activeChannel?.wakePolling()

@@ -344,6 +344,12 @@
   "actionDeny": {
     "message": "Refuser"
   },
+  "actionChoiceInputPlaceholder": {
+    "message": "Saisissez votre réponse"
+  },
+  "actionChoiceSubmit": {
+    "message": "Envoyer"
+  },
   "actionFailed": {
     "message": "Échec de l’action"
   },

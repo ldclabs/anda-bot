@@ -344,6 +344,12 @@
   "actionDeny": {
     "message": "拒绝"
   },
+  "actionChoiceInputPlaceholder": {
+    "message": "填写内容"
+  },
+  "actionChoiceSubmit": {
+    "message": "提交"
+  },
   "actionFailed": {
     "message": "操作失败"
   },

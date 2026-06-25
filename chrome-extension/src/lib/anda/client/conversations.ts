@@ -552,10 +552,23 @@ function choicesFromJson(value: unknown): ChatActionChoice[] | undefined {
       id,
       label,
       value: nullableStringFromJson(raw.value),
-      description: nullableStringFromJson(raw.description)
+      description: nullableStringFromJson(raw.description),
+      input: choiceInputFromJson(raw.input)
     })
   }
   return choices.length ? choices : undefined
+}
+
+function choiceInputFromJson(value: unknown): ChatActionChoice['input'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  return {
+    placeholder: nullableStringFromJson(raw.placeholder),
+    required: booleanFromJson(raw.required) ?? false,
+    multiline: booleanFromJson(raw.multiline) ?? false
+  }
 }
 
 function stringFromJson(value: unknown): string | undefined {

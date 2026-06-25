@@ -472,6 +472,7 @@ mod tests {
             caller.to_string(),
             session_id.to_string(),
             conversation_id,
+            Arc::new(anda_engine::model::Models::default()),
         )
     }
 

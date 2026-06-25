@@ -456,6 +456,7 @@ impl Engines {
             vec![Arc::new(BrainSleepIdleHook::new(brain_client.clone()))];
         let bot = Arc::new(AndaBot::new(
             brain_client.clone(),
+            cfg.models.clone(),
             cfg.home_dir.clone(),
             conversations_tool.clone(),
             resource_store.clone(),
@@ -1274,6 +1275,7 @@ model:
         let bridge = Arc::new(BrowserBridge::new());
         Arc::new(AndaBot::new(
             brain_client,
+            Arc::new(anda_engine::model::Models::default()),
             home,
             conversations_tool,
             resource_store,

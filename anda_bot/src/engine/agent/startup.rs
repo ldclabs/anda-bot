@@ -228,6 +228,7 @@ impl AndaBot {
                 conversation.user.to_string(),
                 session_id,
                 conversation_id,
+                self.inner.models.clone(),
             ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),

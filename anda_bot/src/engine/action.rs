@@ -1,10 +1,11 @@
 use anda_core::{
-    BoxError, ContentPart, FunctionDefinition, Message, Resource, StateFeatures, Tool, ToolOutput,
-    Usage,
+    BoxError, CompletionRequest, ContentPart, FunctionDefinition, Message, ModelEffort,
+    RequestMeta, Resource, StateFeatures, Tool, ToolOutput, Usage,
 };
 use anda_engine::{
     context::BaseCtx,
     extension::shell::{ExecArgs, ShellTool},
+    model::Models,
     unix_ms,
 };
 use ic_auth_types::Xid;
@@ -160,6 +161,7 @@ pub(crate) struct ActionSession {
     caller: String,
     session_id: String,
     conversation_id: Arc<std::sync::atomic::AtomicU64>,
+    models: Arc<Models>,
 }
 
 impl ActionSession {
@@ -169,6 +171,7 @@ impl ActionSession {
         caller: String,
         session_id: String,
         conversation_id: Arc<std::sync::atomic::AtomicU64>,
+        models: Arc<Models>,
     ) -> Self {
         Self {
             runtime,
@@ -176,6 +179,7 @@ impl ActionSession {
             caller,
             session_id,
             conversation_id,
+            models,
         }
     }
 
@@ -192,7 +196,16 @@ impl ActionSession {
             .get_extra_as::<String>("workspace")
             .unwrap_or_default();
         let approval_mode = ApprovalMode::from_ctx(ctx);
-        let approval_reason = match shell_approval_decision(&args, approval_mode, &workspace) {
+        let language_hint = shell_risk_language_hint(ctx.meta());
+        let approval_reason = match shell_approval_decision_with_model(
+            &args,
+            approval_mode,
+            &workspace,
+            self.models.as_ref(),
+            language_hint.as_deref(),
+        )
+        .await
+        {
             ApprovalDecision::Allow => return Ok(args),
             ApprovalDecision::Ask(reason) => reason,
         };
@@ -405,13 +418,35 @@ impl PendingActionKind {
                 let Some(choice) = choices.iter().find(|choice| choice.id == choice_id) else {
                     return Err("unknown choice_id".into());
                 };
+                let choice_text = if choice.input.is_some() {
+                    args.choice_text
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                } else {
+                    None
+                };
+                if choice.input.as_ref().is_some_and(|input| input.required)
+                    && choice_text.is_none()
+                {
+                    return Err("choice_text is required".into());
+                }
+                let value = choice_text
+                    .or(choice.value.as_deref())
+                    .unwrap_or(&choice.label);
+                let mut payload = json!({
+                    "choice_id": choice_id,
+                    "label": &choice.label,
+                    "value": value,
+                });
+                if let Some(choice_text) = choice_text
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("choice_text".to_string(), choice_text.into());
+                }
                 Ok(ActionResponse {
                     status: ActionStatus::Selected,
-                    payload: json!({
-                        "choice_id": choice_id,
-                        "label": &choice.label,
-                        "value": choice.value.as_deref().unwrap_or(&choice.label),
-                    }),
+                    payload,
                 })
             }
         }
@@ -429,6 +464,161 @@ fn merge_approval_payload(payload: Value, approved: bool) -> Value {
             "value": value,
         }),
     }
+}
+
+async fn shell_approval_decision_with_model(
+    args: &ExecArgs,
+    mode: ApprovalMode,
+    workspace: &str,
+    models: &Models,
+    language_hint: Option<&str>,
+) -> ApprovalDecision {
+    match mode {
+        ApprovalMode::FullAccess => return ApprovalDecision::Allow,
+        ApprovalMode::RequestApproval => {
+            return ApprovalDecision::Ask("approval mode requires confirmation".to_string());
+        }
+        ApprovalMode::OnRisk | ApprovalMode::Custom => {}
+    }
+
+    let command = args.command.trim();
+    if command.is_empty() {
+        return ApprovalDecision::Ask("empty command".to_string());
+    }
+
+    match shell_approval_decision(args, mode, workspace) {
+        ApprovalDecision::Allow => return ApprovalDecision::Allow,
+        ApprovalDecision::Ask(_) => {}
+    }
+
+    match model_shell_approval_decision(args, workspace, models, language_hint).await {
+        Ok(decision) => decision,
+        Err(err) => {
+            log::warn!(
+                "Shell approval risk model unavailable or invalid; falling back to static policy: {err:?}"
+            );
+            shell_approval_decision(args, mode, workspace)
+        }
+    }
+}
+
+async fn model_shell_approval_decision(
+    args: &ExecArgs,
+    workspace: &str,
+    models: &Models,
+    language_hint: Option<&str>,
+) -> Result<ApprovalDecision, BoxError> {
+    let Some(model) = shell_risk_model(models) else {
+        return Err("no model available for shell risk classification".into());
+    };
+
+    let request = json!({
+        "command": args.command,
+        "workspace": workspace,
+        "background": args.background,
+        "env_keys": args.env_keys,
+        "user_language_hint": language_hint.unwrap_or("unknown"),
+    });
+    let output = model
+        .completion(CompletionRequest {
+            instructions: concat!(
+                "You are a local shell command risk classifier for an AI agent approval system. ",
+                "Decide whether the command can run without asking the user. ",
+                "Return strict JSON only with fields `decision` and `reason`. ",
+                "`decision` must be `allow` or `ask`. ",
+                "Default to `allow` for ordinary local development work confined to the active workspace, ",
+                "including reading files, searching, editing or generating project files, formatting, running tests/builds, ",
+                "writing caches or logs, and local git operations like add/commit/status/diff/log/show. ",
+                "Use `ask` only for high-risk operations: destructive or hard-to-reverse deletes/overwrites, ",
+                "git reset --hard/clean or history rewrites, publishing/pushing/uploading data, network downloads that execute code, ",
+                "installing or changing global/system software, sudo/admin/system-service changes, broad permission changes, ",
+                "touching credentials/secrets/keychains, paths outside the workspace, or background/long-running processes. ",
+                "Do not mark shell syntax like &&, pipes, or redirection as risky by itself; judge the actual operations. ",
+                "The `reason` is shown directly to the user only when `decision` is `ask`; write it in the user's current conversation language or the supplied `user_language_hint`. ",
+                "Make the reason plain and non-technical, explaining the real-world risk without assuming the user understands shell commands."
+            )
+            .to_string(),
+            content: vec![ContentPart::Text {
+                text: request.to_string(),
+            }],
+            temperature: Some(0.0),
+            output_schema: Some(shell_risk_output_schema()),
+            effort: Some(ModelEffort::Minimal),
+            ..Default::default()
+        })
+        .await?;
+
+    parse_shell_risk_decision(&output.content)
+}
+
+fn shell_risk_model(models: &Models) -> Option<anda_engine::model::Model> {
+    models
+        .get("lite")
+        .or_else(|| models.get("flash"))
+        .or_else(|| models.get_model())
+}
+
+fn shell_risk_language_hint(meta: &RequestMeta) -> Option<String> {
+    ["ui_language", "language", "locale", "lang"]
+        .iter()
+        .find_map(|key| meta.get_extra_as::<String>(key))
+        .map(|hint| hint.trim().to_string())
+        .filter(|hint| !hint.is_empty())
+}
+
+fn shell_risk_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "decision": {
+                "type": "string",
+                "enum": ["allow", "ask"]
+            },
+            "reason": {
+                "type": "string"
+            }
+        },
+        "required": ["decision", "reason"],
+        "additionalProperties": false
+    })
+}
+
+fn parse_shell_risk_decision(content: &str) -> Result<ApprovalDecision, BoxError> {
+    let Some(json_text) = extract_json_object(content) else {
+        return Err("shell risk model did not return JSON".into());
+    };
+    let value: Value = serde_json::from_str(json_text)?;
+    let decision = value
+        .get("decision")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let reason = value
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("model classified the command as risky");
+
+    match decision.as_str() {
+        "allow" => Ok(ApprovalDecision::Allow),
+        "ask" => Ok(ApprovalDecision::Ask(reason.to_string())),
+        _ => Err(format!("unknown shell risk decision: {decision}").into()),
+    }
+}
+
+fn extract_json_object(content: &str) -> Option<&str> {
+    let trimmed = content.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return Some(trimmed);
+    }
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(&trimmed[start..=end])
 }
 
 fn shell_approval_decision(
@@ -675,13 +865,12 @@ fn normalize_path_for_compare(path: &str) -> String {
     while path.len() > 1 && path.ends_with('/') {
         path.pop();
     }
-    if path
-        .as_bytes()
-        .get(0..2)
-        .is_some_and(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':')
+    if path.starts_with("//")
+        || path
+            .as_bytes()
+            .get(0..2)
+            .is_some_and(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':')
     {
-        path = path.to_ascii_lowercase();
-    } else if path.starts_with("//") {
         path = path.to_ascii_lowercase();
     }
     path
@@ -807,6 +996,8 @@ pub(crate) enum ActionsToolArgs {
         approve: Option<bool>,
         #[serde(default)]
         choice_id: Option<String>,
+        #[serde(default)]
+        choice_text: Option<String>,
     },
 }
 
@@ -815,6 +1006,7 @@ pub(crate) struct ActionResponseArgs {
     pub(crate) action_id: String,
     pub(crate) approve: Option<bool>,
     pub(crate) choice_id: Option<String>,
+    pub(crate) choice_text: Option<String>,
 }
 
 impl From<ActionsToolArgs> for ActionResponseArgs {
@@ -824,10 +1016,12 @@ impl From<ActionsToolArgs> for ActionResponseArgs {
                 action_id,
                 approve,
                 choice_id,
+                choice_text,
             } => Self {
                 action_id,
                 approve,
                 choice_id,
+                choice_text,
             },
         }
     }
@@ -910,6 +1104,18 @@ pub(crate) struct UserChoiceOption {
     pub value: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub input: Option<UserChoiceInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct UserChoiceInput {
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub multiline: bool,
 }
 
 pub(crate) struct AskUserChoiceTool;
@@ -927,7 +1133,7 @@ impl Tool<BaseCtx> for AskUserChoiceTool {
     }
 
     fn description(&self) -> String {
-        "Ask the user to choose one option from a small set of suggested next actions. Use this when user intent is ambiguous or confirmation should be collected with buttons instead of free-form text.".to_string()
+        "Ask the user to choose one option from a small set of suggested next actions. Use this when user intent is ambiguous or confirmation should be collected with buttons instead of free-form text. A choice can include an input field when the selected option needs the user to type details.".to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -979,9 +1185,13 @@ fn actions_tool_parameters() -> Value {
             "choice_id": {
                 "type": ["string", "null"],
                 "description": "For choice cards, the selected choice id. Null for shell approvals."
+            },
+            "choice_text": {
+                "type": ["string", "null"],
+                "description": "For choice cards with an input field, the user-entered text. Null otherwise."
             }
         },
-        "required": ["type", "action_id", "approve", "choice_id"],
+        "required": ["type", "action_id", "approve", "choice_id", "choice_text"],
         "additionalProperties": false
     })
 }
@@ -1020,12 +1230,32 @@ fn user_choice_tool_parameters() -> Value {
                         "description": {
                             "type": ["string", "null"],
                             "description": "Optional short helper text shown under the label."
+                        },
+                        "input": {
+                            "type": ["object", "null"],
+                            "description": "Input configuration when selecting this option should ask the user to type extra content. Use null for a plain button option.",
+                            "properties": {
+                                "placeholder": {
+                                    "type": ["string", "null"],
+                                    "description": "Optional placeholder shown in the text field."
+                                },
+                                "required": {
+                                    "type": "boolean",
+                                    "description": "Whether the user must type non-empty text before selecting this option."
+                                },
+                                "multiline": {
+                                    "type": "boolean",
+                                    "description": "Whether to show a multiline text area instead of a single-line input."
+                                }
+                            },
+                            "required": ["placeholder", "required", "multiline"],
+                            "additionalProperties": false
                         }
                     },
-                    "required": ["id", "label", "value", "description"],
+                    "required": ["id", "label", "value", "description", "input"],
                     "additionalProperties": false
                 },
-                "description": "The choices to show. Keep this list small and concrete."
+                "description": "The choices to show. Keep this list small and concrete. Set `input` when an option needs the user to fill in details before submitting."
             }
         },
         "required": ["title", "message", "choices"],
@@ -1196,6 +1426,32 @@ pub(crate) fn apply_action_resolution_to_message(
 mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
+    use anda_core::{AgentOutput, BoxPinFut};
+    use anda_engine::model::{CompletionFeaturesDyn, Model};
+    use std::sync::Mutex as StdMutex;
+
+    struct RecordingCompleter {
+        requests: Arc<StdMutex<Vec<CompletionRequest>>>,
+        response: String,
+        name: &'static str,
+    }
+
+    impl CompletionFeaturesDyn for RecordingCompleter {
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            self.requests.lock().unwrap().push(req);
+            let content = self.response.clone();
+            Box::pin(async move {
+                Ok(AgentOutput {
+                    content,
+                    ..Default::default()
+                })
+            })
+        }
+
+        fn model_name(&self) -> String {
+            self.name.to_string()
+        }
+    }
 
     #[test]
     fn action_tool_schemas_are_strict() {
@@ -1265,6 +1521,7 @@ mod tests {
                 label: "A".to_string(),
                 value: None,
                 description: None,
+                input: None,
             }],
         };
         assert!(validate_choice_args(&args).is_ok());
@@ -1278,6 +1535,7 @@ mod tests {
                 label: "Option A".to_string(),
                 value: Some("value-a".to_string()),
                 description: None,
+                input: None,
             }],
         };
 
@@ -1286,6 +1544,7 @@ mod tests {
                 action_id: "act_1".to_string(),
                 approve: None,
                 choice_id: Some("a".to_string()),
+                choice_text: None,
             })
             .unwrap();
 
@@ -1293,6 +1552,69 @@ mod tests {
         assert_eq!(response.payload["choice_id"], "a");
         assert_eq!(response.payload["label"], "Option A");
         assert_eq!(response.payload["value"], "value-a");
+    }
+
+    #[test]
+    fn choice_response_returns_entered_text() {
+        let kind = PendingActionKind::Choice {
+            choices: vec![UserChoiceOption {
+                id: "custom".to_string(),
+                label: "Custom".to_string(),
+                value: None,
+                description: None,
+                input: Some(UserChoiceInput {
+                    placeholder: Some("Describe it".to_string()),
+                    required: true,
+                    multiline: true,
+                }),
+            }],
+        };
+
+        let response = kind
+            .response_from_args(&ActionResponseArgs {
+                action_id: "act_1".to_string(),
+                approve: None,
+                choice_id: Some("custom".to_string()),
+                choice_text: Some("Please focus on the UI state.".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(response.status, ActionStatus::Selected);
+        assert_eq!(response.payload["choice_id"], "custom");
+        assert_eq!(response.payload["label"], "Custom");
+        assert_eq!(response.payload["value"], "Please focus on the UI state.");
+        assert_eq!(
+            response.payload["choice_text"],
+            "Please focus on the UI state."
+        );
+    }
+
+    #[test]
+    fn choice_response_rejects_missing_required_text() {
+        let kind = PendingActionKind::Choice {
+            choices: vec![UserChoiceOption {
+                id: "custom".to_string(),
+                label: "Custom".to_string(),
+                value: None,
+                description: None,
+                input: Some(UserChoiceInput {
+                    placeholder: None,
+                    required: true,
+                    multiline: false,
+                }),
+            }],
+        };
+
+        let err = kind
+            .response_from_args(&ActionResponseArgs {
+                action_id: "act_1".to_string(),
+                approve: None,
+                choice_id: Some("custom".to_string()),
+                choice_text: Some("   ".to_string()),
+            })
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "choice_text is required");
     }
 
     #[test]
@@ -1309,6 +1631,7 @@ mod tests {
                 action_id: "act_1".to_string(),
                 approve: Some(true),
                 choice_id: None,
+                choice_text: None,
             })
             .unwrap();
 
@@ -1329,6 +1652,7 @@ mod tests {
                 action_id: "act_1".to_string(),
                 approve: None,
                 choice_id: None,
+                choice_text: None,
             })
             .unwrap_err();
 
@@ -1351,6 +1675,7 @@ mod tests {
                         label: "Option A".to_string(),
                         value: None,
                         description: None,
+                        input: None,
                     }],
                 },
                 event_sender,
@@ -1366,6 +1691,7 @@ mod tests {
                     action_id: action_id.clone(),
                     approve: None,
                     choice_id: Some("missing".to_string()),
+                    choice_text: None,
                 },
             )
             .await
@@ -1382,6 +1708,7 @@ mod tests {
                     action_id: action_id.clone(),
                     approve: None,
                     choice_id: Some("a".to_string()),
+                    choice_text: None,
                 },
             )
             .await
@@ -1403,6 +1730,160 @@ mod tests {
         };
         assert_eq!(action_id, "act_retry");
         assert_eq!(status, ActionStatus::Selected);
+    }
+
+    #[tokio::test]
+    async fn shell_policy_uses_lite_model_for_complex_shell_syntax() {
+        let lite_requests = Arc::new(StdMutex::new(Vec::new()));
+        let flash_requests = Arc::new(StdMutex::new(Vec::new()));
+        let models = Models::default();
+        models.set(
+            "flash".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: flash_requests.clone(),
+                response: r#"{"decision":"ask","reason":"flash fallback"}"#.to_string(),
+                name: "flash-recorder",
+            })),
+        );
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: lite_requests.clone(),
+                response: r#"{"decision":"allow","reason":"read-only inspection"}"#.to_string(),
+                name: "lite-recorder",
+            })),
+        );
+        let args = ExecArgs {
+            command: "pwd && rg approval anda_bot/src".to_string(),
+            ..Default::default()
+        };
+
+        let decision = shell_approval_decision_with_model(
+            &args,
+            ApprovalMode::OnRisk,
+            "/tmp/workspace",
+            &models,
+            Some("zh-CN"),
+        )
+        .await;
+
+        assert_eq!(decision, ApprovalDecision::Allow);
+        let lite_requests = lite_requests.lock().unwrap();
+        assert_eq!(lite_requests.len(), 1);
+        assert_eq!(flash_requests.lock().unwrap().len(), 0);
+        assert!(
+            lite_requests[0]
+                .instructions
+                .contains("Do not mark shell syntax")
+        );
+        assert!(
+            lite_requests[0]
+                .instructions
+                .contains("ordinary local development work")
+        );
+        assert!(
+            lite_requests[0]
+                .instructions
+                .contains("current conversation language")
+        );
+        match &lite_requests[0].content[0] {
+            ContentPart::Text { text } => {
+                assert!(text.contains("&&"));
+                assert!(text.contains(r#""user_language_hint":"zh-CN""#));
+            }
+            other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn shell_policy_uses_plain_localized_model_reason_for_high_risk_decision() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let models = Models::default();
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests,
+                response:
+                    r#"{"decision":"ask","reason":"这个命令会删除项目文件，删除后可能很难恢复。"}"#
+                        .to_string(),
+                name: "lite-recorder",
+            })),
+        );
+        let args = ExecArgs {
+            command: "rm -rf anda_bot/src/engine".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            shell_approval_decision_with_model(
+                &args,
+                ApprovalMode::OnRisk,
+                "/tmp/workspace",
+                &models,
+                Some("zh-CN")
+            )
+            .await,
+            ApprovalDecision::Ask("这个命令会删除项目文件，删除后可能很难恢复。".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_policy_allows_ordinary_workspace_writes_when_model_allows() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let models = Models::default();
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests,
+                response: r#"{"decision":"allow","reason":"ordinary workspace write"}"#.to_string(),
+                name: "lite-recorder",
+            })),
+        );
+        let args = ExecArgs {
+            command: "git add anda_bot/src/engine/action.rs".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            shell_approval_decision_with_model(
+                &args,
+                ApprovalMode::OnRisk,
+                "/tmp/workspace",
+                &models,
+                None
+            )
+            .await,
+            ApprovalDecision::Allow
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_policy_falls_back_to_static_rules_when_model_output_is_invalid() {
+        let models = Models::default();
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: Arc::new(StdMutex::new(Vec::new())),
+                response: "not json".to_string(),
+                name: "lite-recorder",
+            })),
+        );
+        let args = ExecArgs {
+            command: "pwd && rg approval anda_bot/src".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            shell_approval_decision_with_model(
+                &args,
+                ApprovalMode::OnRisk,
+                "/tmp/workspace",
+                &models,
+                None
+            )
+            .await,
+            ApprovalDecision::Ask("complex shell syntax".to_string())
+        );
     }
 
     #[test]

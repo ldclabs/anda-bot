@@ -62,6 +62,13 @@ export interface ChatActionChoice {
   label: string
   value?: string | null
   description?: string | null
+  input?: ChatActionChoiceInput | null
+}
+
+export interface ChatActionChoiceInput {
+  placeholder?: string | null
+  required?: boolean
+  multiline?: boolean
 }
 
 export interface ChatActionTool {

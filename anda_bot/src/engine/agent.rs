@@ -19,6 +19,7 @@ use anda_engine::{
     },
     hook::DynAgentHook,
     memory::{Conversation, ConversationRef, ConversationStatus},
+    model::Models,
     subagent::SubAgentManager,
     unix_ms,
 };
@@ -78,6 +79,7 @@ pub struct AndaBot {
 
 struct AndaBotInner {
     brain: brain::Client,
+    models: Arc<Models>,
     actions: Arc<ActionRuntime>,
     conversations: Arc<ConversationsTool>,
     resource_store: Arc<ResourceStore>,
@@ -187,6 +189,7 @@ impl AndaBot {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         brain: brain::Client,
+        models: Arc<Models>,
         home_dir: PathBuf,
         conversations: Arc<ConversationsTool>,
         resource_store: Arc<ResourceStore>,
@@ -214,6 +217,7 @@ impl AndaBot {
         Self {
             inner: Arc::new(AndaBotInner {
                 brain,
+                models,
                 actions,
                 home_dir,
                 conversations,
@@ -982,6 +986,7 @@ impl Agent<AgentCtx> for AndaBot {
                 caller.to_string(),
                 session_id,
                 conversation_id,
+                self.inner.models.clone(),
             ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
@@ -1438,6 +1443,7 @@ mod tests {
 
         let bot = Arc::new(AndaBot::new(
             brain_client.clone(),
+            Arc::new(Models::default()),
             home.clone(),
             conversations_tool.clone(),
             resource_store.clone(),
@@ -1759,6 +1765,7 @@ mod tests {
         let skills = SkillLibrary::for_test(home.clone());
         Arc::new(AndaBot::new(
             brain_client,
+            Arc::new(Models::default()),
             home,
             conversations_tool,
             resource_store,

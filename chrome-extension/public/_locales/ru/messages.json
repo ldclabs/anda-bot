@@ -344,6 +344,12 @@
   "actionDeny": {
     "message": "Отклонить"
   },
+  "actionChoiceInputPlaceholder": {
+    "message": "Введите ответ"
+  },
+  "actionChoiceSubmit": {
+    "message": "Отправить"
+  },
   "actionFailed": {
     "message": "Действие не выполнено"
   },

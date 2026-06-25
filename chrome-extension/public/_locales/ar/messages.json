@@ -344,6 +344,12 @@
   "actionDeny": {
     "message": "رفض"
   },
+  "actionChoiceInputPlaceholder": {
+    "message": "اكتب ردك"
+  },
+  "actionChoiceSubmit": {
+    "message": "إرسال"
+  },
   "actionFailed": {
     "message": "فشل الإجراء"
   },

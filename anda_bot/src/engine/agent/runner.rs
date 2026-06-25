@@ -1203,7 +1203,7 @@ mod tests {
             true
         );
 
-        let mut runner_history = vec![
+        let mut runner_history = [
             Message {
                 role: "user".to_string(),
                 content: vec!["hello".to_string().into()],
@@ -1294,6 +1294,7 @@ mod tests {
         let bridge = Arc::new(BrowserBridge::new());
         AndaBot::new(
             brain_client,
+            Arc::new(anda_engine::model::Models::default()),
             std::env::temp_dir(),
             conversations_tool,
             resource_store,
@@ -1374,6 +1375,7 @@ mod tests {
 
         AndaBot::new(
             brain_client,
+            Arc::new(anda_engine::model::Models::default()),
             std::env::temp_dir(),
             conversations_tool,
             resource_store,
@@ -1409,6 +1411,7 @@ mod tests {
                 "caller".to_string(),
                 session_id.to_string(),
                 conversation_id,
+                Arc::new(anda_engine::model::Models::default()),
             ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),

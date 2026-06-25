@@ -344,6 +344,12 @@
   "actionDeny": {
     "message": "Deny"
   },
+  "actionChoiceInputPlaceholder": {
+    "message": "Type your answer"
+  },
+  "actionChoiceSubmit": {
+    "message": "Submit"
+  },
   "actionFailed": {
     "message": "Action failed"
   },

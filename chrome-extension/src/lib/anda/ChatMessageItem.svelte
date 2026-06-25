@@ -6,6 +6,7 @@
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import type {
     ChatAction,
+    ChatActionChoice,
     ChatActionDetail,
     ChatAttachment,
     ChatMessage
@@ -51,6 +52,7 @@
   let downloadingAttachmentIds = $state(new Set<string>())
   let respondingActionIds = $state(new Set<string>())
   let actionErrors = $state(new Map<string, string>())
+  let choiceInputValues = $state(new Map<string, string>())
   let resourceBlobs = $state(new Map<number, string>())
   let resourceObjectUrls = $state(new Map<string, string>())
   let loadingResourceIds = $state(new Set<number>())
@@ -369,6 +371,62 @@
     return action.status === 'selected' && actionChoiceId(action) === choiceId
   }
 
+  function actionChoiceText(action: ChatAction): string {
+    const response =
+      action.response && typeof action.response === 'object' && !Array.isArray(action.response)
+        ? action.response
+        : undefined
+    const choiceText = response?.choice_text
+    if (typeof choiceText === 'string') {
+      return choiceText
+    }
+    const value = response?.value
+    const selectedChoice = action.choices?.find((choice) => choice.id === actionChoiceId(action))
+    if (
+      selectedChoice?.input &&
+      typeof value === 'string' &&
+      value &&
+      value !== selectedChoice.label &&
+      value !== selectedChoice.value
+    ) {
+      return value
+    }
+    return ''
+  }
+
+  function actionChoiceInputKey(action: ChatAction, choiceId: string): string {
+    return `${action.id}:${choiceId}`
+  }
+
+  function choiceInputValue(action: ChatAction, choiceId: string): string {
+    return choiceInputValues.get(actionChoiceInputKey(action, choiceId)) || ''
+  }
+
+  function setChoiceInputValue(action: ChatAction, choiceId: string, value: string) {
+    const next = new Map(choiceInputValues)
+    next.set(actionChoiceInputKey(action, choiceId), value)
+    choiceInputValues = next
+  }
+
+  function choiceHasInput(choice: ChatActionChoice): boolean {
+    return Boolean(choice.input)
+  }
+
+  function choiceInputRequired(choice: ChatActionChoice): boolean {
+    return Boolean(choice.input?.required)
+  }
+
+  function choiceInputPlaceholder(choice: ChatActionChoice): string {
+    return choice.input?.placeholder || getMessage('actionChoiceInputPlaceholder')
+  }
+
+  function choiceInputDisabled(action: ChatAction, choice: ChatActionChoice): boolean {
+    return (
+      respondingActionIds.has(action.id) ||
+      (choiceInputRequired(choice) && !choiceInputValue(action, choice.id).trim())
+    )
+  }
+
   function actionPending(action: ChatAction): boolean {
     return action.status === 'pending'
   }
@@ -504,19 +562,27 @@
     }
   }
 
-  async function selectChoiceAction(action: ChatAction, choiceId: string) {
+  async function selectChoiceAction(action: ChatAction, choiceId: string, choiceText?: string) {
     if (!actionPending(action) || respondingActionIds.has(action.id)) {
       return
     }
     setActionResponding(action.id, true)
     setActionError(action.id, null)
     try {
-      await andaClient.respondAction({ actionId: action.id, choiceId })
+      await andaClient.respondAction({ actionId: action.id, choiceId, choiceText })
     } catch (error) {
       setActionError(action.id, errorLabel(error))
     } finally {
       setActionResponding(action.id, false)
     }
+  }
+
+  function inputValueFromEvent(event: Event): string {
+    const target = event.currentTarget
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      return target.value
+    }
+    return ''
   }
 
   function attachmentSaveTitle(attachment: ChatAttachment): string {
@@ -944,25 +1010,81 @@
                   <div class="grid min-w-0 gap-1.5">
                     {#each action.choices as choice (choice.id)}
                       {#if actionPending(action)}
-                        <button
-                          type="button"
-                          class={buttonClass(
-                            'outline',
-                            'sm',
-                            'chat-action-choice-button h-auto min-w-0 justify-start whitespace-normal px-2 py-1.5 text-left'
-                          )}
-                          disabled={respondingActionIds.has(action.id)}
-                          onclick={() => selectChoiceAction(action, choice.id)}
-                        >
-                          <span class="min-w-0">
-                            <span class="block font-medium">{choice.label}</span>
-                            {#if choice.description}
-                              <span class="chat-action-meta block text-xs font-normal">
-                                {choice.description}
-                              </span>
+                        {#if choiceHasInput(choice)}
+                          <div class="chat-action-choice-input grid min-w-0 gap-1.5 rounded-md border px-2 py-1.5">
+                            <div class="min-w-0">
+                              <span class="block font-medium">{choice.label}</span>
+                              {#if choice.description}
+                                <span class="chat-action-meta block text-xs font-normal">
+                                  {choice.description}
+                                </span>
+                              {/if}
+                            </div>
+                            {#if choice.input?.multiline}
+                              <textarea
+                                class="chat-action-choice-input-control min-h-18 w-full resize-y rounded-md border px-2 py-1.5 text-xs leading-relaxed outline-hidden"
+                                value={choiceInputValue(action, choice.id)}
+                                placeholder={choiceInputPlaceholder(choice)}
+                                aria-label={choice.label}
+                                disabled={respondingActionIds.has(action.id)}
+                                rows="3"
+                                oninput={(event) =>
+                                  setChoiceInputValue(action, choice.id, inputValueFromEvent(event))}
+                              ></textarea>
+                            {:else}
+                              <input
+                                class="chat-action-choice-input-control w-full rounded-md border px-2 py-1.5 text-xs outline-hidden"
+                                type="text"
+                                value={choiceInputValue(action, choice.id)}
+                                placeholder={choiceInputPlaceholder(choice)}
+                                aria-label={choice.label}
+                                disabled={respondingActionIds.has(action.id)}
+                                oninput={(event) =>
+                                  setChoiceInputValue(action, choice.id, inputValueFromEvent(event))}
+                              />
                             {/if}
-                          </span>
-                        </button>
+                            <div class="flex justify-end">
+                              <button
+                                type="button"
+                                class={buttonClass('default', 'xs', 'chat-action-choice-submit')}
+                                disabled={choiceInputDisabled(action, choice)}
+                                onclick={() =>
+                                  selectChoiceAction(
+                                    action,
+                                    choice.id,
+                                    choiceInputValue(action, choice.id)
+                                  )}
+                              >
+                                {#if respondingActionIds.has(action.id)}
+                                  <LoaderCircle class="size-3 animate-spin" />
+                                {:else}
+                                  <Check class="size-3" />
+                                {/if}
+                                <span>{getMessage('actionChoiceSubmit')}</span>
+                              </button>
+                            </div>
+                          </div>
+                        {:else}
+                          <button
+                            type="button"
+                            class={buttonClass(
+                              'outline',
+                              'sm',
+                              'chat-action-choice-button h-auto min-w-0 justify-start whitespace-normal px-2 py-1.5 text-left'
+                            )}
+                            disabled={respondingActionIds.has(action.id)}
+                            onclick={() => selectChoiceAction(action, choice.id)}
+                          >
+                            <span class="min-w-0">
+                              <span class="block font-medium">{choice.label}</span>
+                              {#if choice.description}
+                                <span class="chat-action-meta block text-xs font-normal">
+                                  {choice.description}
+                                </span>
+                              {/if}
+                            </span>
+                          </button>
+                        {/if}
                       {:else}
                         <div
                           class="chat-action-choice-item flex min-w-0 items-start gap-2 rounded-md border px-2 py-1.5"
@@ -979,6 +1101,11 @@
                             {#if choice.description}
                               <span class="chat-action-meta block text-xs font-normal">
                                 {choice.description}
+                              </span>
+                            {/if}
+                            {#if actionChoiceSelected(action, choice.id) && actionChoiceText(action)}
+                              <span class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal whitespace-pre-wrap wrap-break-word">
+                                {actionChoiceText(action)}
                               </span>
                             {/if}
                           </span>
@@ -1290,6 +1417,33 @@
     border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
   }
 
+  .chat-action-choice-input {
+    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
+  }
+
+  .chat-action-choice-input-control {
+    border-color: var(--message-border, #e6e6e6);
+    background: var(--message-bg, #ffffff);
+    color: var(--message-text, #171717);
+  }
+
+  .chat-action-choice-input-control:focus {
+    border-color: #0f766e;
+    box-shadow: 0 0 0 2px color-mix(in srgb, #0f766e 22%, transparent);
+  }
+
+  .chat-action-choice-submit {
+    background: #047857;
+    color: #ffffff;
+  }
+
+  .chat-action-choice-text {
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 74%, var(--message-surface, #f7f7f7));
+    color: color-mix(in srgb, var(--message-text, #171717) 90%, transparent);
+  }
+
   .chat-action-choice-item {
     border-color: var(--message-border, #e6e6e6);
     background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, var(--message-surface, #f7f7f7));
@@ -1359,6 +1513,23 @@
   :global(.dark) .chat-action-error {
     background: rgba(127, 29, 29, 0.35);
     color: #fecaca;
+  }
+
+  :global(.dark) .chat-action-choice-input {
+    border-color: rgba(45, 212, 191, 0.24);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 76%, #064e3b);
+  }
+
+  :global(.dark) .chat-action-choice-input-control {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(15, 23, 42, 0.36);
+    color: var(--message-text, #f5f5f5);
+  }
+
+  :global(.dark) .chat-action-choice-text {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.28);
+    color: #d1fae5;
   }
 
   :global(.dark) .chat-action-choice-item {

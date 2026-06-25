@@ -6,12 +6,13 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    App, SECONDARY_PART_MAX_LINES,
-    input::input_separator_label,
-    markdown,
+    SECONDARY_PART_MAX_LINES, markdown,
     text::{compact_cjk_spacing, display_width, line_is_blank, normalize_newlines},
     theme,
 };
+
+#[cfg(test)]
+use super::{App, input::input_separator_label};
 
 #[cfg(test)]
 pub(super) fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {

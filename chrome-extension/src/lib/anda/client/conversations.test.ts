@@ -212,7 +212,19 @@ describe('normalizeMessage', () => {
                 id: 'ship',
                 label: 'Ship it',
                 value: null,
-                description: 'Use the current result'
+                description: 'Use the current result',
+                input: null
+              },
+              {
+                id: 'custom',
+                label: 'Custom answer',
+                value: null,
+                description: 'Tell Anda what to do',
+                input: {
+                  placeholder: 'Type instructions',
+                  required: true,
+                  multiline: true
+                }
               }
             ],
             created_at: 100,
@@ -243,6 +255,15 @@ describe('normalizeMessage', () => {
       id: 'ship',
       label: 'Ship it',
       description: 'Use the current result'
+    })
+    expect(normalized?.actions?.[0]?.choices?.[1]).toMatchObject({
+      id: 'custom',
+      label: 'Custom answer',
+      input: {
+        placeholder: 'Type instructions',
+        required: true,
+        multiline: true
+      }
     })
   })
 
@@ -353,7 +374,7 @@ describe('applyActionResponseToGroups', () => {
         action_id: 'act_1',
         conversation: 55,
         status: 'selected',
-        response: { choice_id: 'ship' },
+        response: { choice_id: 'ship', choice_text: 'Use the staged changes only' },
         responded_at: 150
       },
       999
@@ -363,7 +384,7 @@ describe('applyActionResponseToGroups', () => {
     expect(updated[0]?.updatedAt).toBe(150)
     expect(updated[0]?.messages[0]?.actions?.[0]).toMatchObject({
       status: 'selected',
-      response: { choice_id: 'ship' },
+      response: { choice_id: 'ship', choice_text: 'Use the staged changes only' },
       respondedAt: 150
     })
   })
