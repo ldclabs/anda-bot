@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "Could not update quick inputs: $1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "Request approval"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "Ask before every tool call"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "Approve for me"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "Ask only for operations that look risky"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "Full access"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "Automatically approve tool calls"
+  },
+  "approvalModeCustomLabel": {
+    "message": "Custom"
+  },
+  "approvalModeCustomDescription": {
+    "message": "Use approval rules from config"
+  },
+  "approvalModeMenuAria": {
+    "message": "Approval mode"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "How should Anda approve actions?"
+  },
+  "actionToolFallback": {
+    "message": "Tool"
+  },
+  "actionApprovalKindLabel": {
+    "message": "$1 approval"
+  },
+  "actionChoiceKindLabel": {
+    "message": "Choose an option"
+  },
+  "actionFallbackTitle": {
+    "message": "Action"
+  },
+  "actionStatusPending": {
+    "message": "Pending"
+  },
+  "actionStatusApproved": {
+    "message": "Approved"
+  },
+  "actionStatusDenied": {
+    "message": "Denied"
+  },
+  "actionStatusSelected": {
+    "message": "Selected"
+  },
+  "actionStatusExpired": {
+    "message": "Expired"
+  },
+  "actionStatusUnknown": {
+    "message": "Unknown"
+  },
+  "actionApprove": {
+    "message": "Approve"
+  },
+  "actionDeny": {
+    "message": "Deny"
+  },
+  "actionFailed": {
+    "message": "Action failed"
+  },
+  "actionBackground": {
+    "message": "background"
+  },
+  "actionForeground": {
+    "message": "foreground"
+  },
+  "actionDetailCommand": {
+    "message": "Command"
+  },
+  "actionDetailWorkspace": {
+    "message": "Workspace"
+  },
+  "actionDetailApprovalReason": {
+    "message": "Approval reason"
+  },
+  "actionDetailMode": {
+    "message": "Mode"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "Environment keys"
+  },
+  "shellCommandTool": {
+    "message": "Shell command"
+  },
+  "shellApprovalTitle": {
+    "message": "Approve shell command"
+  },
+  "shellApprovalMessage": {
+    "message": "The agent wants to run a local shell command."
+  },
   "stopTask": {
     "message": "Stop current task"
   },

@@ -9,6 +9,8 @@ use anda_engine::{
 };
 use chrono::{DateTime, Local, Utc};
 
+use crate::engine::ActionsTool;
+
 use super::AndaBot;
 
 static SELF_INSTRUCTIONS: &str = include_str!("../../../assets/SelfInstructions.md");
@@ -50,7 +52,7 @@ pub(super) async fn available_tool_names(ctx: &AgentCtx) -> Vec<String> {
         .await
         .into_iter()
         .filter_map(|def| {
-            if def.name == AndaBot::NAME {
+            if def.name == AndaBot::NAME || def.name == ActionsTool::NAME {
                 None
             } else {
                 Some(def.name)

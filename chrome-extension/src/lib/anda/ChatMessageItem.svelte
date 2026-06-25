@@ -4,7 +4,12 @@
 
 <script lang="ts">
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
-  import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
+  import type {
+    ChatAction,
+    ChatActionDetail,
+    ChatAttachment,
+    ChatMessage
+  } from '$lib/anda/client/types'
   import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
@@ -12,14 +17,20 @@
     Bookmark,
     BookmarkCheck,
     Check,
+    CircleCheck,
+    CircleX,
     Clipboard,
     Copy,
+    CreditCard,
     Download,
     FileText,
     Image,
+    ListChecks,
     LoaderCircle,
     Plus,
     Printer,
+    ShieldCheck,
+    Terminal,
     Wrench
   } from '@lucide/svelte'
   import { onDestroy, onMount, tick } from 'svelte'
@@ -38,6 +49,8 @@
   let richCopied = $state(false)
   let detailsExpanded = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
+  let respondingActionIds = $state(new Set<string>())
+  let actionErrors = $state(new Map<string, string>())
   let resourceBlobs = $state(new Map<number, string>())
   let resourceObjectUrls = $state(new Map<string, string>())
   let loadingResourceIds = $state(new Set<number>())
@@ -51,6 +64,7 @@
   const thinkingText = $derived((message.thinkingText || '').trim())
   const hasMainText = $derived(Boolean(mainText))
   const hasAttachments = $derived(Boolean(message.attachments?.length))
+  const hasActions = $derived(Boolean(message.actions?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
   // Only settled assistant messages with a stable server id can be bookmarked
   // (excludes optimistic/local, side, and compacted tool/thinking-only items).
@@ -306,6 +320,196 @@
     )
   }
 
+  function actionKindLabel(action: ChatAction): string {
+    if (isApprovalAction(action)) {
+      const toolLabel = actionToolLabel(action)
+      return getMessage('actionApprovalKindLabel', toolLabel)
+    }
+    if (action.kind === 'choice') {
+      return getMessage('actionChoiceKindLabel')
+    }
+    return actionTitle(action) || getMessage('actionFallbackTitle')
+  }
+
+  function actionStatusLabel(action: ChatAction): string {
+    switch (action.status) {
+      case 'pending':
+        return getMessage('actionStatusPending')
+      case 'approved':
+        return getMessage('actionStatusApproved')
+      case 'denied':
+        return getMessage('actionStatusDenied')
+      case 'selected':
+        return getMessage('actionStatusSelected')
+      case 'expired':
+        return getMessage('actionStatusExpired')
+      default:
+        return action.status || getMessage('actionStatusUnknown')
+    }
+  }
+
+  function actionResponseLabel(action: ChatAction): string {
+    if (action.status === 'selected') {
+      const choiceId =
+        action.response && typeof action.response === 'object' && !Array.isArray(action.response)
+          ? action.response.choice_id
+          : undefined
+      const choice = action.choices?.find((item) => item.id === choiceId)
+      return choice?.label || (typeof choiceId === 'string' ? choiceId : '')
+    }
+    return ''
+  }
+
+  function actionPending(action: ChatAction): boolean {
+    return action.status === 'pending'
+  }
+
+  function isApprovalAction(action: ChatAction): boolean {
+    return action.kind === 'tool_approval' || action.kind === 'shell_command'
+  }
+
+  function actionToolName(action: ChatAction): string {
+    return (action.tool?.name || '').toLowerCase()
+  }
+
+  function isShellApproval(action: ChatAction): boolean {
+    const toolName = actionToolName(action)
+    return action.kind === 'shell_command' || toolName === 'shell' || toolName.includes('shell')
+  }
+
+  function isPaymentApproval(action: ChatAction): boolean {
+    const toolName = actionToolName(action)
+    return toolName.includes('pay') || toolName.includes('payment')
+  }
+
+  function actionToolLabel(action: ChatAction): string {
+    if (isShellApproval(action)) {
+      return getMessage('shellCommandTool')
+    }
+    return action.tool?.label || action.tool?.name || getMessage('actionToolFallback')
+  }
+
+  function actionTitle(action: ChatAction): string {
+    if (isShellApproval(action) && (!action.title || action.title === 'Approve shell command')) {
+      return getMessage('shellApprovalTitle')
+    }
+    return action.title || ''
+  }
+
+  function actionMessage(action: ChatAction): string | null | undefined {
+    if (
+      isShellApproval(action) &&
+      (!action.message || action.message === 'The agent wants to run a local shell command.')
+    ) {
+      return getMessage('shellApprovalMessage')
+    }
+    return action.message
+  }
+
+  function actionApproveLabel(action: ChatAction): string {
+    const label = action.approval?.approveLabel
+    return label && label !== 'Approve' ? label : getMessage('actionApprove')
+  }
+
+  function actionDenyLabel(action: ChatAction): string {
+    const label = action.approval?.denyLabel
+    return label && label !== 'Deny' ? label : getMessage('actionDeny')
+  }
+
+  function actionDetailLabel(detail: ChatActionDetail): string {
+    switch (detail.label) {
+      case 'Command':
+        return getMessage('actionDetailCommand')
+      case 'Workspace':
+        return getMessage('actionDetailWorkspace')
+      case 'Approval reason':
+        return getMessage('actionDetailApprovalReason')
+      case 'Mode':
+        return getMessage('actionDetailMode')
+      case 'Environment keys':
+        return getMessage('actionDetailEnvironmentKeys')
+      default:
+        return detail.label
+    }
+  }
+
+  function detailText(detail: ChatActionDetail): string {
+    const value = detail.value
+    if (typeof value === 'string') {
+      if (detail.label === 'Mode') {
+        if (value === 'background') {
+          return getMessage('actionBackground')
+        }
+        if (value === 'foreground') {
+          return getMessage('actionForeground')
+        }
+      }
+      return value
+    }
+    if (value === null) {
+      return ''
+    }
+    return JSON.stringify(value, null, 2)
+  }
+
+  function detailIsBlock(detail: ChatActionDetail): boolean {
+    return detail.format === 'code' || detail.format === 'json' || detail.format === 'list'
+  }
+
+  function setActionResponding(actionId: string, value: boolean) {
+    const next = new Set(respondingActionIds)
+    if (value) {
+      next.add(actionId)
+    } else {
+      next.delete(actionId)
+    }
+    respondingActionIds = next
+  }
+
+  function setActionError(actionId: string, error: string | null) {
+    const next = new Map(actionErrors)
+    if (error) {
+      next.set(actionId, error)
+    } else {
+      next.delete(actionId)
+    }
+    actionErrors = next
+  }
+
+  function errorLabel(error: unknown): string {
+    return error instanceof Error ? error.message : String(error || getMessage('actionFailed'))
+  }
+
+  async function respondApprovalAction(action: ChatAction, approve: boolean) {
+    if (!actionPending(action) || respondingActionIds.has(action.id)) {
+      return
+    }
+    setActionResponding(action.id, true)
+    setActionError(action.id, null)
+    try {
+      await andaClient.respondAction({ actionId: action.id, approve })
+    } catch (error) {
+      setActionError(action.id, errorLabel(error))
+    } finally {
+      setActionResponding(action.id, false)
+    }
+  }
+
+  async function selectChoiceAction(action: ChatAction, choiceId: string) {
+    if (!actionPending(action) || respondingActionIds.has(action.id)) {
+      return
+    }
+    setActionResponding(action.id, true)
+    setActionError(action.id, null)
+    try {
+      await andaClient.respondAction({ actionId: action.id, choiceId })
+    } catch (error) {
+      setActionError(action.id, errorLabel(error))
+    } finally {
+      setActionResponding(action.id, false)
+    }
+  }
+
   function attachmentSaveTitle(attachment: ChatAttachment): string {
     return attachmentHasDownloadData(attachment)
       ? `Save ${attachment.name}`
@@ -491,11 +695,11 @@
   id={message.id}
   class="grid min-w-0 w-full gap-1 {isUser
     ? 'justify-items-end'
-    : isTool || (!hasMainText && !hasAttachments)
+    : isTool || (!hasMainText && !hasAttachments && !hasActions)
       ? 'justify-items-center'
       : 'justify-items-start'}"
 >
-  {#if hasThinkingText && (isTool || (!hasMainText && !hasAttachments))}
+  {#if hasThinkingText && (isTool || (!hasMainText && !hasAttachments && !hasActions))}
     <button
       type="button"
       class={buttonClass(
@@ -510,7 +714,7 @@
     </button>
   {/if}
 
-  {#if hasMainText || hasAttachments}
+  {#if hasMainText || hasAttachments || hasActions}
     <div
       class={cardClass(
         `relative max-w-[92%] min-w-0 gap-0 overflow-hidden rounded-lg py-0 leading-relaxed shadow-2xs ${
@@ -624,6 +828,141 @@
           </div>
         {/if}
 
+        {#if message.actions?.length}
+          <div class="{hasMainText || hasAttachments ? 'mt-2' : ''} grid min-w-0 gap-2">
+            {#each message.actions as action (action.id)}
+              <div
+                class="chat-action-card grid min-w-0 gap-2 rounded-lg border px-3 py-2 text-xs shadow-2xs"
+              >
+                <div class="flex min-w-0 items-center gap-2">
+                  <div
+                    class="chat-action-icon grid size-8 shrink-0 place-items-center rounded-md border"
+                  >
+                    {#if isShellApproval(action)}
+                      <Terminal class="size-4" />
+                    {:else if isPaymentApproval(action)}
+                      <CreditCard class="size-4" />
+                    {:else if isApprovalAction(action)}
+                      <ShieldCheck class="size-4" />
+                    {:else}
+                      <ListChecks class="size-4" />
+                    {/if}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-semibold" title={actionTitle(action) || actionKindLabel(action)}>
+                      {actionTitle(action) || actionKindLabel(action)}
+                    </div>
+                    <div class="chat-action-meta truncate">
+                      {actionKindLabel(action)} · {actionStatusLabel(action)}
+                      {#if actionResponseLabel(action)}
+                        · {actionResponseLabel(action)}
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+
+                {#if actionMessage(action)}
+                  <div class="chat-action-message leading-relaxed whitespace-pre-wrap wrap-break-word">
+                    {actionMessage(action)}
+                  </div>
+                {/if}
+
+                {#if action.summary}
+                  <div class="chat-action-summary rounded-md border px-2 py-1.5 wrap-break-word">
+                    {action.summary}
+                  </div>
+                {/if}
+
+                {#if action.details?.length}
+                  <div class="grid min-w-0 gap-1.5">
+                    {#each action.details as detail, detailIndex (`${action.id}-${detail.label}-${detailIndex}`)}
+                      <div class="chat-action-detail min-w-0 rounded-md border px-2 py-1.5">
+                        <div class="chat-action-meta mb-1 text-[10px] font-semibold uppercase">
+                          {actionDetailLabel(detail)}
+                        </div>
+                        {#if detailIsBlock(detail)}
+                          <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code>{detailText(detail)}</code></pre>
+                        {:else}
+                          <div class="wrap-break-word">{detailText(detail)}</div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                {:else if action.command}
+                  <pre class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code>{action.command}</code></pre>
+                  {#if action.workspace}
+                    <div class="chat-action-meta truncate" title={action.workspace}>
+                      {action.workspace}
+                      {#if action.background}
+                        · {getMessage('actionBackground')}
+                      {/if}
+                    </div>
+                  {/if}
+                {/if}
+
+                {#if actionErrors.has(action.id)}
+                  <div class="chat-action-error rounded-md px-2 py-1">
+                    {actionErrors.get(action.id)}
+                  </div>
+                {/if}
+
+                {#if actionPending(action)}
+                  {#if isApprovalAction(action)}
+                    <div class="flex min-w-0 flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class={buttonClass('default', 'xs', 'chat-action-approve')}
+                        disabled={respondingActionIds.has(action.id)}
+                        onclick={() => respondApprovalAction(action, true)}
+                      >
+                        {#if respondingActionIds.has(action.id)}
+                          <LoaderCircle class="size-3 animate-spin" />
+                        {:else}
+                          <CircleCheck class="size-3" />
+                        {/if}
+                        <span>{actionApproveLabel(action)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class={buttonClass('outline', 'xs', 'chat-action-deny')}
+                        disabled={respondingActionIds.has(action.id)}
+                        onclick={() => respondApprovalAction(action, false)}
+                      >
+                        <CircleX class="size-3" />
+                        <span>{actionDenyLabel(action)}</span>
+                      </button>
+                    </div>
+                  {:else if action.choices?.length}
+                    <div class="grid min-w-0 gap-1.5">
+                      {#each action.choices as choice (choice.id)}
+                        <button
+                          type="button"
+                          class={buttonClass(
+                            'outline',
+                            'sm',
+                            'chat-action-choice-button h-auto min-w-0 justify-start whitespace-normal px-2 py-1.5 text-left'
+                          )}
+                          disabled={respondingActionIds.has(action.id)}
+                          onclick={() => selectChoiceAction(action, choice.id)}
+                        >
+                          <span class="min-w-0">
+                            <span class="block font-medium">{choice.label}</span>
+                            {#if choice.description}
+                              <span class="chat-action-meta block text-xs font-normal">
+                                {choice.description}
+                              </span>
+                            {/if}
+                          </span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+
         {#if hasThinkingText}
           <div
             class="mt-1.5 flex min-h-5 items-center gap-2 {hasThinkingText && !isAssistant
@@ -716,15 +1055,17 @@
             {/if}
           </button>
         {/if}
-        <button
-          type="button"
-          class={messageActionButtonClass}
-          aria-label="Print message"
-          title="Print message"
-          onclick={printMessage}
-        >
-          <Printer class="size-3.5" />
-        </button>
+        {#if hasMainText || hasAttachments}
+          <button
+            type="button"
+            class={messageActionButtonClass}
+            aria-label="Print message"
+            title="Print message"
+            onclick={printMessage}
+          >
+            <Printer class="size-3.5" />
+          </button>
+        {/if}
         {#if canBookmark}
           <button
             type="button"
@@ -869,6 +1210,57 @@
     color: color-mix(in srgb, var(--message-text, #171717) 82%, transparent);
   }
 
+  .chat-action-card {
+    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 78%, #0f766e);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 76%, #ecfdf5);
+    color: var(--message-text, #171717);
+  }
+
+  .chat-action-detail,
+  .chat-action-summary,
+  .chat-action-icon,
+  .chat-action-command {
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, var(--message-surface, #f7f7f7));
+  }
+
+  .chat-action-meta {
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-action-message {
+    color: color-mix(in srgb, var(--message-text, #171717) 86%, transparent);
+  }
+
+  .chat-action-command,
+  .chat-action-detail,
+  .chat-action-summary {
+    color: color-mix(in srgb, var(--message-text, #171717) 88%, transparent);
+  }
+
+  .chat-action-approve {
+    background: #047857;
+    color: #ffffff;
+  }
+
+  .chat-action-approve:hover {
+    background: #065f46;
+  }
+
+  .chat-action-deny {
+    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 70%, #991b1b);
+    color: #991b1b;
+  }
+
+  .chat-action-error {
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 70%, #fee2e2);
+    color: #991b1b;
+  }
+
+  .chat-action-choice-button {
+    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
+  }
+
   .chat-message-detail-divider {
     border-color: var(--message-border, #e6e6e6);
   }
@@ -895,5 +1287,36 @@
 
   :global(.dark) .chat-external-context {
     color: rgba(153, 246, 228, 0.68);
+  }
+
+  :global(.dark) .chat-action-card {
+    border-color: rgba(45, 212, 191, 0.18);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 84%, #064e3b);
+  }
+
+  :global(.dark) .chat-action-detail,
+  :global(.dark) .chat-action-summary,
+  :global(.dark) .chat-action-icon,
+  :global(.dark) .chat-action-command {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
+  }
+
+  :global(.dark) .chat-action-approve {
+    background: #059669;
+  }
+
+  :global(.dark) .chat-action-approve:hover {
+    background: #047857;
+  }
+
+  :global(.dark) .chat-action-deny {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.28);
+  }
+
+  :global(.dark) .chat-action-error {
+    background: rgba(127, 29, 29, 0.35);
+    color: #fecaca;
   }
 </style>

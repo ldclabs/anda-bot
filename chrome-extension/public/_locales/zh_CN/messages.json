@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "无法更新快捷输入：$1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "请求批准"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "所有 tool 调用都先询问"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "替我审批"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "仅对检测到的风险操作请求批准"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "完全访问权限"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "自动批准 tool 调用"
+  },
+  "approvalModeCustomLabel": {
+    "message": "自定义"
+  },
+  "approvalModeCustomDescription": {
+    "message": "使用配置中的审批规则"
+  },
+  "approvalModeMenuAria": {
+    "message": "审批模式"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "应如何批准 Anda 操作？"
+  },
+  "actionToolFallback": {
+    "message": "工具"
+  },
+  "actionApprovalKindLabel": {
+    "message": "$1 审批"
+  },
+  "actionChoiceKindLabel": {
+    "message": "选择一个选项"
+  },
+  "actionFallbackTitle": {
+    "message": "操作"
+  },
+  "actionStatusPending": {
+    "message": "待处理"
+  },
+  "actionStatusApproved": {
+    "message": "已批准"
+  },
+  "actionStatusDenied": {
+    "message": "已拒绝"
+  },
+  "actionStatusSelected": {
+    "message": "已选择"
+  },
+  "actionStatusExpired": {
+    "message": "已过期"
+  },
+  "actionStatusUnknown": {
+    "message": "未知"
+  },
+  "actionApprove": {
+    "message": "批准"
+  },
+  "actionDeny": {
+    "message": "拒绝"
+  },
+  "actionFailed": {
+    "message": "操作失败"
+  },
+  "actionBackground": {
+    "message": "后台"
+  },
+  "actionForeground": {
+    "message": "前台"
+  },
+  "actionDetailCommand": {
+    "message": "命令"
+  },
+  "actionDetailWorkspace": {
+    "message": "工作区"
+  },
+  "actionDetailApprovalReason": {
+    "message": "审批原因"
+  },
+  "actionDetailMode": {
+    "message": "模式"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "环境变量键"
+  },
+  "shellCommandTool": {
+    "message": "Shell 命令"
+  },
+  "shellApprovalTitle": {
+    "message": "批准 Shell 命令"
+  },
+  "shellApprovalMessage": {
+    "message": "智能体想要运行一个本地 Shell 命令。"
+  },
   "stopTask": {
     "message": "停止当前任务"
   },

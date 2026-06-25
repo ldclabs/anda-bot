@@ -2,6 +2,7 @@
   import { getMessage } from '$lib/i18n'
   import type {
     ChatAttachment,
+    ApprovalMode,
     PageAudioResult,
     PromptSkill,
     QuickPrompt,
@@ -16,6 +17,30 @@
     text: string
     attachments: ChatAttachment[]
   }
+
+  interface ApprovalModeOption {
+    value: ApprovalMode
+    icon: 'ask' | 'auto' | 'full' | 'custom'
+  }
+
+  const approvalModeOptions: ApprovalModeOption[] = [
+    {
+      value: 'request_approval',
+      icon: 'ask'
+    },
+    {
+      value: 'on_risk',
+      icon: 'auto'
+    },
+    {
+      value: 'full_access',
+      icon: 'full'
+    },
+    {
+      value: 'custom',
+      icon: 'custom'
+    }
+  ]
 
   export type ComposerVoicePayload = VoiceRecordingInput
 </script>
@@ -61,10 +86,16 @@
   } from '$lib/anda/ui'
   import {
     Keyboard,
+    Check,
+    ChevronDown,
     LoaderCircle,
     Mic,
     Paperclip,
     SendHorizontal,
+    Settings,
+    Shield,
+    ShieldAlert,
+    ShieldCheck,
     Square,
     Trash2,
     Volume2,
@@ -96,6 +127,8 @@
     onUseQuickPrompt,
     onRemoveQuickPrompt,
     onClearQuickPrompts,
+    approvalMode = 'on_risk',
+    onApprovalModeChange,
     submitKeyMode = 'enter',
     incomingAttachment = null,
     incomingDraft = null,
@@ -123,6 +156,8 @@
     onUseQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onRemoveQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onClearQuickPrompts?: () => Promise<void> | void
+    approvalMode?: ApprovalMode
+    onApprovalModeChange?: (mode: ApprovalMode) => Promise<void> | void
     incomingAttachment?: ChatAttachment | null
     incomingDraft?: PromptDraftRequest | null
     skillsRevision?: number
@@ -153,6 +188,8 @@
   let promptSkillsLoading = $state(false)
   let promptSkillsLoadedAt = $state(0)
   let promptSkillsError = $state('')
+  let approvalMenuOpen = $state(false)
+  let approvalMenuElement: HTMLDivElement | null = $state(null)
   let speechRecognition: BrowserSpeechRecognition | null = null
   let speechRecognitionMode: 'local' | 'page' | null = null
   let speechFinalTranscript = ''
@@ -245,6 +282,10 @@
       ? getMessage('promptSkillsLabel')
       : getMessage('promptCommandsLabel')
   )
+  const currentApprovalMode = $derived(
+    approvalModeOptions.find((option) => option.value === approvalMode) || approvalModeOptions[1]
+  )
+  const CurrentApprovalIcon = $derived(approvalModeIcon(currentApprovalMode))
 
   let workingPersisted = $state(false)
   let workingTimeout: number | undefined
@@ -365,11 +406,24 @@
 
   onMount(() => {
     browserSpeechAvailable = speechRecognitionSupported()
+    document.addEventListener('pointerdown', handleDocumentPointerDown)
   })
 
   onDestroy(() => {
+    document.removeEventListener('pointerdown', handleDocumentPointerDown)
     void cancelRecording()
   })
+
+  function handleDocumentPointerDown(event: PointerEvent) {
+    if (!approvalMenuOpen) {
+      return
+    }
+    const target = event.target
+    if (target instanceof Node && approvalMenuElement?.contains(target)) {
+      return
+    }
+    approvalMenuOpen = false
+  }
 
   function isSubmitEvent(event: KeyboardEvent): boolean {
     if (disabled || sending || preparingAttachments || event.isComposing) {
@@ -474,6 +528,53 @@
       return
     }
     await onClearQuickPrompts()
+  }
+
+  async function selectApprovalMode(mode: ApprovalMode) {
+    approvalMenuOpen = false
+    if (mode === approvalMode) {
+      return
+    }
+    await onApprovalModeChange?.(mode)
+  }
+
+  function approvalModeLabel(option: ApprovalModeOption): string {
+    switch (option.value) {
+      case 'request_approval':
+        return getMessage('approvalModeRequestApprovalLabel')
+      case 'full_access':
+        return getMessage('approvalModeFullAccessLabel')
+      case 'custom':
+        return getMessage('approvalModeCustomLabel')
+      default:
+        return getMessage('approvalModeOnRiskLabel')
+    }
+  }
+
+  function approvalModeDescription(option: ApprovalModeOption): string {
+    switch (option.value) {
+      case 'request_approval':
+        return getMessage('approvalModeRequestApprovalDescription')
+      case 'full_access':
+        return getMessage('approvalModeFullAccessDescription')
+      case 'custom':
+        return getMessage('approvalModeCustomDescription')
+      default:
+        return getMessage('approvalModeOnRiskDescription')
+    }
+  }
+
+  function approvalModeIcon(option: ApprovalModeOption) {
+    switch (option.icon) {
+      case 'ask':
+        return ShieldAlert
+      case 'full':
+        return ShieldCheck
+      case 'custom':
+        return Settings
+      default:
+        return Shield
+    }
   }
 
   function handlePromptCommandKeydown(event: KeyboardEvent): boolean {
@@ -581,6 +682,10 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && approvalMenuOpen) {
+      approvalMenuOpen = false
+      return
+    }
     if (handlePromptCommandKeydown(event)) {
       return
     }
@@ -1353,6 +1458,58 @@
               {/if}
             </button>
           {/if}
+
+          <div bind:this={approvalMenuElement} class="approval-mode-wrap">
+            <button
+              type="button"
+              class={buttonClass(
+                approvalMenuOpen ? 'secondary' : 'ghost',
+                'sm',
+                'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 px-2 hover:text-emerald-700'
+              )}
+              disabled={disabled}
+              aria-haspopup="menu"
+              aria-expanded={approvalMenuOpen}
+              title={approvalModeDescription(currentApprovalMode)}
+              onclick={() => (approvalMenuOpen = !approvalMenuOpen)}
+            >
+              <CurrentApprovalIcon class="size-4" />
+              <span class="max-w-24 truncate text-xs font-semibold">
+                {approvalModeLabel(currentApprovalMode)}
+              </span>
+              <ChevronDown class="size-3" />
+            </button>
+
+            {#if approvalMenuOpen}
+              <div class="approval-mode-menu" role="menu" aria-label={getMessage('approvalModeMenuAria')}>
+                <div class="approval-mode-menu-eyebrow">{getMessage('approvalModeMenuPrompt')}</div>
+                {#each approvalModeOptions as option (option.value)}
+                  {@const OptionIcon = approvalModeIcon(option)}
+                  <button
+                    type="button"
+                    class="approval-mode-item"
+                    class:approval-mode-item-active={option.value === approvalMode}
+                    role="menuitemradio"
+                    aria-checked={option.value === approvalMode}
+                    onclick={() => selectApprovalMode(option.value)}
+                  >
+                    <OptionIcon class="approval-mode-item-icon size-4" />
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-sm font-semibold">
+                        {approvalModeLabel(option)}
+                      </span>
+                      <span class="approval-mode-item-description block truncate text-xs">
+                        {approvalModeDescription(option)}
+                      </span>
+                    </span>
+                    {#if option.value === approvalMode}
+                      <Check class="size-4" />
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
         </div>
 
         <div class="flex items-center gap-1">
@@ -1600,6 +1757,69 @@
 
   .quick-prompts-clear {
     flex: 0 0 auto;
+  }
+
+  .approval-mode-wrap {
+    position: relative;
+    min-width: 0;
+  }
+
+  .approval-mode-button {
+    max-width: 8.5rem;
+  }
+
+  .approval-mode-menu {
+    position: absolute;
+    bottom: calc(100% + 0.5rem);
+    left: 0;
+    z-index: 20;
+    display: grid;
+    width: min(20rem, calc(100vw - 2rem));
+    gap: 0.125rem;
+    border: 1px solid var(--message-border, #e6e6e6);
+    border-radius: 0.75rem;
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 94%, var(--message-surface, #f7f7f7));
+    padding: 0.45rem;
+    color: var(--message-text, #171717);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16);
+  }
+
+  .approval-mode-menu-eyebrow {
+    padding: 0.35rem 0.55rem 0.25rem;
+    color: var(--message-muted, #737373);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+  }
+
+  .approval-mode-item {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    align-items: center;
+    gap: 0.65rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    padding: 0.55rem;
+    color: inherit;
+    text-align: left;
+    outline: none;
+  }
+
+  .approval-mode-item:hover,
+  .approval-mode-item:focus-visible,
+  .approval-mode-item-active {
+    background: var(--message-surface-hover, #eeeeee);
+  }
+
+  .approval-mode-item-icon {
+    flex: 0 0 auto;
+    color: #0f766e;
+  }
+
+  .approval-mode-item-description {
+    color: var(--message-muted, #737373);
   }
 
   :global(.composer-textarea) {

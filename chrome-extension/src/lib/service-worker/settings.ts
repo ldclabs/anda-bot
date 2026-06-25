@@ -1,11 +1,12 @@
-import type { AppearanceTheme, ChromeApi, SettingsState, SubmitKeyMode } from './types'
+import type { AppearanceTheme, ApprovalMode, ChromeApi, SettingsState, SubmitKeyMode } from './types'
 import { getCurrentBrowser } from './chrome'
 
 export const defaultSettings: SettingsState = {
   baseUrl: 'http://127.0.0.1:8042',
   token: '',
   submitKeyMode: 'enter',
-  appearanceTheme: 'system'
+  appearanceTheme: 'system',
+  approvalMode: 'on_risk'
 }
 
 const browserSessionStorageKey = 'browserSessionId'
@@ -15,13 +16,15 @@ export async function loadSettings(chromeApi: ChromeApi): Promise<SettingsState>
     'baseUrl',
     'token',
     'submitKeyMode',
-    'appearanceTheme'
+    'appearanceTheme',
+    'approvalMode'
   ])
   return normalizeSettings({
     baseUrl: saved.baseUrl || defaultSettings.baseUrl,
     token: saved.token || '',
     submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-    appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
+    appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme,
+    approvalMode: saved.approvalMode || defaultSettings.approvalMode
   })
 }
 
@@ -57,7 +60,8 @@ export function normalizeSettings(settings: SettingsState): SettingsState {
     baseUrl: trimTrailingSlash(settings.baseUrl.trim() || defaultSettings.baseUrl),
     token: settings.token.trim(),
     submitKeyMode: normalizeSubmitKeyMode(settings.submitKeyMode),
-    appearanceTheme: normalizeAppearanceTheme(settings.appearanceTheme)
+    appearanceTheme: normalizeAppearanceTheme(settings.appearanceTheme),
+    approvalMode: normalizeApprovalMode(settings.approvalMode)
   }
 }
 
@@ -67,6 +71,15 @@ function normalizeSubmitKeyMode(value: unknown): SubmitKeyMode {
 
 export function normalizeAppearanceTheme(value: unknown): AppearanceTheme {
   return value === 'light' || value === 'dark' ? value : 'system'
+}
+
+export function normalizeApprovalMode(value: unknown): ApprovalMode {
+  return value === 'request_approval' ||
+    value === 'full_access' ||
+    value === 'custom' ||
+    value === 'on_risk'
+    ? value
+    : 'on_risk'
 }
 
 function trimTrailingSlash(value: string): string {

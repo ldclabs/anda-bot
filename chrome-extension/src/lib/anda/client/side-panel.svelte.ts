@@ -3,6 +3,7 @@ import {
   defaultSettings,
   errorToError,
   errorToMessage,
+  normalizeApprovalMode,
   normalizeSettings
 } from '$lib/service-worker/settings'
 import { SvelteMap, SvelteSet } from 'svelte/reactivity'
@@ -14,6 +15,8 @@ import { normalizePromptSkills } from './helper'
 import { getMessage, normalizeUiLanguage, uiLanguageStorageKey } from '$lib/i18n'
 import type {
   AppearanceTheme,
+  ActionApiOutput,
+  ApprovalMode,
   Bookmark,
   BookmarkFolders,
   BookmarkedMessage,
@@ -442,6 +445,15 @@ export class AndaSidePanelClient extends EventTarget {
     this.syncServiceWorker().catch(() => undefined)
   }
 
+  async saveApprovalMode(approvalMode: ApprovalMode): Promise<void> {
+    const normalized = normalizeApprovalMode(approvalMode)
+    if ((this.settings.approvalMode || defaultSettings.approvalMode) === normalized) {
+      return
+    }
+    this.settings = normalizeSettings({ ...this.settings, approvalMode: normalized })
+    await this.chrome.storage.local.set({ approvalMode: this.settings.approvalMode })
+  }
+
   async loadQuickPrompts(): Promise<void> {
     const saved = await this.chrome.storage.local.get([quickPromptsStorageKey])
     this.quickPrompts = normalizeQuickPrompts(saved.quickPrompts)
@@ -595,6 +607,27 @@ export class AndaSidePanelClient extends EventTarget {
     } catch (error) {
       this.updateStatus('stop failed', { kind: 'error', text: errorToMessage(error) })
     }
+  }
+
+  async respondAction(input: {
+    actionId: string
+    approve?: boolean
+    choiceId?: string
+  }): Promise<ActionApiOutput> {
+    if (!this.settings.token) {
+      this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
+      throw new Error(getMessage('pasteTokenFirst'))
+    }
+
+    const { output } = await this.toolCall<ActionApiOutput>('actions_api', {
+      type: 'RespondAction',
+      action_id: input.actionId,
+      approve: input.approve ?? null,
+      choice_id: input.choiceId ?? null
+    })
+    this.activeChannel?.applyActionResponse(output)
+    this.activeChannel?.wakePolling()
+    return output
   }
 
   async sendVoiceTurn(recording: VoiceRecordingInput): Promise<void> {
@@ -982,13 +1015,15 @@ export class AndaSidePanelClient extends EventTarget {
       'baseUrl',
       'token',
       'submitKeyMode',
-      'appearanceTheme'
+      'appearanceTheme',
+      'approvalMode'
     ])
     this.settings = normalizeSettings({
       baseUrl: saved.baseUrl || defaultSettings.baseUrl,
       token: saved.token || '',
       submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-      appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
+      appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme,
+      approvalMode: saved.approvalMode || defaultSettings.approvalMode
     })
   }
 
@@ -1525,7 +1560,8 @@ export class AndaSidePanelClient extends EventTarget {
     await this.refreshActiveTab()
     const extra: Record<string, unknown> = {
       conversation: 0,
-      browser_client: 'chrome_extension'
+      browser_client: 'chrome_extension',
+      approval_mode: this.settings.approvalMode || defaultSettings.approvalMode
     }
 
     if (this.tab) {

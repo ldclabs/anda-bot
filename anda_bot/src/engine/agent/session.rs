@@ -3,7 +3,8 @@
 
 use anda_brain::types::InputContext;
 use anda_core::{
-    AgentOutput, CompletionRequest, RequestMeta, Resource, StateFeatures, ToolOutput, Usage,
+    AgentOutput, BoxError, CompletionRequest, RequestMeta, Resource, StateFeatures, ToolOutput,
+    Usage,
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
@@ -25,7 +26,7 @@ use std::{
 };
 
 use crate::engine::{
-    CompletionHook,
+    ActionSession, CompletionHook,
     goal::{self, GoalStateSnapshot},
     prompt::PromptCommand,
     system::system_runtime_prompt,
@@ -77,8 +78,9 @@ pub(super) struct Session {
     pub(super) caller: String,
     pub(super) workspace: String,
     pub(super) source_key: String,
-    pub(super) conversation_id: AtomicU64,
+    pub(super) conversation_id: Arc<AtomicU64>,
     pub(super) sender: tokio::sync::mpsc::Sender<ConversationInput>,
+    pub(super) actions: ActionSession,
     // task_id -> BackgroundTaskInfo
     pub(super) background_tasks: Arc<RwLock<HashMap<String, BackgroundTaskInfo>>>,
     pub(super) background_progress_outputs: Arc<RwLock<HashMap<String, String>>>,
@@ -350,6 +352,10 @@ impl AgentHook for Session {
 
 #[async_trait]
 impl ToolHook<ExecArgs, ExecOutput> for Session {
+    async fn before_tool_call(&self, ctx: &BaseCtx, args: ExecArgs) -> Result<ExecArgs, BoxError> {
+        self.actions.request_shell_approval(ctx, args).await
+    }
+
     async fn on_background_start(&self, ctx: &BaseCtx, task_id: &str, _args: &ExecArgs) {
         self.background_tasks.write().insert(
             task_id.to_string(),
@@ -452,17 +458,36 @@ pub(super) struct ConversationInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{ActionEvent, ActionRuntime};
+
+    fn test_action_session(
+        caller: &str,
+        session_id: &Xid,
+        conversation_id: Arc<AtomicU64>,
+    ) -> ActionSession {
+        let (action_sender, _action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(1);
+        ActionSession::new(
+            Arc::new(ActionRuntime::new()),
+            action_sender,
+            caller.to_string(),
+            session_id.to_string(),
+            conversation_id,
+        )
+    }
 
     #[test]
     fn session_is_idle_requires_idle_runner_and_no_background_tasks() {
         let (sender, _rx) = tokio::sync::mpsc::channel(1);
+        let session_id = Xid::new();
+        let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Session {
-            id: Xid::new(),
+            id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
             source_key: "test".to_string(),
-            conversation_id: AtomicU64::new(1),
+            conversation_id: conversation_id.clone(),
             sender,
+            actions: test_action_session("caller", &session_id, conversation_id),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(None)),
@@ -555,13 +580,16 @@ mod tests {
 
     fn test_session() -> (Session, tokio::sync::mpsc::Receiver<ConversationInput>) {
         let (sender, rx) = tokio::sync::mpsc::channel(8);
+        let session_id = Xid::new();
+        let conversation_id = Arc::new(AtomicU64::new(3));
         let session = Session {
-            id: Xid::new(),
+            id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
             source_key: "test".to_string(),
-            conversation_id: AtomicU64::new(3),
+            conversation_id: conversation_id.clone(),
             sender,
+            actions: test_action_session("caller", &session_id, conversation_id),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(None)),

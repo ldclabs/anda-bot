@@ -33,6 +33,7 @@ use super::{
     session::{ConversationInput, Session, SessionRequestMeta},
 };
 use crate::engine::{
+    ActionEvent, ActionSession,
     browser::ChromeBrowserTool,
     conversation::{RequestState, SourceState},
     goal::GoalToolState,
@@ -205,19 +206,29 @@ impl AndaBot {
         self.persist_conversation_state(&conversation).await;
 
         let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
+        let (action_sender, action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(42);
         let external_user = request_meta_extra_as::<bool>(&meta, "external_user").unwrap_or(false);
         let formation_counterparty = if external_user {
             Some(scoped_external_user_name_from_meta(&meta))
         } else {
             Some(conversation.user.to_string())
         };
+        let conversation_id = Arc::new(AtomicU64::new(conversation._id));
+        let session_id = sess_id.to_string();
         let session = Arc::new(Session {
             id: sess_id,
             caller: conversation.user.to_string(),
             workspace,
             source_key: source_key.clone(),
-            conversation_id: AtomicU64::new(conversation._id),
+            conversation_id: conversation_id.clone(),
             sender,
+            actions: ActionSession::new(
+                self.inner.actions.clone(),
+                action_sender,
+                conversation.user.to_string(),
+                session_id,
+                conversation_id,
+            ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(None)),
@@ -242,6 +253,7 @@ impl AndaBot {
             session.active_at.clone(),
         ));
         ctx.base.set_state(session_request_meta);
+        ctx.base.set_state(session.actions.clone());
 
         let agent_hook = DynAgentHook::new(session.clone());
         ctx.base.set_state(agent_hook);
@@ -258,6 +270,7 @@ impl AndaBot {
             session,
             conversation,
             rx,
+            action_rx,
             None,
         );
         Ok(())

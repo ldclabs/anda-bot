@@ -4,11 +4,12 @@ import {
   isTransientWebSocketError
 } from '$lib/service-worker/settings'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
-import { conversationToGroup, normalizeMessages } from './conversations'
+import { applyActionResponseToGroups, conversationToGroup, normalizeMessages } from './conversations'
 import { PollConversation } from './poll-conversation'
 import type {
   AgentInput,
   AgentOutput,
+  ActionApiOutput,
   ChatAttachment,
   ChatMessage,
   Conversation,
@@ -463,6 +464,13 @@ export class Channel extends EventTarget {
 
   wakePolling(): void {
     this.#pollWake?.()
+  }
+
+  applyActionResponse(output: ActionApiOutput): void {
+    const nextGroups = applyActionResponseToGroups(this.#messageGroups, output)
+    if (nextGroups !== this.#messageGroups) {
+      this.#messageGroups = nextGroups
+    }
   }
 
   private async pollConversationOnce(conversation: Conversation, epoch: number): Promise<boolean> {

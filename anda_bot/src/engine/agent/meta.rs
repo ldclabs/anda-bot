@@ -5,7 +5,10 @@ use anda_core::{Message, RequestMeta};
 use anda_engine::memory::{Conversation, ConversationStatus};
 use serde_json::{Map, Value};
 
-use crate::engine::system::{mark_special_user_messages, scoped_external_user_name};
+use crate::engine::{
+    is_action_message_value,
+    system::{mark_special_user_messages, scoped_external_user_name},
+};
 use crate::util::request_meta::request_meta_extra_as;
 
 pub(super) fn request_meta_for_conversation(
@@ -81,6 +84,7 @@ pub(super) fn conversation_chat_history(conversation: &Conversation) -> Vec<Mess
     let mut messages = conversation
         .messages
         .iter()
+        .filter(|message| !is_action_message_value(message))
         .filter_map(|message| match serde_json::from_value::<Message>(message.clone()) {
             Ok(message) => Some(message),
             Err(err) => {
@@ -224,6 +228,35 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].name.as_deref(), Some(SYSTEM_PERSON_NAME));
+    }
+
+    #[test]
+    fn conversation_chat_history_filters_action_messages() {
+        let conversation = Conversation {
+            _id: 89,
+            messages: vec![
+                json!({
+                    "role": "assistant",
+                    "name": "$action",
+                    "content": [{
+                        "type": "Action",
+                        "name": "anda.user_choice",
+                        "payload": {"id": "act_1", "status": "pending"}
+                    }]
+                }),
+                json!(Message {
+                    role: "user".to_string(),
+                    content: vec!["continue".to_string().into()],
+                    ..Default::default()
+                }),
+            ],
+            ..Default::default()
+        };
+
+        let messages = conversation_chat_history(&conversation);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
     }
 
     #[test]

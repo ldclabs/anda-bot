@@ -40,7 +40,8 @@ describe('BrainApi', () => {
         baseUrl: 'http://127.0.0.1:8042',
         token: 'browser-token',
         submitKeyMode: 'enter',
-        appearanceTheme: 'system'
+        appearanceTheme: 'system',
+        approvalMode: 'on_risk'
       },
       method: 'brain_kip_readonly',
       params: [{ command: 'FIND(?node) WHERE { ?node {} }' }]

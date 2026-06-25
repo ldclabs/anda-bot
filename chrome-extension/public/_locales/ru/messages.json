@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "Не удалось обновить быстрые фразы: $1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "Запрашивать одобрение"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "Спрашивать перед каждым вызовом инструмента"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "Одобрять за меня"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "Спрашивать только для рискованных операций"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "Полный доступ"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "Автоматически одобрять вызовы инструментов"
+  },
+  "approvalModeCustomLabel": {
+    "message": "Пользовательский"
+  },
+  "approvalModeCustomDescription": {
+    "message": "Использовать правила одобрения из конфигурации"
+  },
+  "approvalModeMenuAria": {
+    "message": "Режим одобрения"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "Как Anda должен одобрять действия?"
+  },
+  "actionToolFallback": {
+    "message": "Инструмент"
+  },
+  "actionApprovalKindLabel": {
+    "message": "Одобрение $1"
+  },
+  "actionChoiceKindLabel": {
+    "message": "Выберите вариант"
+  },
+  "actionFallbackTitle": {
+    "message": "Действие"
+  },
+  "actionStatusPending": {
+    "message": "Ожидает"
+  },
+  "actionStatusApproved": {
+    "message": "Одобрено"
+  },
+  "actionStatusDenied": {
+    "message": "Отклонено"
+  },
+  "actionStatusSelected": {
+    "message": "Выбрано"
+  },
+  "actionStatusExpired": {
+    "message": "Истекло"
+  },
+  "actionStatusUnknown": {
+    "message": "Неизвестно"
+  },
+  "actionApprove": {
+    "message": "Одобрить"
+  },
+  "actionDeny": {
+    "message": "Отклонить"
+  },
+  "actionFailed": {
+    "message": "Действие не выполнено"
+  },
+  "actionBackground": {
+    "message": "фон"
+  },
+  "actionForeground": {
+    "message": "передний план"
+  },
+  "actionDetailCommand": {
+    "message": "Команда"
+  },
+  "actionDetailWorkspace": {
+    "message": "Рабочая область"
+  },
+  "actionDetailApprovalReason": {
+    "message": "Причина одобрения"
+  },
+  "actionDetailMode": {
+    "message": "Режим"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "Ключи окружения"
+  },
+  "shellCommandTool": {
+    "message": "Команда shell"
+  },
+  "shellApprovalTitle": {
+    "message": "Одобрить команду shell"
+  },
+  "shellApprovalMessage": {
+    "message": "Агент хочет выполнить локальную команду shell."
+  },
   "stopTask": {
     "message": "Остановить текущую задачу"
   },

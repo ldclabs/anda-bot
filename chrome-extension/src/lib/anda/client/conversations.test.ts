@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeMessage, normalizeMessages } from './conversations'
-import type { Message, Resource } from './types'
+import {
+  applyActionResponseToGroups,
+  normalizeMessage,
+  normalizeMessages
+} from './conversations'
+import type { Message, MessageGroup, Resource } from './types'
 
 function resource(overrides: Partial<Resource> = {}): Resource {
   return {
@@ -186,5 +190,134 @@ describe('normalizeMessage', () => {
         sender: 'alice'
       }
     })
+  })
+
+  it('normalizes action cards', () => {
+    const message: Message = {
+      role: 'assistant',
+      name: '$action',
+      content: [
+        {
+          type: 'Action',
+          name: 'anda.user_choice',
+          payload: {
+            id: 'act_1',
+            kind: 'choice',
+            title: 'Choose next step',
+            status: 'pending',
+            choices: [
+              {
+                id: 'ship',
+                label: 'Ship it',
+                value: null,
+                description: 'Use the current result'
+              }
+            ],
+            created_at: 100,
+            expires_at: 200
+          }
+        }
+      ],
+      timestamp: 1234
+    }
+
+    const normalized = normalizeMessage(message, {
+      conversation: 55,
+      index: 6,
+      fallbackTimestamp: 999
+    })
+
+    expect(normalized?.text).toBe('')
+    expect(normalized?.actions?.[0]).toMatchObject({
+      id: 'act_1',
+      name: 'anda.user_choice',
+      kind: 'choice',
+      status: 'pending',
+      title: 'Choose next step',
+      createdAt: 100,
+      expiresAt: 200
+    })
+    expect(normalized?.actions?.[0]?.choices?.[0]).toMatchObject({
+      id: 'ship',
+      label: 'Ship it',
+      description: 'Use the current result'
+    })
+  })
+})
+
+describe('applyActionResponseToGroups', () => {
+  it('updates an existing action card without needing a new message delta', () => {
+    const groups: MessageGroup[] = [
+      {
+        _id: 55,
+        status: 'working',
+        ancestors: [],
+        createdAt: 1,
+        updatedAt: 100,
+        current: true,
+        messages: [
+          {
+            id: 'm-55-0',
+            conversation: 55,
+            role: 'assistant',
+            text: '',
+            timestamp: 100,
+            actions: [
+              {
+                id: 'act_1',
+                name: 'anda.user_choice',
+                kind: 'choice',
+                status: 'pending',
+                choices: [{ id: 'ship', label: 'Ship it' }],
+                payload: {}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+
+    const updated = applyActionResponseToGroups(
+      groups,
+      {
+        action_id: 'act_1',
+        conversation: 55,
+        status: 'selected',
+        response: { choice_id: 'ship' },
+        responded_at: 150
+      },
+      999
+    )
+
+    expect(updated).not.toBe(groups)
+    expect(updated[0]?.updatedAt).toBe(150)
+    expect(updated[0]?.messages[0]?.actions?.[0]).toMatchObject({
+      status: 'selected',
+      response: { choice_id: 'ship' },
+      respondedAt: 150
+    })
+  })
+
+  it('returns the original groups when the response belongs to another conversation', () => {
+    const groups: MessageGroup[] = [
+      {
+        _id: 55,
+        status: 'working',
+        ancestors: [],
+        createdAt: 1,
+        updatedAt: 100,
+        current: true,
+        messages: []
+      }
+    ]
+
+    const updated = applyActionResponseToGroups(groups, {
+      action_id: 'act_1',
+      conversation: 99,
+      status: 'approved',
+      response: { approve: true }
+    })
+
+    expect(updated).toBe(groups)
   })
 })

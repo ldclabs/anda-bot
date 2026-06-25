@@ -32,6 +32,7 @@ use std::{
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+mod action;
 mod agent;
 mod bookmark;
 mod browser;
@@ -58,6 +59,11 @@ use crate::{
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
+pub(crate) use action::{
+    ActionEvent, ActionRuntime, ActionSession, ActionsTool, AskUserChoiceTool,
+    action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
+    apply_action_resolution_to_message, is_action_message, is_action_message_value,
+};
 pub use agent::{
     AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,
 };
@@ -390,6 +396,7 @@ impl Engines {
             "note".to_string(),
             "tools_groups".to_string(),
             "tools_select".to_string(),
+            AskUserChoiceTool::NAME.to_string(),
         ];
         let skills_tool = Arc::new(
             skill::SkillManager::new_with_dirs(cfg.skills_dir.clone(), additional_skills_dirs)
@@ -420,6 +427,7 @@ impl Engines {
                 McpServerTool::NAME,
                 ResourceStore::NAME,
                 ConversationsTool::NAME,
+                AskUserChoiceTool::NAME,
                 BookmarksTool::NAME,
                 SubAgentManager::NAME,
                 AndaBot::NAME,
@@ -505,6 +513,8 @@ impl Engines {
             .with_models(cfg.models.clone())
             .register_tool(Arc::new(brain_client.clone()))?
             .register_tool(Arc::new(shell_tool))?
+            .register_tool(Arc::new(ActionsTool::new(bot.action_runtime())))?
+            .register_tool(Arc::new(AskUserChoiceTool))?
             .register_tool(Arc::new(note::NoteTool::new()))?
             .register_tool(Arc::new(GoalTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
@@ -572,6 +582,7 @@ impl Engines {
             .register_agent(bot.clone(), Some(ACTIVE_MODEL_LABEL.to_string()))?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
+                ActionsTool::NAME.to_string(),
                 ResourceStore::NAME.to_string(),
                 BookmarksTool::NAME.to_string(),
                 SkillLibrary::NAME.to_string(),

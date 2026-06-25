@@ -54,7 +54,7 @@ use meta::{
 use session::{ConversationInput, Session};
 
 use super::{
-    CompletionHook, McpServerTool,
+    ActionEvent, ActionRuntime, ActionSession, AskUserChoiceTool, CompletionHook, McpServerTool,
     browser::ChromeBrowserTool,
     conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalTool, GoalToolState},
@@ -78,6 +78,7 @@ pub struct AndaBot {
 
 struct AndaBotInner {
     brain: brain::Client,
+    actions: Arc<ActionRuntime>,
     conversations: Arc<ConversationsTool>,
     resource_store: Arc<ResourceStore>,
     tool_dependencies: Vec<String>,
@@ -142,6 +143,7 @@ fn base_tool_dependencies() -> Vec<String> {
         TOOLS_SELECT_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
+        AskUserChoiceTool::NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
         EditFileTool::NAME.to_string(),
@@ -172,8 +174,8 @@ fn base_tools() -> Vec<String> {
         TOOLS_SELECT_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         TodoTool::NAME.to_string(),
-        McpServerTool::NAME.to_string(),
         ShellTool::NAME.to_string(),
+        AskUserChoiceTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
     ]
@@ -207,10 +209,12 @@ impl AndaBot {
             tool_dependencies.push(channel::SendImMessageTool::NAME.to_string());
             tool_dependencies.push(channel::ListImChannelsTool::NAME.to_string());
         }
+        let actions = Arc::new(ActionRuntime::new());
 
         Self {
             inner: Arc::new(AndaBotInner {
                 brain,
+                actions,
                 home_dir,
                 conversations,
                 resource_store,
@@ -237,6 +241,10 @@ impl AndaBot {
             memory_nodes: bs.concepts as u64,
             memory_links: bs.propositions as u64,
         })
+    }
+
+    pub(crate) fn action_runtime(&self) -> Arc<ActionRuntime> {
+        self.inner.actions.clone()
     }
 
     fn insert_session(&self, task: Arc<Session>) {
@@ -948,6 +956,7 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
+        let (action_sender, action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(42);
         let session_request_meta =
             SessionRequestMeta::new(request_meta_for_conversation(ctx.meta(), conversation._id));
         let external_user =
@@ -958,13 +967,22 @@ impl Agent<AgentCtx> for AndaBot {
             Some(caller.to_string())
         };
 
+        let conversation_id = Arc::new(AtomicU64::new(conversation._id));
+        let session_id = sess_id.to_string();
         let session = Arc::new(Session {
             id: sess_id,
             caller: caller.to_string(),
             workspace,
             source_key: source_key.clone(),
-            conversation_id: AtomicU64::new(conversation._id),
+            conversation_id: conversation_id.clone(),
             sender,
+            actions: ActionSession::new(
+                self.inner.actions.clone(),
+                action_sender,
+                caller.to_string(),
+                session_id,
+                conversation_id,
+            ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(initial_goal.map(goal::GoalState::new))),
@@ -989,6 +1007,7 @@ impl Agent<AgentCtx> for AndaBot {
             session.active_at.clone(),
         ));
         ctx.base.set_state(session_request_meta);
+        ctx.base.set_state(session.actions.clone());
 
         let agent_hook = DynAgentHook::new(session.clone());
         ctx.base.set_state(agent_hook);
@@ -1033,6 +1052,7 @@ impl Agent<AgentCtx> for AndaBot {
             session,
             conversation,
             rx,
+            action_rx,
             system_extra_user_context(&extra),
         );
         Ok(res)
@@ -1453,6 +1473,12 @@ mod tests {
             .unwrap()
             .register_tool(Arc::new(FakeShellTool))
             .unwrap()
+            .register_tool(Arc::new(crate::engine::ActionsTool::new(
+                bot.action_runtime(),
+            )))
+            .unwrap()
+            .register_tool(Arc::new(AskUserChoiceTool))
+            .unwrap()
             .register_tool(Arc::new(NoteTool::new()))
             .unwrap()
             .register_tool(Arc::new(GoalTool::new()))
@@ -1511,6 +1537,7 @@ mod tests {
             .unwrap()
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
+                crate::engine::ActionsTool::NAME.to_string(),
                 ResourceStore::NAME.to_string(),
                 Tool::name(bot.as_ref()),
             ])

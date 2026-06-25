@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "Impossible de mettre à jour les saisies rapides : $1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "Demander l’approbation"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "Demander avant chaque appel d’outil"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "Approuver pour moi"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "Demander seulement pour les opérations risquées"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "Accès complet"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "Approuver automatiquement les appels d’outil"
+  },
+  "approvalModeCustomLabel": {
+    "message": "Personnalisé"
+  },
+  "approvalModeCustomDescription": {
+    "message": "Utiliser les règles d’approbation de la configuration"
+  },
+  "approvalModeMenuAria": {
+    "message": "Mode d’approbation"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "Comment Anda doit-il approuver les actions ?"
+  },
+  "actionToolFallback": {
+    "message": "Outil"
+  },
+  "actionApprovalKindLabel": {
+    "message": "Approbation de $1"
+  },
+  "actionChoiceKindLabel": {
+    "message": "Choisir une option"
+  },
+  "actionFallbackTitle": {
+    "message": "Action"
+  },
+  "actionStatusPending": {
+    "message": "En attente"
+  },
+  "actionStatusApproved": {
+    "message": "Approuvé"
+  },
+  "actionStatusDenied": {
+    "message": "Refusé"
+  },
+  "actionStatusSelected": {
+    "message": "Sélectionné"
+  },
+  "actionStatusExpired": {
+    "message": "Expiré"
+  },
+  "actionStatusUnknown": {
+    "message": "Inconnu"
+  },
+  "actionApprove": {
+    "message": "Approuver"
+  },
+  "actionDeny": {
+    "message": "Refuser"
+  },
+  "actionFailed": {
+    "message": "Échec de l’action"
+  },
+  "actionBackground": {
+    "message": "arrière-plan"
+  },
+  "actionForeground": {
+    "message": "premier plan"
+  },
+  "actionDetailCommand": {
+    "message": "Commande"
+  },
+  "actionDetailWorkspace": {
+    "message": "Espace de travail"
+  },
+  "actionDetailApprovalReason": {
+    "message": "Raison de l’approbation"
+  },
+  "actionDetailMode": {
+    "message": "Mode"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "Clés d’environnement"
+  },
+  "shellCommandTool": {
+    "message": "Commande shell"
+  },
+  "shellApprovalTitle": {
+    "message": "Approuver la commande shell"
+  },
+  "shellApprovalMessage": {
+    "message": "L’agent veut exécuter une commande shell locale."
+  },
   "stopTask": {
     "message": "Arrêter la tâche en cours"
   },

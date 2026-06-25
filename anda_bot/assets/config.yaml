@@ -260,60 +260,62 @@ transcription:
   #   max_audio_bytes: 26214400
   #   timeout_secs: 300
 
-channels:
-  # telegram:
-  #   - id: personal
-  #     # Optional. Bind this bot to a configured user id.
-  #     user: alice
-  #     bot_token: ""
-  #     username: anda_bot
-  #     allowed_users:
-  #       - "*"
-  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
-  #     allow_external_users: false
-  #     mention_only: false
-  #     ack_reactions: true
-  # wechat:
-  #   - id: personal
-  #     # Optional. Bind this WeChat bot to a configured user id.
-  #     user: alice
-  #     # Optional. When empty, anda_bot will start QR login and save token.txt
-  #     # in the channel workspace for later restarts.
-  #     bot_token: ""
-  #     username: anda-wechat
-  #     allowed_users:
-  #       - "*"
-  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
-  #     allow_external_users: false
-  #     route_tag:
-  # discord:
-  #   - id: server
-  #     # Optional. Bind this Discord bot to a configured user id.
-  #     user: team-ops
-  #     bot_token: ""
-  #     username: anda-discord
-  #     guild_id:
-  #     allowed_users:
-  #       - "*"
-  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
-  #     allow_external_users: false
-  #     listen_to_bots: false
-  #     mention_only: true
-  #     ack_reactions: true
-  # lark:
-  #   - id: work
-  #     # Optional. Bind this Lark/Feishu app to a configured user id.
-  #     user: team-ops
-  #     app_id: ""
-  #     app_secret: ""
-  #     username: anda-lark
-  #     verification_token:
-  #     port:
-  #     allowed_users:
-  #       - "*"
-  #     # Accept non-allowlisted senders as $external_user instead of ignoring them.
-  #     allow_external_users: false
-  #     mention_only: true
-  #     platform: lark # or feishu
-  #     receive_mode: websocket # or webhook
-  #     ack_reactions: true
+channels: {}
+# Channel examples. Uncomment under `channels` to enable runtimes.
+# channels:
+#   telegram:
+#     - id: personal
+#       # Optional. Bind this bot to a configured user id.
+#       user: alice
+#       bot_token: ""
+#       username: anda_bot
+#       allowed_users:
+#         - "*"
+#       # Accept non-allowlisted senders as $external_user instead of ignoring them.
+#       allow_external_users: false
+#       mention_only: false
+#       ack_reactions: true
+#   wechat:
+#     - id: personal
+#       # Optional. Bind this WeChat bot to a configured user id.
+#       user: alice
+#       # Optional. When empty, anda_bot will start QR login and save token.txt
+#       # in the channel workspace for later restarts.
+#       bot_token: ""
+#       username: anda-wechat
+#       allowed_users:
+#         - "*"
+#       # Accept non-allowlisted senders as $external_user instead of ignoring them.
+#       allow_external_users: false
+#       route_tag:
+#   discord:
+#     - id: server
+#       # Optional. Bind this Discord bot to a configured user id.
+#       user: team-ops
+#       bot_token: ""
+#       username: anda-discord
+#       guild_id:
+#       allowed_users:
+#         - "*"
+#       # Accept non-allowlisted senders as $external_user instead of ignoring them.
+#       allow_external_users: false
+#       listen_to_bots: false
+#       mention_only: true
+#       ack_reactions: true
+#   lark:
+#     - id: work
+#       # Optional. Bind this Lark/Feishu app to a configured user id.
+#       user: team-ops
+#       app_id: ""
+#       app_secret: ""
+#       username: anda-lark
+#       verification_token:
+#       port:
+#       allowed_users:
+#         - "*"
+#       # Accept non-allowlisted senders as $external_user instead of ignoring them.
+#       allow_external_users: false
+#       mention_only: true
+#       platform: lark # or feishu
+#       receive_mode: websocket # or webhook
+#       ack_reactions: true

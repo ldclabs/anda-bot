@@ -23,10 +23,11 @@ use super::{
 #[cfg(test)]
 use crate::engine::SkillLibrary;
 use crate::engine::{
-    CompletionHook,
+    ActionEvent, CompletionHook, action_id_from_message, action_id_from_message_value,
+    apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
     conversation::SourceState,
     goal::{self},
-    multimodal,
+    is_action_message, is_action_message_value, multimodal,
     prompt::{PromptCommand, skill_subagent},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -58,6 +59,7 @@ impl AndaBot {
         session: Arc<Session>,
         conversation: Conversation,
         mut rx: tokio::sync::mpsc::Receiver<ConversationInput>,
+        action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
         extra_user_context: Option<Message>,
     ) {
         let assistant = self.clone();
@@ -97,6 +99,7 @@ impl AndaBot {
                 assistant: assistant.clone(),
                 session: session.clone(),
                 conversation,
+                action_rx,
                 runner,
                 first_round: true,
                 extra_user_context: extra_user_context.clone(),
@@ -164,6 +167,7 @@ struct SessionRunner {
     assistant: AndaBot,
     session: Arc<Session>,
     conversation: Conversation,
+    action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
     runner: CompletionRunner,
     first_round: bool,
     extra_user_context: Option<Message>,
@@ -175,6 +179,95 @@ impl SessionRunner {
         self.assistant
             .persist_conversation_state(&self.conversation)
             .await;
+    }
+
+    async fn drain_action_events(&mut self) {
+        let mut changed = false;
+        while let Ok(event) = self.action_rx.try_recv() {
+            changed |= self.apply_action_event(event);
+        }
+        if changed {
+            self.persist_conversation_state().await;
+        }
+    }
+
+    async fn next_with_action_events(
+        &mut self,
+    ) -> (
+        Result<Option<anda_core::AgentOutput>, BoxError>,
+        Vec<ActionEvent>,
+    ) {
+        let assistant = self.assistant.clone();
+        let conversation = &mut self.conversation;
+        let action_rx = &mut self.action_rx;
+        let next = self.runner.next();
+        tokio::pin!(next);
+        let mut runner_events = Vec::new();
+
+        loop {
+            tokio::select! {
+                result = &mut next => return (result, runner_events),
+                maybe_event = action_rx.recv() => {
+                    if let Some(event) = maybe_event {
+                        if apply_action_event_to_conversation(conversation, event.clone()) {
+                            assistant.persist_conversation_state(conversation).await;
+                        }
+                        runner_events.push(event);
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_action_event(&mut self, event: ActionEvent) -> bool {
+        self.apply_action_event_to_runner(event.clone());
+        apply_action_event_to_conversation(&mut self.conversation, event)
+    }
+
+    fn apply_action_event_to_runner(&mut self, event: ActionEvent) -> bool {
+        match event {
+            ActionEvent::Add(message) => {
+                let new_action_id = action_id_from_message(&message);
+                if let Some(action_id) = new_action_id.as_deref()
+                    && self
+                        .runner
+                        .chat_history()
+                        .iter()
+                        .filter(|message| is_action_message(message))
+                        .filter_map(action_id_from_message)
+                        .any(|existing| existing == action_id)
+                {
+                    return false;
+                }
+                self.runner.append_chat_history(vec![message]);
+                true
+            }
+            ActionEvent::Resolve {
+                action_id,
+                status,
+                response,
+                responded_at,
+            } => self
+                .runner
+                .chat_history_mut()
+                .iter_mut()
+                .rev()
+                .any(|message| {
+                    action_id_from_message(message).as_deref() == Some(&action_id)
+                        && apply_action_resolution_to_chat_message(
+                            message,
+                            &action_id,
+                            status,
+                            &response,
+                            responded_at,
+                        )
+                }),
+        }
+    }
+
+    fn replace_conversation_messages_from_chat_history(&mut self, chat_history: Vec<Message>) {
+        self.conversation.messages.clear();
+        self.conversation.append_messages(chat_history);
     }
 
     async fn persist_tools_usage_snapshot(
@@ -222,8 +315,7 @@ impl SessionRunner {
         mark_special_user_messages(&mut output.chat_history);
 
         self.session.runner_idle.store(true, Ordering::SeqCst);
-        self.conversation.messages.clear();
-        self.conversation.append_messages(output.chat_history);
+        self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.failed_reason = None;
         self.conversation.status = ConversationStatus::Idle;
         self.conversation.usage = output.usage;
@@ -288,8 +380,7 @@ impl SessionRunner {
             .persist_resources_for_message(&self.conversation.user, output.artifacts)
             .await?;
 
-        self.conversation.messages.clear();
-        self.conversation.append_messages(output.chat_history);
+        self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.status = ConversationStatus::Completed;
         self.conversation.usage = output.usage;
         self.conversation.artifacts = artifacts;
@@ -367,6 +458,7 @@ impl SessionRunner {
         let mut messages = chat_history
             .iter()
             .skip(self.session.submit_formation_at.load(Ordering::SeqCst) as usize)
+            .filter(|msg| !is_action_message(msg))
             .filter_map(|msg| {
                 let mut msg = msg.clone();
                 let pruned = msg.prune_content();
@@ -612,7 +704,14 @@ impl SessionRunner {
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
 
-        let next_result = self.runner.next().await;
+        let (mut next_result, runner_events) = self.next_with_action_events().await;
+        for event in runner_events {
+            self.apply_action_event_to_runner(event);
+        }
+        self.drain_action_events().await;
+        if let Ok(Some(res)) = &mut next_result {
+            res.chat_history = self.runner.chat_history().clone();
+        }
         self.assistant
             .inner
             .cache_merge_discovered_tools(&self.runner);
@@ -740,20 +839,8 @@ impl SessionRunner {
 
                 self.session.on_completion(&self.ctx, &res).await;
 
-                if self.first_round {
-                    self.first_round = false;
-                    self.conversation.messages.clear();
-                    self.conversation.append_messages(res.chat_history);
-                } else {
-                    let existing_len = self.conversation.messages.len();
-                    if res.chat_history.len() >= existing_len {
-                        res.chat_history.drain(0..existing_len);
-                        self.conversation.append_messages(res.chat_history);
-                    } else {
-                        self.conversation.messages.clear();
-                        self.conversation.append_messages(res.chat_history);
-                    }
-                }
+                self.first_round = false;
+                self.replace_conversation_messages_from_chat_history(res.chat_history);
 
                 self.conversation.status = if res.failed_reason.is_some() {
                     ConversationStatus::Failed
@@ -906,6 +993,41 @@ fn should_continue_session_runner_after_stop(
     ) && (has_pending_inputs || has_background_tasks)
 }
 
+fn apply_action_event_to_conversation(conversation: &mut Conversation, event: ActionEvent) -> bool {
+    let updated = match event {
+        ActionEvent::Add(message) => {
+            let value = json!(message);
+            let new_action_id = action_id_from_message_value(&value);
+            if let Some(action_id) = new_action_id.as_deref()
+                && conversation
+                    .messages
+                    .iter()
+                    .filter(|message| is_action_message_value(message))
+                    .filter_map(action_id_from_message_value)
+                    .any(|existing| existing == action_id)
+            {
+                false
+            } else {
+                conversation.messages.push(value);
+                true
+            }
+        }
+        ActionEvent::Resolve {
+            action_id,
+            status,
+            response,
+            responded_at,
+        } => conversation.messages.iter_mut().any(|message| {
+            apply_action_resolution_to_message(message, &action_id, status, &response, responded_at)
+        }),
+    };
+
+    if updated {
+        conversation.updated_at = unix_ms();
+    }
+    updated
+}
+
 fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
     let reason = reason.trim();
     let text = if reason.is_empty() {
@@ -978,6 +1100,7 @@ mod tests {
     use crate::engine::conversation::ConversationsTool;
     use crate::engine::prompt::PromptCommand;
     use crate::engine::resources::ResourceStore;
+    use crate::engine::{ActionEvent, ActionRuntime, action::ActionStatus};
     use anda_brain::types::InputContext;
     use anda_core::{AgentOutput, BoxPinFut, RequestMeta};
     use anda_db::{
@@ -1017,6 +1140,97 @@ mod tests {
         }
 
         messages
+    }
+
+    #[test]
+    fn action_events_are_persisted_and_ignored_for_model_history_count() {
+        let mut conversation = Conversation {
+            _id: 10,
+            messages: vec![json!(Message {
+                role: "user".to_string(),
+                content: vec!["hello".to_string().into()],
+                ..Default::default()
+            })],
+            ..Default::default()
+        };
+        let action_message = Message {
+            role: "assistant".to_string(),
+            name: Some("$action".to_string()),
+            content: vec![ContentPart::Action {
+                name: "anda.tool_approval".to_string(),
+                payload: json!({"id": "act_1", "status": "pending"}),
+                recipients: None,
+                signature: None,
+            }],
+            ..Default::default()
+        };
+
+        assert!(apply_action_event_to_conversation(
+            &mut conversation,
+            ActionEvent::Add(action_message.clone())
+        ));
+        assert_eq!(conversation.messages.len(), 2);
+        assert_eq!(
+            conversation
+                .messages
+                .iter()
+                .filter(|message| !is_action_message_value(message))
+                .count(),
+            1
+        );
+
+        assert!(!apply_action_event_to_conversation(
+            &mut conversation,
+            ActionEvent::Add(action_message.clone())
+        ));
+        assert_eq!(conversation.messages.len(), 2);
+
+        assert!(apply_action_event_to_conversation(
+            &mut conversation,
+            ActionEvent::Resolve {
+                action_id: "act_1".to_string(),
+                status: ActionStatus::Approved,
+                response: json!({"approve": true}),
+                responded_at: 50,
+            }
+        ));
+        assert_eq!(
+            conversation.messages[1]["content"][0]["payload"]["status"],
+            "approved"
+        );
+        assert_eq!(
+            conversation.messages[1]["content"][0]["payload"]["response"]["approve"],
+            true
+        );
+
+        let mut runner_history = vec![
+            Message {
+                role: "user".to_string(),
+                content: vec!["hello".to_string().into()],
+                ..Default::default()
+            },
+            action_message,
+        ];
+        assert!(runner_history.iter_mut().rev().any(|message| {
+            action_id_from_message(message).as_deref() == Some("act_1")
+                && apply_action_resolution_to_chat_message(
+                    message,
+                    "act_1",
+                    ActionStatus::Approved,
+                    &json!({"approve": true}),
+                    50,
+                )
+        }));
+        assert_eq!(runner_history.len(), 2);
+        assert_eq!(
+            action_id_from_message(&runner_history[1]).as_deref(),
+            Some("act_1")
+        );
+        let resolved_value = json!(&runner_history[1]);
+        assert_eq!(
+            resolved_value["content"][0]["payload"]["status"],
+            "approved"
+        );
     }
 
     async fn spawn_runner_brain_mock() -> String {
@@ -1173,15 +1387,29 @@ mod tests {
         )
     }
 
-    fn build_session() -> (Arc<Session>, tokio::sync::mpsc::Receiver<ConversationInput>) {
+    fn build_session() -> (
+        Arc<Session>,
+        tokio::sync::mpsc::Receiver<ConversationInput>,
+        tokio::sync::mpsc::Receiver<ActionEvent>,
+    ) {
         let (sender, rx) = tokio::sync::mpsc::channel(8);
+        let (action_sender, action_rx) = tokio::sync::mpsc::channel(8);
+        let session_id = Xid::new();
+        let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Arc::new(Session {
-            id: Xid::new(),
+            id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
             source_key: "test".to_string(),
-            conversation_id: AtomicU64::new(1),
+            conversation_id: conversation_id.clone(),
             sender,
+            actions: crate::engine::ActionSession::new(
+                Arc::new(ActionRuntime::new()),
+                action_sender,
+                "caller".to_string(),
+                session_id.to_string(),
+                conversation_id,
+            ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
             goal: Arc::new(RwLock::new(None)),
@@ -1200,7 +1428,7 @@ mod tests {
                 topic: None,
             }),
         });
-        (session, rx)
+        (session, rx, action_rx)
     }
 
     fn mock_runner_ctx() -> AgentCtx {
@@ -1235,7 +1463,7 @@ mod tests {
         SessionRunner,
         tokio::sync::mpsc::Receiver<ConversationInput>,
     ) {
-        let (session, rx) = build_session();
+        let (session, rx, action_rx) = build_session();
         let req = CompletionRequest::default();
         let runner = ctx.clone().completion_iter(req.clone(), vec![]).unbound();
         let sess_runner = SessionRunner {
@@ -1246,6 +1474,7 @@ mod tests {
                 _id: 1,
                 ..Default::default()
             },
+            action_rx,
             runner,
             first_round: true,
             extra_user_context: None,

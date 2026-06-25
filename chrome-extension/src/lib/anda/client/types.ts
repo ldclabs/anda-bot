@@ -1,12 +1,13 @@
 import type {
   AppearanceTheme,
+  ApprovalMode,
   ChromeApi,
   QuickPrompt,
   SettingsState,
   SubmitKeyMode
 } from '$lib/service-worker/types'
 
-export type { AppearanceTheme, ChromeApi, QuickPrompt, SettingsState, SubmitKeyMode }
+export type { AppearanceTheme, ApprovalMode, ChromeApi, QuickPrompt, SettingsState, SubmitKeyMode }
 
 export type Principal = string
 export type Xid = string
@@ -52,6 +53,63 @@ export interface Resource {
 
 export interface ChatAttachment extends AttachmentSummary {
   resource: Resource
+}
+
+export type ChatActionStatus = 'pending' | 'approved' | 'denied' | 'selected' | 'expired' | string
+
+export interface ChatActionChoice {
+  id: string
+  label: string
+  value?: string | null
+  description?: string | null
+}
+
+export interface ChatActionTool {
+  name: string
+  label?: string | null
+}
+
+export type ChatActionDetailFormat = 'text' | 'code' | 'list' | 'json' | string
+
+export interface ChatActionDetail {
+  label: string
+  value: Json
+  format?: ChatActionDetailFormat | null
+}
+
+export interface ChatActionApproval {
+  approveLabel?: string | null
+  denyLabel?: string | null
+}
+
+export interface ChatAction {
+  id: string
+  name: string
+  kind?: string
+  status: ChatActionStatus
+  tool?: ChatActionTool
+  title?: string
+  message?: string | null
+  summary?: string
+  details?: ChatActionDetail[]
+  approval?: ChatActionApproval
+  command?: string
+  workspace?: string
+  background?: boolean
+  choices?: ChatActionChoice[]
+  response?: Json
+  createdAt?: number
+  expiresAt?: number
+  respondedAt?: number
+  payload: Record<string, Json>
+}
+
+export interface ActionApiOutput {
+  action_id: string
+  conversation?: number
+  status: string
+  response: Json
+  responded_at?: number
 }
 
 export interface VoiceCapabilities {
@@ -188,6 +246,7 @@ export interface ChatMessage {
   externalUser?: ExternalUserMessageInfo
   thinkingText?: string
   attachments?: ChatAttachment[]
+  actions?: ChatAction[]
   timestamp?: number
   pending?: boolean
 }
@@ -377,6 +436,13 @@ export type ContentPart =
       name: string
       output: Json
       callId?: string
+    }
+  | {
+      type: 'Action'
+      name: string
+      payload: Record<string, Json>
+      recipients?: Principal[]
+      signature?: string
     }
   | ({
       type: 'Resource'

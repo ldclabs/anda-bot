@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "تعذّر تحديث الإدخالات السريعة: $1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "طلب الموافقة"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "اسأل قبل كل استدعاء أداة"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "وافق نيابة عني"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "اسأل فقط عند العمليات التي تبدو خطرة"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "وصول كامل"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "الموافقة تلقائيًا على استدعاءات الأدوات"
+  },
+  "approvalModeCustomLabel": {
+    "message": "مخصص"
+  },
+  "approvalModeCustomDescription": {
+    "message": "استخدام قواعد الموافقة من الإعدادات"
+  },
+  "approvalModeMenuAria": {
+    "message": "وضع الموافقة"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "كيف يجب أن يوافق Anda على الإجراءات؟"
+  },
+  "actionToolFallback": {
+    "message": "أداة"
+  },
+  "actionApprovalKindLabel": {
+    "message": "موافقة $1"
+  },
+  "actionChoiceKindLabel": {
+    "message": "اختر خيارًا"
+  },
+  "actionFallbackTitle": {
+    "message": "إجراء"
+  },
+  "actionStatusPending": {
+    "message": "قيد الانتظار"
+  },
+  "actionStatusApproved": {
+    "message": "تمت الموافقة"
+  },
+  "actionStatusDenied": {
+    "message": "مرفوض"
+  },
+  "actionStatusSelected": {
+    "message": "تم الاختيار"
+  },
+  "actionStatusExpired": {
+    "message": "انتهت المهلة"
+  },
+  "actionStatusUnknown": {
+    "message": "غير معروف"
+  },
+  "actionApprove": {
+    "message": "موافقة"
+  },
+  "actionDeny": {
+    "message": "رفض"
+  },
+  "actionFailed": {
+    "message": "فشل الإجراء"
+  },
+  "actionBackground": {
+    "message": "الخلفية"
+  },
+  "actionForeground": {
+    "message": "المقدمة"
+  },
+  "actionDetailCommand": {
+    "message": "الأمر"
+  },
+  "actionDetailWorkspace": {
+    "message": "مساحة العمل"
+  },
+  "actionDetailApprovalReason": {
+    "message": "سبب الموافقة"
+  },
+  "actionDetailMode": {
+    "message": "الوضع"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "مفاتيح البيئة"
+  },
+  "shellCommandTool": {
+    "message": "أمر shell"
+  },
+  "shellApprovalTitle": {
+    "message": "الموافقة على أمر shell"
+  },
+  "shellApprovalMessage": {
+    "message": "يريد الوكيل تشغيل أمر shell محلي."
+  },
   "stopTask": {
     "message": "إيقاف المهمة الحالية"
   },

@@ -9,6 +9,7 @@
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
+    type ApprovalMode,
     type BookmarkedMessage,
     type ChatAttachment,
     type ChatMessage,
@@ -402,6 +403,10 @@
     await andaClient.clearQuickPrompts()
   }
 
+  async function changeApprovalMode(mode: ApprovalMode) {
+    await andaClient.saveApprovalMode(mode)
+  }
+
   async function sendPrompt(payload: ComposerSubmitPayload) {
     const command = parsePromptCommand(payload.text)
     if (sending && !isImmediatePromptCommand(command)) {
@@ -770,6 +775,8 @@
         {stoppable}
         voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voiceCapabilities}
+        approvalMode={andaClient.settings.approvalMode || 'on_risk'}
+        onApprovalModeChange={changeApprovalMode}
         submitKeyMode={andaClient.settings.submitKeyMode}
         onSend={sendPrompt}
         onStop={stopActiveTask}

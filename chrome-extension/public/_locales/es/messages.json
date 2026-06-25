@@ -278,6 +278,105 @@
   "quickPromptsUpdateFailed": {
     "message": "No se pudieron actualizar las entradas rápidas: $1"
   },
+  "approvalModeRequestApprovalLabel": {
+    "message": "Solicitar aprobación"
+  },
+  "approvalModeRequestApprovalDescription": {
+    "message": "Preguntar antes de cada llamada a una herramienta"
+  },
+  "approvalModeOnRiskLabel": {
+    "message": "Aprobar por mí"
+  },
+  "approvalModeOnRiskDescription": {
+    "message": "Preguntar solo por operaciones que parezcan riesgosas"
+  },
+  "approvalModeFullAccessLabel": {
+    "message": "Acceso completo"
+  },
+  "approvalModeFullAccessDescription": {
+    "message": "Aprobar automáticamente las llamadas a herramientas"
+  },
+  "approvalModeCustomLabel": {
+    "message": "Personalizado"
+  },
+  "approvalModeCustomDescription": {
+    "message": "Usar reglas de aprobación de la configuración"
+  },
+  "approvalModeMenuAria": {
+    "message": "Modo de aprobación"
+  },
+  "approvalModeMenuPrompt": {
+    "message": "¿Cómo debe Anda aprobar las acciones?"
+  },
+  "actionToolFallback": {
+    "message": "Herramienta"
+  },
+  "actionApprovalKindLabel": {
+    "message": "Aprobación de $1"
+  },
+  "actionChoiceKindLabel": {
+    "message": "Elige una opción"
+  },
+  "actionFallbackTitle": {
+    "message": "Acción"
+  },
+  "actionStatusPending": {
+    "message": "Pendiente"
+  },
+  "actionStatusApproved": {
+    "message": "Aprobado"
+  },
+  "actionStatusDenied": {
+    "message": "Denegado"
+  },
+  "actionStatusSelected": {
+    "message": "Seleccionado"
+  },
+  "actionStatusExpired": {
+    "message": "Caducado"
+  },
+  "actionStatusUnknown": {
+    "message": "Desconocido"
+  },
+  "actionApprove": {
+    "message": "Aprobar"
+  },
+  "actionDeny": {
+    "message": "Denegar"
+  },
+  "actionFailed": {
+    "message": "La acción falló"
+  },
+  "actionBackground": {
+    "message": "segundo plano"
+  },
+  "actionForeground": {
+    "message": "primer plano"
+  },
+  "actionDetailCommand": {
+    "message": "Comando"
+  },
+  "actionDetailWorkspace": {
+    "message": "Espacio de trabajo"
+  },
+  "actionDetailApprovalReason": {
+    "message": "Motivo de aprobación"
+  },
+  "actionDetailMode": {
+    "message": "Modo"
+  },
+  "actionDetailEnvironmentKeys": {
+    "message": "Claves de entorno"
+  },
+  "shellCommandTool": {
+    "message": "Comando de shell"
+  },
+  "shellApprovalTitle": {
+    "message": "Aprobar comando de shell"
+  },
+  "shellApprovalMessage": {
+    "message": "El agente quiere ejecutar un comando de shell local."
+  },
   "stopTask": {
     "message": "Detener tarea actual"
   },

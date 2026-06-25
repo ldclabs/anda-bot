@@ -1,10 +1,15 @@
 import { getMessage } from '$lib/i18n'
 import type {
+  ActionApiOutput,
   ChatAttachment,
+  ChatAction,
+  ChatActionChoice,
+  ChatActionDetail,
   ChatMessage,
   ContentPart,
   Conversation,
   ExternalUserMessageInfo,
+  Json,
   Message,
   MessageGroup,
   Resource
@@ -41,6 +46,53 @@ export function conversationToGroup(conversation: Conversation): MessageGroup {
   }
 }
 
+export function applyActionResponseToGroups(
+  groups: MessageGroup[],
+  output: ActionApiOutput,
+  fallbackRespondedAt = Date.now()
+): MessageGroup[] {
+  let changed = false
+  const nextGroups = groups.map((group) => {
+    if (output.conversation && group._id !== output.conversation) {
+      return group
+    }
+
+    let groupChanged = false
+    const messages = group.messages.map((message) => {
+      if (!message.actions?.some((action) => action.id === output.action_id)) {
+        return message
+      }
+
+      groupChanged = true
+      return {
+        ...message,
+        actions: message.actions.map((action) =>
+          action.id === output.action_id
+            ? {
+                ...action,
+                status: output.status,
+                response: output.response,
+                respondedAt: output.responded_at || fallbackRespondedAt
+              }
+            : action
+        )
+      }
+    })
+
+    if (!groupChanged) {
+      return group
+    }
+    changed = true
+    return {
+      ...group,
+      updatedAt: Math.max(group.updatedAt || 0, output.responded_at || fallbackRespondedAt),
+      messages
+    }
+  })
+
+  return changed ? nextGroups : groups
+}
+
 export function failureReasonMessage(reason?: string | null): string {
   const trimmed = reason?.trim()
   return trimmed
@@ -67,6 +119,7 @@ export function normalizeMessages(
   if (
     raw.name?.startsWith('$') &&
     attachments.length === 0 &&
+    content.actions.length === 0 &&
     !externalUser &&
     !content.runtimeToolText
   ) {
@@ -76,7 +129,8 @@ export function normalizeMessages(
     !content.text &&
     !content.thinkingText &&
     !content.runtimeToolText &&
-    attachments.length === 0
+    attachments.length === 0 &&
+    content.actions.length === 0
   ) {
     return []
   }
@@ -87,7 +141,7 @@ export function normalizeMessages(
   // expanded-details state.
   const baseId = `m-${context.conversation}-${context.index}`
   const messages: ChatMessage[] = []
-  if (content.text || content.thinkingText || attachments.length > 0) {
+  if (content.text || content.thinkingText || attachments.length > 0 || content.actions.length > 0) {
     messages.push({
       id: baseId,
       conversation: context.conversation,
@@ -96,6 +150,7 @@ export function normalizeMessages(
       externalUser,
       thinkingText: content.thinkingText,
       attachments: attachments.length ? attachments : undefined,
+      actions: content.actions.length ? content.actions : undefined,
       timestamp
     })
   }
@@ -122,6 +177,7 @@ function contentToMessageContent(
   thinkingText: string
   runtimeToolText?: string
   externalUser?: ExternalUserMessageInfo
+  actions: ChatAction[]
 } {
   if (typeof content === 'string') {
     const externalUserMessage = parseExternalUserPrompt(content)
@@ -129,23 +185,25 @@ function contentToMessageContent(
       return {
         text: externalUserMessage.body,
         thinkingText: '',
-        externalUser: externalUserMessage.externalUser
+        externalUser: externalUserMessage.externalUser,
+        actions: []
       }
     }
     if (shouldHideTextPart(content, options)) {
-      return { text: '', thinkingText: '' }
+      return { text: '', thinkingText: '', actions: [] }
     }
     if (isSystemRuntimeText(content)) {
-      return { text: '', thinkingText: '', runtimeToolText: content.trim() }
+      return { text: '', thinkingText: '', runtimeToolText: content.trim(), actions: [] }
     }
-    return splitLegacyThoughtText(content)
+    return { ...splitLegacyThoughtText(content), actions: [] }
   }
   if (!Array.isArray(content)) {
-    return { text: '', thinkingText: '' }
+    return { text: '', thinkingText: '', actions: [] }
   }
   const textParts: string[] = []
   const thinkingParts: string[] = []
   const runtimeToolParts: string[] = []
+  const actions: ChatAction[] = []
   let externalUser: ExternalUserMessageInfo | undefined
   for (const part of content) {
     if (typeof part === 'string') {
@@ -212,6 +270,9 @@ function contentToMessageContent(
           formatToolDetail(`Tool call${part.name ? `: ${part.name}` : ''}`, part.args)
         )
         continue
+      case 'Action':
+        actions.push(normalizeAction(part))
+        continue
       case 'Resource':
         continue
       default:
@@ -223,8 +284,153 @@ function contentToMessageContent(
     text: textParts.filter(Boolean).join('\n\n').trim(),
     thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim(),
     runtimeToolText: runtimeToolParts.filter(Boolean).join('\n\n---\n\n').trim(),
-    externalUser
+    externalUser,
+    actions
   }
+}
+
+function normalizeAction(part: Extract<ContentPart, { type: 'Action' }>): ChatAction {
+  const payload = part.payload || {}
+  const id = stringFromJson(payload.id) || part.name
+  return {
+    id,
+    name: part.name,
+    kind: stringFromJson(payload.kind),
+    status: stringFromJson(payload.status) || 'pending',
+    tool: toolFromJson(payload.tool),
+    title: stringFromJson(payload.title),
+    message: nullableStringFromJson(payload.message),
+    summary: stringFromJson(payload.summary),
+    details: detailsFromJson(payload.details),
+    approval: approvalFromJson(payload.approval),
+    command: stringFromJson(payload.command),
+    workspace: stringFromJson(payload.workspace),
+    background: booleanFromJson(payload.background),
+    choices: choicesFromJson(payload.choices),
+    response: payload.response,
+    createdAt: numberFromJson(payload.created_at),
+    expiresAt: numberFromJson(payload.expires_at),
+    respondedAt: numberFromJson(payload.responded_at),
+    payload
+  }
+}
+
+function toolFromJson(value: unknown): ChatAction['tool'] {
+  if (typeof value === 'string') {
+    return { name: value }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  const name = stringFromJson(raw.name)
+  if (!name) {
+    return undefined
+  }
+  return {
+    name,
+    label: nullableStringFromJson(raw.label)
+  }
+}
+
+function detailsFromJson(value: unknown): ChatActionDetail[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const details: ChatActionDetail[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue
+    }
+    const raw = item as Record<string, unknown>
+    const label = stringFromJson(raw.label)
+    if (!label) {
+      continue
+    }
+    details.push({
+      label,
+      value: jsonFromUnknown(raw.value),
+      format: nullableStringFromJson(raw.format)
+    })
+  }
+  return details.length ? details : undefined
+}
+
+function approvalFromJson(value: unknown): ChatAction['approval'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  return {
+    approveLabel: nullableStringFromJson(raw.approve_label ?? raw.approveLabel),
+    denyLabel: nullableStringFromJson(raw.deny_label ?? raw.denyLabel)
+  }
+}
+
+function choicesFromJson(value: unknown): ChatActionChoice[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const choices: ChatActionChoice[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue
+    }
+    const raw = item as Record<string, unknown>
+    const id = stringFromJson(raw.id)
+    const label = stringFromJson(raw.label)
+    if (!id || !label) {
+      continue
+    }
+    choices.push({
+      id,
+      label,
+      value: nullableStringFromJson(raw.value),
+      description: nullableStringFromJson(raw.description)
+    })
+  }
+  return choices.length ? choices : undefined
+}
+
+function stringFromJson(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function nullableStringFromJson(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null
+  }
+  return stringFromJson(value)
+}
+
+function numberFromJson(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function booleanFromJson(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function jsonFromUnknown(value: unknown): Json {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map(jsonFromUnknown)
+  }
+  if (value && typeof value === 'object') {
+    const output: Record<string, Json> = {}
+    for (const [key, nested] of Object.entries(value)) {
+      output[key] = jsonFromUnknown(nested)
+    }
+    return output
+  }
+  return null
 }
 
 function messageResources(raw: Message): Resource[] {

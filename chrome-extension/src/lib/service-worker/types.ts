@@ -1,11 +1,13 @@
 export type SubmitKeyMode = 'enter' | 'modifier-enter'
 export type AppearanceTheme = 'system' | 'light' | 'dark'
+export type ApprovalMode = 'request_approval' | 'on_risk' | 'full_access' | 'custom'
 
 export interface SettingsState {
   baseUrl: string
   token: string
   submitKeyMode: SubmitKeyMode
   appearanceTheme: AppearanceTheme
+  approvalMode?: ApprovalMode
 }
 
 export interface QuickPrompt {
