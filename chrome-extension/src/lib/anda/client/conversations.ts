@@ -16,12 +16,14 @@ import type {
 } from './types'
 
 export function conversationToGroup(conversation: Conversation): MessageGroup {
-  const messages = (conversation.messages || []).flatMap((message, index) =>
-    normalizeMessages(message, {
-      conversation: conversation._id,
-      index,
-      fallbackTimestamp: conversation.updated_at
-    })
+  const messages = mergeRepeatedActionMessages(
+    (conversation.messages || []).flatMap((message, index) =>
+      normalizeMessages(message, {
+        conversation: conversation._id,
+        index,
+        fallbackTimestamp: conversation.updated_at
+      })
+    )
   )
 
   if (conversation.status === 'failed') {
@@ -91,6 +93,170 @@ export function applyActionResponseToGroups(
   })
 
   return changed ? nextGroups : groups
+}
+
+export function mergeRepeatedActionMessages(messages: ChatMessage[]): ChatMessage[] {
+  const actionIndex = new Map<string, { messageIndex: number; actionIndex: number }>()
+  const output: ChatMessage[] = []
+
+  for (const message of messages) {
+    if (!message.actions?.length) {
+      output.push(message)
+      continue
+    }
+
+    let removedDuplicateAction = false
+    const keptActions: ChatAction[] = []
+    for (const action of message.actions) {
+      const existing = actionIndex.get(action.id)
+      if (existing) {
+        mergeActionIntoOutput(output, existing, action)
+        removedDuplicateAction = true
+        continue
+      }
+
+      actionIndex.set(action.id, {
+        messageIndex: output.length,
+        actionIndex: keptActions.length
+      })
+      keptActions.push(action)
+    }
+
+    if (!removedDuplicateAction) {
+      output.push(message)
+      continue
+    }
+
+    if (!keptActions.length && isActionOnlyMessage(message)) {
+      continue
+    }
+
+    output.push({
+      ...message,
+      actions: keptActions.length ? keptActions : undefined
+    })
+  }
+
+  return output
+}
+
+export function mergeKnownActionState(
+  group: MessageGroup,
+  previous: MessageGroup | undefined
+): void {
+  if (!previous) {
+    return
+  }
+
+  const knownActions = new Map<string, ChatAction>()
+  for (const message of previous.messages) {
+    for (const action of message.actions || []) {
+      const known = knownActions.get(action.id)
+      knownActions.set(action.id, known ? mergeChatAction(known, action) : action)
+    }
+  }
+  if (!knownActions.size) {
+    return
+  }
+
+  let changed = false
+  group.messages = group.messages.map((message) => {
+    if (!message.actions?.length) {
+      return message
+    }
+
+    let messageChanged = false
+    const actions = message.actions.map((action) => {
+      const known = knownActions.get(action.id)
+      if (!known) {
+        return action
+      }
+
+      messageChanged = true
+      return shouldPreferKnownActionState(action, known)
+        ? mergeChatAction(action, known)
+        : mergeChatAction(known, action)
+    })
+
+    if (!messageChanged) {
+      return message
+    }
+    changed = true
+    return { ...message, actions }
+  })
+
+  if (changed) {
+    group.messages = mergeRepeatedActionMessages(group.messages)
+  }
+}
+
+function mergeActionIntoOutput(
+  output: ChatMessage[],
+  existing: { messageIndex: number; actionIndex: number },
+  incoming: ChatAction
+): void {
+  const message = output[existing.messageIndex]
+  const action = message?.actions?.[existing.actionIndex]
+  if (!message || !action) {
+    return
+  }
+
+  const actions = [...message.actions!]
+  actions[existing.actionIndex] = mergeChatAction(action, incoming)
+  output[existing.messageIndex] = { ...message, actions }
+}
+
+function mergeChatAction(base: ChatAction, incoming: ChatAction): ChatAction {
+  return {
+    ...base,
+    ...incoming,
+    tool: incoming.tool ?? base.tool,
+    title: incoming.title || base.title,
+    message: incoming.message ?? base.message,
+    summary: incoming.summary || base.summary,
+    details: incoming.details?.length ? incoming.details : base.details,
+    approval: incoming.approval ?? base.approval,
+    command: incoming.command || base.command,
+    workspace: incoming.workspace || base.workspace,
+    background: incoming.background ?? base.background,
+    choices: incoming.choices?.length ? incoming.choices : base.choices,
+    response: incoming.response ?? base.response,
+    createdAt: incoming.createdAt ?? base.createdAt,
+    expiresAt: incoming.expiresAt ?? base.expiresAt,
+    respondedAt: incoming.respondedAt ?? base.respondedAt,
+    payload: { ...base.payload, ...incoming.payload }
+  }
+}
+
+function shouldPreferKnownActionState(current: ChatAction, known: ChatAction): boolean {
+  if (!actionHasResponse(known)) {
+    return false
+  }
+  if (!actionHasResponse(current)) {
+    return true
+  }
+  return Boolean(
+    known.respondedAt &&
+      current.respondedAt &&
+      known.respondedAt > current.respondedAt
+  )
+}
+
+function actionHasResponse(action: ChatAction): boolean {
+  return (
+    action.status !== 'pending' ||
+    action.response !== undefined ||
+    action.respondedAt !== undefined
+  )
+}
+
+function isActionOnlyMessage(message: ChatMessage): boolean {
+  return Boolean(
+    !message.text.trim() &&
+      !message.thinkingText?.trim() &&
+      !message.attachments?.length &&
+      message.actions?.length
+  )
 }
 
 export function failureReasonMessage(reason?: string | null): string {

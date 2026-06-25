@@ -4,7 +4,12 @@ import {
   isTransientWebSocketError
 } from '$lib/service-worker/settings'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
-import { applyActionResponseToGroups, conversationToGroup, normalizeMessages } from './conversations'
+import {
+  applyActionResponseToGroups,
+  conversationToGroup,
+  mergeKnownActionState,
+  normalizeMessages
+} from './conversations'
 import { PollConversation } from './poll-conversation'
 import type {
   AgentInput,
@@ -657,6 +662,7 @@ export class Channel extends EventTarget {
     const submitGroup = this.#messageGroups.find(
       (existing) => existing._id === SubmitMessageConversationId
     )
+    mergeKnownActionState(group, existingGroup)
     mergePendingLocalMessages(
       group,
       [existingGroup, submitGroup],
@@ -700,6 +706,7 @@ export class Channel extends EventTarget {
       const b = incoming[j]!
 
       if (a._id === b._id) {
+        mergeKnownActionState(b, a)
         mergePendingLocalMessages(b, [a], knownServerMessageCount(a, b))
         preserveMessageTimestamps(b, a)
         merged.push(b)
@@ -891,6 +898,7 @@ export function mergePendingLocalMessages(
   }
 
   const matched = new Set<ChatMessage>()
+  const matchTargets = new Map<ChatMessage, string>()
   group.messages = group.messages.map((message, index) => {
     // A pending message that already carries this server message's id was
     // merged on an earlier pass (e.g. waiting for attachment confirmation);
@@ -901,6 +909,7 @@ export function mergePendingLocalMessages(
     )
     if (sameIdLocal) {
       matched.add(sameIdLocal)
+      matchTargets.set(sameIdLocal, message.id)
       merged = mergeServerAndLocalMessage(merged, sameIdLocal)
     }
 
@@ -917,6 +926,9 @@ export function mergePendingLocalMessages(
       return merged
     }
 
+    for (const local of acceptedLocalMessages) {
+      matchTargets.set(local, merged.id)
+    }
     return acceptedLocalMessages.reduce(mergeServerAndLocalMessage, merged)
   })
 
@@ -925,8 +937,57 @@ export function mergePendingLocalMessages(
     return
   }
 
-  group.messages = [...group.messages, ...unmatched]
+  group.messages = insertUnmatchedLocalMessages(
+    group.messages,
+    localMessages,
+    unmatched,
+    matchTargets
+  )
   group.updatedAt = Math.max(group.updatedAt, ...unmatched.map((message) => message.timestamp || 0))
+}
+
+function insertUnmatchedLocalMessages(
+  messages: ChatMessage[],
+  localMessages: ChatMessage[],
+  unmatched: ChatMessage[],
+  matchTargets: Map<ChatMessage, string>
+): ChatMessage[] {
+  const merged = [...messages]
+  for (const local of unmatched) {
+    const anchorId = nextMatchedLocalTarget(localMessages, local, matchTargets)
+    const anchorIndex = anchorId ? merged.findIndex((message) => message.id === anchorId) : -1
+    const timestampIndex =
+      anchorIndex < 0 ? firstMessageAfterTimestamp(merged, local.timestamp) : -1
+    const insertIndex = anchorIndex >= 0 ? anchorIndex : timestampIndex
+    if (insertIndex < 0) {
+      merged.push(local)
+    } else {
+      merged.splice(insertIndex, 0, local)
+    }
+  }
+  return merged
+}
+
+function nextMatchedLocalTarget(
+  localMessages: ChatMessage[],
+  local: ChatMessage,
+  matchTargets: Map<ChatMessage, string>
+): string {
+  const index = localMessages.indexOf(local)
+  for (let next = index + 1; next < localMessages.length; next += 1) {
+    const target = matchTargets.get(localMessages[next]!)
+    if (target) {
+      return target
+    }
+  }
+  return ''
+}
+
+function firstMessageAfterTimestamp(messages: ChatMessage[], timestamp: number | undefined): number {
+  if (!timestamp) {
+    return -1
+  }
+  return messages.findIndex((message) => Boolean(message.timestamp && message.timestamp > timestamp))
 }
 
 // Messages without their own timestamp fall back to `conversation.updated_at`,

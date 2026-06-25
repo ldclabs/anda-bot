@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   applyActionResponseToGroups,
+  conversationToGroup,
+  mergeKnownActionState,
   normalizeMessage,
   normalizeMessages
 } from './conversations'
-import type { Message, MessageGroup, Resource } from './types'
+import type { Conversation, Message, MessageGroup, Resource } from './types'
 
 function resource(overrides: Partial<Resource> = {}): Resource {
   return {
@@ -243,6 +245,74 @@ describe('normalizeMessage', () => {
       description: 'Use the current result'
     })
   })
+
+  it('merges repeated action cards and keeps the original choices', () => {
+    const conversation: Conversation = {
+      _id: 55,
+      user: 'user-1',
+      status: 'working',
+      usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 },
+      messages: [
+        {
+          role: 'assistant',
+          name: '$action',
+          content: [
+            {
+              type: 'Action',
+              name: 'anda.user_choice',
+              payload: {
+                id: 'act_1',
+                kind: 'choice',
+                title: 'Choose next step',
+                status: 'pending',
+                choices: [
+                  { id: 'ship', label: 'Ship it', value: null },
+                  { id: 'wait', label: 'Wait', value: null }
+                ],
+                created_at: 100
+              }
+            }
+          ],
+          timestamp: 100
+        },
+        {
+          role: 'assistant',
+          name: '$action',
+          content: [
+            {
+              type: 'Action',
+              name: 'anda.user_choice',
+              payload: {
+                id: 'act_1',
+                kind: 'choice',
+                status: 'selected',
+                response: { choice_id: 'ship' },
+                responded_at: 150
+              }
+            }
+          ],
+          timestamp: 150
+        }
+      ],
+      created_at: 1,
+      updated_at: 150
+    }
+
+    const group = conversationToGroup(conversation)
+
+    expect(group.messages).toHaveLength(1)
+    expect(group.messages[0]?.actions?.[0]).toMatchObject({
+      id: 'act_1',
+      status: 'selected',
+      title: 'Choose next step',
+      response: { choice_id: 'ship' },
+      respondedAt: 150,
+      choices: [
+        { id: 'ship', label: 'Ship it' },
+        { id: 'wait', label: 'Wait' }
+      ]
+    })
+  })
 })
 
 describe('applyActionResponseToGroups', () => {
@@ -319,5 +389,62 @@ describe('applyActionResponseToGroups', () => {
     })
 
     expect(updated).toBe(groups)
+  })
+})
+
+describe('mergeKnownActionState', () => {
+  it('preserves a locally responded action when a stale pending snapshot is rebuilt', () => {
+    const group: MessageGroup = {
+      _id: 55,
+      status: 'working',
+      ancestors: [],
+      createdAt: 1,
+      updatedAt: 100,
+      current: true,
+      messages: [
+        {
+          id: 'm-55-0',
+          conversation: 55,
+          role: 'assistant',
+          text: '',
+          timestamp: 100,
+          actions: [
+            {
+              id: 'act_1',
+              name: 'anda.user_choice',
+              kind: 'choice',
+              status: 'pending',
+              choices: [{ id: 'ship', label: 'Ship it' }],
+              payload: {}
+            }
+          ]
+        }
+      ]
+    }
+    const previous: MessageGroup = {
+      ...group,
+      messages: [
+        {
+          ...group.messages[0]!,
+          actions: [
+            {
+              ...group.messages[0]!.actions![0]!,
+              status: 'selected',
+              response: { choice_id: 'ship' },
+              respondedAt: 150
+            }
+          ]
+        }
+      ]
+    }
+
+    mergeKnownActionState(group, previous)
+
+    expect(group.messages[0]?.actions?.[0]).toMatchObject({
+      status: 'selected',
+      response: { choice_id: 'ship' },
+      respondedAt: 150,
+      choices: [{ id: 'ship', label: 'Ship it' }]
+    })
   })
 })

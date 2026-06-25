@@ -204,6 +204,76 @@ describe('mergePendingLocalMessages', () => {
     expect(group.messages).toHaveLength(2)
     expect(group.messages.filter((message) => message.pending)).toHaveLength(0)
   })
+
+  it('keeps an unmatched pending command before a later accepted local message', () => {
+    const stop = chatMessage({
+      id: 'm-5-1500-1',
+      text: '/stop',
+      pending: true,
+      timestamp: 1500
+    })
+    const later = chatMessage({
+      id: 'm-5-2000-2',
+      text: '测试一下新上的建议卡片功能，你出个选择题让我答题',
+      pending: true,
+      timestamp: 2000
+    })
+    const existing = messageGroup({
+      messages: [chatMessage({ id: 'm-5-0', text: 'hello', timestamp: 1000 }), stop, later]
+    })
+    const group = messageGroup({
+      messages: [
+        chatMessage({ id: 'm-5-0', text: 'hello', timestamp: 1000 }),
+        chatMessage({
+          id: 'm-5-1',
+          text: '测试一下新上的建议卡片功能，你出个选择题让我答题',
+          timestamp: 2000
+        })
+      ]
+    })
+
+    mergePendingLocalMessages(group, [existing], knownServerMessageCount(existing, group))
+
+    expect(group.messages.map((message) => message.text)).toEqual([
+      'hello',
+      '/stop',
+      '测试一下新上的建议卡片功能，你出个选择题让我答题'
+    ])
+    expect(group.messages[1]).toMatchObject({ id: 'm-5-1500-1', pending: true })
+    expect(group.messages[2]?.pending).toBeUndefined()
+  })
+
+  it('uses timestamps to place an unmatched pending command before later server messages', () => {
+    const stop = chatMessage({
+      id: 'm-5-1500-1',
+      text: '/stop',
+      pending: true,
+      timestamp: 1500
+    })
+    const existing = messageGroup({
+      messages: [chatMessage({ id: 'm-5-0', text: 'hello', timestamp: 1000 }), stop]
+    })
+    const group = messageGroup({
+      messages: [
+        chatMessage({ id: 'm-5-0', text: 'hello', timestamp: 1000 }),
+        chatMessage({
+          id: 'm-5-1',
+          role: 'assistant',
+          text: 'later reply',
+          timestamp: 2000
+        })
+      ]
+    })
+
+    mergePendingLocalMessages(group, [existing], knownServerMessageCount(existing, group))
+
+    expect(group.messages.map((message) => message.text)).toEqual([
+      'hello',
+      '/stop',
+      'later reply'
+    ])
+    expect(group.messages[1]).toMatchObject({ id: 'm-5-1500-1', pending: true })
+  })
 })
 
 describe('preserveMessageTimestamps', () => {

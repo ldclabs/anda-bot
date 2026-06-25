@@ -350,14 +350,23 @@
 
   function actionResponseLabel(action: ChatAction): string {
     if (action.status === 'selected') {
-      const choiceId =
-        action.response && typeof action.response === 'object' && !Array.isArray(action.response)
-          ? action.response.choice_id
-          : undefined
+      const choiceId = actionChoiceId(action)
       const choice = action.choices?.find((item) => item.id === choiceId)
-      return choice?.label || (typeof choiceId === 'string' ? choiceId : '')
+      return choice?.label || choiceId
     }
     return ''
+  }
+
+  function actionChoiceId(action: ChatAction): string {
+    const choiceId =
+      action.response && typeof action.response === 'object' && !Array.isArray(action.response)
+        ? action.response.choice_id
+        : undefined
+    return typeof choiceId === 'string' ? choiceId : ''
+  }
+
+  function actionChoiceSelected(action: ChatAction, choiceId: string): boolean {
+    return action.status === 'selected' && actionChoiceId(action) === choiceId
   }
 
   function actionPending(action: ChatAction): boolean {
@@ -906,35 +915,35 @@
                   </div>
                 {/if}
 
-                {#if actionPending(action)}
-                  {#if isApprovalAction(action)}
-                    <div class="flex min-w-0 flex-wrap gap-2">
-                      <button
-                        type="button"
-                        class={buttonClass('default', 'xs', 'chat-action-approve')}
-                        disabled={respondingActionIds.has(action.id)}
-                        onclick={() => respondApprovalAction(action, true)}
-                      >
-                        {#if respondingActionIds.has(action.id)}
-                          <LoaderCircle class="size-3 animate-spin" />
-                        {:else}
-                          <CircleCheck class="size-3" />
-                        {/if}
-                        <span>{actionApproveLabel(action)}</span>
-                      </button>
-                      <button
-                        type="button"
-                        class={buttonClass('outline', 'xs', 'chat-action-deny')}
-                        disabled={respondingActionIds.has(action.id)}
-                        onclick={() => respondApprovalAction(action, false)}
-                      >
-                        <CircleX class="size-3" />
-                        <span>{actionDenyLabel(action)}</span>
-                      </button>
-                    </div>
-                  {:else if action.choices?.length}
-                    <div class="grid min-w-0 gap-1.5">
-                      {#each action.choices as choice (choice.id)}
+                {#if actionPending(action) && isApprovalAction(action)}
+                  <div class="flex min-w-0 flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class={buttonClass('default', 'xs', 'chat-action-approve')}
+                      disabled={respondingActionIds.has(action.id)}
+                      onclick={() => respondApprovalAction(action, true)}
+                    >
+                      {#if respondingActionIds.has(action.id)}
+                        <LoaderCircle class="size-3 animate-spin" />
+                      {:else}
+                        <CircleCheck class="size-3" />
+                      {/if}
+                      <span>{actionApproveLabel(action)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class={buttonClass('outline', 'xs', 'chat-action-deny')}
+                      disabled={respondingActionIds.has(action.id)}
+                      onclick={() => respondApprovalAction(action, false)}
+                    >
+                      <CircleX class="size-3" />
+                      <span>{actionDenyLabel(action)}</span>
+                    </button>
+                  </div>
+                {:else if action.choices?.length}
+                  <div class="grid min-w-0 gap-1.5">
+                    {#each action.choices as choice (choice.id)}
+                      {#if actionPending(action)}
                         <button
                           type="button"
                           class={buttonClass(
@@ -954,9 +963,29 @@
                             {/if}
                           </span>
                         </button>
-                      {/each}
-                    </div>
-                  {/if}
+                      {:else}
+                        <div
+                          class="chat-action-choice-item flex min-w-0 items-start gap-2 rounded-md border px-2 py-1.5"
+                          class:chat-action-choice-selected={actionChoiceSelected(
+                            action,
+                            choice.id
+                          )}
+                        >
+                          {#if actionChoiceSelected(action, choice.id)}
+                            <CircleCheck class="mt-0.5 size-3.5 shrink-0" />
+                          {/if}
+                          <span class="min-w-0">
+                            <span class="block font-medium">{choice.label}</span>
+                            {#if choice.description}
+                              <span class="chat-action-meta block text-xs font-normal">
+                                {choice.description}
+                              </span>
+                            {/if}
+                          </span>
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
                 {/if}
               </div>
             {/each}
@@ -1261,6 +1290,18 @@
     border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
   }
 
+  .chat-action-choice-item {
+    border-color: var(--message-border, #e6e6e6);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, var(--message-surface, #f7f7f7));
+    color: color-mix(in srgb, var(--message-text, #171717) 88%, transparent);
+  }
+
+  .chat-action-choice-selected {
+    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 58%, #047857);
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 68%, #ecfdf5);
+    color: #065f46;
+  }
+
   .chat-message-detail-divider {
     border-color: var(--message-border, #e6e6e6);
   }
@@ -1318,5 +1359,16 @@
   :global(.dark) .chat-action-error {
     background: rgba(127, 29, 29, 0.35);
     color: #fecaca;
+  }
+
+  :global(.dark) .chat-action-choice-item {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
+  }
+
+  :global(.dark) .chat-action-choice-selected {
+    border-color: rgba(45, 212, 191, 0.28);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 78%, #064e3b);
+    color: #99f6e4;
   }
 </style>
