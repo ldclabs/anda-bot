@@ -166,7 +166,9 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     if Some(msg) == taskbar_created_message() {
         // Explorer restarted and wiped the tray; vend our icon again.
-        add_tray_icon(hwnd);
+        unsafe {
+            add_tray_icon(hwnd);
+        }
         return 0;
     }
 
@@ -175,7 +177,9 @@ unsafe extern "system" fn wnd_proc(
             // A second launch (the user reopening the shortcut) — make sure the
             // icon is present before showing the menu, so reopening also
             // restores an icon that went missing for any other reason.
-            add_tray_icon(hwnd);
+            unsafe {
+                add_tray_icon(hwnd);
+            }
             show_tray_menu(hwnd);
             0
         }
@@ -188,12 +192,16 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_DESTROY => {
-            delete_tray_icon(hwnd);
+            unsafe {
+                delete_tray_icon(hwnd);
+            }
             destroy_launcher_icon();
-            PostQuitMessage(0);
+            unsafe {
+                PostQuitMessage(0);
+            }
             0
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
 
@@ -362,7 +370,9 @@ unsafe fn add_tray_icon(hwnd: HWND) {
         ..Default::default()
     };
     copy_wide_fixed(&mut data.szTip, &text().app_title);
-    Shell_NotifyIconW(NIM_ADD, &data);
+    unsafe {
+        Shell_NotifyIconW(NIM_ADD, &data);
+    }
 }
 
 fn launcher_icon() -> HICON {
@@ -536,28 +546,38 @@ unsafe fn delete_tray_icon(hwnd: HWND) {
         uID: TRAY_ID,
         ..Default::default()
     };
-    Shell_NotifyIconW(NIM_DELETE, &data);
+    unsafe {
+        Shell_NotifyIconW(NIM_DELETE, &data);
+    }
 }
 
 unsafe fn append_item(menu: HMENU, id: usize, text: &str) {
-    AppendMenuW(menu, MF_STRING, id, wide_null(text).as_ptr());
+    unsafe {
+        AppendMenuW(menu, MF_STRING, id, wide_null(text).as_ptr());
+    }
 }
 
 unsafe fn append_disabled_item(menu: HMENU, text: &str) {
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, wide_null(text).as_ptr());
+    unsafe {
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, wide_null(text).as_ptr());
+    }
 }
 
 unsafe fn append_submenu(menu: HMENU, submenu: HMENU, text: &str) {
-    AppendMenuW(
-        menu,
-        MF_POPUP | MF_STRING,
-        submenu as usize,
-        wide_null(text).as_ptr(),
-    );
+    unsafe {
+        AppendMenuW(
+            menu,
+            MF_POPUP | MF_STRING,
+            submenu as usize,
+            wide_null(text).as_ptr(),
+        );
+    }
 }
 
 unsafe fn append_separator(menu: HMENU) {
-    AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+    unsafe {
+        AppendMenuW(menu, MF_SEPARATOR, 0, ptr::null());
+    }
 }
 
 fn show_result(title: &str, result: &CommandResult) {
@@ -1063,7 +1083,7 @@ fn same_windows_path(left: &Path, right: &Path) -> bool {
 
 fn normalize_windows_path(path: &Path) -> String {
     path.to_string_lossy()
-        .trim_end_matches(|ch| ch == '\\' || ch == '/')
+        .trim_end_matches(['\\', '/'])
         .to_string()
 }
 
@@ -1262,13 +1282,10 @@ impl Drop for RegistryKey {
 }
 
 fn win32_registry_error(action: &str, code: u32) -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "Windows registry error while trying to {action}: {code} ({})",
-            std::io::Error::from_raw_os_error(code as i32)
-        ),
-    )
+    std::io::Error::other(format!(
+        "Windows registry error while trying to {action}: {code} ({})",
+        std::io::Error::from_raw_os_error(code as i32)
+    ))
 }
 
 fn open_anda_terminal(ctx: &LauncherContext) {

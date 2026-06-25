@@ -1488,17 +1488,20 @@ fn detect_anda_exe_from_candidates(
     PathBuf::from(exe_name)
 }
 
+#[cfg(target_os = "macos")]
 fn fallback_anda_exe_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(home) = env::var_os("HOME") {
-            candidates.push(PathBuf::from(home).join(".local/bin/anda"));
-        }
-        candidates.push(PathBuf::from("/opt/homebrew/bin/anda"));
-        candidates.push(PathBuf::from("/usr/local/bin/anda"));
+    if let Some(home) = env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".local/bin/anda"));
     }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/anda"));
+    candidates.push(PathBuf::from("/usr/local/bin/anda"));
     candidates
+}
+
+#[cfg(not(target_os = "macos"))]
+fn fallback_anda_exe_candidates() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 fn detect_anda_home() -> LauncherResult<PathBuf> {

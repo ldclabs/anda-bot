@@ -307,6 +307,8 @@ pub(super) fn cleanup_inline_viewport<W: io::Write>(writer: &mut W, area: Rect) 
     writer.execute(MoveToNextLine(area.height.max(1)))?;
     Ok(())
 }
+
+#[cfg(unix)]
 fn reopen_stdin_from_tty() -> Result<(), BoxError> {
     if io::stdin().is_terminal() {
         return Ok(());
