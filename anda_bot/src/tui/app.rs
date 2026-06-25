@@ -12,9 +12,17 @@ use crate::{
 };
 
 use super::{
+    action::{
+        ACTION_RESPONSE_TIMEOUT, TuiAction, TuiActionApiOutput, TuiActionChoiceDraft,
+        TuiActionResponseRequest, action_footer_line, action_response_notice,
+        active_pending_action, apply_action_response_to_message_value,
+        apply_action_response_to_messages,
+    },
     input::{InputCursorDirection, input_newline_key, move_cursor_vertically},
     text::{compact_cjk_spacing_with_cursor, normalize_newlines},
 };
+
+type ActionResponseResult = Result<TuiActionApiOutput, String>;
 
 #[derive(Default)]
 pub(super) struct SetupState {
@@ -47,6 +55,8 @@ pub(super) struct App {
     pub(super) pending_scrollback_purge: bool,
     pub(super) input_focused: bool,
     pub(super) pending_update_check: Option<oneshot::Receiver<Result<AutoUpdateState, String>>>,
+    pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
+    pub(super) choice_input: Option<TuiActionChoiceDraft>,
 }
 
 impl App {
@@ -70,6 +80,8 @@ impl App {
             pending_scrollback_purge: false,
             input_focused: true,
             pending_update_check: None,
+            pending_action_response: None,
+            choice_input: None,
         }
     }
 
@@ -102,6 +114,8 @@ impl App {
         self.chat = gateway::ChatSession::new(client);
         self.input_buf.clear();
         self.input_cursor = 0;
+        self.choice_input = None;
+        self.pending_action_response = None;
         self.reset_message_view();
     }
 
@@ -112,6 +126,11 @@ impl App {
 
     pub(super) fn clear_message_view(&mut self) {
         self.reset_message_view();
+        self.refresh_message_view();
+    }
+
+    pub(super) fn refresh_message_view(&mut self) {
+        self.flushed_message_count = 0;
         self.static_panel_flushed = false;
         self.pending_scrollback_purge = true;
     }
@@ -134,7 +153,7 @@ impl App {
     }
 
     pub(super) fn handle_paste(&mut self, text: String) {
-        if !self.chat_enabled() || self.chat.sending {
+        if !self.chat_enabled() || self.chat.sending || self.action_response_pending() {
             return;
         }
 
@@ -144,6 +163,10 @@ impl App {
     pub(super) async fn submit_input(&mut self) -> Result<(), BoxError> {
         if self.chat.sending {
             return Ok(());
+        }
+
+        if self.choice_input.is_some() {
+            return self.submit_choice_input().await;
         }
 
         let text = self.input_buf.trim().to_string();
@@ -173,12 +196,42 @@ impl App {
         Ok(())
     }
 
+    async fn submit_choice_input(&mut self) -> Result<(), BoxError> {
+        if self.action_response_pending() {
+            return Ok(());
+        }
+
+        let Some(draft) = self.choice_input.clone() else {
+            return Ok(());
+        };
+
+        let text = self.input_buf.trim().to_string();
+        if draft.required && text.is_empty() {
+            self.notice = "Choice text is required.".to_string();
+            return Ok(());
+        }
+
+        self.input_buf.clear();
+        self.input_cursor = 0;
+        self.input_preferred_col = None;
+        self.choice_input = None;
+        self.start_action_response(TuiActionResponseRequest::choice(
+            draft.action_id,
+            draft.choice_id,
+            (!text.is_empty()).then_some(text),
+        ));
+
+        Ok(())
+    }
+
     pub(super) async fn bootstrap(&mut self) {
         self.notice.clear();
         self.pid = None;
         self.daemon_running = false;
         self.setup = SetupState::default();
         self.pending_update_check = None;
+        self.pending_action_response = None;
+        self.choice_input = None;
 
         let daemon = self.runtime_daemon();
         let config_created = match daemon.ensure_config_file_exists().await {
@@ -304,6 +357,50 @@ impl App {
         }
     }
 
+    pub(super) async fn finish_pending_action_response(&mut self) -> bool {
+        let Some(rx) = self.pending_action_response.as_mut() else {
+            return false;
+        };
+
+        match rx.try_recv() {
+            Ok(result) => {
+                self.pending_action_response = None;
+                self.apply_action_response_result(result).await;
+                true
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_action_response = None;
+                self.notice = "Action response task cancelled.".to_string();
+                true
+            }
+        }
+    }
+
+    async fn apply_action_response_result(&mut self, result: ActionResponseResult) {
+        match result {
+            Ok(output) => {
+                let mut updated =
+                    apply_action_response_to_messages(&mut self.chat.messages, &output);
+                if let Some(conversation) = self.chat.conversation.as_mut() {
+                    for message in &mut conversation.messages {
+                        updated |= apply_action_response_to_message_value(message, &output);
+                    }
+                }
+                if updated {
+                    self.refresh_message_view();
+                }
+                self.notice = action_response_notice(&output);
+                if output.conversation > 0 {
+                    let _ = self.chat.poll(Some(output.conversation)).await;
+                }
+            }
+            Err(err) => {
+                self.notice = format!("Action response failed: {err}");
+            }
+        }
+    }
+
     pub(super) fn apply_update_state(&mut self, state: AutoUpdateState) -> bool {
         let Some(notice) = state.cli_notice() else {
             return false;
@@ -375,7 +472,28 @@ impl App {
             return Ok(());
         }
 
+        if self.choice_input.is_some()
+            && key.code == KeyCode::Esc
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+        {
+            self.cancel_choice_input();
+            return Ok(());
+        }
+
         if self.chat.sending {
+            return Ok(());
+        }
+
+        if self.action_response_pending() {
+            return Ok(());
+        }
+
+        if self.choice_input.is_none()
+            && self.input_buf.is_empty()
+            && self.handle_action_key(key).await?
+        {
             return Ok(());
         }
 
@@ -455,6 +573,109 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    async fn handle_action_key(&mut self, key: KeyEvent) -> Result<bool, BoxError> {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+        {
+            return Ok(false);
+        }
+
+        let Some(action) = self.active_pending_action() else {
+            return Ok(false);
+        };
+
+        match key.code {
+            KeyCode::Char('y' | 'Y') if action.is_approval() => {
+                self.start_action_response(TuiActionResponseRequest::approve(action.id, true));
+                Ok(true)
+            }
+            KeyCode::Char('n' | 'N') if action.is_approval() => {
+                self.start_action_response(TuiActionResponseRequest::approve(action.id, false));
+                Ok(true)
+            }
+            KeyCode::Char(ch) => {
+                let Some(choice) = action.choice_for_key(ch).cloned() else {
+                    return Ok(false);
+                };
+                if choice.input.is_some() {
+                    self.choice_input = Some(action.choice_draft(&choice));
+                    self.input_buf.clear();
+                    self.input_cursor = 0;
+                    self.input_preferred_col = None;
+                    self.input_focused = true;
+                } else {
+                    self.start_action_response(TuiActionResponseRequest::choice(
+                        action.id, choice.id, None,
+                    ));
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn start_action_response(&mut self, request: TuiActionResponseRequest) {
+        if self.pending_action_response.is_some() {
+            return;
+        }
+
+        let input = request.tool_input();
+        let client = self.client.clone();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = client
+                .tool_call_with_timeout(&input, ACTION_RESPONSE_TIMEOUT)
+                .await
+                .map(|output| output.output)
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+
+        self.pending_action_response = Some(rx);
+        self.notice = "Responding to action...".to_string();
+    }
+
+    fn cancel_choice_input(&mut self) {
+        self.choice_input = None;
+        self.input_buf.clear();
+        self.input_cursor = 0;
+        self.input_preferred_col = None;
+        self.notice.clear();
+    }
+
+    pub(super) fn action_response_pending(&self) -> bool {
+        self.pending_action_response.is_some()
+    }
+
+    pub(super) fn active_pending_action(&self) -> Option<TuiAction> {
+        active_pending_action(&self.chat.messages)
+    }
+
+    pub(super) fn action_footer_line(&self, width: usize) -> Option<ratatui::text::Line<'static>> {
+        if self.action_response_pending() {
+            return Some(ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("ACTION ", super::theme::accent_style()),
+                ratatui::text::Span::styled("responding...", super::theme::subtle_style()),
+            ]));
+        }
+        if let Some(draft) = &self.choice_input {
+            let text = format!(
+                "{} · Enter submit · Esc cancel",
+                draft.placeholder.as_deref().unwrap_or(&draft.label)
+            );
+            return Some(ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("ACTION ", super::theme::accent_style()),
+                ratatui::text::Span::styled(
+                    super::text::truncate_visual(&text, width.saturating_sub(7)),
+                    super::theme::subtle_style(),
+                ),
+            ]));
+        }
+        let action = self.active_pending_action()?;
+        action_footer_line(&action, width)
     }
 
     pub(super) fn move_input_cursor_vertically(

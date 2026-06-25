@@ -23,6 +23,7 @@ use crate::{daemon::Daemon, gateway};
 
 use super::{
     App, STATUS_REFRESH_INTERVAL,
+    action::{TuiActionState, action_state_snapshot, existing_action_state_changed},
     layout::{dynamic_viewport_height, input_navigation_content_width},
     render::{flush_static_scrollback, render},
 };
@@ -128,6 +129,7 @@ async fn run_app(
             if let Some(err) = app.chat.finish_pending_send().await {
                 app.notice = err;
             }
+            needs_render |= app.finish_pending_action_response().await;
             needs_render |=
                 before_send != chat_render_snapshot(app) || notice_before_send != app.notice;
         }
@@ -206,7 +208,12 @@ async fn run_app(
         if app.chat_enabled() {
             let before_poll = chat_render_snapshot(app);
             let received = app.chat.poll(None).await;
-            needs_render |= received || before_poll != chat_render_snapshot(app);
+            let after_poll = chat_render_snapshot(app);
+            if existing_action_state_changed(&before_poll.action_states, &after_poll.action_states)
+            {
+                app.refresh_message_view();
+            }
+            needs_render |= received || before_poll != after_poll;
         }
 
         if !event::poll(Duration::from_millis(150))? {
@@ -253,6 +260,7 @@ struct ChatRenderSnapshot {
     sending: bool,
     thinking: bool,
     status_label: &'static str,
+    action_states: Vec<TuiActionState>,
 }
 
 fn chat_render_snapshot(app: &App) -> ChatRenderSnapshot {
@@ -264,6 +272,7 @@ fn chat_render_snapshot(app: &App) -> ChatRenderSnapshot {
         sending: app.chat.sending,
         thinking: app.chat.is_thinking(),
         status_label: app.chat.status_label(),
+        action_states: action_state_snapshot(&app.chat.messages),
     }
 }
 

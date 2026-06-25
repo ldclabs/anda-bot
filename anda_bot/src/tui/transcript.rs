@@ -6,7 +6,9 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    SECONDARY_PART_MAX_LINES, markdown,
+    SECONDARY_PART_MAX_LINES,
+    action::{action_from_payload, action_transcript_text},
+    markdown,
     text::{compact_cjk_spacing, display_width, line_is_blank, normalize_newlines},
     theme,
 };
@@ -137,18 +139,21 @@ pub(super) fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec
                     SECONDARY_PART_MAX_LINES,
                 );
             }
-            ContentPart::Action { name, .. } => {
+            ContentPart::Action { name, payload, .. } => {
+                let text = action_from_payload(name, payload)
+                    .map(|action| action_transcript_text(&action))
+                    .unwrap_or_else(|| format!("⚡ {name}"));
                 push_limited_block(
                     &mut rendered_lines,
                     &mut first,
-                    &format!("⚡ {name}"),
+                    &text,
                     prefix,
                     &continuation_prefix,
                     prefix_style,
                     theme::dim_style(),
                     theme::dim_style(),
                     content_width,
-                    SECONDARY_PART_MAX_LINES,
+                    action_part_max_lines(&text),
                 );
             }
             ContentPart::Any(json) => {
@@ -189,6 +194,10 @@ fn part_kind(part: &ContentPart) -> PartKind {
     }
 }
 
+fn action_part_max_lines(text: &str) -> usize {
+    text.lines().count().clamp(SECONDARY_PART_MAX_LINES, 12)
+}
+
 fn ensure_part_spacing(
     rendered_lines: &mut Vec<Line<'static>>,
     prev_kind: Option<PartKind>,
@@ -221,6 +230,7 @@ pub(super) fn thinking_lines(app: &App) -> Vec<Line<'static>> {
     ])]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_markdown_block(
     rendered_lines: &mut Vec<Line<'static>>,
     text: &str,

@@ -10,8 +10,17 @@ use super::{
 
 pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
-    let mut lines = if app.input_focused && app.chat_enabled() && !app.chat.sending {
-        vec![
+    let mut lines = Vec::new();
+    if let Some(line) = app.action_footer_line(width) {
+        lines.push(line);
+    }
+
+    if app.input_focused
+        && app.chat_enabled()
+        && !app.chat.sending
+        && !app.action_response_pending()
+    {
+        lines.extend([
             Line::from(vec![
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
@@ -32,10 +41,10 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
                     theme::subtle_style(),
                 ),
             ]),
-        ]
+        ]);
     } else {
-        vec![status_line(app, width)]
-    };
+        lines.push(status_line(app, width));
+    }
 
     if !app.notice.is_empty() && lines.len() < STATUS_FOOTER_MAX_LINES {
         let notice = compact_cjk_spacing(&app.notice);

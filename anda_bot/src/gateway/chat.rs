@@ -102,6 +102,102 @@ fn displayed_suffix_prefix_overlap(displayed: &[Message], incoming: &[Message]) 
     0
 }
 
+fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message]) -> bool {
+    let incoming_actions = incoming
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|part| match part {
+            ContentPart::Action { payload, .. } => {
+                action_payload_id(payload).map(|id| (id.to_string(), payload.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if incoming_actions.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    for (action_id, incoming_payload) in incoming_actions {
+        for message in displayed.iter_mut() {
+            for part in &mut message.content {
+                let ContentPart::Action { payload, .. } = part else {
+                    continue;
+                };
+                if action_payload_id(payload) != Some(action_id.as_str()) {
+                    continue;
+                }
+                changed |= merge_action_payload(payload, &incoming_payload);
+            }
+        }
+    }
+    changed
+}
+
+fn action_payload_id(payload: &serde_json::Value) -> Option<&str> {
+    payload.get("id").and_then(serde_json::Value::as_str)
+}
+
+fn merge_action_payload(target: &mut serde_json::Value, incoming: &serde_json::Value) -> bool {
+    if incoming_action_is_stale(target, incoming) {
+        return false;
+    }
+
+    if let (Some(target), Some(incoming)) = (target.as_object_mut(), incoming.as_object()) {
+        let mut changed = false;
+        for (key, value) in incoming {
+            if target.get(key) == Some(value) {
+                continue;
+            }
+            target.insert(key.clone(), value.clone());
+            changed = true;
+        }
+        return changed;
+    }
+
+    if target != incoming {
+        *target = incoming.clone();
+        true
+    } else {
+        false
+    }
+}
+
+fn incoming_action_is_stale(target: &serde_json::Value, incoming: &serde_json::Value) -> bool {
+    let target_responded_at = action_responded_at(target);
+    let incoming_responded_at = action_responded_at(incoming);
+    if let (Some(target_at), Some(incoming_at)) = (target_responded_at, incoming_responded_at) {
+        return incoming_at < target_at;
+    }
+
+    if target_responded_at.is_some() && incoming_responded_at.is_none() {
+        return true;
+    }
+
+    action_is_resolved(target) && action_is_pending(incoming)
+}
+
+fn action_responded_at(payload: &serde_json::Value) -> Option<u64> {
+    payload
+        .get("responded_at")
+        .and_then(serde_json::Value::as_u64)
+}
+
+fn action_is_pending(payload: &serde_json::Value) -> bool {
+    payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|status| status == "pending")
+}
+
+fn action_is_resolved(payload: &serde_json::Value) -> bool {
+    payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|status| status != "pending")
+}
+
 pub struct ChatSession {
     client: Client,
     pub conv_id: Option<u64>,
@@ -435,10 +531,9 @@ impl ChatSession {
                 self.prev_conversation = self.conversation.take();
                 self.last_msg_offset = 0;
             }
-            let parsed_messages: Vec<Message> = conv
+            let parsed_all_messages: Vec<Message> = conv
                 .messages
                 .iter()
-                .skip(self.last_msg_offset)
                 .filter_map(|m| match serde_json::from_value::<Message>(m.clone()) {
                     Ok(msg) => Some(msg),
                     Err(err) => {
@@ -447,6 +542,11 @@ impl ChatSession {
                     }
                 })
                 .collect();
+            merge_action_payload_updates(&mut self.messages, &parsed_all_messages);
+            let parsed_messages = parsed_all_messages
+                .into_iter()
+                .skip(self.last_msg_offset)
+                .collect::<Vec<_>>();
             let has_assistant_message = parsed_messages.iter().any(|msg| msg.role == "assistant");
             let overlap = displayed_suffix_prefix_overlap(&self.messages, &parsed_messages);
             self.messages
@@ -607,6 +707,111 @@ mod tests {
         assert!(!should_restore_conversation_status(
             &ConversationStatus::Cancelled
         ));
+    }
+
+    #[test]
+    fn apply_conversation_data_merges_action_status_updates() {
+        let mut session = ChatSession::new(test_client());
+        session.conv_id = Some(55);
+        let pending = Message {
+            role: "assistant".to_string(),
+            name: Some("$action".to_string()),
+            content: vec![ContentPart::Action {
+                name: "anda.tool_approval".to_string(),
+                payload: serde_json::json!({
+                    "id": "act_1",
+                    "kind": "tool_approval",
+                    "title": "Approve shell command",
+                    "status": "pending",
+                    "details": [{"label": "Command", "value": "cargo test"}]
+                }),
+                recipients: None,
+                signature: None,
+            }],
+            ..Default::default()
+        };
+        session.apply_conversation_data(Conversation {
+            _id: 55,
+            status: ConversationStatus::Working,
+            messages: vec![serde_json::to_value(&pending).unwrap()],
+            ..Default::default()
+        });
+
+        let mut resolved = pending;
+        if let ContentPart::Action { payload, .. } = &mut resolved.content[0] {
+            let object = payload.as_object_mut().unwrap();
+            object.insert("status".to_string(), "approved".into());
+            object.insert("response".to_string(), serde_json::json!({"approve": true}));
+            object.insert("responded_at".to_string(), 123.into());
+        }
+        session.apply_conversation_data(Conversation {
+            _id: 55,
+            status: ConversationStatus::Working,
+            messages: vec![serde_json::to_value(&resolved).unwrap()],
+            ..Default::default()
+        });
+
+        assert_eq!(session.messages.len(), 1);
+        let ContentPart::Action { payload, .. } = &session.messages[0].content[0] else {
+            panic!("expected action part");
+        };
+        assert_eq!(payload["status"], "approved");
+        assert_eq!(payload["response"]["approve"], true);
+        assert_eq!(payload["details"][0]["value"], "cargo test");
+    }
+
+    #[test]
+    fn apply_conversation_data_does_not_revert_resolved_action_to_stale_pending() {
+        let mut session = ChatSession::new(test_client());
+        session.conv_id = Some(55);
+        let pending = Message {
+            role: "assistant".to_string(),
+            name: Some("$action".to_string()),
+            content: vec![ContentPart::Action {
+                name: "anda.user_choice".to_string(),
+                payload: serde_json::json!({
+                    "id": "act_1",
+                    "kind": "choice",
+                    "title": "Choose",
+                    "status": "pending",
+                    "choices": [{"id": "ship", "label": "Ship it"}]
+                }),
+                recipients: None,
+                signature: None,
+            }],
+            ..Default::default()
+        };
+        session.apply_conversation_data(Conversation {
+            _id: 55,
+            status: ConversationStatus::Working,
+            messages: vec![serde_json::to_value(&pending).unwrap()],
+            ..Default::default()
+        });
+
+        let ContentPart::Action { payload, .. } = &mut session.messages[0].content[0] else {
+            panic!("expected action part");
+        };
+        let object = payload.as_object_mut().unwrap();
+        object.insert("status".to_string(), "selected".into());
+        object.insert(
+            "response".to_string(),
+            serde_json::json!({"choice_id": "ship"}),
+        );
+        object.insert("responded_at".to_string(), 200.into());
+
+        session.apply_conversation_data(Conversation {
+            _id: 55,
+            status: ConversationStatus::Working,
+            messages: vec![serde_json::to_value(&pending).unwrap()],
+            ..Default::default()
+        });
+
+        let ContentPart::Action { payload, .. } = &session.messages[0].content[0] else {
+            panic!("expected action part");
+        };
+        assert_eq!(payload["status"], "selected");
+        assert_eq!(payload["response"]["choice_id"], "ship");
+        assert_eq!(payload["responded_at"], 200);
     }
 
     #[test]

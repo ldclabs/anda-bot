@@ -16,6 +16,10 @@ use crate::{auto_update::AutoUpdateState, config::Config, gateway};
 use super::{
     INPUT_DIVIDER_LABEL, INPUT_DIVIDER_PADDED_HEIGHT, INPUT_DIVIDER_PREFIX,
     SECONDARY_PART_MAX_LINES, THINKING_FRAMES, THINKING_LABEL,
+    action::{
+        action_state_snapshot, action_transcript_text, active_pending_action,
+        apply_action_response_to_messages, existing_action_state_changed,
+    },
     app::App,
     input::{
         InputCursorDirection, build_input_viewport, build_prompt_lines, input_display_text,
@@ -574,6 +578,89 @@ fn chat_message_lines_render_tool_calls_as_dim_summary() {
 }
 
 #[test]
+fn chat_message_lines_render_action_card_details() {
+    let mut app = ready_app();
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.tool_approval".to_string(),
+            payload: serde_json::json!({
+                "id": "act_1",
+                "kind": "tool_approval",
+                "tool": {"name": "shell", "label": "Shell command"},
+                "title": "Approve shell command",
+                "message": "The agent wants to run a local shell command.",
+                "details": [
+                    {"label": "Command", "value": "cargo test -p anda_bot", "format": "code"},
+                    {"label": "Mode", "value": "foreground", "format": "text"}
+                ],
+                "approval": {"approve_label": "Approve", "deny_label": "Deny"},
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+
+    let lines = chat_message_lines(&app, 100);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+    assert!(rendered.contains("Approve shell command · pending"));
+    assert!(rendered.contains("Command: cargo test -p anda_bot"));
+    assert!(rendered.contains("[y] Approve  [n] Deny"));
+}
+
+#[test]
+fn action_helpers_find_pending_choice_and_update_response() {
+    let mut messages = vec![anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.user_choice".to_string(),
+            payload: serde_json::json!({
+                "id": "act_choice",
+                "kind": "choice",
+                "title": "Choose next step",
+                "status": "pending",
+                "choices": [
+                    {"id": "ship", "label": "Ship it", "value": null, "description": "Use the current result", "input": null},
+                    {"id": "custom", "label": "Custom", "value": null, "description": null, "input": {"placeholder": "Type details", "required": true, "multiline": true}}
+                ]
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    }];
+
+    let action = active_pending_action(&messages).expect("pending action");
+    assert_eq!(action.id, "act_choice");
+    assert_eq!(action.choice_for_key('2').unwrap().id, "custom");
+    assert!(action_transcript_text(&action).contains("[2] Custom (text)"));
+    let before = action_state_snapshot(&messages);
+
+    assert!(apply_action_response_to_messages(
+        &mut messages,
+        &super::action::TuiActionApiOutput {
+            action_id: "act_choice".to_string(),
+            conversation: 7,
+            status: "selected".to_string(),
+            response: serde_json::json!({"choice_id": "ship"}),
+            responded_at: 123,
+        },
+    ));
+    assert!(active_pending_action(&messages).is_none());
+    let snapshot = action_state_snapshot(&messages);
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].id, "act_choice");
+    assert_eq!(snapshot[0].status, "selected");
+    assert_eq!(snapshot[0].response, "{\"choice_id\":\"ship\"}");
+    assert!(existing_action_state_changed(&before, &snapshot));
+}
+
+#[test]
 fn chat_message_lines_limit_tool_output_to_three_lines() {
     let mut app = ready_app();
     app.chat.messages.push(anda_core::Message {
@@ -667,6 +754,36 @@ fn status_footer_switches_between_help_and_status() {
     app.input_focused = false;
     let status = status_footer_lines(&app, 80);
     assert!(line_text(&status[0]).starts_with("READY "));
+}
+
+#[test]
+fn status_footer_shows_pending_action_shortcuts() {
+    let mut app = ready_app();
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.tool_approval".to_string(),
+            payload: serde_json::json!({
+                "id": "act_1",
+                "kind": "tool_approval",
+                "tool": {"name": "shell"},
+                "title": "Approve shell command",
+                "approval": {"approve_label": "Approve", "deny_label": "Deny"},
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+
+    let lines = status_footer_lines(&app, 80);
+
+    assert_eq!(
+        line_text(lines.first().expect("action footer")),
+        "ACTION Approve shell command · y Approve · n Deny"
+    );
 }
 
 #[test]

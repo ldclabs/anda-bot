@@ -49,7 +49,7 @@ pub(super) fn input_placeholder(app: &App) -> &'static str {
         "Edit config.yaml, save, then press Enter to enable chat."
     } else if !app.daemon_running {
         "Waiting for a healthy local daemon. Press Enter to retry."
-    } else if app.chat.sending {
+    } else if app.choice_input.is_some() || app.chat.sending {
         ""
     } else if !app.input_focused {
         "Press Enter or start typing to focus the input."
@@ -64,6 +64,15 @@ pub(super) fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> 
         .max(1);
 
     if !app.chat_enabled() || app.input_buf.is_empty() {
+        if let Some(draft) = &app.choice_input
+            && app.chat_enabled()
+            && app.input_buf.is_empty()
+        {
+            return vec![Line::from(vec![
+                Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
+                Span::styled(draft.placeholder(), theme::dim_style()),
+            ])];
+        }
         if placeholder.is_empty() {
             return vec![Line::from(vec![Span::styled(
                 INPUT_PROMPT_PREFIX.to_string(),
