@@ -8,7 +8,10 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{compact_cjk_spacing, display_width, normalize_newlines, theme};
+use super::{
+    text::{compact_cjk_spacing, display_width, normalize_newlines},
+    theme,
+};
 
 #[derive(Clone, Copy)]
 struct StyleRange {
