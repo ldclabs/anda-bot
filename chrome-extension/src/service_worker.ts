@@ -23,6 +23,7 @@ import {
   pageElementAttachmentRequestStorageKey,
   pageElementCaptureMessageType,
   pageElementContextMenuId,
+  pageElementDomMemoryKey,
   pageElementMemoryKey,
   pageElementStorageKey,
   type PageElementAttachmentRequest,
@@ -352,6 +353,7 @@ async function handlePageElementContextMenuClick(
     createdAt: Date.now(),
     element
   }
+  await flashCapturedPageElement(info, tab, element)
   await chromeApi.storage.session?.set({
     [pageElementAttachmentRequestStorageKey]: request
   })
@@ -415,6 +417,120 @@ async function readLastRightClickedElementFromTab(
     }
   }
   return null
+}
+
+async function flashCapturedPageElement(
+  clickInfo: ChromeContextMenuClickInfo,
+  tab: ChromeTabInfo | undefined,
+  element: PageElementInfo
+): Promise<void> {
+  if (typeof tab?.id !== 'number') {
+    return
+  }
+
+  await Promise.resolve(
+    chromeApi.scripting.executeScript<boolean, PageElementHighlightArgs>({
+      target: pageElementScriptTarget(tab.id, clickInfo),
+      func: flashPageElementInTab,
+      args: [
+        {
+          domElementMemoryKey: pageElementDomMemoryKey,
+          cssPath: element.cssPath,
+          xpath: element.xpath
+        }
+      ]
+    })
+  ).catch(() => undefined)
+}
+
+type PageElementHighlightArgs = {
+  domElementMemoryKey: string
+  cssPath: string
+  xpath: string
+}
+
+function flashPageElementInTab(args: PageElementHighlightArgs): boolean {
+  const registry = globalThis as Record<string, unknown>
+  const remembered = registry[args.domElementMemoryKey]
+  let target = remembered instanceof Element && remembered.isConnected ? remembered : null
+
+  if (!target && args.cssPath) {
+    try {
+      target = document.querySelector(args.cssPath)
+    } catch (_error) {}
+  }
+
+  if (!target && args.xpath) {
+    try {
+      const node = document.evaluate(
+        args.xpath,
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      ).singleNodeValue
+      target = node instanceof Element ? node : null
+    } catch (_error) {}
+  }
+
+  if (!target) {
+    return false
+  }
+
+  const rawRect = target.getBoundingClientRect()
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth
+  const viewportHeight = document.documentElement.clientHeight || window.innerHeight
+  const left = Math.max(0, Math.min(viewportWidth, rawRect.left))
+  const top = Math.max(0, Math.min(viewportHeight, rawRect.top))
+  const right = Math.max(0, Math.min(viewportWidth, rawRect.right))
+  const bottom = Math.max(0, Math.min(viewportHeight, rawRect.bottom))
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) {
+    return false
+  }
+
+  document
+    .querySelectorAll('[data-anda-page-element-highlight="true"]')
+    .forEach((node) => node.remove())
+
+  const margin = 4
+  const overlay = document.createElement('div')
+  overlay.setAttribute('data-anda-page-element-highlight', 'true')
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    left: `${Math.max(0, left - margin)}px`,
+    top: `${Math.max(0, top - margin)}px`,
+    width: `${width + margin * 2}px`,
+    height: `${height + margin * 2}px`,
+    border: '2px solid #10b981',
+    borderRadius: `${Math.max(4, Math.min(12, Math.min(width, height) / 6))}px`,
+    boxShadow: '0 0 0 4px rgba(16, 185, 129, 0.24), 0 0 28px rgba(16, 185, 129, 0.55)',
+    boxSizing: 'border-box',
+    background: 'rgba(16, 185, 129, 0.12)',
+    opacity: '0',
+    pointerEvents: 'none',
+    transformOrigin: 'center',
+    zIndex: '2147483647'
+  })
+  document.documentElement.append(overlay)
+
+  const animation = overlay.animate(
+    [
+      { opacity: 0, transform: 'scale(0.985)' },
+      { opacity: 1, transform: 'scale(1)', offset: 0.16 },
+      { opacity: 0.78, transform: 'scale(1.01)', offset: 0.72 },
+      { opacity: 0, transform: 'scale(1.015)' }
+    ],
+    {
+      duration: 3200,
+      easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      iterations: 1
+    }
+  )
+  animation.onfinish = () => overlay.remove()
+  setTimeout(() => overlay.remove(), 3800)
+  return true
 }
 
 function pageElementScriptTarget(

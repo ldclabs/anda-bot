@@ -1,4 +1,5 @@
 const pageElementMemoryKey = '__andaLastRightClickedElement'
+const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 const maxTextChars = 200_000
 const maxOuterHtmlChars = 500_000
 const maxAttributeValueChars = 2_000
@@ -14,9 +15,13 @@ function capturePageElement(event: MouseEvent) {
   }
 
   try {
-    ;(globalThis as Record<string, unknown>)[pageElementMemoryKey] = serializeElement(element)
+    const registry = globalThis as Record<string, unknown>
+    registry[pageElementDomMemoryKey] = element
+    registry[pageElementMemoryKey] = serializeElement(element)
   } catch (_error) {
-    ;(globalThis as Record<string, unknown>)[pageElementMemoryKey] = null
+    const registry = globalThis as Record<string, unknown>
+    registry[pageElementDomMemoryKey] = null
+    registry[pageElementMemoryKey] = null
   }
 }
 

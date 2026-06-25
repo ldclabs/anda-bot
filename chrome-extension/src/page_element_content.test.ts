@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const pageElementMemoryKey = '__andaLastRightClickedElement'
+const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 const listenerKey = '__andaPageElementContentScriptContextMenuListener'
 
 type ContextMenuListener = (event: MouseEvent) => void
@@ -45,6 +46,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
   delete (globalThis as Record<string, unknown>)[listenerKey]
+  delete (globalThis as Record<string, unknown>)[pageElementMemoryKey]
+  delete (globalThis as Record<string, unknown>)[pageElementDomMemoryKey]
 })
 
 describe('page element content script', () => {
@@ -59,13 +62,15 @@ describe('page element content script', () => {
     )
     const contextMenu = await importContentScript(chromeApi)
 
-    contextMenu(contextMenuEvent(new TestElement()))
+    const element = new TestElement()
+    contextMenu(contextMenuEvent(element))
 
     expect((globalThis as Record<string, unknown>)[pageElementMemoryKey]).toMatchObject({
       tagName: 'BUTTON',
       outerHTML: '<button id="submit">Submit</button>',
       pageUrl: 'https://example.com/form'
     })
+    expect((globalThis as Record<string, unknown>)[pageElementDomMemoryKey]).toBe(element)
   })
 
   it('replaces the previous listener when the script is injected again', async () => {
@@ -97,7 +102,10 @@ async function importContentScript(
   vi.stubGlobal('HTMLElement', TestElement)
   vi.stubGlobal('Node', TestNode)
   vi.stubGlobal('location', { href: 'https://example.com/form' })
-  vi.stubGlobal('getSelection', vi.fn(() => ({ toString: () => '' })))
+  vi.stubGlobal(
+    'getSelection',
+    vi.fn(() => ({ toString: () => '' }))
+  )
   vi.stubGlobal('document', {
     title: 'Example form',
     addEventListener: vi.fn((type: string, listener: ContextMenuListener) => {

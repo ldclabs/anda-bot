@@ -3,6 +3,8 @@ import {
   pageElementAttachmentMessageType,
   pageElementAttachmentRequestStorageKey,
   pageElementContextMenuId,
+  pageElementDomMemoryKey,
+  pageElementMemoryKey,
   type PageElementInfo
 } from '$lib/anda/page-element'
 import type {
@@ -242,9 +244,25 @@ describe('service worker page element context menu', () => {
       })
     )
     const request = chromeApi.__sessionState[pageElementAttachmentRequestStorageKey]
-    expect(chromeApi.scripting.executeScript).toHaveBeenCalledWith(
+    expect(chromeApi.scripting.executeScript).toHaveBeenCalledTimes(2)
+    expect(chromeApi.scripting.executeScript).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        target: { tabId: 7, frameIds: [0] }
+        target: { tabId: 7, frameIds: [0] },
+        args: [{ key: pageElementMemoryKey }]
+      })
+    )
+    expect(chromeApi.scripting.executeScript).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: { tabId: 7, frameIds: [0] },
+        args: [
+          {
+            domElementMemoryKey: pageElementDomMemoryKey,
+            cssPath: '#submit',
+            xpath: '//*[@id="submit"]'
+          }
+        ]
       })
     )
     expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith({

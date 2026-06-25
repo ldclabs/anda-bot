@@ -541,9 +541,8 @@ async fn model_shell_approval_decision(
             content: vec![ContentPart::Text {
                 text: request.to_string(),
             }],
-            temperature: Some(0.0),
             output_schema: Some(shell_risk_output_schema()),
-            effort: Some(ModelEffort::Minimal),
+            effort: Some(ModelEffort::Low),
             ..Default::default()
         })
         .await?;

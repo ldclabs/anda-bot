@@ -2,10 +2,29 @@ import type { ChatAttachment, Resource } from './client/types'
 
 export const pageElementContextMenuId = 'anda-send-page-element-to-chat'
 export const pageElementMemoryKey = '__andaLastRightClickedElement'
+export const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 export const pageElementStorageKey = 'andaLastRightClickedElement'
 export const pageElementAttachmentRequestStorageKey = 'andaPageElementAttachmentRequest'
 export const pageElementAttachmentMessageType = 'anda_page_element_attachment_request'
 export const pageElementCaptureMessageType = 'anda_page_element_captured'
+
+const maxAttachmentTextChars = 100_000
+const maxSemanticAttributes = 12
+const maxSemanticAttributeValueChars = 500
+const semanticAttributeNames = new Set([
+  'alt',
+  'aria-description',
+  'aria-label',
+  'content',
+  'datetime',
+  'href',
+  'name',
+  'placeholder',
+  'src',
+  'title',
+  'type',
+  'value'
+])
 
 export interface PageElementRect {
   x: number
@@ -79,15 +98,7 @@ export function isPageElementAttachmentRequest(
 
 export function pageElementInfoToAttachment(request: PageElementAttachmentRequest): ChatAttachment {
   const name = pageElementAttachmentName(request.element)
-  const content = JSON.stringify(
-    {
-      type: 'anda.page_element',
-      captured_at: new Date(request.element.capturedAt || request.createdAt).toISOString(),
-      element: request.element
-    },
-    null,
-    2
-  )
+  const content = JSON.stringify(pageElementAttachmentPayload(request), null, 2)
   const size = new TextEncoder().encode(content).length
   const resource: Resource = {
     _id: 0,
@@ -100,17 +111,7 @@ export function pageElementInfoToAttachment(request: PageElementAttachmentReques
     size,
     metadata: {
       source: 'chrome_extension_context_menu',
-      request_id: request.id,
-      page_url: request.element.pageUrl,
-      page_title: request.element.pageTitle,
-      frame_url: request.element.frameUrl,
-      xpath: request.element.xpath,
-      css_path: request.element.cssPath,
-      tag_name: request.element.tagName,
-      element_id: request.element.id || undefined,
-      class_name: request.element.className || undefined,
-      selected_text: request.element.selectedText || undefined,
-      captured_at: request.element.capturedAt
+      request_id: request.id
     }
   }
   return {
@@ -122,6 +123,31 @@ export function pageElementInfoToAttachment(request: PageElementAttachmentReques
   }
 }
 
+function pageElementAttachmentPayload(request: PageElementAttachmentRequest) {
+  const element = request.element
+  const text = pageElementText(element)
+  const selectedText = cleanPageElementText(element.selectedText || '')
+  const attributes = semanticElementAttributes(element, text)
+  return {
+    type: 'anda.page_element',
+    captured_at: new Date(element.capturedAt || request.createdAt).toISOString(),
+    source: {
+      title: element.pageTitle || undefined,
+      url: element.pageUrl || undefined,
+      frame_url:
+        element.frameUrl && element.frameUrl !== element.pageUrl ? element.frameUrl : undefined
+    },
+    element: {
+      tag: element.tagName.toLowerCase(),
+      id: element.id || undefined,
+      role: element.role || undefined,
+      text: text || undefined,
+      selected_text: selectedText && selectedText !== text ? selectedText : undefined,
+      attributes: Object.keys(attributes).length ? attributes : undefined
+    }
+  }
+}
+
 function pageElementAttachmentName(element: PageElementInfo): string {
   const source = element.pageTitle.trim() || hostnameFromUrl(element.pageUrl) || 'content'
   const label = sanitizeFilePart(`page-content-${source}`) || 'page-content'
@@ -129,11 +155,45 @@ function pageElementAttachmentName(element: PageElementInfo): string {
 }
 
 function pageElementDescription(element: PageElementInfo): string {
-  const text = element.innerText || element.textContent
-  const summary = text.replace(/\s+/g, ' ').trim().slice(0, 160)
-  return summary
-    ? `Web page content from ${element.pageTitle || element.pageUrl}: ${summary}`
-    : `Web page content from ${element.pageTitle || element.pageUrl}`
+  return `Web page content from ${element.pageTitle || element.pageUrl || 'current page'}`
+}
+
+function pageElementText(element: PageElementInfo): string {
+  return trimString(
+    cleanPageElementText(element.innerText || element.textContent),
+    maxAttachmentTextChars
+  )
+}
+
+function cleanPageElementText(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function semanticElementAttributes(element: PageElementInfo, text: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  for (const [name, rawValue] of Object.entries(element.attributes)) {
+    const normalizedName = name.toLowerCase()
+    if (!semanticAttributeNames.has(normalizedName)) {
+      continue
+    }
+
+    const value = trimString(cleanPageElementText(rawValue), maxSemanticAttributeValueChars)
+    if (!value || value === text) {
+      continue
+    }
+
+    attributes[normalizedName] = value
+    if (Object.keys(attributes).length >= maxSemanticAttributes) {
+      break
+    }
+  }
+  return attributes
 }
 
 function sanitizeFilePart(value: string): string {
@@ -151,6 +211,10 @@ function hostnameFromUrl(value: string): string {
   } catch (_error) {
     return ''
   }
+}
+
+function trimString(value: string, maxChars: number): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value
 }
 
 function utf8ToBase64(value: string): string {

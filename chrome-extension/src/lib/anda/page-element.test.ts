@@ -29,16 +29,32 @@ describe('pageElementInfoToAttachment', () => {
     const attachment = pageElementInfoToAttachment(request)
     const raw = attachment.resource.blob || ''
     const decoded = base64ToUtf8(raw)
+    const parsed = JSON.parse(decoded)
 
     expect(raw.trim().startsWith('{')).toBe(false)
     expect(() => JSON.parse(decoded)).not.toThrow()
-    expect(JSON.parse(decoded)).toMatchObject({
+    expect(parsed).toMatchObject({
       type: 'anda.page_element',
+      source: {
+        title: 'Example Post',
+        url: 'https://example.com/post'
+      },
       element: {
-        tagName: 'ARTICLE',
-        innerText: 'Visible page content'
+        tag: 'article',
+        id: 'post',
+        text: 'Visible page content'
       }
     })
+    expect(parsed.element).not.toHaveProperty('innerText')
+    expect(parsed.element).not.toHaveProperty('textContent')
+    expect(parsed.element).not.toHaveProperty('outerHTML')
+    expect(parsed.element).not.toHaveProperty('cssPath')
+    expect(parsed.element).not.toHaveProperty('attributes')
+    expect(attachment.resource.description).not.toContain('Visible page content')
+    expect(attachment.resource.metadata).not.toHaveProperty('css_path')
+    expect(attachment.resource.metadata).not.toHaveProperty('class_name')
+    expect(attachment.resource.metadata).not.toHaveProperty('page_title')
+    expect(attachment.resource.metadata).not.toHaveProperty('tag_name')
     expect(attachment.name).toBe('page-content-Example-Post.json')
   })
 })

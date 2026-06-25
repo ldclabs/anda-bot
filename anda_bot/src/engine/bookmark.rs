@@ -1,6 +1,6 @@
 use anda_core::{
-    BoxError, CompletionRequest, ContentPart, FunctionDefinition, Resource, StateFeatures, Tool,
-    ToolOutput,
+    BoxError, CompletionRequest, ContentPart, FunctionDefinition, ModelEffort, Resource,
+    StateFeatures, Tool, ToolOutput,
 };
 use anda_db::{
     collection::{Collection, CollectionConfig},
@@ -26,7 +26,6 @@ const DEFAULT_LIST_LIMIT: usize = 20;
 /// Hard cap for a single `ListBookmarks` page.
 const MAX_LIST_LIMIT: usize = 100;
 const BOOKMARK_FOLDERS_EXTENSION_KEY: &str = "bookmark_folders";
-const BOOKMARK_SUMMARY_MAX_OUTPUT_TOKENS: usize = 160;
 const BOOKMARK_PREVIEW_MAX_BYTES: usize = 280;
 
 /// A bookmarked conversation and the messages marked inside it.
@@ -998,8 +997,7 @@ impl BookmarksTool {
                 content: vec![ContentPart::Text {
                     text: source_text.to_string(),
                 }],
-                temperature: Some(0.2),
-                max_output_tokens: Some(BOOKMARK_SUMMARY_MAX_OUTPUT_TOKENS),
+                effort: Some(ModelEffort::Low),
                 ..Default::default()
             })
             .await

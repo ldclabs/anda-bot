@@ -1436,29 +1436,6 @@
             {/if}
           </button>
 
-          {#if canUseVoice}
-            <button
-              type="button"
-              class={buttonClass(
-                inputMode === 'voice' ? 'secondary' : 'ghost',
-                'icon-sm',
-                'composer-icon-button hover:text-emerald-700'
-              )}
-              disabled={disabled || sending}
-              aria-label={inputMode === 'voice'
-                ? getMessage('switchToKeyboard')
-                : getMessage('switchToVoice')}
-              title={inputMode === 'voice' ? getMessage('keyboardInput') : getMessage('voiceInput')}
-              onclick={toggleInputMode}
-            >
-              {#if inputMode === 'voice'}
-                <Keyboard class="size-4" />
-              {:else}
-                <Mic class="size-4" />
-              {/if}
-            </button>
-          {/if}
-
           <div bind:this={approvalMenuElement} class="approval-mode-wrap">
             <button
               type="button"
@@ -1467,7 +1444,7 @@
                 'sm',
                 'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 px-2 hover:text-emerald-700'
               )}
-              disabled={disabled}
+              {disabled}
               aria-haspopup="menu"
               aria-expanded={approvalMenuOpen}
               title={approvalModeDescription(currentApprovalMode)}
@@ -1481,7 +1458,11 @@
             </button>
 
             {#if approvalMenuOpen}
-              <div class="approval-mode-menu" role="menu" aria-label={getMessage('approvalModeMenuAria')}>
+              <div
+                class="approval-mode-menu"
+                role="menu"
+                aria-label={getMessage('approvalModeMenuAria')}
+              >
                 <div class="approval-mode-menu-eyebrow">{getMessage('approvalModeMenuPrompt')}</div>
                 {#each approvalModeOptions as option (option.value)}
                   {@const OptionIcon = approvalModeIcon(option)}
@@ -1513,6 +1494,29 @@
         </div>
 
         <div class="flex items-center gap-1">
+          {#if canUseVoice}
+            <button
+              type="button"
+              class={buttonClass(
+                inputMode === 'voice' ? 'secondary' : 'ghost',
+                'icon-sm',
+                'composer-icon-button hover:text-emerald-700'
+              )}
+              disabled={disabled || sending}
+              aria-label={inputMode === 'voice'
+                ? getMessage('switchToKeyboard')
+                : getMessage('switchToVoice')}
+              title={inputMode === 'voice' ? getMessage('keyboardInput') : getMessage('voiceInput')}
+              onclick={toggleInputMode}
+            >
+              {#if inputMode === 'voice'}
+                <Keyboard class="size-4" />
+              {:else}
+                <Mic class="size-4" />
+              {/if}
+            </button>
+          {/if}
+
           {#if inputMode === 'voice'}
             <button
               type="button"
