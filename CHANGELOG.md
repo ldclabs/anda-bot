@@ -4,6 +4,25 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-25
+
+### Added
+
+- **Interactive action approvals and choices**: agents can now surface structured action cards for approvals, choices, and user input, with browser-extension UI for responding directly from chat.
+- **Shell approval cards**: shell commands now expose richer approval prompts and status details instead of relying only on plain text confirmations.
+- **TUI action card responses**: the terminal UI can render action cards, show footer shortcuts, approve/deny requests with `y`/`n`, select numbered choices, and submit choices that require text input.
+
+### Changed
+
+- **TUI internals split into focused modules**: terminal input, layout, rendering, status, transcript, text handling, app state, and tests are separated for safer follow-up work.
+- **Page element capture gives clearer feedback**: browser page-element capture now reports more useful success and failure details through the extension flow.
+- **Version metadata synchronized for the 0.11.0 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.11.0`, and updated `anda_engine` to `0.13.11`.
+
+### Fixed
+
+- **Selected chat actions are preserved during polling**: browser-extension conversation and channel updates now merge existing action state instead of dropping selected cards or duplicating updates.
+- **Interrupted tool-call history is cleaned before continuation**: conversation history now removes unanswered tool calls before runtime stop messages, avoiding provider errors when a task is stopped mid-call.
+
 ## [0.10.6] — 2026-06-24
 
 ### Changed

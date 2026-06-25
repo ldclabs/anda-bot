@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.10.6"
+version = "0.11.0"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -406,9 +406,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.13.10"
+version = "0.13.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9965551eb1e2a2f0bbea39e01b5ec284951f3b90582323451dfc5c8eaa25e967"
+checksum = "37964037096a37ff2e69d722f5e58eb86deac3b84599147f1bf07a29f8fd922a"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -1024,9 +1024,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4e308e67087593070530a666f7fe8815cbd2e61d8f5b7313b71b7d721d1dfde"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
  "serde_core",
@@ -1141,9 +1141,9 @@ checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 
 [[package]]
 name = "candid"
-version = "0.10.30"
+version = "0.10.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cc4495aa7a596cad1570886668cd3cdb1f077ec2ad28e7e3938a76756c89d80"
+checksum = "1347fd6b24f5ad23e4ab16d49551a03d396410dcb086e8f969c21efdf4b1dbd8"
 dependencies = [
  "anyhow",
  "binread",
@@ -1164,9 +1164,9 @@ dependencies = [
 
 [[package]]
 name = "candid_derive"
-version = "0.10.30"
+version = "0.10.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c93f446781aa35d3b2ec5c36e3d67fce948308fe166833ccbb1b3ef8bbb899e0"
+checksum = "ad381629d2d2940899c3a784ccd4fe59e255b5714e7520f016f839f07d2236e7"
 dependencies = [
  "lazy_static",
  "proc-macro2",

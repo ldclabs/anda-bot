@@ -23,7 +23,7 @@ use crate::{daemon::Daemon, gateway};
 
 use super::{
     App, STATUS_REFRESH_INTERVAL,
-    action::{TuiActionState, action_state_snapshot, existing_action_state_changed},
+    action::{TuiActionState, action_state_snapshot},
     layout::{dynamic_viewport_height, input_navigation_content_width},
     render::{flush_static_scrollback, render},
 };
@@ -209,10 +209,6 @@ async fn run_app(
             let before_poll = chat_render_snapshot(app);
             let received = app.chat.poll(None).await;
             let after_poll = chat_render_snapshot(app);
-            if existing_action_state_changed(&before_poll.action_states, &after_poll.action_states)
-            {
-                app.refresh_message_view();
-            }
             needs_render |= received || before_poll != after_poll;
         }
 

@@ -347,6 +347,7 @@ pub(super) fn action_state_snapshot(messages: &[Message]) -> Vec<TuiActionState>
         .collect()
 }
 
+#[cfg(test)]
 pub(super) fn existing_action_state_changed(
     before: &[TuiActionState],
     after: &[TuiActionState],

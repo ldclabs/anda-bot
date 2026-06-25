@@ -380,15 +380,11 @@ impl App {
     async fn apply_action_response_result(&mut self, result: ActionResponseResult) {
         match result {
             Ok(output) => {
-                let mut updated =
-                    apply_action_response_to_messages(&mut self.chat.messages, &output);
+                apply_action_response_to_messages(&mut self.chat.messages, &output);
                 if let Some(conversation) = self.chat.conversation.as_mut() {
                     for message in &mut conversation.messages {
-                        updated |= apply_action_response_to_message_value(message, &output);
+                        apply_action_response_to_message_value(message, &output);
                     }
-                }
-                if updated {
-                    self.refresh_message_view();
                 }
                 self.notice = action_response_notice(&output);
                 if output.conversation > 0 {

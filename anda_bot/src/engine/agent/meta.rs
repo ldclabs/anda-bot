@@ -1,7 +1,7 @@
 //! Request metadata and conversation lifecycle helpers shared by the agent
 //! entry points, the session runner, and startup recovery.
 
-use anda_core::{Message, RequestMeta};
+use anda_core::{ContentPart, Message, RequestMeta};
 use anda_engine::memory::{Conversation, ConversationStatus};
 use serde_json::{Map, Value};
 
@@ -93,16 +93,69 @@ pub(super) fn conversation_chat_history(conversation: &Conversation) -> Vec<Mess
             }
         })
         .collect::<Vec<_>>();
-    while let Some(last) = messages.last() {
-        if last.tool_calls().is_empty() {
-            break;
-        }
-        // 移除最后的 tool_calls
-        // Each `tool_use` block must have a corresponding `tool_result` block in the next message.
-        messages.pop();
-    }
+    remove_unanswered_tool_calls(&mut messages);
     mark_special_user_messages(&mut messages);
     messages
+}
+
+fn remove_unanswered_tool_calls(messages: &mut Vec<Message>) {
+    let mut pending: Vec<(usize, usize, String, Option<String>)> = Vec::new();
+
+    for (message_idx, message) in messages.iter().enumerate() {
+        for (part_idx, part) in message.content.iter().enumerate() {
+            match part {
+                ContentPart::ToolCall { name, call_id, .. } => {
+                    pending.push((message_idx, part_idx, name.clone(), call_id.clone()));
+                }
+                ContentPart::ToolOutput { name, call_id, .. } => {
+                    if let Some(pos) =
+                        pending.iter().position(|(_, _, pending_name, pending_id)| {
+                            tool_call_matches_output(
+                                pending_name,
+                                pending_id.as_deref(),
+                                name,
+                                call_id.as_deref(),
+                            )
+                        })
+                    {
+                        pending.remove(pos);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if pending.is_empty() {
+        return;
+    }
+
+    let unanswered = pending
+        .into_iter()
+        .map(|(message_idx, part_idx, _, _)| (message_idx, part_idx))
+        .collect::<std::collections::HashSet<_>>();
+    for (message_idx, message) in messages.iter_mut().enumerate() {
+        let mut part_idx = 0;
+        message.content.retain(|_| {
+            let keep = !unanswered.contains(&(message_idx, part_idx));
+            part_idx += 1;
+            keep
+        });
+    }
+    messages.retain(|message| !message.content.is_empty());
+}
+
+fn tool_call_matches_output(
+    pending_name: &str,
+    pending_call_id: Option<&str>,
+    output_name: &str,
+    output_call_id: Option<&str>,
+) -> bool {
+    match (pending_call_id, output_call_id) {
+        (Some(pending), Some(output)) => pending == output,
+        (None, None) => pending_name == output_name,
+        _ => false,
+    }
 }
 
 pub(super) fn should_continue_conversation(status: &ConversationStatus) -> bool {
@@ -348,6 +401,54 @@ mod tests {
         // The trailing tool-call message is dropped; the malformed one is skipped.
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text().as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn conversation_chat_history_strips_unanswered_tool_calls_before_stop_message() {
+        use anda_core::ContentPart;
+
+        let conversation = Conversation {
+            _id: 12,
+            messages: vec![
+                json!(Message {
+                    role: "user".to_string(),
+                    content: vec![ContentPart::Text {
+                        text: "start".to_string()
+                    }],
+                    ..Default::default()
+                }),
+                json!(Message {
+                    role: "assistant".to_string(),
+                    content: vec![
+                        ContentPart::Text {
+                            text: "I will inspect it.".to_string()
+                        },
+                        ContentPart::ToolCall {
+                            name: "shell".to_string(),
+                            args: json!({"command": "pwd"}),
+                            call_id: Some("call-stop".to_string()),
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                json!(Message {
+                    role: "user".to_string(),
+                    name: Some(SYSTEM_PERSON_NAME.to_string()),
+                    content: vec![ContentPart::Text {
+                        text: system_runtime_prompt("task stopped", "Current task stopped")
+                    }],
+                    ..Default::default()
+                }),
+            ],
+            ..Default::default()
+        };
+
+        let messages = conversation_chat_history(&conversation);
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1].text().as_deref(), Some("I will inspect it."));
+        assert!(messages[1].tool_calls().is_empty());
+        assert_eq!(messages[2].role, "user");
     }
 
     #[test]

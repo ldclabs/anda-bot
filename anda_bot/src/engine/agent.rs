@@ -1213,7 +1213,7 @@ mod tests {
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(!base_tools().contains(&GoalTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
-        assert!(base_tools().contains(&McpServerTool::NAME.to_string()));
+        assert!(!base_tools().contains(&McpServerTool::NAME.to_string()));
     }
 
     #[test]
