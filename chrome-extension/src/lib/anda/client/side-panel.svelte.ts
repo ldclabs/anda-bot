@@ -1565,6 +1565,10 @@ export class AndaSidePanelClient extends EventTarget {
       browser_client: 'chrome_extension',
       approval_mode: this.settings.approvalMode || defaultSettings.approvalMode
     }
+    const language = await this.requestLanguage()
+    if (language) {
+      extra.language = language
+    }
 
     if (this.tab) {
       extra.tab = {
@@ -1577,6 +1581,29 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     return extra
+  }
+
+  private async requestLanguage(): Promise<string> {
+    try {
+      const saved = await this.chrome.storage.local.get([uiLanguageStorageKey])
+      const storedLanguage = normalizeUiLanguage(saved?.[uiLanguageStorageKey])
+      if (storedLanguage) {
+        return storedLanguage
+      }
+    } catch {
+      // Keep request metadata available when extension storage is temporarily unavailable.
+    }
+
+    const navigatorLanguage = globalThis.navigator?.language?.trim()
+    if (navigatorLanguage) {
+      return navigatorLanguage
+    }
+
+    try {
+      return normalizeUiLanguage(this.chrome.i18n.getUILanguage?.())
+    } catch {
+      return ''
+    }
   }
 
   private async requestMetaForBookmark(

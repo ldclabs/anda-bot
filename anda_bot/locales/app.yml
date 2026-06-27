@@ -562,3 +562,87 @@ launcher.missing_home_arg:
   ar: قيمة --home مفقودة
   fr: valeur manquante pour --home
   es: falta el valor de --home
+shell_approval.detail.approval_reason:
+  en: Approval reason
+  zh-Hans: 审批原因
+  ru: Причина запроса
+  ar: سبب طلب الموافقة
+  fr: Motif de l'approbation
+  es: Motivo de aprobación
+shell_approval.reason.approval_required:
+  en: Current approval mode requires you to confirm this command.
+  zh-Hans: 当前审批模式要求你确认该命令。
+  ru: Текущий режим одобрения требует подтверждения этой команды.
+  ar: يتطلب وضع الموافقة الحالي تأكيد هذا الأمر.
+  fr: Le mode d'approbation actuel exige que vous confirmiez cette commande.
+  es: El modo de aprobación actual requiere que confirmes este comando.
+shell_approval.reason.empty_command:
+  en: The command is empty.
+  zh-Hans: 命令为空。
+  ru: Команда пуста.
+  ar: الأمر فارغ.
+  fr: La commande est vide.
+  es: El comando está vacío.
+shell_approval.reason.background_command:
+  en: This command will run in the background and needs your confirmation.
+  zh-Hans: 该命令会在后台运行，需要你确认。
+  ru: Эта команда будет выполняться в фоне и требует подтверждения.
+  ar: سيعمل هذا الأمر في الخلفية ويتطلب تأكيدك.
+  fr: Cette commande s'exécutera en arrière-plan et nécessite votre confirmation.
+  es: Este comando se ejecutará en segundo plano y requiere tu confirmación.
+shell_approval.reason.complex_shell_syntax:
+  en: This command uses complex shell syntax, so you need to confirm what will run.
+  zh-Hans: 该命令包含复杂的 shell 语法，需要你确认实际会执行的操作。
+  ru: Эта команда использует сложный синтаксис shell, поэтому нужно подтвердить, что именно будет выполнено.
+  ar: يستخدم هذا الأمر صياغة shell معقدة، لذلك تحتاج إلى تأكيد ما سيتم تنفيذه فعلاً.
+  fr: Cette commande utilise une syntaxe shell complexe ; vous devez confirmer ce qui sera réellement exécuté.
+  es: Este comando usa sintaxis de shell compleja, por lo que debes confirmar qué se ejecutará.
+shell_approval.reason.sensitive_path_or_secret:
+  en: This command may touch sensitive paths or secret values.
+  zh-Hans: 该命令可能涉及敏感路径或密钥信息。
+  ru: Эта команда может затрагивать чувствительные пути или секретные значения.
+  ar: قد يمس هذا الأمر مسارات حساسة أو قيماً سرية.
+  fr: Cette commande peut toucher des chemins sensibles ou des valeurs secrètes.
+  es: Este comando puede afectar rutas sensibles o valores secretos.
+shell_approval.reason.path_outside_workspace:
+  en: This command will access a path outside the active workspace.
+  zh-Hans: 该命令会访问当前工作区之外的路径。
+  ru: Эта команда обратится к пути вне активной рабочей области.
+  ar: سيصل هذا الأمر إلى مسار خارج مساحة العمل النشطة.
+  fr: Cette commande accédera à un chemin en dehors de l'espace de travail actif.
+  es: Este comando accederá a una ruta fuera del espacio de trabajo activo.
+shell_approval.reason.unknown_command:
+  en: The risk of this command could not be identified.
+  zh-Hans: 无法识别这个命令的风险。
+  ru: Не удалось определить риск этой команды.
+  ar: تعذر تحديد مخاطر هذا الأمر.
+  fr: Le risque de cette commande n'a pas pu être identifié.
+  es: No se pudo identificar el riesgo de este comando.
+shell_approval.reason.network_write_or_system_change:
+  en: This command may access the network, write files, or change system state.
+  zh-Hans: 该命令可能访问网络、写入文件或更改系统状态。
+  ru: Эта команда может обращаться к сети, записывать файлы или изменять состояние системы.
+  ar: قد يصل هذا الأمر إلى الشبكة أو يكتب ملفات أو يغيّر حالة النظام.
+  fr: Cette commande peut accéder au réseau, écrire des fichiers ou modifier l'état du système.
+  es: Este comando puede acceder a la red, escribir archivos o cambiar el estado del sistema.
+shell_approval.reason.git_state_or_network:
+  en: This git command may change repository state or access the network.
+  zh-Hans: 该 git 命令可能更改仓库状态或访问网络。
+  ru: Эта команда git может изменить состояние репозитория или обратиться к сети.
+  ar: قد يغيّر أمر git هذا حالة المستودع أو يصل إلى الشبكة.
+  fr: Cette commande git peut modifier l'état du dépôt ou accéder au réseau.
+  es: Este comando de git puede cambiar el estado del repositorio o acceder a la red.
+shell_approval.reason.unclassified_command:
+  en: It is unclear whether this command is safe.
+  zh-Hans: 无法确定这个命令是否安全。
+  ru: Неясно, безопасна ли эта команда.
+  ar: من غير الواضح ما إذا كان هذا الأمر آمناً.
+  fr: Il n'est pas clair si cette commande est sûre.
+  es: No está claro si este comando es seguro.
+shell_approval.reason.model_classified_risky:
+  en: The risk model determined that this command needs your confirmation.
+  zh-Hans: 风险模型认为这个命令需要你确认。
+  ru: Модель оценки риска решила, что эта команда требует подтверждения.
+  ar: قرر نموذج المخاطر أن هذا الأمر يحتاج إلى تأكيدك.
+  fr: Le modèle de risque a déterminé que cette commande nécessite votre confirmation.
+  es: El modelo de riesgo determinó que este comando necesita tu confirmación.

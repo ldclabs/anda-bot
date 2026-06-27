@@ -9,9 +9,15 @@ use anda_engine::{
     unix_ms,
 };
 use ic_auth_types::Xid;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 pub(crate) const ACTION_MESSAGE_NAME: &str = "$action";
@@ -162,6 +168,7 @@ pub(crate) struct ActionSession {
     session_id: String,
     conversation_id: Arc<std::sync::atomic::AtomicU64>,
     models: Arc<Models>,
+    home_dir: PathBuf,
 }
 
 impl ActionSession {
@@ -172,6 +179,7 @@ impl ActionSession {
         session_id: String,
         conversation_id: Arc<std::sync::atomic::AtomicU64>,
         models: Arc<Models>,
+        home_dir: PathBuf,
     ) -> Self {
         Self {
             runtime,
@@ -180,6 +188,7 @@ impl ActionSession {
             session_id,
             conversation_id,
             models,
+            home_dir,
         }
     }
 
@@ -196,7 +205,8 @@ impl ActionSession {
             .get_extra_as::<String>("workspace")
             .unwrap_or_default();
         let approval_mode = ApprovalMode::from_ctx(ctx);
-        let language_hint = shell_risk_language_hint(ctx.meta());
+        let language_hint = shell_risk_language_hint(ctx.meta())
+            .or_else(|| launcher_ui_language_hint(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
             &args,
             approval_mode,
@@ -209,11 +219,21 @@ impl ActionSession {
             ApprovalDecision::Allow => return Ok(args),
             ApprovalDecision::Ask(reason) => reason,
         };
-        let mut details = vec![approval_detail("Command", &args.command, "code")];
+        let approval_locale = language_hint.as_deref().unwrap_or("en");
+        let mut details = Vec::new();
         if !workspace.is_empty() {
             details.push(approval_detail("Workspace", workspace, "text"));
         }
-        details.push(approval_detail("Approval reason", &approval_reason, "text"));
+        let approval_reason_label = t!(
+            "shell_approval.detail.approval_reason",
+            locale = approval_locale
+        )
+        .into_owned();
+        details.push(approval_detail(
+            &approval_reason_label,
+            &approval_reason,
+            "text",
+        ));
         details.push(approval_detail(
             "Mode",
             if args.background {
@@ -242,6 +262,7 @@ impl ActionSession {
             "title": "Approve shell command",
             "message": "The agent wants to run a local shell command.",
             "summary": &args.command,
+            "command": &args.command,
             "details": details,
             "approval": {
                 "approve_label": "Approve",
@@ -476,14 +497,20 @@ async fn shell_approval_decision_with_model(
     match mode {
         ApprovalMode::FullAccess => return ApprovalDecision::Allow,
         ApprovalMode::RequestApproval => {
-            return ApprovalDecision::Ask("approval mode requires confirmation".to_string());
+            return localize_shell_approval_decision(
+                ApprovalDecision::Ask("approval mode requires confirmation".to_string()),
+                language_hint,
+            );
         }
         ApprovalMode::OnRisk | ApprovalMode::Custom => {}
     }
 
     let command = args.command.trim();
     if command.is_empty() {
-        return ApprovalDecision::Ask("empty command".to_string());
+        return localize_shell_approval_decision(
+            ApprovalDecision::Ask("empty command".to_string()),
+            language_hint,
+        );
     }
 
     match shell_approval_decision(args, mode, workspace) {
@@ -492,12 +519,15 @@ async fn shell_approval_decision_with_model(
     }
 
     match model_shell_approval_decision(args, workspace, models, language_hint).await {
-        Ok(decision) => decision,
+        Ok(decision) => localize_shell_approval_decision(decision, language_hint),
         Err(err) => {
             log::warn!(
                 "Shell approval risk model unavailable or invalid; falling back to static policy: {err:?}"
             );
-            shell_approval_decision(args, mode, workspace)
+            localize_shell_approval_decision(
+                shell_approval_decision(args, mode, workspace),
+                language_hint,
+            )
         }
     }
 }
@@ -536,6 +566,7 @@ async fn model_shell_approval_decision(
                 "touching credentials/secrets/keychains, non-temporary paths outside the workspace, or background/long-running processes. ",
                 "Do not mark shell syntax like &&, pipes, or redirection as risky by itself; judge the actual operations. ",
                 "The `reason` is shown directly to the user only when `decision` is `ask`; write it in the user's current conversation language or the supplied `user_language_hint`. ",
+                "If `user_language_hint` starts with `zh` or says Chinese, write the reason in Simplified Chinese. ",
                 "Make the reason plain and non-technical, explaining the real-world risk without assuming the user understands shell commands."
             )
             .to_string(),
@@ -562,8 +593,92 @@ fn shell_risk_language_hint(meta: &RequestMeta) -> Option<String> {
     ["ui_language", "language", "locale", "lang"]
         .iter()
         .find_map(|key| meta.get_extra_as::<String>(key))
-        .map(|hint| hint.trim().to_string())
+        .map(|hint| hint.trim().to_ascii_lowercase())
         .filter(|hint| !hint.is_empty())
+        .map(|lang| {
+            if lang.starts_with("zh") || lang.starts_with("cn") {
+                "zh-Hans".to_string()
+            } else {
+                lang
+            }
+        })
+}
+
+fn launcher_ui_language_hint(home_dir: &Path) -> Option<String> {
+    #[derive(Default, Deserialize)]
+    #[serde(default)]
+    struct LauncherUiSettings {
+        language: String,
+    }
+
+    let content = std::fs::read_to_string(home_dir.join("launcher").join("ui.json")).ok()?;
+    let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
+    let language = settings.language.trim();
+    (!language.is_empty()).then(|| language.to_string())
+}
+
+fn localize_shell_approval_decision(
+    decision: ApprovalDecision,
+    language_hint: Option<&str>,
+) -> ApprovalDecision {
+    match decision {
+        ApprovalDecision::Ask(reason) => {
+            ApprovalDecision::Ask(localize_shell_approval_reason(&reason, language_hint))
+        }
+        ApprovalDecision::Allow => ApprovalDecision::Allow,
+    }
+}
+
+fn localize_shell_approval_reason(reason: &str, language_hint: Option<&str>) -> String {
+    let locale = language_hint.unwrap_or("en");
+    match reason {
+        "approval mode requires confirmation" => {
+            t!("shell_approval.reason.approval_required", locale = locale).into_owned()
+        }
+        "empty command" => t!("shell_approval.reason.empty_command", locale = locale).into_owned(),
+        "background command" => {
+            t!("shell_approval.reason.background_command", locale = locale).into_owned()
+        }
+        "complex shell syntax" => t!(
+            "shell_approval.reason.complex_shell_syntax",
+            locale = locale
+        )
+        .into_owned(),
+        "sensitive path or secret-like argument" => t!(
+            "shell_approval.reason.sensitive_path_or_secret",
+            locale = locale
+        )
+        .into_owned(),
+        "path outside the active workspace" => t!(
+            "shell_approval.reason.path_outside_workspace",
+            locale = locale
+        )
+        .into_owned(),
+        "unknown command" => {
+            t!("shell_approval.reason.unknown_command", locale = locale).into_owned()
+        }
+        "network, write, or system-changing command" => t!(
+            "shell_approval.reason.network_write_or_system_change",
+            locale = locale
+        )
+        .into_owned(),
+        "git command may change state or access the network" => t!(
+            "shell_approval.reason.git_state_or_network",
+            locale = locale
+        )
+        .into_owned(),
+        "unclassified command" => t!(
+            "shell_approval.reason.unclassified_command",
+            locale = locale
+        )
+        .into_owned(),
+        "model classified the command as risky" => t!(
+            "shell_approval.reason.model_classified_risky",
+            locale = locale
+        )
+        .into_owned(),
+        _ => reason.to_string(),
+    }
 }
 
 fn shell_risk_output_schema() -> Value {
@@ -1558,6 +1673,79 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn shell_approval_payload_avoids_duplicate_command_and_localizes_reason() {
+        let home = tempfile::tempdir().unwrap();
+        let launcher_dir = home.path().join("launcher");
+        std::fs::create_dir_all(&launcher_dir).unwrap();
+        std::fs::write(launcher_dir.join("ui.json"), r#"{"language":"zh-Hans"}"#).unwrap();
+
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let caller = ctx.caller().to_text();
+        let conversation_id = Arc::new(std::sync::atomic::AtomicU64::new(42));
+        let runtime = Arc::new(ActionRuntime::new());
+        let (event_sender, mut event_rx) = mpsc::channel(4);
+        let session = ActionSession::new(
+            runtime.clone(),
+            event_sender,
+            caller.clone(),
+            "session_1".to_string(),
+            conversation_id,
+            Arc::new(Models::default()),
+            home.path().to_path_buf(),
+        );
+        let args = ExecArgs {
+            command: "rm -rf target".to_string(),
+            ..Default::default()
+        };
+
+        let request = tokio::spawn(async move { session.request_shell_approval(&ctx, args).await });
+        let Some(ActionEvent::Add(message)) = event_rx.recv().await else {
+            panic!("expected shell approval action");
+        };
+        let Some(ContentPart::Action { payload, .. }) = message.content.first() else {
+            panic!("expected action payload");
+        };
+
+        assert_eq!(payload["summary"], "rm -rf target");
+        assert_eq!(payload["command"], "rm -rf target");
+        let details = payload["details"]
+            .as_array()
+            .expect("details should be array");
+        assert!(
+            !details
+                .iter()
+                .any(|detail| detail["label"].as_str() == Some("Command"))
+        );
+        let reason = details
+            .iter()
+            .find(|detail| detail["label"].as_str() == Some("审批原因"))
+            .expect("approval reason detail");
+        assert_eq!(
+            reason["value"],
+            "该命令可能访问网络、写入文件或更改系统状态。"
+        );
+
+        runtime
+            .respond(
+                &caller,
+                42,
+                ActionResponseArgs {
+                    action_id: payload["id"].as_str().unwrap().to_string(),
+                    approve: Some(true),
+                    choice_id: None,
+                    choice_text: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            request.await.unwrap().unwrap().command,
+            "rm -rf target".to_string()
+        );
+    }
+
     #[test]
     fn choice_args_validate_ids() {
         let args = UserChoiceArgs {
@@ -1934,7 +2122,10 @@ mod tests {
                 None
             )
             .await,
-            ApprovalDecision::Ask("complex shell syntax".to_string())
+            ApprovalDecision::Ask(
+                "This command uses complex shell syntax, so you need to confirm what will run."
+                    .to_string()
+            )
         );
     }
 

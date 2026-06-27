@@ -1412,6 +1412,7 @@ mod tests {
                 session_id.to_string(),
                 conversation_id,
                 Arc::new(anda_engine::model::Models::default()),
+                std::env::temp_dir(),
             ),
             background_tasks: Arc::new(RwLock::new(HashMap::new())),
             background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),

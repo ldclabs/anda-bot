@@ -47,6 +47,8 @@ function createChromeApi(
     activeTabs?: ChromeTabInfo[]
     browserSessionId?: string
     workspaceChannelSources?: string[]
+    uiLanguage?: string
+    chromeUiLanguage?: string
     quickPrompts?: QuickPrompt[]
     storageSetError?: Error
   } = {}
@@ -60,6 +62,7 @@ function createChromeApi(
     appearanceTheme: 'system' as const,
     browserSessionId: options.browserSessionId || '1700000000000',
     workspaceChannelSources: options.workspaceChannelSources || [],
+    uiLanguage: options.uiLanguage,
     quickPrompts: options.quickPrompts || [],
     ...options.settings
   }
@@ -98,7 +101,8 @@ function createChromeApi(
     i18n: {
       getMessage: vi.fn((key: string, substitutions?: string[]) =>
         substitutions?.length ? `${key}:${substitutions.join(',')}` : key
-      )
+      ),
+      getUILanguage: vi.fn(() => options.chromeUiLanguage || 'en-US')
     },
     storage: {
       local: {
@@ -367,6 +371,44 @@ describe('AndaSidePanelClient.stopActiveTask', () => {
     await client.stopActiveTask()
 
     expect(sendPrompt).toHaveBeenCalledWith('/stop', [])
+  })
+})
+
+describe('AndaSidePanelClient.requestExtra', () => {
+  it('includes the synced launcher language in request metadata', async () => {
+    const chromeApi = createChromeApi({
+      activeTabs: [{ id: 1, url: 'https://example.com', title: 'Example', windowId: 2 }],
+      uiLanguage: 'zh-Hans'
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    vi.stubGlobal('navigator', { language: 'fr-FR' })
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    const extra = await client.requestExtra()
+
+    expect(extra).toMatchObject({
+      browser_client: 'chrome_extension',
+      language: 'zh_CN',
+      tab: {
+        id: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        window: 2
+      }
+    })
+  })
+
+  it('falls back to navigator.language when no launcher language is stored', async () => {
+    const chromeApi = createChromeApi({ chromeUiLanguage: 'en-US' })
+    vi.stubGlobal('chrome', chromeApi)
+    vi.stubGlobal('navigator', { language: 'fr-FR' })
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    const extra = await client.requestExtra()
+
+    expect(extra.language).toBe('fr-FR')
   })
 })
 

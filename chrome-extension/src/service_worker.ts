@@ -274,7 +274,7 @@ function extensionMessageLogSummary(message: ExtensionMessage): Record<string, u
           token: message.settings.token ? '<redacted>' : ''
         }
       : undefined,
-    params_count: Array.isArray(message.params) ? message.params.length : undefined,
+    params: message.params,
     has_text: typeof message.text === 'string' ? message.text.length > 0 : undefined,
     language: message.language,
     mime_type: message.mimeType,

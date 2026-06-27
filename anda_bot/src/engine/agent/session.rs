@@ -473,6 +473,7 @@ mod tests {
             session_id.to_string(),
             conversation_id,
             Arc::new(anda_engine::model::Models::default()),
+            std::env::temp_dir(),
         )
     }
 
