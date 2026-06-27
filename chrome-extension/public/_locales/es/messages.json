@@ -479,6 +479,15 @@
   "channelsLabel": {
     "message": "Canales"
   },
+  "searchChannels": {
+    "message": "Buscar canales"
+  },
+  "searchChannelsPlaceholder": {
+    "message": "Origen, estado o ID"
+  },
+  "noChannelsFound": {
+    "message": "No se encontraron canales."
+  },
   "expandChannels": {
     "message": "Expandir canales"
   },

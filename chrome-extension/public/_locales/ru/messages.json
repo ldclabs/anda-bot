@@ -479,6 +479,15 @@
   "channelsLabel": {
     "message": "Каналы"
   },
+  "searchChannels": {
+    "message": "Поиск каналов"
+  },
+  "searchChannelsPlaceholder": {
+    "message": "Источник, статус или ID"
+  },
+  "noChannelsFound": {
+    "message": "Каналы не найдены."
+  },
   "expandChannels": {
     "message": "Развернуть каналы"
   },

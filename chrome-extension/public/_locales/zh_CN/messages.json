@@ -479,6 +479,15 @@
   "channelsLabel": {
     "message": "频道"
   },
+  "searchChannels": {
+    "message": "搜索频道"
+  },
+  "searchChannelsPlaceholder": {
+    "message": "来源、状态或 ID"
+  },
+  "noChannelsFound": {
+    "message": "未找到频道。"
+  },
   "expandChannels": {
     "message": "展开频道"
   },

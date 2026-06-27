@@ -6,6 +6,7 @@
     alertDialogOverlayClass,
     badgeClass,
     buttonClass,
+    inputClass,
     itemClass,
     itemContentClass,
     itemMediaClass,
@@ -18,7 +19,9 @@
     History,
     LoaderCircle,
     Radio,
-    Trash2
+    Search,
+    Trash2,
+    X
   } from '@lucide/svelte'
   import { AlertDialog } from 'bits-ui'
   import { quadOut } from 'svelte/easing'
@@ -47,17 +50,25 @@
   let flyoutOpen = $state(false)
   let deleteDialogOpen = $state(false)
   let pendingDeleteSource = $state<string | null>(null)
+  let searchQuery = $state('')
+  let sidebarElement = $state<HTMLElement | null>(null)
 
   const autoCollapsed = $derived(viewportWidth > 0 && viewportWidth < 760)
   const collapsed = $derived(collapsedOverride ?? autoCollapsed)
+  const searchTerm = $derived(searchQuery.trim().toLowerCase())
+  const filteredChannels = $derived.by(() => {
+    if (!searchTerm) {
+      return channels
+    }
+    return channels.filter((channel) => channelSearchText(channel).includes(searchTerm))
+  })
+  const channelCountLabel = $derived(
+    searchTerm ? `${filteredChannels.length}/${channels.length}` : String(channels.length)
+  )
   const pendingDeleteTitle = $derived(
-    pendingDeleteSource
-      ? channelTitle(pendingDeleteSource)
-      : getMessage('deleteChannel')
+    pendingDeleteSource ? channelTitle(pendingDeleteSource) : getMessage('deleteChannel')
   )
-  const pendingDeleteDescription = $derived(
-    getMessage('deleteChannelConfirm', pendingDeleteTitle)
-  )
+  const pendingDeleteDescription = $derived(getMessage('deleteChannelConfirm', pendingDeleteTitle))
 
   function toggleCollapsed() {
     collapsedOverride = !collapsed
@@ -72,6 +83,13 @@
 
   function closeFlyout() {
     flyoutOpen = false
+  }
+
+  function closeFlyoutAfterPointerLeave() {
+    if (collapsed && focusedInsideSidebar()) {
+      return
+    }
+    closeFlyout()
   }
 
   function handleSidebarFocusOut(event: FocusEvent) {
@@ -111,6 +129,36 @@
     await onDelete?.(source)
   }
 
+  function clearSearch() {
+    searchQuery = ''
+  }
+
+  function handleSearchKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    if (searchQuery) {
+      clearSearch()
+      return
+    }
+    if (collapsed) {
+      flyoutOpen = false
+    }
+  }
+
+  function focusedInsideSidebar(): boolean {
+    if (typeof document === 'undefined') {
+      return false
+    }
+    return Boolean(
+      sidebarElement &&
+      document.activeElement instanceof Node &&
+      sidebarElement.contains(document.activeElement)
+    )
+  }
+
   function channelTitle(source: string): string {
     if (source.startsWith('browser:')) {
       const [, scope] = source.split(':')
@@ -143,6 +191,20 @@
       parts.push(String(channel.messageCount))
     }
     return parts.join(' / ')
+  }
+
+  function channelSearchText(channel: Channel): string {
+    return [
+      channel.source,
+      channelTitle(channel.source),
+      channelSubtitle(channel.source),
+      statusLabel(channel),
+      channel.conversationId ? `#${channel.conversationId}` : '',
+      channel.conversationId || '',
+      channel.messageCount > 0 ? String(channel.messageCount) : ''
+    ]
+      .join(' ')
+      .toLowerCase()
   }
 
   function statusLabel(channel: Channel): string {
@@ -214,7 +276,7 @@
         <div class="truncate text-xs font-bold text-sidebar-foreground">
           {getMessage('channelsLabel')}
           <span class={badgeClass('outline')}>
-            {channels.length}
+            {channelCountLabel}
           </span>
         </div>
       </div>
@@ -250,141 +312,190 @@
   </div>
 {/snippet}
 
+{#snippet channelsSearch()}
+  <div class="shrink-0 border-b border-sidebar-border px-1.5 py-1.5">
+    <label class="relative block min-w-0">
+      <Search
+        class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+      />
+      <input
+        type="text"
+        class={inputClass('h-8 bg-sidebar-accent/35 pl-8 pr-8 text-xs shadow-none')}
+        bind:value={searchQuery}
+        placeholder={getMessage('searchChannelsPlaceholder')}
+        aria-label={getMessage('searchChannels')}
+        onkeydown={handleSearchKeydown}
+      />
+      {#if searchQuery}
+        <button
+          type="button"
+          class={buttonClass(
+            'ghost',
+            'icon-xs',
+            'absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground'
+          )}
+          aria-label={getMessage('clearSearch')}
+          title={getMessage('clearSearch')}
+          onclick={clearSearch}
+        >
+          <X class="size-3" />
+        </button>
+      {/if}
+    </label>
+  </div>
+{/snippet}
+
 {#snippet channelsList(expanded: boolean)}
   <div
     class={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5 ${
       expanded ? 'scrollbar-slim' : 'scrollbar-none'
     }`}
   >
-    {#each channels as channel (channel.source)}
-      {@const active = channel.source === activeSource}
-      {@const icon = statusIcon(channel)}
+    {#if filteredChannels.length === 0}
       <div
-        data-slot="item"
-        data-variant={active ? 'outline' : 'default'}
-        data-size="xs"
-        class={itemClass(
-          active ? 'outline' : 'default',
-          'xs',
-          `group relative flex-nowrap p-0 text-left ${
-            active
-              ? 'border-sidebar-border bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-          } ${expanded ? '' : 'mx-auto size-9 shrink-0 justify-center'}`
-        )}
+        class="grid min-h-24 flex-1 place-items-center px-3 text-center text-xs text-muted-foreground"
       >
-        <button
-          type="button"
-          class={`flex items-center text-left ${
-            expanded ? 'min-w-0 flex-1 gap-2 px-2 py-2' : 'size-full justify-center'
-          }`}
-          aria-current={active ? 'page' : undefined}
-          aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}
-          title={`${channelTitle(channel.source)}\n${channel.source}`}
-          onclick={() => selectChannel(channel.source)}
+        <div class="grid max-w-40 gap-2">
+          <Search class="mx-auto size-5 opacity-70" />
+          <div class="font-medium">{getMessage('noChannelsFound')}</div>
+          <button type="button" class={buttonClass('ghost', 'xs', 'mx-auto')} onclick={clearSearch}>
+            {getMessage('clearSearch')}
+          </button>
+        </div>
+      </div>
+    {:else}
+      {#each filteredChannels as channel (channel.source)}
+        {@const active = channel.source === activeSource}
+        {@const icon = statusIcon(channel)}
+        <div
+          data-slot="item"
+          data-variant={active ? 'outline' : 'default'}
+          data-size="xs"
+          class={itemClass(
+            active ? 'outline' : 'default',
+            'xs',
+            `group relative flex-nowrap p-0 text-left ${
+              active
+                ? 'border-sidebar-border bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+            } ${expanded ? '' : 'mx-auto size-9 shrink-0 justify-center'}`
+          )}
         >
-          <span
-            data-slot="item-media"
-            data-variant="icon"
-            class={itemMediaClass(
-              'icon',
-              `relative grid size-6 place-items-center rounded-md border ${
-                active
-                  ? 'border-sidebar-border bg-sidebar-accent text-emerald-700 dark:text-emerald-300'
-                  : 'border-sidebar-border bg-background/75 text-muted-foreground'
-              }`
-            )}
-          >
-            {#if icon === 'loader'}
-              <LoaderCircle class="size-3.5 animate-spin" />
-            {:else if icon === 'warning'}
-              <CircleAlert class="size-3.5 text-amber-700" />
-            {:else}
-              <Radio class="size-3.5" />
-            {/if}
-            <span
-              class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
-            ></span>
-          </span>
-
-          {#if expanded}
-            <div data-slot="item-content" class={itemContentClass('min-w-0 gap-0')}>
-              <div class="flex min-w-0 items-center gap-2">
-                <div class="flex min-w-0 flex-1 items-center gap-2">
-                  <div
-                    data-slot="item-title"
-                    class={itemTitleClass('min-w-0 flex-1 text-xs font-bold')}
-                  >
-                    <span class="truncate">{channelTitle(channel.source)}</span>
-                  </div>
-                  {#if active && sending}
-                    <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
-                  {/if}
-                </div>
-                {#if channelMeta(channel)}
-                  <span class={badgeClass('secondary', 'h-4 rounded-full px-1.5 text-[10px]')}>
-                    {channelMeta(channel)}
-                  </span>
-                {/if}
-              </div>
-              <div
-                class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground"
-              >
-                <span class="shrink-0">{statusLabel(channel)}</span>
-                <span class="min-w-0 truncate text-muted-foreground opacity-70"
-                  >{channelSubtitle(channel.source)}</span
-                >
-              </div>
-            </div>
-          {/if}
-        </button>
-
-        {#if expanded}
           <button
             type="button"
-            class={buttonClass(
-              'outline',
-              'icon-xs',
-              'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
-            )}
-            aria-label={getMessage('deleteChannel')}
-            title={getMessage('deleteChannel')}
-            disabled={sending || channel.sending}
-            onclick={() => requestDeleteChannel(channel.source)}
+            class={`flex items-center text-left ${
+              expanded ? 'min-w-0 flex-1 gap-2 px-2 py-2' : 'size-full justify-center'
+            }`}
+            aria-current={active ? 'page' : undefined}
+            aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}
+            title={`${channelTitle(channel.source)}\n${channel.source}`}
+            onclick={() => selectChannel(channel.source)}
           >
-            <Trash2 class="size-3.5" />
+            <span
+              data-slot="item-media"
+              data-variant="icon"
+              class={itemMediaClass(
+                'icon',
+                `relative grid size-6 place-items-center rounded-md border ${
+                  active
+                    ? 'border-sidebar-border bg-sidebar-accent text-emerald-700 dark:text-emerald-300'
+                    : 'border-sidebar-border bg-background/75 text-muted-foreground'
+                }`
+              )}
+            >
+              {#if icon === 'loader'}
+                <LoaderCircle class="size-3.5 animate-spin" />
+              {:else if icon === 'warning'}
+                <CircleAlert class="size-3.5 text-amber-700" />
+              {:else}
+                <Radio class="size-3.5" />
+              {/if}
+              <span
+                class={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ${statusDotClass(channel)}`}
+              ></span>
+            </span>
+
+            {#if expanded}
+              <div data-slot="item-content" class={itemContentClass('min-w-0 gap-0')}>
+                <div class="flex min-w-0 items-center gap-2">
+                  <div class="flex min-w-0 flex-1 items-center gap-2">
+                    <div
+                      data-slot="item-title"
+                      class={itemTitleClass('min-w-0 flex-1 text-xs font-bold')}
+                    >
+                      <span class="truncate">{channelTitle(channel.source)}</span>
+                    </div>
+                    {#if active && sending}
+                      <LoaderCircle class="size-3 shrink-0 animate-spin text-emerald-700" />
+                    {/if}
+                  </div>
+                  {#if channelMeta(channel)}
+                    <span class={badgeClass('secondary', 'h-4 rounded-full px-1.5 text-[10px]')}>
+                      {channelMeta(channel)}
+                    </span>
+                  {/if}
+                </div>
+                <div
+                  class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground"
+                >
+                  <span class="shrink-0">{statusLabel(channel)}</span>
+                  <span class="min-w-0 truncate text-muted-foreground opacity-70"
+                    >{channelSubtitle(channel.source)}</span
+                  >
+                </div>
+              </div>
+            {/if}
           </button>
-        {/if}
-      </div>
-    {/each}
+
+          {#if expanded}
+            <button
+              type="button"
+              class={buttonClass(
+                'outline',
+                'icon-xs',
+                'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
+              )}
+              aria-label={getMessage('deleteChannel')}
+              title={getMessage('deleteChannel')}
+              disabled={sending || channel.sending}
+              onclick={() => requestDeleteChannel(channel.source)}
+            >
+              <Trash2 class="size-3.5" />
+            </button>
+          {/if}
+        </div>
+      {/each}
+    {/if}
   </div>
 {/snippet}
 
 <aside
+  bind:this={sidebarElement}
   class={`group/sidebar relative z-20 h-full shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
     collapsed ? 'w-12 overflow-visible' : 'w-64 overflow-hidden'
   }`}
   aria-label={getMessage('channelsLabel')}
   onpointerenter={openFlyout}
-  onpointerleave={closeFlyout}
+  onpointerleave={closeFlyoutAfterPointerLeave}
   onfocusin={openFlyout}
   onfocusout={handleSidebarFocusOut}
 >
   <div class="flex h-full min-h-0 flex-col">
     {@render channelsHeader(!collapsed, false)}
+    {#if !collapsed}
+      {@render channelsSearch()}
+    {/if}
     {@render channelsList(!collapsed)}
   </div>
 
   {#if collapsed && flyoutOpen}
-    <div
-      class="absolute inset-y-0 left-0 z-50 w-64"
-      aria-label={getMessage('channelsLabel')}
-    >
+    <div class="absolute inset-y-0 left-0 z-50 w-64" aria-label={getMessage('channelsLabel')}>
       <div
         class="flex h-full min-h-0 flex-col overflow-hidden rounded-r-md border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-sidebar-border/70 backdrop-blur-xl will-change-transform dark:shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
         transition:fly={{ x: -18, duration: 320, easing: quadOut, opacity: 0.92 }}
       >
         {@render channelsHeader(true, true)}
+        {@render channelsSearch()}
         {@render channelsList(true)}
       </div>
     </div>
