@@ -1,14 +1,16 @@
 use anda_core::BoxError;
 use clap::{Args, Subcommand};
-use std::{path::PathBuf, str::FromStr};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use crate::{
     config::{Config, DEFAULT_USER_ID, OWNER_USER_ID},
     daemon::Daemon,
     util::{
         key::{
-            Ed25519Key, Ed25519PubKey, encode_ed25519_pubkey, load_or_init_ed25519_secret,
-            random_ed25519_privkey, write_ed25519_secret_file,
+            Ed25519Key, Ed25519PubKey, IdentityKeyStore, encode_ed25519_pubkey,
+            load_or_init_identity_secret_with_store, os_identity_key_store, owner_identity_key,
+            random_ed25519_privkey, trusted_user_identity_key, write_ed25519_secret_file,
+            write_identity_secret_with_store,
         },
         text::read_text_file,
     },
@@ -38,11 +40,11 @@ pub struct UserCreateCommand {
     #[arg(value_name = "ID")]
     id: String,
 
-    /// Where to save the generated private key.
+    /// Where to save the generated private key instead of the system keyring.
     #[arg(long, value_name = "PATH")]
     key_path: Option<PathBuf>,
 
-    /// Overwrite the private key file when it already exists.
+    /// Overwrite the private key when it already exists.
     #[arg(long)]
     overwrite_key: bool,
 }
@@ -66,18 +68,30 @@ pub struct UserPubkeyCommand {
 }
 
 pub async fn run(daemon: &Daemon, cmd: UserCommand) -> Result<(), BoxError> {
+    run_with_store(daemon, cmd, os_identity_key_store()).await
+}
+
+async fn run_with_store(
+    daemon: &Daemon,
+    cmd: UserCommand,
+    identity_store: Arc<dyn IdentityKeyStore>,
+) -> Result<(), BoxError> {
     match cmd.command.unwrap_or(UserSubcommand::List) {
-        UserSubcommand::List => list_users(daemon).await,
-        UserSubcommand::Create(cmd) => create_user(daemon, cmd).await,
+        UserSubcommand::List => list_users(daemon, identity_store).await,
+        UserSubcommand::Create(cmd) => create_user(daemon, cmd, identity_store).await,
         UserSubcommand::Import(cmd) => import_user(daemon, cmd).await,
         UserSubcommand::Pubkey(cmd) => print_pubkey(cmd).await,
     }
 }
 
-async fn list_users(daemon: &Daemon) -> Result<(), BoxError> {
+async fn list_users(
+    daemon: &Daemon,
+    identity_store: Arc<dyn IdentityKeyStore>,
+) -> Result<(), BoxError> {
     let cfg = load_cli_config(daemon).await?;
-    let owner_key_path = daemon.keys_dir_path().join("user.key");
-    let owner_secret = load_or_init_ed25519_secret(&owner_key_path).await?;
+    let owner_key_ref = owner_identity_key(&daemon.home);
+    let owner_secret =
+        load_or_init_identity_secret_with_store(&owner_key_ref, identity_store).await?;
     let owner_key = Ed25519Key::new(owner_secret);
     let owner_pubkey = owner_key.pubkey();
 
@@ -85,7 +99,7 @@ async fn list_users(daemon: &Daemon) -> Result<(), BoxError> {
     println!("- default, owner");
     println!("  principal: {}", owner_pubkey.id().to_text());
     println!("  pubkey: {}", encode_ed25519_pubkey(&owner_pubkey));
-    println!("  private_key: {}", owner_key_path.display());
+    println!("  private_key: {}", owner_key_ref.location());
 
     let mut listed = 0usize;
     for (index, user) in cfg.users.iter().enumerate() {
@@ -111,34 +125,43 @@ async fn list_users(daemon: &Daemon) -> Result<(), BoxError> {
     Ok(())
 }
 
-async fn create_user(daemon: &Daemon, cmd: UserCreateCommand) -> Result<(), BoxError> {
+async fn create_user(
+    daemon: &Daemon,
+    cmd: UserCreateCommand,
+    identity_store: Arc<dyn IdentityKeyStore>,
+) -> Result<(), BoxError> {
     let id = validate_new_user_id(&cmd.id)?;
     let cfg_text = load_config_text(daemon).await?;
     let cfg = Config::from_contents(&cfg_text)?;
     ensure_user_id_available(&cfg, &id)?;
 
-    let key_path = cmd
-        .key_path
-        .unwrap_or_else(|| default_user_key_path(daemon, &id));
-    if !cmd.overwrite_key && tokio::fs::metadata(&key_path).await.is_ok() {
-        return Err(format!(
-            "{} already exists; pass --overwrite-key or choose --key-path",
-            key_path.display()
-        )
-        .into());
-    }
-
     let secret = random_ed25519_privkey();
     let key = Ed25519Key::new(secret);
     let pubkey = encode_ed25519_pubkey(&key.pubkey());
     let updated = add_user_to_config_text(&cfg_text, &id, &pubkey)?;
+    let private_key_location = if let Some(key_path) = cmd.key_path {
+        if !cmd.overwrite_key && tokio::fs::metadata(&key_path).await.is_ok() {
+            return Err(format!(
+                "{} already exists; pass --overwrite-key or choose --key-path",
+                key_path.display()
+            )
+            .into());
+        }
 
-    write_ed25519_secret_file(&key_path, &secret, cmd.overwrite_key).await?;
+        write_ed25519_secret_file(&key_path, &secret, cmd.overwrite_key).await?;
+        key_path.display().to_string()
+    } else {
+        let key_ref = trusted_user_identity_key(&daemon.home, &id);
+        write_identity_secret_with_store(&key_ref, &secret, cmd.overwrite_key, identity_store)
+            .await?;
+        key_ref.location()
+    };
+
     tokio::fs::write(daemon.config_file_path(), updated).await?;
 
     println!("Created user '{id}'.");
     println!("Config: {}", daemon.config_file_path().display());
-    println!("Private key: {}", key_path.display());
+    println!("Private key: {private_key_location}");
     println!("Public key: {pubkey}");
     println!("Principal: {}", key.id().to_text());
     println!("Use in channel config: user: {id}");
@@ -188,6 +211,7 @@ async fn load_config_text(daemon: &Daemon) -> Result<String, BoxError> {
     Ok(read_text_file(daemon.config_file_path()).await?)
 }
 
+#[cfg(test)]
 fn default_user_key_path(daemon: &Daemon, id: &str) -> PathBuf {
     daemon
         .keys_dir_path()
@@ -460,14 +484,19 @@ channels: {}
     #[tokio::test]
     async fn run_defaults_to_listing_users() {
         let (_dir, daemon) = temp_daemon();
-        run(&daemon, UserCommand { command: None })
-            .await
-            .expect("list users should succeed");
+        run_with_store(
+            &daemon,
+            UserCommand { command: None },
+            Arc::new(crate::util::key::MemoryIdentityKeyStore::default()),
+        )
+        .await
+        .expect("list users should succeed");
     }
 
     #[tokio::test]
     async fn create_then_list_and_reject_duplicate_key() {
         let (_dir, daemon) = temp_daemon();
+        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
 
         create_user(
             &daemon,
@@ -476,6 +505,7 @@ channels: {}
                 key_path: None,
                 overwrite_key: false,
             },
+            identity_store.clone(),
         )
         .await
         .expect("create should succeed");
@@ -483,14 +513,17 @@ channels: {}
         // The config now contains the new user and the key file exists.
         let cfg = load_cli_config(&daemon).await.unwrap();
         assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("alice")));
-        assert!(default_user_key_path(&daemon, "alice").exists());
+        let key_ref = trusted_user_identity_key(&daemon.home, "alice");
+        assert!(identity_store.get_for_test(key_ref.account()).is_some());
+        assert!(!default_user_key_path(&daemon, "alice").exists());
 
         // Listing now iterates the configured users.
-        run(
+        run_with_store(
             &daemon,
             UserCommand {
                 command: Some(UserSubcommand::List),
             },
+            identity_store.clone(),
         )
         .await
         .unwrap();
@@ -503,6 +536,7 @@ channels: {}
                 key_path: None,
                 overwrite_key: false,
             },
+            identity_store.clone(),
         )
         .await
         .map(|_| ())
@@ -515,6 +549,7 @@ channels: {}
         let (_dir, daemon) = temp_daemon();
         let key_path = daemon.home.join("preexisting.key");
         tokio::fs::write(&key_path, "dummy").await.unwrap();
+        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
 
         let err = create_user(
             &daemon,
@@ -523,6 +558,7 @@ channels: {}
                 key_path: Some(key_path),
                 overwrite_key: false,
             },
+            identity_store,
         )
         .await
         .map(|_| ())

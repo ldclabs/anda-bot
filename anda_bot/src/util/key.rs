@@ -4,12 +4,19 @@ use cose2::{Key as CoseKey, Label, Sign1Message};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use ic_auth_types::ByteBufB64;
 use ic_ed25519::PublicKey;
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 pub use cose2::{cwt::Claims, iana};
 
 #[cfg(test)]
 use cose2::Value;
+
+pub const IDENTITY_KEYRING_SERVICE: &str = "com.ldclabs.anda-bot.identity";
 
 #[derive(Clone)]
 pub struct Ed25519Key {
@@ -179,6 +186,183 @@ pub fn encode_ed25519_pubkey(pubkey: &Ed25519PubKey) -> String {
     ByteBufB64(pubkey.as_bytes().to_vec()).to_string()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdentityKeyRef {
+    account: String,
+    legacy_path: PathBuf,
+}
+
+impl IdentityKeyRef {
+    pub fn account(&self) -> &str {
+        &self.account
+    }
+
+    pub fn legacy_path(&self) -> &Path {
+        &self.legacy_path
+    }
+
+    pub fn location(&self) -> String {
+        format!("system keyring account: {}", self.account)
+    }
+}
+
+pub trait IdentityKeyStore: Send + Sync {
+    fn get_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError>;
+    fn put_secret(&self, account: &str, secret: &[u8; 32], overwrite: bool)
+    -> Result<(), BoxError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OsIdentityKeyStore;
+
+impl IdentityKeyStore for OsIdentityKeyStore {
+    fn get_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError> {
+        let entry = keyring::Entry::new(IDENTITY_KEYRING_SERVICE, account)?;
+        match entry.get_secret() {
+            Ok(secret) => Ok(Some(secret.try_into().map_err(|secret: Vec<u8>| {
+                format!(
+                    "identity keyring entry {account} has invalid length {}; expected 32 bytes",
+                    secret.len()
+                )
+            })?)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn put_secret(
+        &self,
+        account: &str,
+        secret: &[u8; 32],
+        overwrite: bool,
+    ) -> Result<(), BoxError> {
+        if !overwrite && self.get_secret(account)?.is_some() {
+            return Err(format!("identity key already exists in system keyring: {account}").into());
+        }
+
+        let entry = keyring::Entry::new(IDENTITY_KEYRING_SERVICE, account)?;
+        entry.set_secret(secret)?;
+        let stored = self
+            .get_secret(account)?
+            .ok_or_else(|| format!("identity keyring write did not persist: {account}"))?;
+        if stored != *secret {
+            return Err(format!("identity keyring verification failed: {account}").into());
+        }
+        Ok(())
+    }
+}
+
+pub fn os_identity_key_store() -> Arc<dyn IdentityKeyStore> {
+    Arc::new(OsIdentityKeyStore)
+}
+
+pub fn daemon_identity_key(home: &Path) -> IdentityKeyRef {
+    identity_key_ref(home, "daemon", home.join("keys").join("anda_bot.key"))
+}
+
+pub fn owner_identity_key(home: &Path) -> IdentityKeyRef {
+    identity_key_ref(home, "owner", home.join("keys").join("user.key"))
+}
+
+pub fn trusted_user_identity_key(home: &Path, id: &str) -> IdentityKeyRef {
+    identity_key_ref(
+        home,
+        &format!("user:{id}"),
+        home.join("keys").join("users").join(format!("{id}.key")),
+    )
+}
+
+fn identity_key_ref(home: &Path, name: &str, legacy_path: PathBuf) -> IdentityKeyRef {
+    IdentityKeyRef {
+        account: format!("v1:{}:{name}", identity_home_namespace(home)),
+        legacy_path,
+    }
+}
+
+fn identity_home_namespace(home: &Path) -> String {
+    let path = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(path.to_string_lossy().as_bytes());
+    let mut namespace = String::with_capacity(32);
+    for byte in digest.iter().take(16) {
+        let _ = write!(&mut namespace, "{byte:02x}");
+    }
+    namespace
+}
+
+pub async fn load_or_init_identity_secret_with_store(
+    key_ref: &IdentityKeyRef,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<[u8; 32], BoxError> {
+    let key_ref = key_ref.clone();
+    tokio::task::spawn_blocking(move || load_or_init_identity_secret_blocking(&key_ref, store))
+        .await?
+}
+
+pub async fn write_identity_secret_with_store(
+    key_ref: &IdentityKeyRef,
+    secret: &[u8; 32],
+    overwrite: bool,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<(), BoxError> {
+    let key_ref = key_ref.clone();
+    let secret = *secret;
+    tokio::task::spawn_blocking(move || store.put_secret(key_ref.account(), &secret, overwrite))
+        .await?
+}
+
+fn load_or_init_identity_secret_blocking(
+    key_ref: &IdentityKeyRef,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<[u8; 32], BoxError> {
+    if let Some(secret) = store.get_secret(key_ref.account())? {
+        return Ok(secret);
+    }
+
+    match std::fs::read_to_string(key_ref.legacy_path()) {
+        Ok(content) => {
+            let secret = parse_ed25519_privkey(content.trim())?;
+            store.put_secret(key_ref.account(), &secret, false)?;
+            log::warn!(
+                name = "daemon";
+                "migrated ED25519 private key from {:?} to {}",
+                key_ref.legacy_path(),
+                key_ref.location()
+            );
+            remove_legacy_identity_key(key_ref);
+            Ok(secret)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!(
+                name = "daemon";
+                "ED25519 private key not found in {}, generating a new one",
+                key_ref.location()
+            );
+            let secret = random_ed25519_privkey();
+            store.put_secret(key_ref.account(), &secret, false)?;
+            Ok(secret)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn remove_legacy_identity_key(key_ref: &IdentityKeyRef) {
+    match std::fs::remove_file(key_ref.legacy_path()) {
+        Ok(()) => log::warn!(
+            name = "daemon";
+            "removed legacy ED25519 private key file {:?}",
+            key_ref.legacy_path()
+        ),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => log::warn!(
+            name = "daemon";
+            "migrated ED25519 private key to {}, but failed to remove legacy file {:?}: {err}",
+            key_ref.location(),
+            key_ref.legacy_path()
+        ),
+    }
+}
+
+#[cfg(test)]
 pub async fn load_or_init_ed25519_secret(key_path: &Path) -> Result<[u8; 32], BoxError> {
     match super::text::read_text_file(key_path).await {
         Ok(content) => {
@@ -247,6 +431,40 @@ pub fn random_ed25519_privkey() -> [u8; 32] {
 }
 
 #[cfg(test)]
+#[derive(Debug, Default)]
+pub struct MemoryIdentityKeyStore {
+    secrets: std::sync::Mutex<std::collections::BTreeMap<String, [u8; 32]>>,
+}
+
+#[cfg(test)]
+impl MemoryIdentityKeyStore {
+    pub fn get_for_test(&self, account: &str) -> Option<[u8; 32]> {
+        self.secrets.lock().unwrap().get(account).copied()
+    }
+}
+
+#[cfg(test)]
+impl IdentityKeyStore for MemoryIdentityKeyStore {
+    fn get_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError> {
+        Ok(self.secrets.lock().unwrap().get(account).copied())
+    }
+
+    fn put_secret(
+        &self,
+        account: &str,
+        secret: &[u8; 32],
+        overwrite: bool,
+    ) -> Result<(), BoxError> {
+        let mut secrets = self.secrets.lock().unwrap();
+        if !overwrite && secrets.contains_key(account) {
+            return Err(format!("identity key already exists in system keyring: {account}").into());
+        }
+        secrets.insert(account.to_string(), *secret);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -301,6 +519,60 @@ mod tests {
 
         assert_eq!(key.len(), 32);
         assert!(key.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn identity_key_accounts_are_scoped_by_home_and_kind() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let daemon = daemon_identity_key(dir.path());
+        let owner = owner_identity_key(dir.path());
+        let alice = trusted_user_identity_key(dir.path(), "alice");
+
+        assert_ne!(daemon.account(), owner.account());
+        assert_ne!(owner.account(), alice.account());
+        assert!(daemon.account().contains(":daemon"));
+        assert!(owner.account().contains(":owner"));
+        assert!(alice.account().contains(":user:alice"));
+        assert!(daemon.legacy_path().ends_with("keys/anda_bot.key"));
+        assert!(owner.legacy_path().ends_with("keys/user.key"));
+        assert!(alice.legacy_path().ends_with("keys/users/alice.key"));
+    }
+
+    #[tokio::test]
+    async fn identity_key_store_generates_and_reuses_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = owner_identity_key(dir.path());
+        let store = Arc::new(MemoryIdentityKeyStore::default());
+
+        let first = load_or_init_identity_secret_with_store(&key_ref, store.clone())
+            .await
+            .unwrap();
+        let second = load_or_init_identity_secret_with_store(&key_ref, store.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(store.get_for_test(key_ref.account()), Some(first));
+        assert!(!key_ref.legacy_path().exists());
+    }
+
+    #[tokio::test]
+    async fn identity_key_store_migrates_legacy_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = owner_identity_key(dir.path());
+        write_ed25519_secret_file(key_ref.legacy_path(), &SECRET, false)
+            .await
+            .unwrap();
+        let store = Arc::new(MemoryIdentityKeyStore::default());
+
+        let secret = load_or_init_identity_secret_with_store(&key_ref, store.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(secret, SECRET);
+        assert_eq!(store.get_for_test(key_ref.account()), Some(SECRET));
+        assert!(!key_ref.legacy_path().exists());
     }
 
     #[test]

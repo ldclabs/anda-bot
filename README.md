@@ -246,14 +246,14 @@ Supported channel families:
 - Discord
 - Lark / Feishu
 
-Multiple trusted users can share one daemon and the same Anda agent. Create a user key, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner from `~/.anda/keys/user.key`.
+Multiple trusted users can share one daemon and the same Anda agent. Create a user key, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner identity stored in the OS secure credential store.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-The command writes the new public key under top-level `users` and saves the matching private key under `~/.anda/keys/users/`:
+The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain or Windows Credential Manager. Older owner and daemon key files are imported into the secure store and removed on first use; pass `--key-path` only when you explicitly need a file key:
 
 ```yaml
 users:
@@ -314,7 +314,7 @@ By default I store state under `~/.anda`:
 ~/.anda/
   config.yaml
   db/
-  keys/
+  keys/ # legacy or explicit file keys
   logs/
   channels/
   bundled-skills/
@@ -326,7 +326,7 @@ By default I store state under `~/.anda`:
   workspace/
 ```
 
-The memory graph, conversations, channel state, cron jobs, keys, logs, personal skills, bundled skills, and workspace data live there. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
+The memory graph, conversations, channel state, cron jobs, logs, personal skills, bundled skills, and workspace data live there. Identity private keys live in the OS secure credential store by default; explicitly exported file keys may still exist under `~/.anda/keys/`. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
 
 ## Learn More
 

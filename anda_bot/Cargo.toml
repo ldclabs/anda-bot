@@ -39,6 +39,7 @@ cbor2 = { workspace = true }
 cose2 = { workspace = true }
 cron = { workspace = true }
 ed25519-dalek = { workspace = true }
+keyring = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 ic-ed25519 = { workspace = true }

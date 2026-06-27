@@ -214,14 +214,18 @@ async fn run() -> Result<(), BoxError> {
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
 
-            let ed25519_secret = util::key::load_or_init_ed25519_secret(
-                &daemon.keys_dir_path().join("anda_bot.key"),
+            let identity_store = util::key::os_identity_key_store();
+            let ed25519_secret = util::key::load_or_init_identity_secret_with_store(
+                &util::key::daemon_identity_key(&daemon.home),
+                identity_store.clone(),
             )
             .await?;
             let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
-            let user_secret =
-                util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key"))
-                    .await?;
+            let user_secret = util::key::load_or_init_identity_secret_with_store(
+                &util::key::owner_identity_key(&daemon.home),
+                identity_store,
+            )
+            .await?;
             let user_key = util::key::Ed25519Key::new(user_secret);
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
@@ -614,10 +618,20 @@ async fn load_daemon(home: PathBuf) -> Result<daemon::Daemon, BoxError> {
 }
 
 async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
+    build_control_client_with_store(daemon, util::key::os_identity_key_store()).await
+}
+
+async fn build_control_client_with_store(
+    daemon: &daemon::Daemon,
+    identity_store: std::sync::Arc<dyn util::key::IdentityKeyStore>,
+) -> Result<gateway::Client, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret =
-        util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_secret = util::key::load_or_init_identity_secret_with_store(
+        &util::key::owner_identity_key(&daemon.home),
+        identity_store,
+    )
+    .await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
     let mut claims = util::key::Claims::default();
     claims.extra.insert(util::key::iana::CWTClaimScope, "*");
@@ -631,10 +645,21 @@ async fn build_browser_extension_token(
     daemon: &daemon::Daemon,
     days: u64,
 ) -> Result<String, BoxError> {
+    build_browser_extension_token_with_store(daemon, days, util::key::os_identity_key_store()).await
+}
+
+async fn build_browser_extension_token_with_store(
+    daemon: &daemon::Daemon,
+    days: u64,
+    identity_store: std::sync::Arc<dyn util::key::IdentityKeyStore>,
+) -> Result<String, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret =
-        util::key::load_or_init_ed25519_secret(&daemon.keys_dir_path().join("user.key")).await?;
+    let user_secret = util::key::load_or_init_identity_secret_with_store(
+        &util::key::owner_identity_key(&daemon.home),
+        identity_store,
+    )
+    .await?;
     let user_key = util::key::Ed25519Key::new(user_secret);
     let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let days = days.clamp(1, 3650);
@@ -826,9 +851,14 @@ mod tests {
         assert_eq!(daemon.home, dir.path());
 
         // Building the control client provisions the user key and succeeds.
-        let _client = build_control_client(&daemon).await.unwrap();
+        let identity_store = std::sync::Arc::new(util::key::MemoryIdentityKeyStore::default());
+        let _client = build_control_client_with_store(&daemon, identity_store.clone())
+            .await
+            .unwrap();
 
-        let token = build_browser_extension_token(&daemon, 9999).await.unwrap();
+        let token = build_browser_extension_token_with_store(&daemon, 9999, identity_store)
+            .await
+            .unwrap();
         assert!(!token.is_empty());
     }
 

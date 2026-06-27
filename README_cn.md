@@ -235,14 +235,14 @@ workspace 中启动。
 - Discord
 - Lark / 飞书
 
-多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以 `~/.anda/keys/user.key` 对应的本地 owner 身份运行。
+多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以操作系统安全凭证库里的本地 owner 身份运行。
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/keys/users/`：
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain 或 Windows 凭证管理器。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库并删除；只有明确需要文件 key 时才传 `--key-path`：
 
 ```yaml
 users:
@@ -303,7 +303,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
 ~/.anda/
   config.yaml
   db/
-  keys/
+  keys/ # 旧版或显式导出的文件 key
   logs/
   channels/
   bundled-skills/
@@ -315,7 +315,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
   workspace/
 ```
 
-记忆图谱、会话、渠道状态、定时任务、密钥、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
+记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。身份私钥默认保存在操作系统安全凭证库；显式导出的文件 key 仍可能位于 `~/.anda/keys/`。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
 
 ## 继续了解
 

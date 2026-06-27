@@ -19,14 +19,14 @@ Anda 可以只待在终端里，也可以接入团队频道。频道会把上下
 
 ## 多用户
 
-一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。先创建用户 key，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用 `~/.anda/keys/user.key` 对应的本地 owner。
+一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。先创建用户 key，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用操作系统安全凭证库里的本地 owner 身份。
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/keys/users/`：
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain 或 Windows 凭证管理器。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库并删除；只有明确需要文件 key 时才传 `--key-path`：
 
 ```yaml
 users:

@@ -101,9 +101,7 @@ fields.
   anda-daemon.pid
   channels/
   db/
-  keys/
-    anda_bot.key
-    user.key
+  keys/ # legacy or explicit file keys
   logs/
   bundled-skills/
   sandbox/
@@ -117,7 +115,7 @@ fields.
 | Directory | Contents |
 | --- | --- |
 | `db/` | Local memory, conversations, channel state, cron state, object state, and related data. |
-| `keys/` | Local signing keys for the daemon and user. |
+| `keys/` | Legacy or explicitly exported signing-key files. New identity private keys are stored in the OS secure credential store by default. |
 | `logs/` | Daemon and CLI logs. |
 | `channels/` | Channel runtime state. |
 | `bundled-skills/` | Release-managed skills installed by Anda updates. |
@@ -130,7 +128,7 @@ fields.
 
 ## Privacy Boundary
 
-Anda local state, memory graph, conversations, channel state, cron state, keys, logs, and workspace data are stored on your machine by default.
+Anda local state, memory graph, conversations, channel state, cron state, logs, and workspace data are stored on your machine by default. Identity private keys are stored in the OS secure credential store by default, with explicit file keys under `~/.anda/keys/`.
 
 However, model providers may still receive prompts, tool-result summaries, and memory formation or recall requests. Choose trusted providers, private endpoints, or proxy policies according to your privacy needs.
 

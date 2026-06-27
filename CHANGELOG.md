@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Identity private keys now default to the OS secure credential store**: daemon, owner, and trusted-user Ed25519 private keys are stored in the platform keyring by default, with legacy file keys migrated on first use and explicit `--key-path` file exports still supported.
+
 ## [0.11.0] — 2026-06-25
 
 ### Added

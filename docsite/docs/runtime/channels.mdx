@@ -19,14 +19,14 @@ Channel configuration lives under `channels` in `~/.anda/config.yaml`.
 
 ## Multiple Users
 
-One daemon can serve multiple trusted users through the same Anda agent. Create a user key, then set a channel entry's `user` to that id. If `user` is omitted, the channel uses the local owner from `~/.anda/keys/user.key`.
+One daemon can serve multiple trusted users through the same Anda agent. Create a user key, then set a channel entry's `user` to that id. If `user` is omitted, the channel uses the local owner identity stored in the OS secure credential store.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-The command writes the new public key under top-level `users` and saves the matching private key under `~/.anda/keys/users/`:
+The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain or Windows Credential Manager. Older owner and daemon key files are imported into the secure store and removed on first use; pass `--key-path` only when you explicitly need a file key:
 
 ```yaml
 users:

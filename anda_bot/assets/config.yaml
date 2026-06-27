@@ -27,9 +27,10 @@ log_level: warn
 # Use persist: true in that tool call to write the server to mcp.json.
 
 # Optional trusted users that can share this daemon and the same Anda agent.
-# Run `anda user create alice` to generate a private key and register the
-# matching Ed25519 public key here. Channel entries can set `user:` to one of
-# these ids; HTTP/browser clients can authenticate with the matching private key.
+# Run `anda user create alice` to generate an Ed25519 keypair. The private key
+# is stored in the OS secure credential store by default, and the matching
+# public key is registered here. Channel entries can set `user:` to one of these
+# ids; HTTP/browser clients can authenticate with the matching private key.
 # users:
 #   - id: alice
 #     pubkey: ""
