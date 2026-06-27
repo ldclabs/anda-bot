@@ -242,7 +242,21 @@ anda user create alice
 anda user list
 ```
 
-命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain 或 Windows 凭证管理器。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库并删除；只有明确需要文件 key 时才传 `--key-path`：
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain、Windows 凭证管理器或 Linux Secret Service。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库；只有明确需要文件 key 时才传 `--key-path`。
+
+在 Linux 上，如果没有可用或已解锁的 Secret Service provider，Anda 会 fallback 到 `~/.anda/keys/` 下的私钥文件，并在终端和日志中显示提醒。若要使用 Secret Service，请在用户 D-Bus session 中启动并解锁 provider，例如运行 `gnome-keyring-daemon --start --components=secrets`，确认 Anda 进程能拿到 `DBUS_SESSION_BUS_ADDRESS`，然后重启 Anda；KDE 用户也可以解锁 KWallet。
+
+如果需要把已有身份私钥导出到文件，使用 `anda user export`。身份可以是 `daemon`、`owner`、`default` 或可信用户 id：
+
+```bash
+anda user export daemon --key-path ./anda-daemon.key
+anda user export owner --key-path ./anda-owner.key
+anda user export alice --key-path ./alice.key
+```
+
+导出的私钥文件不要放进代码仓库或共享目录。
+
+配置仍是这样：
 
 ```yaml
 users:
@@ -315,7 +329,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
   workspace/
 ```
 
-记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。身份私钥默认保存在操作系统安全凭证库；显式导出的文件 key 仍可能位于 `~/.anda/keys/`。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
+记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。身份私钥默认保存在操作系统安全凭证库；显式导出的文件 key 和 Linux Secret Service fallback key 可能位于 `~/.anda/keys/`。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
 
 ## 继续了解
 

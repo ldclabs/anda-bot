@@ -7,10 +7,11 @@ use crate::{
     daemon::Daemon,
     util::{
         key::{
-            Ed25519Key, Ed25519PubKey, IdentityKeyStore, encode_ed25519_pubkey,
-            load_or_init_identity_secret_with_store, os_identity_key_store, owner_identity_key,
-            random_ed25519_privkey, trusted_user_identity_key, write_ed25519_secret_file,
-            write_identity_secret_with_store,
+            Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, daemon_identity_key,
+            encode_ed25519_pubkey, load_identity_secret_with_location_with_store,
+            load_or_init_identity_secret_with_location_with_store, os_identity_key_store,
+            owner_identity_key, random_ed25519_privkey, trusted_user_identity_key,
+            write_ed25519_secret_file, write_identity_secret_with_store,
         },
         text::read_text_file,
     },
@@ -30,6 +31,8 @@ enum UserSubcommand {
     Create(UserCreateCommand),
     /// Add an existing Ed25519 public key to config.yaml.
     Import(UserImportCommand),
+    /// Export an existing identity private key to a file.
+    Export(UserExportCommand),
     /// Print the public key and principal for an Ed25519 private key file.
     Pubkey(UserPubkeyCommand),
 }
@@ -61,6 +64,21 @@ pub struct UserImportCommand {
 }
 
 #[derive(Args)]
+pub struct UserExportCommand {
+    /// Identity to export: daemon, owner, default, user:<id>, or a trusted user id.
+    #[arg(value_name = "IDENTITY")]
+    identity: String,
+
+    /// Where to write the exported private key file.
+    #[arg(long, value_name = "PATH")]
+    key_path: PathBuf,
+
+    /// Overwrite the private key file when it already exists.
+    #[arg(long)]
+    overwrite_key: bool,
+}
+
+#[derive(Args)]
 pub struct UserPubkeyCommand {
     /// Ed25519 private key file.
     #[arg(value_name = "PATH")]
@@ -80,6 +98,7 @@ async fn run_with_store(
         UserSubcommand::List => list_users(daemon, identity_store).await,
         UserSubcommand::Create(cmd) => create_user(daemon, cmd, identity_store).await,
         UserSubcommand::Import(cmd) => import_user(daemon, cmd).await,
+        UserSubcommand::Export(cmd) => export_identity_key(daemon, cmd, identity_store).await,
         UserSubcommand::Pubkey(cmd) => print_pubkey(cmd).await,
     }
 }
@@ -91,15 +110,16 @@ async fn list_users(
     let cfg = load_cli_config(daemon).await?;
     let owner_key_ref = owner_identity_key(&daemon.home);
     let owner_secret =
-        load_or_init_identity_secret_with_store(&owner_key_ref, identity_store).await?;
-    let owner_key = Ed25519Key::new(owner_secret);
+        load_or_init_identity_secret_with_location_with_store(&owner_key_ref, identity_store)
+            .await?;
+    let owner_key = Ed25519Key::new(owner_secret.secret);
     let owner_pubkey = owner_key.pubkey();
 
     println!("Trusted users:");
     println!("- default, owner");
     println!("  principal: {}", owner_pubkey.id().to_text());
     println!("  pubkey: {}", encode_ed25519_pubkey(&owner_pubkey));
-    println!("  private_key: {}", owner_key_ref.location());
+    println!("  private_key: {}", owner_secret.location);
 
     let mut listed = 0usize;
     for (index, user) in cfg.users.iter().enumerate() {
@@ -153,8 +173,7 @@ async fn create_user(
     } else {
         let key_ref = trusted_user_identity_key(&daemon.home, &id);
         write_identity_secret_with_store(&key_ref, &secret, cmd.overwrite_key, identity_store)
-            .await?;
-        key_ref.location()
+            .await?
     };
 
     tokio::fs::write(daemon.config_file_path(), updated).await?;
@@ -189,6 +208,33 @@ async fn import_user(daemon: &Daemon, cmd: UserImportCommand) -> Result<(), BoxE
     Ok(())
 }
 
+async fn export_identity_key(
+    daemon: &Daemon,
+    cmd: UserExportCommand,
+    identity_store: Arc<dyn IdentityKeyStore>,
+) -> Result<(), BoxError> {
+    let (identity, key_ref) = identity_key_ref_for_export(daemon, &cmd.identity)?;
+    if !cmd.overwrite_key && tokio::fs::metadata(&cmd.key_path).await.is_ok() {
+        return Err(format!(
+            "{} already exists; pass --overwrite-key or choose --key-path",
+            cmd.key_path.display()
+        )
+        .into());
+    }
+
+    let loaded = load_identity_secret_with_location_with_store(&key_ref, identity_store).await?;
+    write_ed25519_secret_file(&cmd.key_path, &loaded.secret, cmd.overwrite_key).await?;
+    let key = Ed25519Key::new(loaded.secret);
+    let pubkey = encode_ed25519_pubkey(&key.pubkey());
+
+    println!("Exported {identity} private key.");
+    println!("Source: {}", loaded.location);
+    println!("Private key: {}", cmd.key_path.display());
+    println!("Public key: {pubkey}");
+    println!("Principal: {}", key.id().to_text());
+    Ok(())
+}
+
 async fn print_pubkey(cmd: UserPubkeyCommand) -> Result<(), BoxError> {
     let content = read_text_file(&cmd.key_path).await?;
     let key = Ed25519Key::from_str(content.trim())?;
@@ -198,6 +244,29 @@ async fn print_pubkey(cmd: UserPubkeyCommand) -> Result<(), BoxError> {
     println!("Public key: {}", encode_ed25519_pubkey(&pubkey));
     println!("Principal: {}", pubkey.id().to_text());
     Ok(())
+}
+
+fn identity_key_ref_for_export(
+    daemon: &Daemon,
+    identity: &str,
+) -> Result<(String, IdentityKeyRef), BoxError> {
+    let identity = identity.trim();
+    if identity.is_empty() {
+        return Err("identity cannot be empty".into());
+    }
+
+    match identity {
+        "daemon" => Ok(("daemon".to_string(), daemon_identity_key(&daemon.home))),
+        "owner" | DEFAULT_USER_ID => Ok(("owner".to_string(), owner_identity_key(&daemon.home))),
+        id => {
+            let id = id.strip_prefix("user:").unwrap_or(id);
+            let id = validate_new_user_id(id)?;
+            Ok((
+                format!("user:{id}"),
+                trusted_user_identity_key(&daemon.home, &id),
+            ))
+        }
+    }
 }
 
 async fn load_cli_config(daemon: &Daemon) -> Result<Config, BoxError> {
@@ -375,7 +444,7 @@ fn yaml_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::key::encode_ed25519_pubkey;
+    use crate::util::key::{encode_ed25519_pubkey, parse_ed25519_privkey};
 
     fn test_pubkey() -> String {
         encode_ed25519_pubkey(&Ed25519Key::new([7; 32]).pubkey())
@@ -595,6 +664,80 @@ channels: {}
         .map(|_| ())
         .unwrap_err();
         assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn identity_key_ref_for_export_accepts_daemon_owner_and_users() {
+        let (_dir, daemon) = temp_daemon();
+
+        let (identity, key_ref) = identity_key_ref_for_export(&daemon, "daemon").unwrap();
+        assert_eq!(identity, "daemon");
+        assert_eq!(key_ref, daemon_identity_key(&daemon.home));
+
+        let (identity, key_ref) = identity_key_ref_for_export(&daemon, "default").unwrap();
+        assert_eq!(identity, "owner");
+        assert_eq!(key_ref, owner_identity_key(&daemon.home));
+
+        let (identity, key_ref) = identity_key_ref_for_export(&daemon, "user:alice").unwrap();
+        assert_eq!(identity, "user:alice");
+        assert_eq!(key_ref, trusted_user_identity_key(&daemon.home, "alice"));
+
+        let (identity, key_ref) = identity_key_ref_for_export(&daemon, "bob").unwrap();
+        assert_eq!(identity, "user:bob");
+        assert_eq!(key_ref, trusted_user_identity_key(&daemon.home, "bob"));
+    }
+
+    #[tokio::test]
+    async fn export_daemon_identity_key_writes_private_key_file() {
+        let (_dir, daemon) = temp_daemon();
+        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
+        let secret = random_ed25519_privkey();
+        let daemon_key = daemon_identity_key(&daemon.home);
+        write_identity_secret_with_store(&daemon_key, &secret, false, identity_store.clone())
+            .await
+            .unwrap();
+        let key_path = daemon.home.join("daemon-export.key");
+
+        export_identity_key(
+            &daemon,
+            UserExportCommand {
+                identity: "daemon".to_string(),
+                key_path: key_path.clone(),
+                overwrite_key: false,
+            },
+            identity_store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            parse_ed25519_privkey(std::fs::read_to_string(key_path).unwrap().trim()).unwrap(),
+            secret
+        );
+    }
+
+    #[tokio::test]
+    async fn export_identity_key_does_not_generate_missing_key() {
+        let (_dir, daemon) = temp_daemon();
+        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
+        let key_path = daemon.home.join("missing-export.key");
+
+        let err = export_identity_key(
+            &daemon,
+            UserExportCommand {
+                identity: "daemon".to_string(),
+                key_path: key_path.clone(),
+                overwrite_key: false,
+            },
+            identity_store,
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+
+        assert!(err.to_string().contains("identity key not found"));
+        assert!(!key_path.exists());
+        assert!(!daemon_identity_key(&daemon.home).legacy_path().exists());
     }
 
     #[tokio::test]

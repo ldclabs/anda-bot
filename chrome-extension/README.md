@@ -4,27 +4,21 @@ This Chrome extension is the Svelte + TypeScript side panel client for Anda Bot.
 
 ## Setup
 
-1. Start Anda once so `~/.anda/keys/user.key` exists:
-
-```bash
-cargo run -p anda_bot --
-```
-
-2. Generate an extension token:
+1. Generate an extension token. This also provisions the local owner identity in the OS secure credential store when it does not exist yet:
 
 ```bash
 cargo run -p anda_bot -- browser token --days 30
 ```
 
-3. Build the extension:
+2. Build the extension:
 
 ```bash
 pnpm --filter anda-bot-chrome-extension build
 ```
 
-4. Open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select `chrome-extension/dist`.
+3. Open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select `chrome-extension/dist`.
 
-5. Open the Anda Bot side panel, paste the printed Gateway URL and Bearer token, then save.
+4. Open the Anda Bot side panel, paste the printed Gateway URL and Bearer token, then save.
 
 Chrome 116 or newer is required because the extension keeps its Manifest V3 service worker alive with a WebSocket keepalive.
 

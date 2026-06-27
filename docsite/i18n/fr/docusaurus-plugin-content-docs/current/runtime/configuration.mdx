@@ -102,7 +102,7 @@ conserver après les redémarrages. Ses champs de serveur reflètent une entrée
   mcp.json
   channels/
   db/
-  keys/
+  keys/ # cles heritees, explicites ou fallback Secret Service
   logs/
   bundled-skills/
   sandbox/
@@ -113,11 +113,15 @@ conserver après les redémarrages. Ses champs de serveur reflètent une entrée
   workspace/
 ```
 
-`db/` contient mémoire, conversations, états de canaux et cron. `bundled-skills/` contient les skills gérées par les mises à jour d'Anda, tandis que `skills/` contient les skills personnelles créées, clonées ou modifiées par l'utilisateur. `skills-manifest.json` conserve l'état local d'activation, de désactivation et de rechargement ; `skill-backups/` et `skill-trash/` conservent les sauvegardes avant édition et les skills personnelles supprimées. `workspace/` est l'espace par défaut pour shell et fichiers.
+`db/` contient mémoire, conversations, états de canaux et cron. `keys/` contient les anciens fichiers de clés, les clés fichier explicitement exportées ou les clés de fallback Linux Secret Service ; les nouvelles clés privées d'identité sont stockées par défaut dans le magasin sécurisé de l'OS lorsqu'il est disponible. `bundled-skills/` contient les skills gérées par les mises à jour d'Anda, tandis que `skills/` contient les skills personnelles créées, clonées ou modifiées par l'utilisateur. `skills-manifest.json` conserve l'état local d'activation, de désactivation et de rechargement ; `skill-backups/` et `skill-trash/` conservent les sauvegardes avant édition et les skills personnelles supprimées. `workspace/` est l'espace par défaut pour shell et fichiers.
 
 ## Confidentialité
 
-Les données locales restent sur votre machine, mais les fournisseurs de modèles peuvent recevoir prompts, résumés et requêtes de mémoire. Choisissez fournisseurs, endpoints et proxy selon vos besoins.
+Les données locales restent sur votre machine ; les clés privées d'identité sont stockées par défaut dans le magasin sécurisé de l'OS, avec les clés fichier explicites et les clés de fallback Linux Secret Service sous `~/.anda/keys/`.
+
+Sous Linux, si aucun fournisseur Secret Service n'est disponible ou déverrouillé, Anda bascule vers des fichiers de clés privées sous `~/.anda/keys/` et affiche/enregistre un avertissement. Pour utiliser Secret Service, démarrez et déverrouillez un fournisseur dans une session D-Bus utilisateur, par exemple `gnome-keyring-daemon --start --components=secrets`, assurez-vous que `DBUS_SESSION_BUS_ADDRESS` est défini pour le processus Anda, puis redémarrez Anda. Les utilisateurs KDE peuvent déverrouiller KWallet.
+
+Les fournisseurs de modèles peuvent recevoir prompts, résumés et requêtes de mémoire. Choisissez fournisseurs, endpoints et proxy selon vos besoins.
 
 :::tip
 Utilisez `anda --home /path/to/.anda` pour isoler projets, identités ou tests.

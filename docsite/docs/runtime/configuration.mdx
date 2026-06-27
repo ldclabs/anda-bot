@@ -101,7 +101,7 @@ fields.
   anda-daemon.pid
   channels/
   db/
-  keys/ # legacy or explicit file keys
+  keys/ # legacy, explicit, or Secret Service fallback keys
   logs/
   bundled-skills/
   sandbox/
@@ -115,7 +115,7 @@ fields.
 | Directory | Contents |
 | --- | --- |
 | `db/` | Local memory, conversations, channel state, cron state, object state, and related data. |
-| `keys/` | Legacy or explicitly exported signing-key files. New identity private keys are stored in the OS secure credential store by default. |
+| `keys/` | Legacy, explicitly exported, or Linux Secret Service fallback signing-key files. New identity private keys are stored in the OS secure credential store by default when it is available. |
 | `logs/` | Daemon and CLI logs. |
 | `channels/` | Channel runtime state. |
 | `bundled-skills/` | Release-managed skills installed by Anda updates. |
@@ -128,7 +128,9 @@ fields.
 
 ## Privacy Boundary
 
-Anda local state, memory graph, conversations, channel state, cron state, logs, and workspace data are stored on your machine by default. Identity private keys are stored in the OS secure credential store by default, with explicit file keys under `~/.anda/keys/`.
+Anda local state, memory graph, conversations, channel state, cron state, logs, and workspace data are stored on your machine by default. Identity private keys are stored in the OS secure credential store by default, with explicit file keys and Linux Secret Service fallback keys under `~/.anda/keys/`.
+
+On Linux, if no Secret Service provider is available or unlocked, Anda falls back to private key files under `~/.anda/keys/` and prints/logs a warning. To use Secret Service, start and unlock a provider in a user D-Bus session, for example `gnome-keyring-daemon --start --components=secrets`, make sure `DBUS_SESSION_BUS_ADDRESS` is set for the Anda process, then restart Anda. KDE users can unlock KWallet instead.
 
 However, model providers may still receive prompts, tool-result summaries, and memory formation or recall requests. Choose trusted providers, private endpoints, or proxy policies according to your privacy needs.
 

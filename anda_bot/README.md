@@ -270,9 +270,7 @@ Cron tools let me create, list, manage, and inspect scheduled jobs. A job can ru
   anda-daemon.pid
   channels/
   db/
-  keys/
-    anda_bot.key
-    user.key
+  keys/ # legacy or explicit file keys
   logs/
   sandbox/
   skills/
@@ -283,7 +281,7 @@ What lives there:
 
 - `config.yaml` controls models, proxy, channels, voice, and sandboxing.
 - `db/` stores memory, conversations, channels, cron jobs, and object state.
-- `keys/` stores local signing keys for the daemon and user.
+- `keys/` stores legacy or explicitly exported signing-key files. New identity private keys live in the OS secure credential store by default.
 - `logs/` stores daemon and CLI logs.
 - `channels/` stores channel-specific runtime state.
 - `sandbox/` is used for shell isolation when enabled.

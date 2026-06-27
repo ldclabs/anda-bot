@@ -19,14 +19,28 @@ description: إعداد قنوات IM والإدخال الصوتي والتفر
 
 ## المستخدمون المتعددون
 
-يمكن لـ daemon واحد خدمة عدة مستخدمين موثوقين عبر وكيل Anda نفسه. أنشئ مفتاح مستخدم ثم استخدم ذلك id في حقل `user` داخل القناة. عند حذف `user` تستخدم القناة المالك المحلي من `~/.anda/keys/user.key`.
+يمكن لـ daemon واحد خدمة عدة مستخدمين موثوقين عبر وكيل Anda نفسه. أنشئ مفتاح مستخدم ثم استخدم ذلك id في حقل `user` داخل القناة. عند حذف `user` تستخدم القناة هوية المالك المحلي المخزنة في مخزن بيانات الاعتماد الآمن لنظام التشغيل.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في `~/.anda/keys/users/`:
+يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في مخزن بيانات الاعتماد الآمن لنظام التشغيل، مثل Apple Keychain أو Windows Credential Manager أو Linux Secret Service. تستورد مفاتيح owner و daemon القديمة إلى المخزن الآمن عند أول استخدام؛ مرر `--key-path` فقط عندما تحتاج صراحة إلى مفتاح ملف.
+
+على Linux، إذا لم يكن مزود Secret Service متاحا أو مفتوحا، ينتقل Anda إلى ملفات مفاتيح خاصة تحت `~/.anda/keys/` ويعرض/يسجل تحذيرا. لاستخدام Secret Service، شغل وافتح مزودا داخل جلسة D-Bus للمستخدم، مثلا `gnome-keyring-daemon --start --components=secrets`، وتأكد من ضبط `DBUS_SESSION_BUS_ADDRESS` لعملية Anda، ثم أعد تشغيل Anda. يمكن لمستخدمي KDE فتح KWallet بدلا من ذلك.
+
+لتصدير مفتاح هوية خاص موجود إلى ملف، استخدم `anda user export`. يمكن أن تكون الهوية `daemon` أو `owner` أو `default` أو id مستخدم موثوق:
+
+```bash
+anda user export daemon --key-path ./anda-daemon.key
+anda user export owner --key-path ./anda-owner.key
+anda user export alice --key-path ./alice.key
+```
+
+لا تضع ملفات المفاتيح الخاصة المصدرة في مستودعات الكود أو المجلدات المشتركة.
+
+يبقى شكل الإعدادات هكذا:
 
 ```yaml
 users:

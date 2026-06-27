@@ -2598,7 +2598,7 @@ tts:
         let output = "\
 Gateway URL: http://127.0.0.1:8042
 Bearer token: hEOhASegWGqIAng_c3NhaHUtZTR1YXctMzRtNXEtZXpnamEtZW
-Extension directory: chrome_extension
+Extension directory: chrome-extension
 ";
 
         assert_eq!(

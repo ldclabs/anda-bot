@@ -19,14 +19,28 @@ La configuración vive en `channels` dentro de `~/.anda/config.yaml`.
 
 ## Múltiples usuarios
 
-Un daemon puede servir a varios usuarios de confianza con el mismo agente Anda. Crea una clave de usuario y usa ese id en el campo `user` del canal. Si omites `user`, el canal usa el propietario local de `~/.anda/keys/user.key`.
+Un daemon puede servir a varios usuarios de confianza con el mismo agente Anda. Crea una clave de usuario y usa ese id en el campo `user` del canal. Si omites `user`, el canal usa la identidad del propietario local almacenada en el almacén seguro de credenciales del sistema operativo.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en `~/.anda/keys/users/`:
+El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en el almacén seguro de credenciales del sistema operativo, como Apple Keychain, Windows Credential Manager o Linux Secret Service. Las claves antiguas del owner y del daemon se importan al almacén seguro en el primer uso; usa `--key-path` solo cuando necesites explícitamente una clave en archivo.
+
+En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y muestra/registra una advertencia. Para usar Secret Service, inicia y desbloquea un proveedor en una sesión D-Bus de usuario, por ejemplo `gnome-keyring-daemon --start --components=secrets`, asegúrate de que `DBUS_SESSION_BUS_ADDRESS` esté definido para el proceso de Anda y reinicia Anda. Los usuarios de KDE pueden desbloquear KWallet.
+
+Para exportar una clave privada de identidad existente a un archivo, usa `anda user export`. La identidad puede ser `daemon`, `owner`, `default` o un id de usuario de confianza:
+
+```bash
+anda user export daemon --key-path ./anda-daemon.key
+anda user export owner --key-path ./anda-owner.key
+anda user export alice --key-path ./alice.key
+```
+
+No guardes los archivos de clave privada exportados en repositorios de código ni carpetas compartidas.
+
+La configuración sigue viéndose así:
 
 ```yaml
 users:

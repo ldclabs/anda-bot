@@ -253,7 +253,21 @@ anda user create alice
 anda user list
 ```
 
-The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain or Windows Credential Manager. Older owner and daemon key files are imported into the secure store and removed on first use; pass `--key-path` only when you explicitly need a file key:
+The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain, Windows Credential Manager, or Linux Secret Service. Older owner and daemon key files are imported into the secure store on first use; pass `--key-path` only when you explicitly need a file key.
+
+On Linux, if no Secret Service provider is available or unlocked, Anda falls back to private key files under `~/.anda/keys/` and prints/logs a warning. To use Secret Service, start and unlock a provider in a user D-Bus session, for example `gnome-keyring-daemon --start --components=secrets`, make sure `DBUS_SESSION_BUS_ADDRESS` is set for the Anda process, then restart Anda. KDE users can unlock KWallet instead.
+
+To export an existing identity private key to a file, use `anda user export`. The identity can be `daemon`, `owner`, `default`, or a trusted user id:
+
+```bash
+anda user export daemon --key-path ./anda-daemon.key
+anda user export owner --key-path ./anda-owner.key
+anda user export alice --key-path ./alice.key
+```
+
+Keep exported private key files out of source control and shared folders.
+
+The config still looks like this:
 
 ```yaml
 users:
@@ -326,7 +340,7 @@ By default I store state under `~/.anda`:
   workspace/
 ```
 
-The memory graph, conversations, channel state, cron jobs, logs, personal skills, bundled skills, and workspace data live there. Identity private keys live in the OS secure credential store by default; explicitly exported file keys may still exist under `~/.anda/keys/`. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
+The memory graph, conversations, channel state, cron jobs, logs, personal skills, bundled skills, and workspace data live there. Identity private keys live in the OS secure credential store by default; explicitly exported keys and Linux Secret Service fallback keys may exist under `~/.anda/keys/`. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
 
 ## Learn More
 

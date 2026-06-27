@@ -5,6 +5,7 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use ic_auth_types::ByteBufB64;
 use ic_ed25519::PublicKey;
 use std::{
+    error::Error,
     fmt::Write as _,
     path::{Path, PathBuf},
     str::FromStr,
@@ -16,7 +17,7 @@ pub use cose2::{cwt::Claims, iana};
 #[cfg(test)]
 use cose2::Value;
 
-pub const IDENTITY_KEYRING_SERVICE: &str = "com.ldclabs.anda-bot.identity";
+pub const IDENTITY_KEYRING_SERVICE: &str = "anda.bot.identity";
 
 #[derive(Clone)]
 pub struct Ed25519Key {
@@ -204,6 +205,10 @@ impl IdentityKeyRef {
     pub fn location(&self) -> String {
         format!("system keyring account: {}", self.account)
     }
+
+    pub fn fallback_location(&self) -> String {
+        format!("private key file: {}", self.legacy_path.display())
+    }
 }
 
 pub trait IdentityKeyStore: Send + Sync {
@@ -212,12 +217,24 @@ pub trait IdentityKeyStore: Send + Sync {
     -> Result<(), BoxError>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadedIdentitySecret {
+    pub secret: [u8; 32],
+    pub location: String,
+}
+
+impl LoadedIdentitySecret {
+    fn new(secret: [u8; 32], location: String) -> Self {
+        Self { secret, location }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OsIdentityKeyStore;
 
 impl IdentityKeyStore for OsIdentityKeyStore {
     fn get_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError> {
-        let entry = keyring::Entry::new(IDENTITY_KEYRING_SERVICE, account)?;
+        let entry = keyring_entry(account, "read identity key")?;
         match entry.get_secret() {
             Ok(secret) => Ok(Some(secret.try_into().map_err(|secret: Vec<u8>| {
                 format!(
@@ -226,7 +243,7 @@ impl IdentityKeyStore for OsIdentityKeyStore {
                 )
             })?)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(classify_keyring_error(err, "read identity key")),
         }
     }
 
@@ -240,8 +257,10 @@ impl IdentityKeyStore for OsIdentityKeyStore {
             return Err(format!("identity key already exists in system keyring: {account}").into());
         }
 
-        let entry = keyring::Entry::new(IDENTITY_KEYRING_SERVICE, account)?;
-        entry.set_secret(secret)?;
+        let entry = keyring_entry(account, "write identity key")?;
+        entry
+            .set_secret(secret)
+            .map_err(|err| classify_keyring_error(err, "write identity key"))?;
         let stored = self
             .get_secret(account)?
             .ok_or_else(|| format!("identity keyring write did not persist: {account}"))?;
@@ -250,6 +269,68 @@ impl IdentityKeyStore for OsIdentityKeyStore {
         }
         Ok(())
     }
+}
+
+fn keyring_entry(account: &str, operation: &'static str) -> Result<keyring::Entry, BoxError> {
+    keyring::Entry::new(IDENTITY_KEYRING_SERVICE, account)
+        .map_err(|err| classify_keyring_error(err, operation))
+}
+
+fn classify_keyring_error(err: keyring::Error, operation: &'static str) -> BoxError {
+    if is_secret_service_unavailable(&err) {
+        return Box::new(IdentityKeyStoreUnavailable {
+            operation,
+            source: err.to_string(),
+        });
+    }
+
+    err.into()
+}
+
+fn is_secret_service_unavailable(err: &keyring::Error) -> bool {
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ))]
+    {
+        matches!(
+            err,
+            keyring::Error::NoDefaultStore
+                | keyring::Error::NoStorageAccess(_)
+                | keyring::Error::PlatformFailure(_)
+        )
+    }
+
+    #[cfg(not(all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    )))]
+    {
+        let _ = err;
+        false
+    }
+}
+
+#[derive(Debug)]
+struct IdentityKeyStoreUnavailable {
+    operation: &'static str,
+    source: String,
+}
+
+impl std::fmt::Display for IdentityKeyStoreUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "OS secure credential store is unavailable while trying to {}: {}",
+            self.operation, self.source
+        )
+    }
+}
+
+impl Error for IdentityKeyStoreUnavailable {}
+
+fn is_identity_key_store_unavailable(err: &(dyn Error + Send + Sync + 'static)) -> bool {
+    err.downcast_ref::<IdentityKeyStoreUnavailable>().is_some()
 }
 
 pub fn os_identity_key_store() -> Arc<dyn IdentityKeyStore> {
@@ -293,9 +374,28 @@ pub async fn load_or_init_identity_secret_with_store(
     key_ref: &IdentityKeyRef,
     store: Arc<dyn IdentityKeyStore>,
 ) -> Result<[u8; 32], BoxError> {
+    Ok(
+        load_or_init_identity_secret_with_location_with_store(key_ref, store)
+            .await?
+            .secret,
+    )
+}
+
+pub async fn load_or_init_identity_secret_with_location_with_store(
+    key_ref: &IdentityKeyRef,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<LoadedIdentitySecret, BoxError> {
     let key_ref = key_ref.clone();
     tokio::task::spawn_blocking(move || load_or_init_identity_secret_blocking(&key_ref, store))
         .await?
+}
+
+pub async fn load_identity_secret_with_location_with_store(
+    key_ref: &IdentityKeyRef,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<LoadedIdentitySecret, BoxError> {
+    let key_ref = key_ref.clone();
+    tokio::task::spawn_blocking(move || load_identity_secret_blocking(&key_ref, store)).await?
 }
 
 pub async fn write_identity_secret_with_store(
@@ -303,33 +403,86 @@ pub async fn write_identity_secret_with_store(
     secret: &[u8; 32],
     overwrite: bool,
     store: Arc<dyn IdentityKeyStore>,
-) -> Result<(), BoxError> {
+) -> Result<String, BoxError> {
     let key_ref = key_ref.clone();
     let secret = *secret;
-    tokio::task::spawn_blocking(move || store.put_secret(key_ref.account(), &secret, overwrite))
-        .await?
+    tokio::task::spawn_blocking(move || {
+        write_identity_secret_blocking(&key_ref, &secret, overwrite, store)
+    })
+    .await?
+}
+
+fn write_identity_secret_blocking(
+    key_ref: &IdentityKeyRef,
+    secret: &[u8; 32],
+    overwrite: bool,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<String, BoxError> {
+    match store.put_secret(key_ref.account(), secret, overwrite) {
+        Ok(()) => Ok(key_ref.location()),
+        Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
+            warn_identity_key_file_fallback(key_ref, &err);
+            write_ed25519_secret_file_blocking(key_ref.legacy_path(), secret, overwrite)?;
+            Ok(key_ref.fallback_location())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn load_identity_secret_blocking(
+    key_ref: &IdentityKeyRef,
+    store: Arc<dyn IdentityKeyStore>,
+) -> Result<LoadedIdentitySecret, BoxError> {
+    match store.get_secret(key_ref.account()) {
+        Ok(Some(secret)) => return Ok(LoadedIdentitySecret::new(secret, key_ref.location())),
+        Ok(None) => {}
+        Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
+            warn_identity_key_file_fallback(key_ref, &err);
+            return read_existing_identity_secret_file(key_ref);
+        }
+        Err(err) => return Err(err),
+    }
+
+    read_existing_identity_secret_file(key_ref)
 }
 
 fn load_or_init_identity_secret_blocking(
     key_ref: &IdentityKeyRef,
     store: Arc<dyn IdentityKeyStore>,
-) -> Result<[u8; 32], BoxError> {
-    if let Some(secret) = store.get_secret(key_ref.account())? {
-        return Ok(secret);
+) -> Result<LoadedIdentitySecret, BoxError> {
+    match store.get_secret(key_ref.account()) {
+        Ok(Some(secret)) => return Ok(LoadedIdentitySecret::new(secret, key_ref.location())),
+        Ok(None) => {}
+        Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
+            warn_identity_key_file_fallback(key_ref, &err);
+            return load_or_init_identity_secret_file(key_ref);
+        }
+        Err(err) => return Err(err),
     }
 
     match std::fs::read_to_string(key_ref.legacy_path()) {
         Ok(content) => {
             let secret = parse_ed25519_privkey(content.trim())?;
-            store.put_secret(key_ref.account(), &secret, false)?;
-            log::warn!(
-                name = "daemon";
-                "migrated ED25519 private key from {:?} to {}",
-                key_ref.legacy_path(),
-                key_ref.location()
-            );
-            remove_legacy_identity_key(key_ref);
-            Ok(secret)
+            match store.put_secret(key_ref.account(), &secret, false) {
+                Ok(()) => {
+                    log::warn!(
+                        name = "daemon";
+                        "migrated ED25519 private key from {:?} to {}",
+                        key_ref.legacy_path(),
+                        key_ref.location()
+                    );
+                    remove_legacy_identity_key(key_ref);
+                }
+                Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
+                    warn_identity_key_file_fallback(key_ref, &err);
+                    return Ok(LoadedIdentitySecret::new(
+                        secret,
+                        key_ref.fallback_location(),
+                    ));
+                }
+                Err(err) => return Err(err),
+            }
+            Ok(LoadedIdentitySecret::new(secret, key_ref.location()))
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             log::warn!(
@@ -338,11 +491,86 @@ fn load_or_init_identity_secret_blocking(
                 key_ref.location()
             );
             let secret = random_ed25519_privkey();
-            store.put_secret(key_ref.account(), &secret, false)?;
-            Ok(secret)
+            match store.put_secret(key_ref.account(), &secret, false) {
+                Ok(()) => {}
+                Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
+                    warn_identity_key_file_fallback(key_ref, &err);
+                    write_ed25519_secret_file_blocking(key_ref.legacy_path(), &secret, false)?;
+                    return Ok(LoadedIdentitySecret::new(
+                        secret,
+                        key_ref.fallback_location(),
+                    ));
+                }
+                Err(err) => return Err(err),
+            }
+            Ok(LoadedIdentitySecret::new(secret, key_ref.location()))
         }
         Err(err) => Err(err.into()),
     }
+}
+
+fn load_or_init_identity_secret_file(
+    key_ref: &IdentityKeyRef,
+) -> Result<LoadedIdentitySecret, BoxError> {
+    match read_identity_secret_file(key_ref) {
+        Ok(secret) => Ok(secret),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!(
+                name = "daemon";
+                "ED25519 private key not found at {:?}, generating a new fallback file key",
+                key_ref.legacy_path()
+            );
+            let secret = random_ed25519_privkey();
+            write_ed25519_secret_file_blocking(key_ref.legacy_path(), &secret, false)?;
+            Ok(LoadedIdentitySecret::new(
+                secret,
+                key_ref.fallback_location(),
+            ))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn read_identity_secret_file(
+    key_ref: &IdentityKeyRef,
+) -> Result<LoadedIdentitySecret, std::io::Error> {
+    match std::fs::read_to_string(key_ref.legacy_path()) {
+        Ok(content) => parse_ed25519_privkey(content.trim())
+            .map(|secret| LoadedIdentitySecret::new(secret, key_ref.fallback_location()))
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
+        Err(err) => Err(err),
+    }
+}
+
+fn read_existing_identity_secret_file(
+    key_ref: &IdentityKeyRef,
+) -> Result<LoadedIdentitySecret, BoxError> {
+    match read_identity_secret_file(key_ref) {
+        Ok(secret) => Ok(secret),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(format!(
+            "identity key not found in {} or {}; start Anda first for daemon/owner identities, or create the trusted-user private key before exporting",
+            key_ref.location(),
+            key_ref.fallback_location()
+        )
+        .into()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn warn_identity_key_file_fallback(key_ref: &IdentityKeyRef, err: &BoxError) {
+    let key_path = key_ref.legacy_path();
+    let hint = "On Linux, start and unlock a Secret Service provider in a user D-Bus session, for example `gnome-keyring-daemon --start --components=secrets`, make sure DBUS_SESSION_BUS_ADDRESS is set for Anda, then restart Anda to use the OS keyring.";
+    log::warn!(
+        name = "daemon";
+        "{}; using {}. {}",
+        err,
+        key_ref.fallback_location(),
+        hint
+    );
+    eprintln!(
+        "warning: {err}; using private key file {}.\nwarning: {hint}",
+        key_path.display()
+    );
 }
 
 fn remove_legacy_identity_key(key_ref: &IdentityKeyRef) {
@@ -390,14 +618,31 @@ pub async fn write_ed25519_secret_file(
     secret: &[u8; 32],
     overwrite: bool,
 ) -> Result<(), BoxError> {
-    if let Some(parent) = key_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
+    let key_path = key_path.to_path_buf();
+    let secret = *secret;
+    tokio::task::spawn_blocking(move || {
+        write_ed25519_secret_file_blocking(&key_path, &secret, overwrite)
+    })
+    .await?
+}
+
+fn write_ed25519_secret_file_blocking(
+    key_path: &Path,
+    secret: &[u8; 32],
+    overwrite: bool,
+) -> Result<(), BoxError> {
+    create_parent_dir_if_needed(key_path)?;
 
     let encoded = encode_ed25519_privkey(secret)?;
-    let key_path = key_path.to_path_buf();
-    tokio::task::spawn_blocking(move || write_private_text_file(&key_path, &encoded, overwrite))
-        .await??;
+    write_private_text_file(key_path, &encoded, overwrite)
+}
+
+fn create_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
     Ok(())
 }
 
@@ -418,6 +663,11 @@ fn write_private_text_file(path: &Path, content: &str, overwrite: bool) -> Resul
 
     use std::io::Write;
     let mut file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     file.write_all(content.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())
@@ -472,6 +722,31 @@ mod tests {
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
         26, 27, 28, 29, 30, 31, 32,
     ];
+
+    #[derive(Debug, Default)]
+    struct UnavailableIdentityKeyStore;
+
+    impl IdentityKeyStore for UnavailableIdentityKeyStore {
+        fn get_secret(&self, _account: &str) -> Result<Option<[u8; 32]>, BoxError> {
+            Err(unavailable_identity_store_error("read identity key"))
+        }
+
+        fn put_secret(
+            &self,
+            _account: &str,
+            _secret: &[u8; 32],
+            _overwrite: bool,
+        ) -> Result<(), BoxError> {
+            Err(unavailable_identity_store_error("write identity key"))
+        }
+    }
+
+    fn unavailable_identity_store_error(operation: &'static str) -> BoxError {
+        Box::new(IdentityKeyStoreUnavailable {
+            operation,
+            source: "test Secret Service is unavailable".to_string(),
+        })
+    }
 
     #[test]
     fn private_key_round_trips_between_raw_and_cose_formats() {
@@ -558,6 +833,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identity_key_store_falls_back_to_file_when_secure_store_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = owner_identity_key(dir.path());
+        let store = Arc::new(UnavailableIdentityKeyStore);
+
+        let first = load_or_init_identity_secret_with_location_with_store(&key_ref, store.clone())
+            .await
+            .unwrap();
+        let second = load_or_init_identity_secret_with_location_with_store(&key_ref, store)
+            .await
+            .unwrap();
+
+        assert_eq!(first.secret, second.secret);
+        assert_eq!(first.location, key_ref.fallback_location());
+        assert_eq!(second.location, key_ref.fallback_location());
+        assert_eq!(
+            parse_ed25519_privkey(
+                std::fs::read_to_string(key_ref.legacy_path())
+                    .unwrap()
+                    .trim()
+            )
+            .unwrap(),
+            first.secret
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_key_store_uses_existing_file_when_secure_store_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = owner_identity_key(dir.path());
+        write_ed25519_secret_file(key_ref.legacy_path(), &SECRET, false)
+            .await
+            .unwrap();
+        let store = Arc::new(UnavailableIdentityKeyStore);
+
+        let secret = load_or_init_identity_secret_with_store(&key_ref, store)
+            .await
+            .unwrap();
+
+        assert_eq!(secret, SECRET);
+    }
+
+    #[tokio::test]
+    async fn write_identity_key_store_falls_back_to_file_when_secure_store_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = trusted_user_identity_key(dir.path(), "alice");
+        let store = Arc::new(UnavailableIdentityKeyStore);
+
+        let location = write_identity_secret_with_store(&key_ref, &SECRET, false, store)
+            .await
+            .unwrap();
+
+        assert_eq!(location, key_ref.fallback_location());
+        assert_eq!(
+            parse_ed25519_privkey(
+                std::fs::read_to_string(key_ref.legacy_path())
+                    .unwrap()
+                    .trim()
+            )
+            .unwrap(),
+            SECRET
+        );
+    }
+
+    #[tokio::test]
     async fn identity_key_store_migrates_legacy_key_file() {
         let dir = tempfile::tempdir().unwrap();
         let key_ref = owner_identity_key(dir.path());
@@ -573,6 +913,20 @@ mod tests {
         assert_eq!(secret, SECRET);
         assert_eq!(store.get_for_test(key_ref.account()), Some(SECRET));
         assert!(!key_ref.legacy_path().exists());
+    }
+
+    #[tokio::test]
+    async fn load_identity_key_reports_missing_file_when_secure_store_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_ref = owner_identity_key(dir.path());
+        let store = Arc::new(UnavailableIdentityKeyStore);
+
+        let err = load_identity_secret_with_location_with_store(&key_ref, store)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+
+        assert!(err.to_string().contains("identity key not found"));
     }
 
     #[test]
@@ -672,5 +1026,28 @@ mod tests {
             load_or_init_ed25519_secret(&key_path).await.unwrap(),
             [2; 32]
         );
+    }
+
+    #[test]
+    fn key_file_writer_ignores_empty_parent_for_relative_file_name() {
+        create_parent_dir_if_needed(Path::new("user.key")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn key_file_writer_resets_permissions_when_overwriting() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("user.key");
+        std::fs::write(&key_path, "old").unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_ed25519_secret_file(&key_path, &SECRET, true)
+            .await
+            .unwrap();
+
+        let mode = std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

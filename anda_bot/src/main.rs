@@ -154,6 +154,8 @@ enum DaemonStatusState {
     NotRunning,
 }
 
+const CHROME_EXTENSION_DIR: &str = "chrome-extension";
+
 /// ```bash
 /// cargo run -p anda_bot -- --help
 /// ```
@@ -355,7 +357,7 @@ async fn run() -> Result<(), BoxError> {
                     let token = build_browser_extension_token(&daemon, days).await?;
                     println!("Gateway URL: {}", daemon.base_url());
                     println!("Bearer token: {token}");
-                    println!("Extension directory: chrome_extension");
+                    println!("Extension directory: {CHROME_EXTENSION_DIR}");
                 }
             }
         }
@@ -713,6 +715,11 @@ mod tests {
         let Some(Commands::User(_cmd)) = cli.command else {
             panic!("expected user command");
         };
+    }
+
+    #[test]
+    fn browser_token_output_points_to_extension_directory() {
+        assert_eq!(CHROME_EXTENSION_DIR, "chrome-extension");
     }
 
     #[test]

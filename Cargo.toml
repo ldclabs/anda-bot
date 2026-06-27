@@ -36,7 +36,7 @@ anda_db = { version = "0.8", features = ["full"] }
 anda_db_tfs = { version = "0.8", features = ["full"] }
 anda_db_utils = { version = "0.8" }
 anda_cognitive_nexus = "0.8"
-anda_brain = { version = "0.8" }
+anda_brain = { version = "0.9" }
 anda_kip = "0.8"
 base64 = "0.22"
 cpal = { version = "0.17" }
@@ -66,7 +66,7 @@ sha2 = "0.11"
 ic_auth_types = "0.9"
 ic-ed25519 = "0.6"
 infer2 = { version = "0.21" }
-object_store = { version = "0.13" }
+object_store = { version = "0.14" }
 reqwest = { version = "0.13", features = [
   "rustls",
   "json",
