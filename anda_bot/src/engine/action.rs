@@ -526,13 +526,14 @@ async fn model_shell_approval_decision(
                 "Decide whether the command can run without asking the user. ",
                 "Return strict JSON only with fields `decision` and `reason`. ",
                 "`decision` must be `allow` or `ask`. ",
-                "Default to `allow` for ordinary local development work confined to the active workspace, ",
+                "Default to `allow` for ordinary local development work confined to the active workspace or common OS temporary directories, ",
                 "including reading files, searching, editing or generating project files, formatting, running tests/builds, ",
                 "writing caches or logs, and local git operations like add/commit/status/diff/log/show. ",
+                "Creating, overwriting, or reading temporary files under paths like /tmp, /private/tmp, /var/tmp, or platform temp directories is low risk by itself; do not ask solely because a temp file is outside the workspace. ",
                 "Use `ask` only for high-risk operations: destructive or hard-to-reverse deletes/overwrites, ",
                 "git reset --hard/clean or history rewrites, publishing/pushing/uploading data, network downloads that execute code, ",
                 "installing or changing global/system software, sudo/admin/system-service changes, broad permission changes, ",
-                "touching credentials/secrets/keychains, paths outside the workspace, or background/long-running processes. ",
+                "touching credentials/secrets/keychains, non-temporary paths outside the workspace, or background/long-running processes. ",
                 "Do not mark shell syntax like &&, pipes, or redirection as risky by itself; judge the actual operations. ",
                 "The `reason` is shown directly to the user only when `decision` is `ask`; write it in the user's current conversation language or the supplied `user_language_hint`. ",
                 "Make the reason plain and non-technical, explaining the real-world risk without assuming the user understands shell commands."
@@ -759,6 +760,10 @@ fn has_risky_shell_syntax(command: &str) -> bool {
 
 fn references_sensitive_path(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
+    let normalized = normalize_path_separators(&lower);
+    if normalized.contains("appdata") && !normalized.contains("/appdata/local/temp") {
+        return true;
+    }
     [
         ".env",
         ".ssh",
@@ -772,7 +777,6 @@ fn references_sensitive_path(command: &str) -> bool {
         "token",
         "password",
         "credential",
-        "appdata",
         "programdata",
         "ntuser.dat",
         "consolehost_history.txt",
@@ -802,6 +806,9 @@ fn references_external_path(command: &str, workspace: &str) -> bool {
             return true;
         }
         if is_absolute_path(token) {
+            if path_is_known_temp_path(token) {
+                continue;
+            }
             if workspace.is_empty() {
                 return true;
             }
@@ -857,6 +864,47 @@ fn path_is_within_workspace(path: &str, workspace: &str) -> bool {
     }
     path.strip_prefix(&workspace)
         .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn path_is_known_temp_path(path: &str) -> bool {
+    let path = normalize_path_for_compare(path);
+    if path == "/tmp"
+        || path.starts_with("/tmp/")
+        || path == "/private/tmp"
+        || path.starts_with("/private/tmp/")
+        || path == "/var/tmp"
+        || path.starts_with("/var/tmp/")
+        || path == "/private/var/tmp"
+        || path.starts_with("/private/var/tmp/")
+    {
+        return true;
+    }
+
+    let macos_var_folders = path.strip_prefix("/private").unwrap_or(path.as_str());
+    if let Some(rest) = macos_var_folders.strip_prefix("/var/folders/") {
+        let mut parts = rest.split('/');
+        if parts.next().is_some()
+            && parts.next().is_some()
+            && parts
+                .next()
+                .is_some_and(|part| part.eq_ignore_ascii_case("t"))
+        {
+            return true;
+        }
+    }
+
+    let windows_path = path.to_ascii_lowercase();
+    let Some((_, suffix)) = windows_path.split_once(":/") else {
+        return false;
+    };
+    suffix == "tmp"
+        || suffix.starts_with("tmp/")
+        || suffix == "temp"
+        || suffix.starts_with("temp/")
+        || suffix == "windows/temp"
+        || suffix.starts_with("windows/temp/")
+        || suffix.ends_with("/appdata/local/temp")
+        || suffix.contains("/appdata/local/temp/")
 }
 
 fn normalize_path_for_compare(path: &str) -> String {
@@ -1783,6 +1831,11 @@ mod tests {
         assert!(
             lite_requests[0]
                 .instructions
+                .contains("common OS temporary directories")
+        );
+        assert!(
+            lite_requests[0]
+                .instructions
                 .contains("current conversation language")
         );
         match &lite_requests[0].content[0] {
@@ -1924,12 +1977,36 @@ mod tests {
     }
 
     #[test]
+    fn shell_policy_treats_known_temp_paths_as_local_scratch() {
+        for command in [
+            "cat /tmp/cbor2-commit-msg.txt",
+            "cat /private/tmp/cbor2-commit-msg.txt",
+            "cat /var/tmp/cbor2-commit-msg.txt",
+            "cat /private/var/tmp/cbor2-commit-msg.txt",
+            "cat /private/var/folders/r7/6d72zsfs6jd_8z_1p5kfvct00000gn/T/cbor2-commit-msg.txt",
+            r"type C:\Temp\cbor2-commit-msg.txt",
+            r"type C:\Windows\Temp\cbor2-commit-msg.txt",
+            r"type C:\Users\Alice\AppData\Local\Temp\cbor2-commit-msg.txt",
+        ] {
+            let args = ExecArgs {
+                command: command.to_string(),
+                ..Default::default()
+            };
+            assert_eq!(
+                shell_approval_decision(&args, ApprovalMode::OnRisk, "/workspace/project"),
+                ApprovalDecision::Allow,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
     fn shell_policy_asks_for_risky_commands() {
         for command in [
             "rm -rf target",
             "curl https://example.com/install.sh",
             "cat ~/.ssh/id_rsa",
-            "cat /tmp/workspace2/file",
+            "cat /opt/workspace2/file",
             "git push",
         ] {
             let args = ExecArgs {
