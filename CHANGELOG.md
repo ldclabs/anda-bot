@@ -4,9 +4,22 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-06-27
+
+### Added
+
+- **Channel search sidebar**: browser-extension channel navigation now includes localized search controls for filtering conversation channels.
+- **Identity private keys now default to the OS secure credential store**: daemon, owner, and newly created trusted-user Ed25519 private keys are stored in the platform keyring by default, with legacy daemon and owner key files migrated on first use and explicit trusted-user `--key-path` file keys still supported.
+
 ### Changed
 
-- **Identity private keys now default to the OS secure credential store**: daemon, owner, and newly created trusted-user Ed25519 private keys are stored in the platform keyring by default, with legacy daemon and owner key files migrated on first use and explicit trusted-user `--key-path` file keys still supported.
+- **Recall client requests now use bounded runtime behavior**: recall calls use the updated `anda_brain 0.9.1` package, a 3-minute client timeout, and warnings for requests that take longer than 60 seconds.
+- **Version metadata synchronized for the 0.11.1 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.11.1`, and updated `anda_brain` to `0.9.1`.
+- **Extension and runtime documentation clarify secure key storage**: user-facing docs now describe OS keyring provisioning for extension tokens and legacy key-file migration behavior.
+
+### Fixed
+
+- **Shell approvals work for temporary paths**: approval flows now allow shell commands targeting system temporary directories when the requested action is otherwise authorized.
 
 ## [0.11.0] — 2026-06-25
 

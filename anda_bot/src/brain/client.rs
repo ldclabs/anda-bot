@@ -2,7 +2,7 @@ use anda_core::{AgentOutput, BoxError, FunctionDefinition, Json, Resource, Tool,
 use anda_engine::context::BaseCtx;
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::util::http_client::new_reqwest_client;
 
@@ -14,11 +14,11 @@ pub use anda_brain::{
     },
 };
 
-// Recall runs LLM work inline in the brain handler and can exceed the shared
-// HTTP client's 120s default timeout; a client-side timeout drops the loopback
-// connection and cancels the in-flight work. Lightweight reads (primer, user
-// info, status) keep the client default for fast failure.
-const RECALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// Recall runs LLM work inline in the brain handler. Keep its client-side
+// timeout explicit so slow calls fail predictably while lightweight reads
+// (primer, user info, status) keep the client default behavior.
+const RECALL_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+const SLOW_RECALL_WARN_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 pub struct Client {
@@ -58,9 +58,27 @@ impl Client {
     }
 
     pub async fn recall<'a>(&self, input: RecallInputRef<'a>) -> Result<AgentOutput, BoxError> {
-        let rt: RpcResponse<AgentOutput> = self
+        let started_at = Instant::now();
+        let result: Result<RpcResponse<AgentOutput>, BoxError> = self
             .post_with_timeout("/recall", &input, RECALL_TIMEOUT)
-            .await?;
+            .await;
+        let elapsed = started_at.elapsed();
+        if elapsed > SLOW_RECALL_WARN_AFTER {
+            match &result {
+                Ok(_) => log::warn!(
+                    "[BrainClient] recall request took {:?}, timeout: {:?}",
+                    elapsed,
+                    RECALL_TIMEOUT
+                ),
+                Err(err) => log::warn!(
+                    "[BrainClient] recall request failed after {:?}, timeout: {:?}, error: {err}",
+                    elapsed,
+                    RECALL_TIMEOUT
+                ),
+            }
+        }
+
+        let rt = result?;
         if let Some(result) = rt.result {
             Ok(result)
         } else {
