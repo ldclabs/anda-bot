@@ -47,6 +47,10 @@ struct Cli {
     #[arg(long)]
     home: Option<String>,
 
+    /// Read daemon startup identity secrets from stdin.
+    #[arg(long, hide = true)]
+    identity_secrets_stdin: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -171,7 +175,15 @@ async fn main() -> Result<(), BoxError> {
 
 async fn run() -> Result<(), BoxError> {
     let cli = Cli::parse();
-    let Cli { home, command } = cli;
+    let Cli {
+        home,
+        identity_secrets_stdin,
+        command,
+    } = cli;
+
+    if identity_secrets_stdin && !matches!(command, Some(Commands::Daemon)) {
+        return Err("--identity-secrets-stdin can only be used with `anda daemon`".into());
+    }
 
     let home = if let Some(home) = home {
         PathBuf::from(home)
@@ -216,26 +228,36 @@ async fn run() -> Result<(), BoxError> {
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
 
-            let identity_store = util::key::os_identity_key_store();
-            let ed25519_secret = util::key::load_or_init_identity_secret_with_store(
-                &util::key::daemon_identity_key(&daemon.home),
-                identity_store.clone(),
-            )
-            .await?;
-            let ed25519_key = util::key::Ed25519Key::new(ed25519_secret);
-            let user_secret = util::key::load_or_init_identity_secret_with_store(
-                &util::key::owner_identity_key(&daemon.home),
-                identity_store,
-            )
-            .await?;
-            let user_key = util::key::Ed25519Key::new(user_secret);
+            let local_identity = if identity_secrets_stdin {
+                util::key::read_local_identity_secrets_from_stdin().await?
+            } else {
+                util::key::load_or_init_local_identity_secrets_with_store(
+                    &daemon.home,
+                    util::key::os_identity_key_store(),
+                )
+                .await?
+            };
+            let ed25519_key = util::key::Ed25519Key::new(*local_identity.daemon);
+            let user_key = util::key::Ed25519Key::new(*local_identity.owner);
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         Some(Commands::Stop) => {
             log::info!("Starting CLI with command 'stop' at {}", daemon.base_url());
 
-            let client = build_control_client(&daemon).await?;
-            match stop_daemon(&daemon, &client, Duration::from_secs(10)).await? {
+            let status_client = build_status_client(&daemon)?;
+            let shutdown_client = if status_client.status().await.is_ok() {
+                Some(build_control_client(&daemon).await?)
+            } else {
+                None
+            };
+            match stop_daemon(
+                &daemon,
+                &status_client,
+                shutdown_client.as_ref(),
+                Duration::from_secs(10),
+            )
+            .await?
+            {
                 daemon::StopState::NotRunning => println!("anda daemon is not running"),
                 daemon::StopState::Stopped(pid) => {
                     println!("Stopped anda daemon (pid {pid})")
@@ -247,7 +269,7 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Start) => {
             log::info!("Starting CLI with command 'start' at {}", daemon.base_url());
 
-            let client = build_control_client(&daemon).await?;
+            let client = build_status_client(&daemon)?;
             match client.ensure_daemon_running(&daemon).await? {
                 daemon::LaunchState::AlreadyRunning => {
                     println!("anda daemon is already running at {}", daemon.base_url())
@@ -268,7 +290,7 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
 
-            let client = build_control_client(&daemon).await?;
+            let client = build_status_client(&daemon)?;
             print_daemon_status(&daemon, &client, cmd.json).await?;
         }
 
@@ -278,10 +300,27 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
 
-            let client = build_control_client(&daemon).await?;
-            let stop_state = stop_daemon(&daemon, &client, Duration::from_secs(10)).await?;
+            let local_identity = util::key::load_or_init_local_identity_secrets_with_store(
+                &daemon.home,
+                util::key::os_identity_key_store(),
+            )
+            .await?;
+            let status_client = build_status_client(&daemon)?;
+            let client = build_control_client_from_owner_secret(&daemon, *local_identity.owner)?;
+            let stop_state = stop_daemon(
+                &daemon,
+                &status_client,
+                Some(&client),
+                Duration::from_secs(10),
+            )
+            .await?;
 
-            match (stop_state, client.ensure_daemon_running(&daemon).await?) {
+            match (
+                stop_state,
+                client
+                    .ensure_daemon_running_with_identity_secrets(&daemon, Some(&local_identity))
+                    .await?,
+            ) {
                 (daemon::StopState::Stopped(old_pid), daemon::LaunchState::Started(child)) => {
                     println!(
                         "Restarted anda daemon (old pid {old_pid}, new pid {}). Logs: {}",
@@ -413,16 +452,19 @@ async fn run() -> Result<(), BoxError> {
 
 async fn stop_daemon(
     daemon: &daemon::Daemon,
-    client: &gateway::Client,
+    status_client: &gateway::Client,
+    shutdown_client: Option<&gateway::Client>,
     timeout: Duration,
 ) -> Result<daemon::StopState, BoxError> {
     let pid = daemon.read_pid_file().await?;
-    let gateway_running = client.status().await.is_ok();
+    let gateway_running = status_client.status().await.is_ok();
 
     match pid {
         Some(pid) if daemon::process_exists(pid) => {
             if gateway_running {
-                if let Err(err) = client.shutdown().await {
+                let shutdown_client =
+                    shutdown_client.ok_or("authenticated shutdown client is required")?;
+                if let Err(err) = shutdown_client.shutdown().await {
                     log::warn!("Failed to request graceful daemon shutdown: {err}");
                 } else if let Err(err) = daemon.wait_for_background_exit(pid, timeout).await {
                     log::warn!("Graceful daemon shutdown timed out: {err}");
@@ -437,16 +479,20 @@ async fn stop_daemon(
         Some(_) => {
             daemon.remove_pid_file_if_exists().await?;
             if gateway_running {
-                client.shutdown().await?;
-                wait_for_gateway_down(client, timeout).await?;
+                let shutdown_client =
+                    shutdown_client.ok_or("authenticated shutdown client is required")?;
+                shutdown_client.shutdown().await?;
+                wait_for_gateway_down(status_client, timeout).await?;
                 Ok(daemon::StopState::StoppedUnknown)
             } else {
                 Ok(daemon::StopState::NotRunning)
             }
         }
         None if gateway_running => {
-            client.shutdown().await?;
-            wait_for_gateway_down(client, timeout).await?;
+            let shutdown_client =
+                shutdown_client.ok_or("authenticated shutdown client is required")?;
+            shutdown_client.shutdown().await?;
+            wait_for_gateway_down(status_client, timeout).await?;
             Ok(daemon::StopState::StoppedUnknown)
         }
         None => Ok(daemon::StopState::NotRunning),
@@ -629,18 +675,28 @@ async fn build_control_client_with_store(
 ) -> Result<gateway::Client, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret = util::key::load_or_init_identity_secret_with_store(
-        &util::key::owner_identity_key(&daemon.home),
-        identity_store,
-    )
-    .await?;
-    let user_key = util::key::Ed25519Key::new(user_secret);
+    let secrets =
+        util::key::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
+            .await?;
+    build_control_client_from_owner_secret(daemon, *secrets.owner)
+}
+
+fn build_control_client_from_owner_secret(
+    daemon: &daemon::Daemon,
+    owner_secret: [u8; 32],
+) -> Result<gateway::Client, BoxError> {
+    let user_key = util::key::Ed25519Key::new(owner_secret);
     let mut claims = util::key::Claims::default();
     claims.extra.insert(util::key::iana::CWTClaimScope, "*");
     let gateway_token = user_key.sign_cwt(claims)?;
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
 
     Ok(gateway::Client::new(daemon.base_url(), gateway_token).with_http_client(http_client))
+}
+
+fn build_status_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
+    let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
+    Ok(gateway::Client::new(daemon.base_url(), String::new()).with_http_client(http_client))
 }
 
 async fn build_browser_extension_token(
@@ -657,12 +713,10 @@ async fn build_browser_extension_token_with_store(
 ) -> Result<String, BoxError> {
     daemon.ensure_directories().await?;
 
-    let user_secret = util::key::load_or_init_identity_secret_with_store(
-        &util::key::owner_identity_key(&daemon.home),
-        identity_store,
-    )
-    .await?;
-    let user_key = util::key::Ed25519Key::new(user_secret);
+    let secrets =
+        util::key::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
+            .await?;
+    let user_key = util::key::Ed25519Key::new(*secrets.owner);
     let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let days = days.clamp(1, 3650);
     let expires_secs = now_secs.saturating_add(days * 24 * 60 * 60);

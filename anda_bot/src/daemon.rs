@@ -8,7 +8,7 @@ use anda_engine_server::shutdown_signal;
 use anda_object_store::MetaStoreBuilder;
 use object_store::{ObjectStore, local::LocalFileSystem};
 use std::{
-    io,
+    io::{self, Write as _},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::Arc,
@@ -206,6 +206,13 @@ impl Daemon {
     }
 
     pub fn spawn_background(&self) -> Result<BackgroundDaemon, BoxError> {
+        self.spawn_background_with_identity_secrets(None)
+    }
+
+    pub fn spawn_background_with_identity_secrets(
+        &self,
+        identity_secrets: Option<&util::key::LocalIdentitySecrets>,
+    ) -> Result<BackgroundDaemon, BoxError> {
         let exe = std::env::current_exe()?;
         let logs_dir = self.logs_dir_path();
         std::fs::create_dir_all(&logs_dir)?;
@@ -219,22 +226,36 @@ impl Daemon {
         let stdout = stderr.try_clone()?;
 
         let mut command = Command::new(exe);
+        command.arg("--home").arg(&self.home);
+        if identity_secrets.is_some() {
+            command
+                .arg("--identity-secrets-stdin")
+                .stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
         command
-            .arg("--home")
-            .arg(&self.home)
             .arg("daemon")
-            .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
         configure_background_daemon_command(&mut command);
 
-        let child = match command.spawn() {
+        let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
                 log::error!("Failed to spawn background daemon process: {err}");
                 return Err(err.into());
             }
         };
+
+        if let Some(identity_secrets) = identity_secrets {
+            let payload = identity_secrets.to_bytes()?.to_string();
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or("failed to open daemon identity handoff pipe")?;
+            stdin.write_all(payload.as_bytes())?;
+        }
 
         Ok(BackgroundDaemon {
             pid: child.id(),

@@ -1204,29 +1204,40 @@ pub fn check_update_if_due(ctx: &LauncherContext) -> LauncherResult<LauncherAuto
 }
 
 pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
-    let stop = stop_daemon(ctx)?;
-    if !stop.success {
-        return Ok(stop);
+    // Windows cannot reliably replace a running anda.exe. Stop first to release
+    // the executable lock; Unix can replace the binary before restarting.
+    #[cfg(windows)]
+    {
+        let stop = stop_daemon(ctx)?;
+        if !stop.success {
+            return Ok(stop);
+        }
     }
 
     let update = run_anda(ctx, &["update"])?;
     if !update.success {
-        let recovery = start_daemon(ctx).unwrap_or_else(|err| CommandResult {
-            success: false,
-            message: err.to_string(),
-        });
-        return Ok(combine_command_results(
-            update,
-            CommandResult {
+        #[cfg(windows)]
+        {
+            let recovery = restart_daemon(ctx).unwrap_or_else(|err| CommandResult {
                 success: false,
-                message: text().restart_recovery(&recovery.message),
-            },
-        ));
+                message: err.to_string(),
+            });
+            return Ok(combine_command_results(
+                update,
+                CommandResult {
+                    success: false,
+                    message: text().restart_recovery(&recovery.message),
+                },
+            ));
+        }
+
+        #[cfg(not(windows))]
+        return Ok(update);
     }
 
     thread::sleep(Duration::from_secs(2));
-    let start = start_daemon(ctx)?;
-    Ok(combine_command_results(update, start))
+    let restart = restart_daemon(ctx)?;
+    Ok(combine_command_results(update, restart))
 }
 
 pub fn auto_update_poll_interval() -> Duration {
@@ -2893,6 +2904,21 @@ exit 1
         assert_eq!(status.pid.as_deref(), Some("111"));
         // The cache now returns the refreshed value.
         assert_eq!(cached_daemon_status().pid.as_deref(), Some("111"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_update_and_restart_uses_single_restart_command() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), true);
+
+        let result = install_update_and_restart(&ctx).unwrap();
+
+        assert!(result.success);
+        assert!(result.message.contains("ok: update"));
+        assert!(result.message.contains("ok: restart"));
+        assert!(!result.message.contains("ok: stop"));
+        assert!(!result.message.contains("ok: start"));
     }
 
     #[cfg(unix)]

@@ -14,7 +14,7 @@ use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
     engine::{AndaBotStatus, DaemonModelsResponse},
-    util::http_client::new_reqwest_client,
+    util::{http_client::new_reqwest_client, key::LocalIdentitySecrets},
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
@@ -154,6 +154,15 @@ impl Client {
     }
 
     pub async fn ensure_daemon_running(&self, daemon: &Daemon) -> Result<LaunchState, BoxError> {
+        self.ensure_daemon_running_with_identity_secrets(daemon, None)
+            .await
+    }
+
+    pub async fn ensure_daemon_running_with_identity_secrets(
+        &self,
+        daemon: &Daemon,
+        identity_secrets: Option<&LocalIdentitySecrets>,
+    ) -> Result<LaunchState, BoxError> {
         if self.status().await.is_ok() {
             return Ok(LaunchState::AlreadyRunning);
         }
@@ -167,7 +176,11 @@ impl Client {
             let _ = tokio::fs::remove_file(&pid_path).await;
         }
 
-        let mut child = daemon.spawn_background()?;
+        let mut child = if let Some(identity_secrets) = identity_secrets {
+            daemon.spawn_background_with_identity_secrets(Some(identity_secrets))?
+        } else {
+            daemon.spawn_background()?
+        };
         if let Err(err) = self
             .wait_for_spawned_daemon_ready(&mut child, Duration::from_secs(20))
             .await
