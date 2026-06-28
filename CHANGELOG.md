@@ -4,6 +4,25 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-06-28
+
+### Added
+
+- **Localized shell approval reasons**: shell risk prompts now carry the conversation language hint through agent runtime paths so approval cards explain risks in the user's language.
+- **Local identity secret handoff for daemon startup**: CLI startup can pass local owner and daemon identity material to the spawned daemon over a runtime-only stdin bundle instead of requiring key files.
+
+### Changed
+
+- **Version metadata synchronized for the 0.11.2 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.11.2`, and updated `anda_brain` to `0.9.2`.
+- **Secure key documentation points users to explicit export**: README and channel docs now direct file-key use cases to `anda user export` instead of the old `--key-path` wording.
+- **Shell approval risk classification uses medium model effort**: shell approval decisions now use a higher effort setting for more reliable risk assessment.
+
+### Fixed
+
+- **Skill prompt context survives resource attachment**: spawned session runners now preserve skill/runtime prompt text when resources are attached to the request.
+- **Anonymous gateway requests omit empty authorization headers**: gateway clients no longer send `Authorization: Bearer ` when no token is configured.
+- **Daemon identity handoff cleans up failed child startup**: failed writes to the daemon identity pipe now terminate and reap the child process before returning the error.
+
 ## [0.11.1] — 2026-06-27
 
 ### Added

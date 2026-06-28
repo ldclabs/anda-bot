@@ -270,7 +270,20 @@ async fn run() -> Result<(), BoxError> {
             log::info!("Starting CLI with command 'start' at {}", daemon.base_url());
 
             let client = build_status_client(&daemon)?;
-            match client.ensure_daemon_running(&daemon).await? {
+            let launch_state = if client.status().await.is_ok() {
+                daemon::LaunchState::AlreadyRunning
+            } else {
+                let local_identity = util::key::load_or_init_local_identity_secrets_with_store(
+                    &daemon.home,
+                    util::key::os_identity_key_store(),
+                )
+                .await?;
+                client
+                    .ensure_daemon_running_with_identity_secrets(&daemon, Some(&local_identity))
+                    .await?
+            };
+
+            match launch_state {
                 daemon::LaunchState::AlreadyRunning => {
                     println!("anda daemon is already running at {}", daemon.base_url())
                 }

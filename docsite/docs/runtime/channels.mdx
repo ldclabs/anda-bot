@@ -26,7 +26,7 @@ anda user create alice
 anda user list
 ```
 
-The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain, Windows Credential Manager, or Linux Secret Service. Older owner and daemon key files are imported into the secure store on first use; pass `--key-path` only when you explicitly need a file key.
+The command writes the new public key under top-level `users` and saves the matching private key in the OS secure credential store, such as Apple Keychain, Windows Credential Manager, or Linux Secret Service. Older owner and daemon key files are imported into the secure store on first use. Use `anda user export` below when you explicitly need a file key.
 
 On Linux, if no Secret Service provider is available or unlocked, Anda falls back to private key files under `~/.anda/keys/` and prints/logs a warning. To use Secret Service, start and unlock a provider in a user D-Bus session, for example `gnome-keyring-daemon --start --components=secrets`, make sure `DBUS_SESSION_BUS_ADDRESS` is set for the Anda process, then restart Anda. KDE users can unlock KWallet instead.
 

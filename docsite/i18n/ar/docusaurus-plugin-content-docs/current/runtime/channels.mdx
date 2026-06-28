@@ -26,7 +26,7 @@ anda user create alice
 anda user list
 ```
 
-يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في مخزن بيانات الاعتماد الآمن لنظام التشغيل، مثل Apple Keychain أو Windows Credential Manager أو Linux Secret Service. تستورد مفاتيح owner و daemon القديمة إلى المخزن الآمن عند أول استخدام؛ مرر `--key-path` فقط عندما تحتاج صراحة إلى مفتاح ملف.
+يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في مخزن بيانات الاعتماد الآمن لنظام التشغيل، مثل Apple Keychain أو Windows Credential Manager أو Linux Secret Service. تستورد مفاتيح owner و daemon القديمة إلى المخزن الآمن عند أول استخدام. استخدم `anda user export` أدناه عندما تحتاج صراحة إلى مفتاح ملف.
 
 على Linux، إذا لم يكن مزود Secret Service متاحا أو مفتوحا، ينتقل Anda إلى ملفات مفاتيح خاصة تحت `~/.anda/keys/` ويعرض/يسجل تحذيرا. لاستخدام Secret Service، شغل وافتح مزودا داخل جلسة D-Bus للمستخدم، مثلا `gnome-keyring-daemon --start --components=secrets`، وتأكد من ضبط `DBUS_SESSION_BUS_ADDRESS` لعملية Anda، ثم أعد تشغيل Anda. يمكن لمستخدمي KDE فتح KWallet بدلا من ذلك.
 

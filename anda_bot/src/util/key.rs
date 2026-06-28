@@ -1105,6 +1105,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_identity_bundle_round_trips_without_location() {
+        let secrets = LocalIdentitySecrets {
+            location: "runtime-only location".to_string(),
+            daemon: [9u8; 32].into(),
+            owner: [10u8; 32].into(),
+        };
+
+        let encoded = secrets.to_bytes().unwrap().to_string();
+        let decoded = LocalIdentitySecrets::from_str(&encoded).unwrap();
+
+        assert_eq!(*decoded.daemon, [9u8; 32]);
+        assert_eq!(*decoded.owner, [10u8; 32]);
+        assert!(decoded.location.is_empty());
+    }
+
     #[tokio::test]
     async fn load_identity_key_reports_missing_file_when_secure_store_unavailable() {
         let dir = tempfile::tempdir().unwrap();

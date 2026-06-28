@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.11.1"
+version = "0.11.2"
 dependencies = [
  "anda_brain",
  "anda_core",
@@ -178,9 +178,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.9.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0af10bfb834dab1b5aeb87d4557f2700d310665ffb427e749589db87d5fe0dfb"
+checksum = "a981fed31f6e76b849d0764bd41186f3d955b845986cf69308d618a7ff448ecc"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -3001,9 +3001,9 @@ checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
+checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "typenum",
 ]

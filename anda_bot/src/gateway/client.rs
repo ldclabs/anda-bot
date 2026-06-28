@@ -250,7 +250,12 @@ impl Client {
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
-        self.http.request(method, url).bearer_auth(&self.auth_token)
+        let req = self.http.request(method, url);
+        if self.auth_token.is_empty() {
+            req
+        } else {
+            req.bearer_auth(&self.auth_token)
+        }
     }
 
     async fn decode_response<O>(&self, response: reqwest::Response) -> Result<O, BoxError>
@@ -408,6 +413,31 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                 )
             }),
         )
+    }
+
+    #[test]
+    fn request_omits_authorization_header_when_token_is_empty() {
+        let anonymous = Client::new("http://127.0.0.1:1".to_string(), String::new())
+            .request(reqwest::Method::GET, "/daemon/status")
+            .build()
+            .unwrap();
+        assert!(
+            !anonymous
+                .headers()
+                .contains_key(http::header::AUTHORIZATION)
+        );
+
+        let authed = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string())
+            .request(reqwest::Method::GET, "/daemon/status")
+            .build()
+            .unwrap();
+        assert_eq!(
+            authed
+                .headers()
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer token-1")
+        );
     }
 
     #[tokio::test]

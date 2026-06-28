@@ -865,20 +865,18 @@ pub fn acquire_launcher_instance_lock(
     ctx: &LauncherContext,
 ) -> LauncherResult<Option<LauncherInstanceLock>> {
     #[cfg(unix)]
-    {
-        acquire_unix_launcher_instance_lock(&ctx.home)
-    }
+    return acquire_unix_launcher_instance_lock(&ctx.home);
 
     #[cfg(windows)]
     {
         let _ = ctx;
-        acquire_windows_launcher_instance_lock()
+        return acquire_windows_launcher_instance_lock();
     }
 
     #[cfg(not(any(unix, windows)))]
     {
         let _ = ctx;
-        Ok(Some(LauncherInstanceLock { _private: () }))
+        return Ok(Some(LauncherInstanceLock { _private: () }));
     }
 }
 
@@ -1011,6 +1009,7 @@ pub fn start_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["start"])
 }
 
+#[allow(unused)]
 pub fn stop_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
     run_anda(ctx, &["stop"])
 }

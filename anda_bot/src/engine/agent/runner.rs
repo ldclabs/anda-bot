@@ -1106,7 +1106,7 @@ mod tests {
         memory::Conversations,
         model::{CompletionFeaturesDyn, Model},
     };
-    use ic_auth_types::Xid;
+    use ic_auth_types::{ByteBufB64, Xid};
     use parking_lot::{Mutex, RwLock};
     use std::sync::atomic::{AtomicBool, AtomicU64};
 
@@ -2198,6 +2198,77 @@ mod tests {
             )
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn spawned_runner_preserves_skill_context_when_attaching_resources() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (session, rx, action_rx) = build_session();
+        let stop_sender = session.sender.clone();
+        let req = CompletionRequest {
+            prompt: "build it".to_string(),
+            content: vec![
+                system_runtime_prompt(
+                    "prompt command",
+                    "Use the coder skill to handle this request",
+                )
+                .into(),
+            ],
+            ..Default::default()
+        };
+        let resource = Resource {
+            name: "note.txt".to_string(),
+            mime_type: Some("text/plain".to_string()),
+            blob: Some(ByteBufB64(b"hello".to_vec())),
+            tags: vec!["text".to_string()],
+            ..Default::default()
+        };
+
+        bot.spawn_session_runner(
+            ctx,
+            req,
+            vec![resource],
+            vec![],
+            session,
+            Conversation {
+                _id: 1,
+                status: ConversationStatus::Working,
+                ..Default::default()
+            },
+            rx,
+            action_rx,
+            None,
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if !requests.lock().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("spawned runner did not issue a completion request");
+
+        {
+            let recorded = requests.lock();
+            let request = &recorded[0];
+            let text = request_text(request);
+            assert!(text.contains("Use the coder skill to handle this request"));
+            assert!(text.contains("build it"));
+            let content_json = serde_json::to_string(&request.content).unwrap();
+            assert!(content_json.contains("note.txt"));
+            drop(recorded);
+        }
+
+        let _ = stop_sender
+            .send(input(PromptCommand::Stop {
+                prompt: "/stop".to_string(),
+            }))
+            .await;
     }
 
     #[tokio::test]

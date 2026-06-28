@@ -26,7 +26,7 @@ anda user create alice
 anda user list
 ```
 
-El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en el almacén seguro de credenciales del sistema operativo, como Apple Keychain, Windows Credential Manager o Linux Secret Service. Las claves antiguas del owner y del daemon se importan al almacén seguro en el primer uso; usa `--key-path` solo cuando necesites explícitamente una clave en archivo.
+El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en el almacén seguro de credenciales del sistema operativo, como Apple Keychain, Windows Credential Manager o Linux Secret Service. Las claves antiguas del owner y del daemon se importan al almacén seguro en el primer uso. Usa `anda user export` abajo cuando necesites explícitamente una clave en archivo.
 
 En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y muestra/registra una advertencia. Para usar Secret Service, inicia y desbloquea un proveedor en una sesión D-Bus de usuario, por ejemplo `gnome-keyring-daemon --start --components=secrets`, asegúrate de que `DBUS_SESSION_BUS_ADDRESS` esté definido para el proceso de Anda y reinicia Anda. Los usuarios de KDE pueden desbloquear KWallet.
 

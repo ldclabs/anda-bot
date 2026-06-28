@@ -214,6 +214,9 @@ impl Daemon {
         identity_secrets: Option<&util::key::LocalIdentitySecrets>,
     ) -> Result<BackgroundDaemon, BoxError> {
         let exe = std::env::current_exe()?;
+        let identity_payload = identity_secrets
+            .map(|secrets| secrets.to_bytes().map(|bytes| bytes.to_string()))
+            .transpose()?;
         let logs_dir = self.logs_dir_path();
         std::fs::create_dir_all(&logs_dir)?;
 
@@ -227,7 +230,7 @@ impl Daemon {
 
         let mut command = Command::new(exe);
         command.arg("--home").arg(&self.home);
-        if identity_secrets.is_some() {
+        if identity_payload.is_some() {
             command
                 .arg("--identity-secrets-stdin")
                 .stdin(Stdio::piped());
@@ -248,13 +251,16 @@ impl Daemon {
             }
         };
 
-        if let Some(identity_secrets) = identity_secrets {
-            let payload = identity_secrets.to_bytes()?.to_string();
+        if let Some(payload) = identity_payload {
             let mut stdin = child
                 .stdin
                 .take()
                 .ok_or("failed to open daemon identity handoff pipe")?;
-            stdin.write_all(payload.as_bytes())?;
+            if let Err(err) = stdin.write_all(payload.as_bytes()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(err.into());
+            }
         }
 
         Ok(BackgroundDaemon {

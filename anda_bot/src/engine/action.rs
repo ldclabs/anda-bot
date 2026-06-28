@@ -566,7 +566,6 @@ async fn model_shell_approval_decision(
                 "touching credentials/secrets/keychains, non-temporary paths outside the workspace, or background/long-running processes. ",
                 "Do not mark shell syntax like &&, pipes, or redirection as risky by itself; judge the actual operations. ",
                 "The `reason` is shown directly to the user only when `decision` is `ask`; write it in the user's current conversation language or the supplied `user_language_hint`. ",
-                "If `user_language_hint` starts with `zh` or says Chinese, write the reason in Simplified Chinese. ",
                 "Make the reason plain and non-technical, explaining the real-world risk without assuming the user understands shell commands."
             )
             .to_string(),
@@ -574,7 +573,7 @@ async fn model_shell_approval_decision(
                 text: request.to_string(),
             }],
             output_schema: Some(shell_risk_output_schema()),
-            effort: Some(ModelEffort::Low),
+            effort: Some(ModelEffort::Medium),
             ..Default::default()
         })
         .await?;

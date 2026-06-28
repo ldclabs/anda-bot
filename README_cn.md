@@ -242,7 +242,7 @@ anda user create alice
 anda user list
 ```
 
-命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain、Windows 凭证管理器或 Linux Secret Service。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库；只有明确需要文件 key 时才传 `--key-path`。
+命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到操作系统安全凭证库，例如 Apple Keychain、Windows 凭证管理器或 Linux Secret Service。旧版本的 owner 和 daemon key 文件会在首次使用时导入安全凭证库；如果明确需要文件 key，请使用下面的 `anda user export`。
 
 在 Linux 上，如果没有可用或已解锁的 Secret Service provider，Anda 会 fallback 到 `~/.anda/keys/` 下的私钥文件，并在终端和日志中显示提醒。若要使用 Secret Service，请在用户 D-Bus session 中启动并解锁 provider，例如运行 `gnome-keyring-daemon --start --components=secrets`，确认 Anda 进程能拿到 `DBUS_SESSION_BUS_ADDRESS`，然后重启 Anda；KDE 用户也可以解锁 KWallet。
 
