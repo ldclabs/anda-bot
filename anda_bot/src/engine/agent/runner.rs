@@ -70,29 +70,19 @@ impl AndaBot {
                 .persist_resources_for_message(ctx.caller(), resources)
                 .await
                 .unwrap_or_default();
-            let content = resources_without_blob
-                .into_iter()
-                .map(|res| ContentPart::any_from("Resource", res))
-                .collect::<Vec<_>>();
-            let mut runner = ctx
-                .clone()
-                .completion_iter(
-                    CompletionRequest {
-                        content,
-                        ..req.clone()
-                    },
-                    vec![],
-                )
-                .unbound();
+
+            req.content.extend(
+                resources_without_blob
+                    .into_iter()
+                    .map(|res| ContentPart::any_from("Resource", res)),
+            );
+            let mut runner = ctx.clone().completion_iter(req, vec![]).unbound();
             assistant.inner.apply_merge_discovered_tools(&mut runner);
             runner.accumulate(&media_usage);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
             }
 
-            // Clear the prompt and raw_history to be used for the session.
-            req.prompt.clear();
-            req.raw_history.clear();
             let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
             let mut sess_runner = SessionRunner {
                 ctx,
@@ -621,10 +611,14 @@ impl SessionRunner {
                     {
                         skill = subagent.name;
                     }
-                    prepend_prompt_content(
-                        &mut content,
-                        format!("Use the {skill} skill to handle this request:\n\n{prompt}"),
+                    content.push(
+                        system_runtime_prompt(
+                            "prompt command",
+                            format!("Use the {skill} skill to handle this request"),
+                        )
+                        .into(),
                     );
+                    prepend_prompt_content(&mut content, prompt);
                     follow_up_batch.append(&mut content);
                 }
             }

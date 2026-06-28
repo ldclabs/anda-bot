@@ -1,7 +1,8 @@
 use anda_brain::types::{FormationInputRef, InputContext};
 use anda_core::{
-    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, Document, Documents,
-    FunctionDefinition, Message, Principal, Resource, StateFeatures, Tool, ToolOutput, Usage,
+    Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, ContentPart, Document,
+    Documents, FunctionDefinition, Message, Principal, Resource, StateFeatures, Tool, ToolOutput,
+    Usage,
 };
 use anda_db_utils::UniqueVec;
 use anda_engine::{
@@ -65,7 +66,7 @@ use super::{
     resources::ResourceStore,
     side,
     skill_library::SkillLibrary,
-    system::{SYSTEM_PERSON_NAME, system_extra_user_context},
+    system::{SYSTEM_PERSON_NAME, system_extra_user_context, system_runtime_prompt},
 };
 use crate::{
     brain, channel, cron, transcription::TranscriptionManager, tts::TtsManager,
@@ -764,11 +765,12 @@ impl Agent<AgentCtx> for AndaBot {
             extra,
             ..
         } = input;
-        let mut instructions =
+        let instructions =
             instructions.expect("system instructions are built before session creation");
 
         let mut initial_goal = None;
         let mut tools = UniqueVec::from(self.inner.tools.clone());
+        let mut content: Vec<ContentPart> = Vec::new();
         let mut force_standalone_conversation = false;
         let prompt = match command {
             PromptCommand::Plain { prompt }
@@ -788,12 +790,16 @@ impl Agent<AgentCtx> for AndaBot {
             }
             PromptCommand::Skill { skill, prompt } => {
                 if let Some(subagent) = skill_subagent(self.inner.skill_library.as_ref(), &skill) {
-                    instructions = format!(
-                        "{instructions}\n\nUse the {} skill to handle user's request",
-                        subagent.name
-                    );
                     tools.push(subagent.name);
                 }
+
+                content.push(
+                    system_runtime_prompt(
+                        "prompt command",
+                        format!("Use the {skill} skill to handle this request"),
+                    )
+                    .into(),
+                );
 
                 prompt
             }
@@ -1044,6 +1050,7 @@ impl Agent<AgentCtx> for AndaBot {
         let req = CompletionRequest {
             instructions,
             prompt,
+            content,
             chat_history,
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
