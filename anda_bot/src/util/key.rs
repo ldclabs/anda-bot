@@ -609,7 +609,12 @@ impl LocalEncryptedIdentityKeyStore {
         let mut msg = Encrypt0Message::new(Some(plaintext));
         msg.unprotected.set_iv(iv.to_vec());
         let encrypted = msg.encrypt_and_encode(&encryptor, Some(&aad))?;
-        write_private_binary_file(&self.credential_path(account), &encrypted, overwrite)?;
+        write_private_binary_file(
+            &self.credential_path(account),
+            &encrypted,
+            overwrite,
+            &self.home,
+        )?;
 
         match self.read_encrypted_secret(account)? {
             Some(stored) if stored == *secret => Ok(()),
@@ -1146,8 +1151,13 @@ fn write_private_text_file(path: &Path, content: &str, overwrite: bool) -> Resul
     Ok(())
 }
 
-fn write_private_binary_file(path: &Path, content: &[u8], overwrite: bool) -> Result<(), BoxError> {
-    create_private_parent_dir_if_needed(path)?;
+fn write_private_binary_file(
+    path: &Path,
+    content: &[u8],
+    overwrite: bool,
+    private_boundary: &Path,
+) -> Result<(), BoxError> {
+    create_private_parent_dir_if_needed(path, private_boundary)?;
 
     let temp_path = private_temp_path(path)?;
     let mut options = std::fs::OpenOptions::new();
@@ -1179,11 +1189,9 @@ fn write_private_binary_file(path: &Path, content: &[u8], overwrite: bool) -> Re
             }
             Err(_) => {
                 let _ = std::fs::remove_file(&temp_path);
-                return Err(format!(
-                    "local credential file already exists: {}",
-                    path.display()
-                )
-                .into());
+                return Err(
+                    format!("local credential file already exists: {}", path.display()).into(),
+                );
             }
         }
     }
@@ -1216,7 +1224,10 @@ fn private_temp_path(path: &Path) -> Result<PathBuf, BoxError> {
     .into())
 }
 
-fn create_private_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
+fn create_private_parent_dir_if_needed(
+    path: &Path,
+    private_boundary: &Path,
+) -> Result<(), BoxError> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -1225,16 +1236,26 @@ fn create_private_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
         {
             use std::os::unix::fs::PermissionsExt;
             let private_mode = std::fs::Permissions::from_mode(0o700);
-            // Set 0o700 on every ancestor up to and including `parent`, stopping
-            // at directories that already have the right permissions (which also
-            // covers the pre-existing `home` root).
-            let mut dir = parent.to_path_buf();
-            loop {
+            let boundary = std::fs::canonicalize(private_boundary)?;
+            let mut dir = std::fs::canonicalize(parent)?;
+            if !dir.starts_with(&boundary) {
+                return Err(format!(
+                    "local credential directory {} is outside private boundary {}",
+                    dir.display(),
+                    boundary.display()
+                )
+                .into());
+            }
+
+            // Keep credential directories private without chmod'ing the existing
+            // home directory or system temp roots that may not be owned by us.
+            while dir != boundary {
                 match std::fs::metadata(&dir) {
                     Ok(meta) if meta.permissions().mode() & 0o777 != 0o700 => {
                         std::fs::set_permissions(&dir, private_mode.clone())?;
                     }
-                    _ => break,
+                    Ok(_) => {}
+                    Err(err) => return Err(err.into()),
                 }
                 if !dir.pop() {
                     break;
@@ -1592,8 +1613,13 @@ mod tests {
             [9u8; 32],
             Some(legacy_store),
         );
-        write_private_binary_file(&store.credential_path(alice.account()), b"not cose", false)
-            .unwrap();
+        write_private_binary_file(
+            &store.credential_path(alice.account()),
+            b"not cose",
+            false,
+            &store.home,
+        )
+        .unwrap();
 
         assert!(store.get_secret(alice.account()).is_err());
     }
@@ -1621,6 +1647,34 @@ mod tests {
             & 0o777;
         assert_eq!(file_mode, 0o600);
         assert_eq!(dir_mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_encrypted_identity_store_does_not_chmod_home_boundary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let store = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+
+        store.put_secret(alice.account(), &SECRET, false).unwrap();
+
+        let home_mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        let credentials_mode = std::fs::metadata(dir.path().join("credentials"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let root_mode = std::fs::metadata(store.root())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(home_mode, 0o755);
+        assert_eq!(credentials_mode, 0o700);
+        assert_eq!(root_mode, 0o700);
     }
 
     #[test]
