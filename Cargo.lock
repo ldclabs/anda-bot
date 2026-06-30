@@ -133,6 +133,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "futures-util",
+ "hkdf 0.13.0",
  "http",
  "hyper",
  "hyper-util",
@@ -1668,6 +1669,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4068e64b7e3be34b1ea4fec9a04a20c8c3c666ad2d722ff6ae99aab388b02ea"
 dependencies = [
  "cbor2",
+ "ring",
  "serde",
  "serde_bytes",
 ]

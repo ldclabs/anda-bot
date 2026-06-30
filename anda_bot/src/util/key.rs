@@ -1,7 +1,7 @@
 use anda_core::{BoxError, Principal};
 use anda_web3_client::client::{Identity, identity_from_secret};
 use cbor2::{Cbor, from_slice, to_canonical_vec};
-use cose2::{Key as CoseKey, Label, Sign1Message};
+use cose2::{Encrypt0Message, Key as CoseKey, Label, Sign1Message};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use ic_auth_types::{ByteArrayB64, ByteBufB64};
 use ic_ed25519::PublicKey;
@@ -21,6 +21,10 @@ use cose2::Value;
 
 pub const IDENTITY_KEYRING_SERVICE: &str = "anda.bot.identity";
 const IDENTITY_KEY_STORE_UNAVAILABLE_HINT: &str = "On Linux, start and unlock a Secret Service provider in a user D-Bus session, for example `gnome-keyring-daemon --start --components=secrets`, make sure DBUS_SESSION_BUS_ADDRESS is set for Anda, then restart Anda to use the OS keyring.";
+const LOCAL_CREDENTIAL_STORE_SALT_PREFIX: &[u8] = b"anda.bot.local-credential-store.v1";
+const LOCAL_CREDENTIAL_STORE_INFO_PREFIX: &[u8] = b"identity-ed25519-cose-key/v1\0";
+const LOCAL_CREDENTIAL_STORE_AAD_PURPOSE: &str = "identity-ed25519-cose-key";
+const LOCAL_CREDENTIAL_STORE_VERSION: u64 = 1;
 
 #[derive(Clone)]
 pub struct Ed25519Key {
@@ -186,6 +190,51 @@ pub fn encode_ed25519_privkey(secret: &[u8; 32]) -> Result<String, BoxError> {
     Ok(ByteBufB64(cose_bytes).to_string())
 }
 
+fn encode_ed25519_privkey_cose_key(secret: &[u8; 32]) -> Result<Vec<u8>, BoxError> {
+    // COSE Key: {1: kty, 3: alg, -1: crv, -2: x, -4: d}
+    let key = SigningKey::from_bytes(secret);
+    let mut cose_key = CoseKey::new();
+    cose_key
+        .set_kty(iana::KeyTypeOKP)
+        .set_alg(iana::AlgorithmEdDSA);
+    cose_key.insert(iana::OKPKeyParameterCrv, iana::EllipticCurveEd25519);
+    cose_key.insert(
+        iana::OKPKeyParameterX,
+        key.verifying_key().to_bytes().to_vec(),
+    );
+    cose_key.insert(iana::OKPKeyParameterD, secret.to_vec());
+    Ok(cose_key.to_vec()?)
+}
+
+fn decode_ed25519_privkey_cose_key(data: &[u8]) -> Result<[u8; 32], BoxError> {
+    let cose_key = okp_cose_key(data)?;
+    match cose_key.alg()? {
+        Some(Label::Int(iana::AlgorithmEdDSA)) => {}
+        _ => return Err("invalid Ed25519 key algorithm".into()),
+    }
+    match cose_key.get_label(iana::OKPKeyParameterCrv)? {
+        Some(Label::Int(iana::EllipticCurveEd25519)) => {}
+        _ => return Err("invalid Ed25519 key curve".into()),
+    }
+
+    let secret = cose_key
+        .get_bytes(iana::OKPKeyParameterD)?
+        .ok_or("missing secret key")?;
+    let secret: [u8; 32] = secret.try_into().map_err(|_err| "invalid key length")?;
+
+    if let Some(public_key) = cose_key.get_bytes(iana::OKPKeyParameterX)? {
+        let public_key: [u8; 32] = public_key
+            .try_into()
+            .map_err(|_err| "invalid public key length")?;
+        let derived = SigningKey::from_bytes(&secret).verifying_key().to_bytes();
+        if public_key != derived {
+            return Err("Ed25519 public key does not match secret key".into());
+        }
+    }
+
+    Ok(secret)
+}
+
 pub fn encode_ed25519_pubkey(pubkey: &Ed25519PubKey) -> String {
     ByteBufB64(pubkey.as_bytes().to_vec()).to_string()
 }
@@ -262,14 +311,22 @@ impl IdentityKeyRef {
 fn identity_home_namespace(home: &Path) -> String {
     let path = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
     let digest = <sha2::Sha256 as sha2::Digest>::digest(path.to_string_lossy().as_bytes());
-    let mut namespace = String::with_capacity(32);
-    for byte in digest.iter().take(16) {
-        let _ = write!(&mut namespace, "{byte:02x}");
+    hex_bytes(&digest[..16])
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut encoded, "{byte:02x}");
     }
-    namespace
+    encoded
 }
 
 pub trait IdentityKeyStore: Send + Sync {
+    fn location(&self, account: &str) -> String {
+        format!("credential store account: {account}")
+    }
+
     fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError>;
     fn put_secret_bytes(
         &self,
@@ -318,6 +375,10 @@ impl LoadedIdentitySecret {
 pub struct OsIdentityKeyStore;
 
 impl IdentityKeyStore for OsIdentityKeyStore {
+    fn location(&self, account: &str) -> String {
+        format!("system keyring account: {account}")
+    }
+
     fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError> {
         let entry = keyring_entry(account, "read identity key")?;
         match entry.get_secret() {
@@ -415,6 +476,233 @@ fn is_identity_key_store_unavailable(err: &(dyn Error + Send + Sync + 'static)) 
 
 pub fn os_identity_key_store() -> Arc<dyn IdentityKeyStore> {
     Arc::new(OsIdentityKeyStore)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Cbor)]
+struct LocalCredentialAad {
+    #[cbor(key = 1)]
+    version: u64,
+    #[cbor(key = 2)]
+    purpose: String,
+    #[cbor(key = 3)]
+    account: String,
+    #[cbor(key = 4)]
+    namespace: String,
+}
+
+#[derive(Clone)]
+pub struct LocalEncryptedIdentityKeyStore {
+    home: PathBuf,
+    daemon_secret: [u8; 32],
+    namespace: String,
+    migration_store: Option<Arc<dyn IdentityKeyStore>>,
+}
+
+impl LocalEncryptedIdentityKeyStore {
+    #[cfg(test)]
+    fn new(home: &Path, daemon_secret: [u8; 32]) -> Self {
+        Self::with_migration_store(home, daemon_secret, None)
+    }
+
+    pub fn with_migration_store(
+        home: &Path,
+        daemon_secret: [u8; 32],
+        migration_store: Option<Arc<dyn IdentityKeyStore>>,
+    ) -> Self {
+        Self {
+            home: home.to_path_buf(),
+            daemon_secret,
+            namespace: identity_home_namespace(home),
+            migration_store,
+        }
+    }
+
+    fn root(&self) -> PathBuf {
+        self.home.join("credentials").join("v1").join("identity")
+    }
+
+    fn credential_path(&self, account: &str) -> PathBuf {
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(
+            [
+                b"anda.local-credential.path.v1\0".as_slice(),
+                account.as_bytes(),
+            ]
+            .concat(),
+        );
+        self.root().join(format!("{}.cose", hex_bytes(&digest)))
+    }
+
+    fn trusted_user_key_ref(&self, account: &str) -> Option<IdentityKeyRef> {
+        let prefix = format!("v1:{}:user:", self.namespace);
+        let id = account.strip_prefix(&prefix)?;
+        (!id.is_empty()).then(|| IdentityKeyRef::trusted_user(&self.home, id))
+    }
+
+    fn derive_content_key(&self, account: &str) -> Result<[u8; 32], BoxError> {
+        let mut salt =
+            Vec::with_capacity(LOCAL_CREDENTIAL_STORE_SALT_PREFIX.len() + 1 + self.namespace.len());
+        salt.extend_from_slice(LOCAL_CREDENTIAL_STORE_SALT_PREFIX);
+        salt.push(0);
+        salt.extend_from_slice(self.namespace.as_bytes());
+
+        let mut info = Vec::with_capacity(LOCAL_CREDENTIAL_STORE_INFO_PREFIX.len() + account.len());
+        info.extend_from_slice(LOCAL_CREDENTIAL_STORE_INFO_PREFIX);
+        info.extend_from_slice(account.as_bytes());
+
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), &self.daemon_secret);
+        let mut key = [0u8; 32];
+        hk.expand(&info, &mut key)
+            .map_err(|_err| "failed to derive local credential encryption key")?;
+        Ok(key)
+    }
+
+    fn external_aad(&self, account: &str) -> Result<Vec<u8>, BoxError> {
+        let aad = LocalCredentialAad {
+            version: LOCAL_CREDENTIAL_STORE_VERSION,
+            purpose: LOCAL_CREDENTIAL_STORE_AAD_PURPOSE.to_string(),
+            account: account.to_string(),
+            namespace: self.namespace.clone(),
+        };
+        Ok(to_canonical_vec(&aad)?)
+    }
+
+    fn read_encrypted_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError> {
+        let path = self.credential_path(account);
+        let data = match std::fs::read(&path) {
+            Ok(data) => data,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+
+        let key = self.derive_content_key(account)?;
+        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &key, None)?;
+        let aad = self.external_aad(account)?;
+        let msg = Encrypt0Message::decrypt_and_decode(&encryptor, &data, Some(&aad))?;
+        let plaintext = msg
+            .payload
+            .as_deref()
+            .ok_or("local credential payload missing after decryption")?;
+        Ok(Some(decode_ed25519_privkey_cose_key(plaintext)?))
+    }
+
+    fn write_encrypted_secret(
+        &self,
+        account: &str,
+        secret: &[u8; 32],
+        overwrite: bool,
+    ) -> Result<(), BoxError> {
+        if self.trusted_user_key_ref(account).is_none() {
+            return Err(format!(
+                "local encrypted identity store only supports trusted-user accounts: {account}"
+            )
+            .into());
+        }
+
+        let mut rng = rand::rng();
+        let mut iv = [0u8; 12];
+        rand::Rng::fill_bytes(&mut rng, &mut iv);
+
+        let plaintext = encode_ed25519_privkey_cose_key(secret)?;
+        let key = self.derive_content_key(account)?;
+        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &key, None)?;
+        let aad = self.external_aad(account)?;
+        let mut msg = Encrypt0Message::new(Some(plaintext));
+        msg.unprotected.set_iv(iv.to_vec());
+        let encrypted = msg.encrypt_and_encode(&encryptor, Some(&aad))?;
+        write_private_binary_file(&self.credential_path(account), &encrypted, overwrite)?;
+
+        match self.read_encrypted_secret(account)? {
+            Some(stored) if stored == *secret => Ok(()),
+            Some(_) => Err(format!("local credential verification failed: {account}").into()),
+            None => Err(format!("local credential write did not persist: {account}").into()),
+        }
+    }
+
+    fn migrate_from_legacy_sources(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError> {
+        let Some(key_ref) = self.trusted_user_key_ref(account) else {
+            return Ok(None);
+        };
+
+        if let Some(store) = &self.migration_store {
+            match store.get_secret(account) {
+                Ok(Some(secret)) => {
+                    self.write_encrypted_secret(account, &secret, false)?;
+                    log::warn!(
+                        name = "daemon";
+                        "migrated trusted-user ED25519 private key from {} to {}",
+                        store.location(account),
+                        self.location(account)
+                    );
+                    return Ok(Some(secret.to_vec()));
+                }
+                Ok(None) => {}
+                Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        match read_identity_secret_file(&key_ref) {
+            Ok(loaded) => {
+                self.write_encrypted_secret(account, &loaded.secret, false)?;
+                log::warn!(
+                    name = "daemon";
+                    "migrated trusted-user ED25519 private key from {} to {}",
+                    loaded.location,
+                    self.location(account)
+                );
+                remove_legacy_identity_key(&key_ref);
+                Ok(Some(loaded.secret.to_vec()))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+impl IdentityKeyStore for LocalEncryptedIdentityKeyStore {
+    fn location(&self, account: &str) -> String {
+        format!(
+            "local encrypted credential file: {}",
+            self.credential_path(account).display()
+        )
+    }
+
+    fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError> {
+        match self.read_encrypted_secret(account)? {
+            Some(secret) => Ok(Some(secret.to_vec())),
+            None => self.migrate_from_legacy_sources(account),
+        }
+    }
+
+    fn put_secret_bytes(
+        &self,
+        account: &str,
+        secret: &[u8],
+        overwrite: bool,
+    ) -> Result<(), BoxError> {
+        if secret.len() != 32 {
+            return Err(format!(
+                "local credential entry {account} has invalid length {}; expected 32 bytes",
+                secret.len()
+            )
+            .into());
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(secret);
+        self.write_encrypted_secret(account, &key, overwrite)
+    }
+}
+
+pub fn local_encrypted_identity_key_store(
+    home: &Path,
+    daemon_secret: [u8; 32],
+    migration_store: Option<Arc<dyn IdentityKeyStore>>,
+) -> Arc<dyn IdentityKeyStore> {
+    Arc::new(LocalEncryptedIdentityKeyStore::with_migration_store(
+        home,
+        daemon_secret,
+        migration_store,
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Cbor)]
@@ -567,7 +855,7 @@ fn write_identity_secret_blocking(
     store: Arc<dyn IdentityKeyStore>,
 ) -> Result<String, BoxError> {
     match store.put_secret(key_ref.account(), secret, overwrite) {
-        Ok(()) => Ok(key_ref.location()),
+        Ok(()) => Ok(store.location(key_ref.account())),
         Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
             warn_identity_key_file_fallback(key_ref, &err);
             write_ed25519_secret_file_blocking(key_ref.legacy_path(), secret, overwrite)?;
@@ -582,7 +870,12 @@ fn load_identity_secret_blocking(
     store: Arc<dyn IdentityKeyStore>,
 ) -> Result<LoadedIdentitySecret, BoxError> {
     match store.get_secret(key_ref.account()) {
-        Ok(Some(secret)) => return Ok(LoadedIdentitySecret::new(secret, key_ref.location())),
+        Ok(Some(secret)) => {
+            return Ok(LoadedIdentitySecret::new(
+                secret,
+                store.location(key_ref.account()),
+            ));
+        }
         Ok(None) => {}
         Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
             warn_identity_key_file_fallback(key_ref, &err);
@@ -629,7 +922,12 @@ fn load_or_init_identity_secret_blocking(
     store: Arc<dyn IdentityKeyStore>,
 ) -> Result<LoadedIdentitySecret, BoxError> {
     match store.get_secret(key_ref.account()) {
-        Ok(Some(secret)) => return Ok(LoadedIdentitySecret::new(secret, key_ref.location())),
+        Ok(Some(secret)) => {
+            return Ok(LoadedIdentitySecret::new(
+                secret,
+                store.location(key_ref.account()),
+            ));
+        }
         Ok(None) => {}
         Err(err) if is_identity_key_store_unavailable(err.as_ref()) => {
             warn_identity_key_file_fallback(key_ref, &err);
@@ -647,7 +945,7 @@ fn load_or_init_identity_secret_blocking(
                         name = "daemon";
                         "migrated ED25519 private key from {:?} to {}",
                         key_ref.legacy_path(),
-                        key_ref.location()
+                        store.location(key_ref.account())
                     );
                     remove_legacy_identity_key(key_ref);
                 }
@@ -660,13 +958,16 @@ fn load_or_init_identity_secret_blocking(
                 }
                 Err(err) => return Err(err),
             }
-            Ok(LoadedIdentitySecret::new(secret, key_ref.location()))
+            Ok(LoadedIdentitySecret::new(
+                secret,
+                store.location(key_ref.account()),
+            ))
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             log::warn!(
                 name = "daemon";
                 "ED25519 private key not found in {}, generating a new one",
-                key_ref.location()
+                store.location(key_ref.account())
             );
             let secret = random_ed25519_privkey();
             match store.put_secret(key_ref.account(), &secret, false) {
@@ -681,7 +982,10 @@ fn load_or_init_identity_secret_blocking(
                 }
                 Err(err) => return Err(err),
             }
-            Ok(LoadedIdentitySecret::new(secret, key_ref.location()))
+            Ok(LoadedIdentitySecret::new(
+                secret,
+                store.location(key_ref.account()),
+            ))
         }
         Err(err) => Err(err.into()),
     }
@@ -780,8 +1084,7 @@ fn remove_legacy_identity_key(key_ref: &IdentityKeyRef) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => log::warn!(
             name = "daemon";
-            "migrated ED25519 private key to {}, but failed to remove legacy file {:?}: {err}",
-            key_ref.location(),
+            "migrated ED25519 private key, but failed to remove legacy file {:?}: {err}",
             key_ref.legacy_path()
         ),
     }
@@ -840,6 +1143,105 @@ fn write_private_text_file(path: &Path, content: &str, overwrite: bool) -> Resul
     }
     file.write_all(content.as_bytes())?;
     file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn write_private_binary_file(path: &Path, content: &[u8], overwrite: bool) -> Result<(), BoxError> {
+    create_private_parent_dir_if_needed(path)?;
+
+    let temp_path = private_temp_path(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    use std::io::Write;
+    let mut file = options.open(&temp_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(content)?;
+    file.sync_all()?;
+    drop(file);
+
+    if overwrite {
+        std::fs::rename(&temp_path, path)?;
+    } else {
+        match std::fs::hard_link(&temp_path, path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&temp_path);
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(format!(
+                    "local credential file already exists: {}",
+                    path.display()
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn private_temp_path(path: &Path) -> Result<PathBuf, BoxError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("invalid local credential path: {}", path.display()))?
+        .to_string_lossy();
+    let mut rng = rand::rng();
+    for _ in 0..16 {
+        let mut random = [0u8; 8];
+        rand::Rng::fill_bytes(&mut rng, &mut random);
+        let candidate = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            hex_bytes(&random)
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "failed to allocate temporary local credential path for {}",
+        path.display()
+    )
+    .into())
+}
+
+fn create_private_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let private_mode = std::fs::Permissions::from_mode(0o700);
+            // Set 0o700 on every ancestor up to and including `parent`, stopping
+            // at directories that already have the right permissions (which also
+            // covers the pre-existing `home` root).
+            let mut dir = parent.to_path_buf();
+            loop {
+                match std::fs::metadata(&dir) {
+                    Ok(meta) if meta.permissions().mode() & 0o777 != 0o700 => {
+                        std::fs::set_permissions(&dir, private_mode.clone())?;
+                    }
+                    _ => break,
+                }
+                if !dir.pop() {
+                    break;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1103,6 +1505,122 @@ mod tests {
                 .get_bytes_for_test(IdentityKeyRef::bundle(dir.path()).account())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_round_trips_trusted_user_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+
+        store.put_secret(alice.account(), &SECRET, false).unwrap();
+
+        assert_eq!(store.get_secret(alice.account()).unwrap(), Some(SECRET));
+        assert!(store.credential_path(alice.account()).exists());
+        assert!(!alice.legacy_path().exists());
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_requires_matching_daemon_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+        let writer = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+        let reader = LocalEncryptedIdentityKeyStore::new(dir.path(), [8u8; 32]);
+
+        writer.put_secret(alice.account(), &SECRET, false).unwrap();
+
+        assert!(reader.get_secret(alice.account()).is_err());
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_binds_ciphertext_to_account_aad() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+        let bob = IdentityKeyRef::trusted_user(dir.path(), "bob");
+
+        store.put_secret(alice.account(), &SECRET, false).unwrap();
+        std::fs::copy(
+            store.credential_path(alice.account()),
+            store.credential_path(bob.account()),
+        )
+        .unwrap();
+
+        assert!(store.get_secret(bob.account()).is_err());
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_migrates_from_existing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy_store = Arc::new(MemoryIdentityKeyStore::default());
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+        legacy_store
+            .put_secret(alice.account(), &SECRET, false)
+            .unwrap();
+        let store = LocalEncryptedIdentityKeyStore::with_migration_store(
+            dir.path(),
+            [9u8; 32],
+            Some(legacy_store),
+        );
+
+        assert_eq!(store.get_secret(alice.account()).unwrap(), Some(SECRET));
+        assert!(store.credential_path(alice.account()).exists());
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_migrates_legacy_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+        write_ed25519_secret_file_blocking(alice.legacy_path(), &SECRET, false).unwrap();
+        let store = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+
+        assert_eq!(store.get_secret(alice.account()).unwrap(), Some(SECRET));
+        assert!(store.credential_path(alice.account()).exists());
+        assert!(!alice.legacy_path().exists());
+    }
+
+    #[test]
+    fn local_encrypted_identity_store_fails_closed_when_local_file_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy_store = Arc::new(MemoryIdentityKeyStore::default());
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+        legacy_store
+            .put_secret(alice.account(), &SECRET, false)
+            .unwrap();
+        let store = LocalEncryptedIdentityKeyStore::with_migration_store(
+            dir.path(),
+            [9u8; 32],
+            Some(legacy_store),
+        );
+        write_private_binary_file(&store.credential_path(alice.account()), b"not cose", false)
+            .unwrap();
+
+        assert!(store.get_secret(alice.account()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_encrypted_identity_store_uses_private_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalEncryptedIdentityKeyStore::new(dir.path(), [9u8; 32]);
+        let alice = IdentityKeyRef::trusted_user(dir.path(), "alice");
+
+        store.put_secret(alice.account(), &SECRET, false).unwrap();
+
+        let file_mode = std::fs::metadata(store.credential_path(alice.account()))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let dir_mode = std::fs::metadata(store.root())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600);
+        assert_eq!(dir_mode, 0o700);
     }
 
     #[test]

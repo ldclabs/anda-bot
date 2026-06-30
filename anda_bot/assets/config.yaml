@@ -28,9 +28,10 @@ log_level: warn
 
 # Optional trusted users that can share this daemon and the same Anda agent.
 # Run `anda user create alice` to generate an Ed25519 keypair. The private key
-# is stored in the OS secure credential store by default, and the matching
-# public key is registered here. Channel entries can set `user:` to one of these
-# ids; HTTP/browser clients can authenticate with the matching private key.
+# is stored as an encrypted COSE Key in the local encrypted credential store,
+# and the matching public key is registered here. Channel entries can set
+# `user:` to one of these ids; HTTP/browser clients can authenticate with the
+# matching private key.
 # users:
 #   - id: alice
 #     pubkey: ""

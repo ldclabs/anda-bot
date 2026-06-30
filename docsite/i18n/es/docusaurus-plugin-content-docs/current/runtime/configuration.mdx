@@ -87,8 +87,9 @@ El agente también puede agregar un servidor en runtime utilizando `add_mcp_serv
   mcp.json
   anda-daemon.pid
   channels/
+  credentials/ # almacén local de credenciales cifradas para usuarios de confianza
   db/
-  keys/ # claves heredadas, explícitas o de reserva para Linux Secret Service
+  keys/ # claves de archivos explícitas o de reserva para Linux Secret Service
   logs/
   bundled-skills/
   sandbox/
@@ -101,8 +102,9 @@ El agente también puede agregar un servidor en runtime utilizando `add_mcp_serv
 
 | Directorio | Contenido |
 | --- | --- |
+| `credentials/` | Almacén local de credenciales cifradas. Las claves privadas de los usuarios de confianza se almacenan aquí como claves COSE cifradas. |
 | `db/` | Memoria local, conversaciones, estado de canales, estado de cron, estado de objetos y datos relacionados. |
-| `keys/` | Archivos de clave de firma heredados, exportados explícitamente o de reserva para Linux Secret Service. Las nuevas claves privadas de identidad se almacenan por defecto en el almacén de credenciales seguro del sistema operativo cuando está disponible. |
+| `keys/` | Archivos de clave de firma exportados explícitamente o de reserva para Linux Secret Service. Las claves privadas de identidad del daemon y del propietario se almacenan por defecto en el almacén de credenciales seguro del sistema operativo cuando está disponible. |
 | `logs/` | Registros del daemon y de la CLI. |
 | `channels/` | Estado de runtime de los canales. |
 | `bundled-skills/` | Habilidades integradas gestionadas en el lanzamiento e instaladas por las actualizaciones de Anda. |
@@ -115,9 +117,9 @@ El agente también puede agregar un servidor en runtime utilizando `add_mcp_serv
 
 ## Límite de privacidad
 
-Los datos de estado locales de Anda, el grafo de memoria, las conversaciones, el estado de los canales, el estado de las tareas programadas (cron), los registros y los datos del espacio de trabajo se almacenan en su máquina de forma predeterminada. Las claves privadas de identidad se almacenan de forma predeterminada en el almacén de credenciales seguro del sistema operativo, con claves de archivos explícitas y claves de reserva de Linux Secret Service bajo `~/.anda/keys/`.
+Los datos de estado locales de Anda, el grafo de memoria, las conversaciones, el estado de los canales, el estado de las tareas programadas (cron), los registros y los datos del espacio de trabajo se almacenan en su máquina de forma predeterminada. Las claves privadas de identidad del daemon y del propietario se almacenan de forma predeterminada en el almacén de credenciales seguro del sistema operativo, mientras que las claves privadas de los usuarios de confianza se almacenan en el almacén local de credenciales cifradas bajo `~/.anda/credentials/`. Pueden existir claves de archivos explícitas y claves de reserva de Linux Secret Service bajo `~/.anda/keys/`.
 
-En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y emite una advertencia en la terminal y registros. Para utilizar Secret Service, inicie y desbloquee un proveedor en una sesión D-Bus de usuario (por ejemplo, `gnome-keyring-daemon --start --components=secrets`), asegúrese de que `DBUS_SESSION_BUS_ADDRESS` esté configurado para el proceso de Anda y luego reinicie Anda. Los usuarios de KDE pueden desbloquear KWallet en su lugar.
+En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada de daemon/propietario bajo `~/.anda/keys/` y emite una advertencia en la terminal y registros. Las claves privadas de los usuarios de confianza permanecen cifradas en el almacén local de credenciales mientras se pueda cargar el secreto de identidad del daemon. Para utilizar Secret Service para las identidades de daemon/propietario, inicie y desbloquee un proveedor en una sesión D-Bus de usuario (por ejemplo, `gnome-keyring-daemon --start --components=secrets`), asegúrese de que `DBUS_SESSION_BUS_ADDRESS` esté configurado para el proceso de Anda y luego reinicie Anda. Los usuarios de KDE pueden desbloquear KWallet en su lugar.
 
 Sin embargo, los proveedores de modelos pueden seguir recibiendo prompts, resúmenes de resultados de herramientas y solicitudes de formación o recuerdo de memoria. Elija proveedores de confianza, puntos de conexión privados o políticas de proxy que se adapten a sus necesidades de privacidad.
 

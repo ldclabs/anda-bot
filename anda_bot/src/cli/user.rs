@@ -9,8 +9,9 @@ use crate::{
         key::{
             Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, encode_ed25519_pubkey,
             load_identity_secret_with_location_with_store,
-            load_or_init_local_identity_secrets_with_store, os_identity_key_store,
-            random_ed25519_privkey, write_ed25519_secret_file, write_identity_secret_with_store,
+            load_or_init_local_identity_secrets_with_store, local_encrypted_identity_key_store,
+            os_identity_key_store, random_ed25519_privkey, write_ed25519_secret_file,
+            write_identity_secret_with_store,
         },
         text::read_text_file,
     },
@@ -145,8 +146,9 @@ async fn create_user(
     let pubkey = encode_ed25519_pubkey(&key.pubkey());
     let updated = add_user_to_config_text(&cfg_text, &id, &pubkey)?;
     let key_ref = IdentityKeyRef::trusted_user(&daemon.home, &id);
+    let trusted_user_store = trusted_user_identity_store(daemon, identity_store).await?;
     let private_key_location =
-        write_identity_secret_with_store(&key_ref, &secret, identity_store).await?;
+        write_identity_secret_with_store(&key_ref, &secret, trusted_user_store).await?;
 
     tokio::fs::write(daemon.config_file_path(), updated).await?;
 
@@ -194,7 +196,12 @@ async fn export_identity_key(
         .into());
     }
 
-    let loaded = load_identity_secret_with_location_with_store(&key_ref, identity_store).await?;
+    let read_store = if key_ref.is_daemon() || key_ref.is_owner() {
+        identity_store
+    } else {
+        trusted_user_identity_store(daemon, identity_store).await?
+    };
+    let loaded = load_identity_secret_with_location_with_store(&key_ref, read_store).await?;
     write_ed25519_secret_file(&cmd.key_path, &loaded.secret).await?;
     let key = Ed25519Key::new(loaded.secret);
     let pubkey = encode_ed25519_pubkey(&key.pubkey());
@@ -239,6 +246,20 @@ fn identity_key_ref_for_export(
             ))
         }
     }
+}
+
+async fn trusted_user_identity_store(
+    daemon: &Daemon,
+    identity_store: Arc<dyn IdentityKeyStore>,
+) -> Result<Arc<dyn IdentityKeyStore>, BoxError> {
+    let secrets =
+        load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store.clone())
+            .await?;
+    Ok(local_encrypted_identity_key_store(
+        &daemon.home,
+        *secrets.daemon,
+        Some(identity_store),
+    ))
 }
 
 async fn load_cli_config(daemon: &Daemon) -> Result<Config, BoxError> {
@@ -553,7 +574,13 @@ channels: {}
         let cfg = load_cli_config(&daemon).await.unwrap();
         assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("alice")));
         let key_ref = IdentityKeyRef::trusted_user(&daemon.home, "alice");
-        assert!(identity_store.get_for_test(key_ref.account()).is_some());
+        let trusted_store = trusted_user_identity_store(&daemon, identity_store.clone())
+            .await
+            .unwrap();
+        let loaded = load_identity_secret_with_location_with_store(&key_ref, trusted_store)
+            .await
+            .unwrap();
+        assert!(loaded.location.contains("local encrypted credential file"));
         assert!(!default_user_key_path(&daemon, "alice").exists());
 
         // Listing now iterates the configured users.
