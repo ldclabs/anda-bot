@@ -54,7 +54,7 @@
     "message": "إكمال الإعداد في المشغّل"
   },
   "onboardingConfigureBody": {
-    "message": "افتح Anda Bot من علبة النظام أو شريط القوائم أو قائمة Start، وأكمل معالج provider/API key/model، وأبقِ المشغّل قيد التشغيل أثناء استخدام الإضافة."
+    "message": "افتح Anda Bot من علبة النظام أو شريط القوائم أو قائمة ابدأ، وأكمل معالج الإعداد (مزوّد النموذج/مفتاح API/النموذج)، وأبقِ المشغّل قيد التشغيل أثناء استخدام الإضافة."
   },
   "openConfigEditor": {
     "message": "فتح محرر config.yaml"
@@ -816,13 +816,13 @@
     "message": "Anda Dashboard"
   },
   "dashboardBrainDetail": {
-    "message": "Memory graph workspace"
+    "message": "مساحة عمل مخطط الذاكرة"
   },
   "dashboardBookmarksDetail": {
-    "message": "Saved conversations"
+    "message": "المحادثات المحفوظة"
   },
   "dashboardConfigDetail": {
-    "message": "Daemon configuration"
+    "message": "تكوين الـ daemon"
   },
   "dashboardNoConnection": {
     "message": "No connection"
@@ -852,25 +852,25 @@
     "message": "Config"
   },
   "bookmarksDashboardDescription": {
-    "message": "Folders and saved assistant messages."
+    "message": "المجلدات ورسائل المساعد المحفوظة."
   },
   "bookmarksLibraryTitle": {
     "message": "Bookmark library"
   },
   "bookmarksLibrarySubtitle": {
-    "message": "Browse saved messages, organize folders, and reopen chat context."
+    "message": "تصفح الرسائل المحفوظة، ونظّم المجلدات، وأعد فتح سياق الدردشة."
   },
   "bookmarksSearchPlaceholder": {
-    "message": "Search bookmarks"
+    "message": "البحث في الإشارات المرجعية"
   },
   "bookmarkContextTitle": {
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Selected bookmark metadata and Brain links."
+    "message": "بيانات التعريف للإشارة المرجعية المحددة وروابط الذاكرة."
   },
   "bookmarkSelected": {
-    "message": "Selected bookmark"
+    "message": "الإشارة المرجعية المحددة"
   },
   "bookmarkOpenChat": {
     "message": "Open chat"
@@ -882,13 +882,13 @@
     "message": "Copied Markdown"
   },
   "bookmarkNotLocated": {
-    "message": "Could not locate the message; its conversation may be unavailable."
+    "message": "تعذر تحديد موقع الرسالة؛ قد تكون المحادثة الخاصة بها غير متاحة."
   },
   "bookmarkFolders": {
     "message": "Folders"
   },
   "bookmarkLinkedBrain": {
-    "message": "Linked Brain concepts"
+    "message": "مفاهيم الذاكرة المرتبطة"
   },
   "loadMore": {
     "message": "تحميل المزيد"
@@ -972,106 +972,106 @@
     "message": "ذكريات مثبتة"
   },
   "dashboardSkillsDetail": {
-    "message": "Personal workflows"
+    "message": "سير العمل الشخصي"
   },
   "dashboardSkillsCrumb": {
-    "message": "Skills"
+    "message": "المهارات"
   },
   "skills": {
-    "message": "Skills"
+    "message": "المهارات"
   },
   "skillsSearchPlaceholder": {
-    "message": "Search skills"
+    "message": "البحث عن المهارات"
   },
   "reloadSkills": {
-    "message": "Reload skills"
+    "message": "إعادة تحميل المهارات"
   },
   "allSources": {
-    "message": "All sources"
+    "message": "جميع المصادر"
   },
   "allStatuses": {
-    "message": "All statuses"
+    "message": "جميع الحالات"
   },
   "skillsEmpty": {
-    "message": "No skills found"
+    "message": "لم يتم العثور على مهارات"
   },
   "skillImportToAnda": {
-    "message": "Import to Anda"
+    "message": "استيراد إلى Anda"
   },
   "skillCustomize": {
-    "message": "Customize"
+    "message": "تخصيص"
   },
   "skillCloned": {
-    "message": "Skill cloned to Personal."
+    "message": "تم استنساخ المهارة إلى المهارات الشخصية."
   },
   "skillsReloaded": {
-    "message": "Skills reloaded."
+    "message": "تم إعادة تحميل المهارات."
   },
   "skillEnabled": {
-    "message": "Skill enabled."
+    "message": "تم تمكين المهارة."
   },
   "skillDisabled": {
-    "message": "Skill disabled."
+    "message": "تم تعطيل المهارة."
   },
   "skillDeleted": {
-    "message": "Skill moved to trash."
+    "message": "تم نقل المهارة إلى المهملات."
   },
   "skillOptimizationPromptReady": {
-    "message": "Optimization prompt filled in the side panel."
+    "message": "تم ملء موجه التحسين في اللوحة الجانبية."
   },
   "skillDeleteConfirm": {
-    "message": "Move this Personal skill to trash?"
+    "message": "هل تريد نقل هذه المهارة الشخصية إلى سلة المهملات؟"
   },
   "enableSkill": {
-    "message": "Enable"
+    "message": "تمكين"
   },
   "disableSkill": {
-    "message": "Disable"
+    "message": "تعطيل"
   },
   "deleteSkill": {
-    "message": "Delete"
+    "message": "حذف"
   },
   "skillStatusActive": {
-    "message": "Active"
+    "message": "نشط"
   },
   "skillStatusDisabled": {
-    "message": "Disabled"
+    "message": "معطل"
   },
   "skillStatusShadowed": {
-    "message": "Shadowed"
+    "message": "مظلل"
   },
   "skillStatusError": {
-    "message": "Error"
+    "message": "خطأ"
   },
   "skillStatusInactive": {
-    "message": "Inactive"
+    "message": "غير نشط"
   },
   "skillOverview": {
-    "message": "Overview"
+    "message": "نظرة عامة"
   },
   "skillFiles": {
-    "message": "Files"
+    "message": "الملفات"
   },
   "skillOptimize": {
-    "message": "Optimize"
+    "message": "تحسين"
   },
   "skillDirectory": {
-    "message": "Directory"
+    "message": "المجلد"
   },
   "skillAgentName": {
-    "message": "Agent name"
+    "message": "اسم الوكيل"
   },
   "skillUpdated": {
-    "message": "Updated"
+    "message": "تاريخ التحديث"
   },
   "skillFileCount": {
-    "message": "$1 files"
+    "message": "$1 ملفات"
   },
   "skillFolder": {
-    "message": "Folder"
+    "message": "مجلد"
   },
   "skillFileTruncated": {
-    "message": "Truncated"
+    "message": "مقتطع"
   },
   "skillUsage": {
     "message": "الاستخدام"
@@ -1092,30 +1092,30 @@
     "message": "$1 إدخال / $2 إخراج / $3 مخزن مؤقت"
   },
   "skillAllowedTools": {
-    "message": "Allowed tools"
+    "message": "الأدوات المسموحة"
   },
   "skillDefaultTools": {
-    "message": "Default runtime tools"
+    "message": "أدوات التشغيل الافتراضية"
   },
   "skillDiagnostics": {
-    "message": "Diagnostics"
+    "message": "التشخيصات"
   },
   "skillDiagnosticsClear": {
-    "message": "No diagnostics"
+    "message": "لا توجد تشخيصات"
   },
   "skillOptimizeGoal": {
-    "message": "What should Anda improve?"
+    "message": "ما الذي يجب على Anda تحسينه؟"
   },
   "skillOptimizeAndaHint": {
-    "message": "Anda will receive this directory path and use skill-creator to inspect and update the skill."
+    "message": "سيتلقى Anda مسار هذا المجلد ويستخدم skill-creator لفحص المهارة وتحديثها."
   },
   "skillOptimizePersonalOnly": {
-    "message": "Only Personal skills can be optimized. Copy this skill to Personal first."
+    "message": "يمكن تحسين المهارات الشخصية فقط. انسخ هذه المهارة إلى المهارات الشخصية أولاً."
   },
   "copySkillToPersonal": {
-    "message": "Copy to Personal"
+    "message": "نسخ إلى المهارات الشخصية"
   },
   "optimizeSkillWithAnda": {
-    "message": "Ask Anda to optimize"
+    "message": "اطلب من Anda التحسين"
   }
 }

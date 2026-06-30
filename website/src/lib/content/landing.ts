@@ -568,72 +568,73 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 	},
 	es: {
 		meta: {
-			title: 'Anda Bot - Asistente IA local con memoria primero',
+			title: 'Anda Bot - Asistente de IA local con prioridad de memoria',
 			description:
-				'Usa Anda Bot como asistente local con memoria primero, manteniendo memoria en grafo, contexto, preferencias, herramientas y tareas largas bajo tu control.',
-			ogTitle: 'Anda Bot - Asistente IA local con memoria primero',
+				'Use Anda Bot como su asistente local con prioridad de memoria que mantiene su memoria en grafo, contexto, preferencias, herramientas y tareas largas bajo su control.',
+			ogTitle: 'Anda Bot - Asistente de IA local con prioridad de memoria',
 			ogDescription:
-				'Instala el launcher, conecta la extensión del navegador y conserva la memoria en grafo en tu propia máquina.'
+				'Instale el lanzador de escritorio, conecte la extensión del navegador y conserve la memoria en grafo a largo plazo en su propia máquina.'
 		},
 		nav: {
 			install: 'Instalar app',
-			why: 'Por qué',
+			why: 'Por qué Anda',
 			browser: 'Navegador',
-			launcher: 'Launcher',
+			launcher: 'Lanzador',
 			memory: 'Memoria',
 			docs: 'Docs'
 		},
 		language: { label: 'Idioma' },
 		hero: {
-			badge: 'Asistente local con memoria primero',
-			title: 'Puedes cambiar de modelo. Tu memoria no debería perderse',
-			body: 'Anda Bot guarda memoria en grafo en tu máquina para sobrevivir a plataformas, modelos y sesiones.',
+			badge: 'Asistente de IA local con prioridad de memoria',
+			title: 'Su modelo puede cambiar. Su memoria no debería',
+			body: 'Anda Bot mantiene la memoria en grafo a largo plazo en su propia máquina, por lo que su asistente sobrevive a plataformas, modelos y sesiones.',
 			primary: 'Instalar app',
 			secondary: 'Agregar extensión'
 		},
 		proof: [
 			{
-				value: 'memory-first',
-				label: 'Construido alrededor de memoria local, no de una cuenta de modelo'
+				value: 'prioridad de memoria',
+				label: 'Construido en torno a la memoria en grafo local, no a una única cuenta de modelo'
 			},
 			{
 				value: 'portable',
-				label: 'Cambia modelos sin reconstruir tu contexto y preferencias'
+				label: 'Cambie de modelo sin tener que reconstruir su contexto y preferencias'
 			},
 			{
-				value: 'superficies',
-				label: 'Navegador, launcher, terminal, skills, cron e IM comparten un Brain'
+				value: 'entornos diarios',
+				label:
+					'El navegador, el lanzador, la terminal, las habilidades, el cron y los canales de mensajería comparten un solo Brain'
 			}
 		],
 		why: {
 			badge: 'Por qué Anda Bot',
-			title: 'Agentes de código para código. Anda Bot para continuidad',
-			body: 'Claude Code y Codex son excelentes dentro de un repo. Anda Bot es la capa de asistente que recuerda quién eres.',
+			title: 'Use agentes de código para código. Use Anda Bot para la continuidad',
+			body: 'Claude Code y Codex son excelentes dentro de un repositorio. Anda Bot es la capa de asistente de larga duración que recuerda quién es usted a lo largo de su trabajo.',
 			routes: [
 				{
 					name: 'Claude Code y Codex',
-					role: 'Sesiones de código enfocadas',
-					fit: 'Mejor cuando el repositorio es el contexto y la memoria personal no es necesaria al terminar.'
+					role: 'Sesiones de codificación enfocadas',
+					fit: 'Ideal cuando el repositorio es el contexto y la memoria personal es opcional una vez que finaliza la tarea.'
 				},
 				{
 					name: 'OpenClaw y plataformas tipo Hermes',
-					role: 'Herramientas y plugins amplios',
-					fit: 'Mejor cuando importan ecosistema, skills empaquetadas y muchas capacidades listas.'
+					role: 'Amplia cobertura de herramientas y complementos',
+					fit: 'Ideal cuando la prioridad es la amplitud del ecosistema, habilidades empaquetadas y muchas capacidades listas para usar.'
 				},
 				{
 					name: 'Anda Bot',
 					role: 'Base de asistente personal',
-					fit: 'Mejor cuando preferencias, relaciones, investigación, rutinas e identidad deben sobrevivir al cambio de modelo.',
+					fit: 'Ideal cuando sus preferencias, relaciones, rutas de investigación, rutinas e identidad necesitan sobrevivir a los cambios de modelo.',
 					primary: true
 				}
 			]
 		},
 		install: {
-			badge: 'Comienza',
-			title: 'Instala la app que posee la memoria',
-			body: 'Empieza con el launcher, conecta el navegador y mantén daemon y Brain corriendo localmente.',
-			detected: '{os} detectado',
-			chooseOs: 'Elige SO',
+			badge: 'Comenzar',
+			title: 'Instale la aplicación que posee la memoria',
+			body: 'Comience con el lanzador, conecte el navegador y mantenga el daemon y el Brain ejecutándose localmente.',
+			detected: 'Detectado: {os}',
+			chooseOs: 'Elegir SO',
 			tabAria: 'Ruta de instalación por sistema operativo',
 			copy: 'Copiar',
 			copied: 'Copiado',
@@ -643,141 +644,146 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Launcher de menú',
-					body: 'El script instala Anda Bot.app, registra el launcher al iniciar sesión y arranca el daemon después de configurar.',
+					title: 'Lanzador en la barra de menú',
+					body: 'El script de instalación agrega Anda Bot.app, registra el lanzador en la barra de menú al iniciar sesión y arranca el daemon después de la configuración.',
 					primaryLabel: 'Copiar instalador',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script de macOS',
-					note: 'El launcher revisa actualizaciones, reinicia el daemon, abre logs y crea tokens para el navegador.',
-					steps: ['Instalar app', 'Configurar modelo', 'Conectar navegador']
+					commandLabel: 'Script de instalación de macOS',
+					note: 'El lanzador puede buscar actualizaciones, reiniciar el daemon, abrir registros y crear tokens de emparejamiento para el navegador.',
+					steps: ['Instalar app', 'Configurar modelo', 'Emparejar navegador']
 				},
 				windows: {
 					label: 'Windows',
 					title: 'Instalador gráfico',
-					body: 'Descarga la app de setup. Instala launcher, accesos, skills seleccionadas y asistente de configuración.',
+					body: 'Descargue la última aplicación de configuración. Instala el lanzador, una entrada en el Menú de inicio, un acceso directo en el escritorio, habilidades seleccionadas y el asistente de configuración.',
 					primaryLabel: 'Descargar instalador',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'El launcher de bandeja arranca con la sesión, controla el daemon y avisa cuando una actualización está lista.',
-					steps: ['Ejecutar setup', 'Usar asistente', 'Conectar navegador']
+					note: 'El lanzador en la bandeja del sistema se inicia al iniciar sesión, administra la configuración del modelo, controla el daemon y avisa cuando las actualizaciones están listas.',
+					steps: ['Ejecutar setup', 'Usar el asistente', 'Emparejar navegador']
 				},
 				linux: {
 					label: 'Linux',
-					title: 'Instalación de daemon local',
-					body: 'Linux mantiene el runtime CLI-first con autostart del daemon. El panel lateral se conecta al mismo gateway local.',
+					title: 'Instalación del daemon local',
+					body: 'Linux conserva el runtime CLI-first con inicio automático del daemon. El panel lateral del navegador se conecta a la misma puerta de enlace local.',
 					primaryLabel: 'Copiar instalador',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script de Linux',
-					note: 'Usa esta ruta para estaciones, servidores y personas que prefieren gestionar el runtime directamente.',
-					steps: ['Instalar runtime', 'Configurar proveedor', 'Conectar navegador']
+					commandLabel: 'Script de instalación de Linux',
+					note: 'Use esta ruta para estaciones de trabajo, servidores и пользователей, предпочитающих напрямую управлять средой выполнения.',
+					steps: ['Instalar runtime', 'Configurar proveedor', 'Emparejar navegador']
 				}
 			}
 		},
 		browser: {
-			badge: 'Panel lateral',
+			badge: 'Panel lateral del navegador',
 			title: 'El navegador le da cuerpo a Anda en la web',
-			body: 'Pregunta por la página activa, reúne evidencia y deja que el daemon local actúe con tu aprobación.',
+			body: 'Pregunte sobre la página activa, recopile pruebas y permita que el daemon local actúe a través de las herramientas del navegador con su aprobación.',
 			store: 'Agregar extensión',
-			docs: 'Conectar navegador',
+			docs: 'Emparejar navegador',
 			features: [
 				{
-					title: 'Llevar contexto a la memoria',
+					title: 'Llevar el contexto de la página a la memoria',
 					detail:
-						'Envía título, URL, selección, texto, capturas, datos estructurados y contexto de accesibilidad al agente local.'
+						'Envíe el título, la URL, la selección, el texto de la página, las capturas de pantalla, los datos estructurados y el contexto de accesibilidad al agente local.'
 				},
 				{
 					title: 'Actuar con permiso',
 					detail:
-						'Abre pestañas, cambia páginas, hace clic, escribe, desplaza, descarga, imprime PDF e inspecciona elementos.'
+						'Abra pestañas, cambie de página, haga clic, escriba, desplácese, descarga, imprima a PDF e inspeccione elementos desde la misma conversación.'
 				},
 				{
-					title: 'Usar el mismo Brain',
+					title: 'Mantener el mismo Brain',
 					detail:
-						'El trabajo del navegador conecta al mismo daemon, archivos, herramientas, skills, canales y memoria Brain.'
+						'El trabajo en el navegador se conecta al mismo daemon, archivos, herramientas, habilidades, canales y memoria Brain a largo plazo.'
 				}
 			]
 		},
 		launcher: {
-			badge: 'Launcher de escritorio',
-			title: 'Una app residente para un Brain local',
-			body: 'Setup, estado, pairing, logs, reinicio y updates quedan cerca del sistema para usar Anda cada día.',
+			badge: 'Lanzador de escritorio',
+			title: 'Una aplicación residente para un Brain local',
+			body: 'La configuración, el estado, el emparejamiento, los registros, el reinicio y las actualizaciones permanecen cerca del sistema operativo para usar Anda todos los días.',
 			features: [
 				{
-					title: 'Primer arranque',
-					detail: 'Configura proveedor, API key, modelo y home sin buscar archivos.'
+					title: 'Configuración en el primer arranque',
+					detail:
+						'Configure el proveedor, la clave API, el modelo y el directorio de inicio sin tener que buscar en archivos de configuración.'
 				},
 				{
 					title: 'Control del daemon',
-					detail: 'Abre Anda, revisa estado, reinicia el daemon, edita modelo y abre logs.'
+					detail:
+						'Abra Anda, verifique el estado, reinicie el daemon local, edite la configuración del modelo y acceda a los registros desde el menú.'
 				},
 				{
-					title: 'Emparejar navegador',
-					detail: 'Genera Gateway URL y Bearer token, luego pégalos en el panel lateral.'
+					title: 'Emparejamiento de navegador',
+					detail:
+						'Genere una Gateway URL y un Bearer token desde el lanzador, luego pégalos en el panel lateral de la extensión.'
 				},
 				{
-					title: 'Avisos de actualización',
-					detail: 'Revisa, descarga e instala actualizaciones con aviso de reinicio.'
+					title: 'Actualizaciones de versión',
+					detail:
+						'Busque actualizaciones automáticamente, descargue los recursos de la versión e instálelos con un aviso de reinicio cuando esté listo.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Brain',
 			title: 'El Brain es el producto',
-			body: 'Los modelos son interfaces de inferencia. El activo duradero es el grafo local de proyectos, preferencias, relaciones y decisiones.',
+			body: 'Los modelos son interfaces de inferencia. El activo duradero es el grafo local de sus proyectos, preferencias, relaciones y decisiones.',
 			features: [
 				{
-					title: 'Grafo local de conocimiento',
+					title: 'Grafo de conocimiento local',
 					detail:
-						'Brain forma un Cognitive Nexus de personas, proyectos, preferencias, decisiones, eventos y hechos cambiantes.'
+						'El Brain forma un nexo cognitivo (Cognitive Nexus) de personas, proyectos, preferencias, decisiones, eventos y hechos cambiantes.'
 				},
 				{
 					title: 'Identidad continua',
 					detail:
-						'Anda conserva contexto, estilo de trabajo, responsabilidades y relaciones de confianza entre sesiones.'
+						'Anda puede llevar su contexto, estilo de trabajo, responsabilidades recurrentes y relaciones de confianza a través de las sesiones.'
 				},
 				{
 					title: 'Memoria entre modelos',
 					detail:
-						'El modelo se puede reemplazar. La memoria sigue local, inspeccionable e independiente de un proveedor.'
+						'El modelo es reemplazable. La memoria permanece local, inspeccionable e independiente de una cuenta de proveedor.'
 				},
 				{
-					title: 'Contexto con herramientas',
+					title: 'Contexto consciente de herramientas',
 					detail:
-						'Archivos, shell, cron, documentos, navegador y subagents alimentan el mismo contexto.'
+						'Archivos, herramientas de shell, tareas programadas, documentos, acciones del navegador y subagentes alimentan el mismo contexto del asistente.'
 				}
 			]
 		},
 		work: {
-			badge: 'Tradeoff',
-			title: 'No la caja más grande. El asistente más duradero',
-			body: 'Anda Bot prioriza memoria, exploración del mundo y uso diario antes que empaquetar toda función posible.',
+			badge: 'Compromiso',
+			title: 'No la caja de herramientas más grande. El asistente más duradero',
+			body: 'Anda Bot prioriza la calidad de la memoria, la exploración del mundo exterior y la usabilidad diaria sobre la acumulación de todas las funciones posibles.',
 			surfaces: [
 				{
-					label: 'Memoria',
+					label: 'Mecanismo de memoria',
 					detail:
-						'Hacer fiable el recuerdo de preferencias, proyectos, relaciones y decisiones antes de añadir más controles.'
+						'Haga que el recuerdo de preferencias, proyectos, relaciones y decisiones sea confiable antes de agregar más perillas.'
 				},
 				{
 					label: 'Explorar el mundo',
 					detail:
-						'Usar navegador, documentos, archivos, shell y tareas programadas para reunir evidencia.'
+						'Use el contexto del navegador, documentos, archivos, herramientas de shell y tareas programadas para recopilar evidencia.'
 				},
 				{
 					label: 'Experiencia diaria',
-					detail: 'Pasar de flujos solo de terminal a launcher y panel lateral para uso continuo.'
+					detail:
+						'Pase de flujos de trabajo exclusivos de la terminal a un lanzador y un panel lateral con los que los usuarios normales puedan convivir.'
 				},
 				{
 					label: 'Bordes abiertos',
 					detail:
-						'Mantener skills, herramientas, subagents y asistentes de código sin encerrar la memoria.'
+						'Mantenga disponibles las habilidades, herramientas, subagentes y asistentes de codificación externos sin bloquear la memoria.'
 				}
 			]
 		},
 		final: {
-			title: 'Construye sobre memoria propia',
-			body: 'Usa Codex o Claude Code para código enfocado. Deja que Anda Bot mantenga la capa duradera.',
+			title: 'Construya sobre memoria que usted posee',
+			body: 'Use Codex o Claude Code para codificación enfocada. Deje que Anda Bot mantenga la capa de asistente duradera a su lado.',
 			install: 'Instalar app',
 			docs: 'Leer docs',
 			github: 'GitHub'
@@ -785,16 +791,16 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 	},
 	fr: {
 		meta: {
-			title: 'Anda Bot - Assistant IA local centré mémoire',
+			title: 'Anda Bot - Assistant IA local avec priorité à la mémoire',
 			description:
-				'Utilisez Anda Bot comme assistant local centré mémoire, avec mémoire graphe, contexte, préférences, outils et tâches longues sous votre contrôle.',
-			ogTitle: 'Anda Bot - Assistant IA local centré mémoire',
+				'Utilisez Anda Bot comme assistant local avec priorité à la mémoire, en gardant votre mémoire sous forme de graphe, votre contexte, vos préférences, vos outils et vos tâches longues sous votre contrôle.',
+			ogTitle: 'Anda Bot - Assistant IA local avec priorité à la mémoire',
 			ogDescription:
-				'Installez le lanceur, connectez l extension navigateur et gardez la mémoire graphe sur votre machine.'
+				'Installez le lanceur de bureau, connectez l’extension du navigateur et conservez votre mémoire graphe à long terme sur votre propre machine.'
 		},
 		nav: {
-			install: 'Installer app',
-			why: 'Pourquoi',
+			install: 'Installer l’application',
+			why: 'Pourquoi Anda',
 			browser: 'Navigateur',
 			launcher: 'Lanceur',
 			memory: 'Mémoire',
@@ -802,615 +808,650 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 		},
 		language: { label: 'Langue' },
 		hero: {
-			badge: 'Assistant local centré mémoire',
-			title: 'Le modèle peut changer. Votre mémoire ne devrait pas disparaître',
-			body: 'Anda Bot garde une mémoire graphe locale pour survivre aux plateformes, modèles et sessions.',
-			primary: 'Installer app',
-			secondary: 'Ajouter extension'
+			badge: 'Assistant IA local avec priorité à la mémoire',
+			title: 'Votre modèle peut changer. Votre mémoire ne le devrait pas',
+			body: 'Anda Bot conserve une mémoire graphe à long terme sur votre machine, afin que votre assistant survive aux changements de plateformes, de modèles et de sessions.',
+			primary: 'Installer l’app',
+			secondary: 'Ajouter l’extension'
 		},
 		proof: [
 			{
-				value: 'memory-first',
-				label: 'Construit autour de la mémoire locale, pas un compte modèle'
+				value: 'mémoire d’abord',
+				label: 'Construit autour de la mémoire graphe locale, pas sur un compte de modèle unique'
 			},
 			{
 				value: 'portable',
-				label: 'Changez de modèle sans reconstruire contexte et préférences'
+				label: 'Changez de modèle sans reconstruire votre contexte et vos préférences'
 			},
 			{
-				value: 'surfaces',
-				label: 'Navigateur, lanceur, terminal, skills, cron et IM partagent un Brain'
+				value: 'interfaces quotidiennes',
+				label:
+					'Le navigateur, le lanceur, le terminal, les compétences, le cron et les canaux de messagerie partagent un seul Brain'
 			}
 		],
 		why: {
 			badge: 'Pourquoi Anda Bot',
-			title: 'Agents de code pour le code. Anda Bot pour la continuité',
-			body: 'Claude Code et Codex excellent dans un dépôt. Anda Bot est la couche assistant durable qui se souvient de vous.',
+			title: 'Des agents de code pour coder. Anda Bot pour la continuité',
+			body: 'Claude Code et Codex excellent au sein d’un dépôt de code. Anda Bot est la couche d’assistant durable qui se souvient de vous à travers toutes vos tâches.',
 			routes: [
 				{
 					name: 'Claude Code et Codex',
-					role: 'Sessions de code focalisées',
-					fit: 'Idéal quand le dépôt est le contexte et que la mémoire personnelle est optionnelle après la tâche.'
+					role: 'Sessions de codage focalisées',
+					fit: 'Idéal lorsque le dépôt constitue le contexte et que la mémoire personnelle est optionnelle après la tâche.'
 				},
 				{
-					name: 'OpenClaw et plateformes type Hermes',
-					role: 'Large couverture outils et plugins',
-					fit: 'Idéal quand la priorité est l écosystème, les skills packagées et beaucoup de capacités prêtes.'
+					name: 'OpenClaw et plateformes de type Hermes',
+					role: 'Large couverture d’outils et de plug-ins',
+					fit: 'Idéal lorsque la priorité est la diversité de l’écosystème, les compétences packagées et les nombreuses capacités prêtes à l’emploi.'
 				},
 				{
 					name: 'Anda Bot',
-					role: 'Socle assistant personnel',
-					fit: 'Idéal quand préférences, relations, recherches, routines et identité doivent survivre aux modèles.',
+					role: 'Socle d’assistant personnel',
+					fit: 'Idéal lorsque vos préférences, relations, parcours de recherche, routines et identité doivent survivre aux changements de modèle.',
 					primary: true
 				}
 			]
 		},
 		install: {
 			badge: 'Démarrer',
-			title: 'Installez l app qui possède la mémoire',
-			body: 'Commencez par le lanceur, connectez le navigateur et gardez daemon et Brain en local.',
-			detected: '{os} détecté',
-			chooseOs: 'Choisir OS',
-			tabAria: 'Chemin d installation par système',
+			title: 'Installez l’application qui possède la mémoire',
+			body: 'Commencez par le lanceur, connectez le navigateur et conservez le démon ainsi que le Brain en local.',
+			detected: 'Détecté : {os}',
+			chooseOs: 'Choisir l’OS',
+			tabAria: 'Chemin d’installation selon le système d’exploitation',
 			copy: 'Copier',
 			copied: 'Copié',
 			copyFailed: 'Copie échouée',
-			copyAria: 'Copier la commande',
-			commandAria: 'Copier la commande d installation',
+			copyAria: 'Copier la commande d’installation',
+			commandAria: 'Copier la commande d’installation',
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Lanceur de menu',
-					body: 'Le script installe Anda Bot.app, enregistre le lanceur au login et démarre le daemon après setup.',
-					primaryLabel: 'Copier installateur',
+					title: 'Lanceur de la barre de menus',
+					body: 'Le script d’installation ajoute Anda Bot.app, enregistre le lanceur dans la barre de menus au démarrage et lance le démon après la configuration.',
+					primaryLabel: 'Copier l’installateur',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script macOS',
-					note: 'Le lanceur vérifie les mises à jour, redémarre le daemon, ouvre les logs et crée les tokens navigateur.',
-					steps: ['Installer app', 'Configurer modèle', 'Connecter navigateur']
+					commandLabel: 'Script d’installation macOS',
+					note: 'Le lanceur vérifie les mises à jour, redémarre le démon, ouvre les journaux et génère des jetons d’appairage de navigateur.',
+					steps: ['Installer l’app', 'Configurer le modèle', 'Appairer le navigateur']
 				},
 				windows: {
 					label: 'Windows',
 					title: 'Installateur graphique',
-					body: 'Téléchargez le setup. Il installe lanceur, raccourcis, skills sélectionnées et assistant de configuration.',
-					primaryLabel: 'Télécharger',
+					body: 'Téléchargez l’application d’installation. Elle installe le lanceur, un raccourci dans le menu Démarrer et sur le bureau, des compétences sélectionnées et l’assistant de configuration.',
+					primaryLabel: 'Télécharger l’installateur',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'Le lanceur de barre système démarre au login, contrôle le daemon et signale les mises à jour prêtes.',
-					steps: ['Lancer setup', 'Utiliser assistant', 'Connecter navigateur']
+					note: 'Le lanceur de la zone de notification système démarre à la connexion, gère les paramètres de modèle, contrôle le démon et signale les mises à jour.',
+					steps: ['Lancer le setup', 'Utiliser l’assistant', 'Appairer le navigateur']
 				},
 				linux: {
 					label: 'Linux',
-					title: 'Installation daemon local',
-					body: 'Linux garde le runtime CLI-first avec autostart daemon. Le panneau latéral se connecte au même gateway local.',
-					primaryLabel: 'Copier installateur',
+					title: 'Installation locale du démon',
+					body: 'Linux conserve le runtime CLI-first avec démarrage automatique du démon. Le panneau latéral du navigateur se connecte à la même passerelle locale.',
+					primaryLabel: 'Copier l’installateur',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script Linux',
-					note: 'Utilisez ce chemin pour postes, serveurs et personnes qui préfèrent gérer le runtime directement.',
-					steps: ['Installer runtime', 'Configurer provider', 'Connecter navigateur']
+					commandLabel: 'Script d’installation Linux',
+					note: 'Utilisez ce chemin pour les stations de travail, les serveurs et les utilisateurs qui préfèrent gérer directement le runtime.',
+					steps: ['Installer le runtime', 'Configurer le fournisseur', 'Appairer le navigateur']
 				}
 			}
 		},
 		browser: {
-			badge: 'Panneau navigateur',
+			badge: 'Panneau latéral du navigateur',
 			title: 'Le navigateur donne un corps web à Anda',
-			body: 'Interrogez la page active, rassemblez les preuves et laissez le daemon agir avec votre accord.',
-			store: 'Ajouter extension',
-			docs: 'Connecter navigateur',
+			body: 'Posez des questions sur la page active, rassemblez des preuves et laissez le démon local agir via les outils du navigateur avec votre accord.',
+			store: 'Ajouter l’extension',
+			docs: 'Appairer le navigateur',
 			features: [
 				{
-					title: 'Porter le contexte en mémoire',
+					title: 'Intégrer le contexte de la page en mémoire',
 					detail:
-						'Envoyez titre, URL, sélection, texte, captures, données structurées et accessibilité à l agent local.'
+						'Envoyez le titre, l’URL, la sélection de texte, le texte de la page, les captures d’écran, les données structurées et le contexte d’accessibilité à l’agent local.'
 				},
 				{
-					title: 'Agir avec permission',
+					title: 'Agir avec votre permission',
 					detail:
-						'Ouvrez des onglets, changez de page, cliquez, saisissez, défilez, téléchargez, imprimez PDF et inspectez.'
+						'Ouvrez des onglets, changez de page, cliquez, saisissez du texte, faites défiler, téléchargez, imprimez en PDF et inspectez des éléments au sein de la même conversation.'
 				},
 				{
-					title: 'Garder le même Brain',
+					title: 'Conserver le même Brain',
 					detail:
-						'Le travail navigateur rejoint le même daemon, fichiers, outils, skills, canaux et mémoire Brain.'
+						'Le travail dans le navigateur se connecte au même démon, fichiers, outils, compétences, canaux et mémoire Brain à long terme.'
 				}
 			]
 		},
 		launcher: {
-			badge: 'Lanceur desktop',
-			title: 'Une app résidente pour un Brain local',
-			body: 'Setup, statut, appairage, logs, redémarrage et mises à jour restent près du système pour un usage quotidien.',
+			badge: 'Lanceur de bureau',
+			title: 'Une application résidente pour un Brain local',
+			body: 'La configuration, l’état, l’appairage, les logs, le redémarrage et les mises à jour restent proches du système d’exploitation pour un usage quotidien.',
 			features: [
 				{
-					title: 'Premier setup',
-					detail: 'Configurez provider, API key, modèle et home sans chercher les fichiers.'
-				},
-				{
-					title: 'Contrôle daemon',
+					title: 'Configuration au premier démarrage',
 					detail:
-						'Ouvrez Anda, vérifiez le statut, redémarrez le daemon, modifiez le modèle et ouvrez les logs.'
+						'Configurez le fournisseur, la clé API, le modèle et le répertoire de base sans chercher dans les fichiers de configuration.'
 				},
 				{
-					title: 'Appairage navigateur',
-					detail: 'Générez Gateway URL et Bearer token, puis collez-les dans le panneau.'
+					title: 'Contrôle du démon',
+					detail:
+						'Ouvrez Anda, vérifiez l’état, redémarrez le démon local, modifiez les paramètres du modèle et accédez aux logs depuis le menu.'
 				},
 				{
-					title: 'Mises à jour',
-					detail: 'Vérifiez, téléchargez et installez avec une invite de redémarrage.'
+					title: 'Appairage du navigateur',
+					detail:
+						'Générez une URL de passerelle et un jeton porteur (Bearer token) depuis le lanceur, puis collez-les dans le panneau latéral de l’extension.'
+				},
+				{
+					title: 'Mises à jour automatiques',
+					detail:
+						'Vérifiez automatiquement, téléchargez les nouvelles versions et installez-les avec une invite de redémarrage une fois prêtes.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Brain',
 			title: 'Le Brain est le produit',
-			body: 'Les modèles sont des interfaces d inférence. L actif durable est le graphe local de projets, préférences, relations et décisions.',
+			body: 'Les modèles ne sont que des moteurs d’inférence. L’actif durable est le graphe local de vos projets, préférences, relations et décisions.',
 			features: [
 				{
-					title: 'Graphe local de connaissance',
+					title: 'Graphe de connaissances local',
 					detail:
-						'Brain forme un Cognitive Nexus de personnes, projets, préférences, décisions, événements et faits changeants.'
+						'Le Brain forme un nexu cognitif (Cognitive Nexus) reliant personnes, projets, préférences, décisions, événements et faits changeants.'
 				},
 				{
 					title: 'Identité continue',
 					detail:
-						'Anda porte votre contexte, style de travail, responsabilités et relations de confiance entre sessions.'
+						'Anda porte votre contexte, votre style de travail, vos responsabilités récurrentes et vos relations de confiance d’une session à l’autre.'
 				},
 				{
 					title: 'Mémoire multi-modèles',
 					detail:
-						'Le modèle peut être remplacé. La mémoire reste locale, inspectable et indépendante d un fournisseur.'
+						'Le modèle peut être remplacé. La mémoire reste locale, inspectable et indépendante de tout compte chez un fournisseur unique.'
 				},
 				{
-					title: 'Contexte outillé',
+					title: 'Contexte conscient des outils',
 					detail:
-						'Fichiers, shell, tâches planifiées, documents, navigateur et subagents nourrissent le même contexte.'
+						'Fichiers, outils système, tâches planifiées, documents, actions de navigation et sous-agents alimentent tous le même contexte d’assistant.'
 				}
 			]
 		},
 		work: {
 			badge: 'Compromis',
-			title: 'Pas la boîte la plus large. L assistant le plus durable',
-			body: 'Anda Bot priorise mémoire, exploration du monde et usage quotidien avant d intégrer toute fonction possible.',
+			title: 'Pas la boîte à outils la plus vaste. L’assistant le plus durable',
+			body: 'Anda Bot donne la priorité à la qualité de la mémoire, à l’exploration du monde extérieur et à l’utilité quotidienne plutôt qu’à l’accumulation de fonctionnalités gadgets.',
 			surfaces: [
 				{
-					label: 'Mémoire',
+					label: 'Mécanisme de mémoire',
 					detail:
-						'Rendre fiables préférences, projets, relations et décisions avant d ajouter plus de réglages.'
+						'Rendre fiables le rappel des préférences, des projets, des relations et des décisions avant d’ajouter d’autres réglages.'
 				},
 				{
 					label: 'Explorer le monde',
 					detail:
-						'Utiliser navigateur, documents, fichiers, shell et tâches planifiées pour rassembler des preuves.'
+						'Utiliser le contexte du navigateur, les documents, les fichiers, le shell et les tâches planifiées pour rassembler des informations.'
 				},
 				{
-					label: 'Usage quotidien',
-					detail: 'Passer du terminal seul à un lanceur et un panneau latéral habitables.'
+					label: 'Expérience quotidienne',
+					detail:
+						'Passer d’un flux de travail purement terminal à un lanceur et un panneau latéral avec lesquels les utilisateurs normaux peuvent vivre.'
 				},
 				{
-					label: 'Bords ouverts',
-					detail: 'Garder skills, outils, subagents et assistants code sans enfermer la mémoire.'
+					label: 'Ouverture sur l’extérieur',
+					detail:
+						'Conserver l’accès aux compétences, outils, sous-agents et assistants de codage externes sans emprisonner la mémoire.'
 				}
 			]
 		},
 		final: {
-			title: 'Construisez sur une mémoire qui vous appartient',
-			body: 'Utilisez Codex ou Claude Code pour coder. Laissez Anda Bot garder la couche assistant durable.',
-			install: 'Installer app',
-			docs: 'Lire docs',
+			title: 'Construisez autour d’une mémoire qui vous appartient',
+			body: 'Utilisez Codex ou Claude Code pour le codage focalisé. Laissez Anda Bot s’occuper de la couche d’assistant durable à leurs côtés.',
+			install: 'Installer l’application',
+			docs: 'Lire la documentation',
 			github: 'GitHub'
 		}
 	},
 	ru: {
 		meta: {
-			title: 'Anda Bot - Локальный AI помощник с памятью',
+			title: 'Anda Bot - AI-помощник с приоритетом памяти',
 			description:
-				'Используйте Anda Bot как локального помощника с памятью, где граф памяти, контекст, предпочтения, tools и длинные задачи остаются под вашим контролем.',
-			ogTitle: 'Anda Bot - Локальный AI помощник с памятью',
+				'Используйте Anda Bot как локального помощника с приоритетом памяти, где граф знаний, контекст, предпочтения, инструменты и долгосрочные задачи остаются под вашим полным контролем.',
+			ogTitle: 'Anda Bot - AI-помощник с приоритетом памяти',
 			ogDescription:
-				'Установите launcher, подключите расширение браузера и храните долгую графовую память на своей машине.'
+				'Установите лаунчер для рабочего стола, подключите расширение для браузера и храните долгосрочную графовую память на собственной машине.'
 		},
 		nav: {
-			install: 'Установить',
-			why: 'Зачем',
+			install: 'Установить приложение',
+			why: 'Зачем Anda',
 			browser: 'Браузер',
-			launcher: 'Launcher',
+			launcher: 'Лаунчер',
 			memory: 'Память',
-			docs: 'Документы'
+			docs: 'Документация'
 		},
 		language: { label: 'Язык' },
 		hero: {
-			badge: 'Локальный помощник с памятью',
-			title: 'Модель можно сменить. Память не должна исчезнуть',
-			body: 'Anda Bot хранит графовую память локально, чтобы помощник переживал платформы, модели и сессии.',
-			primary: 'Установить',
+			badge: 'Локальный AI-помощник с приоритетом памяти',
+			title: 'Модели меняются. Ваша память должна оставаться',
+			body: 'Anda Bot хранит долгосрочную графовую память на вашей машине, благодаря чему ваш помощник успешно переживает смену платформ, моделей и сессий.',
+			primary: 'Установить приложение',
 			secondary: 'Добавить расширение'
 		},
 		proof: [
-			{ value: 'memory-first', label: 'Построен вокруг локальной памяти, а не аккаунта модели' },
-			{ value: 'portable', label: 'Меняйте модели без пересборки контекста и предпочтений' },
 			{
-				value: 'surfaces',
-				label: 'Браузер, launcher, terminal, skills, cron и IM делят один Brain'
+				value: 'приоритет памяти',
+				label: 'Построен вокруг локального графа памяти, а не привязан к одному аккаунту модели'
+			},
+			{
+				value: 'портативность',
+				label: 'Меняйте модели без необходимости заново настраивать контекст и предпочтения'
+			},
+			{
+				value: 'все интерфейсы',
+				label: 'Браузер, лаунчер, терминал, навыки, задачи cron и мессенджеры делят один Brain'
 			}
 		],
 		why: {
 			badge: 'Зачем Anda Bot',
-			title: 'Кодовые агенты для кода. Anda Bot для непрерывности',
-			body: 'Claude Code и Codex сильны внутри репозитория. Anda Bot это долговечный слой помощника, который помнит вас.',
+			title: 'Кодовые агенты — для кода. Anda Bot — для непрерывности работы',
+			body: 'Claude Code и Codex отлично подходят для работы внутри репозитория. Anda Bot — это долговечный слой помощника, который помнит вас в процессе всей работы.',
 			routes: [
 				{
 					name: 'Claude Code и Codex',
-					role: 'Фокусные сессии кодинга',
-					fit: 'Лучше всего, когда репозиторий является контекстом, а личная память после задачи необязательна.'
+					role: 'Фокусированные сессии программирования',
+					fit: 'Лучше всего подходят, когда контекстом является репозиторий, а сохранение личной памяти после завершения задачи необязательно.'
 				},
 				{
 					name: 'OpenClaw и платформы типа Hermes',
-					role: 'Широкие tools и plugins',
-					fit: 'Лучше всего, когда важны экосистема, готовые skills и много встроенных возможностей.'
+					role: 'Широкий спектр инструментов и плагинов',
+					fit: 'Лучше всего подходят, когда в приоритете ширина экосистемы, готовые пакеты навыков и множество встроенных возможностей.'
 				},
 				{
 					name: 'Anda Bot',
-					role: 'Основа личного помощника',
-					fit: 'Лучше всего, когда предпочтения, связи, исследования, рутины и идентичность должны пережить смену модели.',
+					role: 'Основа персонального помощника',
+					fit: 'Лучше всего подходит, когда ваши предпочтения, контакты, история исследований, рутина и личные особенности должны сохраняться при смене моделей.',
 					primary: true
 				}
 			]
 		},
 		install: {
-			badge: 'Начало',
-			title: 'Установите приложение, которому принадлежит память',
-			body: 'Начните с launcher, подключите браузер и держите daemon плюс Brain локально.',
-			detected: 'Определено: {os}',
-			chooseOs: 'Выберите ОС',
-			tabAria: 'Путь установки по операционной системе',
+			badge: 'Начало работы',
+			title: 'Установите приложение, владеющее памятью',
+			body: 'Начните с установки лаунчера, подключите браузер и запустите фоновую службу вместе с Brain локально на вашем компьютере.',
+			detected: 'Обнаружена ОС: {os}',
+			chooseOs: 'Выбрать ОС',
+			tabAria: 'Варианты установки в зависимости от операционной системы',
 			copy: 'Копировать',
 			copied: 'Скопировано',
-			copyFailed: 'Не скопировано',
+			copyFailed: 'Копирование не удалось',
 			copyAria: 'Копировать команду установки',
-			commandAria: 'Копировать команду установки',
+			commandAria: 'Скопировать команду установки',
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Menu-bar launcher',
-					body: 'Скрипт добавляет Anda Bot.app, регистрирует launcher при входе и запускает daemon после настройки.',
+					title: 'Лаунчер в строке меню',
+					body: 'Скрипт установки добавляет Anda Bot.app, регистрирует лаунчер в строке меню при входе в систему и запускает фоновую службу демона после завершения настройки.',
 					primaryLabel: 'Копировать установщик',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Скрипт macOS',
-					note: 'Launcher проверяет обновления, перезапускает daemon, открывает логи и создает browser tokens.',
-					steps: ['Установить app', 'Настроить модель', 'Подключить браузер']
+					commandLabel: 'Скрипт установки macOS',
+					note: 'Лаунчер позволяет проверять наличие обновлений, перезапускать демона, просматривать логи и создавать токены авторизации для браузера.',
+					steps: ['Установить приложение', 'Настроить модель', 'Связать с браузером']
 				},
 				windows: {
 					label: 'Windows',
 					title: 'Графический установщик',
-					body: 'Скачайте setup app. Он устанавливает launcher, shortcuts, curated skills и мастер настройки.',
+					body: 'Скачайте последнюю версию программы установки. Она установит лаунчер, ярлык в меню «Пуск» и на рабочем столе, предустановленные навыки и запустит мастер настройки.',
 					primaryLabel: 'Скачать установщик',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'Tray launcher стартует при входе, управляет daemon и сообщает, когда обновление готово.',
-					steps: ['Запустить setup', 'Пройти мастер', 'Подключить браузер']
+					note: 'Лаунчер в системном трее запускается при входе в систему, управляет настройками моделей, контролирует демона и сообщает о готовности обновлений.',
+					steps: ['Запустить установку', 'Использовать мастер', 'Связать с браузером']
 				},
 				linux: {
 					label: 'Linux',
-					title: 'Установка локального daemon',
-					body: 'Linux сохраняет CLI-first runtime с autostart daemon. Боковая панель подключается к тому же local gateway.',
+					title: 'Установка локального демона',
+					body: 'Версия для Linux сохраняет приоритет интерфейса командной строки с автозапуском демона. Боковая панель браузера по-прежнему подключается к тому же локальному шлюзу.',
 					primaryLabel: 'Копировать установщик',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Скрипт Linux',
-					note: 'Этот путь подходит для рабочих станций, серверов и прямого управления runtime.',
-					steps: ['Установить runtime', 'Настроить provider', 'Подключить браузер']
+					commandLabel: 'Скрипт установки Linux',
+					note: 'Этот путь подходит для рабочих станций, серверов и пользователей, предпочитающих напрямую управлять средой выполнения.',
+					steps: ['Установить среду', 'Настроить провайдера', 'Связать с браузером']
 				}
 			}
 		},
 		browser: {
 			badge: 'Боковая панель браузера',
-			title: 'Браузер дает Anda тело в вебе',
-			body: 'Спрашивайте об активной странице, собирайте факты и разрешайте локальному daemon действовать через браузер.',
+			title: 'Браузер дает Anda тело во Всемирной паутине',
+			body: 'Задавайте вопросы об активной странице, собирайте факты и позволяйте локальному демону совершать действия через браузерные инструменты с вашего согласия.',
 			store: 'Добавить расширение',
-			docs: 'Подключить браузер',
+			docs: 'Связать с браузером',
 			features: [
 				{
-					title: 'Передать контекст в память',
+					title: 'Перенос контекста страницы в память',
 					detail:
-						'Передайте title, URL, selection, text, screenshots, structured data и accessibility context локальному агенту.'
+						'Передавайте заголовок, URL-адрес, выделенный текст, текстовое содержимое страницы, снимки экрана, структурированные данные и контекст специальных возможностей локальному агенту.'
 				},
 				{
-					title: 'Действовать с разрешением',
+					title: 'Действия под контролем',
 					detail:
-						'Открывайте tabs, переключайте pages, click, type, scroll, download, print to PDF и inspect elements.'
+						'Открывайте вкладки, переключайте страницы, кликайте, вводите текст, прокручивайте, скачивайте файлы, экспортируйте страницы в PDF и инспектируйте элементы в рамках одного диалога.'
 				},
 				{
-					title: 'Держать один Brain',
+					title: 'Единый Brain на все случаи',
 					detail:
-						'Работа в браузере подключена к тому же daemon, files, tools, skills, channels и Brain memory.'
+						'Работа в браузере связывается с тем же локальным демоном, файлами, инструментами, навыками, каналами коммуникации и долгосрочной памятью Brain.'
 				}
 			]
 		},
 		launcher: {
-			badge: 'Desktop launcher',
-			title: 'Резидентное приложение для локального Brain',
-			body: 'Setup, status, pairing, logs, restart и updates остаются рядом с ОС для ежедневного использования Anda.',
+			badge: 'Десктопный лаунчер',
+			title: 'Фоновое приложение для локального Brain',
+			body: 'Настройка, статус, связывание, логи, перезапуск и обновления всегда находятся под рукой в операционной системе для удобного ежедневного использования Anda.',
 			features: [
 				{
-					title: 'Первый запуск',
-					detail: 'Настройте provider, API key, model и home без поиска файлов конфигурации.'
-				},
-				{
-					title: 'Daemon control',
+					title: 'Первичная настройка',
 					detail:
-						'Откройте Anda, проверьте status, перезапустите daemon, измените model settings и откройте logs.'
+						'Быстро укажите провайдера, API-ключ, модель и домашний каталог без необходимости вручную искать файлы конфигурации.'
 				},
 				{
-					title: 'Browser pairing',
-					detail: 'Создайте Gateway URL и Bearer token, затем вставьте их в боковую панель.'
+					title: 'Управление демоном',
+					detail:
+						'Запускайте Anda, проверяйте текущий статус, перезапускайте локального демона, редактируйте настройки моделей и открывайте логи прямо из системного меню.'
 				},
 				{
-					title: 'Update prompts',
-					detail: 'Проверяйте, скачивайте и устанавливайте updates с prompt на restart.'
+					title: 'Связывание с браузером',
+					detail:
+						'Создавайте Gateway URL и Bearer-токен прямо в лаунчере, а затем просто вставьте их в настройки боковой панели расширения.'
+				},
+				{
+					title: 'Автоматическое обновление',
+					detail:
+						'Приложение само проверяет наличие обновлений, скачивает новые версии и устанавливает их, предлагая перезапуск при готовности.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Brain',
-			title: 'Brain это сам продукт',
-			body: 'Модели являются интерфейсами вывода. Долговечный актив это локальный граф проектов, предпочтений, связей и решений.',
+			title: 'Brain — это сам продукт',
+			body: 'Модели — это лишь интерфейсы для вычислений. Настоящий ценный актив — это локально сохраненный граф ваших проектов, предпочтений, связей и решений.',
 			features: [
 				{
 					title: 'Локальный граф знаний',
 					detail:
-						'Brain формирует Cognitive Nexus из людей, проектов, preferences, decisions, events и меняющихся facts.'
+						'Brain постепенно выстраивает когнитивную связь (Cognitive Nexus) между людьми, проектами, предпочтениями, решениями, событиями и динамическими фактами.'
 				},
 				{
-					title: 'Непрерывная идентичность',
+					title: 'Стабильное самосознание',
 					detail:
-						'Anda переносит контекст, стиль работы, повторяющиеся обязанности и доверенные связи между сессиями.'
+						'Anda способна переносить ваш рабочий стиль, привычки, регулярные задачи и доверенные контакты из сессии в сессию.'
 				},
 				{
-					title: 'Память между моделями',
+					title: 'Память поверх разных моделей',
 					detail:
-						'Модель заменяема. Память остается локальной, проверяемой и независимой от одного провайдера.'
+						'Вы можете в любой момент сменить модель. Память останется локальной, прозрачной и независимой от аккаунта конкретного провайдера.'
 				},
 				{
-					title: 'Контекст с tools',
+					title: 'Интеграция с инструментами',
 					detail:
-						'Files, shell, scheduled jobs, documents, browser actions и subagents питают один контекст.'
+						'Файлы, консольные утилиты, задачи по расписанию, документы, действия в браузере и субагенты питают один общий контекст помощника.'
 				}
 			]
 		},
 		work: {
-			badge: 'Компромисс',
-			title: 'Не самый широкий набор tools. Самый долговечный помощник',
-			body: 'Anda Bot ставит качество памяти, исследование внешнего мира и ежедневный опыт выше упаковки всех функций сразу.',
+			badge: 'Разумный компромисс',
+			title: 'Не самый перегруженный комбайн, но самый долговечный помощник',
+			body: 'Anda Bot ставит качество памяти, исследование внешнего мира и удобство ежедневного использования выше бездумного накопления всех возможных функций.',
 			surfaces: [
 				{
 					label: 'Механизм памяти',
-					detail: 'Сначала сделать надежным recall предпочтений, проектов, связей и решений.'
+					detail:
+						'Мы делаем воспоминания о ваших предпочтениях, проектах, контактах и решениях абсолютно надежными, прежде чем добавлять новые переключатели.'
 				},
 				{
-					label: 'Исследовать мир',
+					label: 'Исследование мира',
 					detail:
-						'Использовать браузер, документы, файлы, shell и scheduled tasks для сбора фактов.'
+						'Используйте контекст браузера, документы, файлы, консольные инструменты и задачи по расписанию для сбора информации.'
 				},
 				{
 					label: 'Ежедневный опыт',
 					detail:
-						'Перейти от terminal-only workflows к launcher и side panel для долгого использования.'
+						'Переход от сценариев работы исключительно через терминал к удобному лаунчеру и боковой панели, подходящим для обычных пользователей.'
 				},
 				{
-					label: 'Открытые края',
+					label: 'Открытые границы',
 					detail:
-						'Сохранить skills, tools, subagents и external coding assistants без запирания памяти.'
+						'Сохраняйте доступ к внешним навыкам, инструментам, субагентам и сторонним помощникам программирования без изоляции памяти в облаке.'
 				}
 			]
 		},
 		final: {
-			title: 'Стройте вокруг памяти, которой владеете.',
-			body: 'Используйте Codex или Claude Code для кода. Anda Bot держит долговечный слой помощника рядом.',
-			install: 'Установить',
-			docs: 'Документы',
+			title: 'Стройте работу вокруг памяти, которая принадлежит вам',
+			body: 'Продолжайте использовать Codex или Claude Code для узконаправленного написания кода. Позвольте Anda Bot служить надежным помощником рядом с ними.',
+			install: 'Установить приложение',
+			docs: 'Читать документацию',
 			github: 'GitHub'
 		}
 	},
 	ar: {
 		meta: {
-			title: 'Anda Bot - مساعد AI محلي يبدأ من الذاكرة',
+			title: 'Anda Bot - مساعد الذكاء الاصطناعي المحلي القائم على الذاكرة أولاً',
 			description:
-				'استخدم Anda Bot كمساعد محلي يبدأ من الذاكرة، مع ذاكرة رسومية وسياق وتفضيلات وأدوات ومهام طويلة تحت سيطرتك.',
-			ogTitle: 'Anda Bot - مساعد AI محلي يبدأ من الذاكرة',
+				'استخدم Anda Bot كمساعد محلي قائم على الذاكرة أولاً، والذي يحافظ على ذاكرة الرسوم البيانية والسياق والتفضيلات والأدوات والمهام الطويلة تحت تحكمك الكامل.',
+			ogTitle: 'Anda Bot - مساعد الذكاء الاصطناعي المحلي القائم على الذاكرة أولاً',
 			ogDescription:
-				'ثبّت launcher، وصل إضافة المتصفح، واحتفظ بالذاكرة الرسومية طويلة المدى على جهازك.'
+				'قم بتثبيت مشغل سطح المكتب، وتوصيل إضافة المتصفح، والاحتفاظ بذاكرة الرسوم البيانية طويلة المدى على جهازك الخاص.'
 		},
 		nav: {
 			install: 'تثبيت التطبيق',
-			why: 'لماذا',
+			why: 'لماذا Anda',
 			browser: 'المتصفح',
-			launcher: 'Launcher',
+			launcher: 'المشغل',
 			memory: 'الذاكرة',
 			docs: 'الوثائق'
 		},
 		language: { label: 'اللغة' },
 		hero: {
-			badge: 'مساعد محلي يبدأ من الذاكرة',
-			title: 'يمكن تغيير النموذج. الذاكرة لا يجب أن تضيع',
-			body: 'يحفظ Anda Bot الذاكرة الرسومية محلياً كي يستمر مساعدك عبر المنصات والنماذج والجلسات.',
+			badge: 'مساعد الذكاء الاصطناعي المحلي القائم على الذاكرة أولاً',
+			title: 'يمكن لنموذجك أن يتغير. لكن ذاكرتك لا ينبغي لها ذلك',
+			body: 'يحفظ Anda Bot ذاكرة الرسوم البيانية طويلة المدى محلياً على جهازك، بحيث يستمر مساعدك عبر المنصات والنماذج والجلسات المختلفة.',
 			primary: 'تثبيت التطبيق',
 			secondary: 'إضافة الامتداد'
 		},
 		proof: [
-			{ value: 'memory-first', label: 'مبني حول ذاكرة محلية، لا حول حساب نموذج واحد' },
-			{ value: 'portable', label: 'غيّر النماذج دون إعادة بناء السياق والتفضيلات' },
 			{
-				value: 'surfaces',
-				label: 'المتصفح و launcher والطرفية و skills و cron وقنوات IM تشارك Brain واحداً'
+				value: 'الذاكرة أولاً',
+				label: 'مبني حول ذاكرة الرسوم البيانية المحلية، وليس حول حساب نموذج واحد'
+			},
+			{
+				value: 'قابل للنقل',
+				label: 'قم بتبديل النماذج دون الحاجة لإعادة بناء السياق وتفضيلاتك الخاصة'
+			},
+			{
+				value: 'واجهات يومية',
+				label:
+					'يتشارك المتصفح، والمشغل، والطرفية، والمهارات، والمهام المجدولة (cron), وقنوات المراسلة في Brain واحد'
 			}
 		],
 		why: {
 			badge: 'لماذا Anda Bot',
-			title: 'وكلاء البرمجة للكود. Anda Bot للاستمرارية',
-			body: 'Claude Code و Codex ممتازان داخل المستودع. Anda Bot هو طبقة المساعد الطويلة التي تتذكرك.',
+			title: 'استخدم وكلاء البرمجة للكود. واستخدم Anda Bot للاستمرارية',
+			body: 'يعد Claude Code و Codex ممتازين داخل المستودع. Anda Bot هو طبقة المساعد طويلة المدى التي تتذكر هويتك أثناء العمل.',
 			routes: [
 				{
 					name: 'Claude Code و Codex',
 					role: 'جلسات برمجة مركزة',
-					fit: 'الأفضل عندما يكون المستودع هو السياق ولا تحتاج الذاكرة الشخصية بعد انتهاء المهمة.'
+					fit: 'الأفضل عندما يكون المستودع هو السياق وتكون الذاكرة الشخصية اختيارية بعد انتهاء المهمة.'
 				},
 				{
-					name: 'OpenClaw ومنصات شبيهة Hermes',
-					role: 'أدوات و plugins واسعة',
-					fit: 'الأفضل عندما تكون الأولوية للنظام البيئي و skills الجاهزة وكثرة القدرات المضمنة.'
+					name: 'OpenClaw والمنصات الشبيهة بـ Hermes',
+					role: 'تغطية واسعة للأدوات والإضافات',
+					fit: 'الأفضل عندما تكون الأولوية لاتساع النظام البيئي، والمهارات الجاهزة، والعديد من القدرات المضمنة.'
 				},
 				{
 					name: 'Anda Bot',
-					role: 'قاعدة مساعد شخصي',
-					fit: 'الأفضل عندما يجب أن تبقى التفضيلات والعلاقات والبحوث والروتين والهوية بعد تغيير النموذج.',
+					role: 'ركيزة المساعد الشخصي',
+					fit: 'الأفضل عندما تحتاج تفضيلاتك وعلاقاتك ومسارات أبحاثك وروتينك وهويتك للبقاء بعد تغيير النموذج.',
 					primary: true
 				}
 			]
 		},
 		install: {
-			badge: 'ابدأ',
-			title: 'ثبّت التطبيق الذي يملك الذاكرة',
-			body: 'ابدأ من launcher، وصل المتصفح، وأبق daemon و Brain يعملان محلياً.',
-			detected: 'تم اكتشاف {os}',
-			chooseOs: 'اختر النظام',
-			tabAria: 'مسار التثبيت حسب نظام التشغيل',
+			badge: 'ابدأ العمل',
+			title: 'ثبّت التطبيق الذي يمتلك الذاكرة',
+			body: 'ابدأ باستخدام المشغل، وقم بتوصيل المتصفح، وحافظ على تشغيل الخدمة الخلفية (daemon) وBrain محلياً.',
+			detected: 'تم اكتشاف نظام التشغيل: {os}',
+			chooseOs: 'اختر نظام التشغيل',
+			tabAria: 'مسار التثبيت حسب نظام التشغيل المكتشف',
 			copy: 'نسخ',
 			copied: 'تم النسخ',
 			copyFailed: 'فشل النسخ',
 			copyAria: 'نسخ أمر التثبيت',
-			commandAria: 'نسخ أمر التثبيت',
+			commandAria: 'نسخ أمر التثبيت المتاح',
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Menu-bar launcher',
-					body: 'يثبت السكربت Anda Bot.app، ويسجل launcher عند تسجيل الدخول، ويبدأ daemon بعد الإعداد.',
-					primaryLabel: 'نسخ المثبت',
+					title: 'مشغل شريط القوائم',
+					body: 'يقوم سكريبت التثبيت بإضافة Anda Bot.app، وتسجيل المشغل في شريط القوائم عند تسجيل الدخول، وتشغيل الخدمة الخلفية (daemon) بعد التثبيت.',
+					primaryLabel: 'نسخ برنامج التثبيت',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'سكريبت macOS',
-					note: 'يمكن للـ launcher فحص التحديثات، وإعادة تشغيل daemon، وفتح السجلات، وإنشاء رموز ربط المتصفح.',
-					steps: ['تثبيت التطبيق', 'إعداد النموذج', 'وصل المتصفح']
+					commandLabel: 'سكريبت تثبيت macOS',
+					note: 'يمكن للمشغل فحص التحديثات، وإعادة تشغيل daemon، وفتح سجلات الأحداث، وإنشاء رموز ربط المتصفح.',
+					steps: ['تثبيت التطبيق', 'إعداد النموذج', 'ربط المتصفح']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'مثبت رسومي',
-					body: 'نزّل تطبيق setup الأحدث. يثبت launcher والاختصارات و curated skills ومعالج الإعداد.',
-					primaryLabel: 'تنزيل المثبت',
+					title: 'برنامج تثبيت رسومي',
+					body: 'قم بتنزيل أحدث تطبيق إعداد. حيث يقوم بتثبيت المشغل، وإدخال قائمة ابدأ، واختصار سطح المكتب، والمهارات المنسقة، ومعالج الإعداد.',
+					primaryLabel: 'تنزيل برنامج التثبيت',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'يبدأ tray launcher عند تسجيل الدخول، ويدير daemon، ويخبرك عندما يصبح التحديث جاهزاً.',
-					steps: ['تشغيل setup', 'استخدام المعالج', 'وصل المتصفح']
+					note: 'يبدأ مشغل علبة النظام عند تسجيل الدخول، ويدير إعدادات النموذج، ويتحكم في daemon، وينبهك عندما تكون التحديثات جاهزة.',
+					steps: ['تشغيل الإعداد', 'استخدام المعالج', 'ربط المتصفح']
 				},
 				linux: {
 					label: 'Linux',
-					title: 'تثبيت daemon محلي',
-					body: 'يحافظ Linux على runtime بنمط CLI-first مع autostart للـ daemon. اللوحة الجانبية تتصل بالـ gateway المحلي نفسه.',
-					primaryLabel: 'نسخ المثبت',
+					title: 'تثبيت daemon المحلي',
+					body: 'يحافظ نظام Linux على بيئة التشغيل التي تركز على واجهة الأوامر (CLI) مع التشغيل التلقائي لـ daemon. لا تزال اللوحة الجانبية للمتصفح تتصل بنفس البوابة المحلية.',
+					primaryLabel: 'نسخ برنامج التثبيت',
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'سكريبت Linux',
-					note: 'هذا المسار مناسب لمحطات العمل والخوادم ومن يفضل إدارة runtime مباشرة.',
-					steps: ['تثبيت runtime', 'إعداد provider', 'وصل المتصفح']
+					commandLabel: 'سكريبت تثبيت Linux',
+					note: 'استخدم هذا المسار لمحطات العمل والخوادم والمستخدمين الذين يفضلون إدارة بيئة التشغيل مباشرة.',
+					steps: ['تثبيت بيئة التشغيل', 'تكوين المزود', 'ربط المتصفح']
 				}
 			}
 		},
 		browser: {
-			badge: 'لوحة المتصفح الجانبية',
-			title: 'يعطي المتصفح Anda جسداً على الويب',
-			body: 'اسأل عن الصفحة النشطة، اجمع الأدلة، ودع daemon المحلي يعمل عبر أدوات المتصفح بعد موافقتك.',
+			badge: 'اللوحة الجانبية للمتصفح',
+			title: 'يمنح المتصفح Anda جسداً على شبكة الويب',
+			body: 'اسأل عن الصفحة النشطة، واجمع الأدلة والبيانات، واسمح للـ daemon المحلي بالعمل عبر أدوات المتصفح بعد موافقتك الصريحة.',
 			store: 'إضافة الامتداد',
-			docs: 'وصل المتصفح',
+			docs: 'ربط المتصفح',
 			features: [
 				{
 					title: 'إدخال سياق الصفحة في الذاكرة',
 					detail:
-						'أرسل العنوان والرابط والتحديد والنص واللقطات والبيانات المنظمة وسياق الوصول إلى الوكيل المحلي.'
+						'أرسل العنوان والرابط والتحديد ونص الصفحة ولقطات الشاشة والبيانات المنظمة وسياق إمكانية الوصول إلى الوكيل المحلي.'
 				},
 				{
-					title: 'العمل بإذن',
-					detail: 'افتح تبويبات، بدّل صفحات، انقر، اكتب، مرر، نزّل، اطبع PDF، وافحص العناصر.'
+					title: 'العمل بموافقتك',
+					detail:
+						'افتح التبويبات، وبدّل الصفحات، وانقر، واكتب، ومرر، ونزّل الملفات، واطبع إلى PDF، وافحص العناصر داخل المحادثة نفسها.'
 				},
 				{
-					title: 'استخدام Brain نفسه',
-					detail: 'عمل المتصفح يتصل بنفس daemon والملفات والأدوات و skills والقنوات وذاكرة Brain.'
+					title: 'الاحتفاظ بنفس الـ Brain',
+					detail:
+						'يتصل عمل المتصفح بنفس daemon والملفات والأدوات والمهارات والقنوات وذاكرة Brain طويلة المدى.'
 				}
 			]
 		},
 		launcher: {
-			badge: 'Desktop launcher',
-			title: 'تطبيق مقيم ل Brain المحلي',
-			body: 'يبقى setup والحالة والربط والسجلات وإعادة التشغيل والتحديثات قرب النظام لاستخدام Anda يومياً.',
+			badge: 'مشغل سطح المكتب',
+			title: 'تطبيق مقيم لـ Brain المحلي',
+			body: 'تظل إعدادات التهيئة، والحالة، والربط، والسجلات، وإعادة التشغيل، والتحديثات قريبة من نظام التشغيل لاستخدام Anda يومياً.',
 			features: [
 				{
-					title: 'الإعداد الأول',
-					detail: 'اضبط provider و API key والنموذج و home دون البحث في ملفات الإعداد.'
+					title: 'التهيئة عند التشغيل الأول',
+					detail:
+						'قم بتكوين المزود، ومفتاح API، والنموذج، والدليل الرئيسي دون الحاجة للبحث في ملفات التكوين المعقدة.'
 				},
 				{
-					title: 'التحكم بالـ daemon',
-					detail: 'افتح Anda، افحص الحالة، أعد تشغيل daemon، عدل النموذج، وافتح السجلات من القائمة.'
+					title: 'التحكم في الـ daemon',
+					detail:
+						'افتح Anda، وافحص الحالة، وأعد تشغيل daemon المحلي، وعدل إعدادات النموذج، وانتقل إلى السجلات من القائمة.'
 				},
 				{
 					title: 'ربط المتصفح',
-					detail: 'أنشئ Gateway URL و Bearer token من launcher ثم الصقهما في اللوحة الجانبية.'
+					detail:
+						'قم بإنشاء Gateway URL و Bearer token من المشغل، ثم الصقهما في اللوحة الجانبية للامتداد.'
 				},
 				{
-					title: 'تنبيهات التحديث',
-					detail: 'افحص وحمّل وثبّت التحديثات مع مطالبة بإعادة التشغيل عند الجاهزية.'
+					title: 'تحديثات الإصدارات',
+					detail:
+						'افحص التحديثات تلقائياً، ونزّل أصول الإصدار، وثبت التحديثات مع إشعار بإعادة التشغيل عند الجاهزية.'
 				}
 			]
 		},
 		memory: {
 			badge: 'Anda Brain',
-			title: 'Brain هو جوهر المنتج',
-			body: 'النماذج واجهات استدلال. الأصل الدائم هو الرسم المحلي للمشاريع والتفضيلات والعلاقات والقرارات.',
+			title: 'Brain هو جوهر المنتج الحقيقي',
+			body: 'النماذج هي مجرد واجهات استدلال. الأصول الدائمة والمستقرة هي الرسم البياني المحلي لمشاريعك وتفضيلاتك وعلاقاتك وقراراتك.',
 			features: [
 				{
-					title: 'رسم معرفة محلي',
+					title: 'مخطط المعرفة المحلي',
 					detail:
-						'يشكل Brain شبكة Cognitive Nexus من أشخاص ومشاريع وتفضيلات وقرارات وأحداث وحقائق متغيرة.'
+						'يشكل Brain محوراً معرفياً (Cognitive Nexus) يربط الأشخاص والمشاريع والتفضيلات والقرارات والأحداث والحقائق المتغيرة.'
 				},
 				{
-					title: 'هوية مستمرة',
-					detail: 'يحمل Anda سياقك وأسلوب عملك ومسؤولياتك المتكررة وعلاقاتك الموثوقة بين الجلسات.'
-				},
-				{
-					title: 'ذاكرة عبر النماذج',
-					detail: 'يمكن استبدال النموذج. تبقى الذاكرة محلية وقابلة للفحص ومستقلة عن مزود واحد.'
-				},
-				{
-					title: 'سياق واع بالأدوات',
+					title: 'الهوية المستمرة',
 					detail:
-						'الملفات و shell والمهام المجدولة والمستندات والمتصفح و subagents تغذي السياق نفسه.'
+						'يمكن لـ Anda نقل سياقك، وأسلوب عملك، ومسؤولياتك المتكررة، وعلاقاتك الموثوقة عبر الجلسات المختلفة.'
+				},
+				{
+					title: 'الذاكرة العابرة للنماذج',
+					detail:
+						'النموذج قابل للاستبدال والترقية. بينما تظل الذاكرة محلية وقابلة للفحص ومستقلة تماماً عن حساب أي مزود منفرد.'
+				},
+				{
+					title: 'سياق واعٍ بالأدوات',
+					detail:
+						'تغذي الملفات، وأدوات القشرة (shell)، والوظائف المجدولة، والمستندات، وإجراءات المتصفح، والوكلاء الفرعيون نفس سياق المساعد.'
 				}
 			]
 		},
 		work: {
-			badge: 'الاختيار',
-			title: 'ليس أكبر صندوق أدوات. بل المساعد الأطول عمراً',
-			body: 'يركز Anda Bot أولاً على جودة الذاكرة واستكشاف العالم وتجربة الاستخدام اليومية، لا على حزم كل ميزة.',
+			badge: 'المفاضلة والالتزام',
+			title: 'ليس صندوق الأدوات الأكبر، بل المساعد الأطول عمراً والأكثر استقراراً',
+			body: 'يعطي Anda Bot الأولوية لجودة الذاكرة، واستكشاف العالم الخارجي، وسهولة الاستخدام اليومي على حساب تكديس الميزات غير الضرورية.',
 			surfaces: [
 				{
 					label: 'آلية الذاكرة',
-					detail: 'اجعل تذكر التفضيلات والمشاريع والعلاقات والقرارات موثوقاً قبل زيادة الضوابط.'
+					detail:
+						'تأكد من جعل استدعاء التفضيلات والمشاريع والعلاقات والقرارات موثوقاً قبل إضافة المزيد من المفاتيح والأزرار.'
 				},
 				{
 					label: 'استكشاف العالم',
-					detail: 'استخدم المتصفح والمستندات والملفات و shell والمهام المجدولة لجمع الأدلة.'
+					detail:
+						'استخدم سياق المتصفح، والمستندات، والملفات، وأدوات shell، والمهام المجدولة لجمع الأدلة والمعلومات.'
 				},
 				{
-					label: 'تجربة يومية',
-					detail: 'انتقل من العمل عبر الطرفية فقط إلى launcher ولوحة جانبية صالحة للاستخدام الطويل.'
+					label: 'تجربة الاستخدام اليومية',
+					detail:
+						'انتقل من سير العمل المقتصر على الطرفية فقط إلى مشغل لوحة جانبية يستطيع المستخدمون العاديون التعايش معها يومياً.'
 				},
 				{
-					label: 'حواف مفتوحة',
-					detail: 'حافظ على skills والأدوات و subagents ومساعدي البرمجة دون حبس الذاكرة.'
+					label: 'حدود مفتوحة',
+					detail:
+						'حافظ على توفر المهارات والأدوات والوكلاء الفرعيين ومساعدي البرمجة الخارجيين دون حبس الذاكرة في مكان مغلق.'
 				}
 			]
 		},
 		final: {
-			title: 'ابن على ذاكرة تملكها.',
-			body: 'استخدم Codex أو Claude Code للبرمجة المركزة. دع Anda Bot يحفظ طبقة المساعد الدائمة.',
+			title: 'ابنِ حول ذاكرة تمتلكها بنفسك',
+			body: 'استخدم Codex أو Claude Code للبرمجة المركزة. ودع Anda Bot يحفظ طبقة المساعد المستقرة بجانبهما.',
 			install: 'تثبيت التطبيق',
 			docs: 'قراءة الوثائق',
 			github: 'GitHub'

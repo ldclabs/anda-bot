@@ -1,65 +1,71 @@
 ---
 sidebar_position: 1
 title: تثبيت Anda
-description: ثبّت إصدار Anda Bot أو شغّله من المصدر.
+description: قم بتثبيت إصدار Anda Bot الرسمي، أو قم بتشغيله من المصدر.
 ---
 
 # تثبيت Anda
 
-يمكن تثبيت Anda Bot من إصدار جاهز أو تشغيله مباشرة من المستودع. استخدم الإصدار اليومي للعمل المعتاد، والمصدر للمساهمة أو التصحيح أو التجربة.
+يمكن تثبيت Anda Bot من إصدار رسمي (release) أو تشغيله مباشرة من مصدر المستودع. تعد الإصدارات الرسمية هي الأفضل للاستخدام اليومي؛ بينما تعد عمليات البناء من المصدر هي الأفضل للمساهمة والتصحيح وتجربة الميزات الجديدة.
 
-## تثبيت أحدث إصدار
+## تثبيت الإصدار الأخير
 
-على macOS نوصي بـ Homebrew:
+على نظام macOS، يوصى باستخدام Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-يمكن لـ macOS وLinux استخدام السكربت:
+على نظام macOS، تقوم صيغة Homebrew بتثبيت كل من `anda` و `anda_launcher`. قم بتشغيل `anda_launcher` مرة واحدة لبدء تشغيل مشغل شريط القوائم وتحديث `~/Applications/Anda Bot.app`.
+
+يمكن لمستخدمي macOS و Linux أيضاً استخدام سكريبت التثبيت:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell:
+يجب على مستخدمي نظام Windows تنزيل `AndaBotSetup-windows-x86_64.exe` من [أحدث إصدار](https://github.com/ldclabs/anda-bot/releases/latest) والنقر عليه نقراً مزدوجاً. يضع برنامج التثبيت Anda تحت المسار `%LOCALAPPDATA%\Programs\AndaBot` ، ويقوم بتثبيت المهارات (Skills) المنسقة، ويقوم بإنشاء اختصارات في قائمة ابدأ وسطح المكتب، ويسجل مشغل علبة النظام للتشغيل عند تسجيل الدخول، ويبدأ تشغيل المشغل، ويفتح معالج إعداد رسومي (GUI) لتكوين المزود/مفتاح API/النموذج، ويفحص التحديثات التي تم تنزيلها والتي يمكن تثبيتها عند إشعار إعادة التشغيل.
+
+لا يزال بإمكان المستخدمين المتقدمين والبيئات المجدولة (CI) استخدام PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-تسجل مثبتات الإصدار تشغيل Anda عند تسجيل دخول المستخدم الحالي وتحاول بدء daemon فورًا. في Windows وmacOS يستطيع launcher في الشريط أو شريط القوائم أيضًا التحقق من التحديثات وتنزيلها ثم مطالبتك بإعادة التشغيل لتثبيتها. في PowerShell أضف `-NoAutostart` أو `-NoStart`؛ وفي مثبت shell استخدم `ANDA_NO_AUTOSTART=1` أو `ANDA_NO_START=1`.
+يقوم مثبت macOS shell أيضاً بتثبيت `~/Applications/Anda Bot.app` ، ويسجل مشغل شريط القوائم عند تسجيل الدخول، ويبدأ تشغيله على الفور; يبدأ المشغل daemon بعد الإعداد، ويمكنه التحقق من وجود تحديثات من شريط القوائم، ويطلب التثبيت وإعادة التشغيل بعد تنزيل التحديث. تسجل عمليات تثبيت Linux shell تشغيل daemon التلقائي مباشرة. بالنسبة إلى PowerShell، أضف `-NoAutostart` أو `-NoStart` لإلغاء التشغيل التلقائي؛ بالنسبة لمثبت shell، اضبط متغيرات البيئة `ANDA_NO_AUTOSTART=1` أو `ANDA_NO_START=1`.
 
-ثم افتح طرفية جديدة:
+بعد التثبيت، افتح طرفية جديدة وقم بتشغيل:
 
 ```bash
 anda
 ```
 
-## إعداد مفتاح API
+## إعداد مفتاح API للنموذج
 
-تحتاج إلى مفتاح API واحد على الأقل لمزود نماذج:
+تحتاج إلى مفتاح API واحد على الأقل لمزود النموذج. يمكن لمستخدمي مثبت Windows إدخاله في معالج الإعداد. بينما يمكن لمستخدمي واجهة سطر الأوامر (CLI) البدء بمتغير بيئة:
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
 ```
 
-Windows PowerShell:
+في Windows PowerShell:
 
 ```powershell
 $env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
 ```
 
-يمكنك أيضًا حفظ المفتاح في `~/.anda/config.yaml`، وله أولوية على متغيرات البيئة.
+يمكنك أيضاً كتابة المفتاح في `~/.anda/config.yaml` لإعادة استخدامه. المفتاح `api_key` في `config.yaml` له الأولوية على متغيرات البيئة.
 
-## أول تشغيل
+## التشغيل الأول
 
-ينشئ Anda ملف `~/.anda/config.yaml`. إذا كان الإعداد ناقصًا، ستعرض واجهة الطرفية الحقول المطلوبة.
+عند التشغيل الأول، يقوم Anda بإنشاء دليل تشغيل محلي وملف `~/.anda/config.yaml`. إذا كان التكوين غير مكتمل، تسرد واجهة مستخدم الطرفية الحقول المفقودة.
 
-1. افتح `~/.anda/config.yaml`.
-2. املأ `family` و `model` و `api_base` و `api_key` أو متغير البيئة.
+1. افتح ملف `~/.anda/config.yaml`.
+2. املأ حقول مزود النموذج: العائلة (`family`)، والنموذج (`model`)، ورابط قاعدة API (`api_base`)، وإما مفتاح API (`api_key`) أو متغير البيئة.
 3. احفظ الملف.
-4. ارجع إلى الواجهة واضغط Enter.
+4. قم بتحديث النماذج من المشغل أو اللوحة الجانبية للمتصفح، أو قم بتشغيل `anda models reload`.
+
+تكوين النموذج الأدنى:
 
 ```yaml
 model:
@@ -68,14 +74,16 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "YOUR_API_KEY" # يمكن تركه فارغاً عند تعيين DEEPSEEK_API_KEY
       labels: ["pro", "brain"]
       disabled: false
 ```
 
-تجعل علامة `brain` هذا المزود مفضلاً لمهام الذاكرة.
+تجعل تسمية `brain` دماغ الذاكرة يفضل هذا المزود. إذا لم يكن لدى أي مزود هذه التسمية، فستستخدم مهام الذاكرة النموذج النشط (active).
 
 ## التشغيل من المصدر
+
+للشغيل مباشرة من المستودع:
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -83,16 +91,29 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-لعزل المشاريع أو الاختبارات:
+استخدم دليلاً رئيسياً (home) منفصلاً لعزل الهويات أو المشاريع أو بيانات الاختبار:
 
 ```bash
 anda --home /path/to/.anda
 ```
 
+أمر المصدر المعادل:
+
+```bash
+cargo run -p anda_bot -- --home /path/to/.anda
+```
+
 ## التحديث
+
+إذا تم تثبيت التطبيق باستخدام سكريبت التثبيت، فقم بالتحديث باستخدام:
 
 ```bash
 anda update
+```
+
+قم بإدارة daemon الخلفية باستخدام:
+
+```bash
 anda status
 anda start
 anda stop

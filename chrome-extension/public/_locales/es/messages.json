@@ -54,7 +54,7 @@
     "message": "Completar configuración en el lanzador"
   },
   "onboardingConfigureBody": {
-    "message": "Abre Anda Bot desde la bandeja del sistema, la barra de menús o el menú Inicio, completa el asistente de provider/API key/model y mantén el lanzador en ejecución mientras usas la extensión."
+    "message": "Abre Anda Bot desde la bandeja del sistema, la barra de menús o el menú Inicio, completa el asistente de configuración (proveedor/clave API/modelo) y mantén el lanzador en ejecución mientras usas la extensión."
   },
   "openConfigEditor": {
     "message": "Abrir editor de config.yaml"
@@ -816,13 +816,13 @@
     "message": "Anda Dashboard"
   },
   "dashboardBrainDetail": {
-    "message": "Memory graph workspace"
+    "message": "Espacio de trabajo del grafo de memoria"
   },
   "dashboardBookmarksDetail": {
-    "message": "Saved conversations"
+    "message": "Conversaciones guardadas"
   },
   "dashboardConfigDetail": {
-    "message": "Daemon configuration"
+    "message": "Configuración del demonio"
   },
   "dashboardNoConnection": {
     "message": "No connection"
@@ -852,25 +852,25 @@
     "message": "Config"
   },
   "bookmarksDashboardDescription": {
-    "message": "Folders and saved assistant messages."
+    "message": "Carpetas y mensajes guardados del asistente."
   },
   "bookmarksLibraryTitle": {
     "message": "Bookmark library"
   },
   "bookmarksLibrarySubtitle": {
-    "message": "Browse saved messages, organize folders, and reopen chat context."
+    "message": "Explora los mensajes guardados, organiza las carpetas y vuelve a abrir el contexto del chat."
   },
   "bookmarksSearchPlaceholder": {
-    "message": "Search bookmarks"
+    "message": "Buscar marcadores"
   },
   "bookmarkContextTitle": {
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Selected bookmark metadata and Brain links."
+    "message": "Metadatos del marcador seleccionado y enlaces de memoria (Brain)."
   },
   "bookmarkSelected": {
-    "message": "Selected bookmark"
+    "message": "Marcador seleccionado"
   },
   "bookmarkOpenChat": {
     "message": "Open chat"
@@ -882,13 +882,13 @@
     "message": "Copied Markdown"
   },
   "bookmarkNotLocated": {
-    "message": "Could not locate the message; its conversation may be unavailable."
+    "message": "No se pudo ubicar el mensaje; su conversación puede no estar disponible."
   },
   "bookmarkFolders": {
     "message": "Folders"
   },
   "bookmarkLinkedBrain": {
-    "message": "Linked Brain concepts"
+    "message": "Conceptos de memoria vinculados"
   },
   "loadMore": {
     "message": "Cargar más"
@@ -972,106 +972,106 @@
     "message": "Memorias fijadas"
   },
   "dashboardSkillsDetail": {
-    "message": "Personal workflows"
+    "message": "Flujos de trabajo personales"
   },
   "dashboardSkillsCrumb": {
-    "message": "Skills"
+    "message": "Habilidades"
   },
   "skills": {
-    "message": "Skills"
+    "message": "Habilidades"
   },
   "skillsSearchPlaceholder": {
-    "message": "Search skills"
+    "message": "Buscar habilidades"
   },
   "reloadSkills": {
-    "message": "Reload skills"
+    "message": "Recargar habilidades"
   },
   "allSources": {
-    "message": "All sources"
+    "message": "Todas las fuentes"
   },
   "allStatuses": {
-    "message": "All statuses"
+    "message": "Todos los estados"
   },
   "skillsEmpty": {
-    "message": "No skills found"
+    "message": "No se encontraron habilidades"
   },
   "skillImportToAnda": {
-    "message": "Import to Anda"
+    "message": "Importar a Anda"
   },
   "skillCustomize": {
-    "message": "Customize"
+    "message": "Personalizar"
   },
   "skillCloned": {
-    "message": "Skill cloned to Personal."
+    "message": "Habilidad clonada a la biblioteca personal."
   },
   "skillsReloaded": {
-    "message": "Skills reloaded."
+    "message": "Habilidades recargadas."
   },
   "skillEnabled": {
-    "message": "Skill enabled."
+    "message": "Habilidad habilitada."
   },
   "skillDisabled": {
-    "message": "Skill disabled."
+    "message": "Habilidad deshabilitada."
   },
   "skillDeleted": {
-    "message": "Skill moved to trash."
+    "message": "Habilidad movida a la papelera."
   },
   "skillOptimizationPromptReady": {
-    "message": "Optimization prompt filled in the side panel."
+    "message": "Indicación de optimización rellenada en el panel lateral."
   },
   "skillDeleteConfirm": {
-    "message": "Move this Personal skill to trash?"
+    "message": "¿Mover esta habilidad personal a la papelera?"
   },
   "enableSkill": {
-    "message": "Enable"
+    "message": "Habilitar"
   },
   "disableSkill": {
-    "message": "Disable"
+    "message": "Deshabilitar"
   },
   "deleteSkill": {
-    "message": "Delete"
+    "message": "Eliminar"
   },
   "skillStatusActive": {
-    "message": "Active"
+    "message": "Activo"
   },
   "skillStatusDisabled": {
-    "message": "Disabled"
+    "message": "Deshabilitado"
   },
   "skillStatusShadowed": {
-    "message": "Shadowed"
+    "message": "Sombreado"
   },
   "skillStatusError": {
     "message": "Error"
   },
   "skillStatusInactive": {
-    "message": "Inactive"
+    "message": "Inactivo"
   },
   "skillOverview": {
-    "message": "Overview"
+    "message": "Resumen"
   },
   "skillFiles": {
-    "message": "Files"
+    "message": "Archivos"
   },
   "skillOptimize": {
-    "message": "Optimize"
+    "message": "Optimizar"
   },
   "skillDirectory": {
-    "message": "Directory"
+    "message": "Directorio"
   },
   "skillAgentName": {
-    "message": "Agent name"
+    "message": "Nombre del agente"
   },
   "skillUpdated": {
-    "message": "Updated"
+    "message": "Actualizado"
   },
   "skillFileCount": {
-    "message": "$1 files"
+    "message": "$1 archivos"
   },
   "skillFolder": {
-    "message": "Folder"
+    "message": "Carpeta"
   },
   "skillFileTruncated": {
-    "message": "Truncated"
+    "message": "Truncado"
   },
   "skillUsage": {
     "message": "Uso"
@@ -1092,30 +1092,30 @@
     "message": "$1 entrada / $2 salida / $3 caché"
   },
   "skillAllowedTools": {
-    "message": "Allowed tools"
+    "message": "Herramientas permitidas"
   },
   "skillDefaultTools": {
-    "message": "Default runtime tools"
+    "message": "Herramientas de ejecución predeterminadas"
   },
   "skillDiagnostics": {
-    "message": "Diagnostics"
+    "message": "Diagnósticos"
   },
   "skillDiagnosticsClear": {
-    "message": "No diagnostics"
+    "message": "Sin diagnósticos"
   },
   "skillOptimizeGoal": {
-    "message": "What should Anda improve?"
+    "message": "¿Qué debería mejorar Anda?"
   },
   "skillOptimizeAndaHint": {
-    "message": "Anda will receive this directory path and use skill-creator to inspect and update the skill."
+    "message": "Anda recibirá la ruta de este directorio y usará skill-creator para inspeccionar y actualizar la habilidad."
   },
   "skillOptimizePersonalOnly": {
-    "message": "Only Personal skills can be optimized. Copy this skill to Personal first."
+    "message": "Solo se pueden optimizar las habilidades personales. Copia esta habilidad a la sección personal primero."
   },
   "copySkillToPersonal": {
-    "message": "Copy to Personal"
+    "message": "Copiar a la biblioteca personal"
   },
   "optimizeSkillWithAnda": {
-    "message": "Ask Anda to optimize"
+    "message": "Pedir a Anda que optimice"
   }
 }

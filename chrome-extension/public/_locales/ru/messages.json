@@ -54,7 +54,7 @@
     "message": "Завершить настройку в лаунчере"
   },
   "onboardingConfigureBody": {
-    "message": "Откройте Anda Bot из системного трея, строки меню или меню Пуск, завершите мастер provider/API key/model и держите лаунчер запущенным во время использования расширения."
+    "message": "Откройте Anda Bot из системного трея, строки меню или меню Пуск, завершите мастер настройки (провайдер/API-ключ/модель) и держите лаунчер запущенным во время использования расширения."
   },
   "openConfigEditor": {
     "message": "Открыть редактор config.yaml"
@@ -816,13 +816,13 @@
     "message": "Anda Dashboard"
   },
   "dashboardBrainDetail": {
-    "message": "Memory graph workspace"
+    "message": "Рабочая область графа памяти"
   },
   "dashboardBookmarksDetail": {
-    "message": "Saved conversations"
+    "message": "Сохраненные диалоги"
   },
   "dashboardConfigDetail": {
-    "message": "Daemon configuration"
+    "message": "Конфигурация демона"
   },
   "dashboardNoConnection": {
     "message": "No connection"
@@ -852,25 +852,25 @@
     "message": "Config"
   },
   "bookmarksDashboardDescription": {
-    "message": "Folders and saved assistant messages."
+    "message": "Папки и сохраненные сообщения ассистента."
   },
   "bookmarksLibraryTitle": {
     "message": "Bookmark library"
   },
   "bookmarksLibrarySubtitle": {
-    "message": "Browse saved messages, organize folders, and reopen chat context."
+    "message": "Просматривайте сохраненные сообщения, систематизируйте папки и открывайте контекст чата."
   },
   "bookmarksSearchPlaceholder": {
-    "message": "Search bookmarks"
+    "message": "Поиск в закладках"
   },
   "bookmarkContextTitle": {
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Selected bookmark metadata and Brain links."
+    "message": "Метаданные выбранной закладки и связи с памятью."
   },
   "bookmarkSelected": {
-    "message": "Selected bookmark"
+    "message": "Выбранная закладка"
   },
   "bookmarkOpenChat": {
     "message": "Open chat"
@@ -882,13 +882,13 @@
     "message": "Copied Markdown"
   },
   "bookmarkNotLocated": {
-    "message": "Could not locate the message; its conversation may be unavailable."
+    "message": "Не удалось найти сообщение; диалог может быть недоступен."
   },
   "bookmarkFolders": {
     "message": "Folders"
   },
   "bookmarkLinkedBrain": {
-    "message": "Linked Brain concepts"
+    "message": "Связанные концепты памяти"
   },
   "loadMore": {
     "message": "Загрузить ещё"
@@ -972,106 +972,106 @@
     "message": "Закрепленные воспоминания"
   },
   "dashboardSkillsDetail": {
-    "message": "Personal workflows"
+    "message": "Персональные рабочие процессы"
   },
   "dashboardSkillsCrumb": {
-    "message": "Skills"
+    "message": "Навыки"
   },
   "skills": {
-    "message": "Skills"
+    "message": "Навыки"
   },
   "skillsSearchPlaceholder": {
-    "message": "Search skills"
+    "message": "Поиск навыков"
   },
   "reloadSkills": {
-    "message": "Reload skills"
+    "message": "Перезагрузить навыки"
   },
   "allSources": {
-    "message": "All sources"
+    "message": "Все источники"
   },
   "allStatuses": {
-    "message": "All statuses"
+    "message": "Все статусы"
   },
   "skillsEmpty": {
-    "message": "No skills found"
+    "message": "Навыки не найдены"
   },
   "skillImportToAnda": {
-    "message": "Import to Anda"
+    "message": "Импортировать в Anda"
   },
   "skillCustomize": {
-    "message": "Customize"
+    "message": "Настроить"
   },
   "skillCloned": {
-    "message": "Skill cloned to Personal."
+    "message": "Навык скопирован в личную библиотеку."
   },
   "skillsReloaded": {
-    "message": "Skills reloaded."
+    "message": "Навыки перезагружены."
   },
   "skillEnabled": {
-    "message": "Skill enabled."
+    "message": "Навык включен."
   },
   "skillDisabled": {
-    "message": "Skill disabled."
+    "message": "Навык отключен."
   },
   "skillDeleted": {
-    "message": "Skill moved to trash."
+    "message": "Навык перемещен в корзину."
   },
   "skillOptimizationPromptReady": {
-    "message": "Optimization prompt filled in the side panel."
+    "message": "Запрос на оптимизацию заполнен на боковой панели."
   },
   "skillDeleteConfirm": {
-    "message": "Move this Personal skill to trash?"
+    "message": "Переместить этот личный навык в корзину?"
   },
   "enableSkill": {
-    "message": "Enable"
+    "message": "Включить"
   },
   "disableSkill": {
-    "message": "Disable"
+    "message": "Отключить"
   },
   "deleteSkill": {
-    "message": "Delete"
+    "message": "Удалить"
   },
   "skillStatusActive": {
-    "message": "Active"
+    "message": "Активен"
   },
   "skillStatusDisabled": {
-    "message": "Disabled"
+    "message": "Отключен"
   },
   "skillStatusShadowed": {
-    "message": "Shadowed"
+    "message": "Затенен"
   },
   "skillStatusError": {
-    "message": "Error"
+    "message": "Ошибка"
   },
   "skillStatusInactive": {
-    "message": "Inactive"
+    "message": "Неактивен"
   },
   "skillOverview": {
-    "message": "Overview"
+    "message": "Обзор"
   },
   "skillFiles": {
-    "message": "Files"
+    "message": "Файлы"
   },
   "skillOptimize": {
-    "message": "Optimize"
+    "message": "Оптимизировать"
   },
   "skillDirectory": {
-    "message": "Directory"
+    "message": "Каталог"
   },
   "skillAgentName": {
-    "message": "Agent name"
+    "message": "Имя агента"
   },
   "skillUpdated": {
-    "message": "Updated"
+    "message": "Обновлено"
   },
   "skillFileCount": {
-    "message": "$1 files"
+    "message": "$1 файлов"
   },
   "skillFolder": {
-    "message": "Folder"
+    "message": "Папка"
   },
   "skillFileTruncated": {
-    "message": "Truncated"
+    "message": "Усечено"
   },
   "skillUsage": {
     "message": "Использование"
@@ -1092,30 +1092,30 @@
     "message": "$1 вход / $2 выход / $3 кэш"
   },
   "skillAllowedTools": {
-    "message": "Allowed tools"
+    "message": "Разрешенные инструменты"
   },
   "skillDefaultTools": {
-    "message": "Default runtime tools"
+    "message": "Инструменты среды выполнения по умолчанию"
   },
   "skillDiagnostics": {
-    "message": "Diagnostics"
+    "message": "Диагностика"
   },
   "skillDiagnosticsClear": {
-    "message": "No diagnostics"
+    "message": "Нет диагностических сообщений"
   },
   "skillOptimizeGoal": {
-    "message": "What should Anda improve?"
+    "message": "Что Anda должен улучшить?"
   },
   "skillOptimizeAndaHint": {
-    "message": "Anda will receive this directory path and use skill-creator to inspect and update the skill."
+    "message": "Anda получит путь к этой папке и использует skill-creator для проверки и обновления навыка."
   },
   "skillOptimizePersonalOnly": {
-    "message": "Only Personal skills can be optimized. Copy this skill to Personal first."
+    "message": "Оптимизировать можно только личные навыки. Сначала скопируйте этот навык в личные."
   },
   "copySkillToPersonal": {
-    "message": "Copy to Personal"
+    "message": "Копировать в личные"
   },
   "optimizeSkillWithAnda": {
-    "message": "Ask Anda to optimize"
+    "message": "Попросить Anda оптимизировать"
   }
 }

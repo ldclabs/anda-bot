@@ -1,62 +1,71 @@
 ---
 sidebar_position: 2
 title: Terminal
-description: Contrôles de la UI terminal, commandes slash et commandes CLI courantes.
+description: Contrôles de l'interface utilisateur du terminal Anda Bot, commandes slash et commandes CLI courantes.
 ---
 
 # Terminal
 
-Après `anda`, la UI terminal se connecte au daemon local. Quand une conversation se termine correctement, elle est envoyée à Brain pour former une mémoire longue.
+Après avoir exécuté `anda`, l'interface utilisateur du terminal se connecte au démon local. Lorsqu'une conversation se termine avec succès, elle est soumise au Brain en arrière-plan pour la formation de la mémoire à long terme.
 
-## Contrôles
+## Contrôles de saisie
 
 | Touche | Action |
 | --- | --- |
-| Enter | Envoyer le message |
-| Shift+Enter | Insérer une nouvelle ligne |
-| Ctrl+U | Vider l'entrée |
-| Ctrl+A / Ctrl+E | Aller au début ou à la fin |
-| Esc | Voir l'état |
+| Entrée | Envoyer le message actuel |
+| Maj+Entrée | Insérer un saut de ligne |
+| Ctrl+U | Vider la zone de saisie |
+| Ctrl+A / Ctrl+E | Aller au début ou à la fin de la saisie |
+| Échap | Afficher le statut |
 | Ctrl+C | Quitter |
 
-Après modification de `~/.anda/config.yaml` :
+Après avoir modifié les fournisseurs de modèles dans `~/.anda/config.yaml`, actualisez les modèles depuis le lanceur ou le panneau latéral du navigateur, ou exécutez :
+
+```bash
+anda models reload
+```
+
+Après avoir modifié des paramètres du démon nécessitant un redémarrage, tapez :
 
 ```text
 /reload
 ```
 
-## Commandes slash
+## Commandes Slash
 
-| Commande | Usage |
+| Commande | Quand l'utiliser |
 | --- | --- |
-| `/goal message` | Met un objectif dans la boucle longue. |
-| `/loop message` | Exécute un prompt ou une commande slash de façon répétée. Décrivez l'intervalle en langage naturel, ou omettez-le pour laisser le modèle choisir le rythme. |
-| `/side message` ou `/btw message` | Ouvre une tâche latérale. |
-| `/skill skill-name message` | Utilise une skill précise. |
-| `/steer message` | Corrige la réponse en cours. |
-| `/stop message` | Arrête la tâche actuelle et laisse la conversation inactive. |
-| `/cancel message` | Annule la session de conversation active. |
+| `/goal message` | Place un objectif dans la boucle de tâche à long terme jusqu'à ce que le vérificateur décide qu'il est terminé ou nécessite un travail supplémentaire. |
+| `/loop message` | Exécute un prompt ou une commande slash de manière répétée. Décrivez un intervalle en langage naturel si vous le souhaitez, ou omettez-le pour laisser le modèle définir son propre rythme. |
+| `/side message` ou `/btw message` | Démarre une tâche secondaire pour de la recherche, de l'inspection ou du travail qui ne doit pas interrompre la conversation principale. |
+| `/skill nom-skill message` | Demande à une compétence (Skill) de runtime spécifique de gérer la requête. |
+| `/steer message` | Interrompt le prochain appel d'outil et oriente la réponse actuelle avec de nouvelles instructions. |
+| `/stop message` | Arrête la tâche actuelle et laisse la conversation inactive ; le message peut inclure une raison. |
+| `/cancel message` | Annule la session de conversation active ; le message peut inclure une raison. |
+
+Exemples :
 
 ```text
-/goal Termine cette release avec tests et changelog confirmés.
-/loop toutes les 5 minutes /side Vérifie la file de déploiement et résume les blocages.
-/side Vérifie le risque pour macOS arm64.
-/skill git-assistant Rédige un commit depuis le diff.
-/steer Ne refactorise pas, corrige d'abord le build.
+/goal Terminer cette préparation de version : lancer les tests, vérifier le journal des modifications, valider les docs du script d'install et résumer les risques.
+/loop toutes les 5 minutes /side Vérifier la file d'attente de déploiement et résumer les bloqueurs.
+/side Vérifier si cette mise à niveau de dépendance présente un risque de compatibilité.
+/skill git-assistant Rédiger un message de commit à partir du diff actuel.
+/steer Arrêter la refactorisation et corriger uniquement l'erreur de build d'abord.
 ```
 
-## Commandes CLI
+## Commandes CLI courantes
 
-| Commande | But |
+| Commande | Objectif |
 | --- | --- |
-| `anda` | Ouvre la UI interactive. |
-| `anda update` | Met à jour une installation par script. |
-| `anda status` | Indique si le daemon est en cours d'exécution. |
-| `anda start` | Démarre le daemon. |
-| `anda stop` | Arrête le daemon. |
-| `anda restart` | Redémarre le daemon. |
-| `anda autostart status` | Indique si le démarrage automatique à la connexion est enregistré. |
-| `anda agent run --prompt "..."` | Envoie une requête et attend le résultat complet sans ouvrir la UI. |
-| `anda voice --record-secs 8` | Démarre l'entrée vocale. |
+| `anda` | Ouvrir l'interface utilisateur interactive du terminal. |
+| `anda update` | Mettre à jour une version installée par le script d'installation. |
+| `anda status` | Indiquer si le démon d'arrière-plan est en cours d'exécution. |
+| `anda start` | Démarrer le démon d'arrière-plan. |
+| `anda stop` | Arrêter le démon d'arrière-plan. |
+| `anda restart` | Redémarrer le démon d'arrière-plan. |
+| `anda models reload` | Recharger les fournisseurs de modèles depuis `config.yaml` sans redémarrer le démon. |
+| `anda autostart status` | Indiquer si le démarrage automatique à la connexion est enregistré. |
+| `anda agent run --prompt "..."` | Envoyer une requête et attendre le résultat complet sans ouvrir l'interface utilisateur. |
+| `anda voice --record-secs 8` | Démarrer la saisie vocale ; requiert la configuration de la transcription. |
 
-La lecture vocale exige `tts.enabled: true`. Pour entrée vocale et sortie texte seulement, ajoutez `--no-playback`.
+La lecture vocale requiert également `tts.enabled: true`. Si vous souhaitez uniquement une entrée vocale et une sortie textuelle, ajoutez `--no-playback`.

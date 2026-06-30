@@ -347,9 +347,9 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 									'扩展会在本地保存一个稳定的临时会话标识，以确保你在不同标签页之间切换时，Anda 仍能保持连贯的对话线索。'
 							},
 							{
-								title: '会话显示状态',
+								title: '对话显示状态',
 								detail:
-									'侧边栏会展示由本地 Anda 守护进程返回的会话记录，但这些数据全权由本地进程管理，扩展本身没有也不会依赖任何远程服务端。'
+									'侧边栏会展示由本地 Anda 守护进程返回的对话记录，但这些数据全权由本地进程管理，扩展本身没有也不会依赖任何远程服务端。'
 							}
 						]
 					},
@@ -553,8 +553,8 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 			home: 'Inicio',
 			docs: 'Docs',
 			github: 'GitHub',
-			privacy: 'Privacidad',
-			terms: 'Términos',
+			privacy: 'Política de privacidad',
+			terms: 'Términos de servicio',
 			support: 'Soporte',
 			languageLabel: 'Idioma',
 			updatedLabel: 'Última actualización',
@@ -566,187 +566,232 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Política de privacidad - Anda Bot',
 					description:
-						'Cómo la extensión de Chrome y el sitio de Anda Bot manejan ajustes locales, contexto del navegador, prompts, voz y proveedores de modelos.'
+						'Cómo la extensión de Chrome y el sitio web de Anda Bot manejan la configuración local, el contexto del navegador, los prompts, las funciones de voz y los datos de los proveedores de modelos.'
 				},
 				eyebrow: 'Política de privacidad',
 				title: 'Privacidad, control local y datos del navegador',
 				intro:
-					'Anda Bot funciona como un puente local: la extensión conecta Chrome con el daemon de Anda que ejecutas en tu equipo.',
+					'Anda Bot está diseñado como un puente de agente local-first. La extensión de Chrome conecta su navegador con el daemon de Anda que ejecuta, mientras que el sitio web explica y distribuye el proyecto.',
 				updated: '15 de mayo de 2026',
 				sections: [
 					{
-						title: 'Alcance',
+						title: 'Qué cubre esta política',
 						body: [
-							'Esta política cubre el sitio web y la extensión de Chrome. El daemon local, los proveedores de modelos y otros servicios conectados pueden tener sus propias prácticas.',
-							'La extensión no vende datos personales; envía tus instrucciones y el contexto elegido al runtime local de Anda que configuras.'
+							'Esta política cubre el sitio web de Anda Bot y la extensión de Chrome de Anda Bot. La extensión es un cliente de panel lateral para un daemon local de Anda. El daemon local, los proveedores de modelos configurados y cualquier servicio externo que conecte pueden tener sus propias prácticas de datos.',
+							'La extensión no vende datos personales. Existe para enviar sus instrucciones y el contexto seleccionado del navegador al runtime local de Anda que configure.'
 						]
 					},
 					{
-						title: 'Datos guardados',
+						title: 'Datos almacenados por la extensión',
 						items: [
 							{
-								title: 'Conexión',
+								title: 'Configuración de conexión',
 								detail:
-									'Gateway URL y Bearer token se guardan en almacenamiento local de Chrome para reconectar con tu daemon.'
+									'La Gateway URL y el Bearer token que pega en el panel de configuración se almacenan en el almacenamiento local de Chrome para que la extensión pueda reconectarse a su daemon local de Anda.'
 							},
 							{
-								title: 'Sesión del navegador',
-								detail: 'Un identificador local mantiene el mismo hilo mientras cambias de pestaña.'
+								title: 'ID de sesión del navegador',
+								detail:
+									'Se almacena localmente un ID de sesión de navegador estable para que Anda pueda mantener un hilo de conversación de navegador mientras cambia de pestaña.'
 							},
 							{
-								title: 'Historial mostrado',
+								title: 'Estado de visualización de la conversación',
 								detail:
-									'El panel puede mostrar conversaciones devueltas por el daemon; no las gestiona un servicio remoto de la extensión.'
+									'El panel lateral puede mostrar el historial de conversación devuelto por el daemon local de Anda, pero los registros de conversación son gestionados por el daemon en lugar de por un servicio de extensión remoto.'
 							}
 						]
 					},
 					{
-						title: 'Permisos del navegador',
+						title: 'Contexto y permisos del navegador',
 						body: [
-							'La extensión puede registrar id, título y URL de la pestaña actual. Para una tarea puede listar, abrir o cambiar pestañas, navegar, capturar pantalla visible o ejecutar acciones de página como leer, hacer clic, escribir y desplazar.',
-							'TTS y voz solo se usan cuando eliges funciones de voz y pueden requerir permisos del navegador.'
+							'Cuando está conectada, la extensión puede registrar el ID de la pestaña actual, el título y la URL con su daemon local de Anda. Si una tarea requiere trabajo en el navegador, el daemon puede pedirle a la extensión que enumere pestañas, abra o cambie pestañas, navegue, capture la pestaña visible o ejecute acciones de la página como leer contenido, hacer clic, escribir, desplazarse y presionar teclas.',
+							'Los permisos de TTS permiten que Anda pronuncie respuestas a través de Chrome cuando elige la reproducción de voz. La captura de voz o el reconocimiento de voz solo se inician desde los controles de voz orientados al usuario y pueden depender de los permisos del micrófono del navegador para la página activa.'
 						]
 					},
 					{
-						title: 'Prompts y proveedores',
+						title: 'Prompts, archivos y proveedores de modelos',
 						body: [
-							'Prompts, adjuntos, transcripciones, capturas, texto de páginas y resultados de herramientas pueden enviarse al daemon local y, desde allí, a los proveedores que configures.',
-							'Revisa los términos de privacidad de cada proveedor antes de enviar información sensible.'
+							'Sus prompts, archivos adjuntos seleccionados, transcripciones generadas, capturas de pantalla, texto de la página y resultados de herramientas pueden enviarse al daemon local de Anda. El daemon puede enviar el contenido relevante a los proveedores de modelos y servicios que configure en Anda.',
+							'Las claves API y la configuración del proveedor están controladas por su configuración local de Anda. Revise los términos de privacidad de cada proveedor antes de enviar información sensible.'
 						]
 					},
 					{
-						title: 'Control',
+						title: 'Retención y control',
+						items: [
+							{
+								title: 'Datos de la extensión local',
+								detail:
+									'Puede borrar la Gateway URL, el token y los datos de sesión a través del almacenamiento de la extensión de Chrome o eliminando la extensión.'
+							},
+							{
+								title: 'Datos de ejecución de Anda',
+								detail:
+									'Anda almacena el estado de ejecución, registros, canales, archivos del espacio de trabajo y datos de memoria en el directorio de inicio local de Anda, a menos que configure una ubicación diferente.'
+							},
+							{
+								title: 'Estadísticas del sitio web',
+								detail:
+									'El código actual del sitio web no incluye un rastreador de análisis personalizado. La infraestructura de alojamiento aún puede crear registros operativos estándar.'
+							}
+						]
+					},
+					{
+						title: 'Uso sensible',
 						body: [
-							'Puedes borrar datos locales de la extensión quitando la configuración o desinstalándola. Los datos del runtime de Anda se conservan en el directorio local de Anda salvo que configures otro lugar.'
+							'No envíe secretos, registros regulados, datos comerciales confidenciales u otro contenido sensible a menos que comprenda dónde lo procesarán su daemon local, herramientas, proveedores de modelos y servicios conectados.',
+							'Anda Bot no está destinado a niños menores de la edad requerida por la ley aplicable para usar servicios en línea sin el consentimiento de los padres.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'Soporte', href: '/support' },
-					{ label: 'GitHub issues', href: githubIssues }
+					{ label: 'Abrir soporte', href: '/support' },
+					{ label: 'Problemas de GitHub', href: githubIssues }
 				]
 			},
 			terms: {
 				meta: {
 					title: 'Términos de servicio - Anda Bot',
 					description:
-						'Términos para usar el sitio, la extensión, el puente local y las funciones de automatización de Anda Bot.'
+						'Términos para usar el sitio web de Anda Bot, la extensión de Chrome, el puente de ejecución local, las funciones de automatización del navegador y los recursos del proyecto de código abierto.'
 				},
 				eyebrow: 'Términos de servicio',
 				title: 'Términos para usar Anda Bot',
 				intro:
-					'Estos términos describen responsabilidades al usar el sitio, la extensión y el runtime local.',
+					'Estos términos explican las responsabilidades que conlleva el uso del sitio web, la extensión de Chrome y el puente de ejecución local de Anda.',
 				updated: '15 de mayo de 2026',
 				sections: [
 					{
-						title: 'Aceptación',
+						title: 'Aceptación y alcance',
 						body: [
-							'Al usar el sitio o la extensión aceptas estos términos. Si no estás de acuerdo, no los uses.',
-							'Anda Bot es software open source y algunas funciones dependen de tu instalación local, proveedores, navegador y herramientas.'
+							'Al usar el sitio web o la extensión de Chrome, acepta estos términos. Si no está de acuerdo, no use el sitio web ni la extensión.',
+							'Anda Bot es software de código abierto y un sistema de agentes local-first. Algunas funciones dependen de su instalación local, proveedores de modelos, navegadores, sistema operativo y herramientas de terceros.'
 						]
 					},
 					{
-						title: 'Tu configuración',
+						title: 'Su configuración y cuentas',
 						items: [
 							{
 								title: 'Daemon local',
-								detail: 'Eres responsable de instalar, configurar, actualizar y proteger Anda.'
+								detail:
+									'Usted es responsable de instalar, configurar, actualizar y proteger el programa local Anda Bot y cualquier directorio de inicio o espacio de trabajo que utilice.'
 							},
 							{
-								title: 'API keys',
-								detail: 'Eres responsable de cuentas, costos, límites y términos de proveedores.'
+								title: 'Claves API',
+								detail:
+									'Usted es responsable de sus cuentas de proveedores de modelos, claves API, costos de uso, límites de velocidad y términos del proveedor.'
 							},
-							{ title: 'Token', detail: 'Mantén privado el Bearer token de la extensión.' }
+							{
+								title: 'Token de la extensión',
+								detail:
+									'Mantenga el Bearer token privado. Cualquier persona con acceso a él puede conectarse a su puerta de enlace local de Anda mientras sea accesible.'
+							}
 						]
 					},
 					{
-						title: 'Automatización',
+						title: 'Automatización del navegador',
 						body: [
-							'Revisa acciones antes de usarlas en cuentas, compras, sistemas administrativos, servicios de producción o flujos sensibles.',
-							'No uses Anda Bot para violar leyes, controles de acceso, derechos de terceros o términos de sitios web.'
+							'La extensión puede ayudar a Anda a interactuar con pestañas y páginas del navegador. Usted es responsable de revisar las acciones antes de usarlas en cuentas, sistemas administrativos, compras, flujos de trabajo financieros, servicios de producción u otros entornos sensibles.',
+							'No use Anda Bot para violar sitios web, términos de servicio, controles de acceso, leyes o los derechos de otros.'
 						]
 					},
 					{
-						title: 'Contenido y salida',
+						title: 'Contenido y resultados',
 						body: [
-							'Eres responsable del contenido que proporcionas y de verificar la salida generada antes de confiar en ella.',
-							'La salida de IA puede ser incompleta o incorrecta. Usa juicio profesional en decisiones legales, médicas, financieras, de seguridad u operación.'
+							'Usted conserva la responsabilidad de los prompts, archivos, contenido del navegador y otros materiales que proporcione. Es responsable de verificar los resultados generados antes de confiar en ellos.',
+							'Los resultados generados por IA pueden ser incompletos, incorrectos, inseguros o inadecuados para un propósito específico. Use el juicio profesional para decisiones legales, médicas, financieras, de seguridad y operativas.'
 						]
 					},
 					{
-						title: 'Licencia y garantía',
+						title: 'Licencia de código abierto y disponibilidad',
 						body: [
-							'El código se ofrece bajo la licencia del repositorio. En la máxima medida permitida por la ley, Anda Bot se proporciona tal cual, sin garantías.'
+							'El código fuente de Anda Bot se proporciona bajo la licencia del repositorio. Estos términos no reemplazan la licencia de código abierto del código.',
+							'El sitio web, la extensión, las versiones, la documentación y las integraciones pueden cambiar, pausarse o detenerse en cualquier momento. Las funciones se proporcionan según estén disponibles y sin un compromiso de nivel de servicio por separado.'
+						]
+					},
+					{
+						title: 'Sin garantía y limitación de responsabilidad',
+						body: [
+							'En la medida máxima permitida por la ley, Anda Bot se proporciona tal cual, sin garantías de ningún tipo.',
+							'En la medida máxima permitida por la ley, los mantenedores del proyecto no son responsables de daños indirectos, incidentales, especiales, consecuentes o punitivos, ni de la pérdida de datos, ganancias, negocios o fondo de comercio.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'Privacidad', href: '/privacy' },
-					{ label: 'GitHub', href: 'https://github.com/ldclabs/anda-bot' }
+					{ label: 'Leer política de privacidad', href: '/privacy' },
+					{ label: 'Repositorio de GitHub', href: 'https://github.com/ldclabs/anda-bot' }
 				]
 			},
 			support: {
 				meta: {
 					title: 'Soporte - Anda Bot',
 					description:
-						'Ayuda para instalación, extensión de Chrome, token del navegador, daemon local y reportes de errores.'
+						'Dónde obtener ayuda con la instalación de Anda Bot, la configuración de la extensión de Chrome, la conexión del token del navegador, los problemas del daemon local y los informes de errores.'
 				},
 				eyebrow: 'Soporte',
-				title: 'Obtén ayuda con Anda Bot',
+				title: 'Obtener ayuda con Anda Bot',
 				intro:
-					'Para soporte, verifica la configuración local, captura el error exacto y abre un issue con pasos reproducibles.',
+					'Anda Bot es un agente local de código abierto. La forma más rápida de obtener soporte suele ser verificar la configuración, capturar el error exacto y abrir un problema en GitHub con suficientes detalles para reproducirlo.',
 				updated: '15 de mayo de 2026',
 				sections: [
 					{
-						title: 'Canales',
+						title: 'Los mejores canales de soporte',
 						items: [
 							{
-								title: 'Errores',
+								title: 'Informes de errores',
 								detail:
-									'Usa GitHub issues para problemas reproducibles de extensión, daemon, instalación, navegador o build.'
+									'Abra un problema en GitHub para problemas reproducibles de la extensión, el daemon, la instalación, la herramienta del navegador o la compilación.'
 							},
 							{
-								title: 'Preguntas',
-								detail: 'Usa discussions para ideas, flujos de trabajo y ayuda de comunidad.'
+								title: 'Preguntas e ideas',
+								detail:
+									'Use las discusiones de GitHub para preguntas de uso, flujos de trabajo, ideas de funciones y ayuda de la comunidad.'
 							},
 							{
 								title: 'Documentación',
 								detail:
-									'Consulta docs y README para instalación, modelos, token, Skills, canales y voz.'
+									'Use la documentación y el README para comandos de instalación, configuración del proveedor de modelos, configuración del token de Chrome, Skills, canales, voz y contexto de resolución de problemas.'
 							}
 						]
 					},
 					{
-						title: 'Antes de reportar',
+						title: 'Antes de abrir un problema',
 						items: [
 							{
-								title: 'Setup local',
+								title: 'Confirmar la configuración local',
 								detail:
-									'Ejecuta anda, confirma proveedor de modelo y prueba que el daemon responde.'
+									'Ejecute anda desde una terminal, confirme que un proveedor de modelos esté configurado y asegúrese de que el daemon sea accesible antes de probar la extensión.'
 							},
 							{
-								title: 'Token',
-								detail: 'Ejecuta anda browser token --days 365 y pega Gateway URL y Bearer token.'
+								title: 'Regenerar el token del navegador',
+								detail:
+									'Ejecute anda browser token --days 365 y pegue tanto la Gateway URL como el Bearer token en la configuración del panel lateral.'
 							},
 							{
-								title: 'Permisos',
+								title: 'Verificar permisos',
 								detail:
-									'Prueba en una página https normal; Chrome bloquea algunas acciones en páginas restringidas.'
+									'Chrome puede bloquear la inyección de páginas, el acceso al micrófono, las URL de archivos o las acciones de extensión en páginas restringidas. Pruebe una página https normal al depurar.'
 							}
 						]
 					},
 					{
-						title: 'Incluye',
+						title: 'Incluye esta información',
 						body: [
-							'Sistema operativo, versión de Anda, Chrome y extensión, método de instalación, comando usado y error exacto.',
-							'No publiques API keys, tokens, prompts privados ni capturas sensibles.'
+							'Incluye su sistema operativo, versión de Anda Bot, versión de Chrome, versión de la extensión, método de instalación, el comando que ejecutó, el mensaje de error exacto y si el problema ocurre en una pestaña nueva del navegador.',
+							'No pegue claves API, Bearer tokens, prompts privados, archivos confidenciales o capturas de pantalla sensibles en problemas públicos.'
+						]
+					},
+					{
+						title: 'Informes de seguridad y privacidad',
+						body: [
+							'Para problemas sensibles de seguridad, evite publicar secretos o detalles de exploits en un problema público. Abra primero un informe minimal o use las opciones de informe de seguridad del repositorio si están disponibles.',
+							'Si un token puede haber estado expuesto, revóquelo eliminando la configuración de la extensión y generando un nuevo token de navegador desde la CLI local de Anda.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'GitHub issues', href: githubIssues },
-					{ label: 'Discussions', href: githubDiscussions },
-					{ label: 'Docs', href: docsUrl }
+					{ label: 'Abrir problemas de GitHub', href: githubIssues },
+					{ label: 'Abrir discusiones', href: githubDiscussions },
+					{ label: 'Leer la documentación', href: docsUrl }
 				]
 			}
 		}
@@ -756,8 +801,8 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 			home: 'Accueil',
 			docs: 'Docs',
 			github: 'GitHub',
-			privacy: 'Confidentialité',
-			terms: 'Conditions',
+			privacy: 'Politique de confidentialité',
+			terms: 'Conditions d’utilisation',
 			support: 'Support',
 			languageLabel: 'Langue',
 			updatedLabel: 'Dernière mise à jour',
@@ -769,59 +814,80 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Politique de confidentialité - Anda Bot',
 					description:
-						'Comment l’extension Chrome et le site Anda Bot traitent les réglages locaux, le contexte du navigateur, les prompts, la voix et les fournisseurs de modèles.'
+						'Comment l’extension Chrome et le site web d’Anda Bot gèrent la configuration locale, le contexte du navigateur, les prompts, les fonctionnalités vocales et les données des fournisseurs de modèles.'
 				},
 				eyebrow: 'Politique de confidentialité',
 				title: 'Confidentialité, contrôle local et données du navigateur',
 				intro:
-					'Anda Bot est un pont local entre Chrome et le daemon Anda que vous exécutez sur votre ordinateur.',
+					'Anda Bot est conçu comme un pont d’agent local-first. L’extension Chrome connecte votre navigateur au daemon Anda que vous exécutez, tandis que le site web explique et distribue le projet.',
 				updated: '15 mai 2026',
 				sections: [
 					{
-						title: 'Portée',
+						title: 'Ce que couvre cette politique',
 						body: [
-							'Cette politique couvre le site web et l’extension Chrome. Le daemon local, les fournisseurs de modèles et les services connectés peuvent avoir leurs propres pratiques.',
-							'L’extension ne vend pas de données personnelles; elle transmet vos instructions et le contexte choisi au runtime Anda local.'
+							'Cette politique couvre le site web d’Anda Bot et l’extension Chrome d’Anda Bot. L’extension est un client de panneau latéral pour un daemon Anda local. Le daemon local, vos fournisseurs de modèles configurés et tous les services externes que vous connectez peuvent avoir leurs propres pratiques en matière de données.',
+							'L’extension ne vend pas de données personnelles. Elle existe pour envoyer vos instructions et le contexte de navigateur sélectionné au runtime Anda local que vous configurez.'
 						]
 					},
 					{
-						title: 'Données enregistrées',
+						title: 'Données stockées par l’extension',
 						items: [
 							{
-								title: 'Connexion',
+								title: 'Paramètres de connexion',
 								detail:
-									'Gateway URL et Bearer token sont stockés localement dans Chrome pour reconnecter le daemon.'
+									'L’URL de la passerelle (Gateway URL) et le jeton porteur (Bearer token) que vous collez dans le panneau des paramètres sont stockés dans le stockage local de Chrome afin que l’extension puisse se reconnecter à votre daemon Anda local.'
 							},
 							{
-								title: 'Session navigateur',
+								title: 'ID de session du navigateur',
 								detail:
-									'Un identifiant local garde le même fil de navigateur lorsque vous changez d’onglet.'
+									'Un ID de session de navigateur stable est stocké localement afin qu’Anda puisse conserver un fil de discussion unique lorsque vous changez d’onglet.'
 							},
 							{
-								title: 'Historique affiché',
+								title: 'État d’affichage de la conversation',
 								detail:
-									'Le panneau peut afficher les conversations renvoyées par le daemon, sans service distant dédié à l’extension.'
+									'Le panneau latéral peut afficher l’historique des conversations renvoyé par le daemon Anda local, mais les enregistrements de conversation sont gérés par le daemon plutôt que par un service d’extension distant.'
 							}
 						]
 					},
 					{
-						title: 'Permissions navigateur',
+						title: 'Contexte du navigateur et autorisations',
 						body: [
-							'L’extension peut enregistrer l’id, le titre et l’URL de l’onglet actif. Pour une tâche, elle peut lister, ouvrir ou changer d’onglets, naviguer, capturer l’écran visible ou exécuter des actions de page.',
-							'Les fonctions TTS et voix ne sont utilisées que lorsque vous choisissez des contrôles vocaux et peuvent demander des permissions du navigateur.'
+							'Une fois connectée, l’extension peut enregistrer l’ID de l’onglet actuel, son titre et son URL auprès de votre daemon Anda local. Si une tâche nécessite un travail dans le navigateur, le daemon peut demander à l’extension de lister les onglets, d’ouvrir ou de changer d’onglets, de naviguer, de capturer l’onglet visible ou d’exécuter des actions sur la page comme lire le contenu, cliquer, taper, faire défiler et appuyer sur des touches.',
+							'Les autorisations TTS permettent à Anda de prononcer les réponses via Chrome lorsque vous choisissez la lecture vocale. La capture vocale ou la reconnaissance vocale ne démarre qu’à partir des commandes vocales destinées à l’utilisateur et peut dépendre des autorisations du microphone du navigateur pour la page active.'
 						]
 					},
 					{
-						title: 'Prompts et fournisseurs',
+						title: 'Prompts, fichiers et fournisseurs de modèles',
 						body: [
-							'Prompts, pièces jointes, transcriptions, captures, texte de page et résultats d’outils peuvent être envoyés au daemon local puis aux fournisseurs configurés.',
-							'Vérifiez les politiques de chaque fournisseur avant d’envoyer des informations sensibles.'
+							'Vos prompts, pièces jointes sélectionnées, transcriptions générées, captures d’écran, texte de page et résultats d’outils peuvent être envoyés au daemon Anda local. Le daemon peut ensuite envoyer le contenu pertinent aux fournisseurs de modèles et aux services que vous configurez dans Anda.',
+							'Les clés API et les paramètres du fournisseur sont contrôlés par votre configuration Anda locale. Examinez les conditions de confidentialité de chaque fournisseur avant d’envoyer des informations sensibles.'
 						]
 					},
 					{
-						title: 'Contrôle',
+						title: 'Rétention et contrôle',
+						items: [
+							{
+								title: 'Données de l’extension locale',
+								detail:
+									'Vous pouvez effacer l’URL de la passerelle, le jeton et les données de session via le stockage de l’extension Chrome ou en supprimant l’extension.'
+							},
+							{
+								title: 'Données du runtime Anda',
+								detail:
+									'Anda stocke l’état du runtime, les journaux, les canaux, les fichiers de l’espace de travail et les données de mémoire dans le répertoire personnel local d’Anda, à moins que vous ne configuriez un autre emplacement.'
+							},
+							{
+								title: 'Analyses du site web',
+								detail:
+									'Le code actuel du site web ne comprend pas de tracker d’analyse personnalisé. L’infrastructure d’hébergement peut toujours créer des journaux opérationnels standard.'
+							}
+						]
+					},
+					{
+						title: 'Utilisation sensible',
 						body: [
-							'Vous pouvez supprimer les données locales de l’extension en effaçant les réglages ou en la désinstallant. Les données du runtime restent dans le dossier local d’Anda sauf configuration contraire.'
+							'N’envoyez pas de secrets, de documents réglementés, de données commerciales confidentielles ou tout autre contenu sensible à moins de comprendre où votre daemon local, vos outils, vos fournisseurs de modèles et vos services connectés les traiteront.',
+							'Anda Bot n’est pas destiné aux enfants de moins de l’âge requis par la loi applicable pour utiliser des services en ligne sans le consentement des parents.'
 						]
 					}
 				],
@@ -834,55 +900,67 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Conditions d’utilisation - Anda Bot',
 					description:
-						'Conditions d’utilisation du site, de l’extension, du pont local et de l’automatisation navigateur.'
+						'Conditions d’utilisation du site web d’Anda Bot, de l’extension Chrome, du pont de runtime local, des fonctionnalités d’automatisation du navigateur et des ressources de projet open-source.'
 				},
 				eyebrow: 'Conditions d’utilisation',
 				title: 'Conditions pour utiliser Anda Bot',
 				intro:
-					'Ces conditions expliquent vos responsabilités lors de l’utilisation du site, de l’extension et du runtime local.',
+					'Ces conditions expliquent les responsabilités liées à l’utilisation du site web, de l’extension Chrome et du pont de runtime Anda local.',
 				updated: '15 mai 2026',
 				sections: [
 					{
-						title: 'Acceptation',
+						title: 'Acceptation et portée',
 						body: [
-							'En utilisant le site ou l’extension, vous acceptez ces conditions. Sinon, ne les utilisez pas.',
-							'Anda Bot est open source et certaines fonctions dépendent de votre installation locale, de vos fournisseurs, du navigateur et des outils.'
+							'En utilisant le site web ou l’extension Chrome, vous acceptez ces conditions. Si vous ne les acceptez pas, n’utilisez pas le site web ni l’extension.',
+							'Anda Bot est un logiciel open-source et un système d’agents local-first. Certaines fonctionnalités dépendent de votre installation locale, de vos fournisseurs de modèles, de vos navigateurs, de votre système d’exploitation et d’outils tiers.'
 						]
 					},
 					{
-						title: 'Votre configuration',
+						title: 'Votre configuration et vos comptes',
 						items: [
 							{
 								title: 'Daemon local',
 								detail:
-									'Vous êtes responsable de l’installation, de la configuration, des mises à jour et de la sécurité d’Anda.'
+									'Vous êtes responsable de l’installation, de la configuration, de la mise à jour et de la sécurisation du programme Anda Bot local ainsi que de tout répertoire personnel ou espace de travail qu’il utilise.'
 							},
 							{
 								title: 'Clés API',
 								detail:
-									'Vous êtes responsable des comptes, coûts, limites et conditions des fournisseurs.'
+									'Vous êtes responsable de vos comptes de fournisseurs de modèles, de vos clés API, de vos coûts d’utilisation, de vos limites de débit et des conditions du fournisseur.'
 							},
-							{ title: 'Token', detail: 'Gardez privé le Bearer token de l’extension.' }
+							{
+								title: 'Jeton d’extension',
+								detail:
+									'Gardez le Bearer token privé. Toute personne y ayant accès peut se connecter à votre passerelle Anda locale tant qu’elle est accessible.'
+							}
 						]
 					},
 					{
-						title: 'Automatisation',
+						title: 'Automatisation du navigateur',
 						body: [
-							'Vérifiez les actions avant de les utiliser dans des comptes, achats, systèmes d’administration, services de production ou contextes sensibles.',
-							'N’utilisez pas Anda Bot pour violer la loi, des contrôles d’accès, les droits d’autrui ou les conditions de sites web.'
+							'L’extension peut aider Anda à interagir avec les onglets et les pages du navigateur. Vous êtes responsable de l’examen des actions avant de les utiliser dans des comptes, des systèmes administratifs, des achats, des flux financiers, des services de production ou d’autres environnements sensibles.',
+							'N’utilisez pas Anda Bot pour violer des sites web, des conditions d’utilisation, des contrôles d’accès, des lois ou les droits d’autrui.'
 						]
 					},
 					{
-						title: 'Contenu et sortie',
+						title: 'Contenu et résultats',
 						body: [
-							'Vous êtes responsable du contenu fourni et de la vérification des résultats générés.',
-							'La sortie IA peut être incomplète ou incorrecte. Utilisez un jugement professionnel pour les décisions sensibles.'
+							'Vous conservez la responsabilité des prompts, des fichiers, du contenu du navigateur et des autres éléments que vous fournissez. Vous êtes responsable de la vérification des résultats générés avant de vous y fier.',
+							'Les résultats générés par l’IA peuvent être incomplets, incorrects, dangereux ou inadaptés à un usage spécifique. Utilisez votre jugement professionnel pour les décisions juridiques, médicales, financières, de sécurité et opérationnelles.'
 						]
 					},
 					{
-						title: 'Licence et garantie',
+						title: 'Licence open-source et disponibilité',
 						body: [
-							'Le code est fourni sous la licence du dépôt. Dans la mesure permise par la loi, Anda Bot est fourni tel quel, sans garantie.'
+							'Le code source d’Anda Bot est fourni sous la licence présente dans le dépôt. Ces conditions ne remplacent pas la licence open-source du code.',
+							'Le site web, l’extension, les versions, la documentation et les intégrations peuvent changer, être suspendus ou arrêtés à tout moment. Les fonctionnalités sont fournies en l’état et sans engagement de niveau de service (SLA) distinct.'
+						]
+					},
+					{
+						title: 'Exclusion de garantie et limitation de responsabilité',
+						body: [
+							'Dans la mesure maximale autorisée par la loi, Anda Bot est fourni en l’état, sans aucune garantie d’aucune sorte.',
+							'Dans la mesure maximale autorisée par la loi, les mainteneurs du projet ne sont pas responsables des dommages indirects, accessoires, spéciaux, consécutifs ou punitifs, ni de la perte de données, de bénéfices, d’activités ou de clientèle.'
 						]
 					}
 				],
@@ -895,57 +973,66 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Support - Anda Bot',
 					description:
-						'Aide pour installation, extension Chrome, token navigateur, daemon local et rapports de bugs.'
+						'Où obtenir de l’aide pour l’installation d’Anda Bot, la configuration de l’extension Chrome, la connexion du jeton du navigateur, les problèmes du daemon local et les rapports de bugs.'
 				},
 				eyebrow: 'Support',
 				title: 'Obtenir de l’aide avec Anda Bot',
 				intro:
-					'Vérifiez la configuration locale, notez l’erreur exacte et ouvrez un issue reproductible sur GitHub.',
+					'Vous devez vérifier la configuration locale, capturer l’erreur exacte et ouvrir un ticket GitHub avec suffisamment de détails pour reproduire l’erreur.',
 				updated: '15 mai 2026',
 				sections: [
 					{
-						title: 'Canaux',
+						title: 'Meilleurs canaux de support',
 						items: [
 							{
-								title: 'Bugs',
+								title: 'Rapports de bugs',
 								detail:
-									'Utilisez GitHub issues pour les problèmes reproductibles d’extension, daemon, installation, navigateur ou build.'
+									'Ouvrez un ticket GitHub pour les problèmes reproductibles d’extension, de daemon, d’installation, d’outil de navigateur ou de compilation.'
 							},
 							{
-								title: 'Questions',
-								detail: 'Utilisez discussions pour les idées, workflows et aide communautaire.'
+								title: 'Questions et idées',
+								detail:
+									'Utilisez les discussions GitHub pour les questions d’utilisation, les flux de travail, les idées de fonctionnalités et l’aide de la communauté.'
 							},
 							{
 								title: 'Documentation',
 								detail:
-									'Consultez docs et README pour installation, modèles, token, Skills, canaux et voix.'
+									'Consultez la doc et le README pour les commandes d’installation, la configuration du fournisseur de modèles, la configuration du jeton Chrome, les Skills, les canaux, la voix et le contexte de dépannage.'
 							}
 						]
 					},
 					{
-						title: 'Avant de signaler',
+						title: 'Avant d’ouvrir un ticket',
 						items: [
 							{
-								title: 'Setup local',
-								detail: 'Exécutez anda, vérifiez le fournisseur de modèle et testez le daemon.'
+								title: 'Confirmer la configuration locale',
+								detail:
+									'Lancez anda depuis un terminal, confirmez qu’un fournisseur de modèles est configuré et assurez-vous que le daemon est accessible avant de tester l’extension.'
 							},
 							{
-								title: 'Token',
+								title: 'Régenerer le jeton du navigateur',
 								detail:
-									'Exécutez anda browser token --days 365 et collez Gateway URL et Bearer token.'
+									'Exécutez anda browser token --days 365 et collez l’URL de la passerelle et le jeton porteur dans les paramètres du panneau latéral.'
 							},
 							{
-								title: 'Permissions',
+								title: 'Vérifier les autorisations',
 								detail:
-									'Testez sur une page https normale; Chrome bloque certaines pages restreintes.'
+									'Chrome peut bloquer l’injection de page, l’accès au microphone, les URL de fichiers ou les actions de l’extension sur les pages restreintes. Essayez une page https normale lors du dépannage.'
 							}
 						]
 					},
 					{
-						title: 'Inclure',
+						title: 'Inclure ces informations',
 						body: [
-							'Système, versions d’Anda, Chrome et extension, méthode d’installation, commande lancée et erreur exacte.',
-							'Ne publiez pas de clés API, tokens, prompts privés ou captures sensibles.'
+							'Veuillez inclure votre système d’exploitation, la version d’Anda Bot, la version de Chrome, la version de l’extension, la méthode d’installation, la commande que vous avez exécutée, le message d’erreur exact et si le problème se produit sur un nouvel onglet du navigateur.',
+							'Ne collez pas de clés API, de jetons porteurs, de prompts privés, de fichiers confidentiels ou de captures d’écran sensibles dans les tickets publics.'
+						]
+					},
+					{
+						title: 'Rapports de sécurité et de confidentialité',
+						body: [
+							'Pour les problèmes sensibles de sécurité, évitez de publier des secrets ou des détails d’exploitation dans un ticket public. Ouvrez d’abord un rapport minimal ou utilisez les options de rapport de sécurité du dépôt si elles sont disponibles.',
+							'Si un jeton a pu être exposé, révoquez-le en supprimant les paramètres de l’extension et en générant un nouveau jeton de navigateur à partir de la CLI locale d’Anda.'
 						]
 					}
 				],
@@ -962,135 +1049,171 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 			home: 'Главная',
 			docs: 'Документация',
 			github: 'GitHub',
-			privacy: 'Конфиденциальность',
-			terms: 'Условия',
+			privacy: 'Политика конфиденциальности',
+			terms: 'Условия обслуживания',
 			support: 'Поддержка',
 			languageLabel: 'Язык',
-			updatedLabel: 'Обновлено',
-			navigationLabel: 'Навигация сайта',
-			moreLinks: 'Дополнительно'
+			updatedLabel: 'Последнее обновление',
+			navigationLabel: 'Навигация по сайту',
+			moreLinks: 'Дополнительная информация'
 		},
 		pages: {
 			privacy: {
 				meta: {
 					title: 'Политика конфиденциальности - Anda Bot',
 					description:
-						'Как расширение Chrome и сайт Anda Bot обрабатывают локальные настройки, контекст браузера, запросы, голос и провайдеров моделей.'
+						'Как расширение Anda Bot для Chrome и веб-сайт обрабатывают локальные настройки, контекст браузера, запросы, голосовые функции и данные поставщиков моделей.'
 				},
 				eyebrow: 'Политика конфиденциальности',
 				title: 'Конфиденциальность, локальный контроль и данные браузера',
 				intro:
-					'Anda Bot работает как локальный мост между Chrome и daemon Anda, который запущен на вашем компьютере.',
+					'Anda Bot разработан как локальный мост для агента. Расширение Chrome соединяет ваш браузер с запущенным вами демоном Anda, а веб-сайт объясняет устройство проекта и распространяет его.',
 				updated: '15 мая 2026 г.',
 				sections: [
 					{
-						title: 'Область действия',
+						title: 'Что охватывает эта политика',
 						body: [
-							'Политика относится к сайту и расширению Chrome. Локальный daemon, провайдеры моделей и подключенные сервисы могут иметь собственные правила.',
-							'Расширение не продает персональные данные; оно передает ваши инструкции и выбранный контекст в локальный runtime Anda.'
+							'Эта политика распространяется на веб-сайт Anda Bot и расширение Anda Bot для Chrome. Расширение является клиентом боковой панели для локального демона Anda. Локальный демон, настроенные вами поставщики моделей и любые внешние службы, к которым вы подключаетесь, могут иметь собственные правила работы с данными.',
+							'Расширение не продает личные данные. Оно существует для отправки ваших инструкций и выбранного контекста браузера в настроенную вами локальную среду выполнения Anda.'
 						]
 					},
 					{
-						title: 'Сохраняемые данные',
+						title: 'Данные, хранимые расширением',
 						items: [
 							{
-								title: 'Подключение',
+								title: 'Настройки подключения',
 								detail:
-									'Gateway URL и Bearer token хранятся локально в Chrome для повторного подключения к daemon.'
+									'URL шлюза (Gateway URL) и токен авторизации (Bearer token), которые вы вставляете в панель настроек, сохраняются в локальном хранилище Chrome, чтобы расширение могло повторно подключаться к вашему локальному демону Anda.'
 							},
 							{
-								title: 'Сессия браузера',
-								detail: 'Локальный идентификатор помогает сохранять один поток при смене вкладок.'
+								title: 'Идентификатор сессии браузера',
+								detail:
+									'Стабильный идентификатор сессии браузера сохраняется локально, чтобы Anda могла поддерживать одну цепочку диалога в браузере при переключении вкладок.'
 							},
 							{
-								title: 'История',
+								title: 'Состояние отображения диалога',
 								detail:
-									'Панель может показывать разговоры, возвращенные daemon; удаленный сервис расширения ими не управляет.'
+									'Боковая панель может отображать историю диалогов, возвращаемую локальным демоном Anda, но записи разговоров управляются демоном, а не удаленной службой расширения.'
 							}
 						]
 					},
 					{
-						title: 'Разрешения браузера',
+						title: 'Контекст браузера и разрешения',
 						body: [
-							'Расширение может передавать id, заголовок и URL активной вкладки. Для задачи оно может работать с вкладками, навигацией, видимым скриншотом и действиями на странице.',
-							'TTS и голос используются только при выборе голосовых функций и могут требовать разрешения браузера.'
+							'При подключении расширение может зарегистрировать идентификатор текущей вкладки, ее заголовок и URL в локальном демоне Anda. Если задача требует работы в браузере, демон может попросить расширение составить список вкладок, открыть или переключить вкладки, выполнить переход, сделать снимок видимой вкладки или выполнить действия на странице, такие как чтение содержимого, нажатие кнопок, ввод текста, прокрутка и нажатие клавиш.',
+							'Разрешения TTS позволяют Anda озвучивать ответы через Chrome, когда вы выбираете голосовое воспроизведение. Запись голоса или распознавание речи запускаются только с помощью элементов управления голосом со стороны пользователя и могут зависеть от разрешений на доступ к микрофону для активной страницы.'
 						]
 					},
 					{
-						title: 'Запросы и провайдеры',
+						title: 'Запросы, файлы и поставщики моделей',
 						body: [
-							'Запросы, вложения, транскрипты, скриншоты, текст страниц и результаты инструментов могут отправляться локальному daemon и затем выбранным провайдерам.',
-							'Проверьте политики провайдеров перед отправкой чувствительных данных.'
+							'Ваши запросы, выбранные вложения, сгенерированные стенограммы, снимки экрана, текст страниц и результаты работы инструментов могут отправляться локальному демону Anda. Затем демон может отправлять соответствующий контент поставщикам моделей и службам, настроенным в Anda.',
+							'Ключи API и настройки поставщиков управляются вашей локальной конфигурацией Anda. Ознакомьтесь с условиями конфиденциальности каждого поставщика перед отправкой конфиденциальной информации.'
 						]
 					},
 					{
-						title: 'Контроль',
+						title: 'Хранение и контроль',
+						items: [
+							{
+								title: 'Локальные данные расширения',
+								detail:
+									'Вы можете очистить URL-адрес шлюза, токен и данные сеанса через хранилище расширений Chrome или удалив расширение.'
+							},
+							{
+								title: 'Данные выполнения Anda',
+								detail:
+									'Anda сохраняет состояние выполнения, журналы, каналы, файлы рабочей области и данные памяти в локальном домашнем каталоге Anda, если вы не настроили другое расположение.'
+							},
+							{
+								title: 'Аналитика веб-сайта',
+								detail:
+									'Текущий код веб-сайта не содержит встроенного счетчика аналитики. Хостинг-провайдер по-прежнему может создавать стандартные операционные журналы.'
+							}
+						]
+					},
+					{
+						title: 'Чувствительная информация',
 						body: [
-							'Локальные данные расширения можно удалить через настройки Chrome или удалив расширение. Данные runtime хранятся в локальной директории Anda, если не задано другое место.'
+							'Не отправляйте пароли, регулируемые записи, конфиденциальные бизнес-данные или другие важные сведения, если вы не понимаете, где ваш локальный демон, инструменты, поставщики моделей и подключенные службы будут их обрабатывать.',
+							'Anda Bot не предназначен для детей младше возраста, установленного применимым законодательством для использования онлайн-услуг без согласия родителей.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'Поддержка', href: '/support' },
+					{ label: 'Открыть поддержку', href: '/support' },
 					{ label: 'GitHub issues', href: githubIssues }
 				]
 			},
 			terms: {
 				meta: {
-					title: 'Условия использования - Anda Bot',
+					title: 'Условия обслуживания - Anda Bot',
 					description:
-						'Условия для сайта, расширения, локального моста и автоматизации браузера Anda Bot.'
+						'Условия использования веб-сайта Anda Bot, расширения Chrome, локального моста выполнения, функций автоматизации браузера и ресурсов проекта с открытым исходным кодом.'
 				},
-				eyebrow: 'Условия использования',
-				title: 'Условия использования Anda Bot',
+				eyebrow: 'Условия обслуживания',
+				title: 'Правила использования Anda Bot',
 				intro:
-					'Эти условия описывают ответственность при использовании сайта, расширения и локального runtime.',
+					'Эти условия определяют ответственность, связанную с использованием веб-сайта, расширения Chrome и локального моста выполнения Anda.',
 				updated: '15 мая 2026 г.',
 				sections: [
 					{
-						title: 'Принятие',
+						title: 'Согласие и область действия',
 						body: [
-							'Используя сайт или расширение, вы принимаете эти условия. Если не согласны, не используйте их.',
-							'Anda Bot является open source; часть функций зависит от локальной установки, провайдеров, браузера и инструментов.'
+							'Используя веб-сайт или расширение Chrome, вы соглашаетесь с настоящими условиями. Если вы не согласны, не используйте их.',
+							'Anda Bot — это программное обеспечение с открытым исходным кодом и локальная агентная система. Некоторые функции зависят от вашей локальной установки, поставщиков моделей, браузеров, операционной системы и сторонних инструментов.'
 						]
 					},
 					{
-						title: 'Ваша настройка',
+						title: 'Ваша конфигурация и учетные записи',
 						items: [
 							{
-								title: 'Локальный daemon',
-								detail: 'Вы отвечаете за установку, настройку, обновление и защиту Anda.'
+								title: 'Локальный демон',
+								detail:
+									'Вы несете ответственность за установку, настройку, обновление и безопасность локального приложения Anda Bot, а также любого домашнего каталога или рабочей области, которые оно использует.'
 							},
 							{
-								title: 'API keys',
-								detail: 'Вы отвечаете за аккаунты провайдеров, расходы, лимиты и условия.'
+								title: 'Ключи API',
+								detail:
+									'Вы несете ответственность за свои учетные записи поставщиков моделей, ключи API, расходы на использование, лимиты запросов и условия обслуживания поставщиков.'
 							},
-							{ title: 'Token', detail: 'Храните Bearer token расширения в тайне.' }
+							{
+								title: 'Токен расширения',
+								detail:
+									'Храните Bearer-токен в секрете. Любой, кто имеет к нему доступ, может подключиться к вашему локальному шлюзу Anda, пока он доступен по сети.'
+							}
 						]
 					},
 					{
-						title: 'Автоматизация',
+						title: 'Автоматизация браузера',
 						body: [
-							'Проверяйте действия перед использованием в аккаунтах, покупках, админ-системах, production-сервисах или чувствительных средах.',
-							'Не используйте Anda Bot для нарушения законов, контроля доступа, прав других лиц или правил сайтов.'
+							'Расширение помогает Anda взаимодействовать со вкладками и страницами браузера. Вы несете ответственность за проверку действий перед их выполнением в учетных записях, административных системах, при покупках, финансовых операциях, на рабочих серверах или в других конфиденциальных средах.',
+							'Не используйте Anda Bot для взлома сайтов, нарушения условий обслуживания, систем контроля доступа, законов или прав других лиц.'
 						]
 					},
 					{
-						title: 'Контент и вывод',
+						title: 'Контент и результаты',
 						body: [
-							'Вы отвечаете за предоставленный контент и проверку сгенерированных результатов.',
-							'AI-вывод может быть неполным или неверным. Используйте профессиональное суждение для важных решений.'
+							'Вы несете полную ответственность за предоставляемые запросы, файлы, содержимое страниц браузера и другие материалы. Вы обязаны проверять результаты генерации ИИ, прежде чем полагаться на них.',
+							'Результаты, созданные ИИ, могут быть неполными, неточными, небезопасными или неподходящими для конкретной цели. Руководствуйтесь здрамым смыслом и мнением специалистов при принятии юридических, медицинских, финансовых решений, а также в вопросах безопасности и эксплуатации.'
 						]
 					},
 					{
-						title: 'Лицензия и гарантии',
+						title: 'Лицензия с открытым исходным кодом и доступность',
 						body: [
-							'Код предоставляется по лицензии репозитория. В пределах закона Anda Bot предоставляется как есть, без гарантий.'
+							'Исходный код Anda Bot предоставляется на условиях лицензии, указанной в репозитории. Настоящие условия не заменяют лицензию на исходный код.',
+							'Сайт, расширение, выпуски программного обеспечения, документация и интеграции могут быть изменены, приостановлены или прекращены в любое время. Функции предоставляются по мере доступности без отдельного соглашения об уровне услуг (SLA).'
+						]
+					},
+					{
+						title: 'Отказ от гарантий и ограничение ответственности',
+						body: [
+							'В максимально разрешенной законом степени Anda Bot предоставляется «как есть», без каких-либо гарантий.',
+							'В максимально разрешенной законом степени разработчики проекта не несут ответственности за косвенные, случайные, специальные или штрафные убытки, а также за потерю данных, прибыли, бизнеса или деловой репутации.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'Конфиденциальность', href: '/privacy' },
+					{ label: 'Политика конфиденциальности', href: '/privacy' },
 					{ label: 'GitHub', href: 'https://github.com/ldclabs/anda-bot' }
 				]
 			},
@@ -1098,64 +1221,73 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Поддержка - Anda Bot',
 					description:
-						'Помощь с установкой, расширением Chrome, browser token, локальным daemon и баг-репортами.'
+						'Где получить помощь по установке Anda Bot, настойке расширения Chrome, подключению токена браузера, локальному демону и сообщениям об ошибках.'
 				},
 				eyebrow: 'Поддержка',
 				title: 'Получить помощь по Anda Bot',
 				intro:
-					'Проверьте локальную настройку, сохраните точную ошибку и откройте issue с шагами воспроизведения.',
+					'Самый быстрый способ получить помощь — проверить настройки, зафиксировать точный текст ошибки и создать тему на GitHub с подробным описанием воспроизведения.',
 				updated: '15 мая 2026 г.',
 				sections: [
 					{
-						title: 'Каналы',
+						title: 'Лучшие каналы поддержки',
 						items: [
 							{
-								title: 'Ошибки',
+								title: 'Отчеты об ошибках',
 								detail:
-									'Используйте GitHub issues для воспроизводимых проблем расширения, daemon, установки, браузера или сборки.'
+									'Откройте issue на GitHub при наличии воспроизводимых проблем в расширении, демоне, установщике, браузерных инструментах или при сборке.'
 							},
 							{
-								title: 'Вопросы',
-								detail: 'Используйте discussions для идей, workflow и помощи сообщества.'
+								title: 'Вопросы и идеи',
+								detail:
+									'Используйте обсуждения (Discussions) на GitHub для вопросов по использованию, сценариев автоматизации, идей и помощи сообщества.'
 							},
 							{
 								title: 'Документация',
 								detail:
-									'Смотрите docs и README для установки, моделей, token, Skills, каналов и голоса.'
+									'Обращайтесь к документации и файлу README для получения команд установки, настройки поставщиков моделей, токена Chrome, Skills, каналов, голоса и решения проблем.'
 							}
 						]
 					},
 					{
-						title: 'Перед отчетом',
+						title: 'Перед созданием темы',
 						items: [
 							{
-								title: 'Локальная настройка',
-								detail: 'Запустите anda, проверьте провайдера модели и доступность daemon.'
+								title: 'Проверка локальной установки',
+								detail:
+									'Запустите anda в терминале, убедитесь в наличии настроенного провайдера моделей и доступности демона перед тестированием расширения.'
 							},
 							{
-								title: 'Token',
+								title: 'Обновление токена браузера',
 								detail:
-									'Выполните anda browser token --days 365 и вставьте Gateway URL и Bearer token.'
+									'Выполните команду anda browser token --days 365 и скопируйте Gateway URL и Bearer token в настройки боковой панели.'
 							},
 							{
-								title: 'Разрешения',
+								title: 'Проверка прав доступа',
 								detail:
-									'Проверьте на обычной https-странице; Chrome блокирует некоторые ограниченные страницы.'
+									'Chrome может блокировать внедрение скриптов, доступ к микрофону, протокол file:// или действия расширения на защищенных страницах. Попробуйте обычную страницу https при отладке.'
 							}
 						]
 					},
 					{
-						title: 'Укажите',
+						title: 'Предоставляемая информация',
 						body: [
-							'ОС, версии Anda, Chrome и расширения, способ установки, команду и точный текст ошибки.',
-							'Не публикуйте API keys, tokens, приватные prompts или чувствительные скриншоты.'
+							'Пожалуйста, укажите вашу операционную систему, версию Anda Bot, версию Chrome, версию расширения, способ установки, выполнявшуюся команду, точное сообщение об ошибке и воспроизводится ли проблема на новой пустой вкладке.',
+							'Никогда не публикуйте ключи API, Bearer-токены, личные запросы, конфиденциальные файлы или снимки экрана с личными данными в публичных темах.'
+						]
+					},
+					{
+						title: 'Отчеты о безопасности и конфиденциальности',
+						body: [
+							'При возникновении проблем, связанных с безопасностью, не публикуйте ключи или детали эксплойтов открыто. Сначала создайте минимальное описание проблемы или воспользуйтесь специальной формой сообщения о проблемах безопасности в репозитории.',
+							'Если токен мог быть скомпрометирован, немедленно удалите его из настроек расширения и сгенерируйте новый с помощью локального CLI Anda.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'GitHub issues', href: githubIssues },
-					{ label: 'Discussions', href: githubDiscussions },
-					{ label: 'Docs', href: docsUrl }
+					{ label: 'Открыть GitHub issues', href: githubIssues },
+					{ label: 'Открыть обсуждения', href: githubDiscussions },
+					{ label: 'Читать документацию', href: docsUrl }
 				]
 			}
 		}
@@ -1165,190 +1297,245 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 			home: 'الرئيسية',
 			docs: 'الوثائق',
 			github: 'GitHub',
-			privacy: 'الخصوصية',
-			terms: 'الشروط',
-			support: 'الدعم',
+			privacy: 'سياسة الخصوصية',
+			terms: 'شروط الخدمة',
+			support: 'الدعم الفني',
 			languageLabel: 'اللغة',
-			updatedLabel: 'آخر تحديث',
-			navigationLabel: 'تنقل الموقع',
-			moreLinks: 'معلومات إضافية'
+			updatedLabel: 'آخر تحديث في',
+			navigationLabel: 'التنقل في الموقع',
+			moreLinks: 'مزيد من المعلومات'
 		},
 		pages: {
 			privacy: {
 				meta: {
 					title: 'سياسة الخصوصية - Anda Bot',
 					description:
-						'كيف يتعامل موقع Anda Bot وإضافة Chrome مع الإعدادات المحلية وسياق المتصفح والمطالبات والصوت ومزوّدي النماذج.'
+						'كيفية تعامل موقع Anda Bot وإضافة Chrome مع الإعدادات المحلية وسياق المتصفح والمطالبات وميزات الصوت وبيانات مزود النموذج.'
 				},
 				eyebrow: 'سياسة الخصوصية',
 				title: 'الخصوصية والتحكم المحلي وبيانات المتصفح',
-				intro: 'Anda Bot يعمل كجسر محلي بين Chrome وdaemon Anda الذي تشغله على جهازك.',
+				intro:
+					'تم تصميم Anda Bot كجسر للوكيل المحلي أولاً. تقوم إضافة Chrome بربط متصفحك بـ Anda daemon الذي تقوم بتشغيله، بينما يقوم الموقع الإلكتروني بشرح وتوزيع المشروع.',
 				updated: '15 مايو 2026',
 				sections: [
 					{
-						title: 'النطاق',
+						title: 'ما تغطيه هذه السياسة',
 						body: [
-							'تنطبق هذه السياسة على الموقع وإضافة Chrome. قد يكون للdaemon المحلي ومزوّدي النماذج والخدمات المتصلة ممارسات خاصة بهم.',
-							'الإضافة لا تبيع البيانات الشخصية؛ هي ترسل تعليماتك والسياق الذي تختاره إلى runtime Anda المحلي.'
+							'تغطي هذه السياسة موقع Anda Bot وإضافة Anda Bot لمتصفح Chrome. الإضافة عبارة عن عميل لوحة جانبية لـ Anda daemon المحلي. قد يكون للـ daemon المحلي ومزودي النماذج الذين قمت بتكوينهم وأي خدمات خارجية تتصل بها ممارسات البيانات الخاصة بهم.',
+							'لا تقوم الإضافة ببيع البيانات الشخصية. تم إنشاؤها لإرسال تعليماتك وسياق المتصفح المحدد إلى بيئة تشغيل Anda المحلية التي تقوم بتكوينها.'
 						]
 					},
 					{
-						title: 'البيانات المخزنة',
+						title: 'البيانات المخزنة بواسطة الإضافة',
 						items: [
 							{
-								title: 'الاتصال',
+								title: 'إعدادات الاتصال',
 								detail:
-									'يتم حفظ Gateway URL وBearer token محلياً في Chrome لإعادة الاتصال بالdaemon.'
+									'يتم تخزين Gateway URL و Bearer token اللذين تقوم بلصقهما في لوحة الإعدادات في التخزين المحلي لـ Chrome حتى تتمكن الإضافة من إعادة الاتصال بـ Anda daemon المحلي.'
 							},
 							{
-								title: 'جلسة المتصفح',
-								detail: 'معرّف محلي يحافظ على نفس مسار المحادثة عند تبديل التبويبات.'
+								title: 'معرف جلسة المتصفح',
+								detail:
+									'يتم تخزين معرف جلسة متصفح مستقر محليًا حتى يتمكن Anda من الحفاظ على سلسلة محادثة متصفح واحدة أثناء تبديل التبويبات.'
 							},
 							{
-								title: 'السجل المعروض',
+								title: 'حالة عرض المحادثة',
 								detail:
-									'قد تعرض اللوحة محادثات يعيدها الdaemon، ولا تديرها خدمة بعيدة خاصة بالإضافة.'
+									'قد تعرض اللوحة الجانبية سجل المحادثات المسترجع من Anda daemon المحلي، ولكن يتم إدارة سجلات المحادثة بواسطة الـ daemon بدلاً من خدمة الإضافة البعيدة.'
 							}
 						]
 					},
 					{
-						title: 'أذونات المتصفح',
+						title: 'سياق المتصفح والأذونات',
 						body: [
-							'قد تسجل الإضافة id وعنوان وURL التبويب الحالي. وللمهام يمكنها إدارة التبويبات والتنقل ولقطة الشاشة المرئية وتنفيذ إجراءات الصفحة.',
-							'تستخدم وظائف TTS والصوت فقط عندما تختار عناصر التحكم الصوتية وقد تتطلب أذونات المتصفح.'
+							'عند الاتصال، يمكن للإضافة تسجيل معرف التبويب الحالي وعنوانه ورابطه (URL) مع Anda daemon المحلي. إذا كانت المهمة تتطلب عملاً في المتصفح، فقد يطلب الـ daemon من الإضافة إدراج التبويبات، أو فتح أو تبديل التبويبات، أو التنقل، أو التقاط التبويب المرئي، أو تشغيل إجراءات الصفحة مثل قراءة المحتوى والنقر والكتابة والتمرير والضغط على المفاتيح.',
+							'تتيح أذونات تحويل النص إلى كلام (TTS) لـ Anda نطق الاستجابات عبر Chrome عندما تختار تشغيل الصوت. لا يبدأ التقاط الصوت أو التعرف على الكلام إلا من خلال عناصر التحكم الصوتية التي تواجه المستخدم وقد يعتمد على أذونات ميكروفون المتصفح للصفحة النشطة.'
 						]
 					},
 					{
-						title: 'المطالبات والمزوّدون',
+						title: 'المطالبات والملفات ومزودو النماذج',
 						body: [
-							'قد تُرسل المطالبات والمرفقات والتفريغات واللقطات ونص الصفحات ونتائج الأدوات إلى الdaemon المحلي ثم إلى المزوّدين الذين تضبطهم.',
-							'راجع سياسات كل مزوّد قبل إرسال معلومات حساسة.'
+							'يمكن إرسال مطالباتك والمرفقات المحددة والنصوص البرمجية التي تم إنشاؤها ولقطات الشاشة ونص الصفحة ونتائج الأدوات إلى Anda daemon المحلي. قد يقوم الـ daemon بعد ذلك بإرسال المحتوى ذي الصلة إلى مزودي النماذج والخدمات التي تقوم بتكوينها في Anda.',
+							'يتم التحكم في مفاتيح API وإعدادات المزود بواسطة تكوين Anda المحلي الخاص بك. راجع شروط الخصوصية لكل مزود قبل إرسال معلومات حساسة.'
 						]
 					},
 					{
-						title: 'التحكم',
+						title: 'الاحتفاظ والتحكم',
+						items: [
+							{
+								title: 'بيانات الإضافة المحلية',
+								detail:
+									'يمكنك مسح Gateway URL والتوكن وبيانات الجلسة من خلال تخزين إضافة Chrome أو عن طريق إزالة الإضافة.'
+							},
+							{
+								title: 'بيانات تشغيل Anda',
+								detail:
+									'يقوم Anda بتخزين حالة التشغيل والسجلات والقنوات وملفات مساحة العمل وبيانات الذاكرة في دليل Anda الرئيسي المحلي ما لم تقم بتكوين موقع مختلف.'
+							},
+							{
+								title: 'تحليلات الموقع الإلكتروني',
+								detail:
+									'لا يتضمن كود الموقع الحالي متتبع تحليلات مخصصًا. قد تستمر البنية التحتية للاستضافة في إنشاء سجلات تشغيل قياسية.'
+							}
+						]
+					},
+					{
+						title: 'الاستخدام الحساس',
 						body: [
-							'يمكن حذف بيانات الإضافة المحلية من إعدادات Chrome أو بإزالة الإضافة. تبقى بيانات runtime في دليل Anda المحلي ما لم تضبط موقعاً آخر.'
+							'لا ترسل أسرارًا أو سجلات خاضعة للتنظيم أو بيانات عمل سرية أو محتويات حساسة أخرى ما لم تكن تفهم أين سيقوم الـ daemon المحلي والأدوات ومزودو النماذج والخدمات المتصلة بمعالجتها.',
+							'Anda Bot ليس مخصصًا للأطفال دون السن المطلوبة بموجب القانون المعمول به لاستخدام الخدمات عبر الإنترنت دون موافقة الوالدين.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'الدعم', href: '/support' },
-					{ label: 'GitHub issues', href: githubIssues }
+					{ label: 'فتح الدعم الفني', href: '/support' },
+					{ label: 'مشكلات GitHub', href: githubIssues }
 				]
 			},
 			terms: {
 				meta: {
 					title: 'شروط الخدمة - Anda Bot',
-					description: 'شروط استخدام الموقع والإضافة والجسر المحلي وأتمتة المتصفح في Anda Bot.'
+					description:
+						'شروط استخدام موقع Anda Bot وإضافة Chrome وجسر التشغيل المحلي وميزات أتمتة المتصفح وموارد مشروع مفتوح المصدر.'
 				},
 				eyebrow: 'شروط الخدمة',
 				title: 'شروط استخدام Anda Bot',
-				intro: 'توضح هذه الشروط مسؤولياتك عند استخدام الموقع والإضافة وruntime المحلي.',
+				intro:
+					'توضح هذه الشروط المسؤوليات التي تصاحب استخدام الموقع الإلكتروني وإضافة Chrome وجسر تشغيل Anda المحلي.',
 				updated: '15 مايو 2026',
 				sections: [
 					{
-						title: 'القبول',
+						title: 'القبول والنطاق',
 						body: [
-							'باستخدام الموقع أو الإضافة فإنك توافق على هذه الشروط. إذا لم توافق، فلا تستخدمهما.',
-							'Anda Bot برنامج مفتوح المصدر وبعض الوظائف تعتمد على تثبيتك المحلي والمزوّدين والمتصفح والأدوات.'
+							'باستخدام الموقع الإلكتروني أو إضافة Chrome، فإنك توافق على هذه الشروط. إذا كنت لا توافق، فلا تستخدم الموقع أو الإضافة.',
+							'Anda Bot هو برنامج مفتوح المصدر ونظام وكيل محلي أولاً. تعتمد بعض الوظائف على التثبيت المحلي ومزودي النماذج والمتصفحات ونظام التشغيل وأدوات الطرف الثالث.'
 						]
 					},
 					{
-						title: 'إعدادك',
+						title: 'إعدادك وحساباتك',
 						items: [
-							{ title: 'Daemon محلي', detail: 'أنت مسؤول عن تثبيت Anda وضبطه وتحديثه وتأمينه.' },
 							{
-								title: 'API keys',
-								detail: 'أنت مسؤول عن حسابات المزوّدين والتكاليف والحدود والشروط.'
+								title: 'الـ daemon المحلي',
+								detail:
+									'أنت مسؤول عن تثبيت برنامج Anda Bot المحلي وتكوينه وتحديثه وتأمينه وأي دليل رئيسي أو مساحة عمل يستخدمها.'
 							},
-							{ title: 'Token', detail: 'حافظ على Bearer token الخاص بالإضافة بسرية.' }
+							{
+								title: 'مفاتيح API',
+								detail:
+									'أنت مسؤول عن حسابات مزودي النماذج الخاصة بك ومفاتيح API وتكاليف الاستخدام وقيود المعدل وشروط المزود.'
+							},
+							{
+								title: 'توكن الإضافة',
+								detail:
+									'حافظ على سرية Bearer token. قد يتمكن أي شخص لديه إمكانية الوصول إليه من الاتصال ببوابة Anda المحلية الخاصة بك طالما كان من الممكن الوصول إليها.'
+							}
 						]
 					},
 					{
-						title: 'الأتمتة',
+						title: 'أتمتة المتصفح',
 						body: [
-							'راجع الإجراءات قبل استخدامها في الحسابات أو المشتريات أو أنظمة الإدارة أو الخدمات الإنتاجية أو البيئات الحساسة.',
-							'لا تستخدم Anda Bot لانتهاك القوانين أو ضوابط الوصول أو حقوق الآخرين أو شروط المواقع.'
+							'يمكن للإضافة مساعدة Anda في التفاعل مع تبويبات وصفحات المتصفح. أنت مسؤول عن مراجعة الإجراءات قبل استخدامها في الحسابات أو الأنظمة الإدارية أو المشتريات أو سير العمل المالي أو خدمات الإنتاج أو البيئات الحساسة الأخرى.',
+							'لا تستخدم Anda Bot لانتهاك المواقع الإلكترونية أو شروط الخدمة أو ضوابط الوصول أو القوانين أو حقوق الآخرين.'
 						]
 					},
 					{
 						title: 'المحتوى والمخرجات',
 						body: [
-							'أنت مسؤول عن المحتوى الذي تقدمه وعن التحقق من المخرجات قبل الاعتماد عليها.',
-							'قد تكون مخرجات الذكاء الاصطناعي ناقصة أو خاطئة. استخدم حكماً مهنياً في القرارات الحساسة.'
+							'أنت تحتفظ بالمسؤولية عن المطالبات والملفات ومحتوى المتصفح والمواد الأخرى التي تقدمها. أنت مسؤول عن التحقق من المخرجات الناتجة قبل الاعتماد عليها.',
+							'يمكن أن تكون المخرجات الناتجة عن الذكاء الاصطناعي غير كاملة أو غير صحيحة أو غير آمنة أو غير مناسبة لغرض معين. استخدم الحكم المهني للقرارات القانونية والطبية والمالية والأمنية والتشغيلية.'
 						]
 					},
 					{
-						title: 'الترخيص والضمان',
+						title: 'ترخيص مفتوح المصدر وتوافر الخدمة',
 						body: [
-							'يقدم الكود بموجب ترخيص المستودع. إلى أقصى حد يسمح به القانون، يقدم Anda Bot كما هو ودون ضمانات.'
+							'يتم توفير الكود المصدري لـ Anda Bot بموجب الترخيص الموجود في المستودع. لا تحل هذه الشروط محل الترخيص مفتوح المصدر للكود.',
+							'قد يتغير الموقع الإلكتروني والإضافة والإصدارات والوثائق والتكاملات أو تتوقف مؤقتًا أو بشكل دائم في أي وقت. يتم تقديم الميزات كما هي متاحة ودون التزام منفصل بمستوى الخدمة (SLA).'
+						]
+					},
+					{
+						title: 'إخلاء المسؤولية وتحديد المسؤولية',
+						body: [
+							'إلى أقصى حد يسمح به القانون، يتم تقديم Anda Bot كما هو، دون أي ضمانات من أي نوع.',
+							'إلى أقصى حد يسمح به القانون، لا يتحمل مشرفو المشروع المسؤولية عن أي أضرار غير مباشرة أو عرضية أو خاصة أو تبعية أو تأديبية، أو عن فقدان البيانات أو الأرباح أو الأعمال أو السمعة التجارية.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'الخصوصية', href: '/privacy' },
-					{ label: 'GitHub', href: 'https://github.com/ldclabs/anda-bot' }
+					{ label: 'قراءة سياسة الخصوصية', href: '/privacy' },
+					{ label: 'مستودع GitHub', href: 'https://github.com/ldclabs/anda-bot' }
 				]
 			},
 			support: {
 				meta: {
-					title: 'الدعم - Anda Bot',
+					title: 'الدعم الفني - Anda Bot',
 					description:
-						'مساعدة في التثبيت وإضافة Chrome وbrowser token والdaemon المحلي وتقارير الأخطاء.'
+						'أين يمكن الحصول على المساعدة بشأن تثبيت Anda Bot وإعداد إضافة Chrome واتصال توكن المتصفح ومشكلات الـ daemon المحلي وتقارير الأخطاء.'
 				},
-				eyebrow: 'الدعم',
-				title: 'احصل على مساعدة مع Anda Bot',
-				intro: 'تحقق من الإعداد المحلي وسجل الخطأ بدقة وافتح issue بخطوات قابلة لإعادة الإنتاج.',
+				eyebrow: 'الدعم الفني',
+				title: 'الحصول على المساعدة بشأن Anda Bot',
+				intro:
+					'Anda Bot هو وكيل محلي مفتوح المصدر. عادةً ما يكون أسرع مسار للحصول على الدعم هو التحقق من الإعداد، والتقاط الخطأ الدقيق، وفتح مشكلة على GitHub مع تفاصيل كافية لإعادة إنتاجها.',
 				updated: '15 مايو 2026',
 				sections: [
 					{
-						title: 'القنوات',
+						title: 'أفضل قنوات الدعم',
 						items: [
 							{
-								title: 'الأخطاء',
+								title: 'تقارير الأخطاء',
 								detail:
-									'استخدم GitHub issues للمشكلات القابلة لإعادة الإنتاج في الإضافة أو daemon أو التثبيت أو المتصفح أو البناء.'
+									'افتح مشكلة (Issue) على GitHub لمشكلات الإضافة أو الـ daemon أو التثبيت أو أداة المتصفح أو البناء القابلة لإعادة الإنتاج.'
 							},
 							{
-								title: 'الأسئلة',
-								detail: 'استخدم discussions للأفكار وسير العمل ومساعدة المجتمع.'
+								title: 'الأسئلة والأفكار',
+								detail:
+									'استخدم مناقشات GitHub لأسئلة الاستخدام وسير العمل وأفكار الميزات ومساعدة المجتمع.'
 							},
 							{
 								title: 'الوثائق',
-								detail: 'راجع docs وREADME للتثبيت والنماذج وtoken وSkills والقنوات والصوت.'
+								detail:
+									'استخدم الوثائق وملف README لأوامر التثبيت وتكوين مزود النموذج وإعداد توكن Chrome والمهارات والقنوات والصوت وسياق استكشاف الأخطاء وإصلاحها.'
 							}
 						]
 					},
 					{
-						title: 'قبل الإبلاغ',
+						title: 'قبل فتح مشكلة',
 						items: [
 							{
-								title: 'الإعداد المحلي',
-								detail: 'شغل anda وتحقق من مزوّد النموذج وإمكانية الوصول إلى daemon.'
+								title: 'تأكيد الإعداد المحلي',
+								detail:
+									'قم بتشغيل anda من محطة الطرفية، وتأكد من تكوين مزود النموذج، وتأكد من إمكانية الوصول إلى الـ daemon قبل اختبار الإضافة.'
 							},
 							{
-								title: 'Token',
-								detail: 'شغل anda browser token --days 365 والصق Gateway URL وBearer token.'
+								title: 'إعادة إنشاء توكن المتصفح',
+								detail:
+									'قم بتشغيل anda browser token --days 365 والصق كلاً من Gateway URL و Bearer token في إعدادات اللوحة الجانبية.'
 							},
 							{
-								title: 'الأذونات',
-								detail: 'جرّب صفحة https عادية؛ Chrome يحظر بعض الصفحات المقيدة.'
+								title: 'التحقق من الأذونات',
+								detail:
+									'قد يحظر Chrome حقن الصفحة أو الوصول إلى الميكروفون أو روابط الملفات أو إجراءات الإضافة على الصفحات المقيدة. جرب صفحة https عادية عند استكشاف الأخطاء وإصلاحها.'
 							}
 						]
 					},
 					{
-						title: 'أرفق',
+						title: 'تضمين هذه المعلومات',
 						body: [
-							'نظام التشغيل وإصدارات Anda وChrome والإضافة وطريقة التثبيت والأمر ونص الخطأ الدقيق.',
-							'لا تنشر API keys أو tokens أو prompts خاصة أو لقطات حساسة.'
+							'يرجى تضمين نظام التشغيل وإصدار Anda Bot وإصدار Chrome وإصدار الإضافة وطريقة التثبيت والأمر الذي قمت بتشغيله ورسالة الخطأ الدقيقة وما إذا كانت المشكلة تحدث في تبويب متصفح جديد.',
+							'لا تقم بلصق مفاتيح API أو Bearer tokens أو المطالبات الخاصة أو الملفات السرية أو لقطات الشاشة الحساسة في المشكلات العامة.'
+						]
+					},
+					{
+						title: 'تقارير الأمن والخصوصية',
+						body: [
+							'بالنسبة للمشكلات الحساسة المتعلقة بالأمان، تجنب نشر الأسرار أو تفاصيل الثغرات في مشكلة عامة. افتح تقريرًا بسيطًا أولاً أو استخدم خيارات الإبلاغ عن الأمان في المستودع إذا كانت متاحة.',
+							'إذا كان هناك احتمال لتعرض التوكن للكشف، فقم بإلغائه عن طريق إزالة إعدادات الإضافة وإنشاء توكن متصفح جديد من واجهة أوامر Anda المحلية.'
 						]
 					}
 				],
 				actions: [
-					{ label: 'GitHub issues', href: githubIssues },
-					{ label: 'Discussions', href: githubDiscussions },
-					{ label: 'Docs', href: docsUrl }
+					{ label: 'فتح مشكلات GitHub', href: githubIssues },
+					{ label: 'فتح المناقشات', href: githubDiscussions },
+					{ label: 'قراءة الوثائق', href: docsUrl }
 				]
 			}
 		}

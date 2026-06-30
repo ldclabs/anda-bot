@@ -1,44 +1,59 @@
 ---
 sidebar_position: 1
 title: Cerebro de memoria Brain
-description: El ciclo Formation, Recall y Maintenance de la memoria a largo plazo de Anda Brain.
+description: El bucle de Formación, Recuerdo y Mantenimiento detrás de la memoria a largo plazo de Anda Brain.
 ---
 
 # Cerebro de memoria Brain
 
-Anda Brain es el sistema de memoria a largo plazo de Anda Bot. No es una base vectorial simple ni un archivo Markdown interminable: es un cerebro de memoria para agentes.
+Anda Brain es el sistema de memoria a largo plazo que impulsa a Anda Bot. No es una base de datos vectorial simple ni un archivo Markdown en constante crecimiento; es un cerebro de memoria diseñado específicamente para agentes de IA.
 
-Convierte conversaciones, archivos, resultados de herramientas y contexto de canales en un Cognitive Nexus: personas, proyectos, preferencias, eventos, decisiones, líneas de tiempo y relaciones.
+El Brain convierte las conversaciones, los archivos, los resultados de las herramientas y el contexto de los canales en un Cognitive Nexus (nexo cognitivo) en constante crecimiento: personas, proyectos, preferencias, eventos, decisiones, líneas de tiempo y las relaciones entre ellos.
 
-## Ciclo de tres fases
+## Bucle de tres fases
 
-### Formation
+### Formación (Formation)
 
-Codifica conversaciones y resultados útiles como memoria estructurada: quién, qué proyecto, qué preferencia, qué decisión y cuándo ocurrió.
+La Formación codifica conversaciones útiles y resultados de trabajo en memorias estructuradas. No solo se pregunta si apareció una frase en el chat; pregunta quién la dijo, a qué proyecto pertenece, qué preferencia revela, qué decisión se tomó y cuándo sucedió.
 
-### Recall
+### Recuerdo (Recall)
 
-Permite consultar el grafo con lenguaje natural. Una buena recuperación explica la tarea actual, no solo devuelve texto parecido.
+El Recuerdo permite consultar el grafo de memoria utilizando lenguaje natural. Un buen recuerdo proporciona el contexto necesario para la tarea actual, en lugar de limitarse a devolver fragmentos de texto similares o cercanos.
 
-### Maintenance
+### Mantenimiento (Maintenance)
 
-Consolida fragmentos, fusiona duplicados, reduce conocimiento viejo y preserva líneas de tiempo cuando los hechos cambian.
+El Mantenimiento consolida los fragmentos de información, fusiona los datos duplicados, reduce la influencia del conocimiento obsoleto y preserva las líneas de tiempo cuando cambian los hechos.
 
 ## Cómo enseñar a Anda
 
+No es necesario mantener manualmente archivos de memoria. Un mejor enfoque consiste en indicarle claramente a Anda las preferencias, los hechos estables y los cambios que ocurran.
+
 ```text
-Recuerda: prefiero notas de release cortas, pero con sección de riesgos.
-El proveedor de modelos de este workspace cambió de A a B.
-Cuando hablemos de Alice, nos referimos a la diseñadora móvil.
+Recuerda: me gustan las notas de lanzamiento cortas, pero conserva una sección de riesgos.
+El proveedor de modelos predeterminado para este espacio de trabajo cambió de A a B.
+Cuando mencionemos a Alice, nos referimos a la diseñadora del equipo móvil.
+¿Recuerdas los antecedentes del proyecto de migración de pagos?
 ```
 
-## Buenas memorias
+## Qué hace que una memoria sea buena
 
-- Contexto claro: proyecto, persona, archivo, canal o periodo.
-- Evolución: indica versión anterior y nueva.
-- Límite: marca información temporal como temporal.
-- Corrección: si Anda recuerda mal, da la versión correcta.
+- Contexto: el proyecto, la persona, el archivo, el canal o el rango de tiempo deben estar claros.
+- Evolución: cuando cambie una preferencia, indique tanto la versión antigua como la nueva.
+- Límites: la información temporal se puede marcar como válida únicamente para la tarea actual.
+- Corrección: si Anda recuerda algo incorrectamente, indíquele directamente la versión correcta.
 
-## Datos locales y proveedores
+## Datos locales y proveedores de modelos
 
-El grafo vive en `~/.anda/db` por defecto. Los proveedores de modelos pueden participar en formation, recall y resumen, así que elige endpoints según tu privacidad.
+Los datos del grafo de memoria se almacenan localmente en `~/.anda/db` de forma predeterminada. Los proveedores de modelos pueden seguir participando en la formación de la memoria, el soporte de recuerdo y la síntesis, así que elija los proveedores y puntos de conexión (endpoints) que mejor se adapten a sus necesidades de privacidad.
+
+Para priorizar un proveedor para tareas relacionadas con la memoria, agregue la etiqueta `brain`:
+
+```yaml
+model:
+  providers:
+    - family: anthropic
+      model: "deepseek-v4-pro"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "TU_CLAVE_API"
+      labels: ["primary", "brain"]
+```

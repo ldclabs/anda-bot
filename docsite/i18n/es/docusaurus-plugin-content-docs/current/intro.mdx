@@ -1,44 +1,44 @@
 ---
 sidebar_position: 1
 title: Resumen de la documentación
-description: Punto de entrada oficial para la documentación de Anda Bot.
+description: El punto de entrada oficial para la documentación de Anda Bot.
 ---
 
 # Documentación de Anda Bot
 
-Anda Bot es un asistente local con memoria primero. El launcher de escritorio y el daemon local mantienen Brain en tu máquina, mientras el panel lateral del navegador, la terminal, archivos, skills, cron, subagentes, canales y voz pueden alimentar la misma memoria en grafo.
+Anda Bot es un asistente de IA local con prioridad de memoria. El lanzador de escritorio y el daemon local mantienen el Brain ejecutándose en su propia máquina, mientras que el panel lateral del navegador, la terminal, los archivos, las habilidades (Skills), el cron, los subagentes, los canales y la voz pueden alimentar la misma memoria en grafo a largo plazo.
 
-Esta documentación es para quienes quieren poseer la capa de asistente en vez de alquilar memoria a una sola cuenta de modelo. Empieza con la app, conecta el navegador, configura proveedores y aprende cómo Brain mantiene contexto portable entre sesiones y modelos.
+Esta documentación está dirigida a las personas que desean poseer su propia capa de asistente en lugar de alquilar la memoria a una cuenta de modelo única. Comience con la instalación de la aplicación, luego conecte el navegador, configure los proveedores y aprenda cómo el Brain mantiene el contexto portable a través de sesiones y modelos.
 
-## Empieza aquí
+## Comience aquí
 
-- [Instalar Anda](./quick-start/install): launcher, Homebrew, script, PowerShell o código fuente.
-- [Conectar el navegador](./quick-start/browser-extension): une el panel lateral al daemon local con Gateway URL y Bearer token.
-- [Usar la terminal](./quick-start/terminal): entrada multilinea, `/goal`, `/loop`, `/side`, `/skill`, `/steer` y comandos comunes.
-- [Configurar runtime](./runtime/configuration): `~/.anda/config.yaml`, proveedores, claves API, proxy y directorios locales.
-- [Entender la memoria](./memory/brain): Formation, Recall y Maintenance.
-- [Trabajo de largo alcance](./workflows/long-horizon): delegar objetivos complejos sin perder el hilo principal.
-- [Canales y voz](./runtime/channels): Telegram, WeChat, Discord, Lark/Feishu y entrada/salida de voz.
+- [Instalar Anda](./quick-start/install): elija el lanzador, Homebrew, el script de instalación, Windows PowerShell o la ruta desde el código fuente.
+- [Emparejar el navegador](./quick-start/browser-extension): conecte el panel lateral al daemon local con una Gateway URL y un Bearer token.
+- [Usar la terminal](./quick-start/terminal): aprenda sobre el envío de mensajes, la entrada multilínea, `/goal`, `/loop`, `/side`, `/skill`, `/steer` y comandos comunes.
+- [Configurar el runtime](./runtime/configuration): prepare `~/.anda/config.yaml`, proveedores de modelos, claves API, proxies y directorios locales.
+- [Comprender la memoria del Brain](./memory/brain): aprenda sobre el bucle de Formación (Formation), Recuerdo (Recall) y Mantenimiento (Maintenance).
+- [Ejecutar trabajo de largo alcance](./workflows/long-horizon): delegue objetivos complejos a roles especializados conservando el hilo principal y la verificación final.
+- [Conectar canales y voz](./runtime/channels): lleve Anda a Telegram, WeChat, Discord, Lark/Feishu y entrada/salida de voz.
 
 ## Modelo mental
 
-Anda no es solo otra ventana de chat. Su valor es la continuidad.
+Anda Bot no es solo otra ventana de chat. La diferencia es la continuidad.
 
-- Se ejecuta localmente y guarda estado en `~/.anda`.
-- Brain convierte contexto útil en memoria de grafo para proyectos, preferencias, relaciones, decisiones y líneas de tiempo.
-- Los modelos y proveedores se pueden reemplazar; la memoria permanece local e inspeccionable.
-- El navegador, la terminal, archivos, skills, cron, subagentes, canales y voz se conectan al mismo runtime.
-- Con `/goal` se puede mantener trabajo largo; con `/loop`, seguimientos recurrentes o con ritmo del modelo.
+- Anda se ejecuta localmente, con el estado predeterminado almacenado en `~/.anda`.
+- El Brain convierte el contexto útil en memoria en grafo para proyectos, preferencias, relaciones, decisiones y líneas de tiempo.
+- Los modelos y proveedores son reemplazables; la memoria permanece local e inspeccionable.
+- El panel lateral del navegador, la terminal, los archivos, las habilidades, el cron, los subagentes, los canales y la voz se conectan al mismo runtime.
+- `/goal` puede mantener en movimiento el trabajo de largo alcance, mientras que `/loop` puede ejecutar seguimientos recurrentes o a ritmo propio.
 
 ## Ruta más corta
 
 ```bash
 brew install ldclabs/tap/anda
-DEEPSEEK_API_KEY=YOUR_API_KEY anda
+DEEPSEEK_API_KEY=TU_CLAVE_API anda
 ```
 
-Si no usas macOS o prefieres el launcher o el script, continúa con [Instalar Anda](./quick-start/install).
+Si no está en macOS, o prefiere el lanzador o el script de instalación, continúe con [Instalar Anda](./quick-start/install).
 
 :::tip
-En el primer arranque, Anda crea `~/.anda/config.yaml`. Si la UI indica campos de modelo faltantes, edita el archivo, guárdalo y presiona Enter para recargar.
+En el primer lanzamiento, Anda crea `~/.anda/config.yaml`. Si la interfaz de usuario de la terminal informa que faltan campos de modelo, edite ese archivo, guárdelo y luego actualice los modelos desde el lanzador o el panel lateral del navegador, o ejecute `anda models reload`.
 :::

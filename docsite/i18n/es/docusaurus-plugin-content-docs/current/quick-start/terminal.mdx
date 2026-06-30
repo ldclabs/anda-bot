@@ -1,62 +1,71 @@
 ---
 sidebar_position: 2
 title: Terminal
-description: Controles de la UI terminal, comandos slash y comandos CLI comunes.
+description: Controles de la interfaz de usuario de la terminal de Anda Bot, comandos de barra diagonal (slash commands) y comandos comunes de CLI.
 ---
 
 # Terminal
 
-Al ejecutar `anda`, la UI se conecta al daemon local. Cuando una conversación termina bien, se envía en segundo plano a Brain para formar memoria a largo plazo.
+Al ejecutar `anda`, la interfaz de usuario de la terminal se conecta al daemon local. Cuando una conversación se completa con éxito, se envía a Brain en segundo plano para la formación de memoria a largo plazo.
 
 ## Controles de entrada
 
 | Tecla | Acción |
 | --- | --- |
 | Enter | Enviar el mensaje actual |
-| Shift+Enter | Insertar una nueva línea |
-| Ctrl+U | Limpiar la entrada |
-| Ctrl+A / Ctrl+E | Ir al inicio o final |
+| Shift+Enter | Insertar un salto de línea |
+| Ctrl+U | Limpiar el cuadro de entrada |
+| Ctrl+A / Ctrl+E | Moverse al inicio o al final del texto de entrada |
 | Esc | Ver estado |
 | Ctrl+C | Salir |
 
-Después de editar `~/.anda/config.yaml`, escribe:
+Después de editar los proveedores de modelos en `~/.anda/config.yaml`, actualice los modelos desde el lanzador o el panel lateral del navegador, o ejecute:
+
+```bash
+anda models reload
+```
+
+Si ha modificado parámetros del daemon que requieren un reinicio, escriba:
 
 ```text
 /reload
 ```
 
-## Comandos slash
+## Comandos de barra diagonal (Slash Commands)
 
-| Comando | Uso |
+| Comando | Cuándo usarlo |
 | --- | --- |
-| `/goal message` | Coloca un objetivo en el ciclo de largo alcance. |
-| `/loop message` | Ejecuta un prompt o comando slash de forma repetida. Describe el intervalo en lenguaje natural, o déjalo fuera para que el modelo marque el ritmo. |
-| `/side message` o `/btw message` | Abre una tarea lateral sin interrumpir la conversación principal. |
-| `/skill skill-name message` | Pide a una skill concreta que atienda la solicitud. |
-| `/steer message` | Corrige la respuesta actual antes de la siguiente herramienta. |
-| `/stop message` | Detiene la tarea actual y deja la conversación en reposo. |
-| `/cancel message` | Cancela la sesión de conversación activa. |
+| `/goal mensaje` | Coloca un objetivo en el bucle de largo alcance hasta que el verificador determine que está completo o requiere más trabajo. |
+| `/loop mensaje` | Ejecuta un prompt o un comando de barra diagonal de forma repetida. Puede describir un intervalo en lenguaje natural (ej. `every 5 minutes`) o dejarlo vacío para que el modelo marque su propio ritmo. |
+| `/side mensaje` o `/btw mensaje` | Inicia una tarea secundaria para investigación, inspección o trabajo que no debe interrumpir la conversación principal. |
+| `/skill nombre-habilidad mensaje` | Solicita a una habilidad (Skill) de runtime específica que gestione la solicitud. |
+| `/steer mensaje` | Interrumpe la próxima llamada a herramienta y dirige la respuesta actual con nuevas instrucciones. |
+| `/stop mensaje` | Detiene la tarea actual y deja la conversación inactiva; el mensaje puede incluir un motivo. |
+| `/cancel mensaje` | Cancela la sesión de conversación activa; el mensaje puede incluir un motivo. |
+
+Ejemplos:
 
 ```text
-/goal Completa esta lista de release hasta confirmar tests y changelog.
-/loop cada 5 minutos /side Revisa la cola de despliegue y resume bloqueos.
-/side Revisa si esta actualización afecta a macOS arm64.
-/skill git-assistant Redacta un commit desde el diff actual.
-/steer No refactorices; primero arregla el build.
+/goal Finalizar esta lista de preparación de lanzamiento hasta que se confirmen las pruebas y el registro de cambios.
+/loop cada 5 minutos /side Verificar la cola de despliegue y resumir los bloqueos.
+/side Comprobar si esta actualización de dependencia tiene riesgos de compatibilidad.
+/skill git-assistant Redactar un mensaje de commit a partir del diff actual.
+/steer Detener la refactorización y solucionar primero únicamente el error de compilación.
 ```
 
-## Comandos CLI comunes
+## Comandos comunes de la CLI
 
 | Comando | Propósito |
 | --- | --- |
-| `anda` | Abre la UI interactiva. |
-| `anda update` | Actualiza una instalación por script. |
-| `anda status` | Muestra si el daemon está en ejecución. |
-| `anda start` | Inicia el daemon. |
-| `anda stop` | Detiene el daemon. |
-| `anda restart` | Reinicia el daemon. |
+| `anda` | Abre la interfaz de usuario de la terminal interactiva. |
+| `anda update` | Actualiza una versión instalada mediante el script de instalación. |
+| `anda status` | Muestra si el daemon en segundo plano se está ejecutando. |
+| `anda start` | Inicia el daemon en segundo plano. |
+| `anda stop` | Detiene el daemon en segundo plano. |
+| `anda restart` | Reinicia el daemon en segundo plano. |
+| `anda models reload` | Recarga los proveedores de modelos desde `config.yaml` sin reiniciar el daemon. |
 | `anda autostart status` | Muestra si el inicio automático al iniciar sesión está registrado. |
-| `anda agent run --prompt "..."` | Envía una solicitud y espera el resultado completo sin abrir la UI. |
-| `anda voice --record-secs 8` | Inicia entrada de voz; requiere transcription. |
+| `anda agent run --prompt "..."` | Envía una solicitud y espera el resultado completo sin abrir la interfaz de usuario. |
+| `anda voice --record-secs 8` | Inicia la entrada de voz; requiere la configuración de transcripción. |
 
-Para reproducir audio también necesitas `tts.enabled: true`. Si solo quieres entrada de voz y salida de texto, añade `--no-playback`.
+La reproducción de voz también requiere que `tts.enabled: true` esté configurado. Si solo desea entrada por voz y salida de texto, añada `--no-playback`.

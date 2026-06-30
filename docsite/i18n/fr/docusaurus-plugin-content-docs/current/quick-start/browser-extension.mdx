@@ -1,78 +1,81 @@
 ---
 sidebar_position: 3
-title: Extension navigateur
-description: Utiliser le panneau latéral d'Anda Bot avec votre daemon Anda local.
+title: Extension de navigateur
+description: Utilisez le panneau latéral de navigateur Anda Bot avec votre démon local Anda.
 ---
 
-# Extension navigateur
+# Extension de navigateur
 
-L'extension navigateur d'Anda Bot ouvre Anda dans le panneau latéral natif des navigateurs basés sur Chromium — Google Chrome et Microsoft Edge. C'est un pont vers le daemon Anda local exécuté sur votre ordinateur, afin que le contexte du navigateur, les outils terminal, les fichiers de projet, les Skills, les subagents, les canaux et la mémoire Brain restent dans le même runtime.
+L'extension de navigateur Anda Bot ouvre Anda dans le panneau latéral natif des navigateurs basés sur Chromium — Google Chrome et Microsoft Edge. Elle sert de pont vers le démon local Anda qui s'exécute sur votre propre ordinateur, afin que le contexte du navigateur, les outils de terminal, les fichiers de projet, les compétences (Skills), les sous-agents, les canaux et la mémoire du Brain restent regroupés dans un seul runtime.
 
 ## Prérequis
 
-- Google Chrome ou Microsoft Edge 116 ou plus récent (tout navigateur basé sur Chromium).
+- Google Chrome ou Microsoft Edge 116 ou supérieur (ou tout autre navigateur basé sur Chromium).
 - Anda installé et configuré avec au moins une clé API de fournisseur de modèle.
-- Le daemon Anda local lancé sur l'ordinateur que vous contrôlez.
+- Le démon local Anda en cours d'exécution sur l'ordinateur que vous contrôlez.
 
-Installez l'extension depuis la boutique de modules de votre navigateur :
+Installez l'extension à partir de la boutique de modules complémentaires de votre navigateur :
 
 - [Anda Bot sur le Chrome Web Store](https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd) — Google Chrome et autres navigateurs Chromium.
-- Microsoft Edge : ouvrez **Edge Add-ons** (`edge://extensions` → « Obtenir des extensions depuis Microsoft Edge Add-ons ») et recherchez **Anda Bot**.
+- Microsoft Edge : ouvrez les **Extensions Edge** (`edge://extensions` → « Obtenir des extensions à partir des modules complémentaires Microsoft Edge ») et recherchez **Anda Bot**.
 
-La même extension et les mêmes étapes de configuration fonctionnent dans les deux navigateurs.
+La même extension et les mêmes étapes de configuration s'appliquent aux deux navigateurs.
 
 ## Connecter le panneau latéral
 
-Lancez le daemon local :
+Démarrez le démon local :
 
 ```bash
 anda start
 ```
 
-Générez un token navigateur :
+Générez un jeton de navigateur :
 
 ```bash
 anda browser token --days 365
 ```
 
-Copiez la Gateway URL et le jeton Bearer affichés. Ouvrez le panneau latéral Anda Bot dans Chrome ou Edge, ouvrez les réglages, collez les deux valeurs et enregistrez. Une fois la connexion établie, vous pouvez discuter avec le même agent local depuis n'importe quelle page Web.
+Copiez l'URL de la passerelle (Gateway URL) et le Bearer token affichés. Ouvrez le panneau latéral Anda Bot dans Chrome ou Edge, accédez aux paramètres, collez les deux valeurs et enregistrez. Une fois la connexion établie, vous pouvez discuter avec le même agent local depuis n'importe quelle page Web.
 
 ## Travailler depuis une page
 
-Lorsque vous envoyez un message depuis le panneau latéral, Anda reçoit le titre et l'URL de l'onglet actuel comme contexte de requête. Si vous demandez un travail dans le navigateur, l'agent peut utiliser les actions de navigateur pour inspecter les pages et manipuler les onglets.
+Lorsque vous envoyez un message depuis le panneau latéral, Anda reçoit le titre et l'URL de l'onglet actif comme contexte de requête. Si vous demandez un travail sur le navigateur, l'agent peut utiliser des actions de navigation pour inspecter les pages et manipuler les onglets.
 
-Exemples utiles :
+Exemples d'utilisation :
 
 - Résumer ou comparer la page que vous lisez.
-- Collecter des informations dans plusieurs onglets en gardant les URL sources.
-- Remplir des formulaires, cliquer sur des boutons, faire défiler, prendre des captures ou exporter une page en PDF lorsque la tâche l'exige.
-- Préparer des commandes shell ou inspecter des fichiers de projet locaux tout en gardant la page dans le contexte.
+- Collecter des informations sur plusieurs onglets tout en conservant les URL sources associées.
+- Remplir des formulaires, cliquer sur des boutons, faire défiler, prendre des captures d'écran ou exporter une page au format PDF lorsque la tâche le requiert.
+- Préparer des commandes de shell ou inspecter des fichiers de projet locaux tout en conservant le contexte de la page de navigation.
+- Ajouter des messages importants de l'assistant aux favoris, les organiser dans des dossiers et revenir à la conversation d'origine plus tard.
 
-## Capacités du navigateur
+## Fonctionnalités du navigateur
 
-L'extension expose des outils de navigateur au daemon local. Les actions courantes incluent :
+L'extension expose des outils de navigation au démon local. Les actions courantes incluent :
 
 - Lister, changer, ouvrir, fermer, recharger et naviguer dans les onglets.
-- Lire les sélections, extraire le texte de page, capturer des écrans, inspecter les données d'accessibilité et imprimer des pages en PDF.
-- Cliquer, saisir, presser des touches, faire défiler, choisir dans des listes, téléverser des fichiers et gérer des dialogues.
+- Lire les sélections de texte, extraire le texte de la page, capturer des captures d'écran, inspecter les données d'accessibilité et imprimer les pages en PDF.
+- Cliquer, saisir du texte, appuyer sur des touches, faire défiler, sélectionner dans des listes déroulantes, téléverser des fichiers et gérer les boîtes de dialogue.
 - Télécharger des fichiers et inspecter les téléchargements initiés par le navigateur.
 
 Les actions de page et de saisie ciblent l'onglet actif. Si la tâche nécessite un autre onglet, demandez d'abord à Anda de changer d'onglet.
 
-## Runtime local et données
+Pour ouvrir des fichiers ou des dossiers locaux à l'aide de `open_file`, cochez la case `Autoriser l'accès aux URL de fichier` dans la page des détails de l'extension Anda Bot du navigateur (dans Edge, ouvrez `edge://extensions` → Anda Bot → Détails).
 
-L'extension stocke la Gateway URL, le jeton Bearer, l'id de session navigateur et les réglages dans le stockage local du navigateur. Elle envoie les prompts, pièces jointes choisies, métadonnées de session navigateur et informations d'onglets pertinentes au daemon Anda connecté.
+## Données et runtime locaux
 
-Le daemon et les fournisseurs de modèles configurés dans Anda peuvent traiter le prompt et les données de tâche. Utilisez l'extension uniquement avec un daemon et une configuration de modèles de confiance, surtout sur des pages sensibles.
+L'extension stocke l'URL de la passerelle, le Bearer token, l'ID de session de navigation et les paramètres dans le stockage local du navigateur. Elle transmet les prompts, les pièces jointes sélectionnées, les métadonnées de session de navigation et les informations d'onglet pertinentes au démon Anda auquel vous vous connectez.
+
+Le démon et les fournisseurs de modèles configurés dans votre installation Anda peuvent traiter le prompt et les données de tâche. N'utilisez l'extension qu'avec un démon et une configuration de modèle de confiance, en particulier sur les pages sensibles.
 
 ## Canaux distants
 
-Le panneau latéral du navigateur n'est qu'une surface. Si vous configurez WeChat, Telegram, Discord ou Lark / Feishu, ces messages peuvent atteindre le même daemon local pendant qu'il continue de tourner sur votre ordinateur.
+Le panneau latéral du navigateur n'est qu'une interface parmi d'autres. Si vous configurez des canaux WeChat, Telegram, Discord ou Lark / Feishu, les messages de ces partenaires peuvent atteindre le même démon local pendant qu'il continue de s'exécuter sur votre ordinateur.
 
-Voir [Canaux et voix](../runtime/channels) pour la configuration des canaux.
+Reportez-vous à la section [Canaux et voix](../runtime/channels) pour la configuration des canaux.
 
 ## Dépannage
 
-- Si le panneau latéral ne se connecte pas, confirmez que `anda start` tourne toujours et que la Gateway URL et le jeton Bearer ont été collés exactement.
-- Si les actions de navigateur échouent sur des pages protégées comme les URL `chrome://` ou `edge://`, ou la boutique de modules du navigateur, ouvrez une page Web ordinaire. Les navigateurs Chromium bloquent les scripts d'extension sur les pages protégées.
-- Si une erreur de modèle apparaît, vérifiez la clé du fournisseur dans `~/.anda/config.yaml` ou la variable d'environnement utilisée pour lancer le daemon.
+- Si le panneau latéral ne parvient pas à se connecter, confirmez que `anda start` est toujours actif et que la Gateway URL et le Bearer token ont été saisis exactement.
+- Si les actions de navigation échouent sur des pages système protégées telles que les URL `chrome://` ou `edge://`, ou sur la boutique de modules du navigateur, ouvrez une page Web classique. Les navigateurs basés sur Chromium bloquent les scripts d'extension sur les pages protégées.
+- Si une erreur de modèle survient, vérifiez la clé de votre fournisseur de modèle dans `~/.anda/config.yaml` ou la variable d'environnement utilisée pour démarrer le démon.

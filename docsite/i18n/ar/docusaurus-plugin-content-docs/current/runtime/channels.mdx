@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: القنوات والصوت
-description: إعداد قنوات IM والإدخال الصوتي والتفريغ و TTS.
+description: تكوين قنوات المراسلة الفورية (IM)، والمدخلات الصوتية، والترانسكريبت (transcription)، وتوليد الصوت (TTS).
 ---
 
 # القنوات والصوت
 
-يمكن أن يبقى Anda في الطرفية أو ينضم إلى قنوات الفريق. تعيد القنوات السياق إلى وقت التشغيل ونظام الذاكرة نفسه.
+يمكن لـ Anda البقاء في الطرفية، أو يمكنه الانضمام إلى قنوات الفريق. تجمع القنوات السياق مرة أخرى في بيئة التشغيل ونظام الذاكرة نفسه.
 
 ## القنوات المدعومة
 
@@ -15,22 +15,22 @@ description: إعداد قنوات IM والإدخال الصوتي والتفر
 - Discord
 - Lark / Feishu
 
-يوجد الإعداد تحت `channels` في `~/.anda/config.yaml`.
+توجد تكوينات القنوات تحت بند `channels` في `~/.anda/config.yaml`.
 
-## المستخدمون المتعددون
+## مستخدمون متعددون
 
-يمكن لـ daemon واحد خدمة عدة مستخدمين موثوقين عبر وكيل Anda نفسه. أنشئ مفتاح مستخدم ثم استخدم ذلك id في حقل `user` داخل القناة. عند حذف `user` تستخدم القناة هوية المالك المحلي المخزنة في مخزن بيانات الاعتماد الآمن لنظام التشغيل.
+يمكن لـ daemon واحد خدمة عدة مستخدمين موثوقين من خلال وكيل Anda نفسه. قم بإنشاء مفتاح مستخدم، ثم قم بتعيين قيمة `user` الخاصة بإدخال القناة على هذا المعرّف (ID). إذا تم حذف `user` ، فستستخدم القناة هوية المالك المحلي المخزنة في مخزن أوراق الاعتماد الآمن لنظام التشغيل.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-يكتب الأمر المفتاح العام الجديد تحت `users` ويحفظ المفتاح الخاص المطابق في مخزن بيانات الاعتماد الآمن لنظام التشغيل، مثل Apple Keychain أو Windows Credential Manager أو Linux Secret Service. تستورد مفاتيح owner و daemon القديمة إلى المخزن الآمن عند أول استخدام. استخدم `anda user export` أدناه عندما تحتاج صراحة إلى مفتاح ملف.
+يكتب هذا الأمر المفتاح العام الجديد تحت المعرّف الرئيسي `users` ويحفظ المفتاح الخاص المطابق له في مخزن أوراق الاعتماد الآمن لنظام التشغيل، مثل Apple Keychain، أو Windows Credential Manager، أو Linux Secret Service. يتم استيراد ملفات مفاتيح المالك و daemon القديمة إلى المخزن الآمن عند الاستخدام الأول. استخدم أمر `anda user export` أدناه عندما تحتاج صراحة إلى ملف مفتاح.
 
-على Linux، إذا لم يكن مزود Secret Service متاحا أو مفتوحا، ينتقل Anda إلى ملفات مفاتيح خاصة تحت `~/.anda/keys/` ويعرض/يسجل تحذيرا. لاستخدام Secret Service، شغل وافتح مزودا داخل جلسة D-Bus للمستخدم، مثلا `gnome-keyring-daemon --start --components=secrets`، وتأكد من ضبط `DBUS_SESSION_BUS_ADDRESS` لعملية Anda، ثم أعد تشغيل Anda. يمكن لمستخدمي KDE فتح KWallet بدلا من ذلك.
+على نظام Linux، إذا لم يكن هناك مزود لخدمة Secret Service متاحاً أو تم إلغاء قفله، فسيرجع Anda إلى استخدام ملفات المفاتيح الخاصة تحت المسار `~/.anda/keys/` ويطبع/يسجل تحذيراً. لاستخدام Secret Service، ابدأ تشغيل المزود وافتح قفله في جلسة D-Bus للمستخدم، على سبيل المثال `gnome-keyring-daemon --start --components=secrets` ، وتأكد من تعيين متغير البيئة `DBUS_SESSION_BUS_ADDRESS` لعملية Anda، ثم أعد تشغيل Anda. يمكن لمستخدمي بيئة KDE فتح قفل KWallet بدلاً من ذلك.
 
-لتصدير مفتاح هوية خاص موجود إلى ملف، استخدم `anda user export`. يمكن أن تكون الهوية `daemon` أو `owner` أو `default` أو id مستخدم موثوق:
+لتصدير مفتاح خاص لهوية موجودة إلى ملف، استخدم `anda user export`. يمكن أن تكون الهوية `daemon` أو `owner` أو `default` أو معرف مستخدم موثوق به:
 
 ```bash
 anda user export daemon --key-path ./anda-daemon.key
@@ -38,17 +38,19 @@ anda user export owner --key-path ./anda-owner.key
 anda user export alice --key-path ./alice.key
 ```
 
-لا تضع ملفات المفاتيح الخاصة المصدرة في مستودعات الكود أو المجلدات المشتركة.
+احتفظ بملفات المفاتيح الخاصة المصدرة خارج التحكم في الإصدار والمجلدات المشتركة.
 
-يبقى شكل الإعدادات هكذا:
+لا يزال التكوين يبدو كالتالي:
 
 ```yaml
 users:
   - id: alice
     pubkey: "ALICE_ED25519_PUBLIC_KEY"
+  - id: ops
+    pubkey: "OPS_ED25519_PUBLIC_KEY"
 ```
 
-## Telegram
+## مثال Telegram
 
 ```yaml
 channels:
@@ -62,36 +64,38 @@ channels:
       mention_only: false
 ```
 
-## WeChat
+## مثال WeChat
 
 ```yaml
 channels:
   wechat:
     - id: personal
+      user: alice
+      # اتركه فارغاً لتشغيل anda channel init wechat، وقراءة كود QR المربع، والحصول على الرمز.
       bot_token: ""
       username: anda-wechat
       allowed_users:
         - "*"
 ```
 
-عند ترك `bot_token` فارغًا يمكن استخدام `anda channel init wechat` ومسح QR.
+## مثال Discord
 
-## Discord
+يستخدم Discord رمز بوت واتصال Gateway. قم بإنشاء البوت وتثبيته قبل تحرير ملف `config.yaml`:
 
-يستخدم Discord رمز bot واتصال Gateway. أنشئ وثبّت bot قبل تعديل `config.yaml`:
-
-1. افتح [Discord Developer Portal](https://discord.com/developers/applications)، ثم أنشئ app أو افتح app موجودة.
-2. في صفحة **Bot** انسخ رمز bot أو أعد إنشاءه. فعّل أيضًا **Message Content Intent** ضمن **Privileged Gateway Intents** حتى يستطيع Anda قراءة نص الرسائل العادية.
-3. في **Installation** تأكد أن **Guild Install** يحتوي على scope باسم `bot`. من دون `bot` قد تظهر app في Discord Apps لكنها لن تظهر كعضو bot في الخادم.
-4. امنح على الأقل `View Channels` و `Send Messages` و `Read Message History`. أضف `Attach Files` لردود الملفات، وأضف `Add Reactions` إذا كان `ack_reactions: true`.
-5. ثبّت app في الخادم. بعد تثبيت الخادم يجب أن يظهر bot في قائمة الأعضاء.
+1. افتح [بوابة مطوري Discord](https://discord.com/developers/applications) ، ثم قم بإنشاء تطبيقك أو فتحه.
+2. في صفحة **البوت** (Bot) الخاصة بالتطبيق، انسخ رمز البوت أو أعد ضبطه. قم أيضاً بتمكين خيار **Message Content Intent** تحت **Privileged Gateway Intents** حتى يتمكن Anda من قراءة نصوص الرسائل العادية.
+3. في صفحة **التثبيت** (Installation) ، تأكد من أن عملية **Guild Install** تتضمن نطاق `bot`. بدون نطاق `bot` ، يمكن أن يظهر التطبيق في تطبيقات Discord الخاصة بك ولكن ليس كعضو بوت في الخادم.
+4. امنح البوت على الأقل صلاحيات `View Channels` و `Send Messages` و `Read Message History`. أضف `Attach Files` إذا كان يجب على Anda إرسال ملفات، وأضف `Add Reactions` عندما يكون `ack_reactions: true`.
+5. قم بتثبيت التطبيق في خادمك. يجب أن يظهر البوت في قائمة أعضاء الخادم بعد تثبيته.
 
 ```yaml
 channels:
   discord:
     - id: server
+      user: ops
       bot_token: "YOUR_DISCORD_BOT_TOKEN"
       username: anda-discord
+      # اختياري. قصر هذا الإدخال على خادم Discord واحد.
       guild_id: "YOUR_DISCORD_GUILD_ID"
       allowed_users:
         - "YOUR_DISCORD_USER_ID"
@@ -99,21 +103,30 @@ channels:
       ack_reactions: true
 ```
 
-الحقل الإلزامي الوحيد في التحقق من الإعداد هو `bot_token`. لإعداد عملي وأكثر أمانًا، اضبط `allowed_users` على Discord user IDs؛ عند ترك `allowed_users` فارغًا مع `allow_external_users: false` يتجاهل Anda المرسلين غير المسموح لهم.
+فقط حقل `bot_token` هو المطلوب بموجب التحقق من التكوين. لإعداد قابل للاستخدام وأكثر أماناً، اضبط `allowed_users` على معرفات مستخدمي Discord؛ قائمة `allowed_users` فارغة مع قيمة `allow_external_users: false` تتجاهل المرسلين غير المعتمدين في القائمة المسموح بها. استخدم `allow_external_users: true` فقط عندما يجب أن يكون المستخدمون الخارجيون غير الموثوق بهم قادرين على التحدث إلى Anda كـ `$external_user`.
+
+بعد حفظ التكوين:
 
 ```bash
 anda channel list
 anda restart
 ```
 
-في قناة الخادم اذكر bot مثل `@anda-discord لخص هذا النقاش`. في DM مع bot أرسل رسالة عادية من دون ذكره.
+في قناة الخادم، قم بالإشارة إلى البوت:
 
-## Lark / Feishu
+```text
+@anda-discord لخص هذا الموضوع
+```
+
+في محادثة خاصة (DM) مع البوت، أرسل رسالة عادية دون الإشارة إليه. إذا لم يكن البوت مرئياً، تحقق من أن خيار **Guild Install** يتضمن نطاق `bot` وأن daemon قيد التشغيل.
+
+## مثال Lark / Feishu
 
 ```yaml
 channels:
   lark:
     - id: work
+      user: ops
       app_id: "cli_xxx"
       app_secret: "YOUR_APP_SECRET"
       platform: feishu
@@ -121,21 +134,27 @@ channels:
       mention_only: true
 ```
 
-## الأمان
+## فحوصات سلامة القنوات
 
-- يحدد `allowed_users` من يمكنه تشغيل Anda.
-- استخدم `"*"` فقط عند قبول الوصول المفتوح.
-- يحتاج Lark/Feishu إلى `app_id` و `app_secret`.
-- تحفظ مسارات القنوات للرد في الخيط أو الغرفة الصحيحة.
+- يحدد خيار `allowed_users` من يمكنه تشغيل Anda؛ استخدم `"*"` فقط عندما يكون الوصول المفتوح مقبولاً.
+- يحدد خيار `user` أي من مرسلي Anda الموثوقين يمتلك المحادثات والموارد والذاكرة الخاصة بمدخل القناة الحالي.
+- تتطلب Telegram و Discord عادةً رمز البوت `bot_token`.
+- يمكن لـ WeChat استخدام رمز محفوظ، أو تسجيل الدخول عبر كود QR عندما يكون `bot_token` فارغاً.
+- يحتاج Lark / Feishu إلى `app_id` و `app_secret`؛ وتستخدم نقاط نهاية Feishu قيمة `platform: feishu`.
+- يتم الاحتفاظ بمسارات القنوات بشكل مستمر بحيث يمكن للردود اللاحقة العودة إلى الموضوع أو الغرفة أو جهة الاتصال الأصلية.
 
-## الصوت
+## الإدخال الصوتي والتشغيل
+
+يتطلب الإدخال الصوتي تعيين `transcription.enabled: true`. ابدأ جلسة صوتية باستخدام:
 
 ```bash
 anda voice --record-secs 8
 ```
 
-يتطلب الإدخال الصوتي `transcription.enabled: true` ويتطلب تشغيل الرد `tts.enabled: true`. للصوت كإدخال والنص كمخرج:
+إذا كنت تريد أيضاً أن يقوم Anda بتشغيل الإجابة صوتياً، فقم بتكوين `tts.enabled: true`. لمدخل الميكروفون ومخرج النص فقط:
 
 ```bash
 anda voice --record-secs 8 --no-playback
 ```
+
+يمكن أن تدخل المرفقات الصوتية في السياق بعد تمكين الترانسكريبت، بحيث تصبح الرسائل الصوتية في القنوات جزءاً من حلقة الذاكرة نفسها.

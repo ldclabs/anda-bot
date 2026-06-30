@@ -1,36 +1,36 @@
 ---
 sidebar_position: 2
-title: Canales y voz
-description: Configura canales IM, entrada de voz, transcripción y TTS.
+title: Canales y Voz
+description: Configure canales de mensajería instantánea (IM), entrada de voz, transcripción y TTS (texto a voz).
 ---
 
-# Canales y voz
+# Canales y Voz
 
-Anda puede quedarse en la terminal o unirse a canales de equipo. Los canales devuelven el contexto al mismo runtime y sistema de memoria.
+Anda puede limitarse a la terminal, o puede unirse a los canales de comunicación de su equipo. Los canales permiten integrar el contexto de diversas fuentes en el mismo runtime y sistema de memoria.
 
-## Canales soportados
+## Canales compatibles
 
 - Telegram
 - WeChat
 - Discord
 - Lark / Feishu
 
-La configuración vive en `channels` dentro de `~/.anda/config.yaml`.
+La configuración de los canales se encuentra bajo la sección `channels` en `~/.anda/config.yaml`.
 
 ## Múltiples usuarios
 
-Un daemon puede servir a varios usuarios de confianza con el mismo agente Anda. Crea una clave de usuario y usa ese id en el campo `user` del canal. Si omites `user`, el canal usa la identidad del propietario local almacenada en el almacén seguro de credenciales del sistema operativo.
+Un único daemon puede dar servicio a varios usuarios de confianza a través del mismo agente de Anda. Cree una clave de usuario y luego configure el campo `user` de una entrada de canal con ese ID. Si se omite `user`, el canal utiliza la identidad del propietario local almacenada en el almacén de credenciales seguro del sistema operativo.
 
 ```bash
 anda user create alice
 anda user list
 ```
 
-El comando escribe la clave pública nueva bajo `users` y guarda la clave privada correspondiente en el almacén seguro de credenciales del sistema operativo, como Apple Keychain, Windows Credential Manager o Linux Secret Service. Las claves antiguas del owner y del daemon se importan al almacén seguro en el primer uso. Usa `anda user export` abajo cuando necesites explícitamente una clave en archivo.
+El comando escribe la nueva clave pública bajo la sección superior `users` y almacena la clave privada correspondiente en el almacén de credenciales seguro del sistema operativo, como el llavero (Keychain) de Apple, el Administrador de credenciales de Windows o el Secret Service de Linux. Las claves anteriores de propietario y del daemon se importan al almacén seguro en el primer uso. Utilice el comando `anda user export` que se describe a continuación si necesita explícitamente un archivo de clave.
 
-En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y muestra/registra una advertencia. Para usar Secret Service, inicia y desbloquea un proveedor en una sesión D-Bus de usuario, por ejemplo `gnome-keyring-daemon --start --components=secrets`, asegúrate de que `DBUS_SESSION_BUS_ADDRESS` esté definido para el proceso de Anda y reinicia Anda. Los usuarios de KDE pueden desbloquear KWallet.
+En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada en `~/.anda/keys/` y muestra/registra una advertencia. Para utilizar Secret Service, inicie y desbloquee un proveedor en una sesión D-Bus de usuario, por ejemplo `gnome-keyring-daemon --start --components=secrets`, asegúrese de que `DBUS_SESSION_BUS_ADDRESS` esté configurado para el proceso de Anda y luego reinicie Anda. Los usuarios de KDE pueden desbloquear KWallet en su lugar.
 
-Para exportar una clave privada de identidad existente a un archivo, usa `anda user export`. La identidad puede ser `daemon`, `owner`, `default` o un id de usuario de confianza:
+Para exportar una clave privada de identidad existente a un archivo, utilice `anda user export`. La identidad puede ser `daemon`, `owner`, `default` o el ID de un usuario de confianza:
 
 ```bash
 anda user export daemon --key-path ./anda-daemon.key
@@ -38,106 +38,123 @@ anda user export owner --key-path ./anda-owner.key
 anda user export alice --key-path ./alice.key
 ```
 
-No guardes los archivos de clave privada exportados en repositorios de código ni carpetas compartidas.
+Mantenga los archivos de clave privada exportados fuera del control de versiones y de las carpetas compartidas.
 
-La configuración sigue viéndose así:
+La configuración mantiene esta estructura:
 
 ```yaml
 users:
   - id: alice
     pubkey: "ALICE_ED25519_PUBLIC_KEY"
+  - id: ops
+    pubkey: "OPS_ED25519_PUBLIC_KEY"
 ```
 
-## Telegram
+## Ejemplo de Telegram
 
 ```yaml
 channels:
   telegram:
     - id: personal
       user: alice
-      bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
-      username: "YOUR_TELEGRAM_BOT_USERNAME"
+      bot_token: "TU_TELEGRAM_BOT_TOKEN"
+      username: "TU_TELEGRAM_BOT_USERNAME"
       allowed_users:
         - "*"
       mention_only: false
 ```
 
-## WeChat
+## Ejemplo de WeChat
 
 ```yaml
 channels:
   wechat:
     - id: personal
+      user: alice
+      # Dejar vacío para ejecutar anda channel init wechat, escanear el código QR y obtener un token.
       bot_token: ""
       username: anda-wechat
       allowed_users:
         - "*"
 ```
 
-Con `bot_token` vacío puedes usar `anda channel init wechat` y escanear el QR.
+## Ejemplo de Discord
 
-## Discord
+Discord utiliza un token de bot y una conexión Gateway. Cree e instale el bot antes de editar `config.yaml`:
 
-Discord usa un bot token y una conexión Gateway. Crea e instala el bot antes de editar `config.yaml`:
-
-1. Abre el [Discord Developer Portal](https://discord.com/developers/applications) y crea o abre tu app.
-2. En la página **Bot**, copia o regenera el bot token. Activa también **Message Content Intent** en **Privileged Gateway Intents** para que Anda pueda leer mensajes normales.
-3. En **Installation**, haz que **Guild Install** incluya el scope `bot`. Sin `bot`, la app puede aparecer en Discord Apps pero no como miembro bot del servidor.
-4. Concede al menos `View Channels`, `Send Messages` y `Read Message History`. Añade `Attach Files` para respuestas con archivos y `Add Reactions` si `ack_reactions: true`.
-5. Instala la app en tu servidor. Tras una instalación de servidor, el bot debería aparecer en la lista de miembros.
+1. Abra el [Portal de desarrolladores de Discord](https://discord.com/developers/applications), luego cree o seleccione su aplicación.
+2. En la página **Bot** de la aplicación, copie o restablezca el token del bot. Active también la opción **Message Content Intent** bajo **Privileged Gateway Intents** para que Anda pueda leer el texto de los mensajes normales.
+3. En la página **Installation**, asegúrese de que **Guild Install** incluya el alcance `bot`. Sin el alcance `bot`, la aplicación puede aparecer en sus aplicaciones de Discord pero no como un bot miembro de un servidor.
+4. Conceda al bot al menos los permisos `View Channels`, `Send Messages` y `Read Message History`. Añada `Attach Files` si Anda debe enviar archivos, y añada `Add Reactions` cuando `ack_reactions: true` esté activado.
+5. Instale la aplicación en su servidor. El bot debería aparecer en la lista de miembros del servidor después de la instalación.
 
 ```yaml
 channels:
   discord:
     - id: server
-      bot_token: "YOUR_DISCORD_BOT_TOKEN"
+      user: ops
+      bot_token: "TU_DISCORD_BOT_TOKEN"
       username: anda-discord
-      guild_id: "YOUR_DISCORD_GUILD_ID"
+      # Opcional. Restringir esta entrada a un servidor de Discord específico.
+      guild_id: "TU_DISCORD_GUILD_ID"
       allowed_users:
-        - "YOUR_DISCORD_USER_ID"
+        - "TU_DISCORD_USER_ID"
       mention_only: true
       ack_reactions: true
 ```
 
-Solo `bot_token` es obligatorio para validar la configuración. Para una configuración útil y más segura, define `allowed_users` con IDs de usuario de Discord; con `allowed_users` vacío y `allow_external_users: false`, Anda ignora remitentes no autorizados.
+Solo el campo `bot_token` es requerido por la validación de configuración. Para una configuración útil y más segura, configure `allowed_users` con IDs de usuario de Discord; una lista `allowed_users` vacía con `allow_external_users: false` ignorará a los remitentes que no estén en la lista de permitidos. Utilice `allow_external_users: true` únicamente si desea permitir que usuarios externos no confiables se comuniquen con Anda como `$external_user`.
+
+Después de guardar la configuración:
 
 ```bash
 anda channel list
 anda restart
 ```
 
-En un canal del servidor menciona al bot, por ejemplo `@anda-discord resume este hilo`. En un DM con el bot, envía un mensaje normal sin mencionarlo.
+Mencione al bot en un canal del servidor:
 
-## Lark / Feishu
+```text
+@anda-discord resumir este hilo
+```
+
+En un mensaje directo (DM) con el bot, envíe un mensaje normal sin mencionarlo. Si el bot no está visible, compruebe que **Guild Install** incluya el alcance `bot` y que el daemon esté en ejecución.
+
+## Ejemplo de Lark / Feishu
 
 ```yaml
 channels:
   lark:
     - id: work
+      user: ops
       app_id: "cli_xxx"
-      app_secret: "YOUR_APP_SECRET"
+      app_secret: "TU_APP_SECRET"
       platform: feishu
       receive_mode: websocket
       mention_only: true
 ```
 
-## Seguridad
+## Verificaciones de seguridad del canal
 
-- `allowed_users` define quién puede activar Anda.
-- Usa `"*"` solo si el acceso abierto es aceptable.
-- Lark/Feishu requiere `app_id` y `app_secret`.
-- Las rutas de canal se guardan para responder en el hilo, sala o contacto correcto.
+- `allowed_users` determina quién puede activar a Anda; utilice `"*"` únicamente si es aceptable el acceso abierto.
+- `user` determina qué remitente de Anda confiable posee las conversaciones, los recursos y la memoria para esta entrada de canal.
+- Telegram y Discord suelen requerir `bot_token`.
+- WeChat puede utilizar un token guardado, o inicio de sesión por QR cuando `bot_token` esté vacío.
+- Lark / Feishu requiere `app_id` y `app_secret`; los endpoints de Feishu utilizan `platform: feishu`.
+- Las rutas del canal se persisten de modo que las respuestas posteriores puedan volver al hilo, sala o contacto original.
 
-## Voz
+## Entrada de voz y reproducción
 
-La entrada de voz requiere `transcription.enabled: true`:
+La entrada de voz requiere que `transcription.enabled: true` esté configurado. Inicie una sesión de voz con:
 
 ```bash
 anda voice --record-secs 8
 ```
 
-Para reproducir respuestas, configura `tts.enabled: true`. Para entrada de voz y salida de texto:
+Si además desea que Anda reproduzca la respuesta, configure `tts.enabled: true`. Si solo desea entrada por micrófono y salida por texto:
 
 ```bash
 anda voice --record-secs 8 --no-playback
 ```
+
+Los archivos de audio adjuntos pueden ingresar al contexto una vez activada la transcripción, permitiendo que los mensajes de voz en los canales pasen a formar parte del mismo hilo de memoria.

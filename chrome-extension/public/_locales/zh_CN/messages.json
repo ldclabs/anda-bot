@@ -30,13 +30,13 @@
     "message": "连接这台电脑上的 Anda"
   },
   "onboardingIntro": {
-    "message": "浏览器扩展需要先安装 Anda Bot 托盘/菜单栏程序、配置模型服务商，并保持本机 daemon 运行，之后才能开始聊天。"
+    "message": "浏览器扩展需要先安装 Anda Bot 托盘/菜单栏程序、配置模型提供商，并保持本机守护进程运行，之后才能开始聊天。"
   },
   "onboardingInstallTitle": {
-    "message": "安装 Anda Bot launcher"
+    "message": "安装 Anda Bot 启动器"
   },
   "onboardingInstallBody": {
-    "message": "Windows 请使用安装器；macOS 请使用安装脚本。launcher 会在安装后启动，并让本机 daemon 保持可用。"
+    "message": "Windows 请使用安装器；macOS 请使用安装脚本。启动器会在安装后启动，并让本机守护进程保持可用。"
   },
   "windowsInstaller": {
     "message": "Windows 安装器"
@@ -51,10 +51,10 @@
     "message": "复制命令"
   },
   "onboardingConfigureTitle": {
-    "message": "在 launcher 中完成设置"
+    "message": "在启动器中完成设置"
   },
   "onboardingConfigureBody": {
-    "message": "从系统托盘、菜单栏或开始菜单打开 Anda Bot，完成 provider/API key/model 向导，并在使用扩展时保持 launcher 运行。"
+    "message": "从系统托盘、菜单栏或开始菜单打开 Anda Bot，完成提供商/API 密钥/模型向导，并在使用扩展时保持启动器运行。"
   },
   "openConfigEditor": {
     "message": "打开 config.yaml 编辑器"
@@ -63,13 +63,13 @@
     "message": "完整 config.yaml"
   },
   "configEditorBody": {
-    "message": "模型服务商、语音、转录、频道、用户和其他 daemon 选项，请在专用配置页中编辑。"
+    "message": "模型提供商、语音、转写、频道、用户和其他守护进程选项，请在专用配置页中编辑。"
   },
   "onboardingTokenTitle": {
     "message": "生成扩展令牌"
   },
   "onboardingTokenBody": {
-    "message": "把命令输出的 Gateway URL 和 Bearer 令牌复制到下方字段。"
+    "message": "将命令输出的 Gateway URL 和 Bearer 令牌复制到下方字段。"
   },
   "tokenCommandLabel": {
     "message": "令牌"
@@ -195,7 +195,7 @@
     "message": "停止当前任务并让对话保持空闲。"
   },
   "promptCommandCancelDescription": {
-    "message": "取消当前对话会话，可选填原因。"
+    "message": "取消当前会话，可选填原因。"
   },
   "promptCommandPingDescription": {
     "message": "发送一次轻量探测。"
@@ -459,10 +459,10 @@
     "message": "音频播放失败。"
   },
   "conversationFailed": {
-    "message": "会话失败：\n\n$1"
+    "message": "对话失败：\n\n$1"
   },
   "conversationFailedNoReason": {
-    "message": "会话失败，但未返回失败原因。"
+    "message": "对话失败，但未返回失败原因。"
   },
   "rpcError": {
     "message": "工具返回了未知的 RPC 响应"
@@ -654,22 +654,22 @@
     "message": "运行时"
   },
   "configSectionRuntimeDetail": {
-    "message": "网关、代理与工作空间"
+    "message": "网关、代理与工作区"
   },
   "configSectionModels": {
     "message": "模型"
   },
   "configSectionModelsDetail": {
-    "message": "供应商列表与当前模型"
+    "message": "提供商列表与当前模型"
   },
   "configSectionTtsDetail": {
-    "message": "语音合成供应商"
+    "message": "语音合成提供商"
   },
   "configSectionTranscription": {
     "message": "语音转写"
   },
   "configSectionTranscriptionDetail": {
-    "message": "语音转文字供应商"
+    "message": "语音转文字提供商"
   },
   "configSectionChannelsDetail": {
     "message": "IM 通道运行时"
@@ -693,34 +693,34 @@
     "message": "守护进程核心设置。侧边栏设置仅保留浏览器连接信息；完整配置文件请在本页编辑。"
   },
   "configModelsDescription": {
-    "message": "选择当前模型，并维护守护进程可用的所有供应商条目。"
+    "message": "选择当前模型，并维护守护进程可用的所有提供商条目。"
   },
   "configProviders": {
-    "message": "供应商"
+    "message": "提供商"
   },
   "configProvidersDescription": {
     "message": "labels 用于路由 memory、flash、图像、音频与视频请求。"
   },
   "configAddProvider": {
-    "message": "添加供应商"
+    "message": "添加提供商"
   },
   "configProviderFallback": {
-    "message": "供应商 $1"
+    "message": "提供商 $1"
   },
   "configRemoveProvider": {
-    "message": "移除供应商"
+    "message": "移除提供商"
   },
   "configTtsTitle": {
     "message": "文本转语音"
   },
   "configTtsDescription": {
-    "message": "启用语音合成，并配置需要保存在 tts 下的供应商块。"
+    "message": "启用语音合成，并配置需要保存在 tts 下的提供商块。"
   },
   "configProviderBlock": {
-    "message": "供应商配置块"
+    "message": "提供商配置块"
   },
   "configTranscriptionDescription": {
-    "message": "配置语音转写默认值与各供应商选项。"
+    "message": "配置语音转写默认值与各提供商选项。"
   },
   "configChannelsDescription": {
     "message": "配置 Telegram、微信、Discord 与 Lark/飞书运行时。回复仍按各平台路由。"
@@ -882,7 +882,7 @@
     "message": "已复制 Markdown"
   },
   "bookmarkNotLocated": {
-    "message": "无法定位该消息，其所属会话可能不可用。"
+    "message": "无法定位该消息，其所属对话可能不可用。"
   },
   "bookmarkFolders": {
     "message": "文件夹"

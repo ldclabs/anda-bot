@@ -1,61 +1,78 @@
 ---
 sidebar_position: 1
-title: Travail longue durée et sous-agents
-description: Utiliser /goal, sous-agents, skills et outils pour mener des objectifs complexes jusqu'à vérification.
+title: Tâches à long terme et Sous-agents
+description: Utilisez /goal, des sous-agents, des compétences (Skills) et des outils pour faire progresser des objectifs complexes jusqu'à leur validation finale.
 ---
 
-# Travail longue durée et sous-agents
+# Tâches à long terme et Sous-agents
 
-Anda Bot vise les objectifs complexes qui demandent de la continuité. Il conserve l'objectif, vérifie la progression, compacte le contexte et continue si nécessaire.
+Anda Bot est conçu pour des objectifs complexes qui nécessitent de la continuité, et non pas une seule réponse. Les tâches à long terme préservent l'objectif d'origine, vérifient la progression, condensent le contexte et reprennent le travail lorsque c'est nécessaire.
 
 ## Utiliser /goal
 
+Le commande `/goal` marque une requête comme un objectif à long terme :
+
 ```text
-/goal Termine cette release : tests, changelog, docs d'installation et résumé des risques.
+/goal Terminer cette préparation de version : lancer les tests, vérifier le journal des modifications, valider la documentation du script d'installation et résumer les risques.
 ```
 
-`/goal` ouvre une boucle longue. Quand l'agent principal est libre, le vérificateur décide si le résultat est complet ou doit continuer.
+Lorsque l'agent principal est inactif, le vérificateur d'objectif évalue si le résultat actuel est complet. Si du travail supplémentaire est requis, il peut générer un suivi pour l'agent principal. Lorsque le contexte devient trop long, Anda condense l'état actuel et ouvre une conversation liée pour poursuivre la même session.
 
 ## Utiliser /loop
 
-`/loop` exécute à répétition un prompt ou une commande slash. Décrivez l'intervalle dans la demande avec les mots naturels pour vous, comme `toutes les 5 minutes`, `5m` ou des unités localisées. Le modèle interprète l'intervalle et peut créer un cron job agent récurrent si nécessaire :
+Le commande `/loop` exécute un prompt ou une commande slash de manière répétée. Décrivez l'intervalle dans la requête en utilisant la formulation qui vous semble naturelle, comme `every 5 minutes` (toutes les 5 minutes), `5m`, ou des unités de temps localisées. Le modèle interprète l'intervalle et peut créer une tâche cron d'agent récurrente si nécessaire :
 
 ```text
-/loop toutes les 5 minutes /side Vérifie si la file de déploiement est bloquée et résume le résultat.
+/loop toutes les 5 minutes /side Vérifier si la file d'attente de déploiement est bloquée et résumer le résultat.
 ```
 
-Si vous ne décrivez pas d'intervalle, Anda laisse le modèle choisir le rythme et continuer quand c'est nécessaire :
+Si vous ne décrivez pas d'intervalle, Anda laisse le modèle cadencer lui-même la boucle et poursuivre lorsqu'un travail supplémentaire est requis :
 
 ```text
-/loop Continue à vérifier la migration jusqu'à prouver chaque étape de validation.
+/loop Continuer à vérifier la migration jusqu'à ce que chaque étape de validation soit confirmée comme terminée.
 ```
 
 ## Utiliser /side
 
-`/side` ou `/btw` crée une tâche latérale pour rechercher, relire ou collecter du contexte sans interrompre la conversation principale.
+Les commandes `/side` ou `/btw` placent une requête dans une tâche secondaire indépendante. C'est utile pour :
+
+- Étudier un risque particulier.
+- Demander à une autre perspective de réviser la conclusion actuelle.
+- Rassembler des informations contextuelles sans interrompre la conversation principale.
 
 ```text
-/side Vérifie si cette dépendance affecte macOS arm64.
+/side Vérifier si cette mise à niveau de dépendance affecte les utilisateurs de macOS arm64.
 ```
 
 ## Utiliser /skill
 
-Les skills personnelles vivent dans `~/.anda/skills` ; les skills incluses dans les versions sont chargées depuis `~/.anda/bundled-skills`.
+Les compétences (Skills) de runtime personnelles résident dans `~/.anda/skills` ; les compétences intégrées aux versions officielles se chargent depuis `~/.anda/bundled-skills`. Lorsque vous souhaitez qu'un flux de travail spécifique gère une requête :
 
 ```text
-/skill git-assistant Rédige un Conventional Commit depuis le diff actuel.
+/skill git-assistant Rédiger un message de commit de type Conventional Commit à partir du diff actuel.
 ```
 
 ## Rôle des sous-agents
 
-Ils peuvent rechercher, implémenter, relire ou superviser. La session principale garde l'objectif et le jugement final ; les sous-agents font le travail ciblé.
+Les sous-agents peuvent assumer des rôles spécialisés tels que la recherche, l'implémentation, la révision et la supervision. La session principale conserve l'objectif et le jugement final ; les sous-agents gèrent les tâches ciblées.
 
-## Outils et workspace local
+Cette structure est utile pour :
 
-Anda inclut mémoire, notes, shell, fichiers, tâches, skills, cron et sous-agents. Shell et fichiers utilisent `~/.anda/workspace` par défaut.
+- Des recherches nécessitant la lecture de nombreux fichiers ou documentations de référence.
+- Des tâches de codage où l'implémentation et la révision doivent être séparées.
+- Des objectifs qui nécessitent des vérifications régulières pour s'assurer que le travail est réellement terminé.
+- Des travaux qui requièrent des outils externes sans perdre le fil principal.
 
-Indiquez clairement l'objectif, les critères d'acceptation et les limites.
+## Outils et espace de travail local
+
+Les outils de base d'Anda comprennent la mémoire, les notes, le shell, la lecture/écriture de fichiers, la liste de tâches (todo), les compétences, le cron et les sous-agents. Les outils de fichiers et de shell s'exécutent par défaut dans `~/.anda/workspace`.
+
+Lorsqu'une tâche implique le dépôt actuel ou des outils externes, énoncez clairement l'objectif, les critères d'acceptation et les limites.
 
 ```text
-/goal Corrige le build docs. Ne modifie pas Rust. Terminé quand pnpm --dir docsite build passe.
+/goal Corriger le build de la doc dans le dépôt actuel. Ne pas modifier le code Rust. Terminé signifie que la commande pnpm --dir docsite build s'exécute avec succès.
 ```
+
+## Quand ne pas utiliser /goal ou /loop
+
+Les questions-réponses simples, les explications ponctuelles et les recherches rapides de commandes ne nécessitent pas `/goal` ou `/loop`. Envoyez un message normal. Réservez `/goal` pour les tâches qui nécessitent un audit de complétion, et `/loop` pour les suivis récurrents ou à cadencement automatique.

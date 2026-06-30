@@ -1,16 +1,16 @@
 ---
 sidebar_position: 1
-title: Configuración del runtime
-description: Configura proveedores de modelos, directorios locales, proxy, privacidad y datos de runtime.
+title: Configuración de runtime
+description: Configure proveedores de modelos, directorios locales, proxies, límites de privacidad y datos de runtime.
 ---
 
-# Configuración del runtime
+# Configuración de runtime
 
-Anda guarda su estado en `~/.anda` por defecto. El archivo principal es `~/.anda/config.yaml`, creado en el primer arranque. La configuración MCP opcional vive en `~/.anda/mcp.json`.
+De manera predeterminada, Anda almacena el estado del runtime en `~/.anda`. El archivo de configuración principal es `~/.anda/config.yaml`, que se crea automáticamente en el primer lanzamiento. La configuración opcional del servidor MCP se almacena en `~/.anda/mcp.json`.
 
 ## Proveedores de modelos
 
-El proveedor activo debe incluir `family`, `model` y `api_base`. `api_key` puede estar en el archivo o venir de una variable de entorno.
+El proveedor activo debe incluir los campos `family`, `model` y `api_base`. La clave `api_key` se puede escribir en el archivo de configuración o dejarse vacía y suministrarse a través de una variable de entorno.
 
 ```yaml
 model:
@@ -19,12 +19,12 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "TU_CLAVE_API"
       labels: ["pro", "brain"]
       disabled: false
 ```
 
-Variables soportadas:
+Las variables de entorno de clave API de modelo admitidas son:
 
 ```text
 OPENAI_API_KEY
@@ -40,24 +40,21 @@ BIGMODEL_API_KEY
 GLM_API_KEY
 ```
 
-## Ajustes principales
+## Ajustes comunes de nivel superior
 
-| Ajuste | Propósito |
+| Parámetro | Propósito |
 | --- | --- |
-| `addr` | Dirección del gateway local, por defecto `127.0.0.1:8042`. |
-| `sandbox` | Si es true, shell usa `~/.anda/sandbox`. |
-| `https_proxy` | Proxy para modelos y canales. |
-| `model` | Proveedores para el agente y la memoria. |
-| `transcription` | Proveedor para voz y adjuntos de audio. |
-| `tts` | Proveedor para reproducción de voz. |
-| `channels` | Configuración de Telegram, WeChat, Discord y Lark/Feishu. |
+| `addr` | Dirección de la puerta de enlace (gateway) local, por defecto `127.0.0.1:8042`. |
+| `sandbox` | Cuando se establece en true, la ejecución del shell se realiza a través de `~/.anda/sandbox`. |
+| `https_proxy` | Proxy utilizado para las solicitudes de modelos y canales. |
+| `model` | Proveedores de modelos para el agente y el cerebro de memoria. |
+| `transcription` | Proveedor para la transcripción de entrada de voz y archivos de audio adjuntos. |
+| `tts` | Proveedor para la reproducción de voz. |
+| `channels` | Configuración de Telegram, WeChat, Discord, Lark/Feishu y otros canales. |
 
 ## Servidores MCP
 
-Anda Bot puede conectarse a servidores MCP mediante procesos stdio o endpoints
-HTTP. Pon una configuración MCP portable en `~/.anda/mcp.json` y reinicia el
-daemon. El archivo acepta `mcpServers` y `servers` como root key para pegar
-configuraciones de otras herramientas MCP con pocos cambios.
+Anda Bot puede conectarse a servidores MCP a través de procesos secundarios stdio o puntos de conexión (endpoints) HTTP. Coloque una configuración MCP portable en `~/.anda/mcp.json`, luego reinicie el daemon. El archivo acepta tanto `mcpServers` como `servers` como clave raíz para que pueda pegar configuraciones de otras herramientas compatibles con MCP con cambios mínimos.
 
 ```json
 {
@@ -78,29 +75,20 @@ configuraciones de otras herramientas MCP con pocos cambios.
 }
 ```
 
-Las herramientas MCP remotas aparecen como herramientas de Anda con nombres como
-`mcp_<server_id>_<remote_tool>`. Las cadenas de configuración admiten expansión
-de variables `$VAR` y `${VAR}`. `ANDA_HOME` y `ANDA_WORKSPACE` están integradas.
-Para servidores stdio, `command` se inicia directamente sin shell; si `cwd` se
-omite, se usa el primer workspace de Anda. Si `type` se omite, Anda infiere
-`stdio` desde `command` o `http` desde `url`.
+Las herramientas remotas de MCP aparecen como herramientas de Anda con nombres similares a `mcp_<server_id>_<remote_tool>`. Las cadenas de configuración admiten la expansión de variables de entorno `$VAR` y `${VAR}`. `ANDA_HOME` y `ANDA_WORKSPACE` están integradas. Para servidores stdio, el comando (`command`) se ejecuta directamente sin shell; cuando se omite `cwd`, se utiliza el primer espacio de trabajo de Anda. Si se omite `type`, Anda infiere `stdio` a partir del comando (`command`) o `http` a partir de la URL.
 
-El agente también puede añadir un servidor en tiempo de ejecución con
-`add_mcp_server`. Usa `persist: false` solo para el daemon actual, o
-`persist: true` para guardar el servidor en `~/.anda/mcp.json` y conservarlo
-tras reinicios. Sus campos de servidor reflejan una entrada de `mcp.json`:
-`type`, `command`, `args`, `env`, `cwd`, `url`, `headers`, `enabled`, `include`
-y `exclude`, más los campos propios de la herramienta `id` y `persist`.
+El agente también puede agregar un servidor en runtime utilizando `add_mcp_server`. Establezca `persist: false` solo para el daemon actual, o `persist: true` para guardar el servidor en `~/.anda/mcp.json` para futuros reinicios. Sus campos de servidor reflejan una entrada de `mcp.json`: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`, `enabled`, `include` y `exclude`, además de los campos `id` y `persist` exclusivos de herramientas.
 
-## Directorios locales
+## Estructura de directorios locales
 
 ```text
 ~/.anda/
   config.yaml
   mcp.json
+  anda-daemon.pid
   channels/
   db/
-  keys/ # claves heredadas, explícitas o fallback de Secret Service
+  keys/ # claves heredadas, explícitas o de reserva para Linux Secret Service
   logs/
   bundled-skills/
   sandbox/
@@ -111,16 +99,28 @@ y `exclude`, más los campos propios de la herramienta `id` y `persist`.
   workspace/
 ```
 
-`db/` contiene memoria, conversaciones, estado de canales y cron. `keys/` contiene claves heredadas, archivos de clave exportados explícitamente o claves de fallback de Linux Secret Service; las nuevas claves privadas de identidad se guardan por defecto en el almacén seguro de credenciales del sistema operativo cuando está disponible. `bundled-skills/` contiene skills gestionadas por las actualizaciones de Anda, mientras que `skills/` contiene skills personales creadas, clonadas o editadas por el usuario. `skills-manifest.json` guarda el estado local de activación, desactivación y recarga; `skill-backups/` y `skill-trash/` guardan copias previas a la edición y skills personales eliminadas. `workspace/` es el espacio por defecto para shell y archivos.
+| Directorio | Contenido |
+| --- | --- |
+| `db/` | Memoria local, conversaciones, estado de canales, estado de cron, estado de objetos y datos relacionados. |
+| `keys/` | Archivos de clave de firma heredados, exportados explícitamente o de reserva para Linux Secret Service. Las nuevas claves privadas de identidad se almacenan por defecto en el almacén de credenciales seguro del sistema operativo cuando está disponible. |
+| `logs/` | Registros del daemon y de la CLI. |
+| `channels/` | Estado de runtime de los canales. |
+| `bundled-skills/` | Habilidades integradas gestionadas en el lanzamiento e instaladas por las actualizaciones de Anda. |
+| `sandbox/` | Directorio de aislamiento de shell cuando el sandboxing está activado. |
+| `skills/` | Habilidades de runtime personales creadas, clonadas o editadas por el usuario. |
+| `skills-manifest.json` | Metadatos locales de habilitación/deshabilitación y recarga para la biblioteca de habilidades. |
+| `skill-backups/` | Copias de seguridad con marca de tiempo creadas antes de editar habilidades desde el panel de control. |
+| `skill-trash/` | Habilidades personales eliminadas que se trasladan aquí antes de su eliminación definitiva. |
+| `workspace/` | Espacio de trabajo predeterminado para herramientas de shell y archivos. |
 
-## Privacidad
+## Límite de privacidad
 
-Los datos locales se guardan en tu máquina; las claves privadas de identidad se guardan por defecto en el almacén seguro de credenciales del sistema operativo, con claves de archivo explícitas y claves de fallback de Linux Secret Service bajo `~/.anda/keys/`.
+Los datos de estado locales de Anda, el grafo de memoria, las conversaciones, el estado de los canales, el estado de las tareas programadas (cron), los registros y los datos del espacio de trabajo se almacenan en su máquina de forma predeterminada. Las claves privadas de identidad se almacenan de forma predeterminada en el almacén de credenciales seguro del sistema operativo, con claves de archivos explícitas y claves de reserva de Linux Secret Service bajo `~/.anda/keys/`.
 
-En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y muestra/registra una advertencia. Para usar Secret Service, inicia y desbloquea un proveedor en una sesión D-Bus de usuario, por ejemplo `gnome-keyring-daemon --start --components=secrets`, asegúrate de que `DBUS_SESSION_BUS_ADDRESS` esté definido para el proceso de Anda y reinicia Anda. Los usuarios de KDE pueden desbloquear KWallet.
+En Linux, si no hay un proveedor de Secret Service disponible o desbloqueado, Anda recurre a archivos de clave privada bajo `~/.anda/keys/` y emite una advertencia en la terminal y registros. Para utilizar Secret Service, inicie y desbloquee un proveedor en una sesión D-Bus de usuario (por ejemplo, `gnome-keyring-daemon --start --components=secrets`), asegúrese de que `DBUS_SESSION_BUS_ADDRESS` esté configurado para el proceso de Anda y luego reinicie Anda. Los usuarios de KDE pueden desbloquear KWallet en su lugar.
 
-Los proveedores de modelos pueden recibir prompts, resúmenes y solicitudes de memoria. Elige proveedores, endpoints y proxy según tus necesidades.
+Sin embargo, los proveedores de modelos pueden seguir recibiendo prompts, resúmenes de resultados de herramientas y solicitudes de formación o recuerdo de memoria. Elija proveedores de confianza, puntos de conexión privados o políticas de proxy que se adapten a sus necesidades de privacidad.
 
 :::tip
-Usa `anda --home /path/to/.anda` para aislar proyectos, identidades o pruebas.
+Utilice `anda --home /ruta/a/.anda` cuando necesite aislar datos para diferentes identidades, proyectos o pruebas.
 :::

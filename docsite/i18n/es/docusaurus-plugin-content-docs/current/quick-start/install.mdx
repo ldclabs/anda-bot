@@ -1,65 +1,71 @@
 ---
 sidebar_position: 1
 title: Instalar Anda
-description: Instala una versión de Anda Bot o ejecútalo desde el código fuente.
+description: Instale una versión de Anda Bot o ejecútelo desde el código fuente.
 ---
 
 # Instalar Anda
 
-Puedes instalar Anda Bot desde una versión publicada o ejecutarlo desde el repositorio. Usa la versión publicada para el día a día y el código fuente para contribuir, depurar o probar cambios.
+Anda Bot se puede instalar desde una versión publicada (release) o ejecutar directamente desde el código fuente del repositorio. Las versiones publicadas son ideales para el uso diario; las compilaciones desde el código fuente son recomendables para contribuciones, depuración y experimentación con nuevas funciones.
 
 ## Instalar la última versión
 
-En macOS se recomienda Homebrew:
+En macOS, se recomienda utilizar Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-macOS y Linux también pueden usar el script:
+En macOS, la fórmula de Homebrew instala tanto `anda` como `anda_launcher`. Ejecute `anda_launcher` una vez para iniciar el lanzador de la barra de menús y actualizar `~/Applications/Anda Bot.app`.
+
+En macOS y Linux también se puede utilizar el script de instalación:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell:
+Los usuarios de Windows deben descargar `AndaBotSetup-windows-x86_64.exe` desde la [última versión lanzada](https://github.com/ldclabs/anda-bot/releases/latest) y hacer doble clic en él. El instalador coloca a Anda bajo `%LOCALAPPDATA%\Programs\AndaBot`, instala las habilidades (Skills) preseleccionadas, crea accesos directos en el Escritorio y en el Menú de inicio, registra el lanzador de la bandeja del sistema para que se inicie al iniciar sesión, inicia el lanzador, abre un asistente de configuración gráfico para configurar el proveedor, la clave API y el modelo, y busca actualizaciones descargadas que puedan instalarse mostrando un aviso de reinicio.
+
+Los usuarios avanzados y los entornos de Integración Continua (CI) pueden utilizar PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-Los instaladores de release registran Anda para arrancar cuando inicia sesión el usuario actual e intentan arrancar el daemon inmediatamente. En Windows y macOS, el launcher de bandeja o barra de menús también puede buscar actualizaciones, descargarlas y pedir reiniciar para instalarlas. En PowerShell, agrega `-NoAutostart` o `-NoStart`; en el instalador shell, usa `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
+El instalador de shell para macOS también instala `~/Applications/Anda Bot.app`, registra el lanzador de la barra de menús al iniciar sesión y lo inicia de inmediato; el lanzador inicia el daemon después de la configuración, puede buscar actualizaciones desde la barra de menús y solicita instalar y reiniciar una vez descargada la actualización. Las instalaciones de shell en Linux registran directamente el inicio automático del daemon. Para PowerShell, añada `-NoAutostart` o `-NoStart` para omitir este comportamiento; para el instalador de shell, defina `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
 
-Después abre una terminal nueva y ejecuta:
+Después de la instalación, abra una nueva terminal y ejecute:
 
 ```bash
 anda
 ```
 
-## Preparar una clave API
+## Preparar una clave API del modelo
 
-Necesitas al menos una clave API de un proveedor de modelos. Puedes arrancar con una variable de entorno:
+Necesita al menos una clave API de proveedor de modelos. Los usuarios del instalador de Windows pueden introducirla en el asistente de configuración. Los usuarios de la interfaz de línea de comandos (CLI) pueden comenzar configurando una variable de entorno:
 
 ```bash
-DEEPSEEK_API_KEY=YOUR_API_KEY anda
+DEEPSEEK_API_KEY=TU_CLAVE_API anda
 ```
 
-Windows PowerShell:
+En Windows PowerShell:
 
 ```powershell
-$env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
+$env:DEEPSEEK_API_KEY="TU_CLAVE_API"; anda
 ```
 
-También puedes guardar la clave en `~/.anda/config.yaml`. El `api_key` del archivo tiene prioridad sobre las variables de entorno.
+También puede escribir la clave en `~/.anda/config.yaml` para reutilizarla. La clave `api_key` en `config.yaml` tiene prioridad sobre las variables de entorno.
 
-## Primer arranque
+## Primer lanzamiento
 
-Anda crea `~/.anda/config.yaml` en el primer arranque. Si falta configuración, la UI de terminal mostrará los campos necesarios.
+En la primera ejecución, Anda crea el directorio de runtime local y el archivo `~/.anda/config.yaml`. Si la configuración está incompleta, la interfaz de usuario de la terminal mostrará la lista de campos faltantes.
 
-1. Abre `~/.anda/config.yaml`.
-2. Completa `family`, `model`, `api_base` y `api_key` o una variable de entorno.
-3. Guarda el archivo.
-4. Vuelve a la UI y presiona Enter para recargar.
+1. Abra `~/.anda/config.yaml`.
+2. Complete los campos `family`, `model`, `api_base` y `api_key` o use una variable de entorno para el proveedor del modelo.
+3. Guarde el archivo.
+4. Actualice los modelos desde el lanzador o el panel lateral del navegador, o ejecute `anda models reload`.
+
+Configuración mínima del modelo:
 
 ```yaml
 model:
@@ -68,14 +74,16 @@ model:
     - family: anthropic
       model: "deepseek-v4-pro"
       api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY"
+      api_key: "TU_CLAVE_API" # Puede dejarse vacío si se establece DEEPSEEK_API_KEY
       labels: ["pro", "brain"]
       disabled: false
 ```
 
-La etiqueta `brain` hace que la memoria prefiera ese proveedor.
+La etiqueta `brain` hace que el cerebro de memoria prefiera ese proveedor. Si ningún proveedor tiene la etiqueta, las tareas de memoria utilizarán el modelo activo.
 
 ## Ejecutar desde el código fuente
+
+Para ejecutar el proyecto directamente desde el repositorio:
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -83,16 +91,29 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-Para aislar identidades, proyectos o pruebas:
+Utilice un directorio principal (`home`) independiente para aislar identidades, proyectos o datos de prueba:
 
 ```bash
-anda --home /path/to/.anda
+anda --home /ruta/a/.anda
+```
+
+Comando equivalente para el código fuente:
+
+```bash
+cargo run -p anda_bot -- --home /ruta/a/.anda
 ```
 
 ## Actualizar
 
+Si instaló Anda mediante el script de instalación, actualícelo con:
+
 ```bash
 anda update
+```
+
+Gestione el daemon en segundo plano con:
+
+```bash
 anda status
 anda start
 anda stop

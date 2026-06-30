@@ -58,7 +58,7 @@ launcher.language:
   es: Idioma
 launcher.model_settings:
   en: Model settings...
-  zh-Hans: 大模型配置...
+  zh-Hans: 模型设置...
   ru: Настройки модели...
   ar: إعدادات النموذج...
   fr: Paramètres du modèle...
@@ -149,14 +149,14 @@ launcher.restart_daemon:
   es: Reiniciar el demonio
 launcher.browser_extension_token:
   en: Generate browser extension token
-  zh-Hans: 生成浏览器扩展应用 token
+  zh-Hans: 生成浏览器扩展 Token
   ru: Создать токен для расширения браузера
   ar: إنشاء رمز لملحق المتصفح
   fr: Générer un jeton pour l'extension de navigateur
   es: Generar token para la extensión del navegador
 launcher.browser_extension_token_title:
   en: Browser extension token
-  zh-Hans: 浏览器扩展应用 token
+  zh-Hans: 浏览器扩展 Token
   ru: Токен расширения браузера
   ar: رمز ملحق المتصفح
   fr: Jeton de l'extension de navigateur
@@ -205,7 +205,7 @@ launcher.launch_at_login:
   es: Iniciar al iniciar sesión
 launcher.disable_launch_at_login:
   en: Disable launch at login
-  zh-Hans: 取消登录时启动
+  zh-Hans: 禁用登录时启动
   ru: Не запускать при входе в систему
   ar: تعطيل التشغيل عند تسجيل الدخول
   fr: Désactiver le lancement à l'ouverture de session
@@ -247,7 +247,7 @@ launcher.cancel:
   es: Cancelar
 launcher.provider:
   en: Provider
-  zh-Hans: 供应商
+  zh-Hans: 提供商
   ru: Провайдер
   ar: المزوّد
   fr: Fournisseur
@@ -268,14 +268,14 @@ launcher.api_key:
   es: Clave de API
 launcher.choose_provider_prompt:
   en: "Choose a model provider:"
-  zh-Hans: 选择模型供应商：
+  zh-Hans: 选择模型提供商：
   ru: "Выберите провайдера модели:"
   ar: "اختر مزوّد النموذج:"
   fr: "Choisissez un fournisseur de modèle :"
   es: "Elige un proveedor de modelo:"
 launcher.setup_required_message:
   en: Model is required. API key is required unless Codex is selected.
-  zh-Hans: 必须填写模型。除选择 Codex 外，必须填写 API key。
+  zh-Hans: 必须配置模型。除选择 Codex 外，必须提供 API 密钥。
   ru: Необходимо указать модель. API-ключ обязателен, если не выбран Codex.
   ar: النموذج مطلوب. مفتاح API مطلوب ما لم يتم اختيار Codex.
   fr: Le modèle est requis. La clé API est requise sauf si Codex est sélectionné.
@@ -289,7 +289,7 @@ launcher.launch_at_login_enabled:
   es: Inicio al iniciar sesión activado.
 launcher.launch_at_login_disabled:
   en: Launch at login disabled.
-  zh-Hans: 已关闭登录时启动。
+  zh-Hans: 已禁用登录时启动。
   ru: Запуск при входе в систему отключён.
   ar: تم تعطيل التشغيل عند تسجيل الدخول.
   fr: Lancement à l'ouverture de session désactivé.
@@ -430,7 +430,7 @@ launcher.unknown_error:
 
 browser.workspace_picker_title:
   en: Open a workspace folder for Anda
-  zh-Hans: 选择 Anda 工作空间目录
+  zh-Hans: 选择 Anda 工作区文件夹
   ru: Откройте папку рабочего пространства для Anda
   ar: افتح مجلد مساحة عمل لـ Anda
   fr: Ouvrir un dossier d'espace de travail pour Anda
@@ -438,21 +438,21 @@ browser.workspace_picker_title:
 
 launcher.error.unsupported_provider:
   en: "unsupported provider: %{provider_id}"
-  zh-Hans: 不支持的模型供应商：%{provider_id}
+  zh-Hans: 不支持的模型提供商：%{provider_id}
   ru: "неподдерживаемый провайдер: %{provider_id}"
   ar: "مزوّد غير مدعوم: %{provider_id}"
   fr: "fournisseur non pris en charge : %{provider_id}"
   es: "proveedor no compatible: %{provider_id}"
 launcher.error.unsupported_provider_from_wizard:
   en: "unsupported provider returned by wizard: %{provider_id}"
-  zh-Hans: 设置向导返回了不支持的模型供应商：%{provider_id}
+  zh-Hans: 设置向导返回了不支持的模型提供商：%{provider_id}
   ru: "мастер настройки вернул неподдерживаемого провайдера: %{provider_id}"
   ar: "أعاد معالج الإعداد مزوّدًا غير مدعوم: %{provider_id}"
   fr: "l'assistant a renvoyé un fournisseur non pris en charge : %{provider_id}"
   es: "el asistente devolvió un proveedor no compatible: %{provider_id}"
 launcher.error.env_required:
   en: "%{env_var} is required"
-  zh-Hans: 必须填写 %{env_var}
+  zh-Hans: 需要环境变量 %{env_var}
   ru: "необходимо указать %{env_var}"
   ar: "%{env_var} مطلوب"
   fr: "%{env_var} est requis"
@@ -466,14 +466,14 @@ launcher.error.settings_wizard_failed:
   es: "el asistente de configuración falló: %{detail}"
 launcher.error.powershell_launch_failed:
   en: "could not launch PowerShell for settings wizard: %{detail}"
-  zh-Hans: 无法启动 PowerShell 设置向导：%{detail}
+  zh-Hans: 无法为设置向导启动 PowerShell：%{detail}
   ru: "не удалось запустить PowerShell для мастера настройки: %{detail}"
   ar: "تعذّر تشغيل PowerShell لمعالج الإعدادات: %{detail}"
   fr: "impossible de lancer PowerShell pour l'assistant de configuration : %{detail}"
   es: "no se pudo iniciar PowerShell para el asistente de configuración: %{detail}"
 launcher.error.launcher_exe_detect_failed:
   en: "could not detect launcher executable: %{detail}"
-  zh-Hans: 无法检测 launcher 可执行文件：%{detail}
+  zh-Hans: 无法检测到启动器可执行文件：%{detail}
   ru: "не удалось определить исполняемый файл лаунчера: %{detail}"
   ar: "تعذّر اكتشاف الملف التنفيذي للمشغّل: %{detail}"
   fr: "impossible de détecter l'exécutable du lanceur : %{detail}"
@@ -487,7 +487,7 @@ launcher.error.run_anda_failed:
   es: "no se pudo ejecutar %{path}: %{detail}"
 launcher.command_exited:
   en: "Command exited with %{status}"
-  zh-Hans: 命令退出状态：%{status}
+  zh-Hans: 命令已退出，状态：%{status}
   ru: "Команда завершилась со статусом %{status}"
   ar: "انتهى الأمر بالحالة %{status}"
   fr: "La commande s'est terminée avec %{status}"
@@ -508,7 +508,7 @@ launcher.error.schtasks_failed:
   es: "schtasks.exe falló: %{detail}"
 launcher.update_ready_message:
   en: Downloaded %{latest_tag}. Restart to apply.
-  zh-Hans: 已下载 %{latest_tag}，重启生效。
+  zh-Hans: 已下载 %{latest_tag}，重启以应用更新。
   ru: Загружено %{latest_tag}. Перезапустите, чтобы применить.
   ar: تم تنزيل %{latest_tag}. أعد التشغيل للتطبيق.
   fr: "%{latest_tag} téléchargée. Redémarrez pour appliquer."
@@ -522,7 +522,7 @@ launcher.update_downloaded_restart_message:
   es: Instalar y reiniciar %{latest_tag}
 launcher.update_restart_confirm:
   en: Downloaded %{latest_tag}. Install and restart now to apply it?
-  zh-Hans: 已下载 %{latest_tag}，重启生效。现在安装并重启？
+  zh-Hans: 已下载 %{latest_tag}。是否立即安装并重启以应用更新？
   ru: Загружено %{latest_tag}. Установить и перезапустить сейчас?
   ar: تم تنزيل %{latest_tag}. هل تريد التثبيت وإعادة التشغيل الآن؟
   fr: "%{latest_tag} téléchargée. Installer et redémarrer maintenant ?"
@@ -543,7 +543,7 @@ launcher.update_check_failed_message:
   es: "Error al comprobar actualizaciones: %{detail}"
 launcher.update_restart_failed_message:
   en: "Update install or restart failed: %{detail}"
-  zh-Hans: 安装更新或重启失败：%{detail}
+  zh-Hans: 更新安装或重启失败：%{detail}
   ru: "Не удалось установить обновление или перезапустить: %{detail}"
   ar: "فشل تثبيت التحديث أو إعادة التشغيل: %{detail}"
   fr: "Échec de l'installation de la mise à jour ou du redémarrage : %{detail}"
@@ -557,7 +557,7 @@ launcher.restart_recovery:
   es: "Recuperación del reinicio: %{message}"
 launcher.missing_home_arg:
   en: missing value for --home
-  zh-Hans: 缺少 --home 的值
+  zh-Hans: 缺少 --home 参数值
   ru: отсутствует значение для --home
   ar: قيمة --home مفقودة
   fr: valeur manquante pour --home
@@ -585,28 +585,28 @@ shell_approval.reason.empty_command:
   es: El comando está vacío.
 shell_approval.reason.background_command:
   en: This command will run in the background and needs your confirmation.
-  zh-Hans: 该命令会在后台运行，需要你确认。
+  zh-Hans: 该命令将在后台运行，需要你确认。
   ru: Эта команда будет выполняться в фоне и требует подтверждения.
   ar: سيعمل هذا الأمر في الخلفية ويتطلب تأكيدك.
   fr: Cette commande s'exécutera en arrière-plan et nécessite votre confirmation.
   es: Este comando se ejecutará en segundo plano y requiere tu confirmación.
 shell_approval.reason.complex_shell_syntax:
   en: This command uses complex shell syntax, so you need to confirm what will run.
-  zh-Hans: 该命令包含复杂的 shell 语法，需要你确认实际会执行的操作。
+  zh-Hans: 该命令包含复杂的 shell 语法，需要你确认实际要执行的操作。
   ru: Эта команда использует сложный синтаксис shell, поэтому нужно подтвердить, что именно будет выполнено.
   ar: يستخدم هذا الأمر صياغة shell معقدة، لذلك تحتاج إلى تأكيد ما سيتم تنفيذه فعلاً.
   fr: Cette commande utilise une syntaxe shell complexe ; vous devez confirmer ce qui sera réellement exécuté.
   es: Este comando usa sintaxis de shell compleja, por lo que debes confirmar qué se ejecutará.
 shell_approval.reason.sensitive_path_or_secret:
   en: This command may touch sensitive paths or secret values.
-  zh-Hans: 该命令可能涉及敏感路径或密钥信息。
+  zh-Hans: 该命令可能涉及敏感路径、密钥或凭据等敏感信息。
   ru: Эта команда может затрагивать чувствительные пути или секретные значения.
   ar: قد يمس هذا الأمر مسارات حساسة أو قيماً سرية.
   fr: Cette commande peut toucher des chemins sensibles ou des valeurs secrètes.
   es: Este comando puede afectar rutas sensibles o valores secretos.
 shell_approval.reason.path_outside_workspace:
   en: This command will access a path outside the active workspace.
-  zh-Hans: 该命令会访问当前工作区之外的路径。
+  zh-Hans: 该命令将访问当前工作区之外的路径。
   ru: Эта команда обратится к пути вне активной рабочей области.
   ar: سيصل هذا الأمر إلى مسار خارج مساحة العمل النشطة.
   fr: Cette commande accédera à un chemin en dehors de l'espace de travail actif.
@@ -620,28 +620,28 @@ shell_approval.reason.unknown_command:
   es: No se pudo identificar el riesgo de este comando.
 shell_approval.reason.network_write_or_system_change:
   en: This command may access the network, write files, or change system state.
-  zh-Hans: 该命令可能访问网络、写入文件或更改系统状态。
+  zh-Hans: 该命令可能会访问网络、写入文件或更改系统状态。
   ru: Эта команда может обращаться к сети, записывать файлы или изменять состояние системы.
   ar: قد يصل هذا الأمر إلى الشبكة أو يكتب ملفات أو يغيّر حالة النظام.
   fr: Cette commande peut accéder au réseau, écrire des fichiers ou modifier l'état du système.
   es: Este comando puede acceder a la red, escribir archivos o cambiar el estado del sistema.
 shell_approval.reason.git_state_or_network:
   en: This git command may change repository state or access the network.
-  zh-Hans: 该 git 命令可能更改仓库状态或访问网络。
+  zh-Hans: 该 Git 命令可能会修改仓库状态或访问网络。
   ru: Эта команда git может изменить состояние репозитория или обратиться к сети.
   ar: قد يغيّر أمر git هذا حالة المستودع أو يصل إلى الشبكة.
   fr: Cette commande git peut modifier l'état du dépôt ou accéder au réseau.
   es: Este comando de git puede cambiar el estado del repositorio o acceder a la red.
 shell_approval.reason.unclassified_command:
   en: It is unclear whether this command is safe.
-  zh-Hans: 无法确定这个命令是否安全。
+  zh-Hans: 无法确定该命令是否安全。
   ru: Неясно, безопасна ли эта команда.
   ar: من غير الواضح ما إذا كان هذا الأمر آمناً.
   fr: Il n'est pas clair si cette commande est sûre.
   es: No está claro si este comando es seguro.
 shell_approval.reason.model_classified_risky:
   en: The risk model determined that this command needs your confirmation.
-  zh-Hans: 风险模型认为这个命令需要你确认。
+  zh-Hans: 风险模型判定该命令需要你确认。
   ru: Модель оценки риска решила, что эта команда требует подтверждения.
   ar: قرر نموذج المخاطر أن هذا الأمر يحتاج إلى تأكيدك.
   fr: Le modèle de risque a déterminé que cette commande nécessite votre confirmation.

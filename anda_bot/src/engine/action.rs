@@ -1722,7 +1722,7 @@ mod tests {
             .expect("approval reason detail");
         assert_eq!(
             reason["value"],
-            "该命令可能访问网络、写入文件或更改系统状态。"
+            "该命令可能会访问网络、写入文件或更改系统状态。"
         );
 
         runtime
