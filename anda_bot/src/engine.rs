@@ -308,10 +308,12 @@ impl Engines {
             .first()
             .cloned()
             .ok_or("At least one workspace must be provided")?;
-        let conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
+        let anda_conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
+        let subagent_conversations =
+            Conversations::connect(db.clone(), "subagent".to_string()).await?;
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await?);
         let conversations_tool = Arc::new(ConversationsTool::new(
-            conversations.clone(),
+            anda_conversations,
             default_workspace.to_string_lossy().to_string(),
         ));
         let bookmarks_tool = Arc::new(BookmarksTool::with_models(
@@ -512,6 +514,7 @@ impl Engines {
             .with_store(Store::new(object_store))
             .with_management(management)
             .with_models(cfg.models.clone())
+            .with_subagent_conversations(subagent_conversations)
             .register_tool(Arc::new(brain_client.clone()))?
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(ActionsTool::new(bot.action_runtime())))?
