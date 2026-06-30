@@ -509,9 +509,9 @@ channels:
     #[test]
     fn setup_issues_flag_provider_state_users_and_channel_duplicates() {
         let _env = model::guard_model_api_key_env();
-        let alice = crate::util::key::Ed25519Key::new([7; 32]);
-        let bob = crate::util::key::Ed25519Key::new([8; 32]);
-        let pubkey_of = |key: &crate::util::key::Ed25519Key| {
+        let alice = crate::identity::Ed25519Key::new([7; 32]);
+        let bob = crate::identity::Ed25519Key::new([8; 32]);
+        let pubkey_of = |key: &crate::identity::Ed25519Key| {
             ic_auth_types::ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string()
         };
 

@@ -1229,9 +1229,9 @@ mod tests {
     ) -> (
         BrowserWebSocketState,
         Principal,
-        crate::util::key::Ed25519Key,
+        crate::identity::Ed25519Key,
     ) {
-        let auth_key = crate::util::key::Ed25519Key::new([9u8; 32]);
+        let auth_key = crate::identity::Ed25519Key::new([9u8; 32]);
         let object_store: Arc<dyn object_store::ObjectStore> =
             Arc::new(object_store::memory::InMemory::new());
         let db = Arc::new(
@@ -1420,7 +1420,7 @@ mod tests {
 
     #[tokio::test]
     async fn browser_websocket_upgrades_and_round_trips_a_message() {
-        use crate::util::key::{Claims, iana};
+        use crate::identity::{Claims, iana};
         use tokio_tungstenite::tungstenite::Message as TMessage;
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 

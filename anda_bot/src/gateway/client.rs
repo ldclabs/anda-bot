@@ -14,7 +14,8 @@ use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
     engine::{AndaBotStatus, DaemonModelsResponse},
-    util::{http_client::new_reqwest_client, key::LocalIdentitySecrets},
+    identity::LocalIdentitySecrets,
+    util::http_client::new_reqwest_client,
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;

@@ -35,7 +35,7 @@ use windows_sys::Win32::{
 use crate::{
     auto_update, brain, channel,
     config::{Config, McpSettings},
-    cron, engine, gateway, logger, util,
+    cron, engine, gateway, identity, logger, util,
 };
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
@@ -211,7 +211,7 @@ impl Daemon {
 
     pub fn spawn_background_with_identity_secrets(
         &self,
-        identity_secrets: Option<&util::key::LocalIdentitySecrets>,
+        identity_secrets: Option<&identity::LocalIdentitySecrets>,
     ) -> Result<BackgroundDaemon, BoxError> {
         let exe = std::env::current_exe()?;
         let identity_payload = identity_secrets
@@ -308,8 +308,8 @@ impl Daemon {
 
     pub async fn serve(
         self,
-        id_key: util::key::Ed25519Key,
-        user_pubkey: util::key::Ed25519PubKey,
+        id_key: identity::Ed25519Key,
+        user_pubkey: identity::Ed25519PubKey,
     ) -> Result<(), BoxError> {
         let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
 
@@ -918,10 +918,10 @@ mod tests {
         daemon.ensure_directories().await.unwrap();
         let base_url = daemon.base_url();
 
-        let id_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
-        let user_key = util::key::Ed25519Key::new(util::key::random_ed25519_privkey());
-        let mut claims = util::key::Claims::default();
-        claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+        let id_key = identity::Ed25519Key::new(identity::random_ed25519_privkey());
+        let user_key = identity::Ed25519Key::new(identity::random_ed25519_privkey());
+        let mut claims = identity::Claims::default();
+        claims.extra.insert(identity::iana::CWTClaimScope, "*");
         let token = user_key.sign_cwt(claims).unwrap();
         let user_pubkey = user_key.pubkey();
 

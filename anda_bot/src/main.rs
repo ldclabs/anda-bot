@@ -19,6 +19,7 @@ mod cron;
 mod daemon;
 mod engine;
 mod gateway;
+mod identity;
 mod logger;
 mod transcription;
 mod tts;
@@ -229,16 +230,16 @@ async fn run() -> Result<(), BoxError> {
             daemon.ensure_config_file_exists().await?;
 
             let local_identity = if identity_secrets_stdin {
-                util::key::read_local_identity_secrets_from_stdin().await?
+                identity::read_local_identity_secrets_from_stdin().await?
             } else {
-                util::key::load_or_init_local_identity_secrets_with_store(
+                identity::load_or_init_local_identity_secrets_with_store(
                     &daemon.home,
-                    util::key::os_identity_key_store(),
+                    identity::os_identity_key_store(),
                 )
                 .await?
             };
-            let ed25519_key = util::key::Ed25519Key::new(*local_identity.daemon);
-            let user_key = util::key::Ed25519Key::new(*local_identity.owner);
+            let ed25519_key = identity::Ed25519Key::new(*local_identity.daemon);
+            let user_key = identity::Ed25519Key::new(*local_identity.owner);
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         Some(Commands::Stop) => {
@@ -273,9 +274,9 @@ async fn run() -> Result<(), BoxError> {
             let launch_state = if client.status().await.is_ok() {
                 daemon::LaunchState::AlreadyRunning
             } else {
-                let local_identity = util::key::load_or_init_local_identity_secrets_with_store(
+                let local_identity = identity::load_or_init_local_identity_secrets_with_store(
                     &daemon.home,
-                    util::key::os_identity_key_store(),
+                    identity::os_identity_key_store(),
                 )
                 .await?;
                 client
@@ -313,9 +314,9 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
 
-            let local_identity = util::key::load_or_init_local_identity_secrets_with_store(
+            let local_identity = identity::load_or_init_local_identity_secrets_with_store(
                 &daemon.home,
-                util::key::os_identity_key_store(),
+                identity::os_identity_key_store(),
             )
             .await?;
             let status_client = build_status_client(&daemon)?;
@@ -679,17 +680,17 @@ async fn load_daemon(home: PathBuf) -> Result<daemon::Daemon, BoxError> {
 }
 
 async fn build_control_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
-    build_control_client_with_store(daemon, util::key::os_identity_key_store()).await
+    build_control_client_with_store(daemon, identity::os_identity_key_store()).await
 }
 
 async fn build_control_client_with_store(
     daemon: &daemon::Daemon,
-    identity_store: std::sync::Arc<dyn util::key::IdentityKeyStore>,
+    identity_store: std::sync::Arc<dyn identity::IdentityKeyStore>,
 ) -> Result<gateway::Client, BoxError> {
     daemon.ensure_directories().await?;
 
     let secrets =
-        util::key::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
+        identity::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
             .await?;
     build_control_client_from_owner_secret(daemon, *secrets.owner)
 }
@@ -698,9 +699,9 @@ fn build_control_client_from_owner_secret(
     daemon: &daemon::Daemon,
     owner_secret: [u8; 32],
 ) -> Result<gateway::Client, BoxError> {
-    let user_key = util::key::Ed25519Key::new(owner_secret);
-    let mut claims = util::key::Claims::default();
-    claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+    let user_key = identity::Ed25519Key::new(owner_secret);
+    let mut claims = identity::Claims::default();
+    claims.extra.insert(identity::iana::CWTClaimScope, "*");
     let gateway_token = user_key.sign_cwt(claims)?;
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
 
@@ -716,30 +717,30 @@ async fn build_browser_extension_token(
     daemon: &daemon::Daemon,
     days: u64,
 ) -> Result<String, BoxError> {
-    build_browser_extension_token_with_store(daemon, days, util::key::os_identity_key_store()).await
+    build_browser_extension_token_with_store(daemon, days, identity::os_identity_key_store()).await
 }
 
 async fn build_browser_extension_token_with_store(
     daemon: &daemon::Daemon,
     days: u64,
-    identity_store: std::sync::Arc<dyn util::key::IdentityKeyStore>,
+    identity_store: std::sync::Arc<dyn identity::IdentityKeyStore>,
 ) -> Result<String, BoxError> {
     daemon.ensure_directories().await?;
 
     let secrets =
-        util::key::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
+        identity::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
             .await?;
-    let user_key = util::key::Ed25519Key::new(*secrets.owner);
+    let user_key = identity::Ed25519Key::new(*secrets.owner);
     let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let days = days.clamp(1, 3650);
     let expires_secs = now_secs.saturating_add(days * 24 * 60 * 60);
 
-    let mut claims = util::key::Claims {
+    let mut claims = identity::Claims {
         issued_at: Some(now_secs),
         expiration: Some(expires_secs),
         ..Default::default()
     };
-    claims.extra.insert(util::key::iana::CWTClaimScope, "*");
+    claims.extra.insert(identity::iana::CWTClaimScope, "*");
     claims.extra.insert("client", "chrome_extension");
     user_key.sign_cwt(claims)
 }
@@ -925,7 +926,7 @@ mod tests {
         assert_eq!(daemon.home, dir.path());
 
         // Building the control client provisions the user key and succeeds.
-        let identity_store = std::sync::Arc::new(util::key::MemoryIdentityKeyStore::default());
+        let identity_store = std::sync::Arc::new(identity::MemoryIdentityKeyStore::default());
         let _client = build_control_client_with_store(&daemon, identity_store.clone())
             .await
             .unwrap();

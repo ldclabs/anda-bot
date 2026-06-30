@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{Config, normalize_optional, normalize_string};
-use crate::util::key::Ed25519PubKey;
+use crate::identity::Ed25519PubKey;
 
 pub const DEFAULT_USER_ID: &str = "default";
 pub const OWNER_USER_ID: &str = "owner";
@@ -168,7 +168,7 @@ mod tests {
     use super::*;
     use crate::{
         config::{ChannelSettings, WechatChannelSettings},
-        util::key::Ed25519Key,
+        identity::Ed25519Key,
     };
     use ic_auth_types::ByteBufB64;
 

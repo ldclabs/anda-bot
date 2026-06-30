@@ -5,16 +5,14 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 use crate::{
     config::{Config, DEFAULT_USER_ID, OWNER_USER_ID},
     daemon::Daemon,
-    util::{
-        key::{
-            Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, encode_ed25519_pubkey,
-            load_identity_secret_with_location_with_store,
-            load_or_init_local_identity_secrets_with_store, local_encrypted_identity_key_store,
-            os_identity_key_store, random_ed25519_privkey, write_ed25519_secret_file,
-            write_identity_secret_with_store,
-        },
-        text::read_text_file,
+    identity::{
+        Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, encode_ed25519_pubkey,
+        load_identity_secret_with_location_with_store,
+        load_or_init_local_identity_secrets_with_store, local_encrypted_identity_key_store,
+        os_identity_key_store, random_ed25519_privkey, write_ed25519_secret_file,
+        write_identity_secret_with_store,
     },
+    util::text::read_text_file,
 };
 
 #[derive(Args)]
@@ -437,7 +435,7 @@ fn yaml_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::key::{encode_ed25519_pubkey, parse_ed25519_privkey};
+    use crate::identity::{encode_ed25519_pubkey, parse_ed25519_privkey};
 
     fn test_pubkey() -> String {
         encode_ed25519_pubkey(&Ed25519Key::new([7; 32]).pubkey())
@@ -549,7 +547,7 @@ channels: {}
         run_with_store(
             &daemon,
             UserCommand { command: None },
-            Arc::new(crate::util::key::MemoryIdentityKeyStore::default()),
+            Arc::new(crate::identity::MemoryIdentityKeyStore::default()),
         )
         .await
         .expect("list users should succeed");
@@ -558,7 +556,7 @@ channels: {}
     #[tokio::test]
     async fn create_then_list_and_reject_duplicate_key() {
         let (_dir, daemon) = temp_daemon();
-        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
+        let identity_store = Arc::new(crate::identity::MemoryIdentityKeyStore::default());
 
         create_user(
             &daemon,
@@ -663,7 +661,7 @@ channels: {}
     #[tokio::test]
     async fn export_daemon_identity_key_writes_private_key_file() {
         let (_dir, daemon) = temp_daemon();
-        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
+        let identity_store = Arc::new(crate::identity::MemoryIdentityKeyStore::default());
         let secret = random_ed25519_privkey();
         let daemon_key = IdentityKeyRef::daemon(&daemon.home);
         identity_store
@@ -691,7 +689,7 @@ channels: {}
     #[tokio::test]
     async fn export_identity_key_does_not_generate_missing_key() {
         let (_dir, daemon) = temp_daemon();
-        let identity_store = Arc::new(crate::util::key::MemoryIdentityKeyStore::default());
+        let identity_store = Arc::new(crate::identity::MemoryIdentityKeyStore::default());
         let key_path = daemon.home.join("missing-export.key");
 
         let err = export_identity_key(

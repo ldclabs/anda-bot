@@ -49,13 +49,13 @@ mod side;
 mod skill_library;
 mod system;
 
-use crate::util::{
-    http_client::{NO_PROXY, build_http_client},
-    key::{Claims, Ed25519Key, Ed25519PubKey, iana},
-};
 use crate::{
-    auto_update::AutoUpdater, brain, channel, config, cron, transcription::TranscriptionManager,
+    auto_update::AutoUpdater,
+    brain, channel, config, cron,
+    identity::{Claims, Ed25519Key, Ed25519PubKey, iana},
+    transcription::TranscriptionManager,
     tts::TtsManager,
+    util::http_client::{NO_PROXY, build_http_client},
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
@@ -1157,7 +1157,7 @@ model:
     }
 
     use crate::auto_update::AutoUpdater;
-    use crate::util::key::{Claims, Ed25519Key, iana};
+    use crate::identity::{Claims, Ed25519Key, iana};
     use anda_db::storage::StorageConfig;
     use axum::extract::State;
     use ed25519_dalek::VerifyingKey;

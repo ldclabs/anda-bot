@@ -8,10 +8,7 @@ use axum::{Router, routing};
 use object_store::ObjectStore;
 use std::sync::Arc;
 
-use crate::{
-    config,
-    util::{http_client::build_http_client, key::Ed25519PubKey},
-};
+use crate::{config, identity::Ed25519PubKey, util::http_client::build_http_client};
 use anda_brain::{agents::SELF_USER_ID, handler::*, space::AppState};
 
 pub struct BrainConfig {
@@ -174,8 +171,8 @@ impl Brain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::Ed25519Key;
     use crate::util::http_client::new_reqwest_client;
-    use crate::util::key::Ed25519Key;
     use anda_engine::model::ModelConfig;
     use object_store::memory::InMemory;
 

@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn user_bindings_cover_all_channel_kinds() {
-        use crate::util::key::Ed25519Key;
+        use crate::identity::Ed25519Key;
         use ic_auth_types::ByteBufB64;
 
         let default_key = Ed25519Key::new([1; 32]);
