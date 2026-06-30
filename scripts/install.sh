@@ -280,9 +280,8 @@ install_macos_launcher_app() {
     APP_MACOS="${APP_CONTENTS}/MacOS"
     APP_RESOURCES="${APP_CONTENTS}/Resources"
     APP_EXECUTABLE="${APP_MACOS}/Anda Bot"
+    APP_EXECUTABLE_TMP="${APP_MACOS}/.Anda Bot.tmp.$$"
     LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
-    LAUNCHER_DIR=$(dirname "$LAUNCHER_PATH")
-    QUOTED_LAUNCHER_DIR=$(shell_single_quote "$LAUNCHER_DIR")
 
     mkdir -p "$APP_MACOS" || {
         info "Could not create ${APP_DIR}; skipping macOS app launcher."
@@ -312,27 +311,22 @@ install_macos_launcher_app() {
 </plist>
 EOF
 
-    cat > "$APP_EXECUTABLE" <<EOF
-#!/bin/sh
-INSTALL_DIR=${QUOTED_LAUNCHER_DIR}
-PATH="\$INSTALL_DIR:\${HOME:-}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
-export PATH
-
-for LAUNCHER in "\$INSTALL_DIR/anda_launcher" "\${HOME:-}/.local/bin/anda_launcher" "/opt/homebrew/bin/anda_launcher" "/usr/local/bin/anda_launcher"; do
-  if [ -x "\$LAUNCHER" ]; then
-    export ANDA_LAUNCHER_EXE="\$LAUNCHER"
-    ANDA_CANDIDATE="\$(dirname "\$LAUNCHER")/anda"
-    if [ -x "\$ANDA_CANDIDATE" ]; then
-      export ANDA_EXE="\$ANDA_CANDIDATE"
+    # Keep the .app executable as the launcher Mach-O. A shell wrapper that
+    # execs the sidecar loses the bundle identity, and AppKit can then run
+    # without showing the menu-bar status item.
+    rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
+    if ! cp "$LAUNCHER_PATH" "$APP_EXECUTABLE_TMP"; then
+        info "Could not copy launcher into ${APP_DIR}; skipping macOS app launcher."
+        rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
+        return 0
     fi
-    exec "\$LAUNCHER" "\$@"
-  fi
-done
-
-osascript -e 'display dialog "Anda launcher could not be found. Reinstall Anda Bot." with title "Anda Bot" buttons {"OK"} default button "OK" with icon caution' >/dev/null 2>&1
-exit 127
-EOF
-    chmod +x "$APP_EXECUTABLE" 2>/dev/null || true
+    chmod +x "$APP_EXECUTABLE_TMP" 2>/dev/null || true
+    if ! mv -f "$APP_EXECUTABLE_TMP" "$APP_EXECUTABLE"; then
+        info "Could not replace launcher in ${APP_DIR}; skipping macOS app launcher."
+        rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
+        return 0
+    fi
+    printf '%s\n' "$LAUNCHER_PATH" > "${APP_RESOURCES}/LauncherPath" 2>/dev/null || true
     success "Installed macOS app launcher to ${APP_DIR}"
 }
 
@@ -473,7 +467,12 @@ register_autostart() {
 register_macos_launcher_autostart() {
     PLIST_DIR="${HOME}/Library/LaunchAgents"
     PLIST_PATH="${PLIST_DIR}/ai.anda.anda-bot.launcher.plist"
-    LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
+    APP_EXECUTABLE="$(macos_launcher_app_path)/Contents/MacOS/Anda Bot"
+    if [ -x "$APP_EXECUTABLE" ]; then
+        LAUNCHER_PATH="$APP_EXECUTABLE"
+    else
+        LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
+    fi
     ESCAPED_LAUNCHER=$(printf '%s' "$LAUNCHER_PATH" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
 
     info "Registering Anda launcher to start when you log in..."
@@ -535,11 +534,15 @@ restart_macos_launcher() {
 
     if command -v pkill >/dev/null 2>&1; then
         pkill -x "$LAUNCHER_INSTALL_NAME" >/dev/null 2>&1 || true
+        pkill -x "Anda Bot" >/dev/null 2>&1 || true
         sleep 1
     fi
 
     if [ -f "$PLIST_PATH" ] && command -v launchctl >/dev/null 2>&1; then
-        if launchctl kickstart -k "gui/$(id -u)/ai.anda.anda-bot.launcher" >/dev/null 2>&1; then
+        # Re-bootstrap instead of only kickstarting so launchd refreshes cached
+        # code-signing/LWCR state after the launcher binary is replaced.
+        launchctl bootout "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
+        if launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1; then
             success "Anda launcher restarted."
             return 0
         fi

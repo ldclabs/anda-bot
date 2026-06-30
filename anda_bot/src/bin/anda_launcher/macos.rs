@@ -3,7 +3,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::OnceLock,
     thread,
@@ -40,6 +40,7 @@ const LAUNCHER_APP_NAME: &str = "Anda Bot.app";
 const LAUNCHER_APP_EXECUTABLE: &str = "Anda Bot";
 const LAUNCHER_APP_ICON: &str = "AndaBot";
 const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
+const LAUNCHER_APP_SOURCE_FILE: &str = "LauncherPath";
 const CHECK_UPDATE_MENU_TAG: isize = 1009;
 const STATUS_PID_MENU_TAG: isize = 1012;
 const STATUS_GATEWAY_MENU_TAG: isize = 1013;
@@ -277,6 +278,10 @@ impl Delegate {
 }
 
 pub fn run(ctx: LauncherContext) -> LauncherResult<()> {
+    if relaunch_as_application_bundle_if_needed(&ctx)? {
+        return Ok(());
+    }
+
     CTX.set(ctx.clone()).ok();
 
     let mtm = MainThreadMarker::new().ok_or_else(|| text().main_thread_required)?;
@@ -715,6 +720,9 @@ fn start_startup_tasks(ctx: LauncherContext) {
         if let Err(err) = ensure_application_entrypoint(&ctx) {
             eprintln!("failed to ensure macOS application entrypoint: {err}");
         }
+        if let Err(err) = ensure_launch_agent_entrypoint(&ctx) {
+            eprintln!("failed to ensure macOS launch agent entrypoint: {err}");
+        }
         if let Err(err) = run_startup_setup(&ctx) {
             show_background_dialog(&text().app_title, &err.to_string());
         }
@@ -833,17 +841,134 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
 }
 
 fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
+    ensure_application_entrypoint(ctx)?;
+    ensure_launch_agent_entrypoint(ctx)?;
+
     Command::new("/bin/sh")
         .arg("-c")
-        .arg("sleep 0.75; exec \"$1\"")
+        .arg(launcher_restart_script(
+            &ctx.launcher_exe,
+            launcher_app_path().ok().as_deref(),
+            launch_agent_path().ok().as_deref(),
+            std::process::id(),
+            unsafe { libc::geteuid() },
+        ))
         .arg("anda-launcher-restart")
-        .arg(&ctx.launcher_exe)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|err| format!("failed to restart launcher: {err}"))?;
     std::process::exit(0);
+}
+
+fn relaunch_as_application_bundle_if_needed(ctx: &LauncherContext) -> LauncherResult<bool> {
+    let app_path = launcher_app_path()?;
+    let app_executable = launcher_app_executable_path_for(&app_path);
+    if current_process_is_app_executable(&app_executable) {
+        return Ok(false);
+    }
+
+    // Do not let the real AppKit launcher run as the sidecar binary
+    // (`~/.local/bin/anda_launcher`, Homebrew bin, etc.). On recent macOS
+    // versions, NSStatusItem is backed by a Control Center scene; a naked
+    // binary can keep running with `bundle = NULL`, but scene activation fails
+    // and no menu-bar icon appears. Run the Mach-O from inside Anda Bot.app so
+    // LaunchServices gives AppKit a real bundle identity.
+    ensure_application_entrypoint(ctx)?;
+    ensure_launch_agent_entrypoint(ctx)?;
+
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(launcher_restart_script(
+            &ctx.launcher_exe,
+            Some(app_path.as_path()),
+            launch_agent_path().ok().as_deref(),
+            std::process::id(),
+            unsafe { libc::geteuid() },
+        ))
+        .arg("anda-launcher-app-relaunch")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to relaunch launcher as app bundle: {err}"))?;
+    Ok(true)
+}
+
+fn current_process_is_app_executable(app_executable: &Path) -> bool {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return false;
+    };
+    paths_refer_to_same_file(&current_exe, app_executable)
+}
+
+fn launcher_restart_script(
+    launcher_exe: &Path,
+    app_path: Option<&Path>,
+    launch_agent_path: Option<&Path>,
+    current_pid: u32,
+    uid: u32,
+) -> String {
+    let launcher = shell_single_quote(&launcher_exe.to_string_lossy());
+    let mut script = format!(
+        r#"LAUNCHER={launcher}
+OLD_PID={current_pid}
+WAIT_ATTEMPTS=100
+
+while kill -0 "$OLD_PID" >/dev/null 2>&1 && [ "$WAIT_ATTEMPTS" -gt 0 ]; do
+  WAIT_ATTEMPTS=$((WAIT_ATTEMPTS - 1))
+  sleep 0.1
+done
+
+"#
+    );
+
+    if let Some(path) = launch_agent_path {
+        let plist_path = shell_single_quote(&path.to_string_lossy());
+        script.push_str(&format!(
+            r#"PLIST_PATH={plist_path}
+if [ -f "$PLIST_PATH" ] && command -v launchctl >/dev/null 2>&1; then
+  # After an update replaces the launcher executable, launchd can retain stale
+  # code-signing/LWCR state and fail the job with OS_REASON_CODESIGNING.
+  # Reload the job before falling back to kickstart.
+  launchctl bootout "gui/{uid}" "$PLIST_PATH" >/dev/null 2>&1 || true
+  if launchctl bootstrap "gui/{uid}" "$PLIST_PATH" >/dev/null 2>&1; then
+    exit 0
+  fi
+  if launchctl kickstart -k "gui/{uid}/{LAUNCH_AGENT_LABEL}" >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
+"#
+        ));
+    }
+
+    if let Some(path) = app_path {
+        let app_dir = shell_single_quote(&path.to_string_lossy());
+        script.push_str(&format!(
+            r#"APP_DIR={app_dir}
+if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
+  if open -n -g "$APP_DIR" >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
+"#
+        ));
+    }
+
+    script.push_str(
+        r#"if [ -x "$LAUNCHER" ]; then
+  nohup "$LAUNCHER" >/dev/null 2>&1 &
+  exit $?
+fi
+
+exit 127
+"#,
+    );
+    script
 }
 
 fn confirm_update_restart(latest_tag: &str) -> bool {
@@ -962,7 +1087,7 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
     let contents = app_path.join("Contents");
     let macos_dir = contents.join("MacOS");
     let resources_dir = contents.join("Resources");
-    let executable = macos_dir.join(LAUNCHER_APP_EXECUTABLE);
+    let executable = launcher_app_executable_path_for(&app_path);
 
     fs::create_dir_all(&macos_dir)?;
     fs::create_dir_all(&resources_dir)?;
@@ -971,7 +1096,9 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
         resources_dir.join(LAUNCHER_APP_ICON_FILE),
         launcher_icon_icns(),
     )?;
-    fs::write(&executable, launcher_app_script(ctx))?;
+    let source = launcher_app_binary_source(ctx, &executable);
+    write_launcher_app_source(&resources_dir, &source)?;
+    install_launcher_app_executable(&source, &executable)?;
 
     let mut permissions = fs::metadata(&executable)?.permissions();
     permissions.set_mode(0o755);
@@ -980,9 +1107,107 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
     Ok(())
 }
 
+fn ensure_launch_agent_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
+    let path = launch_agent_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let desired = launch_agent_plist(ctx);
+    if fs::read_to_string(&path).ok().as_deref() != Some(desired.as_str()) {
+        fs::write(&path, desired)?;
+    }
+    Ok(())
+}
+
+fn install_launcher_app_executable(source: &Path, executable: &Path) -> LauncherResult<()> {
+    if paths_refer_to_same_file(source, executable) {
+        return Ok(());
+    }
+
+    // The app executable must be the launcher Mach-O itself, not a shell
+    // wrapper that `exec`s the sidecar. Execing out of the bundle drops the
+    // LaunchServices bundle identity and can make the process run without a
+    // visible status item.
+    let tmp = executable.with_file_name(format!(".{LAUNCHER_APP_EXECUTABLE}.tmp"));
+    fs::copy(source, &tmp).map_err(|err| {
+        format!(
+            "failed to copy launcher executable from {} to {}: {err}",
+            source.display(),
+            executable.display()
+        )
+    })?;
+    let mut permissions = fs::metadata(&tmp)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tmp, permissions)?;
+    fs::rename(&tmp, executable)?;
+    Ok(())
+}
+
+fn launcher_app_binary_source(ctx: &LauncherContext, app_executable: &Path) -> PathBuf {
+    if ctx.launcher_exe.exists() && !paths_refer_to_same_file(&ctx.launcher_exe, app_executable) {
+        return ctx.launcher_exe.clone();
+    }
+    if let Some(source) = read_launcher_app_source(app_executable)
+        .filter(|path| path.exists() && !paths_refer_to_same_file(path, app_executable))
+    {
+        return source;
+    }
+    fallback_launcher_exe_candidates()
+        .into_iter()
+        .find(|path| path.exists() && !paths_refer_to_same_file(path, app_executable))
+        .unwrap_or_else(|| ctx.launcher_exe.clone())
+}
+
+fn write_launcher_app_source(resources_dir: &Path, source: &Path) -> LauncherResult<()> {
+    fs::write(
+        resources_dir.join(LAUNCHER_APP_SOURCE_FILE),
+        format!("{}\n", source.display()),
+    )?;
+    Ok(())
+}
+
+fn read_launcher_app_source(app_executable: &Path) -> Option<PathBuf> {
+    let resources_dir = app_executable.parent()?.parent()?.join("Resources");
+    let content = fs::read_to_string(resources_dir.join(LAUNCHER_APP_SOURCE_FILE)).ok()?;
+    let path = content.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+fn fallback_launcher_exe_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".local/bin/anda_launcher"));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/anda_launcher"));
+    candidates.push(PathBuf::from("/usr/local/bin/anda_launcher"));
+    candidates
+}
+
+fn paths_refer_to_same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn launcher_app_path() -> LauncherResult<PathBuf> {
     let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
     Ok(home.join("Applications").join(LAUNCHER_APP_NAME))
+}
+
+fn launcher_app_executable_path() -> LauncherResult<PathBuf> {
+    Ok(launcher_app_executable_path_for(&launcher_app_path()?))
+}
+
+fn launcher_app_executable_path_for(app_path: &Path) -> PathBuf {
+    app_path
+        .join("Contents")
+        .join("MacOS")
+        .join(LAUNCHER_APP_EXECUTABLE)
 }
 
 fn launcher_app_info_plist() -> String {
@@ -1016,36 +1241,6 @@ fn launcher_icon_icns() -> Vec<u8> {
     LAUNCHER_APP_ICON_ICNS.to_vec()
 }
 
-fn launcher_app_script(ctx: &LauncherContext) -> String {
-    let install_dir = ctx
-        .launcher_exe
-        .parent()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| ".".to_string());
-    format!(
-        r#"#!/bin/sh
-INSTALL_DIR={install_dir}
-PATH="$INSTALL_DIR:${{HOME:-}}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-export PATH
-
-for LAUNCHER in "$INSTALL_DIR/anda_launcher" "${{HOME:-}}/.local/bin/anda_launcher" "/opt/homebrew/bin/anda_launcher" "/usr/local/bin/anda_launcher"; do
-  if [ -x "$LAUNCHER" ]; then
-    export ANDA_LAUNCHER_EXE="$LAUNCHER"
-    ANDA_CANDIDATE="$(dirname "$LAUNCHER")/anda"
-    if [ -x "$ANDA_CANDIDATE" ]; then
-      export ANDA_EXE="$ANDA_CANDIDATE"
-    fi
-    exec "$LAUNCHER" "$@"
-  fi
-done
-
-osascript -e 'display dialog "Anda launcher could not be found. Reinstall Anda Bot." with title "Anda Bot" buttons {{"OK"}} default button "OK" with icon caution' >/dev/null 2>&1
-exit 127
-"#,
-        install_dir = shell_single_quote(&install_dir),
-    )
-}
-
 fn launch_agent_path() -> LauncherResult<PathBuf> {
     let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
     Ok(home
@@ -1055,6 +1250,14 @@ fn launch_agent_path() -> LauncherResult<PathBuf> {
 }
 
 fn launch_agent_plist(ctx: &LauncherContext) -> String {
+    launch_agent_plist_for_program(&launch_agent_program_path(ctx))
+}
+
+fn launch_agent_program_path(ctx: &LauncherContext) -> PathBuf {
+    launcher_app_executable_path().unwrap_or_else(|_| ctx.launcher_exe.clone())
+}
+
+fn launch_agent_plist_for_program(program: &Path) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1072,7 +1275,7 @@ fn launch_agent_plist(ctx: &LauncherContext) -> String {
 </plist>
 "#,
         label = LAUNCH_AGENT_LABEL,
-        launcher = xml_escape(&ctx.launcher_exe.to_string_lossy()),
+        launcher = xml_escape(&program.to_string_lossy()),
     )
 }
 
@@ -1168,14 +1371,12 @@ mod tests {
 
     #[test]
     fn launch_agent_plist_escapes_launcher_path() {
-        let ctx = LauncherContext {
-            launcher_exe: "/Applications/Anda & Bot/anda_launcher".into(),
-            anda_exe: "/Applications/Anda Bot/anda".into(),
-            home: "/Users/me/.anda".into(),
-        };
+        let program = Path::new("/Users/me/Applications/Anda & Bot.app/Contents/MacOS/Anda Bot");
 
-        let plist = launch_agent_plist(&ctx);
-        assert!(plist.contains("/Applications/Anda &amp; Bot/anda_launcher"));
+        let plist = launch_agent_plist_for_program(program);
+        assert!(
+            plist.contains("/Users/me/Applications/Anda &amp; Bot.app/Contents/MacOS/Anda Bot")
+        );
         assert!(plist.contains(LAUNCH_AGENT_LABEL));
         assert!(!plist.contains("--home"));
         assert!(!plist.contains("/Users/me/.anda"));
@@ -1187,19 +1388,87 @@ mod tests {
     }
 
     #[test]
-    fn launcher_app_script_execs_launcher_without_home_override() {
+    fn launcher_app_executable_lives_inside_bundle() {
+        let path =
+            launcher_app_executable_path_for(Path::new("/Users/me/Applications/Anda Bot.app"));
+
+        assert_eq!(
+            path,
+            Path::new("/Users/me/Applications/Anda Bot.app")
+                .join("Contents")
+                .join("MacOS")
+                .join(LAUNCHER_APP_EXECUTABLE)
+        );
+    }
+
+    #[test]
+    fn launcher_app_binary_source_prefers_external_launcher_over_app_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = dir.path().join("bin").join("anda_launcher");
+        let app_executable = dir
+            .path()
+            .join("Applications/Anda Bot.app/Contents/MacOS/Anda Bot");
+        fs::create_dir_all(external.parent().unwrap()).unwrap();
+        fs::create_dir_all(app_executable.parent().unwrap()).unwrap();
+        fs::write(&external, "external").unwrap();
+        fs::write(&app_executable, "app").unwrap();
         let ctx = LauncherContext {
-            launcher_exe: "/Users/me/bin/anda launcher".into(),
-            anda_exe: "/Users/me/bin/anda".into(),
-            home: "/Users/me/.anda-custom".into(),
+            launcher_exe: external.clone(),
+            anda_exe: dir.path().join("bin").join("anda"),
+            home: dir.path().join(".anda"),
         };
 
-        let script = launcher_app_script(&ctx);
-        assert!(script.contains("INSTALL_DIR='/Users/me/bin'"));
-        assert!(script.contains("ANDA_LAUNCHER_EXE"));
-        assert!(script.contains("ANDA_EXE"));
-        assert!(script.contains("/opt/homebrew/bin/anda_launcher"));
-        assert!(!script.contains("--home"));
+        assert_eq!(launcher_app_binary_source(&ctx, &app_executable), external);
+    }
+
+    #[test]
+    fn launcher_app_binary_source_uses_recorded_sidecar_for_app_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let recorded = dir.path().join("homebrew/bin/anda_launcher");
+        let app_executable = dir
+            .path()
+            .join("Applications/Anda Bot.app/Contents/MacOS/Anda Bot");
+        let resources = app_executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("Resources");
+        fs::create_dir_all(recorded.parent().unwrap()).unwrap();
+        fs::create_dir_all(app_executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(&recorded, "recorded").unwrap();
+        fs::write(&app_executable, "app").unwrap();
+        write_launcher_app_source(&resources, &recorded).unwrap();
+        let ctx = LauncherContext {
+            launcher_exe: app_executable.clone(),
+            anda_exe: dir.path().join("homebrew/bin/anda"),
+            home: dir.path().join(".anda"),
+        };
+
+        assert_eq!(launcher_app_binary_source(&ctx, &app_executable), recorded);
+    }
+
+    #[test]
+    fn install_launcher_app_executable_replaces_existing_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("bin/anda_launcher");
+        let app_executable = dir
+            .path()
+            .join("Applications/Anda Bot.app/Contents/MacOS/Anda Bot");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(app_executable.parent().unwrap()).unwrap();
+        fs::write(&source, b"new launcher").unwrap();
+        fs::write(&app_executable, b"old launcher").unwrap();
+
+        install_launcher_app_executable(&source, &app_executable).unwrap();
+
+        assert_eq!(fs::read(&app_executable).unwrap(), b"new launcher");
+        assert_eq!(fs::read(&source).unwrap(), b"new launcher");
+        assert_ne!(
+            fs::metadata(&app_executable).unwrap().permissions().mode() & 0o111,
+            0
+        );
     }
 
     #[test]
@@ -1222,6 +1491,29 @@ mod tests {
         assert!(!launchctl_print_has_pid(b"state = waiting\n"));
         assert!(!launchctl_print_has_pid(b"pid = 0\n"));
         assert!(!launchctl_print_has_pid(b"pid = not-a-number\n"));
+    }
+
+    #[test]
+    fn launcher_restart_script_uses_visible_entrypoints_after_old_pid_exits() {
+        let script = launcher_restart_script(
+            std::path::Path::new("/Users/me/bin/anda launcher"),
+            Some(std::path::Path::new("/Users/me/Applications/Anda Bot.app")),
+            Some(std::path::Path::new(
+                "/Users/me/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist",
+            )),
+            4242,
+            501,
+        );
+
+        assert!(script.contains("OLD_PID=4242"));
+        assert!(script.contains("while kill -0 \"$OLD_PID\""));
+        assert!(script.contains("launchctl bootout \"gui/501\" \"$PLIST_PATH\""));
+        assert!(script.contains("launchctl bootstrap \"gui/501\" \"$PLIST_PATH\""));
+        assert!(script.contains("launchctl kickstart -k \"gui/501/ai.anda.anda-bot.launcher\""));
+        assert!(script.contains("open -n -g \"$APP_DIR\""));
+        assert!(script.contains("nohup \"$LAUNCHER\""));
+        assert!(!script.contains("exec \"$1\""));
+        assert!(!script.contains("open -gj"));
     }
 
     #[test]

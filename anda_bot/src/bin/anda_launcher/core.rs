@@ -2197,8 +2197,29 @@ mod tests {
         let script = install_script();
 
         assert!(
-            script.contains("launchctl kickstart -k \"gui/$(id -u)/ai.anda.anda-bot.launcher\""),
-            "macOS install restart should prefer the registered LaunchAgent"
+            script.contains("cp \"$LAUNCHER_PATH\" \"$APP_EXECUTABLE_TMP\""),
+            "macOS app launcher should stage a Mach-O copy before replacing the bundle executable"
+        );
+        assert!(
+            script.contains("mv -f \"$APP_EXECUTABLE_TMP\" \"$APP_EXECUTABLE\""),
+            "macOS app launcher should replace the bundle executable atomically"
+        );
+        assert!(
+            script.contains("LauncherPath"),
+            "macOS app launcher should remember the sidecar binary it mirrors"
+        );
+        assert!(
+            script
+                .contains("APP_EXECUTABLE=\"$(macos_launcher_app_path)/Contents/MacOS/Anda Bot\""),
+            "LaunchAgent should prefer the bundled app executable"
+        );
+        assert!(
+            script.contains("launchctl bootout \"gui/$(id -u)\" \"$PLIST_PATH\""),
+            "macOS install restart should refresh launchd's code-signing cache"
+        );
+        assert!(
+            script.contains("launchctl bootstrap \"gui/$(id -u)\" \"$PLIST_PATH\""),
+            "macOS install restart should reload the registered LaunchAgent"
         );
         assert!(
             script.contains("open -g \"$APP_DIR\""),
