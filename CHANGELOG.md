@@ -15,6 +15,7 @@ All notable changes to Anda Bot.
 
 - **Version metadata synchronized for the 0.11.3 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.11.3`, and updated `anda_engine` to `0.13.14`.
 - **Localized app, docs, and website copy refreshed**: improved app action text plus multilingual browser-extension, documentation, and website copy across supported locales.
+- **Browser extension release links now include Edge Add-ons**: quick-start docs and the website now link directly to both Chrome Web Store and Microsoft Edge Add-ons, with privacy, terms, and support copy updated from Chrome-only wording to browser-neutral language.
 - **Trusted-user key documentation now points to encrypted local credentials**: README, docsite, channel docs, and default config comments describe encrypted trusted-user credential storage while daemon and owner identities remain on the OS keyring path.
 
 ### Fixed

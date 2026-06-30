@@ -87,7 +87,8 @@ export type LandingCopy = {
 		badge: string;
 		title: string;
 		body: string;
-		store: string;
+		chromeStore: string;
+		edgeStore: string;
 		docs: string;
 		features: FeatureCopy[];
 	};
@@ -136,9 +137,6 @@ export const localeMeta: Record<
 
 const windowsInstallerFileName = 'AndaBotSetup-windows-x86_64.exe';
 const windowsInstallerUrl = `https://github.com/ldclabs/anda-bot/releases/latest/download/${windowsInstallerFileName}`;
-const extensionStoreUrl =
-	'https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd';
-const browserDocsUrl = 'https://docs.anda.bot/docs/quick-start/browser-extension';
 
 export const landingCopy: Record<Locale, LandingCopy> = {
 	en: {
@@ -251,7 +249,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Browser side panel',
 			title: 'The browser gives Anda a body on the web',
 			body: 'Ask about the active page, collect evidence, and let the local daemon act through browser tools when you approve.',
-			store: 'Add extension',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge Add-ons',
 			docs: 'Pair browser',
 			features: [
 				{
@@ -466,7 +465,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: '浏览器侧边栏',
 			title: '让 Anda 触及 Web 世界',
 			body: '向它询问当前页面的相关内容，收集有效信息，并在你的授权下让本地守护进程通过浏览器工具执行操作。',
-			store: '添加扩展',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge 外接程序',
 			docs: '连接浏览器',
 			features: [
 				{
@@ -680,7 +680,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Panel lateral del navegador',
 			title: 'El navegador le da cuerpo a Anda en la web',
 			body: 'Pregunte sobre la página activa, recopile pruebas y permita que el daemon local actúe a través de las herramientas del navegador con su aprobación.',
-			store: 'Agregar extensión',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge Add-ons',
 			docs: 'Emparejar navegador',
 			features: [
 				{
@@ -903,7 +904,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Panneau latéral du navigateur',
 			title: 'Le navigateur donne un corps web à Anda',
 			body: 'Posez des questions sur la page active, rassemblez des preuves et laissez le démon local agir via les outils du navigateur avec votre accord.',
-			store: 'Ajouter l’extension',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge Add-ons',
 			docs: 'Appairer le navigateur',
 			features: [
 				{
@@ -1125,7 +1127,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'Боковая панель браузера',
 			title: 'Браузер дает Anda тело во Всемирной паутине',
 			body: 'Задавайте вопросы об активной странице, собирайте факты и позволяйте локальному демону совершать действия через браузерные инструменты с вашего согласия.',
-			store: 'Добавить расширение',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge Add-ons',
 			docs: 'Связать с браузером',
 			features: [
 				{
@@ -1348,7 +1351,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			badge: 'اللوحة الجانبية للمتصفح',
 			title: 'يمنح المتصفح Anda جسداً على شبكة الويب',
 			body: 'اسأل عن الصفحة النشطة، واجمع الأدلة والبيانات، واسمح للـ daemon المحلي بالعمل عبر أدوات المتصفح بعد موافقتك الصريحة.',
-			store: 'إضافة الامتداد',
+			chromeStore: 'Chrome Web Store',
+			edgeStore: 'Microsoft Edge Add-ons',
 			docs: 'ربط المتصفح',
 			features: [
 				{

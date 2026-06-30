@@ -44,8 +44,10 @@
 
 	const installOrder: OsKey[] = ['windows', 'macos', 'linux'];
 	const localeStorageKey = 'anda-bot-landing-locale';
-	const extensionStoreUrl =
+	const chromeExtensionStoreUrl =
 		'https://chromewebstore.google.com/detail/anda-bot/injpfajmddchcphfkdkiflfddmajglfd';
+	const edgeExtensionStoreUrl =
+		'https://microsoftedge.microsoft.com/addons/detail/anda-bot/hljillhnmfbobihkehdlpmhbmdgophah';
 	const browserDocsUrl = 'https://docs.anda.bot/docs/quick-start/browser-extension';
 
 	let activeLocale = $state<Locale>(fallbackLocale);
@@ -289,14 +291,7 @@
 						<Download class="size-4" />
 						{copy.hero.primary}
 					</Button>
-					<Button
-						href={extensionStoreUrl}
-						target="_blank"
-						rel="noreferrer"
-						variant="secondary"
-						size="lg"
-						class="min-w-36"
-					>
+					<Button href="#browser" variant="secondary" size="lg" class="min-w-36">
 						<LayoutPanelLeft class="size-4" />
 						{copy.hero.secondary}
 					</Button>
@@ -486,7 +481,7 @@
 			<div class="browser-visual">
 				<div class="browser-marquee-card">
 					<div class="browser-marquee-toolbar">
-						<span>Chrome Web Store creative</span>
+						<span>Chrome Web Store / Edge Add-ons</span>
 						<ExternalLink class="size-4" />
 					</div>
 					<img
@@ -506,10 +501,14 @@
 					{copy.browser.title}
 				</h2>
 				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.browser.body}</p>
-				<div class="mt-8 flex flex-col gap-3 sm:flex-row">
-					<Button href={extensionStoreUrl} target="_blank" rel="noreferrer" size="lg">
+				<div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+					<Button href={chromeExtensionStoreUrl} target="_blank" rel="noreferrer" size="lg">
 						<ExternalLink class="size-4" />
-						{copy.browser.store}
+						{copy.browser.chromeStore}
+					</Button>
+					<Button href={edgeExtensionStoreUrl} target="_blank" rel="noreferrer" size="lg">
+						<ExternalLink class="size-4" />
+						{copy.browser.edgeStore}
 					</Button>
 					<Button
 						href={browserDocsUrl}

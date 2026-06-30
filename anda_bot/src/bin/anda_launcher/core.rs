@@ -2329,7 +2329,7 @@ mod tests {
         let zh = text_for_language(LauncherLanguage::ZhHans);
         assert_eq!(zh.api_key, "API 密钥");
         assert_eq!(zh.settings, "设置");
-        assert_eq!(zh.model_settings, "大模型配置...");
+        assert_eq!(zh.model_settings, "模型设置...");
         assert_eq!(zh.status_pid, "PID");
         assert_eq!(zh.status_gateway_url, "Gateway URL");
         assert_eq!(zh.status_conversations, "对话数量");
@@ -2337,11 +2337,11 @@ mod tests {
         assert_eq!(zh.status_memory_links, "记忆链接数量");
         assert_eq!(
             zh.unsupported_provider("custom"),
-            "不支持的模型供应商：custom"
+            "不支持的模型提供商：custom"
         );
         assert_eq!(
             zh.update_ready_message("v1.2.3"),
-            "已下载 v1.2.3，重启生效。"
+            "已下载 v1.2.3，重启以应用更新。"
         );
         assert_eq!(zh.check_update_label("v1.2.3"), "检查更新（v1.2.3）");
         assert_eq!(

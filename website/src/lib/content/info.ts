@@ -70,18 +70,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Privacy Policy - Anda Bot',
 					description:
-						'How the Anda Bot Chrome extension and website handle local settings, browser context, prompts, voice features, and model provider data.'
+						'How the Anda Bot browser extension and website handle local settings, browser context, prompts, voice features, and model provider data.'
 				},
 				eyebrow: 'Privacy Policy',
 				title: 'Privacy, local control, and browser data',
 				intro:
-					'Anda Bot is designed as a local-first agent bridge. The Chrome extension connects your browser to the Anda daemon you run, while the website explains and distributes the project.',
-				updated: 'May 15, 2026',
+					'Anda Bot is designed as a local-first agent bridge. The browser extension connects Chrome and Edge to the Anda daemon you run, while the website explains and distributes the project.',
+				updated: 'June 30, 2026',
 				sections: [
 					{
 						title: 'What this policy covers',
 						body: [
-							'This policy covers the Anda Bot website and the Anda Bot Chrome extension. The extension is a side panel client for a local Anda daemon. The local daemon, your configured model providers, and any external services you connect may have their own data practices.',
+							'This policy covers the Anda Bot website and the Anda Bot browser extension. The extension is a side panel client for a local Anda daemon. The local daemon, your configured model providers, and any external services you connect may have their own data practices.',
 							'The extension does not sell personal data. It exists to send your instructions and selected browser context to the local Anda runtime you configure.'
 						]
 					},
@@ -91,7 +91,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Connection settings',
 								detail:
-									'The Gateway URL and Bearer token you paste into the settings panel are stored in Chrome local storage so the extension can reconnect to your local Anda daemon.'
+									"The Gateway URL and Bearer token you paste into the settings panel are stored in the browser's local storage so the extension can reconnect to your local Anda daemon."
 							},
 							{
 								title: 'Browser session id',
@@ -109,7 +109,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: 'Browser context and permissions',
 						body: [
 							'When connected, the extension can register the current tab id, title, and URL with your local Anda daemon. If a task requires browser work, the daemon may ask the extension to list tabs, open or switch tabs, navigate, capture the visible tab, or run page actions such as reading content, clicking, typing, scrolling, and pressing keys.',
-							'TTS permissions let Anda speak responses through Chrome when you choose voice playback. Voice capture or speech recognition only starts from user-facing voice controls and may depend on browser microphone permissions for the active page.'
+							'TTS permissions let Anda speak responses through the browser when you choose voice playback. Voice capture or speech recognition only starts from user-facing voice controls and may depend on browser microphone permissions for the active page.'
 						]
 					},
 					{
@@ -125,7 +125,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Local extension data',
 								detail:
-									'You can clear the Gateway URL, token, and session data through Chrome extension storage or by removing the extension.'
+									'You can clear the Gateway URL, token, and session data through browser extension storage or by removing the extension.'
 							},
 							{
 								title: 'Anda runtime data',
@@ -156,18 +156,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Terms of Service - Anda Bot',
 					description:
-						'Terms for using the Anda Bot website, Chrome extension, local runtime bridge, browser automation features, and open-source project resources.'
+						'Terms for using the Anda Bot website, browser extension, local runtime bridge, browser automation features, and open-source project resources.'
 				},
 				eyebrow: 'Terms of Service',
 				title: 'Terms for using Anda Bot',
 				intro:
-					'These terms explain the responsibilities that come with using the website, Chrome extension, and local Anda runtime bridge.',
-				updated: 'May 15, 2026',
+					'These terms explain the responsibilities that come with using the website, browser extension, and local Anda runtime bridge.',
+				updated: 'June 30, 2026',
 				sections: [
 					{
 						title: 'Acceptance and scope',
 						body: [
-							'By using the website or Chrome extension, you agree to these terms. If you do not agree, do not use the website or extension.',
+							'By using the website or browser extension, you agree to these terms. If you do not agree, do not use the website or extension.',
 							'Anda Bot is open-source software and a local-first agent system. Some functionality depends on your local installation, model providers, browsers, operating system, and third-party tools.'
 						]
 					},
@@ -229,13 +229,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Support - Anda Bot',
 					description:
-						'Where to get help with Anda Bot installation, Chrome extension setup, browser token connection, local daemon issues, and bug reports.'
+						'Where to get help with Anda Bot installation, browser extension setup, browser token connection, local daemon issues, and bug reports.'
 				},
 				eyebrow: 'Support',
 				title: 'Get help with Anda Bot',
 				intro:
 					'Anda Bot is an open-source local agent. The fastest path to support is usually to check setup, capture the exact error, and open a GitHub issue with enough detail to reproduce it.',
-				updated: 'May 15, 2026',
+				updated: 'June 30, 2026',
 				sections: [
 					{
 						title: 'Best support channels',
@@ -253,7 +253,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Documentation',
 								detail:
-									'Use the docs and README for install commands, model provider configuration, Chrome token setup, Skills, channels, voice, and troubleshooting context.'
+									'Use the docs and README for install commands, model provider configuration, browser token setup, Skills, channels, voice, and troubleshooting context.'
 							}
 						]
 					},
@@ -273,14 +273,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Check permissions',
 								detail:
-									'Chrome may block page injection, microphone access, file URLs, or extension actions on restricted pages. Try a normal https page when debugging.'
+									'Chromium browsers may block page injection, microphone access, file URLs, or extension actions on restricted pages. Try a normal https page when debugging.'
 							}
 						]
 					},
 					{
 						title: 'Include this information',
 						body: [
-							'Please include your operating system, Anda Bot version, Chrome version, extension version, install method, the command you ran, the exact error message, and whether the issue happens on a fresh browser tab.',
+							'Please include your operating system, Anda Bot version, browser version, extension version, install method, the command you ran, the exact error message, and whether the issue happens on a fresh browser tab.',
 							'Do not paste API keys, Bearer tokens, private prompts, confidential files, or sensitive screenshots into public issues.'
 						]
 					},
@@ -318,18 +318,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: '隐私政策 - Anda Bot',
 					description:
-						'了解 Anda Bot Chrome 扩展和网站如何安全地处理本地设置、浏览器上下文、提示词、语音功能及大模型服务商的数据。'
+						'了解 Anda Bot 浏览器扩展和网站如何安全地处理本地设置、浏览器上下文、提示词、语音功能及大模型服务商的数据。'
 				},
 				eyebrow: '隐私政策',
 				title: '隐私安全、本地控制与浏览器数据',
 				intro:
-					'Anda Bot 的核心理念是做本地优先的智能体桥梁。Chrome 扩展负责将浏览器连接至你自己运行的 Anda 后台进程，网站则用于展示和分发该开源项目。',
-				updated: '2026 年 5 月 15 日',
+					'Anda Bot 的核心理念是做本地优先的智能体桥梁。浏览器扩展负责将 Chrome 和 Edge 连接至你自己运行的 Anda 后台进程，网站则用于展示和分发该开源项目。',
+				updated: '2026 年 6 月 30 日',
 				sections: [
 					{
 						title: '本政策适用范围',
 						body: [
-							'本政策适用于 Anda Bot 网站及 Anda Bot Chrome 扩展。该扩展是你本地 Anda 守护进程（Daemon）的侧边栏客户端。而你本地的守护进程、配置的模型服务商，以及连接的其他外部服务，可能遵循其各自的数据隐私条款。',
+							'本政策适用于 Anda Bot 网站及 Anda Bot 浏览器扩展。该扩展是你本地 Anda 守护进程（Daemon）的侧边栏客户端。而你本地的守护进程、配置的模型服务商，以及连接的其他外部服务，可能遵循其各自的数据隐私条款。',
 							'该扩展绝不会出售任何个人数据。它的唯一用途是将你的指令及你所选的浏览器上下文，透传给配置在本地的 Anda 运行环境。'
 						]
 					},
@@ -339,7 +339,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: '连接凭证',
 								detail:
-									'你在设置面板中填写的 Gateway URL 和 Bearer Token 会被安全地保存在 Chrome 的本地存储中，以便扩展随时重新连接至你本地的 Anda 守护进程。'
+									'你在设置面板中填写的 Gateway URL 和 Bearer Token 会被安全地保存在浏览器的本地存储中，以便扩展随时重新连接至你本地的 Anda 守护进程。'
 							},
 							{
 								title: '浏览器会话 ID',
@@ -357,7 +357,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: '浏览器上下文与操作权限',
 						body: [
 							'连接成功后，扩展可将当前标签页的 ID、标题和 URL 登记到本机的 Anda 守护进程。如果某项任务涉及浏览器操作，守护进程可能会请求扩展获取标签页列表，执行页面切换、导航、可见区域截图，或者深度的页面交互（如：读取文本、点击、输入、滚动及按键）。',
-							'在选择语音播放时，扩展需要 TTS 权限来通过 Chrome 朗读回答。语音录音或识别仅在你主动触发对应按钮时开启，并且可能会向浏览器请求当前页面的麦克风权限。'
+							'在选择语音播放时，扩展需要 TTS 权限来通过浏览器朗读回答。语音录音或识别仅在你主动触发对应按钮时开启，并且可能会向浏览器请求当前页面的麦克风权限。'
 						]
 					},
 					{
@@ -373,7 +373,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: '本地扩展数据',
 								detail:
-									'你可以随时通过清除 Chrome 扩展存储或直接卸载扩展，来彻底抹除 Gateway URL、Token 及会话数据。'
+									'你可以随时通过清除浏览器扩展存储或直接卸载扩展，来彻底抹除 Gateway URL、Token 及会话数据。'
 							},
 							{
 								title: 'Anda 运行时数据',
@@ -404,18 +404,17 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: '服务条款 - Anda Bot',
 					description:
-						'规范使用 Anda Bot 网站、Chrome 扩展程序、本地运行时桥接、浏览器自动化及开源项目资源的服务条款。'
+						'规范使用 Anda Bot 网站、浏览器扩展程序、本地运行时桥接、浏览器自动化及开源项目资源的服务条款。'
 				},
 				eyebrow: '服务条款',
 				title: '使用 Anda Bot 的条款与责任',
-				intro:
-					'以下条款明晰了你在使用 Anda Bot 网站、Chrome 扩展及本地运行时桥接过程中的权责边界。',
-				updated: '2026 年 5 月 15 日',
+				intro: '以下条款明晰了你在使用 Anda Bot 网站、浏览器扩展及本地运行时桥接过程中的权责边界。',
+				updated: '2026 年 6 月 30 日',
 				sections: [
 					{
 						title: '条款接受与适用范围',
 						body: [
-							'访问网站或使用 Chrome 扩展即表示你同意并遵守本条款。若不同意，请立刻停止使用相关服务。',
+							'访问网站或使用浏览器扩展即表示你同意并遵守本条款。若不同意，请立刻停止使用相关服务。',
 							'Anda Bot 是一个开源且完全本地优先的智能体系统。其部分能力直接依赖于你所处的本地环境、模型服务商、浏览器、操作系统及第三方工具链。'
 						]
 					},
@@ -477,13 +476,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: '技术支持 - Anda Bot',
 					description:
-						'快速解决 Anda Bot 安装、Chrome 扩展设置、本地服务连接问题的指南，学习提交高质量缺陷反馈的最佳实践。'
+						'快速解决 Anda Bot 安装、浏览器扩展设置、本地服务连接问题的指南，学习提交高质量缺陷反馈的最佳实践。'
 				},
 				eyebrow: '技术支持',
 				title: '获取 Anda Bot 的帮助',
 				intro:
 					'作为一款主打开源的本地智能体，排查故障的最快路径通常是优先检查本地设定、截取原生错误日志，随后提供可重现的详情并在 GitHub 上提交结构完善的 Issue。',
-				updated: '2026 年 5 月 15 日',
+				updated: '2026 年 6 月 30 日',
 				sections: [
 					{
 						title: '推荐的支持通道',
@@ -521,14 +520,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: '规避浏览器防御机制',
 								detail:
-									'Chrome 可能因安全策略在受限站点阻截脚本注入、静音麦克风、禁用 file:// 本地协议等。调试时推荐用常用的独立 https 网页来交叉验证。'
+									'Chromium 浏览器可能因安全策略在受限站点阻截脚本注入、静音麦克风、禁用 file:// 本地协议等。调试时推荐用常用的独立 https 网页来交叉验证。'
 							}
 						]
 					},
 					{
 						title: '提报所需的标准信息',
 						body: [
-							'工单时请尽可能包含：精确的操作系统版本、Anda Bot 发行版号、Chrome 内核版本、本扩展版本、部署途径、触发问题的对应指令及无错漏的报错回溯栈，并注明该现象在新的空白标签页中是否依旧存在。',
+							'工单时请尽可能包含：精确的操作系统版本、Anda Bot 发行版号、浏览器版本、本扩展版本、部署途径、触发问题的对应指令及无错漏的报错回溯栈，并注明该现象在新的空白标签页中是否依旧存在。',
 							'高度警惕：切勿在公开的工单环境贴入真实的 API 密钥对、Bearer 令牌、涉密提示词、受控制的配置文件或不慎包含私密数据的系统截屏。'
 						]
 					},
@@ -566,18 +565,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Política de privacidad - Anda Bot',
 					description:
-						'Cómo la extensión de Chrome y el sitio web de Anda Bot manejan la configuración local, el contexto del navegador, los prompts, las funciones de voz y los datos de los proveedores de modelos.'
+						'Cómo la extensión del navegador y el sitio web de Anda Bot manejan la configuración local, el contexto del navegador, los prompts, las funciones de voz y los datos de los proveedores de modelos.'
 				},
 				eyebrow: 'Política de privacidad',
 				title: 'Privacidad, control local y datos del navegador',
 				intro:
-					'Anda Bot está diseñado como un puente de agente local-first. La extensión de Chrome conecta su navegador con el daemon de Anda que ejecuta, mientras que el sitio web explica y distribuye el proyecto.',
-				updated: '15 de mayo de 2026',
+					'Anda Bot está diseñado como un puente de agente local-first. La extensión del navegador conecta Chrome y Edge con el daemon de Anda que ejecuta, mientras que el sitio web explica y distribuye el proyecto.',
+				updated: '30 de junio de 2026',
 				sections: [
 					{
 						title: 'Qué cubre esta política',
 						body: [
-							'Esta política cubre el sitio web de Anda Bot y la extensión de Chrome de Anda Bot. La extensión es un cliente de panel lateral para un daemon local de Anda. El daemon local, los proveedores de modelos configurados y cualquier servicio externo que conecte pueden tener sus propias prácticas de datos.',
+							'Esta política cubre el sitio web de Anda Bot y la extensión de navegador de Anda Bot. La extensión es un cliente de panel lateral para un daemon local de Anda. El daemon local, los proveedores de modelos configurados y cualquier servicio externo que conecte pueden tener sus propias prácticas de datos.',
 							'La extensión no vende datos personales. Existe para enviar sus instrucciones y el contexto seleccionado del navegador al runtime local de Anda que configure.'
 						]
 					},
@@ -587,7 +586,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Configuración de conexión',
 								detail:
-									'La Gateway URL y el Bearer token que pega en el panel de configuración se almacenan en el almacenamiento local de Chrome para que la extensión pueda reconectarse a su daemon local de Anda.'
+									'La Gateway URL y el Bearer token que pega en el panel de configuración se almacenan en el almacenamiento local del navegador para que la extensión pueda reconectarse a su daemon local de Anda.'
 							},
 							{
 								title: 'ID de sesión del navegador',
@@ -605,7 +604,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: 'Contexto y permisos del navegador',
 						body: [
 							'Cuando está conectada, la extensión puede registrar el ID de la pestaña actual, el título y la URL con su daemon local de Anda. Si una tarea requiere trabajo en el navegador, el daemon puede pedirle a la extensión que enumere pestañas, abra o cambie pestañas, navegue, capture la pestaña visible o ejecute acciones de la página como leer contenido, hacer clic, escribir, desplazarse y presionar teclas.',
-							'Los permisos de TTS permiten que Anda pronuncie respuestas a través de Chrome cuando elige la reproducción de voz. La captura de voz o el reconocimiento de voz solo se inician desde los controles de voz orientados al usuario y pueden depender de los permisos del micrófono del navegador para la página activa.'
+							'Los permisos de TTS permiten que Anda pronuncie respuestas a través del navegador cuando elige la reproducción de voz. La captura de voz o el reconocimiento de voz solo se inician desde los controles de voz orientados al usuario y pueden depender de los permisos del micrófono del navegador para la página activa.'
 						]
 					},
 					{
@@ -621,7 +620,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Datos de la extensión local',
 								detail:
-									'Puede borrar la Gateway URL, el token y los datos de sesión a través del almacenamiento de la extensión de Chrome o eliminando la extensión.'
+									'Puede borrar la Gateway URL, el token y los datos de sesión a través del almacenamiento de la extensión del navegador o eliminando la extensión.'
 							},
 							{
 								title: 'Datos de ejecución de Anda',
@@ -652,18 +651,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Términos de servicio - Anda Bot',
 					description:
-						'Términos para usar el sitio web de Anda Bot, la extensión de Chrome, el puente de ejecución local, las funciones de automatización del navegador y los recursos del proyecto de código abierto.'
+						'Términos para usar el sitio web de Anda Bot, la extensión del navegador, el puente de ejecución local, las funciones de automatización del navegador y los recursos del proyecto de código abierto.'
 				},
 				eyebrow: 'Términos de servicio',
 				title: 'Términos para usar Anda Bot',
 				intro:
-					'Estos términos explican las responsabilidades que conlleva el uso del sitio web, la extensión de Chrome y el puente de ejecución local de Anda.',
-				updated: '15 de mayo de 2026',
+					'Estos términos explican las responsabilidades que conlleva el uso del sitio web, la extensión del navegador y el puente de ejecución local de Anda.',
+				updated: '30 de junio de 2026',
 				sections: [
 					{
 						title: 'Aceptación y alcance',
 						body: [
-							'Al usar el sitio web o la extensión de Chrome, acepta estos términos. Si no está de acuerdo, no use el sitio web ni la extensión.',
+							'Al usar el sitio web o la extensión del navegador, acepta estos términos. Si no está de acuerdo, no use el sitio web ni la extensión.',
 							'Anda Bot es software de código abierto y un sistema de agentes local-first. Algunas funciones dependen de su instalación local, proveedores de modelos, navegadores, sistema operativo y herramientas de terceros.'
 						]
 					},
@@ -725,13 +724,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Soporte - Anda Bot',
 					description:
-						'Dónde obtener ayuda con la instalación de Anda Bot, la configuración de la extensión de Chrome, la conexión del token del navegador, los problemas del daemon local y los informes de errores.'
+						'Dónde obtener ayuda con la instalación de Anda Bot, la configuración de la extensión del navegador, la conexión del token del navegador, los problemas del daemon local y los informes de errores.'
 				},
 				eyebrow: 'Soporte',
 				title: 'Obtener ayuda con Anda Bot',
 				intro:
 					'Anda Bot es un agente local de código abierto. La forma más rápida de obtener soporte suele ser verificar la configuración, capturar el error exacto y abrir un problema en GitHub con suficientes detalles para reproducirlo.',
-				updated: '15 de mayo de 2026',
+				updated: '30 de junio de 2026',
 				sections: [
 					{
 						title: 'Los mejores canales de soporte',
@@ -749,7 +748,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Documentación',
 								detail:
-									'Use la documentación y el README para comandos de instalación, configuración del proveedor de modelos, configuración del token de Chrome, Skills, canales, voz y contexto de resolución de problemas.'
+									'Use la documentación y el README para comandos de instalación, configuración del proveedor de modelos, configuración del token del navegador, Skills, canales, voz y contexto de resolución de problemas.'
 							}
 						]
 					},
@@ -769,14 +768,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Verificar permisos',
 								detail:
-									'Chrome puede bloquear la inyección de páginas, el acceso al micrófono, las URL de archivos o las acciones de extensión en páginas restringidas. Pruebe una página https normal al depurar.'
+									'Los navegadores Chromium pueden bloquear la inyección de páginas, el acceso al micrófono, las URL de archivos o las acciones de extensión en páginas restringidas. Pruebe una página https normal al depurar.'
 							}
 						]
 					},
 					{
 						title: 'Incluye esta información',
 						body: [
-							'Incluye su sistema operativo, versión de Anda Bot, versión de Chrome, versión de la extensión, método de instalación, el comando que ejecutó, el mensaje de error exacto y si el problema ocurre en una pestaña nueva del navegador.',
+							'Incluye su sistema operativo, versión de Anda Bot, versión del navegador, versión de la extensión, método de instalación, el comando que ejecutó, el mensaje de error exacto y si el problema ocurre en una pestaña nueva del navegador.',
 							'No pegue claves API, Bearer tokens, prompts privados, archivos confidenciales o capturas de pantalla sensibles en problemas públicos.'
 						]
 					},
@@ -814,18 +813,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Politique de confidentialité - Anda Bot',
 					description:
-						'Comment l’extension Chrome et le site web d’Anda Bot gèrent la configuration locale, le contexte du navigateur, les prompts, les fonctionnalités vocales et les données des fournisseurs de modèles.'
+						'Comment l’extension de navigateur et le site web d’Anda Bot gèrent la configuration locale, le contexte du navigateur, les prompts, les fonctionnalités vocales et les données des fournisseurs de modèles.'
 				},
 				eyebrow: 'Politique de confidentialité',
 				title: 'Confidentialité, contrôle local et données du navigateur',
 				intro:
-					'Anda Bot est conçu comme un pont d’agent local-first. L’extension Chrome connecte votre navigateur au daemon Anda que vous exécutez, tandis que le site web explique et distribue le projet.',
-				updated: '15 mai 2026',
+					'Anda Bot est conçu comme un pont d’agent local-first. L’extension de navigateur connecte Chrome et Edge au daemon Anda que vous exécutez, tandis que le site web explique et distribue le projet.',
+				updated: '30 juin 2026',
 				sections: [
 					{
 						title: 'Ce que couvre cette politique',
 						body: [
-							'Cette politique couvre le site web d’Anda Bot et l’extension Chrome d’Anda Bot. L’extension est un client de panneau latéral pour un daemon Anda local. Le daemon local, vos fournisseurs de modèles configurés et tous les services externes que vous connectez peuvent avoir leurs propres pratiques en matière de données.',
+							'Cette politique couvre le site web d’Anda Bot et l’extension de navigateur d’Anda Bot. L’extension est un client de panneau latéral pour un daemon Anda local. Le daemon local, vos fournisseurs de modèles configurés et tous les services externes que vous connectez peuvent avoir leurs propres pratiques en matière de données.',
 							'L’extension ne vend pas de données personnelles. Elle existe pour envoyer vos instructions et le contexte de navigateur sélectionné au runtime Anda local que vous configurez.'
 						]
 					},
@@ -835,7 +834,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Paramètres de connexion',
 								detail:
-									'L’URL de la passerelle (Gateway URL) et le jeton porteur (Bearer token) que vous collez dans le panneau des paramètres sont stockés dans le stockage local de Chrome afin que l’extension puisse se reconnecter à votre daemon Anda local.'
+									'L’URL de la passerelle (Gateway URL) et le jeton porteur (Bearer token) que vous collez dans le panneau des paramètres sont stockés dans le stockage local du navigateur afin que l’extension puisse se reconnecter à votre daemon Anda local.'
 							},
 							{
 								title: 'ID de session du navigateur',
@@ -853,7 +852,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: 'Contexte du navigateur et autorisations',
 						body: [
 							'Une fois connectée, l’extension peut enregistrer l’ID de l’onglet actuel, son titre et son URL auprès de votre daemon Anda local. Si une tâche nécessite un travail dans le navigateur, le daemon peut demander à l’extension de lister les onglets, d’ouvrir ou de changer d’onglets, de naviguer, de capturer l’onglet visible ou d’exécuter des actions sur la page comme lire le contenu, cliquer, taper, faire défiler et appuyer sur des touches.',
-							'Les autorisations TTS permettent à Anda de prononcer les réponses via Chrome lorsque vous choisissez la lecture vocale. La capture vocale ou la reconnaissance vocale ne démarre qu’à partir des commandes vocales destinées à l’utilisateur et peut dépendre des autorisations du microphone du navigateur pour la page active.'
+							'Les autorisations TTS permettent à Anda de prononcer les réponses via le navigateur lorsque vous choisissez la lecture vocale. La capture vocale ou la reconnaissance vocale ne démarre qu’à partir des commandes vocales destinées à l’utilisateur et peut dépendre des autorisations du microphone du navigateur pour la page active.'
 						]
 					},
 					{
@@ -869,7 +868,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Données de l’extension locale',
 								detail:
-									'Vous pouvez effacer l’URL de la passerelle, le jeton et les données de session via le stockage de l’extension Chrome ou en supprimant l’extension.'
+									'Vous pouvez effacer l’URL de la passerelle, le jeton et les données de session via le stockage de l’extension du navigateur ou en supprimant l’extension.'
 							},
 							{
 								title: 'Données du runtime Anda',
@@ -900,18 +899,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Conditions d’utilisation - Anda Bot',
 					description:
-						'Conditions d’utilisation du site web d’Anda Bot, de l’extension Chrome, du pont de runtime local, des fonctionnalités d’automatisation du navigateur et des ressources de projet open-source.'
+						'Conditions d’utilisation du site web d’Anda Bot, de l’extension de navigateur, du pont de runtime local, des fonctionnalités d’automatisation du navigateur et des ressources de projet open-source.'
 				},
 				eyebrow: 'Conditions d’utilisation',
 				title: 'Conditions pour utiliser Anda Bot',
 				intro:
-					'Ces conditions expliquent les responsabilités liées à l’utilisation du site web, de l’extension Chrome et du pont de runtime Anda local.',
-				updated: '15 mai 2026',
+					'Ces conditions expliquent les responsabilités liées à l’utilisation du site web, de l’extension de navigateur et du pont de runtime Anda local.',
+				updated: '30 juin 2026',
 				sections: [
 					{
 						title: 'Acceptation et portée',
 						body: [
-							'En utilisant le site web ou l’extension Chrome, vous acceptez ces conditions. Si vous ne les acceptez pas, n’utilisez pas le site web ni l’extension.',
+							'En utilisant le site web ou l’extension de navigateur, vous acceptez ces conditions. Si vous ne les acceptez pas, n’utilisez pas le site web ni l’extension.',
 							'Anda Bot est un logiciel open-source et un système d’agents local-first. Certaines fonctionnalités dépendent de votre installation locale, de vos fournisseurs de modèles, de vos navigateurs, de votre système d’exploitation et d’outils tiers.'
 						]
 					},
@@ -973,13 +972,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Support - Anda Bot',
 					description:
-						'Où obtenir de l’aide pour l’installation d’Anda Bot, la configuration de l’extension Chrome, la connexion du jeton du navigateur, les problèmes du daemon local et les rapports de bugs.'
+						'Où obtenir de l’aide pour l’installation d’Anda Bot, la configuration de l’extension de navigateur, la connexion du jeton du navigateur, les problèmes du daemon local et les rapports de bugs.'
 				},
 				eyebrow: 'Support',
 				title: 'Obtenir de l’aide avec Anda Bot',
 				intro:
 					'Vous devez vérifier la configuration locale, capturer l’erreur exacte et ouvrir un ticket GitHub avec suffisamment de détails pour reproduire l’erreur.',
-				updated: '15 mai 2026',
+				updated: '30 juin 2026',
 				sections: [
 					{
 						title: 'Meilleurs canaux de support',
@@ -997,7 +996,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Documentation',
 								detail:
-									'Consultez la doc et le README pour les commandes d’installation, la configuration du fournisseur de modèles, la configuration du jeton Chrome, les Skills, les canaux, la voix et le contexte de dépannage.'
+									'Consultez la doc et le README pour les commandes d’installation, la configuration du fournisseur de modèles, la configuration du jeton de navigateur, les Skills, les canaux, la voix et le contexte de dépannage.'
 							}
 						]
 					},
@@ -1017,14 +1016,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Vérifier les autorisations',
 								detail:
-									'Chrome peut bloquer l’injection de page, l’accès au microphone, les URL de fichiers ou les actions de l’extension sur les pages restreintes. Essayez une page https normale lors du dépannage.'
+									'Les navigateurs Chromium peuvent bloquer l’injection de page, l’accès au microphone, les URL de fichiers ou les actions de l’extension sur les pages restreintes. Essayez une page https normale lors du dépannage.'
 							}
 						]
 					},
 					{
 						title: 'Inclure ces informations',
 						body: [
-							'Veuillez inclure votre système d’exploitation, la version d’Anda Bot, la version de Chrome, la version de l’extension, la méthode d’installation, la commande que vous avez exécutée, le message d’erreur exact et si le problème se produit sur un nouvel onglet du navigateur.',
+							'Veuillez inclure votre système d’exploitation, la version d’Anda Bot, la version du navigateur, la version de l’extension, la méthode d’installation, la commande que vous avez exécutée, le message d’erreur exact et si le problème se produit sur un nouvel onglet du navigateur.',
 							'Ne collez pas de clés API, de jetons porteurs, de prompts privés, de fichiers confidentiels ou de captures d’écran sensibles dans les tickets publics.'
 						]
 					},
@@ -1062,18 +1061,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Политика конфиденциальности - Anda Bot',
 					description:
-						'Как расширение Anda Bot для Chrome и веб-сайт обрабатывают локальные настройки, контекст браузера, запросы, голосовые функции и данные поставщиков моделей.'
+						'Как расширение Anda Bot для браузера и веб-сайт обрабатывают локальные настройки, контекст браузера, запросы, голосовые функции и данные поставщиков моделей.'
 				},
 				eyebrow: 'Политика конфиденциальности',
 				title: 'Конфиденциальность, локальный контроль и данные браузера',
 				intro:
-					'Anda Bot разработан как локальный мост для агента. Расширение Chrome соединяет ваш браузер с запущенным вами демоном Anda, а веб-сайт объясняет устройство проекта и распространяет его.',
-				updated: '15 мая 2026 г.',
+					'Anda Bot разработан как локальный мост для агента. Расширение для браузера соединяет Chrome и Edge с запущенным вами демоном Anda, а веб-сайт объясняет устройство проекта и распространяет его.',
+				updated: '30 июня 2026 г.',
 				sections: [
 					{
 						title: 'Что охватывает эта политика',
 						body: [
-							'Эта политика распространяется на веб-сайт Anda Bot и расширение Anda Bot для Chrome. Расширение является клиентом боковой панели для локального демона Anda. Локальный демон, настроенные вами поставщики моделей и любые внешние службы, к которым вы подключаетесь, могут иметь собственные правила работы с данными.',
+							'Эта политика распространяется на веб-сайт Anda Bot и браузерное расширение Anda Bot. Расширение является клиентом боковой панели для локального демона Anda. Локальный демон, настроенные вами поставщики моделей и любые внешние службы, к которым вы подключаетесь, могут иметь собственные правила работы с данными.',
 							'Расширение не продает личные данные. Оно существует для отправки ваших инструкций и выбранного контекста браузера в настроенную вами локальную среду выполнения Anda.'
 						]
 					},
@@ -1083,7 +1082,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Настройки подключения',
 								detail:
-									'URL шлюза (Gateway URL) и токен авторизации (Bearer token), которые вы вставляете в панель настроек, сохраняются в локальном хранилище Chrome, чтобы расширение могло повторно подключаться к вашему локальному демону Anda.'
+									'URL шлюза (Gateway URL) и токен авторизации (Bearer token), которые вы вставляете в панель настроек, сохраняются в локальном хранилище браузера, чтобы расширение могло повторно подключаться к вашему локальному демону Anda.'
 							},
 							{
 								title: 'Идентификатор сессии браузера',
@@ -1101,7 +1100,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: 'Контекст браузера и разрешения',
 						body: [
 							'При подключении расширение может зарегистрировать идентификатор текущей вкладки, ее заголовок и URL в локальном демоне Anda. Если задача требует работы в браузере, демон может попросить расширение составить список вкладок, открыть или переключить вкладки, выполнить переход, сделать снимок видимой вкладки или выполнить действия на странице, такие как чтение содержимого, нажатие кнопок, ввод текста, прокрутка и нажатие клавиш.',
-							'Разрешения TTS позволяют Anda озвучивать ответы через Chrome, когда вы выбираете голосовое воспроизведение. Запись голоса или распознавание речи запускаются только с помощью элементов управления голосом со стороны пользователя и могут зависеть от разрешений на доступ к микрофону для активной страницы.'
+							'Разрешения TTS позволяют Anda озвучивать ответы через браузер, когда вы выбираете голосовое воспроизведение. Запись голоса или распознавание речи запускаются только с помощью элементов управления голосом со стороны пользователя и могут зависеть от разрешений на доступ к микрофону для активной страницы.'
 						]
 					},
 					{
@@ -1117,7 +1116,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Локальные данные расширения',
 								detail:
-									'Вы можете очистить URL-адрес шлюза, токен и данные сеанса через хранилище расширений Chrome или удалив расширение.'
+									'Вы можете очистить URL-адрес шлюза, токен и данные сеанса через хранилище расширения браузера или удалив расширение.'
 							},
 							{
 								title: 'Данные выполнения Anda',
@@ -1148,18 +1147,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Условия обслуживания - Anda Bot',
 					description:
-						'Условия использования веб-сайта Anda Bot, расширения Chrome, локального моста выполнения, функций автоматизации браузера и ресурсов проекта с открытым исходным кодом.'
+						'Условия использования веб-сайта Anda Bot, расширения для браузера, локального моста выполнения, функций автоматизации браузера и ресурсов проекта с открытым исходным кодом.'
 				},
 				eyebrow: 'Условия обслуживания',
 				title: 'Правила использования Anda Bot',
 				intro:
-					'Эти условия определяют ответственность, связанную с использованием веб-сайта, расширения Chrome и локального моста выполнения Anda.',
-				updated: '15 мая 2026 г.',
+					'Эти условия определяют ответственность, связанную с использованием веб-сайта, расширения для браузера и локального моста выполнения Anda.',
+				updated: '30 июня 2026 г.',
 				sections: [
 					{
 						title: 'Согласие и область действия',
 						body: [
-							'Используя веб-сайт или расширение Chrome, вы соглашаетесь с настоящими условиями. Если вы не согласны, не используйте их.',
+							'Используя веб-сайт или расширение для браузера, вы соглашаетесь с настоящими условиями. Если вы не согласны, не используйте их.',
 							'Anda Bot — это программное обеспечение с открытым исходным кодом и локальная агентная система. Некоторые функции зависят от вашей локальной установки, поставщиков моделей, браузеров, операционной системы и сторонних инструментов.'
 						]
 					},
@@ -1221,13 +1220,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'Поддержка - Anda Bot',
 					description:
-						'Где получить помощь по установке Anda Bot, настойке расширения Chrome, подключению токена браузера, локальному демону и сообщениям об ошибках.'
+						'Где получить помощь по установке Anda Bot, настройке расширения для браузера, подключению токена браузера, локальному демону и сообщениям об ошибках.'
 				},
 				eyebrow: 'Поддержка',
 				title: 'Получить помощь по Anda Bot',
 				intro:
 					'Самый быстрый способ получить помощь — проверить настройки, зафиксировать точный текст ошибки и создать тему на GitHub с подробным описанием воспроизведения.',
-				updated: '15 мая 2026 г.',
+				updated: '30 июня 2026 г.',
 				sections: [
 					{
 						title: 'Лучшие каналы поддержки',
@@ -1245,7 +1244,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Документация',
 								detail:
-									'Обращайтесь к документации и файлу README для получения команд установки, настройки поставщиков моделей, токена Chrome, Skills, каналов, голоса и решения проблем.'
+									'Обращайтесь к документации и файлу README для получения команд установки, настройки поставщиков моделей, токена браузера, Skills, каналов, голоса и решения проблем.'
 							}
 						]
 					},
@@ -1265,14 +1264,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'Проверка прав доступа',
 								detail:
-									'Chrome может блокировать внедрение скриптов, доступ к микрофону, протокол file:// или действия расширения на защищенных страницах. Попробуйте обычную страницу https при отладке.'
+									'Браузеры Chromium могут блокировать внедрение скриптов, доступ к микрофону, протокол file:// или действия расширения на защищенных страницах. Попробуйте обычную страницу https при отладке.'
 							}
 						]
 					},
 					{
 						title: 'Предоставляемая информация',
 						body: [
-							'Пожалуйста, укажите вашу операционную систему, версию Anda Bot, версию Chrome, версию расширения, способ установки, выполнявшуюся команду, точное сообщение об ошибке и воспроизводится ли проблема на новой пустой вкладке.',
+							'Пожалуйста, укажите вашу операционную систему, версию Anda Bot, версию браузера, версию расширения, способ установки, выполнявшуюся команду, точное сообщение об ошибке и воспроизводится ли проблема на новой пустой вкладке.',
 							'Никогда не публикуйте ключи API, Bearer-токены, личные запросы, конфиденциальные файлы или снимки экрана с личными данными в публичных темах.'
 						]
 					},
@@ -1310,18 +1309,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'سياسة الخصوصية - Anda Bot',
 					description:
-						'كيفية تعامل موقع Anda Bot وإضافة Chrome مع الإعدادات المحلية وسياق المتصفح والمطالبات وميزات الصوت وبيانات مزود النموذج.'
+						'كيفية تعامل موقع Anda Bot وإضافة المتصفح مع الإعدادات المحلية وسياق المتصفح والمطالبات وميزات الصوت وبيانات مزود النموذج.'
 				},
 				eyebrow: 'سياسة الخصوصية',
 				title: 'الخصوصية والتحكم المحلي وبيانات المتصفح',
 				intro:
-					'تم تصميم Anda Bot كجسر للوكيل المحلي أولاً. تقوم إضافة Chrome بربط متصفحك بـ Anda daemon الذي تقوم بتشغيله، بينما يقوم الموقع الإلكتروني بشرح وتوزيع المشروع.',
-				updated: '15 مايو 2026',
+					'تم تصميم Anda Bot كجسر للوكيل المحلي أولاً. تقوم إضافة المتصفح بربط Chrome و Edge بـ Anda daemon الذي تقوم بتشغيله، بينما يقوم الموقع الإلكتروني بشرح وتوزيع المشروع.',
+				updated: '30 يونيو 2026',
 				sections: [
 					{
 						title: 'ما تغطيه هذه السياسة',
 						body: [
-							'تغطي هذه السياسة موقع Anda Bot وإضافة Anda Bot لمتصفح Chrome. الإضافة عبارة عن عميل لوحة جانبية لـ Anda daemon المحلي. قد يكون للـ daemon المحلي ومزودي النماذج الذين قمت بتكوينهم وأي خدمات خارجية تتصل بها ممارسات البيانات الخاصة بهم.',
+							'تغطي هذه السياسة موقع Anda Bot وإضافة متصفح Anda Bot. الإضافة عبارة عن عميل لوحة جانبية لـ Anda daemon المحلي. قد يكون للـ daemon المحلي ومزودي النماذج الذين قمت بتكوينهم وأي خدمات خارجية تتصل بها ممارسات البيانات الخاصة بهم.',
 							'لا تقوم الإضافة ببيع البيانات الشخصية. تم إنشاؤها لإرسال تعليماتك وسياق المتصفح المحدد إلى بيئة تشغيل Anda المحلية التي تقوم بتكوينها.'
 						]
 					},
@@ -1331,7 +1330,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'إعدادات الاتصال',
 								detail:
-									'يتم تخزين Gateway URL و Bearer token اللذين تقوم بلصقهما في لوحة الإعدادات في التخزين المحلي لـ Chrome حتى تتمكن الإضافة من إعادة الاتصال بـ Anda daemon المحلي.'
+									'يتم تخزين Gateway URL و Bearer token اللذين تقوم بلصقهما في لوحة الإعدادات في التخزين المحلي للمتصفح حتى تتمكن الإضافة من إعادة الاتصال بـ Anda daemon المحلي.'
 							},
 							{
 								title: 'معرف جلسة المتصفح',
@@ -1349,7 +1348,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 						title: 'سياق المتصفح والأذونات',
 						body: [
 							'عند الاتصال، يمكن للإضافة تسجيل معرف التبويب الحالي وعنوانه ورابطه (URL) مع Anda daemon المحلي. إذا كانت المهمة تتطلب عملاً في المتصفح، فقد يطلب الـ daemon من الإضافة إدراج التبويبات، أو فتح أو تبديل التبويبات، أو التنقل، أو التقاط التبويب المرئي، أو تشغيل إجراءات الصفحة مثل قراءة المحتوى والنقر والكتابة والتمرير والضغط على المفاتيح.',
-							'تتيح أذونات تحويل النص إلى كلام (TTS) لـ Anda نطق الاستجابات عبر Chrome عندما تختار تشغيل الصوت. لا يبدأ التقاط الصوت أو التعرف على الكلام إلا من خلال عناصر التحكم الصوتية التي تواجه المستخدم وقد يعتمد على أذونات ميكروفون المتصفح للصفحة النشطة.'
+							'تتيح أذونات تحويل النص إلى كلام (TTS) لـ Anda نطق الاستجابات عبر المتصفح عندما تختار تشغيل الصوت. لا يبدأ التقاط الصوت أو التعرف على الكلام إلا من خلال عناصر التحكم الصوتية التي تواجه المستخدم وقد يعتمد على أذونات ميكروفون المتصفح للصفحة النشطة.'
 						]
 					},
 					{
@@ -1365,7 +1364,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'بيانات الإضافة المحلية',
 								detail:
-									'يمكنك مسح Gateway URL والتوكن وبيانات الجلسة من خلال تخزين إضافة Chrome أو عن طريق إزالة الإضافة.'
+									'يمكنك مسح Gateway URL والتوكن وبيانات الجلسة من خلال تخزين إضافة المتصفح أو عن طريق إزالة الإضافة.'
 							},
 							{
 								title: 'بيانات تشغيل Anda',
@@ -1396,18 +1395,18 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'شروط الخدمة - Anda Bot',
 					description:
-						'شروط استخدام موقع Anda Bot وإضافة Chrome وجسر التشغيل المحلي وميزات أتمتة المتصفح وموارد مشروع مفتوح المصدر.'
+						'شروط استخدام موقع Anda Bot وإضافة المتصفح وجسر التشغيل المحلي وميزات أتمتة المتصفح وموارد مشروع مفتوح المصدر.'
 				},
 				eyebrow: 'شروط الخدمة',
 				title: 'شروط استخدام Anda Bot',
 				intro:
-					'توضح هذه الشروط المسؤوليات التي تصاحب استخدام الموقع الإلكتروني وإضافة Chrome وجسر تشغيل Anda المحلي.',
-				updated: '15 مايو 2026',
+					'توضح هذه الشروط المسؤوليات التي تصاحب استخدام الموقع الإلكتروني وإضافة المتصفح وجسر تشغيل Anda المحلي.',
+				updated: '30 يونيو 2026',
 				sections: [
 					{
 						title: 'القبول والنطاق',
 						body: [
-							'باستخدام الموقع الإلكتروني أو إضافة Chrome، فإنك توافق على هذه الشروط. إذا كنت لا توافق، فلا تستخدم الموقع أو الإضافة.',
+							'باستخدام الموقع الإلكتروني أو إضافة المتصفح، فإنك توافق على هذه الشروط. إذا كنت لا توافق، فلا تستخدم الموقع أو الإضافة.',
 							'Anda Bot هو برنامج مفتوح المصدر ونظام وكيل محلي أولاً. تعتمد بعض الوظائف على التثبيت المحلي ومزودي النماذج والمتصفحات ونظام التشغيل وأدوات الطرف الثالث.'
 						]
 					},
@@ -1469,13 +1468,13 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 				meta: {
 					title: 'الدعم الفني - Anda Bot',
 					description:
-						'أين يمكن الحصول على المساعدة بشأن تثبيت Anda Bot وإعداد إضافة Chrome واتصال توكن المتصفح ومشكلات الـ daemon المحلي وتقارير الأخطاء.'
+						'أين يمكن الحصول على المساعدة بشأن تثبيت Anda Bot وإعداد إضافة المتصفح واتصال توكن المتصفح ومشكلات الـ daemon المحلي وتقارير الأخطاء.'
 				},
 				eyebrow: 'الدعم الفني',
 				title: 'الحصول على المساعدة بشأن Anda Bot',
 				intro:
 					'Anda Bot هو وكيل محلي مفتوح المصدر. عادةً ما يكون أسرع مسار للحصول على الدعم هو التحقق من الإعداد، والتقاط الخطأ الدقيق، وفتح مشكلة على GitHub مع تفاصيل كافية لإعادة إنتاجها.',
-				updated: '15 مايو 2026',
+				updated: '30 يونيو 2026',
 				sections: [
 					{
 						title: 'أفضل قنوات الدعم',
@@ -1493,7 +1492,7 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'الوثائق',
 								detail:
-									'استخدم الوثائق وملف README لأوامر التثبيت وتكوين مزود النموذج وإعداد توكن Chrome والمهارات والقنوات والصوت وسياق استكشاف الأخطاء وإصلاحها.'
+									'استخدم الوثائق وملف README لأوامر التثبيت وتكوين مزود النموذج وإعداد توكن المتصفح والمهارات والقنوات والصوت وسياق استكشاف الأخطاء وإصلاحها.'
 							}
 						]
 					},
@@ -1513,14 +1512,14 @@ export const infoCopy: Record<Locale, InfoLocaleCopy> = {
 							{
 								title: 'التحقق من الأذونات',
 								detail:
-									'قد يحظر Chrome حقن الصفحة أو الوصول إلى الميكروفون أو روابط الملفات أو إجراءات الإضافة على الصفحات المقيدة. جرب صفحة https عادية عند استكشاف الأخطاء وإصلاحها.'
+									'قد تحظر متصفحات Chromium حقن الصفحة أو الوصول إلى الميكروفون أو روابط الملفات أو إجراءات الإضافة على الصفحات المقيدة. جرب صفحة https عادية عند استكشاف الأخطاء وإصلاحها.'
 							}
 						]
 					},
 					{
 						title: 'تضمين هذه المعلومات',
 						body: [
-							'يرجى تضمين نظام التشغيل وإصدار Anda Bot وإصدار Chrome وإصدار الإضافة وطريقة التثبيت والأمر الذي قمت بتشغيله ورسالة الخطأ الدقيقة وما إذا كانت المشكلة تحدث في تبويب متصفح جديد.',
+							'يرجى تضمين نظام التشغيل وإصدار Anda Bot وإصدار المتصفح وإصدار الإضافة وطريقة التثبيت والأمر الذي قمت بتشغيله ورسالة الخطأ الدقيقة وما إذا كانت المشكلة تحدث في تبويب متصفح جديد.',
 							'لا تقم بلصق مفاتيح API أو Bearer tokens أو المطالبات الخاصة أو الملفات السرية أو لقطات الشاشة الحساسة في المشكلات العامة.'
 						]
 					},
