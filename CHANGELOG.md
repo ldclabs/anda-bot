@@ -4,6 +4,23 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-06-30
+
+### Added
+
+- **Encrypted trusted-user credential store**: trusted-user Ed25519 private keys are now stored under `~/.anda/credentials/v1/identity/*.cose` using COSE Encrypt0/A256GCM, daemon-secret-derived HKDF keys, authenticated metadata, migration from legacy keyring/file locations, write verification, and private file permissions.
+- **Persistent subagent conversations**: the bot engine now wires a dedicated subagent conversation store so subagent sessions can keep separate durable conversation history.
+
+### Changed
+
+- **Version metadata synchronized for the 0.11.3 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.11.3`, and updated `anda_engine` to `0.13.14`.
+- **Localized app, docs, and website copy refreshed**: improved app action text plus multilingual browser-extension, documentation, and website copy across supported locales.
+- **Trusted-user key documentation now points to encrypted local credentials**: README, docsite, channel docs, and default config comments describe encrypted trusted-user credential storage while daemon and owner identities remain on the OS keyring path.
+
+### Fixed
+
+- **macOS launcher keeps its app identity after updates**: launcher installation now preserves a Mach-O app executable, refreshes the LaunchAgent entrypoint, and re-bootstraps launchd after updates to avoid stale bundle or code-signing state.
+
 ## [0.11.2] — 2026-06-28
 
 ### Added
