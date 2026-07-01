@@ -4,37 +4,37 @@
 
 > Born of panda. Awakened as Anda.
 
-我是 Anda Bot，一个 Rust 编写、开源、运行在你本机终端里的智能体。我会记住重要的事，会做长程推理任务，会使用你电脑上的工具，会调度 Subagents，也会随着我们一起工作而逐渐成长。
+Anda Bot 是一个基于 Rust 编写、开源、运行在本地终端的 AI 智能体。它具备长期记忆、长程推理、本地工具调用、Subagents 协同调度等能力，并能在与用户的协作中持续学习与成长。
 
-我的核心差异来自 [Anda Brain](https://github.com/ldclabs/anda-brain)。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的长期记忆大脑。Brain 会把对话转化为一个持续生长的认知中枢：里面有用户、项目、偏好、事件、关系、决策和随时间变化的事实，并能从经验里自主学习真正有价值的精华。
+其核心差异在于背后的记忆引擎 [Anda Brain](https://github.com/ldclabs/anda-brain)。Anda Brain 会将对话转化为一个持续生长的认知图谱（Cognitive Nexus），包含用户、项目、偏好、事件、关系、决策以及不断演变的事实。这意味着 Anda Bot 不仅仅是检索历史文本，而是能够自主提炼有价值的知识、构建上下文、建立关联，并将有用的历史背景带入未来的对话中。
 
-## 为什么推荐我
+## 核心特性
 
-- 我有知识图谱长期记忆，不只是检索旧聊天记录。
-- 我可以从过去工作中自主学习精华，并在未来对话里主动召回关键背景。
-- 我可以执行跨越多轮和多段上下文的长程推理任务。
-- 我擅长使用外部工具，包括 Claude Code、Codex、本地 shell、文件、笔记、待办、技能和定时任务。
-- 我拥有强大的 Subagents 系统，适合把复杂工作拆给专门角色协同推进、检查和监督。
-- 我用 Rust 编写，开源，并优先作为本地终端智能体运行。
-- 我可以待在终端里，也可以接入 Telegram、WeChat、Discord、Lark/飞书。
-- 配好转写和语音合成后，你可以直接和我语音对话。
-- 我的运行数据会保存在你的本机目录下。
+- **图谱化长期记忆**：基于知识图谱记忆大脑（Anda Brain），而非零散的聊天日志。
+- **自主学习与召回**：能从过去的工作中自动提炼关键信息，并在未来对话中主动召回相关背景。
+- **长程推理任务**：能够执行跨越多轮对话和复杂上下文的长周期推理任务。
+- **丰富的工具生态**：擅长调用外部工具（如 Claude Code、Codex）、本地 Shell、文件系统、笔记、待办事项、自定义技能以及定时任务。
+- **Subagents 协同系统**：支持将复杂任务拆解并分发给多个专门的子智能体（如实现、审查、研究、监督等角色）协同推进。
+- **Rust & 本地优先**：基于 Rust 构建，完全开源，优先运行在用户本地终端。
+- **多渠道接入**：既可作为终端 TUI 运行，也支持接入 Telegram、WeChat、Discord、Lark/飞书。
+- **语音对话支持**：配置好语音转写和合成服务后，即可支持无缝的语音交互。
+- **数据隐私可控**：所有的运行状态和数据默认保存在本地用户目录下。
 
 ## 长程任务与 Subagents
 
-Anda Bot 面向的不是“一问一答”，而是需要连续性的复杂目标。一个目标可以保持活跃：我会检查进展、压缩上下文、开启下一个关联 conversation、调用工具，并持续推进到有证据表明目标已经完成。Subagents 可以承担实现、审查、研究、监督等专门角色，而主智能体继续保留整体计划和记忆线索。
+Anda Bot 专为需要连续性的复杂目标而设计，而非简单的单轮问答。一个任务目标可以保持长期活跃：智能体会自动检查进度、压缩上下文、跨越关联会话、调用工具，并持续推进直至有明确证据表明目标已达成。Subagents 协同机制允许将特定工作（如代码实现、质量审查、资料研究、运行监督）分配给专属子智能体，而主智能体则维护全局计划和记忆线索。
 
-外部编码工具也是这个循环的一部分。当任务需要时，我可以配合 Claude Code、Codex 等工具工作，调用本地 shell 和文件工具，加载运行时 Skills，并把重要结果沉淀到 Brain，供之后继续召回。
+外部编码工具是该执行闭环的重要组成部分。在需要时，Anda Bot 可以协同 Claude Code、Codex等工具，调用本地 Shell 和文件工具，加载运行时技能（Skills），并将关键成果沉淀到 Anda Brain 中以供后续召回。
 
-## 我的长期记忆大脑
+## 记忆与认知大脑
 
-Anda Brain 的设计重点不是“记得更多”，而是“记住之后还能消化”。它的核心循环分成三步：
+Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积数据。其核心循环包含三个阶段：
 
-- **Formation 生成记忆：** 我们的对话会被编码为结构化知识，包括实体、关系、事件、偏好和行为模式。
-- **Recall 召回记忆：** 我可以用自然语言向记忆图谱提问，拿到有上下文的答案，而不是一堆原始搜索片段。
-- **Maintenance 维护记忆：** Brain 可以在后台巩固碎片、合并重复信息、降低陈旧知识的置信度，并在事实变化时保留演化时间线。
+- **Formation（生成记忆）**：对话内容被编码为结构化知识，如实体、关系、事件、偏好和行为模式。
+- **Recall（召回记忆）**：支持使用自然语言向记忆图谱提问，并获取包含丰富上下文的关联知识，而非单纯的关键词匹配。
+- **Maintenance（记忆维护）**：在后台合并重复信息、巩固记忆碎片、降低过时事实的置信度，并在事实演变时保留时间线。
 
-这对你意味着：你可以像培养一个长期搭档一样培养我。告诉我稳定的偏好、项目背景、团队关系和决策原因；当事实变化时纠正我；需要连续性时直接问“你还记得什么”。如果你过去喜欢一种工作流，现在改成另一种，我应该学会这段变化，而不是粗暴覆盖或同时给出矛盾答案。
+这为用户提供了一种自然且具有连续性的互动体验：只需告知智能体需要跨会话保留的偏好、项目背景或决策依据，在事实变化时进行纠正，或在需要时直接询问智能体“你还记得什么”。若用户的工作偏好发生演变，系统会记录并学习这种演进过程，而不是简单地覆盖历史或给出矛盾的回复。
 
 ## 快速开始
 
@@ -75,7 +75,7 @@ macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 l
 
 - 至少一个可用的模型提供方 API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
 
-也可以用较新的 Rust 工具链从源码启动我：
+也可以使用较新的 Rust 工具链从源码编译运行 Anda Bot：
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -83,7 +83,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-第一次启动时，我会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型配置缺失，请打开这个文件，填好 provider 信息，保存后在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。API key 也可以在启动 Anda 前通过 provider 对应的环境变量导出。
+首次启动时，daemon 会自动创建 `~/.anda/config.yaml`。如果界面提示模型配置缺失，请打开该文件，填写 provider 详情，保存后在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。对于 API Key，也可以在启动 Anda 之前导出对应的环境变量。
 
 最小模型配置示例：
 
@@ -101,7 +101,7 @@ model:
 
 支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。
 
-`brain` 标签表示这一路模型可优先用于记忆大脑。如果没有 provider 带这个标签，我会使用当前激活模型。
+`brain` 标签表示该模型配置将优先用于记忆大脑的生成与处理。若无 provider 携带该标签，则默认使用当前激活的模型。
 
 如果你想为不同身份或项目准备独立记忆，可以换一个 home 目录：
 
@@ -109,7 +109,7 @@ model:
 anda --home /path/to/.anda
 ```
 
-## 和我聊天
+## 交互与快捷键
 
 终端 UI 启动后：
 
@@ -125,7 +125,7 @@ anda --home /path/to/.anda
 - 输入 `/steer ...` 可以给正在生成的回复追加引导。
 - Esc 查看状态，Ctrl+C 退出。
 
-成功完成的对话会在后台提交给 Brain 形成长期记忆。你不需要手动维护记忆文件。
+成功完成的对话会在后台提交给 Anda Brain 形成长期记忆。用户不需要手动维护记忆文件。
 
 适合长期记忆的说法：
 
@@ -175,13 +175,13 @@ anda voice --record-secs 8
 
 语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。
 
-## 把我放到你的工作场景里
+## 多场景集成
 
-你可以只在终端里使用我，也可以从 Chrome 打开我，或编辑 `~/.anda/config.yaml`，把我接入聊天工具。
+Anda Bot 既可以运行在终端中，也可以作为 Chrome 侧边栏插件使用，或通过配置 `~/.anda/config.yaml` 接入各大主流即时通讯频道。
 
 ### Chrome 侧边栏
 
-仓库里提供了一个可直接加载的 Chrome 扩展：[chrome-extension](chrome-extension)。它会把 Anda 打开在 Chrome 原生 Side Panel 中，并通过拆分后的浏览器工具让智能体读取页面和管理浏览器标签页；切换标签页时会保持同一个浏览器会话。
+仓库里提供了一个可直接加载的 Chrome 扩展：[chrome-extension](chrome-extension)。它会将 Anda Bot 嵌入 Chrome 的原生侧边栏（Side Panel）中，允许智能体利用专用的浏览器工具读取页面内容并管理标签页，在切换标签页时保持同一个对话会话。
 
 侧边栏也可以收藏 assistant 消息。收藏会保存在本机 daemon 中，可以放进文件夹，并能从侧边栏或 dashboard 跳回原始对话。
 
@@ -305,13 +305,13 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
 
 ## 文件、技能与自动化
 
-我的本地工作区默认在 `~/.anda/workspace`。文件工具和 shell 工具默认都在这里工作。
+Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。
 
-你可以把个人运行时 Skills 放到 `~/.anda/skills`。随 Anda 发布的内置 Skills 会安装到 `~/.anda/bundled-skills`，共享的跨 Agent Skills（`~/.agents/skills`）可以在 Dashboard 里导入到个人 Anda 库。cron 工具可以让我安排未来执行的 shell 任务或 agent prompt，并保存运行历史。
+用户可将自定义运行时技能放入 `~/.anda/skills`。发布版内置技能会安装到 `~/.anda/bundled-skills`，而在 `~/.agents/skills` 下的跨 Agent 技能可在 Dashboard 中导入到个人库。内置的 Cron 任务调度器支持安排未来的 Shell 任务或 Agent 提示词，并保留运行历史。
 
 ## 本地数据与隐私
 
-默认情况下，我的状态保存在 `~/.anda`：
+默认情况下，Anda Bot 的所有状态和配置均保存在 `~/.anda` 中：
 
 ```text
 ~/.anda/
@@ -330,7 +330,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
   workspace/
 ```
 
-记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。daemon 和 owner 身份私钥默认保存在操作系统安全凭证库，可信用户私钥保存在 `~/.anda/credentials/` 下的本地加密凭证库；显式导出的文件 key 和 Linux Secret Service fallback key 可能位于 `~/.anda/keys/`。请注意，你配置的模型提供方仍可能接收 prompt 和记忆处理请求，所以请根据自己的隐私需求选择可信的 provider 或私有接口。
+记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。daemon 和 owner 身份私钥默认保存在操作系统安全凭证库，可信用户私钥保存在 `~/.anda/credentials/` 下的本地加密凭证库；显式导出的文件 key 和 Linux Secret Service fallback key 可能位于 `~/.anda/keys/`。请注意，配置的模型提供方（Model Provider）仍会接收 prompt 和记忆处理请求，建议根据数据隐私需求选择合适的提供商或部署私有大模型接口。
 
 ## 继续了解
 

@@ -4,37 +4,37 @@
 
 > Born of panda. Awakened as Anda.
 
-I am Anda Bot: an open-source Rust AI agent that runs in your terminal, remembers across sessions, and can keep working on long-horizon goals. I am built to remember, reason, use tools on your computer, coordinate subagents, and keep improving as we work together.
+Anda Bot is an open-source Rust AI agent that runs in your terminal, remembers across sessions, and can work on long-horizon goals. It is built to remember, reason, use tools on your computer, coordinate subagents, and continuously improve through collaboration.
 
-My most important difference is [Anda Brain](https://github.com/ldclabs/anda-brain), the memory engine behind me. Brain turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. That means I do not just search old text. I can autonomously distill useful knowledge, build context, notice relationships, and carry useful history into future conversations.
+Its primary differentiator is [Anda Brain](https://github.com/ldclabs/anda-brain), the memory engine powering the agent. Brain turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. Instead of simply searching raw chat logs, Anda Bot can autonomously distill useful knowledge, construct context, identify relationships, and carry historical context forward into future sessions.
 
-## Why Use Me
+## Why Anda Bot
 
-- I remember through a knowledge graph brain, not a pile of disconnected chat logs.
-- I can autonomously learn the useful parts of past work and recall them when they matter.
-- I can execute long-horizon reasoning tasks that continue across compacted conversations.
-- I am good at using external tools, including Claude Code, Codex, shell commands, files, notes, todos, skills, and scheduled jobs.
-- I have a powerful subagents system for delegating, auditing, and coordinating complex work.
-- I am written in Rust, open source, and built to run locally in your terminal.
-- I can live in your terminal, and optionally in Telegram, WeChat, Discord, or Lark/Feishu.
-- I can support voice conversations when transcription and speech output are configured.
-- I keep my runtime state under your local home directory.
+- **Graph-based Long-term Memory:** Remembers through a knowledge graph (Anda Brain), rather than a disjointed pile of chat logs.
+- **Autonomous Learning:** Discovers and distills key insights from past work, recalling them contextually when needed.
+- **Long-Horizon Execution:** Capable of running reasoning tasks that persist and continue across compacted conversations.
+- **Rich Tool Integration:** Out-of-the-box support for external tools (e.g., Claude Code, Codex), shell commands, files, notes, tasks, skills, and cron jobs.
+- **Subagents Coordination:** A robust system for delegating, auditing, and coordinating specialized tasks among subagents.
+- **Rust & Local-First:** Written in Rust, fully open-source, and optimized to run locally in the terminal.
+- **Multi-Channel Runtime:** Operates in the terminal and can be optionally connected to Telegram, WeChat, Discord, and Lark/Feishu.
+- **Voice Support:** Supports speech-to-text input and text-to-speech output when configured.
+- **Self-Contained State:** Keeps all configuration and runtime files under a local home directory.
 
 ## Long-Horizon Work And Subagents
 
-Anda Bot is designed for tasks that need continuity, not just a single answer. A goal can stay active while I inspect progress, compact context, open the next linked conversation, call tools, and continue until there is evidence that the objective is done. Subagents let specialized workers take on focused roles such as implementation, review, research, or supervision, while the main agent keeps the larger plan and memory thread intact.
+Anda Bot is designed for tasks that require long-term continuity, going beyond simple single-turn question-answering. A goal can remain active as the agent inspects progress, compacts context, links across conversational threads, invokes tools, and executes until the objective is verified as complete. The subagent system allows specialized workers to take on focused roles (e.g., implementation, review, research, or supervision) while the main agent maintains the overarching plan and memory thread.
 
-External coding tools are part of that loop. When a task calls for it, I can work alongside tools such as Claude Code and Codex, use local shell and file tools, load runtime skills, and preserve the important outcomes in Brain for future recall.
+External coding tools are fully integrated into this execution loop. When needed, Anda Bot can collaborate with tools like Claude Code and Codex, execute local shell/file commands, load custom runtime skills, and persist critical outcomes in Anda Brain for future reference.
 
-## My Memory Brain
+## Memory & Knowledge Graph
 
 Anda Brain is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
 
-- **Formation:** conversations are encoded into structured memories: entities, relationships, events, preferences, and patterns.
-- **Recall:** I can ask the memory graph natural-language questions and receive context-rich answers instead of raw search hits.
-- **Maintenance:** Brain can consolidate fragments, merge duplicates, decay stale knowledge, and preserve timelines when facts change.
+- **Formation:** Conversations are encoded into structured memory fragments (entities, relationships, events, preferences, and patterns).
+- **Recall:** The agent queries the memory graph via natural language, receiving context-rich answers instead of flat keyword search hits.
+- **Maintenance:** Brain can consolidate fragments, merge duplicates, decay stale knowledge, and track timelines as facts evolve.
 
-For you, this means a simple habit works well: tell me the things that should remain true across sessions, correct me when something changes, and ask me what I remember when you want continuity. If you once preferred one workflow and now prefer another, I should learn the evolution instead of blindly overwriting the past.
+This allows users to establish a natural feedback loop: state facts or preferences that should persist across sessions, correct the agent when things change, or query what the agent remembers. If a workflow preference evolves over time, the system learns the transition rather than blindly overwriting past knowledge.
 
 ## Quick Start
 
@@ -84,7 +84,7 @@ Requirements:
   the setup wizard; CLI users can put it in `~/.anda/config.yaml` or a supported
   environment variable.
 
-Or run me from this repository with a recent Rust toolchain:
+Or run Anda Bot from this repository with a recent Rust toolchain:
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
@@ -92,7 +92,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-On first launch I create `~/.anda/config.yaml`. If the setup screen says a model field is missing, open that file, fill in your provider details, save it, then refresh models from the launcher or browser side panel, or run `anda models reload`. For API keys, you can also export a provider environment variable before starting Anda.
+On first launch, the daemon creates `~/.anda/config.yaml`. If the setup screen indicates a missing model configuration, open this file, specify the provider details, save it, then refresh models from the launcher or browser side panel, or run `anda models reload`. For API keys, you can also export a provider environment variable before starting Anda.
 
 Minimal model configuration:
 
@@ -110,7 +110,7 @@ model:
 
 Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
 
-The `brain` label lets the memory brain prefer that provider for memory work. If no provider has that label, I use the active model.
+The `brain` label designates the preferred provider for memory processing. If no provider has this label, the active model is used.
 
 Use a separate home directory when you want an isolated profile:
 
@@ -118,7 +118,7 @@ Use a separate home directory when you want an isolated profile:
 anda --home /path/to/.anda
 ```
 
-## Chat With Me
+## Interacting with the Agent
 
 When the terminal UI is running:
 
@@ -134,7 +134,7 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
-Successful conversation turns are submitted to Brain for memory formation in the background. You do not need to manage memory files by hand.
+Successful conversation turns are submitted to Anda Brain for memory formation in the background. Users do not need to manage memory files manually.
 
 Good prompts for long-term memory:
 
@@ -184,9 +184,9 @@ anda voice --record-secs 8
 
 Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output.
 
-## Put Me Where You Work
+## Integrations
 
-You can keep me in the terminal, open me from Chrome, or connect me to chat channels by editing `~/.anda/config.yaml`.
+Anda Bot can be used directly in the terminal, opened as a Chrome extension, or connected to various external messaging channels by editing `~/.anda/config.yaml`.
 
 ### Chrome Side Panel
 
@@ -316,13 +316,13 @@ See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.ya
 
 ## Files, Skills, And Automations
 
-My local runtime creates a working area at `~/.anda/workspace`. File and shell tools operate there by default.
+The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default.
 
-You can add personal runtime skills under `~/.anda/skills`. Release-managed skills are installed under `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into your personal Anda library from the Dashboard. Cron tools let me schedule shell commands or future agent prompts, with run history stored locally.
+Custom runtime skills can be added under `~/.anda/skills`. Release-managed skills are installed in `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into the personal library via the Dashboard. Integrated cron capabilities enable scheduling shell commands or automated agent prompts, with execution histories stored locally.
 
 ## Local Data And Privacy
 
-By default I store state under `~/.anda`:
+By default, Anda Bot stores all state and configuration under `~/.anda`:
 
 ```text
 ~/.anda/
@@ -341,7 +341,7 @@ By default I store state under `~/.anda`:
   workspace/
 ```
 
-The memory graph, conversations, channel state, cron jobs, logs, personal skills, bundled skills, and workspace data live there. Daemon and owner identity private keys live in the OS secure credential store by default, while trusted-user private keys live in the local encrypted credential store under `~/.anda/credentials/`. Explicitly exported keys and Linux Secret Service fallback keys may exist under `~/.anda/keys/`. Your configured model provider can still receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy needs.
+The memory graph, conversations, channel state, cron jobs, logs, personal skills, bundled skills, and workspace data live there. Daemon and owner identity private keys live in the OS secure credential store by default, while trusted-user private keys live in the local encrypted credential store under `~/.anda/credentials/`. Explicitly exported keys and Linux Secret Service fallback keys may exist under `~/.anda/keys/`. Your configured model providers will receive prompts and memory-processing requests, so choose providers and API endpoints that match your privacy preferences.
 
 ## Learn More
 
