@@ -11,7 +11,7 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use hyper::upgrade;
 use hyper_util::rt::TokioIo;
 use rust_i18n::t;

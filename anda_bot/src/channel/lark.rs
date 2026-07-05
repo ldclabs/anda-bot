@@ -1,7 +1,7 @@
 use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
-use futures_util::{Sink, SinkExt, StreamExt};
+use futures::{Sink, SinkExt, StreamExt};
 use prost::Message as ProstMessage;
 use reqwest::Client;
 use serde_json::Value;

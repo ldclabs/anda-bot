@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["anda_bot"]
 
 [workspace.package]
@@ -14,19 +14,14 @@ categories = [
   "text-processing",
 ]
 edition = "2024"
+rust-version = "1.91"
 license = "Apache-2.0"
 
 [workspace.dependencies]
 async-trait = "0.1"
-axum = { version = "0.8", features = [
-  "http1",
-  "http2",
-  "json",
-  # "macros",
-  "matched-path",
-  "tokio",
-  "query",
-], default-features = true }
+# Default features already cover http1/json/matched-path/query/tokio; only
+# http2 is additive.
+axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.13" }
 anda_engine = { version = "0.13" }
 anda_engine_server = { version = "0.13" }
@@ -35,11 +30,10 @@ anda_object_store = "0.8"
 anda_db = { version = "0.9", features = ["full"] }
 anda_db_tfs = { version = "0.9", features = ["full"] }
 anda_db_utils = { version = "0.8" }
-anda_cognitive_nexus = "0.9"
 anda_brain = { version = "0.9" }
 anda_kip = "0.9"
 base64 = "0.22"
-cpal = { version = "0.17" }
+cpal = { version = "0.18" }
 cbor2 = "1"
 cose2 = "0.3"
 ed25519-dalek = "2"
@@ -53,10 +47,8 @@ chrono = { version = "0.4", default-features = false, features = [
   "std",
 ] }
 chrono-tz = "0.10"
-cron = "0.16"
-dotenv = "0.15"
+cron = "0.17"
 futures = "0.3"
-futures-util = "0.3"
 hkdf = "0.13"
 http = "1.3"
 hyper = { version = "1", features = ["http1", "server"] }
@@ -65,27 +57,28 @@ parking_lot = "0.12"
 png = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
-serde-saphyr = "0.0"
+# 0.0.x releases carry no compatibility guarantees between each other, so pin
+# the exact minor we have validated.
+serde-saphyr = "0.0.29"
 sha3 = "0.12"
 sha2 = "0.11"
 ic_auth_types = "0.9"
 ic-ed25519 = "0.6"
 infer2 = { version = "0.21" }
 object_store = { version = "0.14" }
+# Default features already provide rustls (via default-tls) and http2.
 reqwest = { version = "0.13", features = [
-  "rustls",
   "json",
   "gzip",
   "stream",
-  "http2",
   "form",
   "multipart",
-  # "hickory-dns",
-], default-features = true }
+] }
 rust-i18n = "4"
-# Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs` is
-# already linked transitively via reqwest on every target, so this adds the API without
-# introducing a second provider.
+# Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs`
+# is the sole crypto backend in the tree (reqwest's rustls and cose2's
+# `crypto-aws-lc-rs` both use it), so this adds the API without introducing a
+# second provider.
 rustls = { version = "0.23", default-features = false, features = [
   "aws_lc_rs",
 ] }
@@ -108,23 +101,24 @@ objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 ratatui = { version = "0.30", default-features = true }
 crossterm = { version = "0.29", features = ["event-stream"] }
+tempfile = "3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 weixin-agent = "0.2"
 windows-sys = "0.61"
-zip = { version = "2", default-features = false, features = [
-  "deflate-flate2",
-  "flate2",
-] }
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
+# Pin patches to explicit revs so builds stay reproducible even without the
+# lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-ratatui = { git = "https://github.com/ldclabs/ratatui.git", branch = "main" }
-weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", branch = "main" }
+ratatui = { git = "https://github.com/ldclabs/ratatui.git", rev = "f2fe6304b898a2b1759a45c6f7936eafebfd8f65" }
+weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }
 
 [profile.release]
-debug = false
 lto = true
 strip = true
 opt-level = 'z'
 codegen-units = 1
+# cron/runtime.rs relies on catch_unwind for job isolation; do not switch to
+# "abort" to shave binary size.
 panic = "unwind"

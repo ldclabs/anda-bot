@@ -829,7 +829,7 @@ where
     let data_tx = audio_tx.clone();
     let err_tx = audio_tx;
     let stream = device.build_input_stream(
-        stream_config,
+        *stream_config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
             if data.is_empty() {
                 return;

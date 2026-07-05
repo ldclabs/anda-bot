@@ -5,7 +5,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
 };
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use reqwest::{
     Client,
     multipart::{Form, Part},

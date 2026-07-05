@@ -1,9 +1,14 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.11.3"
-description = "Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Brain."
+version = "0.11.4"
+default-run = "anda"
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [package.metadata.i18n]
 available-locales = ["en", "zh-Hans"]
@@ -33,15 +38,14 @@ anda_object_store = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
-chrono = { workspace = true, features = ["clock"] }
+chrono = { workspace = true }
 chrono-tz = { workspace = true }
 cbor2 = { workspace = true }
-cose2 = { workspace = true, features = ["crypto-ring"] }
+cose2 = { workspace = true, features = ["crypto-aws-lc-rs"] }
 cron = { workspace = true }
 ed25519-dalek = { workspace = true }
 keyring = { workspace = true }
 futures = { workspace = true }
-futures-util = { workspace = true }
 hkdf = { workspace = true }
 ic-ed25519 = { workspace = true }
 ic_auth_types = { workspace = true }
@@ -54,7 +58,7 @@ rustls = { workspace = true }
 tokio-util = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 serde-saphyr = { workspace = true }
 sha3 = { workspace = true }
@@ -64,23 +68,25 @@ log = { workspace = true }
 http = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-object_store = { workspace = true, features = ["aws", "integration"] }
+object_store = { workspace = true }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
-libc = { workspace = true }
+liteparse = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
-crossterm = { workspace = true, features = ["event-stream"] }
+crossterm = { workspace = true }
 markdown = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 weixin-agent = { workspace = true }
 zip = { workspace = true }
 
-[target.'cfg(any(target_env = "musl", target_os = "windows"))'.dependencies]
-liteparse = { workspace = true }
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
+# Desktop glibc targets additionally get OCR; musl and Windows stay on the base
+# feature set declared in [dependencies].
 [target.'cfg(all(not(target_env = "musl"), not(target_os = "windows")))'.dependencies]
 liteparse = { workspace = true, features = ["tesseract"] }
 
@@ -130,4 +136,4 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }

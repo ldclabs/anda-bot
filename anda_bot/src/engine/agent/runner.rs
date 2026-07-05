@@ -745,6 +745,14 @@ impl SessionRunner {
                 self.submit_pending_formation(self.runner.chat_history(), now_ms)
                     .await;
 
+                // The turn produced no further output, so the runner is idle
+                // here. Reclaim context-window budget by pruning completed tool
+                // calls and results from the accumulated provider raw history.
+                // Do this before the goal supervisor runs: if the goal queues a
+                // follow-up the runner turns non-idle and the prune becomes a
+                // no-op, so pruning first keeps the next request lean.
+                self.runner.prune_req_raw_history();
+
                 let maybe_goal =
                     if now_ms >= self.session.goal_check_backoff_until.load(Ordering::SeqCst) {
                         self.session.goal.write().take()

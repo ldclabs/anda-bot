@@ -1,7 +1,7 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use futures_util::StreamExt;
+use futures::StreamExt;
 use reqwest::header::ACCEPT;
 use serde_json::json;
 

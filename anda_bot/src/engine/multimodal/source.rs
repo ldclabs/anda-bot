@@ -1,7 +1,7 @@
 use anda_core::{
     BoxError, ByteBufB64, ContentPart, RequestMeta, Resource, inline_data_from_data_url,
 };
-use futures_util::StreamExt;
+use futures::StreamExt;
 use reqwest::header::CONTENT_TYPE;
 use std::path::{Path, PathBuf};
 

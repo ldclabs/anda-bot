@@ -7,7 +7,7 @@ use anda_core::{
     ContentPart, FunctionDefinition, RequestMeta, Resource, StateFeatures, ToolGroupInfo, Usage,
 };
 use anda_engine::context::AgentCtx;
-use futures_util::{StreamExt, stream};
+use futures::{StreamExt, stream};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;

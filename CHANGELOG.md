@@ -4,6 +4,37 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.4] — 2026-07-05
+
+### Added
+
+- **Idle context-window budget reclamation**: the session runner now prunes completed tool calls and results from raw provider history during idle ticks, keeping follow-up requests lean before the goal supervisor runs.
+
+### Changed
+
+- **Crypto backend switched from `ring` to `aws-lc-rs`**: the `cose2` dependency now uses `crypto-aws-lc-rs` instead of `crypto-ring`, matching the rest of the dependency tree (reqwest's rustls already pulls in aws-lc-rs as the sole crypto provider).
+- **Dependency upgrades**: Cargo workspace resolver 2→3, `cpal` 0.17→0.18, `cron` 0.16→0.17, `zip` 2→8, and `rust-version = "1.85"` declared at workspace level.
+- **Dependency cleanup**: removed `futures-util` and `dotenv` from the workspace; all `futures_util` imports migrated to the `futures` crate; `serde-saphyr` pinned to exact `0.0.29`; `axum` and `reqwest` features simplified to their essential additive flags; `tempfile` promoted to workspace dependency; git-dependency patches pinned to explicit revs for reproducible builds.
+- **Platform dependency targeting refined**: `libc` is now unix-only instead of all targets; `liteparse` with Tesseract OCR is gated to desktop glibc targets (not musl or Windows).
+- **anda-db bumped to 0.9** with install-script Homebrew shadow-directory repair and updated channel/cron/engine import paths.
+- **Identity key utilities split into focused modules**: `ed25519`, `files`, `local_store`, `refs`, `secrets`, `store`, and test infrastructure, replacing the monolithic `util/key.rs`.
+- **README product messaging refined** in both English and Chinese.
+
+### Fixed
+
+- **Inbound message sharding**: IM messages are now distributed across 4 workers (hash-routed by channel/chat) so a slow agent run on one conversation does not stall every channel; messages within the same chat stay ordered.
+- **Deferred reply retries**: replies whose immediate send retries were exhausted now receive long-delay re-attempts (60s / 300s / 900s) before being dropped.
+- **Daemon singleton lock**: a file-lock exclusive lock prevents concurrent daemon starts, with race-free PID file cleanup.
+- **Daemon fail-fast orchestration**: `select_all` cancels remaining subsystems when any one exits with error, avoiding half-alive daemon states; channel listeners now start only after the engine is ready.
+- **Secret file permissions hardened**: config files, backups, and temp files are created with `0o600` permissions; existing files are retroactively repaired on startup.
+- **Streamed HTTP body size enforcement**: attachment downloads for Discord, Lark, Telegram, and WeChat now enforce size limits via streamed `read_limited_body` instead of post-load checks; WeChat pre-checks file size on disk before loading into memory.
+- **Conversation route map bounded**: a `BTreeMap` with a 4096-entry cap prevents unbounded memory growth in long-running daemons.
+- **Agent `/new` lock release**: the session creation mutex is dropped before the database chain walk, avoiding stalls on unrelated session creations.
+- **Idle tick optimization**: the outer loop now blocks on the input channel with a 1s timeout when the session is idle, picking up queued messages instantly.
+- **Log retention**: daily log files older than 30 days are pruned at startup.
+- **Config backup rotation**: capped at 10 backups, oldest pruned first.
+- **Home directory permissions preserved** during credential writes.
+
 ## [0.11.3] — 2026-06-30
 
 ### Added
