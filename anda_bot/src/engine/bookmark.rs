@@ -8,7 +8,7 @@ use anda_db::{
     error::DBError,
     index::{BTree, jieba_tokenizer},
     query::{Filter, Query, RangeQuery},
-    schema::{AndaDBSchema, FieldEntry, FieldKey, FieldType, FieldTyped, Fv, Schema, SchemaError},
+    schema::{AndaDBSchema, FieldTyped, Fv},
     unix_ms,
 };
 use anda_engine::{context::BaseCtx, model::Models, truncate_utf8_to_max_bytes};

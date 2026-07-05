@@ -1,7 +1,5 @@
 use anda_core::{BoxError, Json, Resource};
-use anda_db::schema::{
-    AndaDBSchema, FieldEntry, FieldKey, FieldType, FieldTyped, Schema, SchemaError,
-};
+use anda_db::schema::{AndaDBSchema, FieldTyped};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};

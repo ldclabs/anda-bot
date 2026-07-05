@@ -55,6 +55,10 @@ macOS 和 Linux 通过安装脚本：
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
+如果机器上也装过 Homebrew 版本，请打开新终端后确认 `command -v anda`
+指向 `~/.local/bin/anda` 或你的 `ANDA_INSTALL_DIR`；否则较旧的 Homebrew
+二进制可能会遮蔽安装脚本安装的新版本。
+
 Windows 普通用户请从
 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载
 `AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到

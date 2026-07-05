@@ -104,11 +104,12 @@ profile_has_install_dir() {
 }
 
 append_unix_path_profile() {
+    FORCE_PROFILE_UPDATE="${1:-0}"
     PROFILE_PATH=$(detect_profile)
     PROFILE_DIR=$(dirname "$PROFILE_PATH")
     SHELL_NAME=$(basename "${SHELL:-sh}" 2>/dev/null || printf 'sh')
 
-    if profile_has_install_dir "$PROFILE_PATH"; then
+    if [ "$FORCE_PROFILE_UPDATE" != "1" ] && profile_has_install_dir "$PROFILE_PATH"; then
         return 0
     fi
 
@@ -135,16 +136,40 @@ append_unix_path_profile() {
     } >> "$PROFILE_PATH"
 }
 
+installed_binary_is_first_in_path() {
+    RESOLVED_BINARY=$(command -v "$INSTALL_NAME" 2>/dev/null || true)
+    [ "$RESOLVED_BINARY" = "${INSTALL_DIR}/${INSTALL_NAME}" ]
+}
+
 ensure_unix_path() {
-    if path_contains "$INSTALL_DIR"; then
+    if installed_binary_is_first_in_path; then
         return 0
     fi
 
-    export PATH="$INSTALL_DIR:$PATH"
+    SHADOWED_BINARY=$(command -v "$INSTALL_NAME" 2>/dev/null || true)
+    INSTALL_DIR_ALREADY_IN_PATH=0
+    if path_contains "$INSTALL_DIR"; then
+        INSTALL_DIR_ALREADY_IN_PATH=1
+    fi
 
-    if append_unix_path_profile; then
+    export PATH="$INSTALL_DIR:$PATH"
+    hash -r 2>/dev/null || true
+
+    FORCE_PROFILE_UPDATE=0
+    if [ "$INSTALL_DIR_ALREADY_IN_PATH" = "1" ]; then
+        FORCE_PROFILE_UPDATE=1
+    fi
+
+    if append_unix_path_profile "$FORCE_PROFILE_UPDATE"; then
         PROFILE_PATH=$(detect_profile)
-        success "Ensured ${INSTALL_DIR} is in PATH via ${PROFILE_PATH}"
+        if [ "$FORCE_PROFILE_UPDATE" = "1" ]; then
+            success "Moved ${INSTALL_DIR} ahead of other ${BINARY_NAME} binaries in PATH via ${PROFILE_PATH}"
+        else
+            success "Ensured ${INSTALL_DIR} is in PATH via ${PROFILE_PATH}"
+        fi
+        if [ -n "$SHADOWED_BINARY" ] && [ "$SHADOWED_BINARY" != "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
+            info "A different ${BINARY_NAME} was found earlier in PATH: ${SHADOWED_BINARY}"
+        fi
         info "Open a new terminal for the PATH change to take effect."
     else
         info "Add ${INSTALL_DIR} to your PATH to run ${BINARY_NAME} from any terminal."

@@ -32,18 +32,22 @@ anda_engine = { version = "0.13" }
 anda_engine_server = { version = "0.13" }
 anda_web3_client = { version = "0.13" }
 anda_object_store = "0.8"
-anda_db = { version = "0.8", features = ["full"] }
-anda_db_tfs = { version = "0.8", features = ["full"] }
+anda_db = { version = "0.9", features = ["full"] }
+anda_db_tfs = { version = "0.9", features = ["full"] }
 anda_db_utils = { version = "0.8" }
-anda_cognitive_nexus = "0.8"
+anda_cognitive_nexus = "0.9"
 anda_brain = { version = "0.9" }
-anda_kip = "0.8"
+anda_kip = "0.9"
 base64 = "0.22"
 cpal = { version = "0.17" }
 cbor2 = "1"
 cose2 = "0.3"
 ed25519-dalek = "2"
-keyring = "4.1"
+# Pinned to =4.1.2: keyring 4.1.3 has a regression in `Entry::new` where the
+# `compare_exchange` guard never calls `set_credential_store`, so the platform
+# default store is never registered and every keyring op fails with
+# "No default store has been set". Revisit once a fixed release (>4.1.3) is out.
+keyring = "=4.1.2"
 chrono = { version = "0.4", default-features = false, features = [
   "clock",
   "std",

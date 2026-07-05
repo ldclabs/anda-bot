@@ -26,6 +26,10 @@ macOS and Linux can also use the install script:
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
+If you also have a Homebrew install, open a new terminal and verify
+`command -v anda` points at `~/.local/bin/anda` or your `ANDA_INSTALL_DIR`;
+otherwise an older Homebrew binary may shadow the updated install-script binary.
+
 Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) and
 double-click it. The installer places Anda under

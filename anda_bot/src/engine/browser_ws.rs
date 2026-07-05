@@ -109,12 +109,15 @@ pub async fn browser_websocket(
     };
 
     let auth_headers = websocket_auth_headers(request.headers(), request.uri());
-    let caller = state
+    let caller = match state
         .app
-        .verify_user(&auth_headers, unix_ms(), Some(engine_id), None);
-    if caller == Principal::anonymous() {
-        return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
-    }
+        .verify_user(&auth_headers, unix_ms(), Some(engine_id), None)
+    {
+        Ok(caller) if caller != Principal::anonymous() => caller,
+        _ => {
+            return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
+        }
+    };
 
     let Some(sec_key) = websocket_key(request.headers()) else {
         return (StatusCode::BAD_REQUEST, "missing WebSocket upgrade headers").into_response();

@@ -926,13 +926,12 @@ fn verify_authenticated_request(
     app: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), Box<axum::response::Response>> {
-    let caller = app.verify_user(headers, unix_ms(), None, None);
-    if caller == Principal::anonymous() {
-        return Err(Box::new(
+    match app.verify_user(headers, unix_ms(), None, None) {
+        Ok(caller) if caller != Principal::anonymous() => Ok(()),
+        _ => Err(Box::new(
             (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response(),
-        ));
+        )),
     }
-    Ok(())
 }
 
 pub async fn get_version() -> impl IntoResponse {

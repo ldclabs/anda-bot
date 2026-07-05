@@ -2232,6 +2232,24 @@ mod tests {
     }
 
     #[test]
+    fn install_script_repairs_shadowed_anda_binary_in_path() {
+        let script = install_script();
+
+        assert!(
+            script.contains("command -v \"$INSTALL_NAME\""),
+            "installer should check which anda binary the shell will execute"
+        );
+        assert!(
+            script.contains("FORCE_PROFILE_UPDATE=1"),
+            "installer should rewrite the profile when the install dir is present but shadowed"
+        );
+        assert!(
+            script.contains("A different ${BINARY_NAME} was found earlier in PATH"),
+            "installer should explain when another anda binary shadows the installed one"
+        );
+    }
+
+    #[test]
     fn launcher_language_detects_chinese_tags() {
         assert_eq!(
             language_from_tags(["xx-XX", "zh-Hans-CN", "en-US"]),
