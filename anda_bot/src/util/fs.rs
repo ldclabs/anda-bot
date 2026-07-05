@@ -24,11 +24,12 @@ pub fn restrict_secret_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+// Every test here exercises the Unix permission-bit path; the Windows
+// implementation is a no-op, so the whole module is Unix-only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn restrict_secret_file_permissions_removes_group_and_other_bits() {
         use std::os::unix::fs::PermissionsExt;
@@ -49,6 +50,8 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    // The Windows no-op returns Ok(()) even for a missing path, so expecting
+    // an error here is Unix-only (see the module cfg above).
     #[test]
     fn restrict_secret_file_permissions_errors_on_missing_file() {
         let dir = tempfile::tempdir().unwrap();
