@@ -10,6 +10,8 @@ use structured_logger::{Builder, Writer};
 
 pub const CLI_LOG_FILE_PREFIX: &str = "anda-cli";
 pub const DAEMON_LOG_FILE_PREFIX: &str = "anda-daemon";
+// Daily log files older than this are removed at logger startup.
+const LOG_RETENTION_DAYS: u64 = 30;
 
 pub fn init_daily_json_logger(
     level: &str,
@@ -17,9 +19,44 @@ pub fn init_daily_json_logger(
     file_prefix: &'static str,
 ) -> io::Result<()> {
     Builder::with_level(level)
-        .with_target_writer("*", new_daily_json_writer(logs_dir, file_prefix)?)
+        .with_target_writer("*", new_daily_json_writer(logs_dir.clone(), file_prefix)?)
         .init();
+    prune_old_daily_logs(&logs_dir, LOG_RETENTION_DAYS);
     Ok(())
+}
+
+/// Best-effort removal of daily `.log` files older than `keep_days`, based on
+/// the `-YYYYMMDD` date embedded in the file name. Files whose names do not
+/// parse are left alone.
+fn prune_old_daily_logs(logs_dir: &Path, keep_days: u64) {
+    let today = Local::now().date_naive();
+    let Some(cutoff) = today.checked_sub_days(chrono::Days::new(keep_days)) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(logs_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(date) = daily_log_file_date(name) else {
+            continue;
+        };
+        if date < cutoff
+            && let Err(err) = std::fs::remove_file(entry.path())
+        {
+            log::warn!("failed to prune old log file {name}: {err}");
+        }
+    }
+}
+
+fn daily_log_file_date(file_name: &str) -> Option<NaiveDate> {
+    let stem = file_name.strip_suffix(".log")?;
+    let (_, date) = stem.rsplit_once('-')?;
+    NaiveDate::parse_from_str(date, "%Y%m%d").ok()
 }
 
 pub fn current_daily_log_file_path(logs_dir: PathBuf, file_prefix: &str) -> PathBuf {
@@ -146,6 +183,35 @@ mod tests {
         let log_path = dir.path().join(daily_log_file_name("anda-test", date));
         let content = std::fs::read_to_string(log_path).unwrap();
         assert_eq!(content, "{\"msg\":\"daemon started\"}\n");
+    }
+
+    #[test]
+    fn daily_log_file_date_parses_only_dated_log_names() {
+        assert_eq!(
+            daily_log_file_date("anda-daemon-20260601.log"),
+            NaiveDate::from_ymd_opt(2026, 6, 1)
+        );
+        assert_eq!(daily_log_file_date("anda-daemon.log"), None);
+        assert_eq!(daily_log_file_date("random.txt"), None);
+    }
+
+    #[test]
+    fn prune_old_daily_logs_removes_only_expired_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("anda-test-20200101.log");
+        let recent = dir
+            .path()
+            .join(daily_log_file_name("anda-test", Local::now().date_naive()));
+        let unrelated = dir.path().join("notes.txt");
+        std::fs::write(&old, "old").unwrap();
+        std::fs::write(&recent, "recent").unwrap();
+        std::fs::write(&unrelated, "keep").unwrap();
+
+        prune_old_daily_logs(dir.path(), 30);
+
+        assert!(!old.exists());
+        assert!(recent.exists());
+        assert!(unrelated.exists());
     }
 
     #[test]

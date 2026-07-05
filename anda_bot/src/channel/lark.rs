@@ -1090,21 +1090,8 @@ impl LarkChannel {
             let status = response.status();
 
             if status.is_success() {
-                if let Some(content_length) = response.content_length()
-                    && content_length > max_bytes
-                {
-                    return Err(
-                        format!("{context} exceeds {max_bytes} bytes: {content_length}").into(),
-                    );
-                }
-
-                let bytes = response.bytes().await?.to_vec();
-                if bytes.len() as u64 > max_bytes {
-                    return Err(
-                        format!("{context} exceeds {max_bytes} bytes: {}", bytes.len()).into(),
-                    );
-                }
-                return Ok(bytes);
+                return crate::util::http_client::read_limited_body(response, max_bytes, context)
+                    .await;
             }
 
             let body = response.text().await.unwrap_or_default();

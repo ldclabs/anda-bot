@@ -262,6 +262,22 @@ Runtime skills live in `~/.anda/skills`. Put skill folders or skill documents th
 
 Cron tools let me create, list, manage, and inspect scheduled jobs. A job can run a shell command or submit a future prompt back to the agent. Run history is persisted locally.
 
+## Shell Command Execution and Security
+
+My shell tool executes commands **natively and unsandboxed**, with the full privileges of the user running the daemon. There is no container, chroot, or seccomp isolation; the `~/.anda/workspace` default directory is a convention, not a boundary.
+
+What stands between a prompt and a running command is the approval flow:
+
+1. **Static policy.** A built-in policy allows clearly safe commands and flags risky ones.
+2. **Risk model.** In the default `on_risk` mode, commands the static policy cannot clear are classified by the configured LLM; if the model is unavailable, the static policy's conservative answer is used.
+3. **Human approval.** Commands judged risky produce an approval action that you must confirm (in the chat UI, launcher, or browser extension) before they run. In `request_approval` mode every command asks; in `full_access` mode nothing asks.
+
+Implications you should be aware of:
+
+- Content from connected channels (group chats, external users) reaches the same agent. External participants are tagged and scoped, but prompt injection is a real attack surface — prefer `on_risk` or `request_approval` mode when channels are open to people you do not fully trust, and never use `full_access` on such setups.
+- Because the risk gate is partly model-based, do not treat it as a hard security boundary. The hard boundary is your approval click and the OS user account the daemon runs as.
+- Run the daemon as a dedicated, least-privilege user if you want stronger containment.
+
 ## Home Directory Layout
 
 ```text

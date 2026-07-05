@@ -28,4 +28,3 @@ const IDENTITY_KEY_STORE_UNAVAILABLE_HINT: &str = "On Linux, start and unlock a 
 
 #[cfg(test)]
 mod tests;
-

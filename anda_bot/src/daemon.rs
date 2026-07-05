@@ -39,6 +39,10 @@ use crate::{
 };
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
+// Held (flocked / exclusively opened) for the daemon's lifetime; makes the
+// stale-pid cleanup in acquire_pid_file race-free between two starting
+// daemons. The file itself is never deleted — only the lock matters.
+const DAEMON_LOCK_FILE: &str = "anda-daemon.lock";
 
 pub struct Daemon {
     pub home: PathBuf,
@@ -313,6 +317,15 @@ impl Daemon {
     ) -> Result<(), BoxError> {
         let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
 
+        if let Ok(addr) = self.cfg.socket_addr()
+            && !addr.ip().is_loopback()
+        {
+            log::warn!(
+                name = "daemon";
+                "gateway binds non-loopback address {addr}: /daemon/status and / are reachable without authentication from the network"
+            );
+        }
+
         let setup_issues = self.cfg.setup_issues();
         if !setup_issues.is_empty() {
             return Err(format!(
@@ -386,9 +399,6 @@ impl Daemon {
         .await?;
         let channel_hook = channel_runtime.hook();
         let channel_sender = channel_runtime.sender();
-        let channel_handle = channel_runtime
-            .serve(global_cancel_token.child_token())
-            .await?;
 
         // The gateway gets the root token (not a child) because its
         // /daemon/shutdown route cancels it, and that must propagate to the
@@ -406,12 +416,48 @@ impl Daemon {
         )
         .await?;
 
+        // Start channel listeners only after gateway::serve returned, which
+        // guarantees the engine is built and bound: IM messages that arrive
+        // before the engine is ready would be acked upstream and then dropped.
+        let channel_handle = channel_runtime
+            .serve(global_cancel_token.child_token())
+            .await?;
+
         // shutdown_signal only completes on an OS signal; joining it would
         // keep the process alive forever after an HTTP-triggered shutdown.
-        tokio::spawn(shutdown_signal(global_cancel_token));
-        let _ = tokio::join!(cron_handle, channel_handle, gateway_handle);
+        tokio::spawn(shutdown_signal(global_cancel_token.clone()));
 
-        Ok(())
+        // Fail fast: if any subsystem exits (error or panic), cancel the rest
+        // instead of leaving a half-alive daemon (e.g. cron and channels
+        // running with no HTTP gateway).
+        let (first, _, remaining) =
+            futures::future::select_all([cron_handle, channel_handle, gateway_handle]).await;
+        global_cancel_token.cancel();
+
+        let mut first_error: Option<BoxError> = match first {
+            Ok(Ok(())) => None,
+            Ok(Err(err)) => Some(err),
+            Err(join_err) => Some(join_err.into()),
+        };
+        for handle in remaining {
+            let error = match handle.await {
+                Ok(Ok(())) => None,
+                Ok(Err(err)) => Some(err),
+                Err(join_err) => Some(join_err.into()),
+            };
+            if let Some(error) = error {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                } else {
+                    log::error!(name = "daemon"; "daemon subsystem failed during shutdown: {error}");
+                }
+            }
+        }
+
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
@@ -423,6 +469,8 @@ fn push_unique_workspace(workspaces: &mut Vec<PathBuf>, path: PathBuf) {
 
 struct PidFileGuard {
     path: PathBuf,
+    // Keeps the daemon lock file exclusively held for the process lifetime.
+    _lock: Option<std::fs::File>,
 }
 
 impl Drop for PidFileGuard {
@@ -431,7 +479,59 @@ impl Drop for PidFileGuard {
     }
 }
 
+#[cfg(unix)]
+fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
+    use std::os::fd::AsRawFd;
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)?;
+    let rt = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rt == 0 {
+        return Ok(Some(file));
+    }
+
+    let err = io::Error::last_os_error();
+    if matches!(err.raw_os_error(), Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN)
+    {
+        return Err("anda daemon is already running (daemon lock is held)".into());
+    }
+    Err(err.into())
+}
+
+#[cfg(windows)]
+fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // share_mode(0): no other process can open the file while we hold it.
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .share_mode(0)
+        .open(lock_path)
+    {
+        Ok(file) => Ok(Some(file)),
+        // ERROR_SHARING_VIOLATION
+        Err(err) if err.raw_os_error() == Some(32) => {
+            Err("anda daemon is already running (daemon lock is held)".into())
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn acquire_daemon_lock(_lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
+    Ok(None)
+}
+
 async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
+    // The lock serializes daemon startup: with it held, any existing pid file
+    // was left by a dead daemon (or a pre-lock release, which the live-pid
+    // check below still catches), so removing it cannot race a healthy peer.
+    let lock = acquire_daemon_lock(&pid_path.with_file_name(DAEMON_LOCK_FILE))?;
     loop {
         match OpenOptions::new()
             .create_new(true)
@@ -449,7 +549,10 @@ async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
                     let _ = tokio::fs::remove_file(&pid_path).await;
                     return Err(err.into());
                 }
-                return Ok(PidFileGuard { path: pid_path });
+                return Ok(PidFileGuard {
+                    path: pid_path,
+                    _lock: lock,
+                });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 match util::text::read_text_file(&pid_path).await {

@@ -94,6 +94,7 @@ impl AndaBot {
                 first_round: true,
                 extra_user_context: extra_user_context.clone(),
                 last_extra_user_context: extra_user_context,
+                wait_for_input: false,
             };
             let mut pending_inputs = Vec::new();
 
@@ -106,6 +107,22 @@ impl AndaBot {
 
                 match sess_runner.run(inputs, &mut tools_usage_snapshot).await {
                     Ok(continue_active) => {
+                        if continue_active && sess_runner.wait_for_input {
+                            // Idle tick: block on the next input so a queued
+                            // message is picked up immediately, waking at
+                            // least once per second for the idle bookkeeping
+                            // in run(). A closed channel falls back to a
+                            // plain sleep to keep the loop paced.
+                            match tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+                                .await
+                            {
+                                Ok(Some(input)) => pending_inputs.push(input),
+                                Ok(None) => {
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                }
+                                Err(_) => {}
+                            }
+                        }
                         if !continue_active {
                             while let Ok(input) = rx.try_recv() {
                                 pending_inputs.push(input);
@@ -162,6 +179,9 @@ struct SessionRunner {
     first_round: bool,
     extra_user_context: Option<Message>,
     last_extra_user_context: Option<Message>,
+    // Set by run() on an idle tick: the outer loop should wait for new input
+    // (bounded by the 1s idle poll interval) instead of spinning.
+    wait_for_input: bool,
 }
 
 impl SessionRunner {
@@ -507,6 +527,7 @@ impl SessionRunner {
         inputs: Vec<ConversationInput>,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<bool, BoxError> {
+        self.wait_for_input = false;
         let mut stop_requested: Option<String> = None;
         let mut cancellation_requested: Option<String> = None;
         if !inputs.is_empty() {
@@ -820,7 +841,10 @@ impl SessionRunner {
                     self.persist_conversation_state().await;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // The outer loop performs the idle wait (input-aware, up to
+                // one second) so a queued message does not sit through a
+                // fixed sleep before being seen.
+                self.wait_for_input = true;
                 return Ok(true);
             }
 
@@ -1477,6 +1501,7 @@ mod tests {
             first_round: true,
             extra_user_context: None,
             last_extra_user_context: None,
+            wait_for_input: false,
         };
         (sess_runner, rx)
     }

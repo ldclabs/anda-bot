@@ -697,7 +697,11 @@ impl Agent<AgentCtx> for AndaBot {
                         detached_existing_session = true;
                     }
                     if Some(detached_conversation_id) != current_conversation_id {
-                        // fetch the latest ancestors in session for /new command
+                        // Fetch the latest ancestors in the detached session for
+                        // the /new command. The chain walk is a sequence of DB
+                        // reads, so release the creation lock first: holding it
+                        // here would stall every unrelated session creation.
+                        drop(guard);
                         if let Ok(conv) = self
                             .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
                             .await
@@ -709,6 +713,7 @@ impl Agent<AgentCtx> for AndaBot {
                             }
                             ancestors = Some(ids);
                         }
+                        continue;
                     }
                 } else {
                     // Join existing conversation session if it's active.

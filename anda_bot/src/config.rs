@@ -91,15 +91,25 @@ impl Config {
 
     pub async fn ensure_file_exists(home: &Path) -> Result<bool, BoxError> {
         let config_path = Self::file_path(home);
-        match tokio::fs::metadata(&config_path).await {
-            Ok(_) => Ok(false),
+        let created = match tokio::fs::metadata(&config_path).await {
+            Ok(_) => false,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 tokio::fs::create_dir_all(home).await?;
                 tokio::fs::write(&config_path, Self::default_template()).await?;
-                Ok(true)
+                true
             }
-            Err(err) => Err(err.into()),
+            Err(err) => return Err(err.into()),
+        };
+
+        // config.yaml holds model API keys and channel bot tokens; keep it
+        // owner-only, repairing files created by earlier releases as 0644.
+        if let Err(err) = crate::util::fs::restrict_secret_file_permissions(&config_path) {
+            log::warn!(
+                "failed to restrict permissions of {}: {err}",
+                config_path.display()
+            );
         }
+        Ok(created)
     }
 
     pub async fn from_file(path: &Path) -> Result<Self, BoxError> {

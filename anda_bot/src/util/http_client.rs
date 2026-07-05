@@ -78,6 +78,35 @@ pub fn new_reqwest_client() -> reqwest::Client {
     builder.build().expect("failed to build reqwest client")
 }
 
+/// Reads a response body while enforcing `max_bytes` as the body streams in,
+/// so an oversized (or Content-Length-less chunked) response can never be
+/// fully buffered in memory before the size check.
+pub async fn read_limited_body(
+    mut response: reqwest::Response,
+    max_bytes: u64,
+    context: &str,
+) -> Result<Vec<u8>, BoxError> {
+    if let Some(content_length) = response.content_length()
+        && content_length > max_bytes
+    {
+        return Err(format!("{context} exceeds {max_bytes} bytes: {content_length}").into());
+    }
+
+    let capacity = response
+        .content_length()
+        .unwrap_or(0)
+        .min(max_bytes)
+        .min(1024 * 1024) as usize;
+    let mut body = Vec::with_capacity(capacity);
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() as u64 + chunk.len() as u64 > max_bytes {
+            return Err(format!("{context} exceeds {max_bytes} bytes").into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct AnyHost;
 

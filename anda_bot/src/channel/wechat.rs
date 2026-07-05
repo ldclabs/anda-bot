@@ -571,6 +571,20 @@ async fn download_media_resource(
     let temp_path = temp_media_path(workspace, &ctx.message_id, &file_name).await;
     let bytes = match ctx.download_media(media, &temp_path).await {
         Ok(path) => {
+            // Check the downloaded size on disk before pulling it into memory.
+            let file_size = tokio::fs::metadata(&path)
+                .await
+                .map(|meta| meta.len())
+                .unwrap_or(u64::MAX);
+            if file_size > WECHAT_MAX_FILE_DOWNLOAD_BYTES {
+                let _ = tokio::fs::remove_file(&path).await;
+                log::warn!(
+                    "WeChat skipping downloaded attachment larger than {} bytes: {}",
+                    WECHAT_MAX_FILE_DOWNLOAD_BYTES,
+                    file_size
+                );
+                return None;
+            }
             let bytes = tokio::fs::read(&path).await.ok()?;
             let _ = tokio::fs::remove_file(path).await;
             bytes
@@ -580,15 +594,6 @@ async fn download_media_resource(
             return None;
         }
     };
-
-    if bytes.len() as u64 > WECHAT_MAX_FILE_DOWNLOAD_BYTES {
-        log::warn!(
-            "WeChat skipping downloaded attachment larger than {} bytes: {}",
-            WECHAT_MAX_FILE_DOWNLOAD_BYTES,
-            bytes.len()
-        );
-        return None;
-    }
 
     let mut resource = resource_from_bytes(file_name, bytes, "WeChat attachment");
     workspace

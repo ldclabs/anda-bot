@@ -660,11 +660,14 @@ impl TelegramChannel {
             .into());
         }
 
-        Ok(response
-            .bytes()
-            .await
-            .map_err(|err| -> BoxError { self.scrub(&err.to_string()).into() })?
-            .to_vec())
+        crate::util::http_client::read_limited_body(
+            response,
+            TELEGRAM_MAX_FILE_DOWNLOAD_BYTES,
+            "Telegram file download",
+        )
+        .await
+        // reqwest errors can embed the request URL, which contains the token.
+        .map_err(|err| -> BoxError { self.scrub(&err.to_string()).into() })
     }
 
     fn extract_update_message_target(update: &Value) -> Option<(String, i64)> {

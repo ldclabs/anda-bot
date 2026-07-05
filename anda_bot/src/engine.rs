@@ -350,6 +350,11 @@ impl Engines {
         };
 
         let shell_tool = {
+            // Deliberately unsandboxed: commands run with the daemon user's
+            // full privileges. The safety gate is the approval flow in
+            // engine/action.rs (static policy + risk model + human approval
+            // outside FullAccess mode), documented in README.md
+            // "Shell Command Execution and Security".
             let runtime = Arc::new(
                 shell_runtime::NativeShellRuntime::new(default_workspace.clone()).insecure(),
             );
@@ -850,6 +855,9 @@ async fn write_daemon_config_atomically(path: &Path, content: &[u8]) -> Result<(
         file.write_all(content).await?;
         file.sync_all().await?;
         drop(file);
+        // The config carries API keys and bot tokens: tighten the temp file
+        // before the rename so the final file is never readable by others.
+        crate::util::fs::restrict_secret_file_permissions(&temp_path)?;
         tokio::fs::rename(&temp_path, path).await
     }
     .await;
@@ -891,10 +899,62 @@ async fn daemon_config_needs_backup(path: &Path, next_content: &[u8]) -> Result<
     }
 }
 
+// Backups beyond this count are pruned oldest-first after each new backup.
+const MAX_CONFIG_BACKUPS: usize = 10;
+
 async fn backup_daemon_config(path: &Path) -> Result<PathBuf, BoxError> {
     let backup_path = unique_daemon_config_backup_path(path).await?;
     tokio::fs::copy(path, &backup_path).await?;
+    if let Err(err) = crate::util::fs::restrict_secret_file_permissions(&backup_path) {
+        log::warn!(
+            "failed to restrict permissions of {}: {err}",
+            backup_path.display()
+        );
+    }
+    prune_daemon_config_backups(path, MAX_CONFIG_BACKUPS).await;
     Ok(backup_path)
+}
+
+// Best effort: backup rotation must never fail a config update.
+async fn prune_daemon_config_backups(path: &Path, keep: usize) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+
+    let mut backups: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    let Ok(mut entries) = tokio::fs::read_dir(parent).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !(name.starts_with(&format!("{file_name}.")) && name.ends_with(".bak")) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        backups.push((modified, entry.path()));
+    }
+
+    if backups.len() <= keep {
+        return;
+    }
+    // Newest first; everything past `keep` is removed.
+    backups.sort_by_key(|backup| std::cmp::Reverse(backup.0));
+    for (_, stale) in backups.into_iter().skip(keep) {
+        if let Err(err) = tokio::fs::remove_file(&stale).await {
+            log::warn!("failed to prune config backup {}: {err}", stale.display());
+        }
+    }
 }
 
 async fn unique_daemon_config_backup_path(path: &Path) -> Result<PathBuf, BoxError> {

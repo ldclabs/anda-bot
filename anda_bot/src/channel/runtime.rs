@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,6 +37,22 @@ const CHANNEL_RECONNECT_RESET_AFTER: Duration = Duration::from_secs(300);
 const CHANNEL_SEND_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 const CHANNEL_SEND_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 const CHANNEL_SEND_RETRY_MAX_ATTEMPTS: u32 = 6;
+// Inbound messages are sharded by route onto this many workers so one slow
+// agent_run (e.g. session creation hitting the brain) cannot stall every
+// channel, while messages for the same chat stay ordered.
+const INBOUND_WORKER_COUNT: usize = 4;
+const INBOUND_WORKER_QUEUE_SIZE: usize = 16;
+// Long-delay retries for agent replies whose immediate send retries were
+// exhausted, covering channel outages of a few minutes.
+const REPLY_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(300),
+    Duration::from_secs(900),
+];
+// Upper bound on remembered conversation -> route mappings. Conversation ids
+// are monotonically increasing, so evicting the smallest ids drops only the
+// oldest (long finished) conversations.
+const MAX_CONVERSATION_ROUTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy)]
 struct ChannelReconnectPolicy {
@@ -137,7 +153,7 @@ struct ChannelRuntimeInner {
     tx: tokio::sync::mpsc::Sender<ChannelMessage>,
     channels: HashMap<String, Arc<dyn Channel>>,
     channels_conversation: RwLock<ChannelConversationMap>, // (channel, reply_target, thread) -> conversation_id
-    conversation_routes: RwLock<HashMap<u64, ChannelRoute>>, // conversation_id -> route
+    conversation_routes: RwLock<BTreeMap<u64, ChannelRoute>>, // conversation_id -> route
     messages: Arc<Collection>,
     work_dir: PathBuf,
 }
@@ -370,12 +386,25 @@ impl ChannelRuntime {
     ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
         Ok(tokio::spawn(async move {
             log::warn!(name = "channel"; "channel runtime started");
-            let messages = self.inner.messages.clone();
             let rx_token = cancel_token.child_token();
             let inner = self.inner.clone();
             let rx_handle = tokio::spawn(async move {
                 let mut rx = self.rx;
-                while let Some(mut message) = tokio::select! {
+                let mut worker_txs = Vec::with_capacity(INBOUND_WORKER_COUNT);
+                let mut workers = Vec::with_capacity(INBOUND_WORKER_COUNT);
+                for _ in 0..INBOUND_WORKER_COUNT {
+                    let (worker_tx, mut worker_rx) =
+                        tokio::sync::mpsc::channel::<ChannelMessage>(INBOUND_WORKER_QUEUE_SIZE);
+                    let inner = self.inner.clone();
+                    workers.push(tokio::spawn(async move {
+                        while let Some(message) = worker_rx.recv().await {
+                            inner.process_incoming_message(message).await;
+                        }
+                    }));
+                    worker_txs.push(worker_tx);
+                }
+
+                while let Some(message) = tokio::select! {
                     _ = rx_token.cancelled() => {
                         log::warn!(name = "channel"; "channel runtime receiver stopped");
                         None
@@ -387,108 +416,17 @@ impl ChannelRuntime {
                         message
                     },
                 } {
-                    log::debug!(
-                        channel = message.channel,
-                        message:serde = message;
-                        "received message from channel {}",
-                        message.channel
-                    );
-                    let _ = messages.flush(unix_ms()).await;
-                    if let Some(engine) = self.inner.engine.get() {
-                        let mut extra = Map::new();
-                        let route = ChannelRoute::from_message(&message);
-                        let new_command = channel_new_prompt_command(&message);
-                        let key = route.key();
-                        let conv_id = {
-                            self.inner
-                                .channels_conversation
-                                .read()
-                                .get(&key)
-                                .copied()
-                                .unwrap_or(0)
-                        };
-                        extra.insert("conversation".to_string(), conv_id.into());
-                        extra.insert(
-                            "workspace".to_string(),
-                            channel_workspace_path(&self.inner.work_dir, &message.channel)
-                                .to_string_lossy()
-                                .into(),
-                        );
-                        extra.insert("source".to_string(), message.channel.clone().into());
-                        extra.insert(
-                            "reply_target".to_string(),
-                            message.reply_target.clone().into(),
-                        );
-                        if let Some(thread) = &message.thread
-                            && !thread.is_empty()
-                        {
-                            extra.insert("thread".to_string(), thread.clone().into());
-                        }
-
-                        extra.insert("external_user".to_string(), message.external_user.into());
-                        let prompt = agent_prompt_from_message(&message);
-                        let channel_user = self.inner.user_for_channel(&message.channel);
-                        extra.insert("channel_user".to_string(), channel_user.to_text().into());
-                        match engine
-                            .agent_run(
-                                channel_user,
-                                AgentInput {
-                                    name: String::new(),
-                                    prompt,
-                                    resources: message.attachments.clone(),
-                                    meta: Some(RequestMeta {
-                                        user: Some(message.sender.clone()),
-                                        extra,
-                                        ..Default::default()
-                                    }),
-                                    ..Default::default()
-                                },
-                            )
-                            .await
-                        {
-                            Ok(output) => {
-                                message.conversation = output.conversation;
-                                match messages.add_from(&message).await {
-                                    Ok(id) => {
-                                        message._id = id;
-                                    }
-                                    Err(err) => {
-                                        log::error!(name = "channel"; "failed to add message to collection: {err}");
-                                    }
-                                }
-                                match (new_command, output.conversation) {
-                                    (Some(None), _) => {
-                                        if let Some(channels_conversation) =
-                                            self.inner.clear_route_conversation(&route)
-                                        {
-                                            messages.set_extension_from::<ChannelConversationMap>(
-                                                "channels_conversation".to_string(),
-                                                channels_conversation,
-                                            );
-                                        }
-                                    }
-                                    (_, Some(conv_id)) => {
-                                        if let Some(channels_conversation) =
-                                            self.inner.bind_conversation(route, conv_id)
-                                        {
-                                            messages.set_extension_from::<ChannelConversationMap>(
-                                                "channels_conversation".to_string(),
-                                                channels_conversation,
-                                            );
-                                        }
-                                    }
-                                    _ => {}
-                                }
-
-                                let _ = messages.flush(unix_ms()).await;
-                            }
-                            Err(err) => {
-                                log::error!(name = "channel"; "failed to process message from channel {}: {err}", message.channel);
-                            }
-                        };
-                    } else {
-                        log::warn!(name = "channel"; "engine is not available, skipping incoming message");
+                    let index = inbound_worker_index(&message, worker_txs.len());
+                    if worker_txs[index].send(message).await.is_err() {
+                        log::error!(name = "channel"; "channel inbound worker {index} stopped; dropping message");
                     }
+                }
+
+                // Closing the worker channels lets in-flight messages finish
+                // before the runtime task exits.
+                drop(worker_txs);
+                for worker in workers {
+                    let _ = worker.await;
                 }
             });
 
@@ -527,6 +465,151 @@ impl ChannelRuntimeInner {
             .unwrap_or(self.default_user)
     }
 
+    async fn process_incoming_message(&self, mut message: ChannelMessage) {
+        log::debug!(
+            channel = message.channel,
+            message:serde = message;
+            "received message from channel {}",
+            message.channel
+        );
+        let Some(engine) = self.engine.get() else {
+            log::warn!(name = "channel"; "engine is not available, skipping incoming message");
+            return;
+        };
+
+        let mut extra = Map::new();
+        let route = ChannelRoute::from_message(&message);
+        let new_command = channel_new_prompt_command(&message);
+        let key = route.key();
+        let conv_id = {
+            self.channels_conversation
+                .read()
+                .get(&key)
+                .copied()
+                .unwrap_or(0)
+        };
+        extra.insert("conversation".to_string(), conv_id.into());
+        extra.insert(
+            "workspace".to_string(),
+            channel_workspace_path(&self.work_dir, &message.channel)
+                .to_string_lossy()
+                .into(),
+        );
+        extra.insert("source".to_string(), message.channel.clone().into());
+        extra.insert(
+            "reply_target".to_string(),
+            message.reply_target.clone().into(),
+        );
+        if let Some(thread) = &message.thread
+            && !thread.is_empty()
+        {
+            extra.insert("thread".to_string(), thread.clone().into());
+        }
+
+        extra.insert("external_user".to_string(), message.external_user.into());
+        let prompt = agent_prompt_from_message(&message);
+        let channel_user = self.user_for_channel(&message.channel);
+        extra.insert("channel_user".to_string(), channel_user.to_text().into());
+        match engine
+            .agent_run(
+                channel_user,
+                AgentInput {
+                    name: String::new(),
+                    prompt,
+                    resources: message.attachments.clone(),
+                    meta: Some(RequestMeta {
+                        user: Some(message.sender.clone()),
+                        extra,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(output) => {
+                message.conversation = output.conversation;
+                match self.messages.add_from(&message).await {
+                    Ok(id) => {
+                        message._id = id;
+                    }
+                    Err(err) => {
+                        log::error!(name = "channel"; "failed to add message to collection: {err}");
+                    }
+                }
+                match (new_command, output.conversation) {
+                    (Some(None), _) => {
+                        if let Some(channels_conversation) = self.clear_route_conversation(&route) {
+                            self.messages.set_extension_from::<ChannelConversationMap>(
+                                "channels_conversation".to_string(),
+                                channels_conversation,
+                            );
+                        }
+                    }
+                    (_, Some(conv_id)) => {
+                        if let Some(channels_conversation) = self.bind_conversation(route, conv_id)
+                        {
+                            self.messages.set_extension_from::<ChannelConversationMap>(
+                                "channels_conversation".to_string(),
+                                channels_conversation,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+
+                let _ = self.messages.flush(unix_ms()).await;
+            }
+            Err(err) => {
+                log::error!(name = "channel"; "failed to process message from channel {}: {err}", message.channel);
+            }
+        }
+    }
+
+    // Replies whose immediate send retries were exhausted get a few
+    // long-delay attempts before being dropped for good.
+    fn spawn_reply_retry(
+        self: &Arc<Self>,
+        channel: String,
+        message: SendMessage,
+        conversation: Option<u64>,
+    ) {
+        let inner = self.clone();
+        tokio::spawn(async move {
+            for (attempt, delay) in REPLY_RETRY_DELAYS.into_iter().enumerate() {
+                tokio::time::sleep(delay).await;
+                match inner
+                    .try_send(channel.clone(), message.clone(), conversation)
+                    .await
+                {
+                    Ok(()) => {
+                        log::warn!(
+                            name = "channel";
+                            "deferred reply delivered to channel {} on retry {}",
+                            channel,
+                            attempt + 1
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            name = "channel";
+                            "deferred reply retry {} to channel {} failed: {err}",
+                            attempt + 1,
+                            channel
+                        );
+                    }
+                }
+            }
+            log::error!(
+                name = "channel";
+                "dropping reply to channel {} after {} deferred retries",
+                channel,
+                REPLY_RETRY_DELAYS.len()
+            );
+        });
+    }
+
     fn bind_conversation(
         &self,
         route: ChannelRoute,
@@ -544,6 +627,7 @@ impl ChannelRuntimeInner {
 
         let mut conversation_routes = self.conversation_routes.write();
         conversation_routes.insert(conv_id, route);
+        prune_conversation_routes(&mut conversation_routes);
 
         Some(snapshot)
     }
@@ -556,10 +640,11 @@ impl ChannelRuntimeInner {
             (previous, channels_conversation.clone())
         };
 
-        self.conversation_routes
-            .write()
+        let mut conversation_routes = self.conversation_routes.write();
+        conversation_routes
             .entry(previous)
             .or_insert_with(|| route.clone());
+        prune_conversation_routes(&mut conversation_routes);
 
         Some(snapshot)
     }
@@ -763,8 +848,12 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         let channel = route.channel.clone();
         let msg = completion_message(&meta, output, route, stale);
 
-        if let Err(err) = self.try_send(channel.clone(), msg, Some(conv_id)).await {
-            log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
+        if let Err(err) = self
+            .try_send(channel.clone(), msg.clone(), Some(conv_id))
+            .await
+        {
+            log::error!(name = "channel"; "failed to send message to channel {}: {err}; scheduling deferred retries", channel);
+            self.spawn_reply_retry(channel, msg, Some(conv_id));
         }
     }
 }
@@ -778,8 +867,8 @@ fn completion_meta(ctx: &AgentCtx) -> RequestMeta {
 
 fn build_conversation_routes(
     channels_conversation: &ChannelConversationMap,
-) -> HashMap<u64, ChannelRoute> {
-    let mut conversation_routes = HashMap::new();
+) -> BTreeMap<u64, ChannelRoute> {
+    let mut conversation_routes = BTreeMap::new();
     for ((channel, reply_target, thread), &conversation) in channels_conversation {
         conversation_routes.insert(
             conversation,
@@ -791,6 +880,26 @@ fn build_conversation_routes(
         );
     }
     conversation_routes
+}
+
+// Evicts the oldest conversations (smallest ids) once the cap is exceeded, so
+// a long-lived daemon does not accumulate routes for finished conversations.
+fn prune_conversation_routes(conversation_routes: &mut BTreeMap<u64, ChannelRoute>) {
+    while conversation_routes.len() > MAX_CONVERSATION_ROUTES {
+        conversation_routes.pop_first();
+    }
+}
+
+// Shards a message onto a worker by its route so messages for the same chat
+// (channel, reply_target, thread) are processed in arrival order.
+fn inbound_worker_index(message: &ChannelMessage, worker_count: usize) -> usize {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    message.channel.hash(&mut hasher);
+    message.reply_target.hash(&mut hasher);
+    message.thread.hash(&mut hasher);
+    (hasher.finish() as usize) % worker_count.max(1)
 }
 
 fn normalize_non_empty(value: &str) -> Option<String> {

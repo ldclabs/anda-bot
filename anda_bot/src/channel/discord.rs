@@ -288,8 +288,14 @@ impl DiscordChannel {
             return None;
         }
 
-        let bytes = match response.bytes().await {
-            Ok(bytes) => bytes.to_vec(),
+        let bytes = match crate::util::http_client::read_limited_body(
+            response,
+            DISCORD_MAX_FILE_BYTES,
+            "Discord attachment",
+        )
+        .await
+        {
+            Ok(bytes) => bytes,
             Err(err) => {
                 log::warn!(
                     "Discord failed to read attachment '{}': {err}",
@@ -298,14 +304,6 @@ impl DiscordChannel {
                 return None;
             }
         };
-        if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
-            log::warn!(
-                "Discord skipping downloaded attachment larger than {} bytes: {}",
-                DISCORD_MAX_FILE_BYTES,
-                attachment.file_name
-            );
-            return None;
-        }
 
         Some(resource_from_bytes(
             attachment.file_name.clone(),
