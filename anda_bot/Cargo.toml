@@ -1,7 +1,7 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.11.4"
+version = "0.11.5"
 default-run = "anda"
 description.workspace = true
 license.workspace = true

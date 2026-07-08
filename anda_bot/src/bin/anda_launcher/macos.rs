@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     fs,
     io::Write,
-    os::unix::fs::PermissionsExt,
+    os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::OnceLock,
@@ -844,21 +844,17 @@ fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
     ensure_application_entrypoint(ctx)?;
     ensure_launch_agent_entrypoint(ctx)?;
 
-    Command::new("/bin/sh")
-        .arg("-c")
-        .arg(launcher_restart_script(
+    spawn_restart_script(
+        launcher_restart_script(
             &ctx.launcher_exe,
             launcher_app_path().ok().as_deref(),
             launch_agent_path().ok().as_deref(),
             std::process::id(),
             unsafe { libc::geteuid() },
-        ))
-        .arg("anda-launcher-restart")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| format!("failed to restart launcher: {err}"))?;
+        ),
+        "anda-launcher-restart",
+    )
+    .map_err(|err| format!("failed to restart launcher: {err}"))?;
     std::process::exit(0);
 }
 
@@ -878,22 +874,36 @@ fn relaunch_as_application_bundle_if_needed(ctx: &LauncherContext) -> LauncherRe
     ensure_application_entrypoint(ctx)?;
     ensure_launch_agent_entrypoint(ctx)?;
 
-    Command::new("/bin/sh")
-        .arg("-c")
-        .arg(launcher_restart_script(
+    spawn_restart_script(
+        launcher_restart_script(
             &ctx.launcher_exe,
             Some(app_path.as_path()),
             launch_agent_path().ok().as_deref(),
             std::process::id(),
             unsafe { libc::geteuid() },
-        ))
-        .arg("anda-launcher-app-relaunch")
+        ),
+        "anda-launcher-app-relaunch",
+    )
+    .map_err(|err| format!("failed to relaunch launcher as app bundle: {err}"))?;
+    Ok(true)
+}
+
+// When the launcher runs as a LaunchAgent job and its main process exits,
+// launchd SIGKILLs every process left in the job's process group (the plist
+// does not set AbandonProcessGroup). The restart script must outlive this
+// process while it waits for the old PID to die, so spawn it in its own
+// process group; posix_spawn applies the new group atomically at spawn time.
+fn spawn_restart_script(script: String, name: &str) -> std::io::Result<()> {
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .arg(name)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
-        .map_err(|err| format!("failed to relaunch launcher as app bundle: {err}"))?;
-    Ok(true)
+        .map(drop)
 }
 
 fn current_process_is_app_executable(app_executable: &Path) -> bool {
@@ -1514,6 +1524,35 @@ mod tests {
         assert!(script.contains("nohup \"$LAUNCHER\""));
         assert!(!script.contains("exec \"$1\""));
         assert!(!script.contains("open -gj"));
+    }
+
+    // launchd kills the LaunchAgent job's process group when the launcher
+    // exits; the restart script only survives that if it runs in its own
+    // process group.
+    #[test]
+    fn restart_script_runs_in_its_own_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("pgid");
+        let script = format!(
+            "ps -o pgid= -p $$ > {}",
+            shell_single_quote(&out.to_string_lossy())
+        );
+
+        spawn_restart_script(script, "anda-launcher-test-pgid").unwrap();
+
+        let mut child_pgid = None;
+        for _ in 0..250 {
+            if let Ok(content) = fs::read_to_string(&out)
+                && let Ok(pgid) = content.trim().parse::<i32>()
+            {
+                child_pgid = Some(pgid);
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let child_pgid = child_pgid.expect("restart script never reported its pgid");
+        assert_ne!(child_pgid, unsafe { libc::getpgrp() });
     }
 
     #[test]
