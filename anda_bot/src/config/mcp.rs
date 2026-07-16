@@ -1,6 +1,7 @@
 use anda_core::BoxError;
 use anda_engine::extension::mcp::{
-    McpServerConfig, McpStdioTransport, McpStreamableHttpTransport, McpTransportConfig,
+    McpOAuthConfig, McpServerConfig, McpStdioTransport, McpStreamableHttpTransport,
+    McpTransportConfig, OAuthAuthorizationCodeConfig,
 };
 use http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -154,6 +155,8 @@ struct McpJsonServer {
     #[serde(default)]
     headers: BTreeMap<String, String>,
     #[serde(default)]
+    oauth: Option<McpOAuthSettings>,
+    #[serde(default)]
     enabled: Option<bool>,
     #[serde(default)]
     disabled: bool,
@@ -174,6 +177,7 @@ impl McpJsonServer {
             url,
             bearer_token,
             headers,
+            oauth,
             enabled,
             disabled,
             include,
@@ -197,6 +201,7 @@ impl McpJsonServer {
                     url: url.unwrap_or_default(),
                     bearer_token,
                     headers,
+                    oauth,
                 })
             }
             Some(other) => {
@@ -218,6 +223,7 @@ impl McpJsonServer {
                         url: url.unwrap_or_default(),
                         bearer_token,
                         headers,
+                        oauth,
                     })
                 } else {
                     return Err(format!(
@@ -422,6 +428,48 @@ pub struct McpStreamableHttpSettings {
     /// Custom HTTP headers sent with every request.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Present when the server authorizes via the OAuth Authorization Code
+    /// flow (onboarded through `connect_mcp_server`). Mutually exclusive with
+    /// `bearer_token`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthSettings>,
+}
+
+/// OAuth Authorization Code marker for an HTTP MCP server.
+///
+/// Tokens are never stored in mcp.json: access and refresh tokens live in the
+/// MCP credential store (`mcp_credentials/` under ANDA_HOME). This section only
+/// records that the server authenticates via OAuth so the daemon reconnects it
+/// from stored credentials after a restart; when those credentials are gone the
+/// server needs a new interactive `connect_mcp_server` authorization.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct McpOAuthSettings {
+    /// Pre-registered public client id. Omit to register dynamically (RFC 7591)
+    /// during authorization; the issued id is persisted with the credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth scopes to request during (re-)authorization. Empty means the
+    /// scopes the server advertises.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+}
+
+/// Placeholder redirect URI stored in reconnect configs. Reconnection uses the
+/// persisted credentials and never visits this URI; an interactive
+/// (re-)authorization always rebinds a fresh loopback port first.
+pub const MCP_OAUTH_REDIRECT_PLACEHOLDER: &str = "http://127.0.0.1/callback";
+
+impl McpOAuthSettings {
+    /// Builds the engine-side authorization config for reconnecting from
+    /// stored credentials.
+    pub fn to_auth_config(&self) -> McpOAuthConfig {
+        McpOAuthConfig::AuthorizationCode(OAuthAuthorizationCodeConfig {
+            redirect_uri: MCP_OAUTH_REDIRECT_PLACEHOLDER.to_string(),
+            scopes: self.scopes.clone(),
+            client_name: None,
+            client_id: self.client_id.clone(),
+        })
+    }
 }
 
 impl McpStreamableHttpSettings {
@@ -437,6 +485,9 @@ impl McpStreamableHttpSettings {
                 vars,
                 issues,
             );
+            if self.oauth.is_some() {
+                issues.push(format!("{base}.transport.oauth"));
+            }
         }
         for (name, value) in &self.headers {
             let field = format!("{base}.transport.headers.{name}");
@@ -483,6 +534,7 @@ impl McpStreamableHttpSettings {
                     Ok((key.trim().to_string(), value))
                 })
                 .collect::<Result<_, BoxError>>()?,
+            auth: self.oauth.as_ref().map(McpOAuthSettings::to_auth_config),
         })
     }
 }
@@ -675,6 +727,72 @@ mod tests {
     }
 
     #[test]
+    fn mcp_json_oauth_section_round_trips_into_authorization_code_config() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "alink": {
+                  "type": "http",
+                  "url": "https://api.al.ink/mcp",
+                  "oauth": {
+                    "scopes": ["events:read", "handles:read"]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.servers.len(), 1);
+        let http = match &settings.servers[0].transport {
+            McpTransportSettings::StreamableHttp(http) => http,
+            _ => panic!("expected HTTP"),
+        };
+        let oauth = http.oauth.as_ref().expect("oauth section");
+        assert_eq!(oauth.client_id, None);
+        assert_eq!(oauth.scopes, vec!["events:read", "handles:read"]);
+        assert!(settings.setup_issues().is_empty());
+
+        let configs = settings
+            .server_configs(Path::new("/tmp/anda-home"), None)
+            .unwrap();
+        match &configs[0].transport {
+            McpTransportConfig::StreamableHttp(http) => match &http.auth {
+                Some(McpOAuthConfig::AuthorizationCode(ac)) => {
+                    assert_eq!(ac.redirect_uri, MCP_OAUTH_REDIRECT_PLACEHOLDER);
+                    assert_eq!(ac.scopes, vec!["events:read", "handles:read"]);
+                    assert_eq!(ac.client_id, None);
+                }
+                other => panic!("expected authorization_code auth, got {other:?}"),
+            },
+            _ => panic!("expected HTTP transport"),
+        }
+    }
+
+    #[test]
+    fn mcp_json_rejects_bearer_token_combined_with_oauth() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "alink": {
+                  "type": "http",
+                  "url": "https://api.al.ink/mcp",
+                  "bearer_token": "static-token",
+                  "oauth": {}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let issues = settings.setup_issues();
+        assert!(
+            issues.iter().any(|issue| issue.ends_with(".oauth")),
+            "expected an oauth conflict issue, got {issues:?}"
+        );
+    }
+
+    #[test]
     fn mcp_json_accepts_mcp_servers_root_and_standard_http() {
         let settings = McpSettings::from_json_contents(
             r#"{
@@ -807,6 +925,7 @@ mod tests {
                             "x-anda-home".to_string(),
                             "$ANDA_HOME".to_string(),
                         )]),
+                        oauth: None,
                     }),
                     include: BTreeSet::from(["search".to_string()]),
                     ..Default::default()

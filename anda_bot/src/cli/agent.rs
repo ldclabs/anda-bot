@@ -445,26 +445,21 @@ mod tests {
 
     use anda_core::ByteBufB64;
     use axum::{Router, extract::State, routing};
-    use base64::Engine;
     use std::{collections::HashMap, sync::Arc};
 
     async fn agent_gateway_handler(
         State(state): State<Arc<HashMap<u64, Conversation>>>,
-        axum::Json(request): axum::Json<serde_json::Value>,
+        axum::Json(request): axum::Json<anda_core::http::RPCRequest>,
     ) -> axum::Json<serde_json::Value> {
-        let method = request["method"].as_str().unwrap_or_default();
-        let rpc: anda_core::http::RPCResponse = if method == "agent_run" {
+        let rpc: anda_core::http::RPCResponse = if request.method == "agent_run" {
             let output = AgentOutput {
                 conversation: Some(1),
                 ..Default::default()
             };
             Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
         } else {
-            let params = base64::engine::general_purpose::STANDARD
-                .decode(request["params"].as_str().unwrap_or_default())
-                .unwrap_or_default();
             let (input,): (ToolInput<serde_json::Value>,) =
-                serde_json::from_slice(&params).unwrap();
+                serde_json::from_slice(&request.params).unwrap();
             let id = input.args["_id"].as_u64().unwrap_or_default();
             let conversation = state.get(&id).expect("known conversation");
             let response = KipResponse::Ok {

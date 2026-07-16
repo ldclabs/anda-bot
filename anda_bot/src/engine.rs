@@ -40,6 +40,7 @@ mod browser_ws;
 mod conversation;
 mod goal;
 mod idle;
+mod mcp_credentials;
 mod mcp_server;
 mod multimodal;
 mod prompt;
@@ -72,7 +73,7 @@ pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub use idle::{BrainSleepIdleHook, IdleHook};
-pub(crate) use mcp_server::McpServerTool;
+pub(crate) use mcp_server::{McpConnectTool, McpServerTool};
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
@@ -432,6 +433,7 @@ impl Engines {
                 skill::SkillManager::NAME,
                 SkillLibrary::NAME,
                 McpServerTool::NAME,
+                McpConnectTool::NAME,
                 ResourceStore::NAME,
                 ConversationsTool::NAME,
                 AskUserChoiceTool::NAME,
@@ -505,12 +507,27 @@ impl Engines {
             let servers = cfg
                 .mcp
                 .server_configs(&cfg.home_dir, Some(default_workspace.as_path()))?;
-            Arc::new(mcp::McpToolProvider::new(servers)?)
+            // OAuth refresh tokens persist here, so servers marked `oauth` in
+            // mcp.json reconnect across restarts without a new browser flow.
+            let credential_store = Arc::new(mcp_credentials::FileMcpCredentialStore::new(
+                cfg.home_dir.join(mcp_credentials::MCP_CREDENTIALS_DIR_NAME),
+            ));
+            Arc::new(
+                mcp::McpToolProvider::builder()
+                    .servers(servers)
+                    .credential_store(credential_store)
+                    .build()?,
+            )
         };
         let add_mcp_server_tool = Arc::new(McpServerTool::new(
             mcp_provider.clone(),
             cfg.home_dir.clone(),
             Some(default_workspace.clone()),
+            mcp_config_path.clone(),
+            config_write_lock.clone(),
+        ));
+        let connect_mcp_server_tool = Arc::new(McpConnectTool::new(
+            mcp_provider.clone(),
             mcp_config_path,
             config_write_lock.clone(),
         ));
@@ -551,6 +568,7 @@ impl Engines {
             .register_tool(skills_tool.clone())?
             .register_tool(skill_library.clone())?
             .register_tool(add_mcp_server_tool)?
+            .register_tool(connect_mcp_server_tool)?
             .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
             .register_tool(bookmarks_tool.clone())?
@@ -1232,6 +1250,7 @@ model:
                     description: "route test".to_string(),
                     storage: StorageConfig {
                         cache_max_capacity: 1024,
+                        cache_max_bytes: None,
                         compress_level: 1,
                         object_chunk_size: 256 * 1024,
                         bucket_overload_size: 256 * 1024,

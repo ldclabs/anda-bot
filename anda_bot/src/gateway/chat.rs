@@ -893,7 +893,6 @@ mod tests {
 
     use anda_core::ByteBufB64;
     use axum::{Router, extract::State, routing};
-    use base64::Engine;
     use std::{collections::HashMap, sync::Arc};
 
     struct ChatGateway {
@@ -904,21 +903,16 @@ mod tests {
 
     async fn chat_gateway_handler(
         State(state): State<Arc<ChatGateway>>,
-        axum::Json(request): axum::Json<serde_json::Value>,
+        axum::Json(request): axum::Json<anda_core::http::RPCRequest>,
     ) -> axum::Json<serde_json::Value> {
-        let method = request["method"].as_str().unwrap_or_default().to_string();
-        let params = base64::engine::general_purpose::STANDARD
-            .decode(request["params"].as_str().unwrap_or_default())
-            .unwrap_or_default();
-
-        let rpc: anda_core::http::RPCResponse = if method == "agent_run" {
+        let rpc: anda_core::http::RPCResponse = if request.method == "agent_run" {
             match &state.agent_output {
                 Ok(output) => Ok(ByteBufB64(serde_json::to_vec(output).unwrap())),
                 Err(()) => Err("agent unavailable".to_string()),
             }
         } else {
             let (input,): (ToolInput<serde_json::Value>,) =
-                serde_json::from_slice(&params).unwrap();
+                serde_json::from_slice(&request.params).unwrap();
             let response = match input.args["type"].as_str() {
                 Some("GetSourceState") => KipResponse::Ok {
                     result: state.source_state.clone(),

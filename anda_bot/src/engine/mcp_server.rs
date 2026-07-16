@@ -1,5 +1,11 @@
 use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
-use anda_engine::{context::BaseCtx, extension::mcp::McpToolProvider};
+use anda_engine::{
+    context::BaseCtx,
+    extension::mcp::{
+        McpAuthorizationRequired, McpOAuthConfig, McpOAuthMetadata, McpServerConfig,
+        McpToolProvider, McpTransportConfig, OAuthAuthorizationCodeConfig,
+    },
+};
 use anda_kip::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -7,13 +13,19 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+    time::timeout,
+};
 
 use crate::{
     config::{
-        McpServerSettings, McpSettings, McpStdioSettings, McpStreamableHttpSettings,
-        McpTransportSettings, normalize_string,
+        McpOAuthSettings, McpServerSettings, McpSettings, McpStdioSettings,
+        McpStreamableHttpSettings, McpTransportSettings, normalize_string,
     },
     util::text::read_text_file,
 };
@@ -334,6 +346,7 @@ fn http_transport(
             url,
             bearer_token: bearer_token.and_then(|token| normalize_string(&token)),
             headers: normalize_string_map("headers", headers)?,
+            oauth: None,
         },
     ))
 }
@@ -454,6 +467,9 @@ fn mcp_server_json(server: &McpServerSettings) -> Value {
             if !headers.is_empty() {
                 object.insert("headers".to_string(), string_map_json(&headers));
             }
+            if let Some(oauth) = &http.oauth {
+                object.insert("oauth".to_string(), json!(oauth));
+            }
         }
     }
 
@@ -477,6 +493,433 @@ fn string_map_json(values: &BTreeMap<String, String>) -> Value {
             .map(|(key, value)| (key.clone(), json!(value)))
             .collect(),
     )
+}
+
+/// Maximum time to wait for the user to complete the browser authorization
+/// before giving up and cleaning up the half-registered server. Generous
+/// because the ceremony may include a sign-in step before the consent page
+/// (authorization codes themselves live longer, e.g. 10 minutes on alink).
+const OAUTH_REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Connects an MCP server by URL, transparently running the OAuth flow when the
+/// endpoint requires it.
+///
+/// Anda Bot runs locally, so authorization uses a native-app loopback redirect
+/// (RFC 8252): the tool binds an ephemeral `127.0.0.1` port, opens the user's
+/// browser at the authorization URL, and captures the redirect to finish the
+/// flow — no copy/paste and no public callback URL.
+///
+/// A successful OAuth connection outlives the daemon: the tokens go to the
+/// provider's credential store and the server (with an `oauth` marker, never
+/// tokens) is persisted to mcp.json, so restarts reconnect silently from the
+/// stored refresh token. When those credentials die (revoked in the remote
+/// console, store deleted), calling this tool again on the same server runs a
+/// fresh browser authorization instead of failing with "already exists".
+#[derive(Clone)]
+pub struct McpConnectTool {
+    provider: Arc<McpToolProvider>,
+    config_path: PathBuf,
+    config_write_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ConnectMcpServerArgs {
+    /// MCP endpoint URL (http or https), e.g. `https://api.al.ink/mcp`.
+    pub url: String,
+    /// Optional stable server id used in local tool names. Defaults to the host.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Optional OAuth scopes to request. Defaults to the scopes the server
+    /// advertises during discovery.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+impl McpConnectTool {
+    pub const NAME: &'static str = "connect_mcp_server";
+
+    pub fn new(
+        provider: Arc<McpToolProvider>,
+        config_path: PathBuf,
+        config_write_lock: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            provider,
+            config_path,
+            config_write_lock,
+        }
+    }
+
+    async fn connect(&self, args: ConnectMcpServerArgs) -> Result<Value, BoxError> {
+        let url = normalize_string(&args.url).ok_or("MCP server url cannot be empty")?;
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("MCP server url must start with http:// or https://".into());
+        }
+        let id = match args.id.as_deref().and_then(normalize_string) {
+            Some(id) => id,
+            None => default_server_id_from_url(&url)?,
+        };
+        if self.provider.contains_server(&id) {
+            match self.provider.refresh_server(&id).await {
+                Ok(()) => return Ok(self.connected_summary(&id, false)),
+                // Dead credentials (revoked, or the store was cleared): drop the
+                // registration and run a fresh interactive authorization below.
+                Err(err) if err.downcast_ref::<McpAuthorizationRequired>().is_some() => {
+                    self.provider.remove_server(&id);
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "MCP server {id} already exists but is unreachable: {err}"
+                    )
+                    .into());
+                }
+            }
+        }
+
+        // Let the endpoint itself decide the auth mode: OAuth servers advertise
+        // authorization metadata, others (static bearer / none) do not.
+        match McpToolProvider::discover_http_oauth(&url).await? {
+            None => {
+                self.provider
+                    .add_server(McpServerConfig::streamable_http(id.clone(), url))
+                    .await?;
+                Ok(self.connected_summary(&id, false))
+            }
+            Some(meta) => {
+                let scopes = self
+                    .authorize_and_connect(&id, url.clone(), args.scopes, meta)
+                    .await?;
+                let persisted = self.persist_oauth_server(&id, url, scopes).await?;
+                Ok(self.connected_summary(&id, persisted))
+            }
+        }
+    }
+
+    /// Runs the interactive flow and returns the scopes that were requested.
+    async fn authorize_and_connect(
+        &self,
+        id: &str,
+        url: String,
+        scopes: Vec<String>,
+        meta: McpOAuthMetadata,
+    ) -> Result<Vec<String>, BoxError> {
+        // Bind the loopback listener first so its port can be advertised as the
+        // redirect URI before the authorization request is built.
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let redirect_uri = format!(
+            "http://127.0.0.1:{}/callback",
+            listener.local_addr()?.port()
+        );
+        let scopes = if scopes.is_empty() {
+            meta.scopes_supported
+        } else {
+            scopes
+        };
+
+        let mut config = McpServerConfig::streamable_http(id.to_string(), url);
+        if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
+            http.auth = Some(McpOAuthConfig::AuthorizationCode(
+                OAuthAuthorizationCodeConfig {
+                    redirect_uri,
+                    scopes: scopes.clone(),
+                    client_name: Some("Anda Bot".to_string()),
+                    client_id: None,
+                },
+            ));
+        }
+        self.provider.register_server(config)?;
+
+        // Any failure past registration must not leave a half-registered server.
+        let result = self.run_authorization(id, listener).await;
+        if result.is_err() {
+            self.provider.remove_server(id);
+        }
+        result.map(|()| scopes)
+    }
+
+    /// Persists an OAuth server to mcp.json so it reconnects after a restart.
+    /// Returns whether a new entry was written (re-authorizations find the
+    /// entry already present). Tokens never touch mcp.json — they live in the
+    /// provider's credential store.
+    async fn persist_oauth_server(
+        &self,
+        id: &str,
+        url: String,
+        scopes: Vec<String>,
+    ) -> Result<bool, BoxError> {
+        let _guard = self.config_write_lock.lock().await;
+        if mcp_config_contains_server(&self.config_path, id).await? {
+            return Ok(false);
+        }
+        let server = McpServerSettings {
+            id: id.to_string(),
+            disabled: false,
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url,
+                bearer_token: None,
+                headers: BTreeMap::new(),
+                oauth: Some(McpOAuthSettings {
+                    client_id: None,
+                    scopes,
+                }),
+            }),
+            include: BTreeSet::new(),
+            exclude: BTreeSet::new(),
+        };
+        persist_mcp_server_config(&self.config_path, server)
+            .await
+            .map_err(|err| {
+                format!(
+                    "MCP server {id} is connected, but failed to persist to {}: {err}",
+                    self.config_path.display()
+                )
+            })?;
+        Ok(true)
+    }
+
+    async fn run_authorization(&self, id: &str, listener: TcpListener) -> Result<(), BoxError> {
+        let auth_url = self.provider.begin_authorization(id).await?;
+        log::info!("MCP `{id}` requires authorization. Opening browser: {auth_url}");
+        // Best-effort: open the user's browser. Harmless if it is unavailable —
+        // the URL is also logged for the user to open manually.
+        let _ = open_in_browser(&auth_url);
+
+        let redirect = timeout(OAUTH_REDIRECT_TIMEOUT, wait_for_oauth_redirect(listener)).await;
+        let redirect_url = match redirect {
+            Ok(result) => result?,
+            Err(_) => {
+                let secs = OAUTH_REDIRECT_TIMEOUT.as_secs();
+                // The pending PKCE state and the loopback port die with this
+                // attempt, so finishing the old authorization URL later cannot
+                // work; only a fresh call can.
+                return Err(format!(
+                    "authorization timed out after {secs}s waiting for the browser redirect; \
+                     call connect_mcp_server again to restart authorization"
+                )
+                .into());
+            }
+        };
+
+        self.provider
+            .complete_authorization(id, &redirect_url)
+            .await?;
+        self.provider.refresh_server(id).await?;
+        Ok(())
+    }
+
+    fn connected_summary(&self, id: &str, newly_persisted: bool) -> Value {
+        let tools = self
+            .provider
+            .routes()
+            .into_iter()
+            .filter(|route| route.server_id == id)
+            .map(|route| json!({"name": route.name, "remote_name": route.remote_name}))
+            .collect::<Vec<_>>();
+        json!({
+            "status": "connected",
+            "server_id": id,
+            "newly_persisted": newly_persisted,
+            "tools": tools,
+        })
+    }
+}
+
+/// Returns whether mcp.json already carries a server with this id. A missing
+/// or empty file simply means "no".
+async fn mcp_config_contains_server(config_path: &Path, id: &str) -> Result<bool, BoxError> {
+    let content = match read_text_file(config_path).await {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let settings = McpSettings::from_json_contents(&content)?;
+    Ok(settings.servers.iter().any(|server| server.id.trim() == id))
+}
+
+impl Tool<BaseCtx> for McpConnectTool {
+    type Args = ConnectMcpServerArgs;
+    type Output = Response;
+
+    fn name(&self) -> String {
+        Self::NAME.to_string()
+    }
+
+    fn description(&self) -> String {
+        concat!(
+            "Connects an MCP server by URL and exposes its tools dynamically. ",
+            "If the server requires OAuth authorization, this opens the user's browser so they ",
+            "can approve access, then finishes connecting automatically; the connection is ",
+            "persisted (tokens in the local credential store, server in mcp.json) and survives ",
+            "daemon restarts. Calling it again on a connected server verifies the connection, ",
+            "and re-runs the browser authorization if the credentials have died. ",
+            "Before calling, tell the user a browser window may open for them to confirm ",
+            "authorization. Use add_mcp_server instead for local stdio servers or ",
+            "bearer-token/no-auth HTTP servers that should be persisted."
+        )
+        .to_string()
+    }
+
+    fn definition(&self) -> FunctionDefinition {
+        FunctionDefinition {
+            name: self.name(),
+            description: self.description(),
+            parameters: connect_mcp_server_parameters(),
+            strict: Some(false),
+        }
+    }
+
+    async fn call(
+        &self,
+        _ctx: BaseCtx,
+        args: Self::Args,
+        _resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let result = self.connect(args).await?;
+        Ok(ToolOutput::new(Response::Ok {
+            result,
+            next_cursor: None,
+        }))
+    }
+}
+
+fn connect_mcp_server_parameters() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "MCP endpoint URL. Must be http or https. Example: https://api.al.ink/mcp"
+            },
+            "id": {
+                "type": "string",
+                "description": "Optional stable server id used in local tool names. Defaults to the URL host."
+            },
+            "scopes": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional OAuth scopes to request. Omit to request the scopes the server advertises."
+            }
+        },
+        "required": ["url"],
+        "additionalProperties": false
+    })
+}
+
+/// Derives a server id from a URL host, e.g. `https://api.al.ink/mcp` -> `api.al.ink`.
+fn default_server_id_from_url(url: &str) -> Result<String, BoxError> {
+    let after_scheme = url.split("://").nth(1).unwrap_or(url);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    // `user:pass@host` must yield the host, not the userinfo.
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        // Bracketed IPv6 literal: the colons inside are part of the host.
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    }
+    .trim_end_matches('.');
+    normalize_string(host)
+        .ok_or_else(|| "cannot derive an MCP server id from the url; pass an explicit id".into())
+}
+
+/// Serves the loopback redirect endpoint and returns the full redirect URL once
+/// the authorization server sends the user back with `code`/`state`.
+async fn wait_for_oauth_redirect(listener: TcpListener) -> Result<String, BoxError> {
+    loop {
+        let (mut stream, _) = listener.accept().await?;
+        // Per-connection failures (port probes, browser preconnects, clients
+        // hanging up early) must not abort the authorization; keep listening.
+        let Some(request_line) = read_request_line(&mut stream).await else {
+            continue;
+        };
+        let Some(target) = request_line.split_whitespace().nth(1) else {
+            let _ = write_http_response(&mut stream, "400 Bad Request", "Bad Request").await;
+            continue;
+        };
+        // Ignore ancillary requests such as /favicon.ico; wait for the callback.
+        if !(target.contains("code=") || target.contains("error=")) {
+            let _ = write_http_response(&mut stream, "404 Not Found", "Not Found").await;
+            continue;
+        }
+        // Best-effort: the redirect is already captured even if the browser
+        // never renders the confirmation page.
+        let _ = write_http_response(
+            &mut stream,
+            "200 OK",
+            "授权完成，可以关闭此页面并返回 Anda Bot。\nAuthorization complete; you can close this tab.",
+        )
+        .await;
+        return Ok(format!("http://127.0.0.1{target}"));
+    }
+}
+
+/// Reads from the connection until the request line is complete (terminated by
+/// a newline) and returns it. `None` when the client disconnects or errors
+/// before sending one, or floods more than 16 KiB without a line break.
+async fn read_request_line(stream: &mut TcpStream) -> Option<String> {
+    let mut buffer = Vec::with_capacity(2048);
+    let mut chunk = [0u8; 2048];
+    while !buffer.contains(&b'\n') {
+        match stream.read(&mut chunk).await {
+            Ok(0) | Err(_) => return None,
+            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+        }
+        if buffer.len() > 16 * 1024 {
+            return None;
+        }
+    }
+    let request = String::from_utf8_lossy(&buffer);
+    request.lines().next().map(str::to_string)
+}
+
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    body: &str,
+) -> Result<(), BoxError> {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+/// Best-effort launch of the user's default browser at `url`.
+///
+/// Only http/https URLs are opened: the authorization URL is built from the
+/// remote server's discovery metadata, so treat it as untrusted input to the
+/// local system.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to open a non-http(s) URL in the browser",
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    // Not `cmd /C start`: cmd.exe would reparse the URL, splitting on `&`
+    // (executing the rest as commands) and expanding `%..%` sequences.
+    // rundll32 receives the URL as a plain argument.
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
+        command
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(test)]
@@ -813,5 +1256,138 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("already exists"));
+    }
+
+    fn test_connect_tool(config_path: PathBuf) -> McpConnectTool {
+        let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
+        McpConnectTool::new(provider, config_path, Arc::new(Mutex::new(())))
+    }
+
+    #[tokio::test]
+    async fn persist_oauth_server_writes_marker_and_skips_existing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = McpSettings::file_path(dir.path());
+        let tool = test_connect_tool(config_path.clone());
+
+        let newly = tool
+            .persist_oauth_server(
+                "alink",
+                "https://api.al.ink/mcp".to_string(),
+                vec!["events:read".to_string()],
+            )
+            .await
+            .unwrap();
+        assert!(newly);
+
+        // The entry re-parses with the oauth marker and no token material.
+        let settings = McpSettings::from_file(dir.path()).await.unwrap();
+        assert_eq!(settings.servers.len(), 1);
+        match &settings.servers[0].transport {
+            McpTransportSettings::StreamableHttp(http) => {
+                assert_eq!(http.url, "https://api.al.ink/mcp");
+                assert!(http.bearer_token.is_none());
+                let oauth = http.oauth.as_ref().expect("oauth marker");
+                assert_eq!(oauth.scopes, vec!["events:read".to_string()]);
+            }
+            _ => panic!("expected HTTP"),
+        }
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap();
+        assert!(!content.contains("token"), "no tokens in mcp.json");
+
+        // Re-authorization finds the entry already present and does not fail.
+        let newly = tool
+            .persist_oauth_server("alink", "https://api.al.ink/mcp".to_string(), Vec::new())
+            .await
+            .unwrap();
+        assert!(!newly);
+    }
+
+    #[tokio::test]
+    async fn mcp_config_contains_server_handles_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = McpSettings::file_path(dir.path());
+        assert!(
+            !mcp_config_contains_server(&config_path, "alink")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn default_server_id_from_url_uses_host() {
+        assert_eq!(
+            default_server_id_from_url("https://api.al.ink/mcp").unwrap(),
+            "api.al.ink"
+        );
+        assert_eq!(
+            default_server_id_from_url("http://127.0.0.1:8080/mcp?x=1").unwrap(),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            default_server_id_from_url("https://user:pass@api.al.ink/mcp").unwrap(),
+            "api.al.ink"
+        );
+        assert_eq!(
+            default_server_id_from_url("http://[::1]:8080/mcp").unwrap(),
+            "::1"
+        );
+        assert!(default_server_id_from_url("https:///mcp").is_err());
+    }
+
+    #[test]
+    fn open_in_browser_rejects_non_http_urls() {
+        assert!(open_in_browser("javascript:alert(1)").is_err());
+        assert!(open_in_browser("file:///etc/passwd").is_err());
+    }
+
+    #[tokio::test]
+    async fn oauth_redirect_survives_stray_connections_and_split_requests() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let redirect = tokio::spawn(wait_for_oauth_redirect(listener));
+
+        // A probe that connects and hangs up without sending anything.
+        drop(TcpStream::connect(addr).await.unwrap());
+        // An ancillary request (favicon) on its own connection.
+        let mut favicon = TcpStream::connect(addr).await.unwrap();
+        favicon
+            .write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        drop(favicon);
+
+        // The real callback, with the request line split across two writes.
+        let mut callback = TcpStream::connect(addr).await.unwrap();
+        callback.write_all(b"GET /callback?co").await.unwrap();
+        callback.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        callback
+            .write_all(b"de=abc&state=xyz HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+
+        let url = timeout(Duration::from_secs(5), redirect)
+            .await
+            .expect("redirect must resolve")
+            .unwrap()
+            .unwrap();
+        assert_eq!(url, "http://127.0.0.1/callback?code=abc&state=xyz");
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_non_http_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = test_connect_tool(McpSettings::file_path(dir.path()));
+        let err = tool
+            .connect(ConnectMcpServerArgs {
+                url: "ftp://example.test/mcp".to_string(),
+                id: None,
+                scopes: Vec::new(),
+            })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("http:// or https://"));
     }
 }

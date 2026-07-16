@@ -9,7 +9,7 @@ use anda_core::{
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
     extension::shell::{ExecArgs, ExecOutput, ShellTool},
-    hook::{AgentHook, ToolHook},
+    hook::{AgentHook, BackgroundHandle, ToolHook},
 };
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -261,9 +261,10 @@ impl AgentHook for Session {
     async fn on_background_start(
         &self,
         ctx: &AgentCtx,
-        session_id: &str,
+        handle: BackgroundHandle,
         _req: &CompletionRequest,
     ) {
+        let session_id = handle.task_id();
         self.background_tasks.write().insert(
             session_id.to_string(),
             BackgroundTaskInfo {
@@ -356,7 +357,8 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         self.actions.request_shell_approval(ctx, args).await
     }
 
-    async fn on_background_start(&self, ctx: &BaseCtx, task_id: &str, _args: &ExecArgs) {
+    async fn on_background_start(&self, ctx: &BaseCtx, handle: BackgroundHandle, _args: &ExecArgs) {
+        let task_id = handle.task_id();
         self.background_tasks.write().insert(
             task_id.to_string(),
             BackgroundTaskInfo {
@@ -686,8 +688,13 @@ mod tests {
         let (session, mut rx) = test_session();
         let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
 
-        AgentHook::on_background_start(&session, &ctx, "sub-1", &CompletionRequest::default())
-            .await;
+        AgentHook::on_background_start(
+            &session,
+            &ctx,
+            BackgroundHandle::new("sub-1", anda_core::CancellationToken::new()),
+            &CompletionRequest::default(),
+        )
+        .await;
         assert!(session.background_tasks.read().contains_key("sub-1"));
 
         // Progress with content sends an intermediate prompt.
@@ -755,7 +762,13 @@ mod tests {
         let (session, mut rx) = test_session();
         let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
 
-        ToolHook::on_background_start(&session, &ctx, "task-1", &ExecArgs::default()).await;
+        ToolHook::on_background_start(
+            &session,
+            &ctx,
+            BackgroundHandle::new("task-1", anda_core::CancellationToken::new()),
+            &ExecArgs::default(),
+        )
+        .await;
         assert!(session.background_tasks.read().contains_key("task-1"));
 
         let output = ToolOutput::new(ExecOutput {

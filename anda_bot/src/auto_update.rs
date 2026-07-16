@@ -552,6 +552,7 @@ mod tests {
                 description: "auto update test db".to_string(),
                 storage: StorageConfig {
                     cache_max_capacity: 1024,
+                    cache_max_bytes: None,
                     compress_level: 1,
                     object_chunk_size: 256 * 1024,
                     bucket_overload_size: 256 * 1024,

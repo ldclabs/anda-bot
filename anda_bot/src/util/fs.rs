@@ -24,6 +24,28 @@ pub fn restrict_secret_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Tightens a secrets-bearing directory (mcp_credentials/, …) to owner-only
+/// access. No-op when the directory already has no group/other bits.
+#[cfg(unix)]
+pub fn restrict_secret_dir_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path)?;
+    let mut permissions = metadata.permissions();
+    if permissions.mode() & 0o077 != 0 {
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+/// Windows ACLs default to per-user profile protection under the home
+/// directory; there is no direct mode-bits equivalent to tighten.
+#[cfg(not(unix))]
+pub fn restrict_secret_dir_permissions(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 // Every test here exercises the Unix permission-bit path; the Windows
 // implementation is a no-op, so the whole module is Unix-only.
 #[cfg(all(test, unix))]
