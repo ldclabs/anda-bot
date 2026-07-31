@@ -686,9 +686,14 @@ impl Agent<AgentCtx> for AndaBot {
         let mut instructions: Option<String> = None;
         let _session_creation_guard = loop {
             let guard = self.inner.session_creation_lock.lock().await;
+            // A session is only joinable by the caller that owns it: several
+            // managers without an explicit source/workspace share the same
+            // fallback source_key, and joining another caller's session would
+            // leak its chat history and reroute its replies.
             let active_session = self
                 .get_session(&sess_id)
-                .or_else(|| self.get_session_by_source(&source_key));
+                .or_else(|| self.get_session_by_source(&source_key))
+                .filter(|session| session.caller == caller.to_string());
             if let Some(session) = active_session {
                 if matches!(input.command, PromptCommand::New { .. }) {
                     detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);

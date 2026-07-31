@@ -200,6 +200,18 @@ impl AndaBot {
             None => Xid::new(),
         };
 
+        // Same discipline as AndaBot::run(): the instruction build above spans
+        // slow brain/DB calls, so a channel message may have created a session
+        // for this conversation meanwhile. Re-check under the session creation
+        // lock and hold it through insert_session, or two runners for the same
+        // session id would race persist_conversation_state and the orphan's
+        // detach_session would later evict the healthy runner.
+        let _session_creation_guard = self.inner.session_creation_lock.lock().await;
+        if self.get_session(&sess_id).is_some() || self.get_session_by_source(&source_key).is_some()
+        {
+            return Ok(());
+        }
+
         conversation.thread = Some(sess_id.clone());
         conversation.status = ConversationStatus::Working;
         conversation.updated_at = now_ms;

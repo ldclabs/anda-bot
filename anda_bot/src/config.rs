@@ -268,6 +268,13 @@ impl Config {
             if lark.receive_mode == LarkReceiveMode::Webhook && lark.port.is_none() {
                 issues.push(format!("{base}.port"));
             }
+            // Without a verification token anyone who can reach the webhook
+            // port can forge Lark events, so webhook mode requires it.
+            if lark.receive_mode == LarkReceiveMode::Webhook
+                && normalize_optional(&lark.verification_token).is_none()
+            {
+                issues.push(format!("{base}.verification_token"));
+            }
 
             let channel_id = lark.channel_id();
             if !channel_id.is_empty() && !seen_lark_ids.insert(channel_id) {

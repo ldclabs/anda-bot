@@ -1,6 +1,6 @@
 use anda_core::BoxError;
 use anda_engine::model::{Proxy, request_client_builder, reqwest};
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 /// Default `no_proxy` value for Anda Engine HTTP clients, covering common local and private network addresses.
 pub static NO_PROXY: &str =
@@ -76,6 +76,175 @@ pub fn new_reqwest_client() -> reqwest::Client {
         builder = builder.proxy(proxy);
     }
     builder.build().expect("failed to build reqwest client")
+}
+
+/// Whether an IP address is a public (globally routable) unicast address.
+/// Used to reject model-controlled URLs that point at loopback, private,
+/// link-local (cloud metadata), CGN, or otherwise internal addresses.
+pub fn ip_is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+
+    match ip.to_canonical() {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            !(ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                // 0.0.0.0/8 "this network"
+                || octets[0] == 0
+                // 100.64.0.0/10 carrier-grade NAT
+                || (octets[0] == 100 && (64..128).contains(&octets[1]))
+                // 192.0.0.0/24 IETF protocol assignments
+                || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+                // 198.18.0.0/15 benchmarking
+                || (octets[0] == 198 && (18..20).contains(&octets[1]))
+                // 240.0.0.0/4 reserved
+                || octets[0] >= 240)
+        }
+        IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            let seg0 = segments[0];
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                // fc00::/7 unique local
+                || (seg0 & 0xfe00) == 0xfc00
+                // fe80::/10 link local
+                || (seg0 & 0xffc0) == 0xfe80
+                // fec0::/10 deprecated site-local addresses can still be
+                // routed inside private IPv6 networks.
+                || (seg0 & 0xffc0) == 0xfec0
+                // 2001:db8::/32 documentation range
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicUrlPolicy {
+    PublicOnly,
+    #[cfg(test)]
+    AllowPrivateForTests,
+}
+
+impl PublicUrlPolicy {
+    fn permits(self, ip: std::net::IpAddr) -> bool {
+        #[cfg(test)]
+        if self == Self::AllowPrivateForTests {
+            return true;
+        }
+        ip_is_public(ip)
+    }
+}
+
+/// Resolve and validate a model-controlled HTTP target. The returned
+/// addresses are subsequently installed as reqwest DNS overrides, binding the
+/// actual connection to the exact addresses checked here instead of resolving
+/// the hostname a second time (which would permit DNS rebinding).
+async fn resolve_public_http_target(
+    url: &reqwest::Url,
+    policy: PublicUrlPolicy,
+) -> Result<(String, Vec<SocketAddr>), BoxError> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("unsupported public URL scheme: {}", url.scheme()).into());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("URL has no host: {url}"))?;
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| format!("URL does not have a known or explicit port: {url}"))?;
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !policy.permits(ip) {
+            return Err(format!("URL {url} points at a private or internal address").into());
+        }
+        return Ok((host, vec![SocketAddr::new(ip, port)]));
+    }
+
+    let mut resolved = Vec::new();
+    for addr in tokio::net::lookup_host((host.as_str(), port)).await? {
+        // Every resolved address must be public: a rebinding name that mixes
+        // public and private records must not slip through.
+        if !policy.permits(addr.ip()) {
+            return Err(format!("URL {url} resolves to a private or internal address").into());
+        }
+        if !resolved.contains(&addr) {
+            resolved.push(addr);
+        }
+    }
+    if resolved.is_empty() {
+        return Err(format!("URL host does not resolve: {url}").into());
+    }
+    Ok((host, resolved))
+}
+
+const MAX_PUBLIC_URL_REDIRECTS: usize = 5;
+
+fn pinned_public_http_client(
+    host: &str,
+    addresses: &[SocketAddr],
+) -> Result<reqwest::Client, BoxError> {
+    install_default_crypto_provider();
+    // Model-controlled fetches intentionally bypass proxies: a proxy resolves
+    // the target in its own network, which would break the guarantee that the
+    // connection uses the addresses validated above.
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(300));
+    if host.parse::<std::net::IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    Ok(builder.build()?)
+}
+
+/// Fetches a model-controlled URL while rejecting private/internal targets.
+/// Redirects are followed manually so every hop is validated before any
+/// request is sent, and DNS overrides pin each connection to the addresses
+/// that passed validation.
+pub async fn fetch_public_url(
+    mut url: reqwest::Url,
+    policy: PublicUrlPolicy,
+) -> Result<reqwest::Response, BoxError> {
+    for redirect_count in 0..=MAX_PUBLIC_URL_REDIRECTS {
+        let (host, addresses) = resolve_public_http_target(&url, policy).await?;
+        let client = pinned_public_http_client(&host, &addresses)?;
+        let response = client.get(url.clone()).send().await?;
+        if !matches!(
+            response.status(),
+            http::StatusCode::MOVED_PERMANENTLY
+                | http::StatusCode::FOUND
+                | http::StatusCode::SEE_OTHER
+                | http::StatusCode::TEMPORARY_REDIRECT
+                | http::StatusCode::PERMANENT_REDIRECT
+        ) {
+            return Ok(response);
+        }
+
+        let Some(location) = response.headers().get(reqwest::header::LOCATION) else {
+            return Ok(response);
+        };
+        if redirect_count == MAX_PUBLIC_URL_REDIRECTS {
+            return Err(format!("public URL exceeded {MAX_PUBLIC_URL_REDIRECTS} redirects").into());
+        }
+        let location = location
+            .to_str()
+            .map_err(|_| "public URL redirect location is not valid UTF-8")?;
+        url = url.join(location)?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(format!("unsupported public URL redirect scheme: {}", url.scheme()).into());
+        }
+    }
+
+    unreachable!("redirect loop exits by response or error")
 }
 
 /// Reads a response body while enforcing `max_bytes` as the body streams in,
@@ -171,6 +340,97 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ip_is_public_rejects_internal_ranges() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "192.0.0.1",
+            "198.18.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12::1",
+            "fe80::1",
+            "fec0::1",
+            "2001:db8::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(!ip_is_public(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["93.184.216.34", "8.8.8.8", "2606:4700::1111"] {
+            assert!(ip_is_public(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_target_guard_rejects_internal_urls() {
+        for url in [
+            "http://127.0.0.1:8080/secret",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://10.0.0.2/",
+            "http://localhost/",
+        ] {
+            let url = reqwest::Url::parse(url).unwrap();
+            assert!(
+                resolve_public_http_target(&url, PublicUrlPolicy::PublicOnly)
+                    .await
+                    .is_err(),
+                "{url}"
+            );
+        }
+
+        let url = reqwest::Url::parse("http://8.8.8.8/").unwrap();
+        assert!(
+            resolve_public_http_target(&url, PublicUrlPolicy::PublicOnly)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn public_fetch_follows_only_validated_http_redirects() {
+        use axum::{Router, response::Redirect, routing::get};
+
+        let app = Router::new()
+            .route("/redirect", get(|| async { Redirect::temporary("/final") }))
+            .route("/final", get(|| async { "redirected body" }))
+            .route(
+                "/file-redirect",
+                get(|| async { Redirect::temporary("file:///etc/passwd") }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let response = fetch_public_url(
+            reqwest::Url::parse(&format!("http://{addr}/redirect")).unwrap(),
+            PublicUrlPolicy::AllowPrivateForTests,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.url().path(), "/final");
+        assert_eq!(response.text().await.unwrap(), "redirected body");
+
+        let err = fetch_public_url(
+            reqwest::Url::parse(&format!("http://{addr}/file-redirect")).unwrap(),
+            PublicUrlPolicy::AllowPrivateForTests,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("redirect scheme"), "{err}");
+    }
 
     #[test]
     fn any_host_matches_every_host() {

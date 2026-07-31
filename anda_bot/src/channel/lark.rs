@@ -203,6 +203,22 @@ pub fn build_lark_channels(
             .into());
         }
 
+        // Symmetric with the port check: without a verification token anyone
+        // who can reach the webhook port can forge im.message.receive_v1
+        // events (and impersonate allowed_users open_ids).
+        if lark_cfg.receive_mode == config::LarkReceiveMode::Webhook
+            && lark_cfg
+                .verification_token
+                .as_deref()
+                .is_none_or(|token| token.trim().is_empty())
+        {
+            return Err(format!(
+                "Lark channel '{}' webhook mode requires verification_token",
+                lark_cfg.label(index)
+            )
+            .into());
+        }
+
         let channel: Arc<dyn Channel> = Arc::new(LarkChannel::new(lark_cfg, client.clone()));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
@@ -1831,10 +1847,13 @@ fn should_respond_in_group(
 }
 
 fn webhook_token_matches(verification_token: &str, payload: &Value) -> bool {
+    // Fail closed: webhook mode requires a configured token (enforced at
+    // startup), so an empty token must never accept events.
     let verification_token = verification_token.trim();
-    verification_token.is_empty()
-        || payload
+    !verification_token.is_empty()
+        && payload
             .get("token")
+            .or_else(|| payload.pointer("/header/token"))
             .and_then(Value::as_str)
             .is_some_and(|token| token == verification_token)
 }
@@ -1940,16 +1959,48 @@ mod tests {
     }
 
     #[test]
-    fn webhook_token_is_required_when_configured() {
+    fn webhook_token_is_always_required() {
         let valid = serde_json::json!({ "token": "test_verification_token" });
+        let valid_v2 = serde_json::json!({
+            "schema": "2.0",
+            "header": {"token": "test_verification_token"},
+        });
         let wrong = serde_json::json!({ "token": "wrong" });
+        let wrong_v2 = serde_json::json!({
+            "schema": "2.0",
+            "header": {"token": "wrong"},
+        });
         let missing = serde_json::json!({});
 
         assert!(webhook_token_matches("test_verification_token", &valid));
+        assert!(webhook_token_matches("test_verification_token", &valid_v2));
         assert!(!webhook_token_matches("test_verification_token", &wrong));
+        assert!(!webhook_token_matches("test_verification_token", &wrong_v2));
         assert!(!webhook_token_matches("test_verification_token", &missing));
-        assert!(webhook_token_matches("", &missing));
-        assert!(webhook_token_matches("   ", &missing));
+        // Fail closed: an empty configured token must never accept events.
+        assert!(!webhook_token_matches("", &missing));
+        assert!(!webhook_token_matches("   ", &missing));
+        assert!(!webhook_token_matches(
+            "",
+            &serde_json::json!({ "token": "" })
+        ));
+    }
+
+    #[test]
+    fn build_lark_channels_rejects_webhook_without_verification_token() {
+        let cfg = vec![config::LarkChannelSettings {
+            app_id: "cli_a".to_string(),
+            app_secret: "secret".to_string(),
+            receive_mode: config::LarkReceiveMode::Webhook,
+            port: Some(8090),
+            verification_token: None,
+            ..Default::default()
+        }];
+        let err = match build_lark_channels(&cfg, new_reqwest_client()) {
+            Ok(_) => panic!("webhook mode without verification_token must be rejected"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("verification_token"), "{err}");
     }
 
     #[test]
@@ -2425,8 +2476,11 @@ mod tests {
         let response = client
             .post(&url)
             .json(&serde_json::json!({
-                "token": "test_verification_token",
-                "header": {"event_type": "im.message.receive_v1"},
+                "schema": "2.0",
+                "header": {
+                    "event_type": "im.message.receive_v1",
+                    "token": "test_verification_token",
+                },
                 "event": {
                     "sender": {"sender_id": {"open_id": "ou_testuser123"}},
                     "message": {

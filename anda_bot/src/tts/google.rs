@@ -2,7 +2,7 @@ use anda_core::BoxError;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 
-use super::TtsProvider;
+use super::{TTS_HTTP_TIMEOUT, TtsProvider};
 use crate::config;
 
 /// Google Cloud TTS provider (`POST /v1/text:synthesize`).
@@ -52,6 +52,7 @@ impl TtsProvider for GoogleTtsProvider {
             .post(url)
             .header("x-goog-api-key", &self.api_key)
             .json(&body)
+            .timeout(TTS_HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|_| "Failed to send Google TTS request")?;

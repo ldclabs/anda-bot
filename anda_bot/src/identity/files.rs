@@ -170,6 +170,18 @@ fn create_private_parent_dir_if_needed(
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
+        // Create new directories private from the start, so there is no
+        // window between create_dir_all and the chmod below where the
+        // umask-mode directory is visible to other local users.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)?;
+        }
+        #[cfg(not(unix))]
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
         {

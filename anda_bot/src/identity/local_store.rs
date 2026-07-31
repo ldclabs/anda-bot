@@ -79,7 +79,7 @@ impl LocalEncryptedIdentityKeyStore {
         (!id.is_empty()).then(|| IdentityKeyRef::trusted_user(&self.home, id))
     }
 
-    fn derive_content_key(&self, account: &str) -> Result<[u8; 32], BoxError> {
+    fn derive_content_key(&self, account: &str) -> Result<zeroize::Zeroizing<[u8; 32]>, BoxError> {
         let mut salt =
             Vec::with_capacity(LOCAL_CREDENTIAL_STORE_SALT_PREFIX.len() + 1 + self.namespace.len());
         salt.extend_from_slice(LOCAL_CREDENTIAL_STORE_SALT_PREFIX);
@@ -91,8 +91,8 @@ impl LocalEncryptedIdentityKeyStore {
         info.extend_from_slice(account.as_bytes());
 
         let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), &self.daemon_secret);
-        let mut key = [0u8; 32];
-        hk.expand(&info, &mut key)
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        hk.expand(&info, key.as_mut())
             .map_err(|_err| "failed to derive local credential encryption key")?;
         Ok(key)
     }
@@ -116,14 +116,22 @@ impl LocalEncryptedIdentityKeyStore {
         };
 
         let key = self.derive_content_key(account)?;
-        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &key, None)?;
+        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &*key, None)?;
         let aad = self.external_aad(account)?;
-        let msg = Encrypt0Message::decrypt_and_decode(&encryptor, &data, Some(&aad))?;
-        let plaintext = msg
-            .payload
-            .as_deref()
-            .ok_or("local credential payload missing after decryption")?;
-        Ok(Some(decode_ed25519_privkey_cose_key(plaintext)?))
+        let mut msg = Encrypt0Message::decrypt_and_decode(&encryptor, &data, Some(&aad))?;
+        let secret = {
+            let plaintext = msg
+                .payload
+                .as_deref()
+                .ok_or("local credential payload missing after decryption")?;
+            decode_ed25519_privkey_cose_key(plaintext)
+        };
+        // The decrypted COSE payload holds the raw private key; wipe it
+        // before the buffer is freed.
+        if let Some(payload) = msg.payload.as_mut() {
+            zeroize::Zeroize::zeroize(payload);
+        }
+        Ok(Some(secret?))
     }
 
     fn write_encrypted_secret(
@@ -145,11 +153,14 @@ impl LocalEncryptedIdentityKeyStore {
 
         let plaintext = encode_ed25519_privkey_cose_key(secret)?;
         let key = self.derive_content_key(account)?;
-        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &key, None)?;
+        let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &*key, None)?;
         let aad = self.external_aad(account)?;
         let mut msg = Encrypt0Message::new(Some(plaintext));
         msg.unprotected.set_iv(iv.to_vec());
         let encrypted = msg.encrypt_and_encode(&encryptor, Some(&aad))?;
+        if let Some(payload) = msg.payload.as_mut() {
+            zeroize::Zeroize::zeroize(payload);
+        }
         write_private_binary_file(
             &self.credential_path(account),
             &encrypted,
@@ -236,6 +247,12 @@ impl IdentityKeyStore for LocalEncryptedIdentityKeyStore {
         let mut key = [0u8; 32];
         key.copy_from_slice(secret);
         self.write_encrypted_secret(account, &key, overwrite)
+    }
+}
+
+impl Drop for LocalEncryptedIdentityKeyStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.daemon_secret);
     }
 }
 

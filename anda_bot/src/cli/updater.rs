@@ -225,12 +225,15 @@ pub async fn run(
             staged.keep();
         }
 
-        install_release_skills(client, &base_url, home_dir).await?;
-        if let Some(finish) =
-            install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
-        {
-            print_launcher_update_finish(latest_tag.as_str(), finish);
-        }
+        install_secondary_release_artifacts(
+            client,
+            &base_url,
+            target,
+            &install_dir,
+            home_dir,
+            latest_tag.as_str(),
+        )
+        .await;
         auto_update::mark_installed(daemon, &latest_tag).await;
         print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
         return Ok(());
@@ -251,17 +254,48 @@ pub async fn run(
         staged.keep();
     }
 
-    install_release_skills(client, &base_url, home_dir).await?;
-    if let Some(finish) =
-        install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
-    {
-        print_launcher_update_finish(latest_tag.as_str(), finish);
-    }
+    install_secondary_release_artifacts(
+        client,
+        &base_url,
+        target,
+        &install_dir,
+        home_dir,
+        latest_tag.as_str(),
+    )
+    .await;
     auto_update::mark_installed(daemon, &latest_tag).await;
 
     print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
 
     Ok(())
+}
+
+/// Installs the skills bundle and the launcher sidecar after the main binary
+/// has already been replaced. Failures here are warnings, not errors: callers
+/// treat a returned error as "the update failed" (the launcher then skips
+/// restarting the daemon on macOS), while the new binary is in fact installed.
+async fn install_secondary_release_artifacts(
+    client: &reqwest::Client,
+    base_url: &str,
+    target: ReleaseTarget,
+    install_dir: &Path,
+    home_dir: &Path,
+    latest_tag: &str,
+) {
+    if let Err(err) = install_release_skills(client, base_url, home_dir).await {
+        println!(
+            "Warning: the anda binary was updated, but installing bundled skills failed: {err}"
+        );
+    }
+    match install_release_launcher_if_present(client, base_url, target, install_dir).await {
+        Ok(Some(finish)) => print_launcher_update_finish(latest_tag, finish),
+        Ok(None) => {}
+        Err(err) => {
+            println!(
+                "Warning: the anda binary was updated, but installing the launcher failed: {err}"
+            );
+        }
+    }
 }
 
 fn validate_update_command(cmd: &UpdateCommand) -> Result<(), BoxError> {

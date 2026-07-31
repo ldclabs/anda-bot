@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 
-use crate::util::http_client::new_reqwest_client;
+use crate::util::http_client::PublicUrlPolicy;
 use attachment::{AttachmentUnderstanding, OtherAttachment, other_understanding_tool_names};
 pub use catalog::{
     AUDIO_UNDERSTANDING_AGENT_NAME, IMAGE_UNDERSTANDING_AGENT_NAME, MediaKind,
@@ -74,7 +74,7 @@ impl MediaUnderstandingArgs {
 pub struct MediaUnderstandingAgent {
     kind: MediaKind,
     workspaces: Vec<PathBuf>,
-    http: reqwest::Client,
+    public_url_policy: PublicUrlPolicy,
 }
 
 impl MediaUnderstandingAgent {
@@ -82,7 +82,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Image,
             workspaces,
-            http: new_reqwest_client(),
+            public_url_policy: PublicUrlPolicy::PublicOnly,
         }
     }
 
@@ -90,7 +90,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Audio,
             workspaces,
-            http: new_reqwest_client(),
+            public_url_policy: PublicUrlPolicy::PublicOnly,
         }
     }
 
@@ -98,7 +98,7 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Video,
             workspaces,
-            http: new_reqwest_client(),
+            public_url_policy: PublicUrlPolicy::PublicOnly,
         }
     }
 
@@ -106,12 +106,13 @@ impl MediaUnderstandingAgent {
         Self {
             kind: MediaKind::Other,
             workspaces,
-            http: new_reqwest_client(),
+            public_url_policy: PublicUrlPolicy::PublicOnly,
         }
     }
 
-    pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
-        self.http = http;
+    #[cfg(test)]
+    pub fn with_http_client(mut self, _http: reqwest::Client) -> Self {
+        self.public_url_policy = PublicUrlPolicy::AllowPrivateForTests;
         self
     }
 
@@ -120,11 +121,11 @@ impl MediaUnderstandingAgent {
     }
 
     fn source_loader(&self) -> MediaSourceLoader {
-        MediaSourceLoader::new(self.kind, self.workspaces.clone(), self.http.clone())
+        MediaSourceLoader::new(self.kind, self.workspaces.clone(), self.public_url_policy)
     }
 
     fn attachment_understanding(&self) -> AttachmentUnderstanding {
-        AttachmentUnderstanding::new(self.workspaces.clone(), self.http.clone())
+        AttachmentUnderstanding::new(self.workspaces.clone(), self.public_url_policy)
     }
 
     async fn run_other(
@@ -790,8 +791,8 @@ mod tests {
             .route("/doc.txt", get(|| async { "remote body" }))
             .route("/missing", get(|| async { (AxumStatus::NOT_FOUND, "") }));
         let base = spawn_router(app).await;
-        let agent =
-            MediaUnderstandingAgent::other(Vec::new()).with_http_client(new_reqwest_client());
+        let agent = MediaUnderstandingAgent::other(Vec::new())
+            .with_http_client(crate::util::http_client::new_reqwest_client());
 
         let url = reqwest::Url::parse(&format!("{base}/doc.txt")).unwrap();
         let attachment = agent
@@ -826,8 +827,8 @@ mod tests {
                 }),
             );
         let base = spawn_router(app).await;
-        let agent =
-            MediaUnderstandingAgent::image(Vec::new()).with_http_client(new_reqwest_client());
+        let agent = MediaUnderstandingAgent::image(Vec::new())
+            .with_http_client(crate::util::http_client::new_reqwest_client());
 
         let missing = reqwest::Url::parse(&format!("{base}/img")).unwrap();
         let err = agent

@@ -25,6 +25,19 @@ impl LoadedIdentitySecret {
     }
 }
 
+impl Drop for LoadedIdentitySecret {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.secret);
+    }
+}
+
+impl Drop for LocalIdentitySecrets {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut *self.daemon);
+        zeroize::Zeroize::zeroize(&mut *self.owner);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Cbor)]
 pub struct LocalIdentitySecrets {
     #[serde(skip, default)]
@@ -151,9 +164,13 @@ pub async fn load_identity_secret_with_location_with_store(
     tokio::task::spawn_blocking(move || load_identity_secret_blocking(&key_ref, store)).await?
 }
 
+/// With `overwrite: false` an existing secret is an error. `anda user create`
+/// passes `overwrite: true` so an orphan key left behind by an earlier run
+/// whose config write failed does not block retries with "already exists".
 pub async fn write_identity_secret_with_store(
     key_ref: &IdentityKeyRef,
     secret: &[u8; 32],
+    overwrite: bool,
     store: Arc<dyn IdentityKeyStore>,
 ) -> Result<String, BoxError> {
     if key_ref.is_daemon() || key_ref.is_owner() {
@@ -163,7 +180,7 @@ pub async fn write_identity_secret_with_store(
     let key_ref = key_ref.clone();
     let secret = *secret;
     tokio::task::spawn_blocking(move || {
-        write_identity_secret_blocking(&key_ref, &secret, false, store)
+        write_identity_secret_blocking(&key_ref, &secret, overwrite, store)
     })
     .await?
 }

@@ -116,7 +116,11 @@ impl App {
         self.input_cursor = 0;
         self.choice_input = None;
         self.pending_action_response = None;
-        self.reset_message_view();
+        // The new ChatSession discards the dedup state
+        // (displayed_suffix_prefix_overlap), so the refetched history would be
+        // appended to the physical scrollback a second time. Clear the screen
+        // and re-flush, same as /new.
+        self.clear_message_view();
     }
 
     pub(super) fn reset_message_view(&mut self) {
@@ -305,7 +309,9 @@ impl App {
         if self.chat_enabled() {
             self.start_auto_update_check();
             match self.chat.restore_source_conversation().await {
-                Ok(true) => self.reset_message_view(),
+                // clear (not reset): the restore refetches the full history,
+                // which must replace the scrollback instead of piling on top.
+                Ok(true) => self.clear_message_view(),
                 Ok(false) => {}
                 Err(err) => {
                     log::warn!("Failed to restore source conversation: {err}");

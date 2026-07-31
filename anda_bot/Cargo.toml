@@ -56,6 +56,7 @@ reqwest = { workspace = true }
 rust-i18n = { workspace = true }
 rustls = { workspace = true }
 tokio-util = { workspace = true }
+zeroize = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }
 serde = { workspace = true }

@@ -31,6 +31,7 @@ use super::{
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
+use crate::util::http_client::PublicUrlPolicy;
 
 const MAX_OTHER_TEXT_INLINE_BYTES: usize = 256 * 1024;
 const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 1024 * 1024;
@@ -40,12 +41,15 @@ const PDFIUM_DLL_NAME: &str = "pdfium.dll";
 #[derive(Clone)]
 pub(super) struct AttachmentUnderstanding {
     workspaces: Vec<PathBuf>,
-    http: reqwest::Client,
+    public_url_policy: PublicUrlPolicy,
 }
 
 impl AttachmentUnderstanding {
-    pub(super) fn new(workspaces: Vec<PathBuf>, http: reqwest::Client) -> Self {
-        Self { workspaces, http }
+    pub(super) fn new(workspaces: Vec<PathBuf>, public_url_policy: PublicUrlPolicy) -> Self {
+        Self {
+            workspaces,
+            public_url_policy,
+        }
     }
 
     pub(super) async fn attachment_from_location(
@@ -137,7 +141,8 @@ impl AttachmentUnderstanding {
         &self,
         url: reqwest::Url,
     ) -> Result<OtherAttachment, BoxError> {
-        let response = self.http.get(url.clone()).send().await?;
+        let response =
+            crate::util::http_client::fetch_public_url(url.clone(), self.public_url_policy).await?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!("failed to fetch attachment URL {url}: {status}").into());
@@ -1313,10 +1318,7 @@ mod tests {
 
     #[tokio::test]
     async fn attachment_from_location_handles_schemes() {
-        let understanding = AttachmentUnderstanding::new(
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let understanding = AttachmentUnderstanding::new(Vec::new(), PublicUrlPolicy::PublicOnly);
 
         let err = understanding
             .attachment_from_location(&RequestMeta::default(), "   ")
@@ -1350,7 +1352,7 @@ mod tests {
         fs::write(&file, b"file body").unwrap();
         let understanding = AttachmentUnderstanding::new(
             vec![dir.path().to_path_buf()],
-            crate::util::http_client::new_reqwest_client(),
+            PublicUrlPolicy::PublicOnly,
         );
 
         let attachment = understanding

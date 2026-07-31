@@ -5,6 +5,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 use crate::{
     config::{Config, DEFAULT_USER_ID, OWNER_USER_ID},
     daemon::Daemon,
+    engine::write_daemon_config_atomically,
     identity::{
         Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, encode_ed25519_pubkey,
         load_identity_secret_with_location_with_store,
@@ -145,10 +146,20 @@ async fn create_user(
     let updated = add_user_to_config_text(&cfg_text, &id, &pubkey)?;
     let key_ref = IdentityKeyRef::trusted_user(&daemon.home, &id);
     let trusted_user_store = trusted_user_identity_store(daemon, identity_store).await?;
+    // Overwrite semantics: `ensure_user_id_available` already rejects ids the
+    // config knows about, so an existing key here is an orphan from an earlier
+    // run whose config write failed — replacing it lets that run be retried.
     let private_key_location =
-        write_identity_secret_with_store(&key_ref, &secret, trusted_user_store).await?;
+        write_identity_secret_with_store(&key_ref, &secret, true, trusted_user_store).await?;
 
-    tokio::fs::write(daemon.config_file_path(), updated).await?;
+    write_daemon_config_atomically(&daemon.config_file_path(), updated.as_bytes())
+        .await
+        .map_err(|err| {
+            format!(
+                "failed to write {} (the '{id}' identity key was already stored; rerunning this command is safe and will regenerate it): {err}",
+                daemon.config_file_path().display()
+            )
+        })?;
 
     println!("Created user '{id}'.");
     println!("Config: {}", daemon.config_file_path().display());
@@ -169,7 +180,7 @@ async fn import_user(daemon: &Daemon, cmd: UserImportCommand) -> Result<(), BoxE
     ensure_user_id_available(&cfg, &id)?;
     let updated = add_user_to_config_text(&cfg_text, &id, &pubkey_text)?;
 
-    tokio::fs::write(daemon.config_file_path(), updated).await?;
+    write_daemon_config_atomically(&daemon.config_file_path(), updated.as_bytes()).await?;
 
     println!("Imported user '{id}'.");
     println!("Config: {}", daemon.config_file_path().display());
@@ -286,6 +297,9 @@ fn validate_new_user_id(raw: &str) -> Result<String, BoxError> {
     }
     if id == DEFAULT_USER_ID || id == OWNER_USER_ID {
         return Err(format!("'{id}' is reserved for the local owner").into());
+    }
+    if id == "daemon" {
+        return Err("'daemon' is reserved for the daemon identity".into());
     }
     if !id
         .chars()
@@ -514,8 +528,30 @@ channels: {}
     fn validate_user_id_rejects_reserved_and_path_like_ids() {
         assert!(validate_new_user_id("alice-1").is_ok());
         assert!(validate_new_user_id("owner").is_err());
+        assert!(validate_new_user_id("default").is_err());
+        assert!(validate_new_user_id("daemon").is_err());
         assert!(validate_new_user_id("../alice").is_err());
         assert!(validate_new_user_id("alice/team").is_err());
+    }
+
+    #[test]
+    fn export_never_resolves_reserved_ids_to_local_identity_keys() {
+        let (_dir, daemon) = temp_daemon();
+
+        // `user:daemon` / `user:owner` must be rejected instead of silently
+        // resolving to the real daemon/owner identity keys.
+        assert!(identity_key_ref_for_export(&daemon, "user:daemon").is_err());
+        assert!(identity_key_ref_for_export(&daemon, "user:owner").is_err());
+        assert!(identity_key_ref_for_export(&daemon, "user:default").is_err());
+
+        // Even a trusted-user ref constructed with a reserved id must never be
+        // classified as the daemon/owner key (no suffix collision).
+        let key_ref = IdentityKeyRef::trusted_user(&daemon.home, "daemon");
+        assert!(!key_ref.is_daemon());
+        assert!(!key_ref.is_owner());
+        let key_ref = IdentityKeyRef::trusted_user(&daemon.home, "owner");
+        assert!(!key_ref.is_daemon());
+        assert!(!key_ref.is_owner());
     }
 
     fn temp_daemon() -> (tempfile::TempDir, Daemon) {

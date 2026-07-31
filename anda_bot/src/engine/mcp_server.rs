@@ -30,7 +30,141 @@ use crate::{
     util::text::read_text_file,
 };
 
-use super::{backup_daemon_config, daemon_config_needs_backup, write_daemon_config_atomically};
+use super::{
+    approval_detail, backup_daemon_config, daemon_config_needs_backup, require_mcp_approval,
+    write_daemon_config_atomically,
+};
+
+const APPROVAL_REDACTED: &str = "[redacted]";
+
+fn approval_arg_name_is_sensitive(name: &str) -> bool {
+    let name = name
+        .trim_start_matches(['-', '/'])
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    matches!(name.as_str(), "h" | "header" | "headers" | "key")
+        || [
+            "token",
+            "secret",
+            "password",
+            "passwd",
+            "credential",
+            "api-key",
+            "apikey",
+            "private-key",
+            "authorization",
+            "bearer",
+        ]
+        .iter()
+        .any(|marker| name.contains(marker))
+        || name.ends_with("-key")
+}
+
+fn redact_url_for_approval(raw: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(raw) else {
+        return "[invalid URL omitted]".to_string();
+    };
+
+    let had_password = url.password().is_some();
+    if !url.username().is_empty() {
+        let _ = url.set_username("redacted");
+    }
+    if had_password {
+        let _ = url.set_password(Some("redacted"));
+    }
+
+    let query_keys: Vec<String> = url.query_pairs().map(|(key, _)| key.into_owned()).collect();
+    if !query_keys.is_empty() {
+        url.set_query(None);
+        let mut query = url.query_pairs_mut();
+        for key in query_keys {
+            query.append_pair(&key, APPROVAL_REDACTED);
+        }
+    }
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn redact_args_for_approval(args: &[String]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(args.len());
+    let mut redact_next = false;
+    for arg in args {
+        if redact_next {
+            redacted.push(APPROVAL_REDACTED.to_string());
+            redact_next = false;
+            continue;
+        }
+
+        if reqwest::Url::parse(arg).is_ok() {
+            redacted.push(redact_url_for_approval(arg));
+            continue;
+        }
+        if let Some((name, _value)) = arg.split_once('=')
+            && approval_arg_name_is_sensitive(name)
+        {
+            redacted.push(format!("{name}={APPROVAL_REDACTED}"));
+            continue;
+        }
+        if (arg.starts_with('-') || arg.starts_with('/')) && approval_arg_name_is_sensitive(arg) {
+            redacted.push(arg.clone());
+            redact_next = true;
+            continue;
+        }
+
+        let lower = arg.to_ascii_lowercase();
+        if lower.contains("authorization:") || lower.contains("bearer ") {
+            redacted.push(APPROVAL_REDACTED.to_string());
+        } else {
+            redacted.push(arg.clone());
+        }
+    }
+    redacted
+}
+
+/// Builds the user-facing approval card for `add_mcp_server`. Secrets (env
+/// values, bearer tokens, header values, credential-like argv, and URL
+/// credentials/query values) are never included.
+fn add_mcp_server_approval_card(server: &McpServerSettings, persist: bool) -> (String, Vec<Value>) {
+    let mut details = vec![approval_detail("Server id", &server.id, "text")];
+    let summary = match &server.transport {
+        McpTransportSettings::Stdio(stdio) => {
+            let safe_args = redact_args_for_approval(&stdio.args);
+            details.push(approval_detail("Command", &stdio.command, "text"));
+            if !safe_args.is_empty() {
+                details.push(approval_detail("Args", &safe_args, "list"));
+            }
+            if !stdio.env.is_empty() {
+                let env_keys: Vec<&String> = stdio.env.keys().collect();
+                details.push(approval_detail("Environment keys", env_keys, "list"));
+            }
+            if let Some(cwd) = &stdio.cwd {
+                details.push(approval_detail("Working directory", cwd, "text"));
+            }
+            format!(
+                "Run local MCP server: {} {}",
+                stdio.command,
+                safe_args.join(" ")
+            )
+            .trim_end()
+            .to_string()
+        }
+        McpTransportSettings::StreamableHttp(http) => {
+            let safe_url = redact_url_for_approval(&http.url);
+            details.push(approval_detail("URL", &safe_url, "text"));
+            let header_names: Vec<&String> = http.headers.keys().collect();
+            if !header_names.is_empty() {
+                details.push(approval_detail("Header names", header_names, "list"));
+            }
+            format!("Connect MCP server: {safe_url}")
+        }
+    };
+    details.push(approval_detail(
+        "Persist to mcp.json",
+        if persist { "yes" } else { "no" },
+        "text",
+    ));
+    (summary, details)
+}
 
 #[derive(Clone)]
 pub struct McpServerTool {
@@ -177,7 +311,7 @@ impl Tool<BaseCtx> for McpServerTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
@@ -190,6 +324,22 @@ impl Tool<BaseCtx> for McpServerTool {
         if enabled && self.provider.contains_server(&server.id) {
             return Err(format!("MCP server {} already exists", server.id).into());
         }
+
+        // Stdio servers spawn arbitrary local processes and HTTP servers open
+        // connections to arbitrary endpoints, so this always needs approval
+        // outside FullAccess mode.
+        let (summary, details) = add_mcp_server_approval_card(&server, persist);
+        require_mcp_approval(
+            &ctx,
+            Self::NAME,
+            summary,
+            details,
+            json!({
+                "server_id": &server.id,
+                "persist": persist,
+            }),
+        )
+        .await?;
 
         let server_id = server.id.clone();
         if enabled {
@@ -770,10 +920,28 @@ impl Tool<BaseCtx> for McpConnectTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let url = args.url.trim().to_string();
+        let safe_url = redact_url_for_approval(&url);
+        let mut details = vec![approval_detail("URL", &safe_url, "text")];
+        if let Some(id) = args.id.as_deref() {
+            details.push(approval_detail("Server id", id, "text"));
+        }
+        if !args.scopes.is_empty() {
+            details.push(approval_detail("OAuth scopes", &args.scopes, "list"));
+        }
+        require_mcp_approval(
+            &ctx,
+            Self::NAME,
+            format!("Connect MCP server: {safe_url}"),
+            details,
+            json!({ "url": &safe_url }),
+        )
+        .await?;
+
         let result = self.connect(args).await?;
         Ok(ToolOutput::new(Response::Ok {
             result,
@@ -925,7 +1093,50 @@ fn open_in_browser(url: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anda_core::StateFeatures;
     use anda_engine::extension::mcp::McpServerConfig;
+
+    /// A mock ctx whose ActionSession auto-approves every approval card, so
+    /// tool-level tests can exercise the behavior behind the approval gate.
+    fn auto_approving_ctx() -> BaseCtx {
+        use super::super::action::{ActionEvent, ActionResponseArgs, ActionRuntime, ActionSession};
+
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let caller = ctx.caller().to_text();
+        let runtime = Arc::new(ActionRuntime::new());
+        let (event_sender, mut event_rx) = tokio::sync::mpsc::channel(4);
+        let session = ActionSession::new(
+            runtime.clone(),
+            event_sender,
+            caller.clone(),
+            "session_test".to_string(),
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            Arc::new(anda_engine::model::Models::default()),
+            std::env::temp_dir(),
+        );
+        ctx.set_state(session);
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                if let ActionEvent::Add(message) = event
+                    && let Some(action_id) = super::super::action_id_from_message(&message)
+                {
+                    let _ = runtime
+                        .respond(
+                            &caller,
+                            0,
+                            ActionResponseArgs {
+                                action_id,
+                                approve: Some(true),
+                                choice_id: None,
+                                choice_text: None,
+                            },
+                        )
+                        .await;
+                }
+            }
+        });
+        ctx
+    }
 
     fn test_tool() -> McpServerTool {
         let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
@@ -960,6 +1171,54 @@ mod tests {
             "string"
         );
         assert_eq!(properties["enabled"]["type"], "boolean");
+    }
+
+    #[test]
+    fn mcp_approval_card_redacts_argv_and_url_credentials() {
+        let stdio = McpServerSettings {
+            id: "secret-server".to_string(),
+            transport: McpTransportSettings::Stdio(McpStdioSettings {
+                command: "mcp-server".to_string(),
+                args: vec![
+                    "--api-key".to_string(),
+                    "api-secret-value".to_string(),
+                    "--password=hunter2".to_string(),
+                    "https://alice:url-password-value@example.com/mcp?token=url-secret&mode=fast"
+                        .to_string(),
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (summary, details) = add_mcp_server_approval_card(&stdio, false);
+        let rendered = format!("{summary} {}", serde_json::to_string(&details).unwrap());
+        for secret in [
+            "api-secret-value",
+            "hunter2",
+            "alice",
+            "url-password-value",
+            "url-secret",
+            "fast",
+        ] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+        assert!(rendered.contains("redacted"));
+
+        let http = McpServerSettings {
+            id: "remote".to_string(),
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: "https://bob:http-password-value@example.com/mcp?access_token=top-secret"
+                    .to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (summary, details) = add_mcp_server_approval_card(&http, true);
+        let rendered = format!("{summary} {}", serde_json::to_string(&details).unwrap());
+        for secret in ["bob", "http-password-value", "top-secret"] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+        assert!(rendered.contains("redacted"));
     }
 
     #[test]
@@ -1168,6 +1427,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn call_requires_approval_outside_full_access() {
+        // A plain mock ctx runs in OnRisk mode with no ActionSession, so both
+        // MCP tools must fail closed instead of executing.
+        let err = Tool::call(
+            &test_tool(),
+            anda_engine::engine::EngineBuilder::new().mock_ctx().base,
+            AddMcpServerArgs {
+                id: "srv".to_string(),
+                r#type: Some(McpServerTransportType::Stdio),
+                command: Some("missing-command".to_string()),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+                cwd: None,
+                url: None,
+                bearer_token: None,
+                headers: BTreeMap::new(),
+                enabled: None,
+                include: Vec::new(),
+                exclude: Vec::new(),
+                persist: false,
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("approval"), "{err}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let connect_tool = McpConnectTool::new(
+            Arc::new(McpToolProvider::new(Vec::new()).unwrap()),
+            McpSettings::file_path(dir.path()),
+            Arc::new(Mutex::new(())),
+        );
+        let err = Tool::call(
+            &connect_tool,
+            anda_engine::engine::EngineBuilder::new().mock_ctx().base,
+            ConnectMcpServerArgs {
+                url: "http://127.0.0.1:9/mcp".to_string(),
+                id: None,
+                scopes: Vec::new(),
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("approval"), "{err}");
+    }
+
+    #[tokio::test]
     async fn call_persists_disabled_server_without_connecting() {
         let dir = tempfile::tempdir().unwrap();
         let tool = McpServerTool::new(
@@ -1180,7 +1488,7 @@ mod tests {
 
         let output = Tool::call(
             &tool,
-            anda_engine::engine::EngineBuilder::new().mock_ctx().base,
+            auto_approving_ctx(),
             AddMcpServerArgs {
                 id: "disabled".to_string(),
                 r#type: Some(McpServerTransportType::Stdio),

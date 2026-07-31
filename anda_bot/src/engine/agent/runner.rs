@@ -159,6 +159,15 @@ impl AndaBot {
                     }
                     Err(err) => {
                         log::error!("Error processing session {}: {:?}", session.id, err);
+                        // Best-effort fallback: if the error escaped before the
+                        // conversation reached a terminal state, persist it as
+                        // Failed so it does not stay `Working` in the DB after
+                        // the session is dropped from the in-memory table.
+                        if sess_runner.conversation.status == ConversationStatus::Working {
+                            sess_runner
+                                .mark_conversation_failed(format!("Session runner failed: {err}"))
+                                .await;
+                        }
                         break;
                     }
                 }
@@ -333,6 +342,16 @@ impl SessionRunner {
         self.persist_conversation_state().await;
     }
 
+    /// Marks the current conversation `Failed` with a reason and persists it,
+    /// so the session never stays `Working` in the DB after its runner exits.
+    async fn mark_conversation_failed(&mut self, reason: String) {
+        self.session.stop_background_tasks();
+        self.conversation.failed_reason = Some(reason);
+        self.conversation.status = ConversationStatus::Failed;
+        self.conversation.updated_at = unix_ms();
+        self.persist_conversation_state().await;
+    }
+
     async fn compact(
         &mut self,
         continuation_prompt: Option<String>,
@@ -348,11 +367,8 @@ impl SessionRunner {
         {
             Ok((runner, output)) => (runner, output),
             Err(err) => {
-                self.session.stop_background_tasks();
-                self.conversation.failed_reason = Some(format!("Compaction failed: {err}"));
-                self.conversation.status = ConversationStatus::Failed;
-                self.conversation.updated_at = unix_ms();
-                self.persist_conversation_state().await;
+                self.mark_conversation_failed(format!("Compaction failed: {err}"))
+                    .await;
                 return Ok(false);
             }
         };
@@ -374,21 +390,42 @@ impl SessionRunner {
             ..Default::default()
         };
 
-        let child_id = self
+        // DB errors here must not propagate to the outer runner loop: that
+        // would drop the session while the conversation stays `Working` in
+        // the DB with no failed_reason, making it unrecoverable for CLI/API
+        // sources. Fail the conversation explicitly instead, matching the
+        // handoff-failure branch above.
+        let child_id = match self
             .assistant
             .inner
             .conversations
             .conversations
             .add_conversation(ConversationRef::from(&child_conversation))
-            .await?;
+            .await
+        {
+            Ok(child_id) => child_id,
+            Err(err) => {
+                self.mark_conversation_failed(format!("Compaction failed: {err}"))
+                    .await;
+                return Ok(false);
+            }
+        };
         child_conversation._id = child_id;
 
         self.submit_pending_formation(&output.chat_history, now_ms)
             .await;
-        let artifacts = self
+        let artifacts = match self
             .assistant
             .persist_resources_for_message(&self.conversation.user, output.artifacts)
-            .await?;
+            .await
+        {
+            Ok(artifacts) => artifacts,
+            Err(err) => {
+                self.mark_conversation_failed(format!("Compaction failed: {err}"))
+                    .await;
+                return Ok(false);
+            }
+        };
 
         self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.status = ConversationStatus::Completed;

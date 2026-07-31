@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use super::catalog::MediaKind;
 use crate::util::file_uri::{is_file_uri, path_from_file_uri};
+use crate::util::http_client::PublicUrlPolicy;
 
 pub(super) const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 
@@ -14,15 +15,19 @@ pub(super) const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 pub(super) struct MediaSourceLoader {
     kind: MediaKind,
     workspaces: Vec<PathBuf>,
-    http: reqwest::Client,
+    public_url_policy: PublicUrlPolicy,
 }
 
 impl MediaSourceLoader {
-    pub(super) fn new(kind: MediaKind, workspaces: Vec<PathBuf>, http: reqwest::Client) -> Self {
+    pub(super) fn new(
+        kind: MediaKind,
+        workspaces: Vec<PathBuf>,
+        public_url_policy: PublicUrlPolicy,
+    ) -> Self {
         Self {
             kind,
             workspaces,
-            http,
+            public_url_policy,
         }
     }
 
@@ -87,7 +92,8 @@ impl MediaSourceLoader {
         &self,
         url: reqwest::Url,
     ) -> Result<ContentPart, BoxError> {
-        let response = self.http.get(url.clone()).send().await?;
+        let response =
+            crate::util::http_client::fetch_public_url(url.clone(), self.public_url_policy).await?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!("failed to fetch media URL {url}: {status}").into());
@@ -502,11 +508,8 @@ mod tests {
 
     #[test]
     fn content_from_resource_infers_inline_blob_mime_type() {
-        let loader = MediaSourceLoader::new(
-            MediaKind::Image,
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let loader =
+            MediaSourceLoader::new(MediaKind::Image, Vec::new(), PublicUrlPolicy::PublicOnly);
         let resource = Resource {
             name: "photo.bin".to_string(),
             blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
@@ -528,11 +531,8 @@ mod tests {
 
     #[test]
     fn content_from_resource_uses_file_uri_when_present() {
-        let loader = MediaSourceLoader::new(
-            MediaKind::Video,
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let loader =
+            MediaSourceLoader::new(MediaKind::Video, Vec::new(), PublicUrlPolicy::PublicOnly);
         let resource = Resource {
             name: "clip.mp4".to_string(),
             uri: Some("https://example.com/clip.mp4".to_string()),
@@ -558,11 +558,8 @@ mod tests {
 
     #[test]
     fn content_from_resource_rejects_mismatched_media_kind() {
-        let loader = MediaSourceLoader::new(
-            MediaKind::Image,
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let loader =
+            MediaSourceLoader::new(MediaKind::Image, Vec::new(), PublicUrlPolicy::PublicOnly);
         let resource = Resource {
             name: "speech.mp3".to_string(),
             mime_type: Some("audio/mpeg".to_string()),
@@ -587,7 +584,7 @@ mod tests {
         let loader = MediaSourceLoader::new(
             MediaKind::Image,
             vec![dir.path().to_path_buf()],
-            crate::util::http_client::new_reqwest_client(),
+            PublicUrlPolicy::PublicOnly,
         );
         let content = loader
             .content_from_path(&RequestMeta::default(), "images/cat.png")
@@ -609,10 +606,7 @@ mod tests {
         let loader = MediaSourceLoader::new(
             MediaKind::Image,
             Vec::new(),
-            reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .expect("test HTTP client should build"),
+            PublicUrlPolicy::AllowPrivateForTests,
         );
 
         let content = loader
@@ -635,11 +629,8 @@ mod tests {
             "data:image/png;base64,{}",
             BASE64_STANDARD.encode(PNG_SIGNATURE)
         );
-        let loader = MediaSourceLoader::new(
-            MediaKind::Image,
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let loader =
+            MediaSourceLoader::new(MediaKind::Image, Vec::new(), PublicUrlPolicy::PublicOnly);
 
         let content = loader
             .content_from_location(&RequestMeta::default(), &data_url)
@@ -657,11 +648,8 @@ mod tests {
 
     #[test]
     fn content_from_data_url_decodes_percent_encoded_payload() {
-        let loader = MediaSourceLoader::new(
-            MediaKind::Image,
-            Vec::new(),
-            crate::util::http_client::new_reqwest_client(),
-        );
+        let loader =
+            MediaSourceLoader::new(MediaKind::Image, Vec::new(), PublicUrlPolicy::PublicOnly);
         let content = loader
             .content_from_data_url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E")
             .expect("percent encoded SVG data URL should be accepted");

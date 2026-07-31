@@ -1213,7 +1213,17 @@ pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<Comma
         }
     }
 
-    let update = run_anda(ctx, &["update"])?;
+    // A spawn-level IO error (antivirus scan, stale path) must take the same
+    // recovery branch as a failed update run: on Windows the daemon is already
+    // stopped at this point, and `?` would return before the restart below,
+    // leaving it down for good.
+    let update = match run_anda(ctx, &["update"]) {
+        Ok(update) => update,
+        Err(err) => CommandResult {
+            success: false,
+            message: err.to_string(),
+        },
+    };
     if !update.success {
         #[cfg(windows)]
         {

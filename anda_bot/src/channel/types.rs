@@ -345,6 +345,12 @@ pub trait Channel: Send + Sync {
         false
     }
 
+    // NOTE: the typing/draft-streaming API below (start_typing through
+    // finalize_draft) is implemented and unit-tested for Discord/Telegram but
+    // not yet wired into the engine/gateway reply path — nothing calls it in
+    // production. It is kept as a staged feature; remove the #[allow(unused)]
+    // markers when the streaming delivery lands.
+
     /// Signal that the bot is processing a response (e.g. "typing" indicator).
     /// Implementations should repeat the indicator as needed for their platform.
     #[allow(unused)]

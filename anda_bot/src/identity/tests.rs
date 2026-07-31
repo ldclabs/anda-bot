@@ -130,7 +130,7 @@ async fn write_identity_key_store_falls_back_to_file_when_secure_store_unavailab
     let key_ref = IdentityKeyRef::trusted_user(dir.path(), "alice");
     let store = Arc::new(UnavailableIdentityKeyStore);
 
-    let location = write_identity_secret_with_store(&key_ref, &SECRET, store)
+    let location = write_identity_secret_with_store(&key_ref, &SECRET, false, store)
         .await
         .unwrap();
 

@@ -494,6 +494,10 @@ impl ChatSession {
         }
 
         let mut received = false;
+        // Same guard as fetch_conversation_chain: a malformed child chain
+        // (cycle, or absurd length) must not turn the hottest interactive
+        // path into an unbounded HTTP busy loop.
+        let mut visited: Vec<u64> = Vec::new();
         loop {
             self.last_poll = Instant::now();
             match self.fetch_conversation(conv_id).await {
@@ -501,10 +505,19 @@ impl ChatSession {
                     let child = conv.child;
                     self.apply_conversation_data(conv);
                     received = true;
+                    visited.push(conv_id);
 
                     if self.conv_id != child
                         && let Some(id) = child
                     {
+                        if visited.contains(&id) {
+                            log::warn!("Conversation child chain contains a cycle at {id}");
+                            return received;
+                        }
+                        if visited.len() >= 64 {
+                            log::warn!("Conversation child chain is too long starting at {id}");
+                            return received;
+                        }
                         self.conv_id = Some(id);
                         conv_id = id;
                         continue;

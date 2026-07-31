@@ -295,6 +295,13 @@ fn schedule_restart(current_exe: PathBuf, home_dir: PathBuf) {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // Own process group, same as the launcher restart script (9f4805c7):
+        // launchd kills the job's process group when the daemon exits, and the
+        // restart child must survive that to bring the new daemon up.
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         if let Err(err) = command.spawn() {
             log::error!("failed to spawn anda restart after update: {err}");
         }

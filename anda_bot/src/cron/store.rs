@@ -96,7 +96,7 @@ impl CronStore {
         cursor: Option<String>,
         limit: Option<usize>,
     ) -> Result<(Vec<CronJob>, Option<String>), BoxError> {
-        let limit = limit.unwrap_or(10).min(100);
+        let limit = limit.unwrap_or(10).clamp(1, 100);
         let cursor = match BTree::from_cursor::<u64>(&cursor)? {
             Some(cursor) => cursor,
             None => self.jobs.max_document_id() + 1,
@@ -113,7 +113,7 @@ impl CronStore {
             })
             .await?;
         let cursor = if rt.len() >= limit {
-            BTree::to_cursor(&rt.first().unwrap()._id)
+            rt.first().and_then(|first| BTree::to_cursor(&first._id))
         } else {
             None
         };
@@ -179,7 +179,7 @@ impl CronStore {
         limit: Option<usize>,
         job_id: Option<u64>,
     ) -> Result<(Vec<CronRun>, Option<String>), BoxError> {
-        let limit = limit.unwrap_or(10).min(100);
+        let limit = limit.unwrap_or(10).clamp(1, 100);
         let cursor = match BTree::from_cursor::<u64>(&cursor)? {
             Some(cursor) => cursor,
             None => self.runs.max_document_id() + 1,
@@ -211,7 +211,7 @@ impl CronStore {
             })
             .await?;
         let cursor = if rt.len() >= limit {
-            BTree::to_cursor(&rt.first().unwrap()._id)
+            rt.first().and_then(|first| BTree::to_cursor(&first._id))
         } else {
             None
         };
@@ -461,6 +461,21 @@ mod tests {
                 .collect::<HashSet<u64>>(),
             inserted_ids
         );
+    }
+
+    #[tokio::test]
+    async fn list_jobs_and_runs_survive_zero_limit() {
+        let (_dir, store) = test_store().await;
+        let job = insert_test_job(&store, "job-1").await;
+        let _run = store.job_start(job._id, unix_ms()).await.unwrap();
+        store.flush(unix_ms()).await.unwrap();
+
+        // limit=0 (e.g. an LLM passing {"limit":0} for "no limit") must not
+        // panic; it clamps to at least 1.
+        let (jobs, _cursor) = store.list_jobs(None, Some(0)).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        let (runs, _cursor) = store.list_runs(None, Some(0), Some(job._id)).await.unwrap();
+        assert_eq!(runs.len(), 1);
     }
 
     #[tokio::test]

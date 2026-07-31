@@ -3,8 +3,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityKind {
+    Daemon,
+    Owner,
+    Bundle,
+    TrustedUser,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdentityKeyRef {
+    kind: IdentityKind,
     account: String,
     home: PathBuf,
     legacy_path: PathBuf,
@@ -12,16 +21,27 @@ pub struct IdentityKeyRef {
 
 impl IdentityKeyRef {
     pub fn daemon(home: &Path) -> Self {
-        Self::new(home, "daemon", home.join("keys").join("anda_bot.key"))
+        Self::new(
+            home,
+            IdentityKind::Daemon,
+            "daemon",
+            home.join("keys").join("anda_bot.key"),
+        )
     }
 
     pub fn owner(home: &Path) -> Self {
-        Self::new(home, "owner", home.join("keys").join("user.key"))
+        Self::new(
+            home,
+            IdentityKind::Owner,
+            "owner",
+            home.join("keys").join("user.key"),
+        )
     }
 
     pub fn bundle(home: &Path) -> Self {
         Self::new(
             home,
+            IdentityKind::Bundle,
             "local-identities",
             home.join("keys").join("local-identities.bundle"),
         )
@@ -30,13 +50,15 @@ impl IdentityKeyRef {
     pub fn trusted_user(home: &Path, id: &str) -> Self {
         Self::new(
             home,
+            IdentityKind::TrustedUser,
             &format!("user:{id}"),
             home.join("keys").join("users").join(format!("{id}.key")),
         )
     }
 
-    fn new(home: &Path, name: &str, legacy_path: PathBuf) -> Self {
+    fn new(home: &Path, kind: IdentityKind, name: &str, legacy_path: PathBuf) -> Self {
         IdentityKeyRef {
+            kind,
             home: home.to_path_buf(),
             account: format!("v1:{}:{name}", identity_home_namespace(home)),
             legacy_path,
@@ -44,11 +66,11 @@ impl IdentityKeyRef {
     }
 
     pub fn is_daemon(&self) -> bool {
-        self.account.ends_with(":daemon")
+        self.kind == IdentityKind::Daemon
     }
 
     pub fn is_owner(&self) -> bool {
-        self.account.ends_with(":owner")
+        self.kind == IdentityKind::Owner
     }
 
     pub fn account(&self) -> &str {

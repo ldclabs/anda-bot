@@ -27,6 +27,7 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, handshake::derive_accept_key, protocol::Role},
 };
+use tokio_util::sync::CancellationToken;
 
 use super::{
     RuntimeModels,
@@ -203,8 +204,24 @@ async fn handle_browser_websocket(
         }
     });
 
+    // Cancels in-flight request tasks (agent runs, tool calls, ...) when the
+    // connection goes away, so orphans do not keep running side effects that a
+    // reconnecting client will retry.
+    let request_tasks = CancellationToken::new();
+
     while let Some(message) = socket_reader.next().await {
-        match message? {
+        let message = match message {
+            Ok(message) => message,
+            Err(err) => {
+                // Read errors are common in practice (extension service worker
+                // killed, network drop). Fall through to the cleanup below
+                // instead of returning early and leaking the connection state
+                // plus writer/forwarder tasks.
+                log::warn!("Chrome browser WebSocket read error: {err}");
+                break;
+            }
+        };
+        match message {
             Message::Text(text) => {
                 handle_browser_ws_text(
                     text.as_ref(),
@@ -213,6 +230,7 @@ async fn handle_browser_websocket(
                     engine_id,
                     &connection,
                     &write_sender,
+                    &request_tasks,
                 )
                 .await;
             }
@@ -225,6 +243,7 @@ async fn handle_browser_websocket(
                         engine_id,
                         &connection,
                         &write_sender,
+                        &request_tasks,
                     )
                     .await;
                 }
@@ -237,6 +256,7 @@ async fn handle_browser_websocket(
     state.bridge.disconnect_ws_connection(connection_id);
     action_forwarder.abort();
     writer.abort();
+    request_tasks.cancel();
     Ok(())
 }
 
@@ -247,6 +267,7 @@ async fn handle_browser_ws_text(
     engine_id: Principal,
     connection: &BrowserWsConnection,
     write_sender: &mpsc::Sender<String>,
+    request_tasks: &CancellationToken,
 ) {
     let incoming = match serde_json::from_str::<BrowserWsIncoming>(text) {
         Ok(incoming) => incoming,
@@ -260,19 +281,24 @@ async fn handle_browser_ws_text(
         // Handle requests on their own task: agent runs, folder pickers, and
         // auto-update checks can take seconds to minutes, and the read loop
         // must keep draining pings and browser-action responses meanwhile.
+        // The task dies with the connection: its results would go to a dead
+        // sender anyway, and a reconnecting client retries the request.
         let state = state.clone();
         let connection = connection.clone();
         let write_sender = write_sender.clone();
+        let cancel = request_tasks.child_token();
         tokio::spawn(async move {
-            handle_browser_ws_request(
-                incoming,
-                &state,
-                caller,
-                engine_id,
-                &connection,
-                &write_sender,
-            )
-            .await;
+            tokio::select! {
+                _ = cancel.cancelled() => {}
+                _ = handle_browser_ws_request(
+                    incoming,
+                    &state,
+                    caller,
+                    engine_id,
+                    &connection,
+                    &write_sender,
+                ) => {}
+            }
         });
     } else {
         handle_browser_ws_response(incoming, state).await;
@@ -1393,6 +1419,7 @@ mod tests {
 
         // handle_browser_ws_text parses raw frames and routes method calls,
         // responses, and rejects malformed input.
+        let request_tasks = CancellationToken::new();
         handle_browser_ws_text(
             "{\"id\":2,\"method\":\"ping\"}",
             &state,
@@ -1400,6 +1427,7 @@ mod tests {
             engine_id,
             &connection,
             &write_tx,
+            &request_tasks,
         )
         .await;
         handle_browser_ws_text(
@@ -1409,6 +1437,7 @@ mod tests {
             engine_id,
             &connection,
             &write_tx,
+            &request_tasks,
         )
         .await;
         handle_browser_ws_text(
@@ -1418,6 +1447,7 @@ mod tests {
             engine_id,
             &connection,
             &write_tx,
+            &request_tasks,
         )
         .await;
     }

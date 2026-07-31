@@ -208,6 +208,7 @@ dependencies = [
  "unicode-width",
  "weixin-agent",
  "windows-sys 0.61.2",
+ "zeroize",
  "zip 8.6.0",
 ]
 

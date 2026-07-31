@@ -432,15 +432,21 @@ impl Tool<BaseCtx> for ConversationsTool {
                 }))
             }
             ConversationsToolArgs::GetConversation { _id } => {
-                let _id = if _id == 0 {
-                    self.conversations
+                // `_id == 0` means "the caller's latest conversation" — the
+                // globally latest document may belong to another manager and
+                // would make this stably fail with "permission denied".
+                let conversation = if _id == 0 {
+                    let (conversations, _) = self
                         .conversations
-                        .latest_document_id()
-                        .unwrap_or_default()
+                        .list_conversations_by_user(ctx.caller(), None, Some(1))
+                        .await?;
+                    conversations
+                        .into_iter()
+                        .next()
+                        .ok_or("no conversations found")?
                 } else {
-                    _id
+                    self.conversations.get_conversation(_id).await?
                 };
-                let conversation = self.conversations.get_conversation(_id).await?;
                 if &conversation.user != ctx.caller() {
                     return Err("permission denied".into());
                 }

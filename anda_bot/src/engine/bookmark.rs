@@ -115,6 +115,11 @@ type BookmarkFoldersByUser = BTreeMap<String, BookmarkFolders>;
 pub struct BookmarkStore {
     bookmarks: Arc<Collection>,
     extension_save_lock: Arc<tokio::sync::Mutex<()>>,
+    // Serializes the find→modify→update sequences on bookmark rows: the
+    // engine runs tool calls of one turn concurrently, and two interleaved
+    // read-modify-writes of the same `(user, conversation)` row would let the
+    // later writer silently overwrite the earlier one's messages/folders.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl BookmarkStore {
@@ -138,6 +143,7 @@ impl BookmarkStore {
         Ok(Self {
             bookmarks,
             extension_save_lock: Arc::new(tokio::sync::Mutex::new(())),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -169,6 +175,7 @@ impl BookmarkStore {
         message: MessageInfo,
         folder_ids: Vec<u64>,
     ) -> Result<Bookmark, BoxError> {
+        let _guard = self.write_lock.lock().await;
         if let Some(mut existing) = self.find(&user, conversation).await? {
             let mut changed = false;
             if !existing
@@ -226,6 +233,7 @@ impl BookmarkStore {
         user: &str,
         message_ref: MessageRef,
     ) -> Result<(bool, Option<Bookmark>), BoxError> {
+        let _guard = self.write_lock.lock().await;
         let Some(mut found) = self.find(user, message_ref.conversation).await? else {
             return Ok((false, None));
         };
@@ -489,6 +497,7 @@ impl BookmarkStore {
         message_ref: MessageRef,
         folder_ids: Vec<u64>,
     ) -> Result<Bookmark, BoxError> {
+        let _guard = self.write_lock.lock().await;
         let folders = self.folders(user)?;
         let folder_ids = validate_folder_ids(&folders, folder_ids)?;
         let mut bookmark = self
@@ -515,6 +524,7 @@ impl BookmarkStore {
         message_ref: MessageRef,
         folder_id: u64,
     ) -> Result<Bookmark, BoxError> {
+        let _guard = self.write_lock.lock().await;
         let folders = self.folders(user)?;
         validate_folder_ids(&folders, vec![folder_id])?;
         let mut bookmark = self
@@ -542,6 +552,7 @@ impl BookmarkStore {
         message_ref: MessageRef,
         folder_id: u64,
     ) -> Result<Bookmark, BoxError> {
+        let _guard = self.write_lock.lock().await;
         let folders = self.folders(user)?;
         validate_folder_ids(&folders, vec![folder_id])?;
         let mut bookmark = self
@@ -590,6 +601,7 @@ impl BookmarkStore {
         user: &str,
         folder_ids: &BTreeSet<u64>,
     ) -> Result<(), BoxError> {
+        let _guard = self.write_lock.lock().await;
         let mut cursor = self.bookmarks.max_document_id() + 1;
         loop {
             let rt: Vec<Bookmark> = self
@@ -1461,6 +1473,37 @@ mod tests {
         let second = add_sample(&store, "alice", "m-1-1").await;
         assert_eq!(second._id, first._id, "same conversation stays one row");
         assert_eq!(message_indexes(&second), vec![0, 1]);
+    }
+
+    #[tokio::test]
+    async fn concurrent_adds_to_same_conversation_keep_every_message() {
+        let store = test_store().await;
+
+        // The engine runs tool calls of one turn concurrently; interleaved
+        // read-modify-writes must not overwrite each other's marks.
+        let adds = (0..8).map(|index| {
+            let store = store.clone();
+            async move {
+                store
+                    .add(
+                        "alice".to_string(),
+                        1,
+                        "cli".to_string(),
+                        MessageInfo {
+                            index,
+                            role: "assistant".to_string(),
+                            text: format!("message {index}"),
+                        },
+                        vec![],
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        futures::future::join_all(adds).await;
+
+        let found = store.find("alice", 1).await.unwrap().unwrap();
+        assert_eq!(message_indexes(&found), (0..8).collect::<Vec<_>>());
     }
 
     #[tokio::test]

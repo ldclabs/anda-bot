@@ -39,9 +39,13 @@ const CHANNEL_SEND_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 const CHANNEL_SEND_RETRY_MAX_ATTEMPTS: u32 = 6;
 // Inbound messages are sharded by route onto this many workers so one slow
 // agent_run (e.g. session creation hitting the brain) cannot stall every
-// channel, while messages for the same chat stay ordered.
+// channel, while messages for the same chat stay ordered. The dispatcher
+// never blocks on a full worker queue (that would stall the shared inbound
+// queue and with it every channel's listen loop and heartbeats); instead the
+// message for the overloaded shard is dropped with a loud error. The queue is
+// sized so that only takes effect when a shard is pathologically stuck.
 const INBOUND_WORKER_COUNT: usize = 4;
-const INBOUND_WORKER_QUEUE_SIZE: usize = 16;
+const INBOUND_WORKER_QUEUE_SIZE: usize = 256;
 // Long-delay retries for agent replies whose immediate send retries were
 // exhausted, covering channel outages of a few minutes.
 const REPLY_RETRY_DELAYS: [Duration; 3] = [
@@ -417,8 +421,20 @@ impl ChannelRuntime {
                     },
                 } {
                     let index = inbound_worker_index(&message, worker_txs.len());
-                    if worker_txs[index].send(message).await.is_err() {
-                        log::error!(name = "channel"; "channel inbound worker {index} stopped; dropping message");
+                    match worker_txs[index].try_send(message) {
+                        Ok(()) => {}
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(message)) => {
+                            log::error!(
+                                name = "channel";
+                                "channel inbound worker {index} overloaded ({} queued); dropping message from channel {} target {}",
+                                INBOUND_WORKER_QUEUE_SIZE,
+                                message.channel,
+                                message.reply_target,
+                            );
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                            log::error!(name = "channel"; "channel inbound worker {index} stopped; dropping message");
+                        }
                     }
                 }
 

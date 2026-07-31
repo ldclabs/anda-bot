@@ -63,7 +63,8 @@ use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websoc
 pub(crate) use action::{
     ActionEvent, ActionRuntime, ActionSession, ActionsTool, AskUserChoiceTool,
     action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
-    apply_action_resolution_to_message, is_action_message, is_action_message_value,
+    apply_action_resolution_to_message, approval_detail, is_action_message,
+    is_action_message_value, require_mcp_approval,
 };
 pub use agent::{
     AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,
@@ -477,22 +478,14 @@ impl Engines {
             transcription_manager.clone(),
             active_im_channels,
         ));
-        let image_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::image(cfg.workspaces.clone())
-                .with_http_client(outer_http_client.clone()),
-        );
-        let audio_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::audio(cfg.workspaces.clone())
-                .with_http_client(outer_http_client.clone()),
-        );
-        let video_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::video(cfg.workspaces.clone())
-                .with_http_client(outer_http_client.clone()),
-        );
-        let other_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::other(cfg.workspaces.clone())
-                .with_http_client(outer_http_client.clone()),
-        );
+        let image_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::image(cfg.workspaces.clone()));
+        let audio_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::audio(cfg.workspaces.clone()));
+        let video_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::video(cfg.workspaces.clone()));
+        let other_understanding_agent =
+            Arc::new(MediaUnderstandingAgent::other(cfg.workspaces.clone()));
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager
                 .as_ref()
@@ -859,7 +852,10 @@ async fn reload_daemon_models(
 // Write via a temp file in the same directory plus fsync and rename, so a
 // crash mid-write cannot leave a truncated config that blocks the next
 // daemon start.
-async fn write_daemon_config_atomically(path: &Path, content: &[u8]) -> Result<(), BoxError> {
+pub(crate) async fn write_daemon_config_atomically(
+    path: &Path,
+    content: &[u8],
+) -> Result<(), BoxError> {
     use tokio::io::AsyncWriteExt;
 
     let file_name = path

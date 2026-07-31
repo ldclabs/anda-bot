@@ -1,7 +1,7 @@
 use anda_core::BoxError;
 use serde_json::json;
 
-use super::TtsProvider;
+use super::{TTS_HTTP_TIMEOUT, TtsProvider};
 use crate::config;
 
 /// OpenAI TTS provider (`POST /v1/audio/speech`).
@@ -49,6 +49,7 @@ impl TtsProvider for OpenAiTtsProvider {
             .post("https://api.openai.com/v1/audio/speech")
             .bearer_auth(&self.api_key)
             .json(&body)
+            .timeout(TTS_HTTP_TIMEOUT)
             .send()
             .await
             .map_err(|_| "Failed to send OpenAI TTS request")?;

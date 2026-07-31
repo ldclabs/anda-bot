@@ -197,6 +197,7 @@ impl WechatChannel {
     }
 
     async fn save_context_tokens(&self, tokens: &HashMap<String, String>) {
+        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
         save_context_tokens_to_workspace(&self.workspace, tokens).await;
     }
 
@@ -863,6 +864,10 @@ async fn load_context_token_for_send(
     Some(token)
 }
 
+// Serializes read-modify-write cycles on the context token files, so
+// concurrent updates cannot overwrite each other's entries.
+static CONTEXT_TOKENS_FILE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn remove_context_token_from_workspace(
     workspace: &Arc<ChannelWorkspace>,
     user_id: &str,
@@ -873,6 +878,7 @@ async fn remove_context_token_from_workspace(
         return;
     }
 
+    let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
     let mut tokens = load_context_tokens_from_workspace(workspace).await;
     let should_remove = expected_token.is_none_or(|expected| {
         tokens
@@ -905,6 +911,7 @@ async fn save_context_token_to_workspace(
         return;
     }
 
+    let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
     let mut tokens = load_context_tokens_from_workspace(workspace).await;
     if tokens.get(user_id).is_none_or(|current| current != token) {
         tokens.insert(user_id.to_string(), token.to_string());
@@ -928,40 +935,15 @@ fn is_wechat_context_token_error(error: &str) -> bool {
 }
 
 fn split_message_for_wechat(message: &str) -> Vec<String> {
-    if message.chars().count() <= WECHAT_MAX_MESSAGE_LENGTH {
-        return vec![message.to_string()];
-    }
-
-    let mut chunks = Vec::new();
-    let mut remaining = message;
-    let chunk_limit = WECHAT_MAX_MESSAGE_LENGTH - WECHAT_CONTINUATION_OVERHEAD;
-
-    while !remaining.is_empty() {
-        if remaining.chars().count() <= WECHAT_MAX_MESSAGE_LENGTH {
-            chunks.push(remaining.to_string());
-            break;
-        }
-
-        let hard_split = remaining
-            .char_indices()
-            .nth(chunk_limit)
-            .map_or(remaining.len(), |(idx, _)| idx);
-        let chunk_end = if hard_split == remaining.len() {
-            hard_split
-        } else {
-            let search_area = &remaining[..hard_split];
-            search_area
-                .rfind('\n')
-                .filter(|pos| *pos > 0)
-                .or_else(|| search_area.rfind(' ').filter(|pos| *pos > 0))
-                .unwrap_or(hard_split)
-        };
-
-        chunks.push(remaining[..chunk_end].trim_end().to_string());
-        remaining = remaining[chunk_end..].trim_start();
-    }
-
-    chunks
+    // The shared splitter keeps every chunk of a split message (including the
+    // tail) within the reduced limit, so the "(continued)" / "(continues...)"
+    // markers added in send_text_chunks never push a chunk past the WeChat
+    // message length cap.
+    super::split_message_on_word_boundaries(
+        message,
+        WECHAT_MAX_MESSAGE_LENGTH,
+        WECHAT_MAX_MESSAGE_LENGTH - WECHAT_CONTINUATION_OVERHEAD,
+    )
 }
 
 fn is_identity_allowed(allowed_users: &[String], identity: &str) -> bool {
@@ -1040,6 +1022,38 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert!(chunks[0].chars().count() <= WECHAT_MAX_MESSAGE_LENGTH);
         assert!(chunks[1].chars().count() <= WECHAT_MAX_MESSAGE_LENGTH);
+    }
+
+    #[test]
+    fn split_message_for_wechat_keeps_every_chunk_within_marker_budget() {
+        // Every chunk of a split message (including the tail) must leave room
+        // for the "(continued)\n\n" / "\n\n(continues...)" markers, or the send
+        // fails permanently and the user never receives the reply.
+        let chunk_limit = WECHAT_MAX_MESSAGE_LENGTH - WECHAT_CONTINUATION_OVERHEAD;
+        for length in [
+            WECHAT_MAX_MESSAGE_LENGTH + 1,
+            2 * WECHAT_MAX_MESSAGE_LENGTH,
+            2 * WECHAT_MAX_MESSAGE_LENGTH + 7,
+        ] {
+            let text = "a".repeat(length);
+            let chunks = split_message_for_wechat(&text);
+            assert!(chunks.len() > 1, "{length}");
+            for chunk in &chunks {
+                assert!(
+                    chunk.chars().count() <= chunk_limit,
+                    "chunk of {length}-char message exceeds marker budget: {}",
+                    chunk.chars().count()
+                );
+            }
+            assert_eq!(
+                chunks
+                    .iter()
+                    .map(|chunk| chunk.chars().count())
+                    .sum::<usize>(),
+                length,
+                "no characters lost"
+            );
+        }
     }
 
     #[test]

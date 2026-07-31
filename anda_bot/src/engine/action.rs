@@ -282,6 +282,87 @@ impl ActionSession {
             "created_at": now_ms,
             "expires_at": now_ms + ACTION_RESPONSE_TIMEOUT.as_millis() as u64,
         });
+        let approved_payload = json!({
+            "tool": ShellTool::NAME,
+            "command": &args.command,
+        });
+        self.publish_approval_and_wait(
+            action_id,
+            conversation,
+            approved_payload,
+            payload,
+            "shell command",
+        )
+        .await
+        .map(|()| args)
+    }
+
+    /// Requests user approval before an MCP server is added or connected.
+    /// Unlike shell commands there is no risk classification: outside
+    /// FullAccess mode these tools always require explicit confirmation,
+    /// because they spawn local processes or open connections to arbitrary
+    /// endpoints.
+    pub(crate) async fn request_mcp_approval(
+        &self,
+        ctx: &BaseCtx,
+        tool_name: &str,
+        summary: String,
+        details: Vec<Value>,
+        metadata: Value,
+    ) -> Result<(), BoxError> {
+        if ApprovalMode::from_ctx(ctx) == ApprovalMode::FullAccess {
+            return Ok(());
+        }
+        let conversation = self
+            .conversation_id
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let now_ms = unix_ms();
+        let action_id = next_action_id();
+        let payload = json!({
+            "id": action_id,
+            "kind": "tool_approval",
+            "tool": {
+                "name": tool_name,
+                "label": "MCP server"
+            },
+            "agent": &ctx.agent,
+            "conversation": conversation,
+            "session": self.session_id,
+            "title": "Approve MCP server connection",
+            "message": "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
+            "summary": &summary,
+            "details": details,
+            "approval": {
+                "approve_label": "Approve",
+                "deny_label": "Deny"
+            },
+            "metadata": metadata,
+            "status": ActionStatus::Pending.as_str(),
+            "created_at": now_ms,
+            "expires_at": now_ms + ACTION_RESPONSE_TIMEOUT.as_millis() as u64,
+        });
+        let approved_payload = json!({
+            "tool": tool_name,
+            "summary": summary,
+        });
+        self.publish_approval_and_wait(
+            action_id,
+            conversation,
+            approved_payload,
+            payload,
+            "MCP server",
+        )
+        .await
+    }
+
+    async fn publish_approval_and_wait(
+        &self,
+        action_id: String,
+        conversation: u64,
+        approved_payload: Value,
+        payload: Value,
+        what: &str,
+    ) -> Result<(), BoxError> {
         let message = action_message(TOOL_APPROVAL_ACTION, payload);
         let rx = self
             .runtime
@@ -289,12 +370,7 @@ impl ActionSession {
                 action_id: action_id.clone(),
                 caller: self.caller.clone(),
                 conversation,
-                kind: PendingActionKind::Approval {
-                    approved_payload: json!({
-                        "tool": ShellTool::NAME,
-                        "command": &args.command,
-                    }),
-                },
+                kind: PendingActionKind::Approval { approved_payload },
                 event_sender: self.event_sender.clone(),
                 tx: oneshot::channel().0,
             })
@@ -306,13 +382,13 @@ impl ActionSession {
             .is_err()
         {
             self.runtime.expire(&action_id).await;
-            return Err("failed to publish shell approval request".into());
+            return Err(format!("failed to publish {what} approval request").into());
         }
 
         match tokio::time::timeout(ACTION_RESPONSE_TIMEOUT, rx).await {
-            Ok(Ok(response)) if response.status == ActionStatus::Approved => Ok(args),
+            Ok(Ok(response)) if response.status == ActionStatus::Approved => Ok(()),
             Ok(Ok(response)) => Err(action_denied_error(&response.payload)),
-            Ok(Err(_)) => Err("shell command approval was cancelled".into()),
+            Ok(Err(_)) => Err(format!("{what} approval was cancelled").into()),
             Err(_) => {
                 if let Some(pending) = self.runtime.expire(&action_id).await {
                     let response = json!({"reason": "approval timed out"});
@@ -326,7 +402,7 @@ impl ActionSession {
                         })
                         .await;
                 }
-                Err("shell command approval timed out".into())
+                Err(format!("{what} approval timed out").into())
             }
         }
     }
@@ -1128,18 +1204,205 @@ fn git_approval_decision(command: &str) -> ApprovalDecision {
 
 fn is_read_only_program(program: &str, command: &str) -> bool {
     match program {
-        "pwd" | "ls" | "find" | "fd" | "rg" | "grep" | "cat" | "head" | "tail" | "wc" | "du"
-        | "df" | "ps" | "which" | "type" | "uname" | "date" | "whoami" | "dir" | "findstr"
-        | "where" | "hostname" | "ver" | "tasklist" | "systeminfo" | "get-childitem" | "gci"
-        | "get-content" | "gc" | "select-string" | "get-location" | "gl" | "get-command"
-        | "get-process" | "gps" | "get-service" | "get-item" | "gi" | "get-itemproperty" | "gp"
-        | "measure-object" => true,
-        "sed" => !shell_tokens(command)
-            .iter()
-            .any(|token| token.starts_with("-i")),
-        "awk" => true,
+        "pwd" | "ls" | "grep" | "cat" | "head" | "tail" | "wc" | "du" | "df" | "ps" | "which"
+        | "type" | "uname" | "date" | "whoami" | "dir" | "findstr" | "where" | "hostname"
+        | "ver" | "tasklist" | "systeminfo" | "get-childitem" | "gci" | "get-content" | "gc"
+        | "select-string" | "get-location" | "gl" | "get-command" | "get-process" | "gps"
+        | "get-service" | "get-item" | "gi" | "get-itemproperty" | "gp" | "measure-object" => true,
+        "find" => !find_has_side_effect_args(command),
+        "fd" => !fd_has_side_effect_args(command),
+        "rg" => !rg_has_side_effect_args(command),
+        "sed" => sed_invocation_is_read_only(command),
+        "awk" => awk_invocation_is_read_only(command),
         _ => false,
     }
+}
+
+fn find_has_side_effect_args(command: &str) -> bool {
+    shell_tokens(command).iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "-exec" | "-execdir" | "-ok" | "-okdir" | "-delete" | "-fls"
+        ) || token.starts_with("-fprint")
+    })
+}
+
+fn fd_has_side_effect_args(command: &str) -> bool {
+    shell_tokens(command).iter().any(|token| {
+        let attached_short_exec = token.strip_prefix('-').is_some_and(|short_options| {
+            !short_options.starts_with('-')
+                && short_options
+                    .chars()
+                    .any(|option| matches!(option, 'x' | 'X'))
+        });
+        attached_short_exec
+            || matches!(token.as_str(), "--exec" | "--exec-batch")
+            || token.starts_with("--exec=")
+            || token.starts_with("--exec-batch=")
+    })
+}
+
+fn rg_has_side_effect_args(command: &str) -> bool {
+    shell_tokens(command)
+        .iter()
+        .any(|token| token == "--pre" || token.starts_with("--pre="))
+}
+
+fn awk_invocation_is_read_only(command: &str) -> bool {
+    // Options that load code from files or edit in place make the program
+    // uninspectable here; those must go through approval.
+    if shell_tokens(command).iter().skip(1).any(|token| {
+        token.starts_with("-f")
+            || token.starts_with("--file")
+            || token.starts_with("-i")
+            || token.starts_with("--include")
+            || token.starts_with("-l")
+            || token.starts_with("--load")
+            || token.starts_with("-E")
+            || token.starts_with("--exec")
+    }) {
+        return false;
+    }
+    // `system()` escapes to a shell; `@load`/`@include` pull in external code.
+    let compact: String = command
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    !(compact.contains("system(") || compact.contains("@load") || compact.contains("@include"))
+}
+
+fn sed_invocation_is_read_only(command: &str) -> bool {
+    let tokens = shell_tokens(command);
+    let mut scripts: Vec<String> = Vec::new();
+    let mut saw_script_operand = false;
+    let mut expect_expression = false;
+    let mut expect_option_value = false;
+    for token in tokens.iter().skip(1) {
+        if expect_expression {
+            scripts.push(token.clone());
+            expect_expression = false;
+            continue;
+        }
+        if expect_option_value {
+            expect_option_value = false;
+            continue;
+        }
+        if let Some(expr) = token.strip_prefix("--expression=") {
+            scripts.push(expr.to_string());
+            continue;
+        }
+        if token == "-e" || token == "--expression" {
+            expect_expression = true;
+            continue;
+        }
+        // In-place editing and script-from-file cannot be verified read-only.
+        if token.starts_with("-i")
+            || token.starts_with("--in-place")
+            || token.starts_with("-f")
+            || token.starts_with("--file")
+        {
+            return false;
+        }
+        if token.starts_with('-') && token.len() > 1 {
+            if token == "-l" {
+                expect_option_value = true;
+            }
+            continue;
+        }
+        if !saw_script_operand && scripts.is_empty() {
+            scripts.push(token.clone());
+            saw_script_operand = true;
+        }
+        // Remaining operands are input files, which are only read.
+    }
+    !scripts.is_empty() && scripts.iter().all(|script| sed_script_is_safe(script))
+}
+
+/// Whether a single sed script consists only of commands that cannot execute
+/// programs (`e`, `s///e`) or write files (`w`, `W`, `s///w`).
+fn sed_script_is_safe(script: &str) -> bool {
+    let rest = sed_skip_addresses(script.trim());
+    let mut chars = rest.chars();
+    let Some(cmd) = chars.next() else {
+        return false;
+    };
+    let tail = chars.as_str().trim();
+    match cmd {
+        'p' | 'P' | 'd' | 'D' | '=' | 'n' | 'N' | 'h' | 'H' | 'g' | 'G' | 'x' | 'z' | 'F' => {
+            tail.is_empty()
+        }
+        'q' | 'Q' | 'l' => tail.chars().all(|ch| ch.is_ascii_digit()),
+        's' | 'y' => sed_substitution_is_safe(rest),
+        _ => false,
+    }
+}
+
+fn sed_skip_addresses(script: &str) -> &str {
+    let mut rest = script.trim_start();
+    loop {
+        rest = rest.trim_start();
+        if let Some(stripped) = rest.strip_prefix(|ch: char| {
+            ch.is_ascii_digit() || matches!(ch, '$' | ',' | '~' | '+' | '!')
+        }) {
+            rest = stripped;
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix('/') {
+            let Some(end) = find_unescaped(after, '/') else {
+                return rest;
+            };
+            rest = &after[end + 1..];
+            continue;
+        }
+        return rest;
+    }
+}
+
+fn sed_substitution_is_safe(rest: &str) -> bool {
+    let mut chars = rest.chars();
+    let Some(cmd) = chars.next() else {
+        return false;
+    };
+    let Some(delim) = chars.next() else {
+        return false;
+    };
+    if delim.is_ascii_alphanumeric() || delim == '\\' {
+        return false;
+    }
+    let after = chars.as_str();
+    let Some(second) = find_unescaped(after, delim) else {
+        return false;
+    };
+    let after = &after[second + delim.len_utf8()..];
+    let Some(third) = find_unescaped(after, delim) else {
+        return false;
+    };
+    let flags = after[third + delim.len_utf8()..].trim();
+    if cmd == 'y' {
+        return flags.is_empty();
+    }
+    flags
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || matches!(ch, 'g' | 'i' | 'I' | 'm' | 'M' | 'p'))
+}
+
+fn find_unescaped(text: &str, needle: char) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == needle {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 #[derive(Clone, Debug)]
@@ -1443,12 +1706,37 @@ fn action_message(name: &str, payload: Value) -> Message {
     }
 }
 
-fn approval_detail(label: &str, value: impl Serialize, format: &str) -> Value {
+pub(crate) fn approval_detail(label: &str, value: impl Serialize, format: &str) -> Value {
     json!({
         "label": label,
         "value": value,
         "format": format,
     })
+}
+
+/// Fail-closed approval gate for the MCP server tools: outside FullAccess mode
+/// the user must confirm, and when no [`ActionSession`] is available in the
+/// context (so no approval card can be shown) the call is rejected.
+pub(crate) async fn require_mcp_approval(
+    ctx: &BaseCtx,
+    tool_name: &str,
+    summary: String,
+    details: Vec<Value>,
+    metadata: Value,
+) -> Result<(), BoxError> {
+    if ApprovalMode::from_ctx(ctx) == ApprovalMode::FullAccess {
+        return Ok(());
+    }
+    let Some(session) = ctx.get_state::<ActionSession>() else {
+        return Err(
+            "adding or connecting an MCP server requires user approval, \
+             which is not available in this context"
+                .into(),
+        );
+    };
+    session
+        .request_mcp_approval(ctx, tool_name, summary, details, metadata)
+        .await
 }
 
 fn validate_choice_args(args: &UserChoiceArgs) -> Result<(), BoxError> {
@@ -1743,6 +2031,77 @@ mod tests {
             request.await.unwrap().unwrap().command,
             "rm -rf target".to_string()
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_approval_gate_fails_closed_and_requires_confirmation() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+
+        // Without an ActionSession in the context (and outside FullAccess
+        // mode), the gate must fail closed instead of letting the tool run.
+        let err = require_mcp_approval(
+            &ctx,
+            "add_mcp_server",
+            "Run local MCP server: npx server".to_string(),
+            vec![],
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("approval"));
+
+        // With a session, an approval card is published; a deny resolves to an
+        // error and the tool must not proceed.
+        let caller = ctx.caller().to_text();
+        let conversation_id = Arc::new(std::sync::atomic::AtomicU64::new(7));
+        let runtime = Arc::new(ActionRuntime::new());
+        let (event_sender, mut event_rx) = mpsc::channel(4);
+        let session = ActionSession::new(
+            runtime.clone(),
+            event_sender,
+            caller.clone(),
+            "session_1".to_string(),
+            conversation_id,
+            Arc::new(Models::default()),
+            std::env::temp_dir(),
+        );
+        ctx.set_state(session);
+
+        let ctx2 = ctx.clone();
+        let request = tokio::spawn(async move {
+            require_mcp_approval(
+                &ctx2,
+                "add_mcp_server",
+                "Run local MCP server: npx server".to_string(),
+                vec![approval_detail("Command", "npx", "text")],
+                json!({"server_id": "srv"}),
+            )
+            .await
+        });
+        let Some(ActionEvent::Add(message)) = event_rx.recv().await else {
+            panic!("expected MCP approval action");
+        };
+        let Some(ContentPart::Action { payload, .. }) = message.content.first() else {
+            panic!("expected action payload");
+        };
+        assert_eq!(payload["kind"], "tool_approval");
+        assert_eq!(payload["tool"]["name"], "add_mcp_server");
+        assert_eq!(payload["status"], "pending");
+
+        runtime
+            .respond(
+                &caller,
+                7,
+                ActionResponseArgs {
+                    action_id: payload["id"].as_str().unwrap().to_string(),
+                    approve: Some(false),
+                    choice_id: None,
+                    choice_text: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(request.await.unwrap().is_err());
     }
 
     #[test]
@@ -2227,6 +2586,84 @@ mod tests {
             shell_approval_decision(&args, ApprovalMode::OnRisk, "/tmp/workspace"),
             ApprovalDecision::Allow
         );
+    }
+
+    #[test]
+    fn shell_policy_never_auto_allows_side_effects_via_read_only_whitelist() {
+        for command in [
+            // find can execute commands or delete/write files
+            "find . -exec rm {} +",
+            "find . -execdir rm {} +",
+            "find . -delete",
+            "find . -ok rm {} +",
+            "find . -okdir rm {} +",
+            "find . -fprintf out.txt %p",
+            "find . -fprint out.txt",
+            "find . -fls out.txt",
+            // fd/rg equivalents
+            "fd -x rm",
+            "fd -xrm",
+            "fd --exec rm",
+            "fd -X rm",
+            "fd -Xrm",
+            "fd -HIx rm",
+            "fd --exec-batch rm",
+            "rg --pre bash pattern",
+            // awk can escape to a shell or load external code
+            r#"awk 'BEGIN{system("rm -rf ~")}'"#,
+            r#"awk 'BEGIN{system ("id")}'"#,
+            r#"awk '@load "extension"' f"#,
+            "awk -f prog.awk data.txt",
+            "awk -i inplace '{print}' data.txt",
+            // sed can execute (e) or write files (w, s///w), or edit in place
+            "sed 'e ls' file",
+            "sed '1e ls' file",
+            "sed 'w out.txt' file",
+            "sed 's/a/b/e' file",
+            "sed 's/a/b/w out.txt' file",
+            "sed --in-place 's/a/b/' file",
+            "sed -i.bak 's/a/b/' file",
+            "sed -f script.sed file",
+            "sed -e 's/a/b/' -e 'w out.txt' file",
+        ] {
+            let args = ExecArgs {
+                command: command.to_string(),
+                ..Default::default()
+            };
+            assert!(
+                matches!(
+                    shell_approval_decision(&args, ApprovalMode::OnRisk, "/tmp/workspace"),
+                    ApprovalDecision::Ask(_)
+                ),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_policy_still_allows_harmless_find_sed_awk() {
+        for command in [
+            "find . -name file.rs -type f",
+            "find . -newer ref.txt -print",
+            "fd pattern src",
+            "rg pattern src",
+            "sed -n '5,10p' file.txt",
+            "sed 's/foo/bar/g' file.txt",
+            "sed -e 's/foo/bar/' -e '2d' file.txt",
+            "sed 'y/abc/xyz/' file.txt",
+            "awk '{print $1}' file.txt",
+            "awk -F: '{print $1}' file.txt",
+        ] {
+            let args = ExecArgs {
+                command: command.to_string(),
+                ..Default::default()
+            };
+            assert_eq!(
+                shell_approval_decision(&args, ApprovalMode::OnRisk, "/tmp/workspace"),
+                ApprovalDecision::Allow,
+                "{command}"
+            );
+        }
     }
 
     #[test]
