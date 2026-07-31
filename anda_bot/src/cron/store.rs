@@ -4,7 +4,7 @@ use anda_db::{
     database::AndaDB,
     error::DBError,
     index::BTree,
-    query::{Filter, Query, RangeQuery},
+    query::{Filter, RangeQuery},
     schema::Fv,
     unix_ms,
 };
@@ -101,23 +101,28 @@ impl CronStore {
             Some(cursor) => cursor,
             None => self.jobs.max_document_id() + 1,
         };
-        let rt: Vec<CronJob> = self
-            .jobs
-            .search_as(Query {
-                search: None,
-                filter: Some(Filter::Field((
-                    "_id".to_string(),
-                    RangeQuery::Lt(Fv::U64(cursor)),
-                ))),
-                limit: Some(limit),
-            })
-            .await?;
-        let cursor = if rt.len() >= limit {
-            rt.first().and_then(|first| BTree::to_cursor(&first._id))
+        let filter = Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))));
+        let ids = self.jobs.query_last_ids(filter, Some(limit)).await?;
+        // Derive the next cursor from the queried ids, not from the
+        // materialized rows: a concurrent `remove_job` between the id query
+        // and the reads below would otherwise shorten the page and stop
+        // pagination early.
+        let next_cursor = if ids.len() >= limit {
+            ids.first().and_then(|id| BTree::to_cursor(id))
         } else {
             None
         };
-        Ok((rt, cursor))
+        let mut rt = Vec::with_capacity(ids.len());
+        for id in ids {
+            match self.jobs.get_as::<CronJob>(id).await {
+                Ok(job) => rt.push(job),
+                // The job was removed after the id query; skip it instead of
+                // failing the whole listing.
+                Err(DBError::NotFound { .. }) => continue,
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok((rt, next_cursor))
     }
 
     pub async fn get_job(&self, id: u64) -> Result<CronJob, BoxError> {
@@ -185,7 +190,7 @@ impl CronStore {
             None => self.runs.max_document_id() + 1,
         };
         let filter = if let Some(job_id) = job_id {
-            Some(Filter::And(vec![
+            Filter::And(vec![
                 Box::new(Filter::Field((
                     "job_id".to_string(),
                     RangeQuery::Eq(Fv::U64(job_id)),
@@ -194,28 +199,26 @@ impl CronStore {
                     "_id".to_string(),
                     RangeQuery::Lt(Fv::U64(cursor)),
                 ))),
-            ]))
+            ])
         } else {
-            Some(Filter::Field((
-                "_id".to_string(),
-                RangeQuery::Lt(Fv::U64(cursor)),
-            )))
+            Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))))
         };
 
-        let rt: Vec<CronRun> = self
-            .runs
-            .search_as(Query {
-                search: None,
-                filter,
-                limit: Some(limit),
-            })
-            .await?;
-        let cursor = if rt.len() >= limit {
-            rt.first().and_then(|first| BTree::to_cursor(&first._id))
+        let ids = self.runs.query_last_ids(filter, Some(limit)).await?;
+        let next_cursor = if ids.len() >= limit {
+            ids.first().and_then(|id| BTree::to_cursor(id))
         } else {
             None
         };
-        Ok((rt, cursor))
+        let mut rt = Vec::with_capacity(ids.len());
+        for id in ids {
+            match self.runs.get_as::<CronRun>(id).await {
+                Ok(run) => rt.push(run),
+                Err(DBError::NotFound { .. }) => continue,
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok((rt, next_cursor))
     }
 
     pub async fn due_jobs(
@@ -224,25 +227,39 @@ impl CronStore {
         limit: usize,
         exclude: &HashSet<u64>,
     ) -> Result<Vec<CronJob>, BoxError> {
-        // A running job keeps `next_run <= now` until it finishes (next_run is
-        // only advanced in `job_finish`), so the in-flight jobs in `exclude`
-        // still match the query. Fetch enough extra rows to cover them, or they
-        // could consume the whole query budget and starve free slots until the
-        // next tick.
-        let mut jobs: Vec<CronJob> = self
-            .jobs
-            .search_as(Query {
-                filter: Some(Filter::Field((
-                    "next_run".to_string(),
-                    RangeQuery::Le(Fv::U64(now_ms / 1000)),
-                ))),
-                limit: Some(limit.saturating_add(exclude.len())),
-                ..Default::default()
-            })
-            .await?;
-        jobs.retain(|job| !exclude.contains(&job._id));
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        // AndaDB 0.11 makes bounded collection queries select by document ID.
+        // Walk the next_run index directly so the limit keeps the earliest due
+        // jobs, skipping in-flight IDs without letting them consume the page.
+        let mut ids = Vec::with_capacity(limit);
+        self.jobs
+            .get_btree_index(&["next_run"])?
+            .try_range_query_ids(RangeQuery::Le(Fv::U64(now_ms / 1000)), false, |matches| {
+                for &id in matches {
+                    if !exclude.contains(&id) {
+                        ids.push(id);
+                        if ids.len() == limit {
+                            return false;
+                        }
+                    }
+                }
+                true
+            })?;
+
+        let mut jobs = Vec::with_capacity(ids.len());
+        for id in ids {
+            match self.jobs.get_as::<CronJob>(id).await {
+                Ok(job) => jobs.push(job),
+                // A job removed between the index walk and this read must not
+                // fail the whole scheduler tick.
+                Err(DBError::NotFound { .. }) => continue,
+                Err(err) => return Err(err.into()),
+            }
+        }
         jobs.sort_by_key(|job| (job.next_run, job._id));
-        jobs.truncate(limit);
         Ok(jobs)
     }
 

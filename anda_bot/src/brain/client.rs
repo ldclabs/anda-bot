@@ -529,12 +529,7 @@ mod tests {
             routing::post(|| async {
                 axum::Json(
                     serde_json::to_value(KipResponse::Err {
-                        error: anda_kip::ErrorObject {
-                            code: "KIP_2001".to_string(),
-                            message: "nexus unavailable".to_string(),
-                            hint: None,
-                            data: None,
-                        },
+                        error: anda_kip::ErrorObject::new("KIP_2001", "nexus unavailable"),
                         result: None,
                     })
                     .unwrap(),

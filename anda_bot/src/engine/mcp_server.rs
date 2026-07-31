@@ -95,14 +95,27 @@ fn redact_args_for_approval(args: &[String]) -> Vec<String> {
             continue;
         }
 
-        if reqwest::Url::parse(arg).is_ok() {
+        // Only treat network URLs as URLs. `Url::parse` also accepts any
+        // `scheme:rest` token, and `redact_url_for_approval` has nothing to
+        // strip from those — so `x-api-key:sk-live-...` would be echoed
+        // verbatim instead of falling through to the checks below.
+        if let Ok(parsed) = reqwest::Url::parse(arg)
+            && matches!(parsed.scheme(), "http" | "https" | "ws" | "wss")
+        {
             redacted.push(redact_url_for_approval(arg));
             continue;
         }
-        if let Some((name, _value)) = arg.split_once('=')
+        // `name=value` and `name:value` both carry secrets in practice
+        // (`--password=x`, `X-Api-Key:x`).
+        if let Some((name, _value)) = arg.split_once(['=', ':'])
             && approval_arg_name_is_sensitive(name)
         {
-            redacted.push(format!("{name}={APPROVAL_REDACTED}"));
+            let separator = if arg[name.len()..].starts_with(':') {
+                ':'
+            } else {
+                '='
+            };
+            redacted.push(format!("{name}{separator}{APPROVAL_REDACTED}"));
             continue;
         }
         if (arg.starts_with('-') || arg.starts_with('/')) && approval_arg_name_is_sensitive(arg) {
@@ -1183,6 +1196,9 @@ mod tests {
                     "--api-key".to_string(),
                     "api-secret-value".to_string(),
                     "--password=hunter2".to_string(),
+                    // `Url::parse` accepts this as scheme `x-api-key`; it must
+                    // still be redacted as a credential-bearing argument.
+                    "x-api-key:header-secret-value".to_string(),
                     "https://alice:url-password-value@example.com/mcp?token=url-secret&mode=fast"
                         .to_string(),
                 ],
@@ -1195,6 +1211,7 @@ mod tests {
         for secret in [
             "api-secret-value",
             "hunter2",
+            "header-secret-value",
             "alice",
             "url-password-value",
             "url-secret",

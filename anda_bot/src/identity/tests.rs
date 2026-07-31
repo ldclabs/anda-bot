@@ -433,7 +433,7 @@ fn cose_public_key_round_trips() {
 #[test]
 fn sign_cwt_produces_decodable_cose_sign1() {
     let key = Ed25519Key::new(SECRET);
-    let claims = Claims::default();
+    let claims = expiring_claims(std::time::Duration::from_secs(60)).unwrap();
 
     let token = key.sign_cwt(claims).unwrap();
     let bytes = ByteBufB64::from_str(&token).unwrap();
@@ -447,6 +447,13 @@ fn sign_cwt_produces_decodable_cose_sign1() {
     assert_eq!(sig.len(), 64);
     let payload: Value = cbor2::from_slice(arr[2].as_bytes().unwrap()).unwrap();
     assert!(matches!(payload, Value::Map(_)));
+}
+
+#[test]
+fn sign_cwt_rejects_unbounded_claims() {
+    let key = Ed25519Key::new(SECRET);
+    let err = key.sign_cwt(Claims::default()).unwrap_err();
+    assert!(err.to_string().contains("expiration is required"));
 }
 
 #[tokio::test]

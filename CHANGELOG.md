@@ -4,6 +4,34 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.11.6] — 2026-07-31
+
+### Changed
+
+- **Core storage and protocol stack upgraded**: updated AndaDB and its storage/index crates to 0.11, Anda Brain to 0.10.2, Anda KIP to 0.11, and related runtime dependencies including `base64`, `keyring`, `serde-saphyr`, `tokio-tungstenite`, and `tower-http`.
+- **Cron persistence adapted to AndaDB 0.11**: cron listing and due-job selection now use ordered ID/index queries, preserving pagination and earliest-due scheduling behavior under the updated database APIs.
+- **Bounded authentication tokens**: locally issued CWTs now carry explicit issuance and expiration times; unbounded tokens are rejected.
+
+### Fixed
+
+- **MCP connection approvals**: adding or connecting an MCP server now requires explicit user approval outside FullAccess mode.
+- **Outbound URL safety**: model-controlled URL fetches reject loopback, private-network, link-local, cloud-metadata, and other internal targets to reduce SSRF exposure.
+- **Shell approval classification**: commands whose apparently read-only utilities can execute programs, load external code, or mutate files are now routed through approval.
+- **Channel reliability and security**: Lark webhooks require and validate verification tokens; overloaded inbound worker shards no longer stall every channel; WeChat context-token writes are serialized; and split replies consistently reserve room for continuation markers.
+- **Credential and user-identity safety**: trusted-user configuration writes are atomic, orphaned keys can be safely regenerated, reserved identity names cannot target daemon or owner keys, and identity secrets are cleared promptly after use.
+- **Update and runtime recovery**: auto-update restart scripts receive their own process group, optional skills/launcher artifact failures no longer misreport a completed binary update as failed, browser WebSocket cleanup is more robust, and session/conversation failure paths retain consistent state.
+
+## [0.11.5] — 2026-07-17
+
+### Added
+
+- **OAuth authorization for remote MCP servers**: `connect_mcp_server` now supports OAuth discovery, dynamic client registration, PKCE loopback authorization, token exchange and refresh, and credential-backed reconnects for protected HTTP MCP endpoints.
+
+### Changed
+
+- **MCP OAuth credentials persist securely**: client IDs and tokens are stored per server with owner-only permissions and atomic replacement, while configuration records only OAuth markers such as client IDs and scopes—not tokens.
+- **Anda stack upgraded to 0.14**: adopted the updated MCP tool-provider seams and aligned `anda_db`, `ic_auth_types`, and `cose2` integration with the current stack.
+
 ## [0.11.4] — 2026-07-05
 
 ### Added

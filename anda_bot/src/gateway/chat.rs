@@ -939,12 +939,10 @@ mod tests {
                             next_cursor: None,
                         },
                         None => KipResponse::Err {
-                            error: anda_kip::ErrorObject {
-                                code: "KIP_404".to_string(),
-                                message: format!("conversation {id} not found"),
-                                hint: None,
-                                data: None,
-                            },
+                            error: anda_kip::ErrorObject::new(
+                                "KIP_404",
+                                format!("conversation {id} not found"),
+                            ),
                             result: None,
                         },
                     }

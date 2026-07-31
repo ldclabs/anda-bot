@@ -193,6 +193,7 @@ impl WechatChannel {
     }
 
     async fn load_context_tokens(&self) -> HashMap<String, String> {
+        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
         load_context_tokens_from_workspace(&self.workspace).await
     }
 
@@ -842,13 +843,23 @@ async fn load_context_token_for_send(
         return None;
     }
 
-    let tokens = load_context_tokens_from_workspace(workspace).await;
+    // Read under the same lock the writers take: the files are rewritten with
+    // a truncating `fs::write`, so an unsynchronized read can observe an empty
+    // or partial file and silently lose every cached token. The guard is
+    // released before `remove_context_token_from_workspace`, which takes it
+    // itself (the mutex is not reentrant).
+    let (tokens, meta) = {
+        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
+        (
+            load_context_tokens_from_workspace(workspace).await,
+            load_context_token_meta_from_workspace(workspace).await,
+        )
+    };
     let token = tokens.get(user_id)?.trim().to_string();
     if token.is_empty() {
         return None;
     }
 
-    let meta = load_context_token_meta_from_workspace(workspace).await;
     let updated_at = match meta.get(user_id).copied() {
         Some(updated_at) => Some(updated_at),
         None => context_tokens_file_modified_ms(workspace).await,

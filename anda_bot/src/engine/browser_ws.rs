@@ -1454,7 +1454,7 @@ mod tests {
 
     #[tokio::test]
     async fn browser_websocket_upgrades_and_round_trips_a_message() {
-        use crate::identity::{Claims, iana};
+        use crate::identity::iana;
         use tokio_tungstenite::tungstenite::Message as TMessage;
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -1470,7 +1470,8 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let mut claims = Claims::default();
+        let mut claims =
+            crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap();
         claims.extra.insert(iana::CWTClaimScope, "*");
         let token = key.sign_cwt(claims).unwrap();
 

@@ -1024,7 +1024,7 @@ mod tests {
 
         let id_key = identity::Ed25519Key::new(identity::random_ed25519_privkey());
         let user_key = identity::Ed25519Key::new(identity::random_ed25519_privkey());
-        let mut claims = identity::Claims::default();
+        let mut claims = identity::expiring_claims(Duration::from_secs(60)).unwrap();
         claims.extra.insert(identity::iana::CWTClaimScope, "*");
         let token = user_key.sign_cwt(claims).unwrap();
         let user_pubkey = user_key.pubkey();

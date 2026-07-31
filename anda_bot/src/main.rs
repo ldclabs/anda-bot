@@ -700,7 +700,12 @@ fn build_control_client_from_owner_secret(
     owner_secret: [u8; 32],
 ) -> Result<gateway::Client, BoxError> {
     let user_key = identity::Ed25519Key::new(owner_secret);
-    let mut claims = identity::Claims::default();
+    // The token is minted once per CLI process and `gateway::Client` has no
+    // refresh path, so the lifetime must cover the longest-lived command: the
+    // interactive TUI (`anda` with no subcommand) and `anda voice` both hold
+    // one client for the whole session. A few minutes would make every request
+    // 401 mid-session; one day keeps the credential bounded without that.
+    let mut claims = identity::expiring_claims(Duration::from_secs(24 * 60 * 60))?;
     claims.extra.insert(identity::iana::CWTClaimScope, "*");
     let gateway_token = user_key.sign_cwt(claims)?;
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;

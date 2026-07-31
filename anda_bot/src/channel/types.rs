@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 /// Message to send through a channel
-#[derive(Debug, Clone, Default, Deserialize, Serialize, FieldTyped, AndaDBSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, FieldTyped)]
 pub struct SendMessage {
     pub content: String,
     pub recipient: String,

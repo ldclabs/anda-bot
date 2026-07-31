@@ -28,6 +28,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -53,7 +54,7 @@ mod system;
 use crate::{
     auto_update::AutoUpdater,
     brain, channel, config, cron,
-    identity::{Claims, Ed25519Key, Ed25519PubKey, iana},
+    identity::{Ed25519Key, Ed25519PubKey, iana},
     transcription::TranscriptionManager,
     tts::TtsManager,
     util::http_client::{NO_PROXY, build_http_client},
@@ -295,10 +296,12 @@ impl Engines {
         let web3 = Arc::new(Web3SDK::from_web3(web3));
         let object_store = db.object_store().clone();
 
-        let mut claims = Claims {
-            audience: Some("*".to_string()),
-            ..Default::default()
-        };
+        // The brain client keeps this token for the daemon's lifetime and has
+        // no refresh path, so use the same ten-year maximum as exported browser
+        // credentials while still satisfying the server's bounded-token rule.
+        let mut claims =
+            crate::identity::expiring_claims(Duration::from_secs(3650 * 24 * 60 * 60))?;
+        claims.audience = Some("*".to_string());
         claims.extra.insert(iana::CWTClaimScope, "*");
         let brain_token = cfg.id_key.sign_cwt(claims)?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
@@ -1230,7 +1233,7 @@ model:
     }
 
     use crate::auto_update::AutoUpdater;
-    use crate::identity::{Claims, Ed25519Key, iana};
+    use crate::identity::{Ed25519Key, iana};
     use anda_db::storage::StorageConfig;
     use axum::extract::State;
     use ed25519_dalek::VerifyingKey;
@@ -1271,7 +1274,7 @@ model:
     }
 
     fn authed_headers(key: &Ed25519Key) -> HeaderMap {
-        let mut claims = Claims::default();
+        let mut claims = crate::identity::expiring_claims(Duration::from_secs(60)).unwrap();
         claims.extra.insert(iana::CWTClaimScope, "*");
         let token = key.sign_cwt(claims).unwrap();
         let mut headers = HeaderMap::new();

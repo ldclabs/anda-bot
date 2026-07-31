@@ -4,9 +4,23 @@ use cose2::{Key as CoseKey, Label, Sign1Message};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use ic_auth_types::ByteBufB64;
 use ic_ed25519::PublicKey;
-use std::{str::FromStr, sync::Arc};
+use std::{
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use super::{Claims, iana};
+
+/// Creates CWT claims with an explicit issuance time and bounded lifetime.
+pub fn expiring_claims(lifetime: Duration) -> Result<Claims, BoxError> {
+    let issued_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    Ok(Claims {
+        issued_at: Some(issued_at),
+        expiration: Some(issued_at.saturating_add(lifetime.as_secs())),
+        ..Default::default()
+    })
+}
 
 #[derive(Clone)]
 pub struct Ed25519Key {
@@ -47,6 +61,9 @@ impl Ed25519Key {
     }
 
     pub fn sign_cwt(&self, mut claims: Claims) -> Result<String, BoxError> {
+        if claims.expiration.is_none() {
+            return Err("CWT expiration is required".into());
+        }
         claims.subject = self.identity.sender().map(|s| s.to_string()).ok();
         let tagged_payload = claims.to_vec()?;
         let payload = cose2::tag::skip_tag(cose2::tag::CWT_PREFIX, &tagged_payload).to_vec();

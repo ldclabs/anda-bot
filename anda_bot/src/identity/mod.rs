@@ -6,7 +6,9 @@ mod secrets;
 mod store;
 
 pub use cose2::{cwt::Claims, iana};
-pub use ed25519::{Ed25519Key, Ed25519PubKey, encode_ed25519_pubkey, random_ed25519_privkey};
+pub use ed25519::{
+    Ed25519Key, Ed25519PubKey, encode_ed25519_pubkey, expiring_claims, random_ed25519_privkey,
+};
 pub use files::write_ed25519_secret_file;
 pub use local_store::local_encrypted_identity_key_store;
 pub use refs::IdentityKeyRef;
