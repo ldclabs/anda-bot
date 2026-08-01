@@ -58,7 +58,6 @@ write_formula() {
 class ${FORMULA_CLASS} < Formula
   desc "Local AI agent with a long-term memory brain"
   homepage "https://github.com/${REPO}"
-  version "${VERSION}"
   license "Apache-2.0"
 
   on_macos do
@@ -140,7 +139,6 @@ need_cmd awk
 need_cmd git
 
 TAG=$(normalize_tag "$TAG")
-VERSION="${TAG#v}"
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
 info "Generating Homebrew formula for ${REPO} ${TAG}..."
