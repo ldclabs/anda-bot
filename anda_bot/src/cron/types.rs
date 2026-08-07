@@ -5,7 +5,7 @@ use cron::Schedule as CronExprSchedule;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::{fmt, str::FromStr, time::Duration};
 
-use crate::util::request_meta::request_meta_extra_as;
+use crate::util::request_meta::{keys, request_meta_extra_as};
 
 // Number.MAX_SAFE_INTEGER in JavaScript, used to represent "never" for disabled jobs
 pub const DISABLED_JOB_NEXT_RUN: u64 = (1 << 53) - 1;
@@ -117,21 +117,21 @@ impl CronJobOrigin {
         let origin = Self {
             caller: caller.map(Principal::to_text),
             user: meta.user.as_deref().and_then(normalize_optional_name),
-            source: request_meta_extra_as::<String>(meta, "source")
+            source: request_meta_extra_as::<String>(meta, keys::SOURCE)
                 .as_deref()
                 .and_then(normalize_optional_name),
-            reply_target: request_meta_extra_as::<String>(meta, "reply_target")
+            reply_target: request_meta_extra_as::<String>(meta, keys::REPLY_TARGET)
                 .as_deref()
                 .and_then(normalize_optional_name),
-            thread: request_meta_extra_as::<String>(meta, "thread")
+            thread: request_meta_extra_as::<String>(meta, keys::THREAD)
                 .as_deref()
                 .and_then(normalize_optional_name),
-            workspace: request_meta_extra_as::<String>(meta, "workspace")
+            workspace: request_meta_extra_as::<String>(meta, keys::WORKSPACE)
                 .as_deref()
                 .and_then(normalize_optional_name),
-            conversation_id: request_meta_extra_as::<u64>(meta, "conversation")
+            conversation_id: request_meta_extra_as::<u64>(meta, keys::CONVERSATION)
                 .filter(|conversation_id| *conversation_id > 0),
-            external_user: request_meta_extra_as::<bool>(meta, "external_user"),
+            external_user: request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER),
         };
 
         (!origin.is_empty()).then_some(origin)
@@ -149,22 +149,22 @@ impl CronJobOrigin {
         if let Some(conversation_id) =
             conversation_id.filter(|conversation_id| *conversation_id > 0)
         {
-            extra.insert("conversation".to_string(), conversation_id.into());
+            extra.insert(keys::CONVERSATION.to_string(), conversation_id.into());
         }
         if let Some(source) = &self.source {
-            extra.insert("source".to_string(), source.clone().into());
+            extra.insert(keys::SOURCE.to_string(), source.clone().into());
         }
         if let Some(reply_target) = &self.reply_target {
-            extra.insert("reply_target".to_string(), reply_target.clone().into());
+            extra.insert(keys::REPLY_TARGET.to_string(), reply_target.clone().into());
         }
         if let Some(thread) = &self.thread {
-            extra.insert("thread".to_string(), thread.clone().into());
+            extra.insert(keys::THREAD.to_string(), thread.clone().into());
         }
         if let Some(workspace) = &self.workspace {
-            extra.insert("workspace".to_string(), workspace.clone().into());
+            extra.insert(keys::WORKSPACE.to_string(), workspace.clone().into());
         }
         if let Some(external_user) = self.external_user {
-            extra.insert("external_user".to_string(), external_user.into());
+            extra.insert(keys::EXTERNAL_USER.to_string(), external_user.into());
         }
 
         RequestMeta {
@@ -217,6 +217,26 @@ impl CronJob {
         build_schedule(&self.schedule_kind, &self.schedule, self.tz.as_ref())
     }
 
+    /// Whether the job is paused. Storage encodes "paused" as the
+    /// [`DISABLED_JOB_NEXT_RUN`] sentinel in `next_run`.
+    pub fn is_paused(&self) -> bool {
+        self.next_run >= DISABLED_JOB_NEXT_RUN
+    }
+
+    /// Model-facing JSON for tool outputs: reports `paused` explicitly and
+    /// omits `next_run` while paused, so consumers never see the storage
+    /// sentinel.
+    pub fn to_view(&self) -> serde_json::Value {
+        let mut view = serde_json::json!(self);
+        if let Some(object) = view.as_object_mut() {
+            object.insert("paused".to_string(), self.is_paused().into());
+            if self.is_paused() {
+                object.remove("next_run");
+            }
+        }
+        view
+    }
+
     pub fn request_meta(&self) -> Option<RequestMeta> {
         let origin = self.origin.clone().unwrap_or_default();
         let conversation_id = self.last_conversation_id.or(origin.conversation_id);
@@ -225,13 +245,13 @@ impl CronJob {
         }
         let mut meta = origin.to_request_meta(conversation_id);
         meta.extra
-            .insert("cron_job_id".to_string(), self._id.into());
+            .insert(keys::CRON_JOB_ID.to_string(), self._id.into());
         meta.extra.insert(
-            "cron_job_name".to_string(),
+            keys::CRON_JOB_NAME.to_string(),
             self.name.clone().unwrap_or_default().into(),
         );
         meta.extra.insert(
-            "cron_job_kind".to_string(),
+            keys::CRON_JOB_KIND.to_string(),
             self.job_kind.to_string().into(),
         );
 

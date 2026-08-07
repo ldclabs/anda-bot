@@ -356,6 +356,11 @@ fn print_update_check_state(state: &auto_update::AutoUpdateState) {
         auto_update::AutoUpdateStatus::Downloaded => {
             println!("Downloaded update state is stale; run `anda update --check` again.");
         }
+        auto_update::AutoUpdateStatus::Unknown => {
+            println!(
+                "Update state was written by a different anda version; run `anda update --check` again."
+            );
+        }
     }
 }
 

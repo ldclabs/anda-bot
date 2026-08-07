@@ -8,8 +8,12 @@ use serde_json::Map;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
-use super::Client;
-use crate::engine::{ConversationsTool, ConversationsToolArgs, PromptCommand, SourceState};
+use super::{Client, MAX_CONVERSATION_CHAIN, is_terminal_conversation_status};
+use crate::engine::{
+    ConversationsTool, ConversationsToolArgs, PromptCommand, SourceState, payload_action_id,
+    payload_is_pending, payload_responded_at,
+};
+use crate::util::request_meta::keys;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(2000);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
@@ -51,11 +55,6 @@ fn assistant_message(text: impl Into<String>) -> Message {
     }
 }
 
-/// `approval_mode` value that lets the agent run local shell commands and
-/// connect MCP servers without an approval card. Mirrors the Chrome
-/// extension's `full_access` setting.
-const FULL_ACCESS_APPROVAL_MODE: &str = "full_access";
-
 fn current_request_meta(conversation: u64, full_access: bool) -> RequestMeta {
     let mut extra = Map::new();
     let workspace = std::env::current_dir()
@@ -67,15 +66,17 @@ fn current_request_meta(conversation: u64, full_access: bool) -> RequestMeta {
         "cli".to_string()
     };
 
-    extra.insert("conversation".to_string(), conversation.into());
-    extra.insert("source".to_string(), source.into());
+    extra.insert(keys::CONVERSATION.to_string(), conversation.into());
+    extra.insert(keys::SOURCE.to_string(), source.into());
     if let Some(workspace) = workspace {
-        extra.insert("workspace".to_string(), workspace.into());
+        extra.insert(keys::WORKSPACE.to_string(), workspace.into());
     };
     if full_access {
+        // Runs shell commands and MCP connections without approval cards.
+        // Mirrors the Chrome extension's `full_access` setting.
         extra.insert(
-            "approval_mode".to_string(),
-            FULL_ACCESS_APPROVAL_MODE.into(),
+            keys::APPROVAL_MODE.to_string(),
+            keys::APPROVAL_MODE_FULL_ACCESS.into(),
         );
     }
 
@@ -119,7 +120,7 @@ fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message])
         .flat_map(|message| message.content.iter())
         .filter_map(|part| match part {
             ContentPart::Action { payload, .. } => {
-                action_payload_id(payload).map(|id| (id.to_string(), payload.clone()))
+                payload_action_id(payload).map(|id| (id.to_string(), payload.clone()))
             }
             _ => None,
         })
@@ -136,7 +137,7 @@ fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message])
                 let ContentPart::Action { payload, .. } = part else {
                     continue;
                 };
-                if action_payload_id(payload) != Some(action_id.as_str()) {
+                if payload_action_id(payload) != Some(action_id.as_str()) {
                     continue;
                 }
                 changed |= merge_action_payload(payload, &incoming_payload);
@@ -144,10 +145,6 @@ fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message])
         }
     }
     changed
-}
-
-fn action_payload_id(payload: &serde_json::Value) -> Option<&str> {
-    payload.get("id").and_then(serde_json::Value::as_str)
 }
 
 fn merge_action_payload(target: &mut serde_json::Value, incoming: &serde_json::Value) -> bool {
@@ -176,8 +173,8 @@ fn merge_action_payload(target: &mut serde_json::Value, incoming: &serde_json::V
 }
 
 fn incoming_action_is_stale(target: &serde_json::Value, incoming: &serde_json::Value) -> bool {
-    let target_responded_at = action_responded_at(target);
-    let incoming_responded_at = action_responded_at(incoming);
+    let target_responded_at = payload_responded_at(target);
+    let incoming_responded_at = payload_responded_at(incoming);
     if let (Some(target_at), Some(incoming_at)) = (target_responded_at, incoming_responded_at) {
         return incoming_at < target_at;
     }
@@ -186,27 +183,7 @@ fn incoming_action_is_stale(target: &serde_json::Value, incoming: &serde_json::V
         return true;
     }
 
-    action_is_resolved(target) && action_is_pending(incoming)
-}
-
-fn action_responded_at(payload: &serde_json::Value) -> Option<u64> {
-    payload
-        .get("responded_at")
-        .and_then(serde_json::Value::as_u64)
-}
-
-fn action_is_pending(payload: &serde_json::Value) -> bool {
-    payload
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(|status| status == "pending")
-}
-
-fn action_is_resolved(payload: &serde_json::Value) -> bool {
-    payload
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|status| status != "pending")
+    !payload_is_pending(target) && payload_is_pending(incoming)
 }
 
 pub struct ChatSession {
@@ -538,7 +515,7 @@ impl ChatSession {
                             log::warn!("Conversation child chain contains a cycle at {id}");
                             return received;
                         }
-                        if visited.len() >= 64 {
+                        if visited.len() >= MAX_CONVERSATION_CHAIN {
                             log::warn!("Conversation child chain is too long starting at {id}");
                             return received;
                         }
@@ -610,21 +587,9 @@ impl ChatSession {
     }
 
     async fn fetch_conversation(&self, conv_id: u64) -> Result<Conversation, BoxError> {
-        let output = self
-            .client
-            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
-                &ToolInput::new(
-                    ConversationsTool::NAME.to_string(),
-                    ConversationsToolArgs::GetConversation { _id: conv_id },
-                ),
-                CONVERSATION_FETCH_TIMEOUT,
-            )
-            .await?;
-
-        match output.output {
-            KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<Conversation>(result)?),
-            other => Err(format!("conversation API returned an error: {other:?}").into()),
-        }
+        self.client
+            .get_conversation_with_timeout(conv_id, CONVERSATION_FETCH_TIMEOUT)
+            .await
     }
 
     async fn fetch_conversation_chain(&self, conv_id: u64) -> Result<Vec<Conversation>, BoxError> {
@@ -639,7 +604,7 @@ impl ChatSession {
                 log::warn!("Conversation child chain contains a cycle at {conv_id}");
                 break;
             }
-            if conversations.len() >= 64 {
+            if conversations.len() >= MAX_CONVERSATION_CHAIN {
                 log::warn!("Conversation child chain is too long starting at {conv_id}");
                 break;
             }
@@ -671,13 +636,6 @@ fn should_restore_conversation_status(status: &ConversationStatus) -> bool {
             | ConversationStatus::Working
             | ConversationStatus::Idle
             | ConversationStatus::Failed
-    )
-}
-
-fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
-    matches!(
-        status,
-        ConversationStatus::Completed | ConversationStatus::Cancelled | ConversationStatus::Failed
     )
 }
 

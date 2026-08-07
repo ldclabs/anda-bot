@@ -1,45 +1,31 @@
 //! Startup self-check: resume interrupted source-bound conversations after a
 //! daemon restart, plus the optional self-exploration bootstrap.
 
-use anda_brain::types::InputContext;
 use anda_core::{AgentContext, BoxError, CompletionRequest, RequestMeta, StateFeatures};
 use anda_db_utils::UniqueVec;
 use anda_engine::{
     context::AgentCtx,
-    extension::shell::ShellToolHook,
-    hook::DynAgentHook,
     memory::{Conversation, ConversationRef, ConversationStatus},
     unix_ms,
 };
 use ic_auth_types::Xid;
-use parking_lot::RwLock;
 use serde_json::{Map, json};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64},
-    },
-};
+use std::collections::HashSet;
 
 use super::{
-    AndaBot,
+    AndaBot, SessionSpec,
     instructions::available_tool_names,
     meta::{
         conversation_chat_history, request_meta_for_conversation, request_meta_from_conversation,
-        scoped_external_user_name_from_meta,
     },
     select_most_used_tools,
-    session::{ConversationInput, Session, SessionRequestMeta},
+    session::SessionRequestMeta,
 };
 use crate::engine::{
-    ActionEvent, ActionSession,
     browser::ChromeBrowserTool,
     conversation::{RequestState, SourceState},
-    goal::GoalToolState,
     system::system_runtime_prompt,
 };
-use crate::util::request_meta::request_meta_extra_as;
 
 const STARTUP_SELF_SOURCE: &str = "startup:self";
 
@@ -217,64 +203,21 @@ impl AndaBot {
         conversation.updated_at = now_ms;
         self.persist_conversation_state(&conversation).await;
 
-        let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
-        let (action_sender, action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(42);
-        let external_user = request_meta_extra_as::<bool>(&meta, "external_user").unwrap_or(false);
-        let formation_counterparty = if external_user {
-            Some(scoped_external_user_name_from_meta(&meta))
-        } else {
-            Some(conversation.user.to_string())
-        };
-        let conversation_id = Arc::new(AtomicU64::new(conversation._id));
-        let session_id = sess_id.to_string();
-        let session = Arc::new(Session {
-            id: sess_id,
-            caller: conversation.user.to_string(),
-            workspace,
-            source_key: source_key.clone(),
-            conversation_id: conversation_id.clone(),
-            sender,
-            actions: ActionSession::new(
-                self.inner.actions.clone(),
-                action_sender,
-                conversation.user.to_string(),
-                session_id,
-                conversation_id,
-                self.inner.models.clone(),
-                self.inner.home_dir.clone(),
-            ),
-            background_tasks: Arc::new(RwLock::new(HashMap::new())),
-            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
-            goal: Arc::new(RwLock::new(None)),
-            request_meta: session_request_meta.clone(),
-            completion_hooks: self.inner.completion_hooks.clone(),
-            submit_formation_at: AtomicU64::new(0),
-            formation_backoff_until: AtomicU64::new(0),
-            goal_check_backoff_until: AtomicU64::new(0),
-            active_at: Arc::new(AtomicU64::new(now_ms)),
-            finish_when_idle: AtomicBool::new(false),
-            runner_idle: AtomicBool::new(false),
-            formation_context: Some(InputContext {
-                counterparty: formation_counterparty,
-                agent: Some(AndaBot::NAME.to_string()),
-                source: Some(source_key),
-                topic: Some("startup_self_check".to_string()),
-            }),
-        });
-
-        ctx.base.set_state(GoalToolState::new(
-            session.goal.clone(),
-            session.active_at.clone(),
-        ));
-        ctx.base.set_state(session_request_meta);
-        ctx.base.set_state(session.actions.clone());
-
-        let agent_hook = DynAgentHook::new(session.clone());
-        ctx.base.set_state(agent_hook);
-
-        let shell_hook = ShellToolHook::new(session.clone());
-        ctx.base.set_state(shell_hook);
-        self.insert_session(session.clone());
+        let (session, rx, action_rx) = self.create_session(
+            &ctx,
+            SessionSpec {
+                sess_id,
+                caller: conversation.user.to_string(),
+                workspace,
+                source_key,
+                conversation_id: conversation._id,
+                request_meta: session_request_meta,
+                meta: &meta,
+                initial_goal: None,
+                formation_topic: Some("startup_self_check"),
+                active_at_ms: now_ms,
+            },
+        );
 
         self.spawn_session_runner(
             ctx,

@@ -1,7 +1,6 @@
 use anda_core::{BoxError, Json, ToolInput};
 use clap::{Args, Parser, Subcommand};
 use mimalloc::MiMalloc;
-use serde::Serialize;
 use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -17,10 +16,12 @@ mod cli;
 mod config;
 mod cron;
 mod daemon;
+mod daemon_protocol;
 mod engine;
 mod gateway;
 mod identity;
 mod logger;
+mod provider_env;
 mod transcription;
 mod tts;
 mod tui;
@@ -127,6 +128,9 @@ pub enum BrowserCommand {
         /// Number of days before the token expires.
         #[arg(long, default_value_t = 30)]
         days: u64,
+        /// Print the token report as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -143,27 +147,7 @@ pub struct StatusCommand {
     json: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct DaemonStatusReport {
-    state: DaemonStatusState,
-    summary: String,
-    pid: Option<u32>,
-    pid_file: Option<String>,
-    gateway_url: Option<String>,
-    log_file: Option<String>,
-    conversations: Option<u64>,
-    memory_nodes: Option<u64>,
-    memory_links: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum DaemonStatusState {
-    Running,
-    GatewayRunning,
-    ProcessUnresponsive,
-    NotRunning,
-}
+use daemon_protocol::{DaemonStatusReport, DaemonStatusState};
 
 const CHROME_EXTENSION_DIR: &str = "chrome-extension";
 
@@ -420,11 +404,20 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
             match cmd {
-                BrowserCommand::Token { days } => {
+                BrowserCommand::Token { days, json } => {
                     let token = build_browser_extension_token(&daemon, days).await?;
-                    println!("Gateway URL: {}", daemon.base_url());
-                    println!("Bearer token: {token}");
-                    println!("Extension directory: {CHROME_EXTENSION_DIR}");
+                    if json {
+                        let report = daemon_protocol::BrowserTokenReport {
+                            gateway_url: daemon.base_url().to_string(),
+                            token,
+                            extension_dir: CHROME_EXTENSION_DIR.to_string(),
+                        };
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!("Gateway URL: {}", daemon.base_url());
+                        println!("Bearer token: {token}");
+                        println!("Extension directory: {CHROME_EXTENSION_DIR}");
+                    }
                 }
             }
         }

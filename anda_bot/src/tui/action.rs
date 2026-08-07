@@ -2,17 +2,16 @@ use std::time::Duration;
 
 use anda_core::{ContentPart, Message, ToolInput};
 use ratatui::text::{Line, Span};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{
     text::{compact_cjk_spacing, truncate_visual},
     theme,
 };
+pub(super) use crate::engine::ActionApiOutput;
+use crate::engine::{ActionStatus, ActionsTool, ActionsToolArgs, update_action_payload_resolution};
 
 pub(super) const ACTION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
-const ACTIONS_TOOL_NAME: &str = "actions_api";
-const PENDING_STATUS: &str = "pending";
 const MAX_CHOICE_KEYS: usize = 6;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,20 +95,6 @@ impl TuiActionChoiceDraft {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-pub(super) struct TuiActionApiOutput {
-    #[serde(default)]
-    pub(super) action_id: String,
-    #[serde(default)]
-    pub(super) conversation: u64,
-    #[serde(default)]
-    pub(super) status: String,
-    #[serde(default)]
-    pub(super) response: Value,
-    #[serde(default)]
-    pub(super) responded_at: u64,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TuiActionResponseRequest {
     pub(super) action_id: String,
@@ -141,23 +126,22 @@ impl TuiActionResponseRequest {
         }
     }
 
-    pub(super) fn tool_input(&self) -> ToolInput<Value> {
+    pub(super) fn tool_input(&self) -> ToolInput<ActionsToolArgs> {
         ToolInput::new(
-            ACTIONS_TOOL_NAME.to_string(),
-            json!({
-                "type": "RespondAction",
-                "action_id": self.action_id,
-                "approve": self.approve,
-                "choice_id": self.choice_id,
-                "choice_text": self.choice_text,
-            }),
+            ActionsTool::NAME.to_string(),
+            ActionsToolArgs::RespondAction {
+                action_id: self.action_id.clone(),
+                approve: self.approve,
+                choice_id: self.choice_id.clone(),
+                choice_text: self.choice_text.clone(),
+            },
         )
     }
 }
 
 impl TuiAction {
     pub(super) fn is_pending(&self) -> bool {
-        self.status == PENDING_STATUS
+        self.status == ActionStatus::Pending.as_str()
     }
 
     pub(super) fn is_approval(&self) -> bool {
@@ -511,7 +495,7 @@ pub(super) fn action_transcript_text(action: &TuiAction) -> String {
     compact_cjk_spacing(&lines.join("\n")).into_owned()
 }
 
-pub(super) fn action_response_notice(output: &TuiActionApiOutput) -> String {
+pub(super) fn action_response_notice(output: &ActionApiOutput) -> String {
     let status = if output.status.is_empty() {
         "updated"
     } else {
@@ -522,7 +506,7 @@ pub(super) fn action_response_notice(output: &TuiActionApiOutput) -> String {
 
 pub(super) fn apply_action_response_to_messages(
     messages: &mut [Message],
-    output: &TuiActionApiOutput,
+    output: &ActionApiOutput,
 ) -> bool {
     let mut updated = false;
     for message in messages {
@@ -538,7 +522,7 @@ pub(super) fn apply_action_response_to_messages(
 
 pub(super) fn apply_action_response_to_message_value(
     value: &mut Value,
-    output: &TuiActionApiOutput,
+    output: &ActionApiOutput,
 ) -> bool {
     let Some(parts) = value
         .get_mut("content")
@@ -560,20 +544,17 @@ pub(super) fn apply_action_response_to_message_value(
     updated
 }
 
-fn apply_action_response_to_payload(payload: &mut Value, output: &TuiActionApiOutput) -> bool {
-    if output.action_id.is_empty()
-        || payload.get("id").and_then(Value::as_str) != Some(output.action_id.as_str())
-    {
+fn apply_action_response_to_payload(payload: &mut Value, output: &ActionApiOutput) -> bool {
+    if output.action_id.is_empty() {
         return false;
     }
-    let Some(object) = payload.as_object_mut() else {
-        return false;
-    };
-
-    object.insert("status".to_string(), output.status.clone().into());
-    object.insert("response".to_string(), output.response.clone());
-    object.insert("responded_at".to_string(), output.responded_at.into());
-    true
+    update_action_payload_resolution(
+        payload,
+        &output.action_id,
+        &output.status,
+        &output.response,
+        output.responded_at,
+    )
 }
 
 pub(super) fn action_from_payload(name: &str, payload: &Value) -> Option<TuiAction> {
@@ -586,7 +567,8 @@ pub(super) fn action_from_payload(name: &str, payload: &Value) -> Option<TuiActi
         id,
         name: name.to_string(),
         kind: string_field(payload, "kind"),
-        status: string_field(payload, "status").unwrap_or_else(|| PENDING_STATUS.to_string()),
+        status: string_field(payload, "status")
+            .unwrap_or_else(|| ActionStatus::Pending.as_str().to_string()),
         tool: tool_from_value(payload.get("tool")),
         title: string_field(payload, "title"),
         message: string_field(payload, "message"),

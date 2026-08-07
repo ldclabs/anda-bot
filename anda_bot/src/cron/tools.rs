@@ -94,7 +94,7 @@ impl Tool<BaseCtx> for CreateCronTool {
         let origin = CronJobOrigin::from_meta_with_caller(&meta, ctx.caller());
         let job = self.cron.store.insert_job(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
-            result: json!(job),
+            result: job.to_view(),
             next_cursor: None,
         }))
     }
@@ -162,7 +162,7 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
         };
         let job = self.cron.store.update_job_with_origin(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
-            result: json!(job),
+            result: job.to_view(),
             next_cursor: None,
         }))
     }
@@ -399,15 +399,15 @@ impl Tool<BaseCtx> for ManageCronJobTool {
         let result = match args.action {
             CronJobAction::Get => json!({
                 "action": "get",
-                "job": self.cron.store.get_job(args.id).await?,
+                "job": self.cron.store.get_job(args.id).await?.to_view(),
             }),
             CronJobAction::Pause => json!({
                 "action": "pause",
-                "job": self.cron.store.pause_job(args.id).await?,
+                "job": self.cron.store.pause_job(args.id).await?.to_view(),
             }),
             CronJobAction::Resume => json!({
                 "action": "resume",
-                "job": self.cron.store.resume_job(args.id).await?,
+                "job": self.cron.store.resume_job(args.id).await?.to_view(),
             }),
             CronJobAction::Remove => {
                 self.cron.store.remove_job(args.id).await?;
@@ -447,8 +447,11 @@ impl Tool<BaseCtx> for ListCronJobsTool {
     }
 
     fn description(&self) -> String {
-        "Lists scheduled cron jobs with optional cursor pagination. Returns up to 100 jobs per call."
-            .to_string()
+        concat!(
+            "Lists scheduled cron jobs with optional cursor pagination. Returns up to 100 jobs per call. ",
+            "Paused jobs report paused=true and omit next_run."
+        )
+        .to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -471,6 +474,7 @@ impl Tool<BaseCtx> for ListCronJobsTool {
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let (jobs, next_cursor) = self.cron.store.list_jobs(args.cursor, args.limit).await?;
+        let jobs: Vec<serde_json::Value> = jobs.iter().map(|job| job.to_view()).collect();
         Ok(paginated_response(jobs, next_cursor))
     }
 }
@@ -715,6 +719,9 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(paused["action"], "pause");
+        // Paused jobs surface `paused` instead of the storage sentinel.
+        assert_eq!(paused["job"]["paused"], true);
+        assert!(paused["job"].get("next_run").is_none());
 
         let resumed = result_of(
             manage
@@ -730,6 +737,8 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(resumed["action"], "resume");
+        assert_eq!(resumed["job"]["paused"], false);
+        assert!(resumed["job"]["next_run"].as_u64().is_some());
 
         let removed = result_of(
             manage

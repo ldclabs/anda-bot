@@ -27,7 +27,7 @@ use super::types::*;
 use crate::engine::{
     CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt_with_space,
 };
-use crate::util::request_meta::request_meta_extra_as;
+use crate::util::request_meta::{keys, request_meta_extra_as};
 
 type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
 
@@ -504,25 +504,28 @@ impl ChannelRuntimeInner {
                 .copied()
                 .unwrap_or(0)
         };
-        extra.insert("conversation".to_string(), conv_id.into());
+        extra.insert(keys::CONVERSATION.to_string(), conv_id.into());
         extra.insert(
-            "workspace".to_string(),
+            keys::WORKSPACE.to_string(),
             channel_workspace_path(&self.work_dir, &message.channel)
                 .to_string_lossy()
                 .into(),
         );
-        extra.insert("source".to_string(), message.channel.clone().into());
+        extra.insert(keys::SOURCE.to_string(), message.channel.clone().into());
         extra.insert(
-            "reply_target".to_string(),
+            keys::REPLY_TARGET.to_string(),
             message.reply_target.clone().into(),
         );
         if let Some(thread) = &message.thread
             && !thread.is_empty()
         {
-            extra.insert("thread".to_string(), thread.clone().into());
+            extra.insert(keys::THREAD.to_string(), thread.clone().into());
         }
 
-        extra.insert("external_user".to_string(), message.external_user.into());
+        extra.insert(
+            keys::EXTERNAL_USER.to_string(),
+            message.external_user.into(),
+        );
         let prompt = agent_prompt_from_message(&message);
         let channel_user = self.user_for_channel(&message.channel);
         extra.insert("channel_user".to_string(), channel_user.to_text().into());
@@ -680,7 +683,7 @@ impl ChannelRuntimeInner {
             return None;
         }
 
-        let reply_target = request_meta_extra_as::<String>(meta, "reply_target")
+        let reply_target = request_meta_extra_as::<String>(meta, keys::REPLY_TARGET)
             .and_then(|value| normalize_non_empty(value.as_str()))?;
         let thread = request_meta_extra_as::<String>(meta, "thread")
             .and_then(|value| normalize_non_empty(value.as_str()));
@@ -941,12 +944,13 @@ fn completion_message(
             msg.push_str("[Previous conversation]\n\n");
         }
     }
-    if let Some(cron_job_id) = request_meta_extra_as::<u64>(meta, "cron_job_id") {
-        let mut name = request_meta_extra_as::<String>(meta, "cron_job_name").unwrap_or_default();
+    if let Some(cron_job_id) = request_meta_extra_as::<u64>(meta, keys::CRON_JOB_ID) {
+        let mut name =
+            request_meta_extra_as::<String>(meta, keys::CRON_JOB_NAME).unwrap_or_default();
         if name.is_empty() {
             name = cron_job_id.to_string();
         }
-        let kind = request_meta_extra_as::<String>(meta, "cron_job_kind").unwrap_or_default();
+        let kind = request_meta_extra_as::<String>(meta, keys::CRON_JOB_KIND).unwrap_or_default();
         msg.push_str(&format!("Cron Job ({kind}): {name}\n\n"));
     }
     msg.push_str(&output.content);

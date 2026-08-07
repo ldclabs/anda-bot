@@ -2,7 +2,12 @@ use anda_core::{BoxError, Json, Resource};
 use anda_db::schema::{AndaDBSchema, FieldTyped};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 /// Message to send through a channel
@@ -113,6 +118,88 @@ impl ChannelInitResult {
             message: message.into(),
         }
     }
+}
+
+/// How long a platform event id is remembered for duplicate suppression.
+pub(crate) const EVENT_DEDUP_WINDOW: Duration = Duration::from_secs(30 * 60);
+
+/// Suppresses redelivered platform events (websocket resumes, webhook
+/// retries, long-poll rewinds) by remembering event ids for a bounded window.
+/// In-memory only: a restart forgets history, which matches the reconnect
+/// windows this protects.
+pub(crate) struct RecentEventDedup {
+    window: Duration,
+    seen: RwLock<HashMap<String, Instant>>,
+}
+
+impl RecentEventDedup {
+    pub(crate) fn new(window: Duration) -> Self {
+        Self {
+            window,
+            seen: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Returns true when `event_id` was already observed inside the window,
+    /// recording it otherwise. Empty ids are never treated as duplicates.
+    pub(crate) async fn is_duplicate(&self, event_id: &str) -> bool {
+        if event_id.trim().is_empty() {
+            return false;
+        }
+
+        let now = Instant::now();
+        let mut seen = self.seen.write().await;
+        seen.retain(|_, instant| now.duration_since(*instant) < self.window);
+        if seen.contains_key(event_id) {
+            return true;
+        }
+        seen.insert(event_id.to_string(), now);
+        false
+    }
+}
+
+/// Wraps a multi-chunk message with continuation markers so readers can tell
+/// a split reply from unrelated consecutive messages. A single chunk passes
+/// through verbatim. Chunks must already leave room for the markers (see
+/// `split_message_on_word_boundaries`'s `split_limit`).
+pub(crate) fn apply_continuation_markers(chunks: &[String]) -> Vec<String> {
+    if chunks.len() <= 1 {
+        return chunks.to_vec();
+    }
+
+    let last = chunks.len() - 1;
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            if index == 0 {
+                format!("{chunk}\n\n(continues...)")
+            } else if index == last {
+                format!("(continued)\n\n{chunk}")
+            } else {
+                format!("(continued)\n\n{chunk}\n\n(continues...)")
+            }
+        })
+        .collect()
+}
+
+/// Uniform random index in `0..len` via rejection sampling (no modulo bias).
+pub(crate) fn pick_uniform_index(len: usize) -> usize {
+    debug_assert!(len > 0);
+    let upper = len as u64;
+    let reject_threshold = (u64::MAX / upper) * upper;
+
+    loop {
+        let value = rand::random::<u64>();
+        if value < reject_threshold {
+            return (value % upper) as usize;
+        }
+    }
+}
+
+/// Picks a uniformly random entry from a static pool (e.g. ACK reactions).
+pub(crate) fn random_from_pool(pool: &'static [&'static str]) -> &'static str {
+    pool[pick_uniform_index(pool.len())]
 }
 
 /// Splits `message` into chunks, preferring to break on newline and then
@@ -582,6 +669,16 @@ mod tests {
             legacy_percent_encoded_channel_workspace_dir_name("con"),
             "_con"
         );
+    }
+
+    #[tokio::test]
+    async fn recent_event_dedup_suppresses_repeats_and_ignores_empty_ids() {
+        let dedup = RecentEventDedup::new(Duration::from_secs(60));
+        assert!(!dedup.is_duplicate("evt_1").await);
+        assert!(dedup.is_duplicate("evt_1").await);
+        assert!(!dedup.is_duplicate("evt_2").await);
+        assert!(!dedup.is_duplicate("").await);
+        assert!(!dedup.is_duplicate("  ").await);
     }
 
     struct MinimalChannel;

@@ -11,8 +11,9 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    is_transient_send_error, resource_from_bytes, split_message_on_word_boundaries,
+    Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
+    apply_continuation_markers, file_name_for_resource, is_http_url, is_transient_send_error,
+    random_from_pool, resource_from_bytes, split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -83,6 +84,7 @@ pub struct TelegramChannel {
     ack_reactions: bool,
     client: Client,
     workspace: Arc<ChannelWorkspace>,
+    dedup: RecentEventDedup,
     bot_username: Mutex<Option<String>>,
     #[allow(dead_code)]
     typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -108,6 +110,7 @@ impl TelegramChannel {
             ack_reactions: cfg.ack_reactions,
             client,
             workspace: Arc::new(ChannelWorkspace::default()),
+            dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
             bot_username: Mutex::new(None),
             typing_handle: Mutex::new(None),
         }
@@ -685,7 +688,7 @@ impl TelegramChannel {
         let client = self.client.clone();
         let url = self.api_url("setMessageReaction");
         let token = self.bot_token.clone();
-        let emoji = random_telegram_ack_reaction().to_string();
+        let emoji = random_from_pool(TELEGRAM_ACK_REACTIONS).to_string();
         let body = serde_json::json!({
             "chat_id": chat_id,
             "message_id": message_id,
@@ -745,24 +748,12 @@ impl TelegramChannel {
         chat_id: &str,
         thread_id: Option<&str>,
     ) -> Result<(), BoxError> {
-        let chunks = split_message_for_telegram(message);
+        let chunks = apply_continuation_markers(&split_message_for_telegram(message));
 
-        for (index, chunk) in chunks.iter().enumerate() {
-            let text = if chunks.len() > 1 {
-                if index == 0 {
-                    format!("{chunk}\n\n(continues...)")
-                } else if index == chunks.len() - 1 {
-                    format!("(continued)\n\n{chunk}")
-                } else {
-                    format!("(continued)\n\n{chunk}\n\n(continues...)")
-                }
-            } else {
-                chunk.to_string()
-            };
-
+        for (index, text) in chunks.iter().enumerate() {
             let mut html_body = serde_json::json!({
                 "chat_id": chat_id,
-                "text": Self::markdown_to_telegram_html(&text),
+                "text": Self::markdown_to_telegram_html(text),
                 "parse_mode": "HTML",
             });
             if let Some(thread_id) = thread_id {
@@ -1189,6 +1180,11 @@ impl Channel for TelegramChannel {
             for update in results {
                 if let Some(update_id) = update.get("update_id").and_then(Value::as_i64) {
                     offset = update_id + 1;
+                    // Long-poll rewinds after transport errors can replay
+                    // updates the loop already handled.
+                    if self.dedup.is_duplicate(&update_id.to_string()).await {
+                        continue;
+                    }
                 }
 
                 let message = if let Some(message) = self.parse_update_message(update).await {
@@ -1266,18 +1262,6 @@ fn scrub_token(text: &str, token: &str) -> String {
         return text.to_string();
     }
     text.replace(token, "<redacted>")
-}
-
-fn random_telegram_ack_reaction() -> &'static str {
-    let upper = TELEGRAM_ACK_REACTIONS.len() as u64;
-    let reject_threshold = (u64::MAX / upper) * upper;
-
-    loop {
-        let value = rand::random::<u64>();
-        if value < reject_threshold {
-            return TELEGRAM_ACK_REACTIONS[(value % upper) as usize];
-        }
-    }
 }
 
 fn split_message_for_telegram(message: &str) -> Vec<String> {
@@ -1823,7 +1807,7 @@ mod tests {
     #[test]
     fn ack_reactions_come_from_known_set() {
         for _ in 0..16 {
-            assert!(TELEGRAM_ACK_REACTIONS.contains(&random_telegram_ack_reaction()));
+            assert!(TELEGRAM_ACK_REACTIONS.contains(&random_from_pool(TELEGRAM_ACK_REACTIONS)));
         }
     }
 

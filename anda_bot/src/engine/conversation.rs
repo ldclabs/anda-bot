@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc};
 
-use crate::util::request_meta::request_meta_extra_as;
+use crate::util::request_meta::{keys, request_meta_extra_as};
 
 /// Arguments for "conversation_api" tool
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -167,8 +167,8 @@ impl ConversationsTool {
 
     pub fn state_from_meta(&self, meta: &RequestMeta) -> RequestState {
         let (workspace, source) = match (
-            request_meta_extra_as::<String>(meta, "workspace"),
-            request_meta_extra_as::<String>(meta, "source"),
+            request_meta_extra_as::<String>(meta, keys::WORKSPACE),
+            request_meta_extra_as::<String>(meta, keys::SOURCE),
         ) {
             (Some(workspace), Some(source)) => (workspace, source),
             (Some(workspace), None) => (workspace.clone(), format!("cli:{workspace}")),
@@ -187,12 +187,12 @@ impl ConversationsTool {
             }
         };
 
-        let reply_target = request_meta_extra_as::<String>(meta, "reply_target");
-        let thread = request_meta_extra_as::<String>(meta, "thread");
+        let reply_target = request_meta_extra_as::<String>(meta, keys::REPLY_TARGET);
+        let thread = request_meta_extra_as::<String>(meta, keys::THREAD);
         let source_key =
             source_conversation_key(&source, reply_target.as_deref(), thread.as_deref());
         let source_state = self.get_source_state(&source_key).unwrap_or_default();
-        let conversation = request_meta_extra_as::<u64>(meta, "conversation")
+        let conversation = request_meta_extra_as::<u64>(meta, keys::CONVERSATION)
             .filter(|conv_id| *conv_id > 0)
             .unwrap_or(source_state.conv_id);
         RequestState {

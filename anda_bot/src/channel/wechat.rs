@@ -15,7 +15,8 @@ use weixin_agent::{
 };
 
 use super::{
-    Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace, SendMessage,
+    Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace,
+    EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage, apply_continuation_markers,
     file_name_for_resource, is_http_url, is_transient_send_error, resource_from_bytes,
 };
 use crate::{
@@ -69,6 +70,7 @@ pub struct WechatChannel {
     cdn_base_url: String,
     route_tag: Option<u32>,
     workspace: Arc<ChannelWorkspace>,
+    dedup: Arc<RecentEventDedup>,
 }
 
 impl WechatChannel {
@@ -87,6 +89,7 @@ impl WechatChannel {
             cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
             workspace: Arc::new(ChannelWorkspace::default()),
+            dedup: Arc::new(RecentEventDedup::new(EVENT_DEDUP_WINDOW)),
         }
     }
 
@@ -209,20 +212,8 @@ impl WechatChannel {
         text: &str,
         context_token: Option<&str>,
     ) -> Result<(), BoxError> {
-        let chunks = split_message_for_wechat(text);
-        for (index, chunk) in chunks.iter().enumerate() {
-            let text = if chunks.len() > 1 {
-                if index == 0 {
-                    format!("{chunk}\n\n(continues...)")
-                } else if index == chunks.len() - 1 {
-                    format!("(continued)\n\n{chunk}")
-                } else {
-                    format!("(continued)\n\n{chunk}\n\n(continues...)")
-                }
-            } else {
-                chunk.to_string()
-            };
-            client.send_text(recipient, &text, context_token).await?;
+        for chunk in apply_continuation_markers(&split_message_for_wechat(text)) {
+            client.send_text(recipient, &chunk, context_token).await?;
         }
         Ok(())
     }
@@ -400,6 +391,7 @@ impl Channel for WechatChannel {
         let token = self.resolve_token().await?;
         let handler = WechatMessageHandler {
             channel_id: self.id(),
+            dedup: self.dedup.clone(),
             allowed_users: self.allowed_users.clone(),
             allow_external_users: self.allow_external_users,
             tx,
@@ -434,6 +426,7 @@ impl MessageHandler for NoopMessageHandler {
 
 struct WechatMessageHandler {
     channel_id: String,
+    dedup: Arc<RecentEventDedup>,
     allowed_users: Vec<String>,
     allow_external_users: bool,
     tx: mpsc::Sender<ChannelMessage>,
@@ -444,6 +437,11 @@ struct WechatMessageHandler {
 #[async_trait]
 impl MessageHandler for WechatMessageHandler {
     async fn on_message(&self, ctx: &MessageContext) -> WeixinResult<()> {
+        // The sync-based SDK can redeliver messages after reconnect windows.
+        if self.dedup.is_duplicate(&ctx.message_id).await {
+            return Ok(());
+        }
+
         let trusted_user = is_identity_allowed(&self.allowed_users, &ctx.from);
         if !trusted_user && !self.allow_external_users {
             log::warn!(

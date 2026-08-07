@@ -108,7 +108,7 @@ impl CronStore {
         // and the reads below would otherwise shorten the page and stop
         // pagination early.
         let next_cursor = if ids.len() >= limit {
-            ids.first().and_then(|id| BTree::to_cursor(id))
+            ids.first().and_then(BTree::to_cursor)
         } else {
             None
         };
@@ -206,7 +206,7 @@ impl CronStore {
 
         let ids = self.runs.query_last_ids(filter, Some(limit)).await?;
         let next_cursor = if ids.len() >= limit {
-            ids.first().and_then(|id| BTree::to_cursor(id))
+            ids.first().and_then(BTree::to_cursor)
         } else {
             None
         };
@@ -334,8 +334,8 @@ impl CronStore {
             return Ok(());
         };
 
-        // only update next_run if the job is not already disabled
-        if job.next_run < DISABLED_JOB_NEXT_RUN {
+        // only update next_run if the job is not already paused
+        if !job.is_paused() {
             let schedule = job.schedule()?;
             let next_run = schedule.next_run(finished_at);
             job_patch.insert("next_run".to_string(), Fv::U64(next_run));

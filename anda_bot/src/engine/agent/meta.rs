@@ -9,7 +9,7 @@ use crate::engine::{
     is_action_message_value,
     system::{mark_special_user_messages, scoped_external_user_name},
 };
-use crate::util::request_meta::request_meta_extra_as;
+use crate::util::request_meta::{keys, request_meta_extra_as};
 
 pub(super) fn request_meta_for_conversation(
     meta: &RequestMeta,
@@ -18,24 +18,24 @@ pub(super) fn request_meta_for_conversation(
     let mut meta = meta.clone();
     if conversation_id > 0 {
         meta.extra
-            .insert("conversation".to_string(), conversation_id.into());
+            .insert(keys::CONVERSATION.to_string(), conversation_id.into());
     }
     meta
 }
 
 pub(super) fn conversation_extra_without_id(meta: &RequestMeta) -> Map<String, Value> {
     let mut extra = meta.extra.clone();
-    extra.remove("conversation");
+    extra.remove(keys::CONVERSATION);
     extra
 }
 
 pub(super) fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String {
-    let source = request_meta_extra_as::<String>(meta, "source").unwrap_or_default();
+    let source = request_meta_extra_as::<String>(meta, keys::SOURCE).unwrap_or_default();
     let sender = meta.user.as_deref().unwrap_or_default();
-    let thread = request_meta_extra_as::<String>(meta, "thread")
+    let thread = request_meta_extra_as::<String>(meta, keys::THREAD)
         .map(|thread| thread.trim().to_string())
         .filter(|thread| !thread.is_empty());
-    let reply_target = request_meta_extra_as::<String>(meta, "reply_target")
+    let reply_target = request_meta_extra_as::<String>(meta, keys::REPLY_TARGET)
         .map(|reply_target| reply_target.trim().to_string())
         .filter(|reply_target| !reply_target.is_empty())
         .filter(|reply_target| reply_target != sender);
@@ -52,10 +52,10 @@ pub(super) fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String 
 /// longer connected. Both grant approval-free shell and MCP access to later
 /// turns the user drives by hand.
 const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 4] = [
-    "cron_job_id",
-    "cron_job_name",
-    "cron_job_kind",
-    "approval_mode",
+    keys::CRON_JOB_ID,
+    keys::CRON_JOB_NAME,
+    keys::CRON_JOB_KIND,
+    keys::APPROVAL_MODE,
 ];
 
 pub(super) fn request_meta_from_conversation(
@@ -71,7 +71,7 @@ pub(super) fn request_meta_from_conversation(
         extra.remove(key);
     }
     apply_source_key_to_meta_extra(&mut extra, source_key);
-    extra.insert("conversation".to_string(), conversation._id.into());
+    extra.insert(keys::CONVERSATION.to_string(), conversation._id.into());
 
     RequestMeta {
         extra,
@@ -80,20 +80,23 @@ pub(super) fn request_meta_from_conversation(
 }
 
 fn apply_source_key_to_meta_extra(extra: &mut Map<String, Value>, source_key: &str) {
-    if extra.get("source").is_some() {
+    if extra.get(keys::SOURCE).is_some() {
         return;
     }
 
     if let Some((source, route)) = source_key.split_once(":reply_target:") {
-        extra.insert("source".to_string(), source.to_string().into());
+        extra.insert(keys::SOURCE.to_string(), source.to_string().into());
         if let Some((reply_target, thread)) = route.split_once(":thread:") {
-            extra.insert("reply_target".to_string(), reply_target.to_string().into());
+            extra.insert(
+                keys::REPLY_TARGET.to_string(),
+                reply_target.to_string().into(),
+            );
             if !thread.is_empty() {
-                extra.insert("thread".to_string(), thread.to_string().into());
+                extra.insert(keys::THREAD.to_string(), thread.to_string().into());
             }
         }
     } else if !source_key.is_empty() {
-        extra.insert("source".to_string(), source_key.to_string().into());
+        extra.insert(keys::SOURCE.to_string(), source_key.to_string().into());
     }
 }
 

@@ -2,6 +2,7 @@ use anda_core::{
     AgentInput, AgentOutput, BoxError, ByteBufB64, Json, ToolInput, ToolOutput,
     http::{RPCRequestRef, RPCResponse},
 };
+use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
 use anda_kip::{Request as KipRequest, Response as KipResponse};
 use std::{
     io::SeekFrom,
@@ -13,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
-    engine::{AndaBotStatus, DaemonModelsResponse},
+    engine::{AndaBotStatus, ConversationsTool, ConversationsToolArgs, DaemonModelsResponse},
     identity::LocalIdentitySecrets,
     util::http_client::new_reqwest_client,
 };
@@ -30,6 +31,11 @@ pub const AGENT_RUN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 // loops (TUI refresh, daemon readiness waits); fail fast instead of letting a
 // wedged daemon hold callers for the client's full default timeout.
 pub const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Hard cap every conversation child-chain walk shares: a malformed chain
+/// (a cycle, or an absurd length) must never turn a polling loop into an
+/// unbounded sequence of HTTP requests.
+pub const MAX_CONVERSATION_CHAIN: usize = 64;
 
 #[derive(Clone)]
 pub struct Client {
@@ -152,6 +158,60 @@ impl Client {
         let rt: RPCResponse = self.decode_response(req.send().await?).await?;
         let rt: ToolOutput<O> = serde_json::from_slice(&(rt?))?;
         Ok(rt)
+    }
+
+    /// Fetch a conversation by id, unwrapping the daemon's KIP envelope.
+    pub async fn get_conversation(&self, conversation_id: u64) -> Result<Conversation, BoxError> {
+        let output = self
+            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+                ConversationsTool::NAME.to_string(),
+                ConversationsToolArgs::GetConversation {
+                    _id: conversation_id,
+                },
+            ))
+            .await?;
+        kip_result(output.output)
+    }
+
+    /// Like [`Client::get_conversation`], failing fast with a per-call timeout
+    /// so polling loops are not held for the client's default timeout.
+    pub async fn get_conversation_with_timeout(
+        &self,
+        conversation_id: u64,
+        timeout: Duration,
+    ) -> Result<Conversation, BoxError> {
+        let output = self
+            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
+                &ToolInput::new(
+                    ConversationsTool::NAME.to_string(),
+                    ConversationsToolArgs::GetConversation {
+                        _id: conversation_id,
+                    },
+                ),
+                timeout,
+            )
+            .await?;
+        kip_result(output.output)
+    }
+
+    /// Fetch only the messages and artifacts appended after the given offsets.
+    pub async fn get_conversation_delta(
+        &self,
+        conversation_id: u64,
+        messages_offset: usize,
+        artifacts_offset: usize,
+    ) -> Result<ConversationDelta, BoxError> {
+        let output = self
+            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+                ConversationsTool::NAME.to_string(),
+                ConversationsToolArgs::GetConversationDelta {
+                    _id: conversation_id,
+                    messages_offset,
+                    artifacts_offset,
+                },
+            ))
+            .await?;
+        kip_result(output.output)
     }
 
     pub async fn ensure_daemon_running(&self, daemon: &Daemon) -> Result<LaunchState, BoxError> {
@@ -284,6 +344,24 @@ impl Client {
             )
             .into())
         }
+    }
+}
+
+/// Whether a conversation has finished and will receive no further updates.
+pub fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
+    matches!(
+        status,
+        ConversationStatus::Completed | ConversationStatus::Cancelled | ConversationStatus::Failed
+    )
+}
+
+fn kip_result<T>(response: KipResponse) -> Result<T, BoxError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match response {
+        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<T>(result)?),
+        other => Err(format!("conversation API returned an error: {other:?}").into()),
     }
 }
 
@@ -733,5 +811,39 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("not ready"));
+    }
+    #[test]
+    fn terminal_conversation_status_covers_variants() {
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Completed
+        ));
+        assert!(is_terminal_conversation_status(
+            &ConversationStatus::Cancelled
+        ));
+        assert!(is_terminal_conversation_status(&ConversationStatus::Failed));
+        assert!(!is_terminal_conversation_status(
+            &ConversationStatus::Working
+        ));
+        assert!(!is_terminal_conversation_status(&ConversationStatus::Idle));
+    }
+
+    #[test]
+    fn kip_result_unwraps_ok_and_reports_errors() {
+        let ok: u64 = kip_result(anda_kip::Response::Ok {
+            result: serde_json::json!(7),
+            next_cursor: None,
+        })
+        .unwrap();
+        assert_eq!(ok, 7);
+
+        let err = kip_result::<u64>(anda_kip::Response::Err {
+            error: anda_kip::ErrorObject::new("KIP_404", "nope".to_string()),
+            result: None,
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("conversation API returned an error")
+        );
     }
 }

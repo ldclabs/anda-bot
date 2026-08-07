@@ -1,6 +1,5 @@
-use anda_core::{AgentInput, AgentOutput, BoxError, Message, RequestMeta, ToolInput, Usage};
+use anda_core::{AgentInput, AgentOutput, BoxError, Message, RequestMeta, Usage};
 use anda_engine::memory::{Conversation, ConversationStatus};
-use anda_kip::Response as KipResponse;
 use clap::{Args, Subcommand};
 use serde_json::json;
 use std::{
@@ -10,13 +9,12 @@ use std::{
 };
 
 use crate::{
-    engine::{ConversationsTool, ConversationsToolArgs},
     gateway,
-    util::text::read_text_file,
+    gateway::{MAX_CONVERSATION_CHAIN, is_terminal_conversation_status},
+    util::{request_meta::keys, text::read_text_file},
 };
 
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
-const MAX_CONVERSATION_CHAIN: usize = 64;
 
 #[derive(Subcommand)]
 pub enum AgentCommand {
@@ -149,13 +147,13 @@ fn apply_agent_meta_defaults(
 ) {
     if let Some(workspace) = workspace {
         meta.extra
-            .entry("workspace".to_string())
+            .entry(keys::WORKSPACE.to_string())
             .or_insert_with(|| json!(workspace.to_string_lossy().to_string()));
     }
 
     if let Some(session_id) = session_id.filter(|session_id| !session_id.trim().is_empty()) {
         meta.extra
-            .entry("thread".to_string())
+            .entry(keys::THREAD.to_string())
             .or_insert_with(|| json!(session_id));
     }
 }
@@ -176,7 +174,7 @@ async fn wait_for_agent_output(
     let mut current_id = root_id;
 
     loop {
-        let conversation = get_conversation(client, current_id).await?;
+        let conversation = client.get_conversation(current_id).await?;
         upsert_conversation(&mut conversations, &mut seen, conversation)?;
 
         let last = conversations
@@ -237,25 +235,6 @@ fn upsert_conversation(
     }
     conversations.push(conversation);
     Ok(())
-}
-
-async fn get_conversation(
-    client: &gateway::Client,
-    conversation_id: u64,
-) -> Result<Conversation, BoxError> {
-    let output = client
-        .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
-            ConversationsTool::NAME.to_string(),
-            ConversationsToolArgs::GetConversation {
-                _id: conversation_id,
-            },
-        ))
-        .await?;
-
-    match output.output {
-        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<Conversation>(result)?),
-        other => Err(format!("conversation API returned an error: {other:?}").into()),
-    }
 }
 
 fn output_from_conversation_chain(
@@ -326,17 +305,11 @@ async fn write_text(path: &Path, text: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
-fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
-    matches!(
-        status,
-        ConversationStatus::Completed | ConversationStatus::Cancelled | ConversationStatus::Failed
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anda_core::ContentPart;
+    use anda_core::{ContentPart, ToolInput};
+    use anda_kip::Response as KipResponse;
 
     #[test]
     fn agent_meta_defaults_preserve_explicit_values() {

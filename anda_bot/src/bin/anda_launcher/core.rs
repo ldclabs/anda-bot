@@ -34,7 +34,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub type LauncherResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../../assets/config.yaml");
-const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
+use crate::provider_env::CODEX_API_BASE;
 const ANDA_EXE_ENV: &str = "ANDA_EXE";
 const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
 const BROWSER_EXTENSION_TOKEN_DAYS: &str = "365";
@@ -89,23 +89,17 @@ pub struct CommandResult {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct LauncherAutoUpdateState {
-    pub status: String,
-    pub current_tag: String,
-    pub latest_tag: Option<String>,
-    pub downloaded_path: Option<String>,
-    pub error: Option<String>,
-}
+pub use crate::daemon_protocol::{AutoUpdateState as LauncherAutoUpdateState, AutoUpdateStatus};
 
+/// Launcher-side presentation helpers on the shared wire type. The daemon
+/// binary keeps its own, differently-scoped helpers on the same struct.
 impl LauncherAutoUpdateState {
     pub fn current_tag_label(&self) -> String {
         normalize_version_tag(&self.current_tag).unwrap_or_else(current_version_tag)
     }
 
     pub fn downloaded_update_available(&self) -> bool {
-        if self.status != "downloaded"
+        if self.status != AutoUpdateStatus::Downloaded
             || self
                 .downloaded_path
                 .as_deref()
@@ -134,15 +128,15 @@ impl LauncherAutoUpdateState {
             return copy.update_ready_message(&latest_tag);
         }
 
-        match self.status.as_str() {
-            "failed" => copy.update_check_failed_message(
+        match self.status {
+            AutoUpdateStatus::Failed => copy.update_check_failed_message(
                 self.error
                     .as_deref()
                     .filter(|err| !err.trim().is_empty())
                     .unwrap_or(&copy.unknown_error),
             ),
-            "checking" | "downloading" => copy.checking_update,
-            "idle" => copy.update_not_checked,
+            AutoUpdateStatus::Checking | AutoUpdateStatus::Downloading => copy.checking_update,
+            AutoUpdateStatus::Idle => copy.update_not_checked,
             _ => copy.update_current_message(&self.current_tag_label()),
         }
     }
@@ -163,17 +157,6 @@ pub struct LauncherDaemonStatus {
     pub conversations: Option<String>,
     pub memory_nodes: Option<String>,
     pub memory_links: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct LauncherDaemonStatusJson {
-    summary: Option<String>,
-    pid: Option<serde_json::Value>,
-    pid_file: Option<String>,
-    gateway_url: Option<String>,
-    conversations: Option<serde_json::Value>,
-    memory_nodes: Option<serde_json::Value>,
-    memory_links: Option<serde_json::Value>,
 }
 
 #[allow(dead_code)]
@@ -1074,11 +1057,50 @@ pub fn daemon_status_poll_interval() -> Duration {
 }
 
 pub fn generate_browser_extension_token(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
+    let json_result = run_anda(ctx, &browser_extension_token_json_args())?;
+    if json_result.success {
+        if let Some(report) = browser_extension_token_report(&json_result.message) {
+            return Ok(CommandResult {
+                success: true,
+                message: browser_extension_token_message(&report),
+            });
+        }
+        return Ok(json_result);
+    }
+
+    // Older `anda` binaries do not know `--json`; fall back to the text output.
     run_anda(ctx, &browser_extension_token_args())
 }
 
 fn browser_extension_token_args() -> [&'static str; 4] {
     ["browser", "token", "--days", BROWSER_EXTENSION_TOKEN_DAYS]
+}
+
+fn browser_extension_token_json_args() -> [&'static str; 5] {
+    [
+        "browser",
+        "token",
+        "--days",
+        BROWSER_EXTENSION_TOKEN_DAYS,
+        "--json",
+    ]
+}
+
+fn browser_extension_token_report(
+    output: &str,
+) -> Option<crate::daemon_protocol::BrowserTokenReport> {
+    serde_json::from_str::<crate::daemon_protocol::BrowserTokenReport>(output.trim())
+        .ok()
+        .filter(|report| !report.token.trim().is_empty())
+}
+
+/// Renders the same lines the text command prints, so the token dialog and
+/// the clipboard content stay byte-identical to older launchers.
+fn browser_extension_token_message(report: &crate::daemon_protocol::BrowserTokenReport) -> String {
+    format!(
+        "Gateway URL: {}\nBearer token: {}\nExtension directory: {}",
+        report.gateway_url, report.token, report.extension_dir
+    )
 }
 
 pub fn browser_extension_bearer_token(output: &str) -> Option<String> {
@@ -1186,11 +1208,10 @@ pub fn finish_update_restart_success(state: &LauncherAutoUpdateState) {
         ui_state.prompting_restart_tag = None;
     }
     ui_state.last_state = Some(LauncherAutoUpdateState {
-        status: "installed".to_string(),
+        status: AutoUpdateStatus::Installed,
         current_tag: tag,
         latest_tag: state.latest_tag.clone(),
-        downloaded_path: None,
-        error: None,
+        ..Default::default()
     });
 }
 
@@ -1379,39 +1400,23 @@ fn launcher_daemon_status_from_command_result(result: &CommandResult) -> Launche
 }
 
 fn launcher_daemon_status_from_json(message: &str) -> Option<LauncherDaemonStatus> {
-    let status = serde_json::from_str::<LauncherDaemonStatusJson>(message).ok()?;
-    let summary = status
-        .summary
-        .as_deref()
-        .map(str::trim)
-        .filter(|summary| !summary.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| text().status_unavailable);
-    let pid = json_status_value(status.pid).or_else(|| {
-        status
-            .pid_file
-            .as_deref()
-            .map(str::trim)
-            .filter(|pid_file| !pid_file.is_empty())
-            .map(ToOwned::to_owned)
-    });
+    let report =
+        serde_json::from_str::<crate::daemon_protocol::DaemonStatusReport>(message).ok()?;
+    let summary =
+        non_empty_json_string(Some(report.summary)).unwrap_or_else(|| text().status_unavailable);
+    let pid = report
+        .pid
+        .map(|pid| pid.to_string())
+        .or_else(|| non_empty_json_string(report.pid_file));
 
     Some(LauncherDaemonStatus {
         summary,
         pid,
-        gateway_url: non_empty_json_string(status.gateway_url),
-        conversations: json_status_value(status.conversations),
-        memory_nodes: json_status_value(status.memory_nodes),
-        memory_links: json_status_value(status.memory_links),
+        gateway_url: non_empty_json_string(report.gateway_url),
+        conversations: report.conversations.map(|value| value.to_string()),
+        memory_nodes: report.memory_nodes.map(|value| value.to_string()),
+        memory_links: report.memory_links.map(|value| value.to_string()),
     })
-}
-
-fn json_status_value(value: Option<serde_json::Value>) -> Option<String> {
-    match value? {
-        serde_json::Value::Number(number) => Some(number.to_string()),
-        serde_json::Value::String(value) => non_empty_json_string(Some(value)),
-        _ => None,
-    }
 }
 
 fn non_empty_json_string(value: Option<String>) -> Option<String> {
@@ -2070,7 +2075,7 @@ fn parse_existing_config(content: &str) -> LauncherResult<ExistingConfig> {
 fn provider_has_auth(provider: &ExistingProvider) -> bool {
     !provider.api_key.trim().is_empty()
         || codex_auth_file_available(provider.api_base.trim())
-        || env_api_key_for_provider(
+        || crate::provider_env::env_api_key(
             provider.family.trim(),
             provider.model.trim(),
             provider.api_base.trim(),
@@ -2106,80 +2111,10 @@ struct ExistingOAuthToken {
     access_token: String,
 }
 
-fn env_api_key_for_provider(family: &str, model: &str, api_base: &str) -> Option<String> {
-    api_key_env_candidates(family, model, api_base)
-        .into_iter()
-        .find_map(|name| {
-            env::var(name).ok().and_then(|value| {
-                let value = value.trim().to_string();
-                (!value.is_empty()).then_some(value)
-            })
-        })
-}
-
-fn api_key_env_candidates(family: &str, model: &str, api_base: &str) -> Vec<&'static str> {
-    let family = family.to_ascii_lowercase();
-    let model = model.to_ascii_lowercase();
-    let api_base = api_base.to_ascii_lowercase();
-    let mut candidates = Vec::new();
-
-    if api_base.contains("deepseek") || model.contains("deepseek") {
-        push_candidate(&mut candidates, "DEEPSEEK_API_KEY");
-    } else if api_base.contains("minimaxi") || model.contains("minimax") {
-        push_candidate(&mut candidates, "MINIMAX_API_KEY");
-        push_candidate(&mut candidates, "MINIMAXI_API_KEY");
-    } else if api_base.contains("xiaomimimo") || model.contains("mimo") {
-        push_candidate(&mut candidates, "MIMO_API_KEY");
-        push_candidate(&mut candidates, "XIAOMI_MIMO_API_KEY");
-    } else if api_base.contains("moonshot") || model.contains("kimi") {
-        push_candidate(&mut candidates, "MOONSHOT_API_KEY");
-        push_candidate(&mut candidates, "KIMI_API_KEY");
-    } else if api_base.contains("bigmodel") || model.contains("glm") {
-        push_candidate(&mut candidates, "BIGMODEL_API_KEY");
-        push_candidate(&mut candidates, "ZHIPUAI_API_KEY");
-        push_candidate(&mut candidates, "GLM_API_KEY");
-    } else if api_base.contains("openrouter") {
-        push_candidate(&mut candidates, "OPENROUTER_API_KEY");
-    } else if api_base.contains("groq") {
-        push_candidate(&mut candidates, "GROQ_API_KEY");
-    } else if api_base.contains("siliconflow") {
-        push_candidate(&mut candidates, "SILICONFLOW_API_KEY");
-    } else if api_base.contains("dashscope") || model.contains("qwen") {
-        push_candidate(&mut candidates, "DASHSCOPE_API_KEY");
-        push_candidate(&mut candidates, "QWEN_API_KEY");
-    } else if api_base.contains("anthropic.com") {
-        push_candidate(&mut candidates, "ANTHROPIC_API_KEY");
-    } else if api_base.contains("openai.com") {
-        push_candidate(&mut candidates, "OPENAI_API_KEY");
-    } else if api_base.contains("googleapis.com") || model.contains("gemini") {
-        push_candidate(&mut candidates, "GEMINI_API_KEY");
-        push_candidate(&mut candidates, "GOOGLE_API_KEY");
-    }
-
-    if candidates.is_empty() {
-        match family.as_str() {
-            "anthropic" => push_candidate(&mut candidates, "ANTHROPIC_API_KEY"),
-            "openai" => push_candidate(&mut candidates, "OPENAI_API_KEY"),
-            "gemini" | "google" => {
-                push_candidate(&mut candidates, "GEMINI_API_KEY");
-                push_candidate(&mut candidates, "GOOGLE_API_KEY");
-            }
-            _ => {}
-        }
-    }
-
-    candidates
-}
-
-fn push_candidate(candidates: &mut Vec<&'static str>, name: &'static str) {
-    if !candidates.contains(&name) {
-        candidates.push(name);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider_env::api_key_env_candidates;
 
     static UPDATE_UI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -2194,11 +2129,11 @@ mod tests {
 
     fn downloaded_test_update_state() -> LauncherAutoUpdateState {
         LauncherAutoUpdateState {
-            status: "downloaded".to_string(),
+            status: AutoUpdateStatus::Downloaded,
             current_tag: "v1.0.0".to_string(),
             latest_tag: Some("v1.2.3".to_string()),
             downloaded_path: Some("/tmp/anda-update".to_string()),
-            error: None,
+            ..Default::default()
         }
     }
 
@@ -2441,11 +2376,10 @@ mod tests {
 
         assert!(downloaded_update_state().is_none());
         finish_update_check(Some(LauncherAutoUpdateState {
-            status: "idle".to_string(),
+            status: AutoUpdateStatus::Idle,
             current_tag: "v1.0.0".to_string(),
             latest_tag: Some("v1.0.0".to_string()),
-            downloaded_path: None,
-            error: None,
+            ..Default::default()
         }));
         assert!(downloaded_update_state().is_none());
 
@@ -2650,6 +2584,33 @@ tts:
             browser_extension_token_args(),
             ["browser", "token", "--days", "365"]
         );
+        assert_eq!(
+            browser_extension_token_json_args(),
+            ["browser", "token", "--days", "365", "--json"]
+        );
+    }
+
+    #[test]
+    fn browser_extension_token_report_renders_the_legacy_text_lines() {
+        let report = browser_extension_token_report(
+            r#"{"gateway_url":"http://127.0.0.1:8042","token":"tok-1","extension_dir":"chrome-extension"}"#,
+        )
+        .expect("report should parse");
+        let message = browser_extension_token_message(&report);
+
+        assert_eq!(
+            message,
+            "Gateway URL: http://127.0.0.1:8042\nBearer token: tok-1\nExtension directory: chrome-extension"
+        );
+        // The composed message keeps feeding the existing line scraper.
+        assert_eq!(
+            browser_extension_bearer_token(&message),
+            Some("tok-1".to_string())
+        );
+
+        // Empty tokens and non-JSON output fall back to the text flow.
+        assert!(browser_extension_token_report(r#"{"token":"  "}"#).is_none());
+        assert!(browser_extension_token_report("Bearer token: tok-1").is_none());
     }
 
     #[test]
@@ -2976,11 +2937,11 @@ exit 1
         let ctx = context_with_fake_anda(home.path(), true);
 
         let now = check_update_now(&ctx).unwrap();
-        assert_eq!(now.status, "downloaded");
+        assert_eq!(now.status, AutoUpdateStatus::Downloaded);
         assert!(now.downloaded_update_available());
 
         let due = check_update_if_due(&ctx).unwrap();
-        assert_eq!(due.status, "current");
+        assert_eq!(due.status, AutoUpdateStatus::Current);
     }
 
     #[cfg(unix)]
@@ -3007,11 +2968,11 @@ exit 1
     #[test]
     fn launcher_auto_update_state_status_messages() {
         let downloaded = LauncherAutoUpdateState {
-            status: "downloaded".to_string(),
+            status: AutoUpdateStatus::Downloaded,
             current_tag: "v1.0.0".to_string(),
             latest_tag: Some("v2.0.0".to_string()),
             downloaded_path: Some("/tmp/anda".to_string()),
-            error: None,
+            ..Default::default()
         };
         assert!(downloaded.downloaded_update_available());
         assert_eq!(downloaded.current_tag_label(), "v1.0.0");
@@ -3020,24 +2981,24 @@ exit 1
 
         // Same current and latest tag is not an update.
         let current = LauncherAutoUpdateState {
-            status: "downloaded".to_string(),
+            status: AutoUpdateStatus::Downloaded,
             current_tag: "v2.0.0".to_string(),
             latest_tag: Some("v2.0.0".to_string()),
             downloaded_path: Some("/tmp/anda".to_string()),
-            error: None,
+            ..Default::default()
         };
         assert!(!current.downloaded_update_available());
 
         for status in [
-            "failed",
-            "checking",
-            "downloading",
-            "idle",
-            "current",
-            "weird",
+            AutoUpdateStatus::Failed,
+            AutoUpdateStatus::Checking,
+            AutoUpdateStatus::Downloading,
+            AutoUpdateStatus::Idle,
+            AutoUpdateStatus::Current,
+            AutoUpdateStatus::Unknown,
         ] {
             let state = LauncherAutoUpdateState {
-                status: status.to_string(),
+                status,
                 current_tag: "v1.0.0".to_string(),
                 error: Some("oops".to_string()),
                 ..Default::default()

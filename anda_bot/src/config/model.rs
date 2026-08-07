@@ -4,9 +4,7 @@ use std::path::Path;
 
 use crate::util::text::read_text_file_sync;
 
-use super::normalize_string;
-
-pub const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
+pub use crate::provider_env::CODEX_API_BASE;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelSettings {
@@ -73,82 +71,13 @@ pub struct OAuthToken {
 fn provider_with_env_api_key(provider: &ModelConfig) -> ModelConfig {
     let mut provider = provider.clone();
     if provider.api_key.trim().is_empty()
-        && let Some(api_key) = env_api_key_for_provider(&provider)
+        && let Some(api_key) =
+            crate::provider_env::env_api_key(&provider.family, &provider.model, &provider.api_base)
     {
         provider.api_key = api_key;
     }
 
     provider
-}
-
-fn env_api_key_for_provider(provider: &ModelConfig) -> Option<String> {
-    api_key_env_candidates(provider)
-        .into_iter()
-        .find_map(|name| {
-            std::env::var(name)
-                .ok()
-                .and_then(|value| normalize_string(&value))
-        })
-}
-
-fn api_key_env_candidates(provider: &ModelConfig) -> Vec<&'static str> {
-    let family = provider.family.trim().to_ascii_lowercase();
-    let model = provider.model.trim().to_ascii_lowercase();
-    let api_base = provider.api_base.trim().to_ascii_lowercase();
-    let mut candidates = Vec::new();
-
-    if api_base.contains("deepseek") || model.contains("deepseek") {
-        push_candidate(&mut candidates, "DEEPSEEK_API_KEY");
-    } else if api_base.contains("minimaxi") || model.contains("minimax") {
-        push_candidate(&mut candidates, "MINIMAX_API_KEY");
-        push_candidate(&mut candidates, "MINIMAXI_API_KEY");
-    } else if api_base.contains("xiaomimimo") || model.contains("mimo") {
-        push_candidate(&mut candidates, "MIMO_API_KEY");
-        push_candidate(&mut candidates, "XIAOMI_MIMO_API_KEY");
-    } else if api_base.contains("moonshot") || model.contains("kimi") {
-        push_candidate(&mut candidates, "MOONSHOT_API_KEY");
-        push_candidate(&mut candidates, "KIMI_API_KEY");
-    } else if api_base.contains("bigmodel") || model.contains("glm") {
-        push_candidate(&mut candidates, "BIGMODEL_API_KEY");
-        push_candidate(&mut candidates, "ZHIPUAI_API_KEY");
-        push_candidate(&mut candidates, "GLM_API_KEY");
-    } else if api_base.contains("openrouter") {
-        push_candidate(&mut candidates, "OPENROUTER_API_KEY");
-    } else if api_base.contains("groq") {
-        push_candidate(&mut candidates, "GROQ_API_KEY");
-    } else if api_base.contains("siliconflow") {
-        push_candidate(&mut candidates, "SILICONFLOW_API_KEY");
-    } else if api_base.contains("dashscope") || model.contains("qwen") {
-        push_candidate(&mut candidates, "DASHSCOPE_API_KEY");
-        push_candidate(&mut candidates, "QWEN_API_KEY");
-    } else if api_base.contains("anthropic.com") {
-        push_candidate(&mut candidates, "ANTHROPIC_API_KEY");
-    } else if api_base.contains("openai.com") {
-        push_candidate(&mut candidates, "OPENAI_API_KEY");
-    } else if api_base.contains("googleapis.com") || model.contains("gemini") {
-        push_candidate(&mut candidates, "GEMINI_API_KEY");
-        push_candidate(&mut candidates, "GOOGLE_API_KEY");
-    }
-
-    if candidates.is_empty() {
-        match family.as_str() {
-            "anthropic" => push_candidate(&mut candidates, "ANTHROPIC_API_KEY"),
-            "openai" => push_candidate(&mut candidates, "OPENAI_API_KEY"),
-            "gemini" | "google" => {
-                push_candidate(&mut candidates, "GEMINI_API_KEY");
-                push_candidate(&mut candidates, "GOOGLE_API_KEY");
-            }
-            _ => {}
-        }
-    }
-
-    candidates
-}
-
-fn push_candidate(candidates: &mut Vec<&'static str>, name: &'static str) {
-    if !candidates.contains(&name) {
-        candidates.push(name);
-    }
 }
 
 #[cfg(test)]
@@ -330,12 +259,7 @@ mod tests {
     #[test]
     fn api_key_env_candidates_cover_known_brands() {
         fn candidates(family: &str, model: &str, api_base: &str) -> Vec<&'static str> {
-            api_key_env_candidates(&ModelConfig {
-                family: family.to_string(),
-                model: model.to_string(),
-                api_base: api_base.to_string(),
-                ..Default::default()
-            })
+            crate::provider_env::api_key_env_candidates(family, model, api_base)
         }
 
         assert_eq!(

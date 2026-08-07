@@ -4,9 +4,8 @@
 //! artifacts returned by the daemon. Wake-word detection is not handled here; a
 //! future wake model can decide when to invoke these helpers.
 
-use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource, ToolInput};
-use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
-use anda_kip::Response as KipResponse;
+use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource};
+use anda_engine::memory::ConversationStatus;
 use clap::Args;
 use ic_auth_types::Xid;
 use std::{
@@ -19,9 +18,8 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    config,
-    engine::{ConversationsTool, ConversationsToolArgs},
-    gateway, transcription, tts, util,
+    config, gateway, gateway::is_terminal_conversation_status, transcription, tts, util,
+    util::request_meta::keys,
 };
 
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
@@ -500,7 +498,7 @@ async fn initialize_voice_cursor(
         return Ok(VoiceConversationCursor::default());
     }
 
-    let conversation = get_conversation(client, conversation_id).await?;
+    let conversation = client.get_conversation(conversation_id).await?;
     Ok(VoiceConversationCursor {
         conversation_id: Some(conversation._id),
         seen_messages: conversation.messages.len(),
@@ -515,15 +513,15 @@ async fn poll_voice_response(
 ) -> Result<String, BoxError> {
     let mut conversation_id = conversation_id;
     reset_voice_cursor_if_needed(cursor, conversation_id);
+    // Same guard as the chat view's poll loop: following `child` skips the
+    // poll sleep, so a malformed chain (cycle, or absurd length) would spin
+    // into an unbounded sequence of HTTP requests.
+    let mut visited: Vec<u64> = vec![conversation_id];
 
     loop {
-        let delta = get_conversation_delta(
-            client,
-            conversation_id,
-            cursor.seen_messages,
-            cursor.seen_artifacts,
-        )
-        .await?;
+        let delta = client
+            .get_conversation_delta(conversation_id, cursor.seen_messages, cursor.seen_artifacts)
+            .await?;
 
         let response_text = assistant_text_from_messages(&delta.messages);
         cursor.seen_messages += delta.messages.len();
@@ -536,6 +534,19 @@ async fn poll_voice_response(
         if let Some(child_id) = delta.child
             && child_id != conversation_id
         {
+            if visited.contains(&child_id) {
+                return Err(
+                    format!("conversation child chain contains a cycle at {child_id}").into(),
+                );
+            }
+            if visited.len() >= gateway::MAX_CONVERSATION_CHAIN {
+                return Err(format!(
+                    "conversation child chain is longer than {}",
+                    gateway::MAX_CONVERSATION_CHAIN
+                )
+                .into());
+            }
+            visited.push(child_id);
             conversation_id = child_id;
             reset_voice_cursor_if_needed(cursor, conversation_id);
             continue;
@@ -555,61 +566,12 @@ async fn poll_voice_response(
     }
 }
 
-async fn get_conversation(
-    client: &gateway::Client,
-    conversation_id: u64,
-) -> Result<Conversation, BoxError> {
-    let output = client
-        .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
-            ConversationsTool::NAME.to_string(),
-            ConversationsToolArgs::GetConversation {
-                _id: conversation_id,
-            },
-        ))
-        .await?;
-
-    match output.output {
-        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<Conversation>(result)?),
-        other => Err(format!("conversation API returned an error: {other:?}").into()),
-    }
-}
-
-async fn get_conversation_delta(
-    client: &gateway::Client,
-    conversation_id: u64,
-    messages_offset: usize,
-    artifacts_offset: usize,
-) -> Result<ConversationDelta, BoxError> {
-    let output = client
-        .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
-            ConversationsTool::NAME.to_string(),
-            ConversationsToolArgs::GetConversationDelta {
-                _id: conversation_id,
-                messages_offset,
-                artifacts_offset,
-            },
-        ))
-        .await?;
-
-    match output.output {
-        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<ConversationDelta>(result)?),
-        other => Err(format!("conversation API returned an error: {other:?}").into()),
-    }
-}
-
 fn reset_voice_cursor_if_needed(cursor: &mut VoiceConversationCursor, conversation_id: u64) {
     if cursor.conversation_id != Some(conversation_id) {
         cursor.conversation_id = Some(conversation_id);
         cursor.seen_messages = 0;
         cursor.seen_artifacts = 0;
     }
-}
-
-fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
-    matches!(
-        status,
-        ConversationStatus::Completed | ConversationStatus::Cancelled | ConversationStatus::Failed
-    )
 }
 
 fn assistant_text_from_messages(messages: &[serde_json::Value]) -> String {
@@ -642,11 +604,11 @@ fn add_cli_voice_context(meta: &mut RequestMeta) {
         .map(|dir| format!("cli:voice:{dir}"))
         .unwrap_or_else(|| "cli:voice".to_string());
     meta.extra
-        .entry("source".to_string())
+        .entry(keys::SOURCE.to_string())
         .or_insert(source.into());
     if let Some(workspace) = workspace {
         meta.extra
-            .entry("workspace".to_string())
+            .entry(keys::WORKSPACE.to_string())
             .or_insert(workspace.into());
     }
 }
@@ -1195,20 +1157,6 @@ mod tests {
     }
 
     #[test]
-    fn is_terminal_conversation_status_covers_variants() {
-        assert!(is_terminal_conversation_status(
-            &ConversationStatus::Completed
-        ));
-        assert!(is_terminal_conversation_status(
-            &ConversationStatus::Cancelled
-        ));
-        assert!(is_terminal_conversation_status(&ConversationStatus::Failed));
-        assert!(!is_terminal_conversation_status(
-            &ConversationStatus::Working
-        ));
-    }
-
-    #[test]
     fn assistant_text_from_messages_joins_assistant_replies() {
         let messages = vec![
             serde_json::json!({"role": "user", "content": [{"type": "Text", "text": "hi"}]}),
@@ -1260,5 +1208,71 @@ mod tests {
     fn voice_channel_constructs() {
         let _ = VoiceChannel::new();
         let _ = VoiceChannel;
+    }
+
+    use anda_core::ByteBufB64;
+    use anda_engine::memory::ConversationDelta;
+    use axum::{Router, extract::State, routing};
+    use std::{collections::HashMap, sync::Arc};
+
+    async fn voice_gateway_handler(
+        State(state): State<Arc<HashMap<u64, ConversationDelta>>>,
+        axum::Json(request): axum::Json<anda_core::http::RPCRequest>,
+    ) -> axum::Json<serde_json::Value> {
+        let (input,): (anda_core::ToolInput<serde_json::Value>,) =
+            serde_json::from_slice(&request.params).unwrap();
+        let id = input.args["_id"].as_u64().unwrap_or_default();
+        let delta = state.get(&id).expect("known conversation");
+        let response = anda_kip::Response::Ok {
+            result: serde_json::to_value(delta).unwrap(),
+            next_cursor: None,
+        };
+        let output: anda_core::ToolOutput<anda_kip::Response> =
+            anda_core::ToolOutput::new(response);
+        let rpc: anda_core::http::RPCResponse =
+            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+        axum::Json(serde_json::to_value(&rpc).unwrap())
+    }
+
+    async fn spawn_voice_gateway(deltas: HashMap<u64, ConversationDelta>) -> gateway::Client {
+        let app = Router::new()
+            .route("/engine/default", routing::post(voice_gateway_handler))
+            .with_state(Arc::new(deltas));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        gateway::Client::new(format!("http://{addr}"), "token".to_string())
+    }
+
+    fn working_delta(id: u64, child: Option<u64>) -> ConversationDelta {
+        ConversationDelta {
+            _id: id,
+            messages: Vec::new(),
+            artifacts: Vec::new(),
+            status: ConversationStatus::Working,
+            usage: Default::default(),
+            failed_reason: None,
+            updated_at: 0,
+            child,
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_voice_response_stops_on_child_chain_cycle() {
+        // Following `child` skips the poll sleep, so without the guard a
+        // cyclic chain would spin this loop on HTTP requests forever.
+        let client = spawn_voice_gateway(HashMap::from([
+            (1, working_delta(1, Some(2))),
+            (2, working_delta(2, Some(1))),
+        ]))
+        .await;
+        let mut cursor = VoiceConversationCursor::default();
+
+        let err = poll_voice_response(&client, &mut cursor, 1)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("cycle"), "{err}");
     }
 }

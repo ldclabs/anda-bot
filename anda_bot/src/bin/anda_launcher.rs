@@ -2,6 +2,12 @@
 
 rust_i18n::i18n!("locales", fallback = "en");
 
+#[path = "../daemon_protocol.rs"]
+mod daemon_protocol;
+
+#[path = "../provider_env.rs"]
+mod provider_env;
+
 #[path = "anda_launcher/core.rs"]
 mod core;
 #[path = "anda_launcher/settings.rs"]

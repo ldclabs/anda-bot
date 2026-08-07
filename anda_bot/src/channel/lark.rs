@@ -16,8 +16,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    is_transient_send_error, resource_from_bytes,
+    Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
+    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    resource_from_bytes,
 };
 use crate::config::{self, normalize_identity};
 
@@ -249,7 +250,7 @@ pub struct LarkChannel {
     workspace: Arc<ChannelWorkspace>,
     bot_open_id: Arc<StdRwLock<Option<String>>>,
     tenant_token: Arc<RwLock<Option<CachedTenantToken>>>,
-    ws_seen_ids: Arc<RwLock<HashMap<String, Instant>>>,
+    dedup: Arc<RecentEventDedup>,
 }
 
 impl LarkChannel {
@@ -281,7 +282,7 @@ impl LarkChannel {
             workspace: Arc::new(ChannelWorkspace::default()),
             bot_open_id: Arc::new(StdRwLock::new(None)),
             tenant_token: Arc::new(RwLock::new(None)),
-            ws_seen_ids: Arc::new(RwLock::new(HashMap::new())),
+            dedup: Arc::new(RecentEventDedup::new(EVENT_DEDUP_WINDOW)),
         }
     }
 
@@ -898,18 +899,7 @@ impl LarkChannel {
     }
 
     async fn is_duplicate_message(&self, message_id: &str) -> bool {
-        if message_id.trim().is_empty() {
-            return false;
-        }
-
-        let now = Instant::now();
-        let mut seen = self.ws_seen_ids.write().await;
-        seen.retain(|_, instant| now.duration_since(*instant) < Duration::from_secs(30 * 60));
-        if seen.contains_key(message_id) {
-            return true;
-        }
-        seen.insert(message_id.to_string(), now);
-        false
+        self.dedup.is_duplicate(message_id).await
     }
 
     async fn parse_message_content(
@@ -1471,23 +1461,6 @@ fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> St
         }
     }
     lines.join("\n")
-}
-
-fn pick_uniform_index(len: usize) -> usize {
-    debug_assert!(len > 0);
-    let upper = len as u64;
-    let reject_threshold = (u64::MAX / upper) * upper;
-
-    loop {
-        let value = rand::random::<u64>();
-        if value < reject_threshold {
-            return (value % upper) as usize;
-        }
-    }
-}
-
-fn random_from_pool(pool: &'static [&'static str]) -> &'static str {
-    pool[pick_uniform_index(pool.len())]
 }
 
 fn lark_ack_pool(locale: LarkAckLocale) -> &'static [&'static str] {

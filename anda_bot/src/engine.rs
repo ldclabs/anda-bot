@@ -63,10 +63,12 @@ use crate::{
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 
 pub(crate) use action::{
-    ActionEvent, ActionRuntime, ActionSession, ActionsTool, AskUserChoiceTool,
-    action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
+    ActionApiOutput, ActionDetail, ActionEvent, ActionRuntime, ActionSession, ActionStatus,
+    ActionsTool, ActionsToolArgs, AskUserChoiceTool, action_id_from_message,
+    action_id_from_message_value, apply_action_resolution_to_chat_message,
     apply_action_resolution_to_message, approval_detail, is_action_message,
-    is_action_message_value, require_mcp_approval,
+    is_action_message_value, payload_action_id, payload_is_pending, payload_responded_at,
+    require_mcp_approval, update_action_payload_resolution,
 };
 pub use agent::{
     AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,

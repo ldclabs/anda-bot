@@ -643,7 +643,7 @@ fn action_helpers_find_pending_choice_and_update_response() {
 
     assert!(apply_action_response_to_messages(
         &mut messages,
-        &super::action::TuiActionApiOutput {
+        &super::action::ActionApiOutput {
             action_id: "act_choice".to_string(),
             conversation: 7,
             status: "selected".to_string(),

@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     action::{
-        ACTION_RESPONSE_TIMEOUT, TuiAction, TuiActionAnswer, TuiActionApiOutput, TuiActionChoice,
+        ACTION_RESPONSE_TIMEOUT, ActionApiOutput, TuiAction, TuiActionAnswer, TuiActionChoice,
         TuiActionChoiceDraft, TuiActionResponseRequest, action_footer_line, action_response_notice,
         active_pending_action, apply_action_response_to_message_value,
         apply_action_response_to_messages,
@@ -22,7 +22,7 @@ use super::{
     text::{compact_cjk_spacing_with_cursor, normalize_newlines},
 };
 
-type ActionResponseResult = Result<TuiActionApiOutput, String>;
+type ActionResponseResult = Result<ActionApiOutput, String>;
 
 #[derive(Default)]
 pub(super) struct SetupState {

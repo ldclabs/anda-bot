@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::{
-    approval_detail, backup_daemon_config, daemon_config_needs_backup, mcp_oauth::McpOAuthFlows,
-    require_mcp_approval, write_daemon_config_atomically,
+    ActionDetail, approval_detail, backup_daemon_config, daemon_config_needs_backup,
+    mcp_oauth::McpOAuthFlows, require_mcp_approval, write_daemon_config_atomically,
 };
 
 const APPROVAL_REDACTED: &str = "[redacted]";
@@ -132,7 +132,10 @@ fn redact_args_for_approval(args: &[String]) -> Vec<String> {
 /// Builds the user-facing approval card for `add_mcp_server`. Secrets (env
 /// values, bearer tokens, header values, credential-like argv, and URL
 /// credentials/query values) are never included.
-fn add_mcp_server_approval_card(server: &McpServerSettings, persist: bool) -> (String, Vec<Value>) {
+fn add_mcp_server_approval_card(
+    server: &McpServerSettings,
+    persist: bool,
+) -> (String, Vec<ActionDetail>) {
     let mut details = vec![approval_detail("Server id", &server.id, "text")];
     let summary = match &server.transport {
         McpTransportSettings::Stdio(stdio) => {

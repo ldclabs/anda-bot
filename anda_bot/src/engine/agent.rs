@@ -1,8 +1,8 @@
 use anda_brain::types::{FormationInputRef, InputContext};
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, ContentPart, Document,
-    Documents, FunctionDefinition, Message, Principal, Resource, StateFeatures, Tool, ToolOutput,
-    Usage,
+    Documents, FunctionDefinition, Message, Principal, RequestMeta, Resource, StateFeatures, Tool,
+    ToolOutput, Usage,
 };
 use anda_db_utils::UniqueVec;
 use anda_engine::{
@@ -69,8 +69,10 @@ use super::{
     system::{SYSTEM_PERSON_NAME, system_extra_user_context, system_runtime_prompt},
 };
 use crate::{
-    brain, channel, cron, transcription::TranscriptionManager, tts::TtsManager,
-    util::request_meta::request_meta_extra_as,
+    brain, channel, cron,
+    transcription::TranscriptionManager,
+    tts::TtsManager,
+    util::request_meta::{keys, request_meta_extra_as},
 };
 
 #[derive(Clone)]
@@ -184,6 +186,25 @@ fn base_tools() -> Vec<String> {
     ]
 }
 
+/// Everything that varies between the entry points that open a live session
+/// (a user request in [`AndaBot::run`], startup recovery). The shared wiring
+/// — channels, [`ActionSession`], hook installation, registration — lives in
+/// [`AndaBot::create_session`].
+struct SessionSpec<'a> {
+    sess_id: Xid,
+    caller: String,
+    workspace: String,
+    source_key: String,
+    conversation_id: u64,
+    request_meta: SessionRequestMeta,
+    /// Live request metadata; decides whether the formation counterparty is
+    /// the caller or a scoped external-user name.
+    meta: &'a RequestMeta,
+    initial_goal: Option<String>,
+    formation_topic: Option<&'static str>,
+    active_at_ms: u64,
+}
+
 impl AndaBot {
     pub const NAME: &'static str = "anda_bot";
 
@@ -250,6 +271,79 @@ impl AndaBot {
 
     pub(crate) fn action_runtime(&self) -> Arc<ActionRuntime> {
         self.inner.actions.clone()
+    }
+
+    /// Builds a [`Session`], installs its context hooks (goal state, live
+    /// request meta, actions, agent/shell hooks), and registers it. Returns
+    /// the receivers the session runner consumes; spawn the runner only after
+    /// this call so every hook is in place when the first turn executes.
+    fn create_session(
+        &self,
+        ctx: &AgentCtx,
+        spec: SessionSpec<'_>,
+    ) -> (
+        Arc<Session>,
+        tokio::sync::mpsc::Receiver<ConversationInput>,
+        tokio::sync::mpsc::Receiver<ActionEvent>,
+    ) {
+        let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
+        let (action_sender, action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(42);
+        let external_user =
+            request_meta_extra_as::<bool>(spec.meta, keys::EXTERNAL_USER).unwrap_or(false);
+        let formation_counterparty = if external_user {
+            Some(scoped_external_user_name_from_meta(spec.meta))
+        } else {
+            Some(spec.caller.clone())
+        };
+
+        let conversation_id = Arc::new(AtomicU64::new(spec.conversation_id));
+        let session_id = spec.sess_id.to_string();
+        let session = Arc::new(Session {
+            id: spec.sess_id,
+            caller: spec.caller.clone(),
+            workspace: spec.workspace,
+            source_key: spec.source_key.clone(),
+            conversation_id: conversation_id.clone(),
+            sender,
+            actions: ActionSession::new(
+                self.inner.actions.clone(),
+                action_sender,
+                spec.caller,
+                session_id,
+                conversation_id,
+                self.inner.models.clone(),
+                self.inner.home_dir.clone(),
+            ),
+            background_tasks: Arc::new(RwLock::new(HashMap::new())),
+            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
+            goal: Arc::new(RwLock::new(spec.initial_goal.map(goal::GoalState::new))),
+            request_meta: spec.request_meta.clone(),
+            completion_hooks: self.inner.completion_hooks.clone(),
+            submit_formation_at: AtomicU64::new(0),
+            formation_backoff_until: AtomicU64::new(0),
+            goal_check_backoff_until: AtomicU64::new(0),
+            active_at: Arc::new(AtomicU64::new(spec.active_at_ms)),
+            finish_when_idle: AtomicBool::new(false),
+            runner_idle: AtomicBool::new(false),
+            formation_context: Some(InputContext {
+                counterparty: formation_counterparty,
+                agent: Some(AndaBot::NAME.to_string()),
+                source: Some(spec.source_key),
+                topic: spec.formation_topic.map(str::to_string),
+            }),
+        });
+
+        ctx.base.set_state(GoalToolState::new(
+            session.goal.clone(),
+            session.active_at.clone(),
+        ));
+        ctx.base.set_state(spec.request_meta);
+        ctx.base.set_state(session.actions.clone());
+        ctx.base.set_state(DynAgentHook::new(session.clone()));
+        ctx.base.set_state(ShellToolHook::new(session.clone()));
+        self.insert_session(session.clone());
+
+        (session, rx, action_rx)
     }
 
     fn insert_session(&self, task: Arc<Session>) {
@@ -666,7 +760,9 @@ impl Agent<AgentCtx> for AndaBot {
         };
         let current_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
         if let Some(id) = current_conversation_id {
-            input.extra.insert("conversation".to_string(), id.into());
+            input
+                .extra
+                .insert(keys::CONVERSATION.to_string(), id.into());
         }
 
         let mut sess_id = current_conversation
@@ -971,69 +1067,24 @@ impl Agent<AgentCtx> for AndaBot {
             ..Default::default()
         };
 
-        let (sender, rx) = tokio::sync::mpsc::channel::<ConversationInput>(42);
-        let (action_sender, action_rx) = tokio::sync::mpsc::channel::<ActionEvent>(42);
-        let session_request_meta =
-            SessionRequestMeta::new(request_meta_for_conversation(ctx.meta(), conversation._id));
-        let external_user =
-            request_meta_extra_as::<bool>(ctx.meta(), "external_user").unwrap_or(false);
-        let formation_counterparty = if external_user {
-            Some(scoped_external_user_name_from_meta(ctx.meta()))
-        } else {
-            Some(caller.to_string())
-        };
-
-        let conversation_id = Arc::new(AtomicU64::new(conversation._id));
-        let session_id = sess_id.to_string();
-        let session = Arc::new(Session {
-            id: sess_id,
-            caller: caller.to_string(),
-            workspace,
-            source_key: source_key.clone(),
-            conversation_id: conversation_id.clone(),
-            sender,
-            actions: ActionSession::new(
-                self.inner.actions.clone(),
-                action_sender,
-                caller.to_string(),
-                session_id,
-                conversation_id,
-                self.inner.models.clone(),
-                self.inner.home_dir.clone(),
-            ),
-            background_tasks: Arc::new(RwLock::new(HashMap::new())),
-            background_progress_outputs: Arc::new(RwLock::new(HashMap::new())),
-            goal: Arc::new(RwLock::new(initial_goal.map(goal::GoalState::new))),
-            request_meta: session_request_meta.clone(),
-            completion_hooks: self.inner.completion_hooks.clone(),
-            submit_formation_at: AtomicU64::new(0),
-            formation_backoff_until: AtomicU64::new(0),
-            goal_check_backoff_until: AtomicU64::new(0),
-            active_at: Arc::new(AtomicU64::new(unix_ms())),
-            finish_when_idle: AtomicBool::new(false),
-            runner_idle: AtomicBool::new(false),
-            formation_context: Some(InputContext {
-                counterparty: formation_counterparty,
-                agent: Some(AndaBot::NAME.to_string()),
-                source: Some(source_key),
-                topic: None,
-            }),
-        });
-
-        ctx.base.set_state(GoalToolState::new(
-            session.goal.clone(),
-            session.active_at.clone(),
-        ));
-        ctx.base.set_state(session_request_meta);
-        ctx.base.set_state(session.actions.clone());
-
-        let agent_hook = DynAgentHook::new(session.clone());
-        ctx.base.set_state(agent_hook);
-
-        let shell_hook = ShellToolHook::new(session.clone());
-        ctx.base.set_state(shell_hook);
-
-        self.insert_session(session.clone());
+        let (session, rx, action_rx) = self.create_session(
+            &ctx,
+            SessionSpec {
+                sess_id,
+                caller: caller.to_string(),
+                workspace,
+                source_key,
+                conversation_id: conversation._id,
+                request_meta: SessionRequestMeta::new(request_meta_for_conversation(
+                    ctx.meta(),
+                    conversation._id,
+                )),
+                meta: ctx.meta(),
+                initial_goal,
+                formation_topic: None,
+                active_at_ms: unix_ms(),
+            },
+        );
 
         let assistant = self.clone();
         if !new_chat_history_message.content.is_empty() {

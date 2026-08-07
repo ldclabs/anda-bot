@@ -17,8 +17,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    Channel, ChannelMessage, ChannelWorkspace, SendMessage, file_name_for_resource, is_http_url,
-    is_transient_send_error, resource_from_bytes, split_message_on_word_boundaries,
+    Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
+    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    resource_from_bytes, split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -108,6 +109,7 @@ pub struct DiscordChannel {
     ack_reactions: bool,
     client: Client,
     workspace: Arc<ChannelWorkspace>,
+    dedup: RecentEventDedup,
     bot_user_id: Mutex<Option<String>>,
     #[allow(dead_code)]
     typing_handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -135,6 +137,7 @@ impl DiscordChannel {
             ack_reactions: cfg.ack_reactions,
             client,
             workspace: Arc::new(ChannelWorkspace::default()),
+            dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
             bot_user_id: Mutex::new(None),
             typing_handles: Mutex::new(HashMap::new()),
         }
@@ -451,7 +454,7 @@ impl DiscordChannel {
             &self.api_base,
             &channel_id,
             &message_id,
-            random_discord_ack_reaction(),
+            random_from_pool(DISCORD_ACK_REACTIONS),
         );
 
         tokio::spawn(async move {
@@ -832,6 +835,14 @@ impl Channel for DiscordChannel {
                         continue;
                     };
 
+                    // Gateway resumes can replay MESSAGE_CREATE events the
+                    // previous connection already delivered.
+                    if let Some(message_id) = data.get("id").and_then(Value::as_str)
+                        && self.dedup.is_duplicate(message_id).await
+                    {
+                        continue;
+                    }
+
                     let Some(channel_message) = self.parse_gateway_message(data, &bot_user_id).await else {
                         continue;
                     };
@@ -1149,18 +1160,6 @@ fn truncate_for_discord(text: &str) -> &str {
         .nth(DISCORD_MAX_MESSAGE_LENGTH)
         .map_or(text.len(), |(index, _)| index);
     &text[..end]
-}
-
-fn random_discord_ack_reaction() -> &'static str {
-    let upper = DISCORD_ACK_REACTIONS.len() as u64;
-    let reject_threshold = (u64::MAX / upper) * upper;
-
-    loop {
-        let value = rand::random::<u64>();
-        if value < reject_threshold {
-            return DISCORD_ACK_REACTIONS[(value % upper) as usize];
-        }
-    }
 }
 
 fn encode_emoji_for_discord(emoji: &str) -> String {
@@ -1805,7 +1804,7 @@ mod tests {
         );
         assert_eq!(truncate_for_discord("short"), "short");
 
-        assert!(DISCORD_ACK_REACTIONS.contains(&random_discord_ack_reaction()));
+        assert!(DISCORD_ACK_REACTIONS.contains(&random_from_pool(DISCORD_ACK_REACTIONS)));
         assert_eq!(encode_emoji_for_discord("custom:123"), "custom:123");
     }
 }

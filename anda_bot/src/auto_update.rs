@@ -1,7 +1,6 @@
 use anda_core::BoxError;
 use anda_db::database::AndaDB;
 use anda_engine::unix_ms;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -15,59 +14,12 @@ use std::{
     time::Duration,
 };
 
-use crate::{cli::updater, daemon::Daemon};
+use crate::{cli::updater, daemon::Daemon, daemon_protocol::current_version_tag};
+
+pub use crate::daemon_protocol::{AutoUpdateState, AutoUpdateStatus};
 
 pub const AUTO_UPDATE_EXTENSION_KEY: &str = "anda_auto_update";
 const CHECK_INTERVAL_MS: u64 = 24 * 60 * 60 * 1000;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AutoUpdateStatus {
-    #[default]
-    Idle,
-    Checking,
-    Current,
-    Downloading,
-    Downloaded,
-    Failed,
-    Installed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AutoUpdateState {
-    pub status: AutoUpdateStatus,
-    pub current_tag: String,
-    pub latest_tag: Option<String>,
-    pub last_checked_ms: Option<u64>,
-    pub downloaded_at_ms: Option<u64>,
-    pub installed_at_ms: Option<u64>,
-    pub target: Option<String>,
-    pub asset_name: Option<String>,
-    pub downloaded_path: Option<String>,
-    pub sha256: Option<String>,
-    pub checksum_verified: bool,
-    pub error: Option<String>,
-}
-
-impl Default for AutoUpdateState {
-    fn default() -> Self {
-        Self {
-            status: AutoUpdateStatus::Idle,
-            current_tag: current_version_tag(),
-            latest_tag: None,
-            last_checked_ms: None,
-            downloaded_at_ms: None,
-            installed_at_ms: None,
-            target: None,
-            asset_name: None,
-            downloaded_path: None,
-            sha256: None,
-            checksum_verified: false,
-            error: None,
-        }
-    }
-}
 
 impl AutoUpdateState {
     pub fn downloaded_update_available(&self) -> bool {
@@ -348,10 +300,6 @@ fn read_state(db: &AndaDB) -> AutoUpdateState {
         .unwrap_or_default();
     state.current_tag = current_version_tag();
     state
-}
-
-fn current_version_tag() -> String {
-    format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
 fn check_due(state: &AutoUpdateState, now_ms: u64) -> bool {
