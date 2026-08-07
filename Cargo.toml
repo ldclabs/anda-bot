@@ -32,6 +32,7 @@ anda_db_tfs = { version = "0.11", features = ["full"] }
 anda_db_utils = { version = "0.11" }
 anda_brain = { version = "0.11" }
 anda_kip = "0.11"
+anydoc = "0.1"
 base64 = "0.23"
 cpal = { version = "0.18" }
 cbor2 = "1"
@@ -92,8 +93,6 @@ mimalloc = { version = "0.1", features = ["v3"] }
 rand = "0.10"
 prost = { version = "0.14", default-features = false, features = ["derive"] }
 libc = "0.2"
-liteparse = { version = "2", default-features = false }
-liteparse-pdfium-sys = { version = "1", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"

@@ -702,6 +702,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_other_converts_a_document_with_anydoc() {
+        // RTF decodes as plain text, so this also pins the routing order: the
+        // content signature has to win over the text path, or the agent would
+        // hand the model raw control words instead of Markdown.
+        let ctx = mock_ctx();
+        let agent = MediaUnderstandingAgent::other(Vec::new());
+        let resource = Resource {
+            name: "memo.rtf".to_string(),
+            mime_type: Some("application/rtf".to_string()),
+            blob: Some(ByteBufB64(
+                br"{\rtf1\ansi\ansicpg1252 Quarterly panda census: 42.\par}".to_vec(),
+            )),
+            ..Default::default()
+        };
+
+        let output = agent
+            .run(ctx, "summarize".to_string(), vec![resource])
+            .await
+            .expect("document attachment should convert without a model");
+
+        assert!(output.content.contains("Quarterly panda census: 42."));
+        assert!(output.content.contains("converted by anydoc"));
+        assert!(!output.content.contains(r"\rtf1"));
+    }
+
+    #[tokio::test]
     async fn run_other_requires_attachments() {
         let ctx = mock_ctx();
         let agent = MediaUnderstandingAgent::other(Vec::new());

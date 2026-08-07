@@ -35,6 +35,7 @@ anda_db_tfs = { workspace = true }
 anda_db_utils = { workspace = true }
 anda_kip = { workspace = true }
 anda_object_store = { workspace = true }
+anydoc = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
@@ -73,7 +74,6 @@ object_store = { workspace = true }
 tower-http = { workspace = true }
 mimalloc = { workspace = true }
 rand = { workspace = true }
-liteparse = { workspace = true }
 # TUI (ratatui + crossterm)
 ratatui = { workspace = true }
 crossterm = { workspace = true }
@@ -85,11 +85,6 @@ zip = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
-
-# Desktop glibc targets additionally get OCR; musl and Windows stay on the base
-# feature set declared in [dependencies].
-[target.'cfg(all(not(target_env = "musl"), not(target_os = "windows")))'.dependencies]
-liteparse = { workspace = true, features = ["tesseract"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = { workspace = true }
@@ -122,7 +117,6 @@ objc2-app-kit = { workspace = true, features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
-liteparse-pdfium-sys = { workspace = true }
 png = { workspace = true }
 windows-sys = { workspace = true, features = [
   "Win32_Globalization",

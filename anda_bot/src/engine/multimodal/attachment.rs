@@ -13,10 +13,8 @@ use anda_engine::{
     grapheme_safe_cutoff,
     subagent::SubAgentManager,
 };
+use anydoc::Format;
 use ic_auth_types::Xid;
-use liteparse::{LiteParse, LiteParseConfig, types::PdfInput};
-#[cfg(windows)]
-use std::path::Path;
 use std::{borrow::Cow, path::PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -35,8 +33,6 @@ use crate::util::http_client::PublicUrlPolicy;
 
 const MAX_OTHER_TEXT_INLINE_BYTES: usize = 256 * 1024;
 const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 1024 * 1024;
-#[cfg(windows)]
-const PDFIUM_DLL_NAME: &str = "pdfium.dll";
 
 #[derive(Clone)]
 pub(super) struct AttachmentUnderstanding {
@@ -220,8 +216,16 @@ impl AttachmentUnderstanding {
             return self.fallback(ctx, attachment, question).await;
         };
 
-        if attachment_looks_like_pdf(data, &attachment) {
-            return self.understand_pdf(ctx, attachment, question).await;
+        // Content signatures name the container no matter how the attachment
+        // was labelled, so they get first refusal. Plain text then takes
+        // anything that decodes, which keeps CSV, JSON, and logs verbatim
+        // instead of reshaping them; only what is left over is matched against
+        // the MIME type and extension, which is what covers the formats anydoc
+        // cannot fingerprint.
+        if let Some(format) = Format::from_bytes(data) {
+            return self
+                .understand_document(ctx, attachment, format, question)
+                .await;
         }
 
         if let Some(text) = attachment_text_from_bytes(data, &attachment) {
@@ -229,7 +233,7 @@ impl AttachmentUnderstanding {
                 .text_or_summary_output(
                     ctx,
                     &attachment.label,
-                    &attachment.name,
+                    text_language_for_name(&attachment.name),
                     "text attachment",
                     text.as_ref(),
                     question,
@@ -237,40 +241,49 @@ impl AttachmentUnderstanding {
                 .await;
         }
 
+        if let Some(format) = document_format_from_label(&attachment) {
+            return self
+                .understand_document(ctx, attachment, format, question)
+                .await;
+        }
+
         self.fallback(ctx, attachment, question).await
     }
 
-    async fn understand_pdf(
+    async fn understand_document(
         &self,
         ctx: &AgentCtx,
         mut attachment: OtherAttachment,
+        format: Format,
         question: &str,
     ) -> Result<AgentOutput, BoxError> {
         let Some(data) = attachment.data.clone() else {
             return self.fallback(ctx, attachment, question).await;
         };
 
-        match parse_pdf_text(&data).await {
-            Ok(text) if !text.trim().is_empty() => {
+        let source = format!("{} converted by anydoc", format_label(format));
+        match convert_document_to_markdown(data, format).await {
+            Ok(markdown) if !markdown.trim().is_empty() => {
                 self.text_or_summary_output(
                     ctx,
                     &attachment.label,
-                    &attachment.name,
-                    "PDF text parsed by LiteParse",
-                    &text,
+                    "markdown",
+                    &source,
+                    &markdown,
                     question,
                 )
                 .await
             }
             Ok(_) => Ok(AgentOutput {
                 content: format!(
-                    "LiteParse recognized {} as a PDF but did not extract text. The file may be scanned, image-only, encrypted, or otherwise sparse.",
-                    attachment.label
+                    "anydoc read {} as {} but found no extractable text. The document may be scanned, image-only, or otherwise empty.",
+                    attachment.label,
+                    format_label(format)
                 ),
                 ..Default::default()
             }),
             Err(err) => {
-                attachment.read_error = Some(format!("LiteParse failed: {err}"));
+                attachment.read_error = Some(format!("anydoc failed: {err}"));
                 self.fallback(ctx, attachment, question).await
             }
         }
@@ -280,7 +293,7 @@ impl AttachmentUnderstanding {
         &self,
         ctx: &AgentCtx,
         label: &str,
-        name: &str,
+        language: &str,
         source: &str,
         text: &str,
         question: &str,
@@ -290,7 +303,7 @@ impl AttachmentUnderstanding {
                 content: format!(
                     "Detected {source} from {label} ({} bytes). Full text:\n\n{}",
                     text.len(),
-                    fenced_text(text_language_for_name(name), text)
+                    fenced_text(language, text)
                 ),
                 ..Default::default()
             });
@@ -700,24 +713,74 @@ fn display_attachment_uri(uri: &str) -> String {
     }
 }
 
-pub(super) fn attachment_looks_like_pdf(data: &[u8], attachment: &OtherAttachment) -> bool {
+/// The anydoc [`Format`] an attachment's MIME type, name, or URI claims.
+///
+/// Only consulted once [`Format::from_bytes`] and the plain-text path have both
+/// declined the bytes, so this is what picks up signature-less CSV and anything
+/// whose container anydoc cannot fingerprint. A wrong label costs one failed
+/// conversion, after which the attachment lands in the model fallback anyway.
+pub(super) fn document_format_from_label(attachment: &OtherAttachment) -> Option<Format> {
     attachment
         .mime_type
         .as_deref()
         .and_then(normalize_mime_type)
         .as_deref()
-        .is_some_and(is_pdf_mime_type)
-        || infer2::get(data).is_some_and(|kind| is_pdf_mime_type(kind.mime_type()))
-        || extension_from_name(&attachment.name).is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-        || attachment
-            .uri
-            .as_deref()
-            .and_then(extension_from_name)
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        .and_then(format_from_mime_type)
+        .or_else(|| extension_from_name(&attachment.name).and_then(Format::from_extension))
+        .or_else(|| {
+            attachment
+                .uri
+                .as_deref()
+                .and_then(extension_from_name)
+                .and_then(Format::from_extension)
+        })
 }
 
-pub(super) fn is_pdf_mime_type(mime_type: &str) -> bool {
-    mime_type.trim().eq_ignore_ascii_case("application/pdf")
+/// Maps an already-normalized MIME essence onto the parser anydoc should use.
+///
+/// `Format::from_extension` covers the filename side; this covers attachments
+/// that arrive with a MIME type but no usable name, such as data URLs and
+/// downloads whose URL path carries no extension.
+fn format_from_mime_type(mime_type: &str) -> Option<Format> {
+    Some(match mime_type {
+        "application/pdf" | "application/x-pdf" => Format::Pdf,
+        "application/msword" => Format::Doc,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        | "application/vnd.ms-word.document.macroenabled.12" => Format::Docx,
+        "application/vnd.oasis.opendocument.text" => Format::Odt,
+        "application/vnd.ms-powerpoint" => Format::Ppt,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        | "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
+        | "application/vnd.ms-powerpoint.presentation.macroenabled.12" => Format::Pptx,
+        "application/rtf" | "text/rtf" => Format::Rtf,
+        "application/epub+zip" => Format::Epub,
+        "application/vnd.ms-excel"
+        | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        | "application/vnd.ms-excel.sheet.macroenabled.12"
+        | "application/vnd.ms-excel.sheet.binary.macroenabled.12" => Format::Excel,
+        "application/vnd.oasis.opendocument.spreadsheet" => Format::Ods,
+        "application/vnd.oasis.opendocument.presentation" => Format::Odp,
+        "text/csv" | "application/csv" => Format::Csv,
+        _ => return None,
+    })
+}
+
+/// Human-readable name for a [`Format`], used in the text handed to the model.
+pub(super) fn format_label(format: Format) -> &'static str {
+    match format {
+        Format::Doc => "Word 97-2003 document",
+        Format::Docx => "Word document",
+        Format::Odt => "OpenDocument text",
+        Format::Pdf => "PDF",
+        Format::Ppt => "PowerPoint 97-2003 presentation",
+        Format::Pptx => "PowerPoint presentation",
+        Format::Rtf => "RTF document",
+        Format::Epub => "EPUB book",
+        Format::Excel => "Excel workbook",
+        Format::Ods => "OpenDocument spreadsheet",
+        Format::Odp => "OpenDocument presentation",
+        Format::Csv => "CSV table",
+    }
 }
 
 pub(super) fn attachment_text_from_bytes<'a>(
@@ -865,116 +928,20 @@ pub(super) fn is_text_extension(ext: &str) -> bool {
     )
 }
 
-pub(super) async fn parse_pdf_text(data: &[u8]) -> Result<String, BoxError> {
-    #[cfg(windows)]
-    ensure_pdfium_library_available()?;
-
-    let mut config = LiteParseConfig {
-        quiet: true,
-        ocr_enabled: cfg!(all(not(target_env = "musl"), not(target_os = "windows"))),
-        ..Default::default()
-    };
-    let first_ocr_enabled = config.ocr_enabled;
-    match parse_pdf_text_once(data, config.clone()).await {
-        Ok(text) => Ok(text),
-        Err(first_err) if first_ocr_enabled => {
-            config.ocr_enabled = false;
-            parse_pdf_text_once(data, config)
-                .await
-                .map_err(|second_err| {
-                    format!("with OCR enabled: {first_err}; with OCR disabled: {second_err}").into()
-                })
-        }
-        Err(err) => Err(err),
-    }
-}
-
-async fn parse_pdf_text_once(data: &[u8], config: LiteParseConfig) -> Result<String, BoxError> {
-    let parser = LiteParse::new(config);
-    parser
-        .parse_input(PdfInput::Bytes(data.to_vec()))
+/// Converts a document attachment to Markdown with anydoc.
+///
+/// anydoc is pure Rust and synchronous, so conversion runs on the blocking pool
+/// rather than stalling the runtime worker driving this agent. That also
+/// contains a panic on hostile input as a task failure instead of tearing down
+/// the process.
+pub(super) async fn convert_document_to_markdown(
+    data: Vec<u8>,
+    format: Format,
+) -> Result<String, BoxError> {
+    tokio::task::spawn_blocking(move || anydoc::to_markdown_bytes(&data, format))
         .await
-        .map(|result| result.text)
+        .map_err(|err| -> BoxError { format!("document conversion task failed: {err}").into() })?
         .map_err(Into::into)
-}
-
-#[cfg(windows)]
-fn ensure_pdfium_library_available() -> Result<(), BoxError> {
-    let mut load_errors = Vec::new();
-    for candidate in pdfium_library_candidates() {
-        if !candidate.is_file() && candidate != Path::new(PDFIUM_DLL_NAME) {
-            continue;
-        }
-        match try_load_pdfium_library(&candidate) {
-            Ok(()) => return Ok(()),
-            Err(err) => load_errors.push(format!("{}: {err}", candidate.display())),
-        }
-    }
-
-    let detail = if load_errors.is_empty() {
-        "searched PDFIUM_LIB_PATH, the anda.exe directory, the current directory, and PATH"
-            .to_string()
-    } else {
-        format!(
-            "could not load any pdfium.dll candidate: {}",
-            load_errors.join("; ")
-        )
-    };
-    Err(format!(
-        "{PDFIUM_DLL_NAME} is not available for LiteParse PDF extraction ({detail}). Set PDFIUM_LIB_PATH to the directory containing {PDFIUM_DLL_NAME}."
-    )
-    .into())
-}
-
-#[cfg(windows)]
-fn pdfium_library_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) =
-        std::env::var_os("PDFIUM_LIB_PATH").filter(|path| !path.as_os_str().is_empty())
-    {
-        push_pdfium_candidate(&mut candidates, PathBuf::from(path));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        push_pdfium_candidate(&mut candidates, dir.to_path_buf());
-    }
-    if let Ok(dir) = std::env::current_dir() {
-        push_pdfium_candidate(&mut candidates, dir);
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path) {
-            push_pdfium_candidate(&mut candidates, dir);
-        }
-    }
-    push_pdfium_candidate(&mut candidates, PathBuf::from(PDFIUM_DLL_NAME));
-    candidates
-}
-
-#[cfg(windows)]
-fn push_pdfium_candidate(candidates: &mut Vec<PathBuf>, path: PathBuf) {
-    let candidate = pdfium_library_candidate_for_path(&path);
-    if !candidates.iter().any(|existing| existing == &candidate) {
-        candidates.push(candidate);
-    }
-}
-
-#[cfg(windows)]
-fn pdfium_library_candidate_for_path(path: &Path) -> PathBuf {
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case(PDFIUM_DLL_NAME))
-    {
-        path.to_path_buf()
-    } else {
-        path.join(PDFIUM_DLL_NAME)
-    }
-}
-
-#[cfg(windows)]
-fn try_load_pdfium_library(path: &Path) -> Result<(), String> {
-    liteparse_pdfium_sys::dynamic::load(path)
 }
 
 pub(super) fn fenced_text(language: &str, text: &str) -> String {
@@ -1180,9 +1147,6 @@ mod tests {
 
     #[test]
     fn pure_text_helpers() {
-        assert!(is_pdf_mime_type(" Application/PDF "));
-        assert!(!is_pdf_mime_type("text/plain"));
-
         assert_eq!(text_language_for_name("a.rs"), "rust");
         assert_eq!(text_language_for_name("a.py"), "python");
         assert_eq!(text_language_for_name("a.cpp"), "cpp");
@@ -1198,13 +1162,73 @@ mod tests {
     }
 
     #[test]
-    fn pdf_detection_uses_mime_name_and_uri() {
-        let pdf_attachment = test_other_attachment("report.pdf", None, vec![]);
-        assert!(attachment_looks_like_pdf(b"random", &pdf_attachment));
-        let by_mime = test_other_attachment("blob", Some("application/pdf"), vec![]);
-        assert!(attachment_looks_like_pdf(b"random", &by_mime));
-        let not_pdf = test_other_attachment("notes.txt", Some("text/plain"), vec![]);
-        assert!(!attachment_looks_like_pdf(b"random", &not_pdf));
+    fn document_format_from_label_uses_mime_name_and_uri() {
+        assert_eq!(
+            document_format_from_label(&test_other_attachment("report.pdf", None, vec![])),
+            Some(Format::Pdf)
+        );
+        assert_eq!(
+            document_format_from_label(&test_other_attachment(
+                "blob",
+                Some("application/pdf; charset=binary"),
+                vec![]
+            )),
+            Some(Format::Pdf)
+        );
+        assert_eq!(
+            document_format_from_label(&test_other_attachment("memo.docx", None, vec![])),
+            Some(Format::Docx)
+        );
+        assert_eq!(
+            document_format_from_label(&test_other_attachment(
+                "book",
+                Some("application/epub+zip"),
+                vec![]
+            )),
+            Some(Format::Epub)
+        );
+
+        // The MIME type wins over a name that says otherwise.
+        let mut mislabeled = test_other_attachment(
+            "sheet.xlsx",
+            Some("application/vnd.oasis.opendocument.spreadsheet"),
+            vec![],
+        );
+        assert_eq!(document_format_from_label(&mislabeled), Some(Format::Ods));
+
+        // A nameless download falls through to the URI extension.
+        mislabeled = test_other_attachment("attachment", None, vec![]);
+        mislabeled.uri = Some("https://example.com/files/deck.pptx".to_string());
+        assert_eq!(document_format_from_label(&mislabeled), Some(Format::Pptx));
+
+        assert_eq!(
+            document_format_from_label(&test_other_attachment(
+                "notes.txt",
+                Some("text/plain"),
+                vec![]
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn format_label_names_every_format() {
+        for format in [
+            Format::Doc,
+            Format::Docx,
+            Format::Odt,
+            Format::Pdf,
+            Format::Ppt,
+            Format::Pptx,
+            Format::Rtf,
+            Format::Epub,
+            Format::Excel,
+            Format::Ods,
+            Format::Odp,
+            Format::Csv,
+        ] {
+            assert!(!format_label(format).is_empty());
+        }
     }
 
     #[test]
@@ -1374,9 +1398,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parse_pdf_text_rejects_invalid_bytes() {
-        // Not a valid PDF; both OCR-on and OCR-off passes should fail without panicking.
-        let result = parse_pdf_text(b"not a pdf at all").await;
+    async fn convert_document_to_markdown_rejects_invalid_bytes() {
+        // Bytes that claim to be a PDF but are not: anydoc must report an error
+        // rather than panic out of the blocking task.
+        let result = convert_document_to_markdown(b"not a pdf at all".to_vec(), Format::Pdf).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn convert_document_to_markdown_renders_a_signature_less_format() {
+        // CSV carries no signature, so it only converts when the label names it
+        // — the path `document_format_from_label` exists to reach.
+        let markdown = convert_document_to_markdown(b"name,qty\npanda,2\n".to_vec(), Format::Csv)
+            .await
+            .expect("csv should convert to markdown");
+
+        assert!(markdown.contains("name"));
+        assert!(markdown.contains("panda"));
+        assert!(markdown.contains('|'), "expected a GFM table: {markdown}");
     }
 }

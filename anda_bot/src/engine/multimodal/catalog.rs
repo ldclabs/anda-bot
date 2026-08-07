@@ -78,7 +78,7 @@ impl MediaKind {
                 "Understand video attachments, video file paths, or video URLs using the model labeled `video`, returning a textual summary for downstream agents."
             }
             Self::Other => {
-                "Understand non-image/audio/video attachments. Text blobs are handled directly, PDFs are parsed locally with LiteParse, and other formats are delegated to available skills or shell-assisted extraction."
+                "Understand non-image/audio/video attachments. Text blobs are handled directly, documents (PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV) are converted to Markdown locally with anydoc, and other formats are delegated to available skills or shell-assisted extraction."
             }
         }
     }
@@ -118,7 +118,7 @@ impl MediaKind {
 
     pub fn instructions(self) -> String {
         if self == Self::Other {
-            return "You are a specialized attachment understanding subagent. Prefer local, faithful extraction over guessing. For text attachments, preserve the actual content when it is small and summarize it when it is large. For PDFs, use LiteParse extraction results. For other formats, look for a suitable installed skill first, then use safe shell/read-only inspection, and only research a method over the network when local options are insufficient. Return Markdown plain text for the main agent and clearly mark failures or uncertainty.".to_string();
+            return "You are a specialized attachment understanding subagent. Prefer local, faithful extraction over guessing. For text attachments, preserve the actual content when it is small and summarize it when it is large. For documents, use the Markdown anydoc converted them to. For other formats, look for a suitable installed skill first, then use safe shell/read-only inspection, and only research a method over the network when local options are insufficient. Return Markdown plain text for the main agent and clearly mark failures or uncertainty.".to_string();
         }
 
         format!(
@@ -189,7 +189,12 @@ impl MediaKind {
             "3gp" | "avi" | "flv" | "m4v" | "mkv" | "mov" | "mp4" | "mpg" | "ogv" | "webm"
             | "wmv" => Some(Self::Video),
             "mpeg" => Some(Self::Audio),
-            "pdf" => Some(Self::Other),
+            // Every container anydoc converts to Markdown, so a bare `.docx`
+            // tag or path routes to `attachment_understanding` the same way a
+            // `.pdf` always has.
+            "csv" | "doc" | "docm" | "docx" | "epub" | "odp" | "ods" | "odt" | "pdf" | "pot"
+            | "pps" | "ppsm" | "ppsx" | "ppt" | "pptm" | "pptx" | "rtf" | "xls" | "xlsb"
+            | "xlsm" | "xlsx" => Some(Self::Other),
             _ => None,
         }
     }
@@ -278,6 +283,9 @@ mod tests {
         assert_eq!(MediaKind::from_extension("mpeg"), Some(MediaKind::Audio));
         assert_eq!(MediaKind::from_extension("mkv"), Some(MediaKind::Video));
         assert_eq!(MediaKind::from_extension("pdf"), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_extension("DOCX"), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_extension("xlsx"), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_extension("epub"), Some(MediaKind::Other));
         assert_eq!(MediaKind::from_extension("unknown"), None);
     }
 

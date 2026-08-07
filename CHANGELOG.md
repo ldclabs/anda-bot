@@ -4,6 +4,11 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Document parsing moved from LiteParse to `anydoc`**: attachment understanding now converts documents to GitHub-Flavored Markdown with `anydoc` instead of extracting plain text from PDFs with `liteparse`. Coverage widens from PDF alone to PDF, Word (`.doc`/`.docx`), PowerPoint (`.ppt`/`.pptx`), Excel (`.xls`/`.xlsx`/`.xlsb`), OpenDocument (`.odt`/`.ods`/`.odp`), RTF, EPUB, and CSV, and those extensions now route to `attachment_understanding`. Attachments are matched by content signature first, then the plain-text path, then the MIME type or extension.
+- **Native PDF dependencies dropped**: `liteparse`, `liteparse-pdfium-sys`, and the Tesseract OCR feature are gone. `anydoc` is pure Rust, so Windows no longer needs a `pdfium.dll` (the `PDFIUM_LIB_PATH` lookup is removed) and musl builds no longer need OCR gating — every target now uses the same parser. Scanned, image-only PDFs previously handled by OCR on desktop glibc targets now fall through to the model fallback instead.
+
 ## [0.11.6] — 2026-07-31
 
 ### Changed
