@@ -28,11 +28,15 @@ use super::{
     render::{flush_static_scrollback, render},
 };
 
-pub async fn run(daemon: Daemon, client: gateway::Client) -> Result<(), BoxError> {
+pub async fn run(
+    daemon: Daemon,
+    client: gateway::Client,
+    full_access: bool,
+) -> Result<(), BoxError> {
     #[cfg(unix)]
     reopen_stdin_from_tty()?;
 
-    let mut app = App::new(daemon.home, daemon.cfg, client);
+    let mut app = App::new(daemon.home, daemon.cfg, client, full_access);
     app.bootstrap().await;
 
     enable_raw_mode()?;

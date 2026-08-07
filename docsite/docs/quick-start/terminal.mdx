@@ -53,11 +53,25 @@ Examples:
 /steer Stop refactoring and only fix the build error first.
 ```
 
+## Command Approvals
+
+Risky shell commands and MCP server connections raise an approval card before they run.
+
+| Situation | How to answer |
+| --- | --- |
+| Input box empty | Press `y` to approve, `n` to deny. |
+| Input box has text | Type `y`/`yes` or `n`/`no` and press Enter, or press Ctrl+U to clear the input and use the single-key shortcuts again. |
+
+The footer always shows which of the two is currently active. An unanswered card expires after 10 minutes, and the tool call then fails.
+
+Cron jobs and autonomous goal mode (`/goal ...`) always run with full access, because nobody is present to answer a card and the task would otherwise stall until the card expires.
+
 ## Common CLI Commands
 
 | Command | Purpose |
 | --- | --- |
 | `anda` | Open the interactive terminal UI. |
+| `anda --full-access` | Open the terminal UI with shell and MCP approval cards disabled for that session. |
 | `anda update` | Update a release installed by the install script. |
 | `anda status` | Show whether the background daemon is running. |
 | `anda start` | Start the background daemon. |

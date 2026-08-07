@@ -51,7 +51,12 @@ fn assistant_message(text: impl Into<String>) -> Message {
     }
 }
 
-fn current_request_meta(conversation: u64) -> RequestMeta {
+/// `approval_mode` value that lets the agent run local shell commands and
+/// connect MCP servers without an approval card. Mirrors the Chrome
+/// extension's `full_access` setting.
+const FULL_ACCESS_APPROVAL_MODE: &str = "full_access";
+
+fn current_request_meta(conversation: u64, full_access: bool) -> RequestMeta {
     let mut extra = Map::new();
     let workspace = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
@@ -67,6 +72,12 @@ fn current_request_meta(conversation: u64) -> RequestMeta {
     if let Some(workspace) = workspace {
         extra.insert("workspace".to_string(), workspace.into());
     };
+    if full_access {
+        extra.insert(
+            "approval_mode".to_string(),
+            FULL_ACCESS_APPROVAL_MODE.into(),
+        );
+    }
 
     RequestMeta {
         engine: None,
@@ -212,6 +223,7 @@ pub struct ChatSession {
     last_msg_offset: usize,
     pending_send: Option<oneshot::Receiver<SendResult>>,
     pending_new_command: Option<NewPromptCommand>,
+    full_access: bool,
 }
 
 impl ChatSession {
@@ -230,7 +242,19 @@ impl ChatSession {
             last_msg_offset: 0,
             pending_send: None,
             pending_new_command: None,
+            full_access: false,
         }
+    }
+
+    /// Tags every request from this session with the `full_access` approval
+    /// mode, so shell commands and MCP connections run without approval cards.
+    pub fn with_full_access(mut self, full_access: bool) -> Self {
+        self.full_access = full_access;
+        self
+    }
+
+    fn request_meta(&self, conversation: u64) -> RequestMeta {
+        current_request_meta(conversation, self.full_access)
     }
 
     fn status(&self) -> Option<&ConversationStatus> {
@@ -311,7 +335,7 @@ impl ChatSession {
         }
 
         let mut input = AgentInput::new(String::new(), text);
-        input.meta = Some(current_request_meta(conv_id));
+        input.meta = Some(self.request_meta(conv_id));
 
         let client = self.client.clone();
         let (tx, rx) = oneshot::channel();
@@ -411,7 +435,7 @@ impl ChatSession {
             ConversationsTool::NAME.to_string(),
             ConversationsToolArgs::GetSourceState {},
         );
-        input.meta = Some(current_request_meta(0));
+        input.meta = Some(self.request_meta(0));
 
         let output = self
             .client
@@ -462,7 +486,7 @@ impl ChatSession {
 
         self.last_ping = Instant::now();
         let mut input = AgentInput::new(String::new(), String::new());
-        input.meta = Some(current_request_meta(self.conv_id.unwrap_or_default()));
+        input.meta = Some(self.request_meta(self.conv_id.unwrap_or_default()));
         let _ = self
             .client
             .agent_run_with_timeout(&input, PING_TIMEOUT)
@@ -663,6 +687,21 @@ mod tests {
 
     fn test_client() -> Client {
         Client::new("http://127.0.0.1:8042".to_string(), String::new())
+    }
+
+    #[test]
+    fn full_access_sessions_declare_the_approval_mode_in_request_meta() {
+        let default = ChatSession::new(test_client()).request_meta(7);
+        assert_eq!(default.get_extra_as::<String>("approval_mode"), None);
+        assert_eq!(default.get_extra_as::<u64>("conversation"), Some(7));
+
+        let full_access = ChatSession::new(test_client())
+            .with_full_access(true)
+            .request_meta(7);
+        assert_eq!(
+            full_access.get_extra_as::<String>("approval_mode"),
+            Some("full_access".to_string())
+        );
     }
 
     fn session_with_status(status: ConversationStatus) -> ChatSession {

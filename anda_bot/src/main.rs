@@ -52,6 +52,12 @@ struct Cli {
     #[arg(long, hide = true)]
     identity_secrets_stdin: bool,
 
+    /// Start the interactive CLI in full-access mode: shell commands and MCP
+    /// server connections run without approval prompts. Not valid with a
+    /// subcommand.
+    #[arg(long)]
+    full_access: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -179,11 +185,19 @@ async fn run() -> Result<(), BoxError> {
     let Cli {
         home,
         identity_secrets_stdin,
+        full_access,
         command,
     } = cli;
 
     if identity_secrets_stdin && !matches!(command, Some(Commands::Daemon)) {
         return Err("--identity-secrets-stdin can only be used with `anda daemon`".into());
+    }
+
+    // Only the interactive CLI puts the approval mode on its requests. Failing
+    // loudly beats dropping it: a subcommand cannot answer an approval card, so
+    // the request would just block until the card expires.
+    if full_access && command.is_some() {
+        return Err("--full-access can only be used with the interactive `anda` CLI".into());
     }
 
     let home = if let Some(home) = home {
@@ -220,7 +234,7 @@ async fn run() -> Result<(), BoxError> {
         None => {
             log::info!("Starting CLI at {}", daemon.base_url());
             let client = build_control_client(&daemon).await?;
-            let cli = cli::Cli::new(client, daemon);
+            let cli = cli::Cli::new(client, daemon, full_access);
             cli.run().await?
         }
         Some(Commands::Daemon) => {

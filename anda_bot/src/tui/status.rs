@@ -85,11 +85,16 @@ pub(super) fn status_line(app: &App, width: usize) -> Line<'static> {
             .as_ref()
             .map(|c| format!("#{}", c._id))
             .unwrap_or_else(|| "new".to_string());
+        let access = if app.full_access {
+            " · full-access"
+        } else {
+            ""
+        };
         (
             "READY",
             theme::success_style(),
             format!(
-                "conversation {conversation} · state {}",
+                "conversation {conversation} · state {}{access}",
                 app.chat.status_label()
             ),
         )

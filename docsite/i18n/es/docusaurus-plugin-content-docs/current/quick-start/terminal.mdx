@@ -53,11 +53,25 @@ Ejemplos:
 /steer Detener la refactorización y solucionar primero únicamente el error de compilación.
 ```
 
+## Aprobaciones de comandos
+
+Los comandos de shell riesgosos y las conexiones a servidores MCP muestran una tarjeta de aprobación antes de ejecutarse.
+
+| Situación | Cómo responder |
+| --- | --- |
+| Cuadro de entrada vacío | Pulse `y` para aprobar, `n` para denegar. |
+| El cuadro de entrada tiene texto | Escriba `y`/`yes` o `n`/`no` y pulse Enter, o pulse Ctrl+U para limpiar la entrada y volver a usar los atajos de una sola tecla. |
+
+El pie de página siempre indica cuál de las dos opciones está activa. Una tarjeta sin respuesta caduca a los 10 minutos y la llamada a la herramienta falla.
+
+Las tareas cron y el modo de objetivo autónomo (`/goal ...`) siempre se ejecutan con acceso completo, porque no hay nadie presente para responder una tarjeta y, de lo contrario, la tarea se quedaría bloqueada hasta que la tarjeta caduque.
+
 ## Comandos comunes de la CLI
 
 | Comando | Propósito |
 | --- | --- |
 | `anda` | Abre la interfaz de usuario de la terminal interactiva. |
+| `anda --full-access` | Abre la interfaz de la terminal con las tarjetas de aprobación de shell y MCP desactivadas para esa sesión. |
 | `anda update` | Actualiza una versión instalada mediante el script de instalación. |
 | `anda status` | Muestra si el daemon en segundo plano se está ejecutando. |
 | `anda start` | Inicia el daemon en segundo plano. |

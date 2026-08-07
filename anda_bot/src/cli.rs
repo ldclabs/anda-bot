@@ -16,14 +16,19 @@ use crate::{daemon, gateway, tui};
 pub struct Cli {
     client: gateway::Client,
     daemon: daemon::Daemon,
+    full_access: bool,
 }
 
 impl Cli {
-    pub fn new(client: gateway::Client, daemon: daemon::Daemon) -> Self {
-        Self { client, daemon }
+    pub fn new(client: gateway::Client, daemon: daemon::Daemon, full_access: bool) -> Self {
+        Self {
+            client,
+            daemon,
+            full_access,
+        }
     }
 
     pub async fn run(self) -> Result<(), BoxError> {
-        tui::run(self.daemon, self.client).await
+        tui::run(self.daemon, self.client, self.full_access).await
     }
 }

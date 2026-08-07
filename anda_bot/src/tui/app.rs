@@ -13,8 +13,8 @@ use crate::{
 
 use super::{
     action::{
-        ACTION_RESPONSE_TIMEOUT, TuiAction, TuiActionApiOutput, TuiActionChoiceDraft,
-        TuiActionResponseRequest, action_footer_line, action_response_notice,
+        ACTION_RESPONSE_TIMEOUT, TuiAction, TuiActionAnswer, TuiActionApiOutput, TuiActionChoice,
+        TuiActionChoiceDraft, TuiActionResponseRequest, action_footer_line, action_response_notice,
         active_pending_action, apply_action_response_to_message_value,
         apply_action_response_to_messages,
     },
@@ -57,10 +57,16 @@ pub(super) struct App {
     pub(super) pending_update_check: Option<oneshot::Receiver<Result<AutoUpdateState, String>>>,
     pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
     pub(super) choice_input: Option<TuiActionChoiceDraft>,
+    pub(super) full_access: bool,
 }
 
 impl App {
-    pub(super) fn new(home: PathBuf, cfg: Config, client: gateway::Client) -> Self {
+    pub(super) fn new(
+        home: PathBuf,
+        cfg: Config,
+        client: gateway::Client,
+        full_access: bool,
+    ) -> Self {
         Self {
             home,
             client: client.clone(),
@@ -70,7 +76,7 @@ impl App {
             daemon_running: false,
             runtime_cfg: cfg,
             setup: SetupState::default(),
-            chat: gateway::ChatSession::new(client),
+            chat: gateway::ChatSession::new(client).with_full_access(full_access),
             input_buf: String::new(),
             input_cursor: 0,
             input_preferred_col: None,
@@ -82,6 +88,7 @@ impl App {
             pending_update_check: None,
             pending_action_response: None,
             choice_input: None,
+            full_access,
         }
     }
 
@@ -111,7 +118,7 @@ impl App {
     pub(super) fn rebind_client(&mut self) {
         let client = self.client.rebased(self.runtime_cfg.base_url());
         self.client = client.clone();
-        self.chat = gateway::ChatSession::new(client);
+        self.chat = gateway::ChatSession::new(client).with_full_access(self.full_access);
         self.input_buf.clear();
         self.input_cursor = 0;
         self.choice_input = None;
@@ -175,6 +182,20 @@ impl App {
 
         let text = self.input_buf.trim().to_string();
         if text.is_empty() {
+            return Ok(());
+        }
+
+        // A stray keystroke puts text in the composer, which routes the
+        // single-key answers to the composer instead. Accept the same answer
+        // typed out so a pending action never becomes unanswerable and has to
+        // be waited out until it expires.
+        if let Some(action) = self.active_pending_action()
+            && let Some(answer) = action.answer_from_text(&text)
+        {
+            self.input_buf.clear();
+            self.input_cursor = 0;
+            self.input_preferred_col = None;
+            self.answer_action(&action, answer);
             return Ok(());
         }
 
@@ -591,32 +612,57 @@ impl App {
 
         match key.code {
             KeyCode::Char('y' | 'Y') if action.is_approval() => {
-                self.start_action_response(TuiActionResponseRequest::approve(action.id, true));
+                self.answer_action(&action, TuiActionAnswer::Approve(true));
                 Ok(true)
             }
             KeyCode::Char('n' | 'N') if action.is_approval() => {
-                self.start_action_response(TuiActionResponseRequest::approve(action.id, false));
+                self.answer_action(&action, TuiActionAnswer::Approve(false));
                 Ok(true)
             }
             KeyCode::Char(ch) => {
                 let Some(choice) = action.choice_for_key(ch).cloned() else {
+                    // The keystroke falls through into the composer, which
+                    // deactivates the shortcuts. Say how to answer from there,
+                    // otherwise the card looks stuck until it expires.
+                    if let Some(notice) = action.unanswered_notice() {
+                        self.notice = notice;
+                    }
                     return Ok(false);
                 };
-                if choice.input.is_some() {
-                    self.choice_input = Some(action.choice_draft(&choice));
-                    self.input_buf.clear();
-                    self.input_cursor = 0;
-                    self.input_preferred_col = None;
-                    self.input_focused = true;
-                } else {
-                    self.start_action_response(TuiActionResponseRequest::choice(
-                        action.id, choice.id, None,
-                    ));
-                }
+                self.answer_action(&action, TuiActionAnswer::Choice(choice));
                 Ok(true)
             }
             _ => Ok(false),
         }
+    }
+
+    fn answer_action(&mut self, action: &TuiAction, answer: TuiActionAnswer) {
+        match answer {
+            TuiActionAnswer::Approve(approve) => {
+                self.start_action_response(TuiActionResponseRequest::approve(
+                    action.id.clone(),
+                    approve,
+                ));
+            }
+            TuiActionAnswer::Choice(choice) => self.answer_choice(action, &choice),
+        }
+    }
+
+    fn answer_choice(&mut self, action: &TuiAction, choice: &TuiActionChoice) {
+        if choice.input.is_some() {
+            self.choice_input = Some(action.choice_draft(choice));
+            self.input_buf.clear();
+            self.input_cursor = 0;
+            self.input_preferred_col = None;
+            self.input_focused = true;
+            return;
+        }
+
+        self.start_action_response(TuiActionResponseRequest::choice(
+            action.id.clone(),
+            choice.id.clone(),
+            None,
+        ));
     }
 
     fn start_action_response(&mut self, request: TuiActionResponseRequest) {
@@ -677,7 +723,7 @@ impl App {
             ]));
         }
         let action = self.active_pending_action()?;
-        action_footer_line(&action, width)
+        action_footer_line(&action, width, self.input_buf.is_empty())
     }
 
     pub(super) fn move_input_cursor_vertically(

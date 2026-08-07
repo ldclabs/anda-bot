@@ -20,11 +20,14 @@ use std::{
 };
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use super::{agent::SessionRequestMeta, goal::GoalToolState};
+
 pub(crate) const ACTION_MESSAGE_NAME: &str = "$action";
 pub(crate) const TOOL_APPROVAL_ACTION: &str = "anda.tool_approval";
 pub(crate) const USER_CHOICE_ACTION: &str = "anda.user_choice";
 const ACTION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const APPROVAL_MODE_META_KEY: &str = "approval_mode";
+const CRON_JOB_ID_META_KEY: &str = "cron_job_id";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ApprovalMode {
@@ -36,8 +39,28 @@ enum ApprovalMode {
 
 impl ApprovalMode {
     fn from_ctx(ctx: &BaseCtx) -> Self {
-        match ctx
-            .meta()
+        let meta = live_request_meta(ctx);
+        // Unattended runs have nobody on the other end of an approval card:
+        // it would sit pending until ACTION_RESPONSE_TIMEOUT and then fail the
+        // whole task. Grant full access instead so scheduled and autonomous
+        // work can complete.
+        let declared = Self::from_meta(&meta);
+        if let Some(reason) = unattended_run_reason(ctx, &meta) {
+            if declared != Self::FullAccess {
+                log::info!(
+                    "Approval elevated from {} to full_access for an unattended run ({reason}); agent {}",
+                    declared.as_str(),
+                    ctx.agent
+                );
+            }
+            return Self::FullAccess;
+        }
+
+        declared
+    }
+
+    fn from_meta(meta: &RequestMeta) -> Self {
+        match meta
             .get_extra_as::<String>(APPROVAL_MODE_META_KEY)
             .unwrap_or_default()
             .as_str()
@@ -48,6 +71,42 @@ impl ApprovalMode {
             _ => Self::OnRisk,
         }
     }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RequestApproval => "request_approval",
+            Self::OnRisk => "on_risk",
+            Self::FullAccess => "full_access",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+/// Metadata of the request currently being served.
+///
+/// A session's [`BaseCtx`] metadata is frozen when the session is created, but
+/// later requests join the running session and only refresh
+/// [`SessionRequestMeta`]. Approval decisions must follow the live request (a
+/// cron job firing into an existing chat session, a CLI launched with
+/// `--full-access`), so prefer it and fall back to the context metadata.
+fn live_request_meta(ctx: &BaseCtx) -> RequestMeta {
+    ctx.get_state::<SessionRequestMeta>()
+        .map(|meta| meta.get())
+        .unwrap_or_else(|| ctx.meta().clone())
+}
+
+/// Returns why the current run is unattended, or `None` when a human can answer.
+fn unattended_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
+    if meta.get_extra_as::<u64>(CRON_JOB_ID_META_KEY).is_some() {
+        return Some("cron job");
+    }
+    if ctx
+        .get_state::<GoalToolState>()
+        .is_some_and(|goal| goal.is_active())
+    {
+        return Some("goal mode");
+    }
+    None
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -272,10 +331,7 @@ impl ActionSession {
                 "command": &args.command,
                 "env_keys": &args.env_keys,
                 "background": args.background,
-                "approval_mode": ctx
-                    .meta()
-                    .get_extra_as::<String>(APPROVAL_MODE_META_KEY)
-                    .unwrap_or_else(|| "on_risk".to_string()),
+                "approval_mode": approval_mode.as_str(),
                 "approval_reason": &approval_reason,
             },
             "status": ActionStatus::Pending.as_str(),
@@ -1933,6 +1989,87 @@ mod tests {
             message["content"][0]["payload"]["response"]["choice_id"],
             "a"
         );
+    }
+
+    fn meta_with(entries: &[(&str, Value)]) -> RequestMeta {
+        let mut extra = serde_json::Map::new();
+        for (key, value) in entries {
+            extra.insert((*key).to_string(), value.clone());
+        }
+        RequestMeta {
+            extra,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn approval_mode_parses_every_declared_value() {
+        for (declared, expected) in [
+            ("request_approval", ApprovalMode::RequestApproval),
+            ("on_risk", ApprovalMode::OnRisk),
+            ("full_access", ApprovalMode::FullAccess),
+            ("custom", ApprovalMode::Custom),
+            ("nonsense", ApprovalMode::OnRisk),
+        ] {
+            let mode = ApprovalMode::from_meta(&meta_with(&[("approval_mode", json!(declared))]));
+            assert_eq!(mode, expected, "declared mode {declared}");
+            assert_eq!(mode.as_str(), expected.as_str());
+        }
+        assert_eq!(
+            ApprovalMode::from_meta(&meta_with(&[])),
+            ApprovalMode::OnRisk
+        );
+    }
+
+    #[test]
+    fn approval_mode_follows_the_live_session_request_meta() {
+        // The context metadata of a running session is frozen at creation, so a
+        // later request that joins it (a CLI started with --full-access) only
+        // shows up in SessionRequestMeta.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::OnRisk);
+
+        ctx.set_state(SessionRequestMeta::new(meta_with(&[(
+            "approval_mode",
+            json!("full_access"),
+        )])));
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+    }
+
+    #[test]
+    fn cron_runs_are_unattended_and_get_full_access() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        // Nobody can answer an approval card for a scheduled job, so the
+        // declared mode must not be able to stall it until it expires.
+        ctx.set_state(SessionRequestMeta::new(meta_with(&[
+            ("cron_job_id", json!(7u64)),
+            ("approval_mode", json!("request_approval")),
+        ])));
+
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+    }
+
+    #[test]
+    fn goal_mode_gets_full_access_only_while_an_objective_is_active() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        ctx.set_state(SessionRequestMeta::new(meta_with(&[(
+            "approval_mode",
+            json!("request_approval"),
+        )])));
+
+        let goal = Arc::new(parking_lot::RwLock::new(None));
+        ctx.set_state(GoalToolState::new(
+            goal.clone(),
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        ));
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::RequestApproval);
+
+        *goal.write() = Some(crate::engine::goal::GoalState::new("ship it".to_string()));
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+
+        // Completing the objective hands control back to the declared mode.
+        *goal.write() = None;
+        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::RequestApproval);
     }
 
     #[test]

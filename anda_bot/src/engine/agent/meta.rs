@@ -44,6 +44,20 @@ pub(super) fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String 
     scoped_external_user_name(&source, space, sender)
 }
 
+/// Keys that describe the single request that opened a conversation, not the
+/// conversation itself. `Conversation::extra` stores the request metadata
+/// verbatim, so recovery has to drop them: replaying `cron_job_id` would keep a
+/// resumed session permanently marked as an unattended cron run, and replaying
+/// `approval_mode` would pin it to the approval policy of a client that is no
+/// longer connected. Both grant approval-free shell and MCP access to later
+/// turns the user drives by hand.
+const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 4] = [
+    "cron_job_id",
+    "cron_job_name",
+    "cron_job_kind",
+    "approval_mode",
+];
+
 pub(super) fn request_meta_from_conversation(
     conversation: &Conversation,
     source_key: &str,
@@ -53,6 +67,9 @@ pub(super) fn request_meta_from_conversation(
         .as_ref()
         .and_then(|extra| extra.as_object().cloned())
         .unwrap_or_default();
+    for key in TRANSIENT_REQUEST_EXTRA_KEYS {
+        extra.remove(key);
+    }
     apply_source_key_to_meta_extra(&mut extra, source_key);
     extra.insert("conversation".to_string(), conversation._id.into());
 
@@ -325,6 +342,43 @@ mod tests {
         let stripped = conversation_extra_without_id(&meta);
         assert!(!stripped.contains_key("conversation"));
         assert!(stripped.contains_key("source"));
+    }
+
+    #[test]
+    fn request_meta_from_conversation_drops_transient_request_keys() {
+        // A conversation opened by a cron job persists the job markers, and one
+        // opened by a full-access client persists its approval mode. Replaying
+        // either would keep the recovered session running without approval
+        // cards for turns the user drives by hand.
+        let conversation = Conversation {
+            _id: 91,
+            extra: Some(json!({
+                "source": "telegram",
+                "reply_target": "chat-1",
+                "cron_job_id": 7,
+                "cron_job_name": "nightly",
+                "cron_job_kind": "agent",
+                "approval_mode": "full_access",
+            })),
+            ..Default::default()
+        };
+
+        let meta = request_meta_from_conversation(&conversation, "telegram");
+
+        assert_eq!(meta.get_extra_as::<u64>("cron_job_id"), None);
+        assert_eq!(meta.get_extra_as::<String>("cron_job_name"), None);
+        assert_eq!(meta.get_extra_as::<String>("cron_job_kind"), None);
+        assert_eq!(meta.get_extra_as::<String>("approval_mode"), None);
+        // Routing keys still have to survive so replies return to the source.
+        assert_eq!(
+            meta.get_extra_as::<String>("source"),
+            Some("telegram".to_string())
+        );
+        assert_eq!(
+            meta.get_extra_as::<String>("reply_target"),
+            Some("chat-1".to_string())
+        );
+        assert_eq!(meta.get_extra_as::<u64>("conversation"), Some(91));
     }
 
     #[test]

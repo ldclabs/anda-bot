@@ -45,7 +45,7 @@ fn test_client() -> gateway::Client {
 }
 
 fn ready_app() -> App {
-    let mut app = App::new(PathBuf::from("."), Config::default(), test_client());
+    let mut app = App::new(PathBuf::from("."), Config::default(), test_client(), false);
     app.daemon_running = true;
     app
 }
@@ -786,6 +786,137 @@ fn status_footer_shows_pending_action_shortcuts() {
     );
 }
 
+fn push_pending_shell_approval(app: &mut App) {
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.tool_approval".to_string(),
+            payload: serde_json::json!({
+                "id": "act_1",
+                "kind": "tool_approval",
+                "tool": {"name": "shell"},
+                "title": "Approve shell command",
+                "approval": {"approve_label": "Approve", "deny_label": "Deny"},
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+}
+
+#[tokio::test]
+async fn stray_keystroke_keeps_a_pending_approval_answerable() {
+    let mut app = ready_app();
+    push_pending_shell_approval(&mut app);
+
+    // A mistyped character lands in the composer, which routes y/n there too.
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40)
+        .await
+        .unwrap();
+    assert_eq!(app.input_buf, "h");
+    assert!(app.notice.contains("type y or n"));
+
+    // The footer must stop advertising the now-inert shortcuts.
+    assert_eq!(
+        line_text(
+            status_footer_lines(&app, 80)
+                .first()
+                .expect("action footer")
+        ),
+        "ACTION Approve shell command · type y/n + Enter · Ctrl+U clears input"
+    );
+
+    // Pressing y appends instead of approving, and the action is still pending.
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40)
+        .await
+        .unwrap();
+    assert_eq!(app.input_buf, "hy");
+    assert!(!app.action_response_pending());
+    assert!(app.active_pending_action().is_some());
+
+    // Submitting the typed answer resolves it without waiting for expiry, and
+    // without sending "yes" to the agent as a chat message.
+    app.input_buf = "yes".to_string();
+    app.input_cursor = 3;
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 40)
+        .await
+        .unwrap();
+    assert!(app.input_buf.is_empty());
+    assert!(app.action_response_pending());
+    assert!(!app.chat.sending);
+}
+
+#[tokio::test]
+async fn clearing_the_composer_restores_approval_shortcuts() {
+    let mut app = ready_app();
+    push_pending_shell_approval(&mut app);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40)
+        .await
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 40)
+        .await
+        .unwrap();
+    assert!(app.input_buf.is_empty());
+    assert_eq!(
+        line_text(
+            status_footer_lines(&app, 80)
+                .first()
+                .expect("action footer")
+        ),
+        "ACTION Approve shell command · y Approve · n Deny"
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40)
+        .await
+        .unwrap();
+    assert!(app.input_buf.is_empty());
+    assert!(app.action_response_pending());
+}
+
+#[tokio::test]
+async fn typed_choice_digit_answers_a_pending_choice() {
+    let mut app = ready_app();
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.user_choice".to_string(),
+            payload: serde_json::json!({
+                "id": "act_choice",
+                "kind": "choice",
+                "title": "Pick one",
+                "choices": [
+                    {"id": "keep", "label": "Keep"},
+                    {"id": "custom", "label": "Custom", "input": {"required": true}},
+                ],
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+
+    app.input_buf = "2".to_string();
+    app.input_cursor = 1;
+    app.submit_input().await.unwrap();
+
+    // Choice 2 needs text, so the composer switches to its draft rather than
+    // sending "2" as a chat message.
+    assert_eq!(
+        app.choice_input
+            .as_ref()
+            .map(|draft| draft.choice_id.clone()),
+        Some("custom".to_string())
+    );
+    assert!(app.input_buf.is_empty());
+    assert!(!app.chat.sending);
+}
+
 #[test]
 fn status_footer_height_reserves_separator_row() {
     let app = ready_app();
@@ -1062,7 +1193,12 @@ async fn submit_input_handles_empty_and_text() {
 #[tokio::test]
 async fn bootstrap_reports_setup_or_daemon_state() {
     let home = tempfile::tempdir().unwrap();
-    let mut app = App::new(home.path().to_path_buf(), Config::default(), test_client());
+    let mut app = App::new(
+        home.path().to_path_buf(),
+        Config::default(),
+        test_client(),
+        false,
+    );
     app.bootstrap().await;
     // Either a setup notice or a daemon connection notice is produced.
     assert!(!app.notice.is_empty());
@@ -1090,7 +1226,7 @@ fn render_draws_full_frame_without_panicking() {
 fn render_draws_setup_screen_when_not_ready() {
     use ratatui::{Terminal, backend::TestBackend};
 
-    let mut app = App::new(PathBuf::from("."), Config::default(), test_client());
+    let mut app = App::new(PathBuf::from("."), Config::default(), test_client(), false);
     app.daemon_running = false;
     app.setup.issues = vec!["model.active".to_string()];
     app.notice = "fill in config".to_string();
@@ -1179,7 +1315,7 @@ fn render_helpers_cover_state_variants() {
     let _ = thinking_lines(&ready);
 
     // Not-ready app (setup required) exercises the alternate branches.
-    let mut setup = App::new(PathBuf::from("."), Config::default(), test_client());
+    let mut setup = App::new(PathBuf::from("."), Config::default(), test_client(), false);
     setup.daemon_running = false;
     setup.setup.issues = vec!["model.active".to_string()];
     let _ = status_line(&setup, 80);

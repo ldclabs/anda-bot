@@ -138,6 +138,18 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
+### Command Approvals
+
+Risky shell commands and MCP server connections raise an approval card before they run:
+
+- With an empty input box, press `y` to approve or `n` to deny.
+- If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
+- Approval cards expire after 10 minutes, and the tool call then fails.
+
+Start the terminal UI with `anda --full-access` to skip the cards for that session; the status line shows `full-access` while it is on.
+
+Cron jobs and autonomous goal mode (`/goal ...`) always run with full access, because nobody is present to answer a card and the task would otherwise stall until the card expires.
+
 Successful conversation turns are submitted to Anda Brain for memory formation in the background. Users do not need to manage memory files manually.
 
 Good prompts for long-term memory:

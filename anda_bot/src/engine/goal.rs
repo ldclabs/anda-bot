@@ -91,6 +91,14 @@ impl GoalToolState {
         Self { goal, active_at }
     }
 
+    /// True while an objective is active, i.e. the session is running
+    /// autonomously under the goal supervisor instead of turn by turn with the
+    /// user. Briefly false while the supervisor evaluates progress, which is a
+    /// tool-free completion, so no approval decision is taken in that window.
+    pub fn is_active(&self) -> bool {
+        self.goal.read().is_some()
+    }
+
     fn activate(&self, objective: String, reason: Option<String>) -> GoalToolResult {
         let result = activate_goal(&self.goal, objective, reason);
         self.active_at.store(unix_ms(), Ordering::SeqCst);

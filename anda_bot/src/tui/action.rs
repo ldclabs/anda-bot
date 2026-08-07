@@ -67,6 +67,12 @@ pub(super) struct TuiActionChoiceInput {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum TuiActionAnswer {
+    Approve(bool),
+    Choice(TuiActionChoice),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TuiActionChoiceDraft {
     pub(super) action_id: String,
     pub(super) choice_id: String,
@@ -177,22 +183,39 @@ impl TuiAction {
             .unwrap_or_else(|| self.kind_label())
     }
 
-    pub(super) fn footer_text(&self) -> Option<String> {
+    /// Footer hint for a pending action.
+    ///
+    /// `hotkeys_live` is false while the composer holds text: single-key
+    /// answers are then routed to the composer instead, so advertise the
+    /// typed answer that still works rather than a shortcut that silently
+    /// does nothing.
+    pub(super) fn footer_text(&self, hotkeys_live: bool) -> Option<String> {
         if !self.is_pending() {
             return None;
         }
 
         let title = self.display_title();
         if self.is_approval() {
-            return Some(format!(
-                "{title} · y {} · n {}",
-                self.approve_label(),
-                self.deny_label()
-            ));
+            return Some(if hotkeys_live {
+                format!(
+                    "{title} · y {} · n {}",
+                    self.approve_label(),
+                    self.deny_label()
+                )
+            } else {
+                format!("{title} · type y/n + Enter · Ctrl+U clears input")
+            });
         }
 
         if self.choices.is_empty() {
             return None;
+        }
+
+        if !hotkeys_live {
+            return Some(format!(
+                "{title} · type 1-{} + Enter · Ctrl+U clears input",
+                self.choices.len().min(MAX_CHOICE_KEYS)
+            ));
         }
 
         let choices = self
@@ -204,6 +227,48 @@ impl TuiAction {
             .collect::<Vec<_>>()
             .join(" · ");
         Some(format!("{title} · {choices}"))
+    }
+
+    /// Notice shown when a keystroke lands in the composer while this action is
+    /// still waiting, so the card never looks unanswerable. `None` for a card
+    /// that offers nothing to press — neither an approval nor parsed choices,
+    /// as a payload from a daemon on another version could be — which renders
+    /// no footer either and must not be annotated.
+    pub(super) fn unanswered_notice(&self) -> Option<String> {
+        if self.is_approval() {
+            return Some(
+                "Approval still pending: type y or n and press Enter (Ctrl+U clears the input)."
+                    .to_string(),
+            );
+        }
+        if self.choices.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "Choice still pending: type 1-{} and press Enter (Ctrl+U clears the input).",
+            self.choices.len().min(MAX_CHOICE_KEYS)
+        ))
+    }
+
+    /// Resolves composed text into an answer for this action. Approvals accept
+    /// `y`/`yes`/`n`/`no`; choices accept the shortcut digit.
+    pub(super) fn answer_from_text(&self, text: &str) -> Option<TuiActionAnswer> {
+        let text = text.trim();
+        if self.is_approval() {
+            return match text.to_ascii_lowercase().as_str() {
+                "y" | "yes" => Some(TuiActionAnswer::Approve(true)),
+                "n" | "no" => Some(TuiActionAnswer::Approve(false)),
+                _ => None,
+            };
+        }
+
+        let mut chars = text.chars();
+        let (Some(key), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
+        self.choice_for_key(key)
+            .cloned()
+            .map(TuiActionAnswer::Choice)
     }
 
     pub(super) fn choice_for_key(&self, key: char) -> Option<&TuiActionChoice> {
@@ -360,8 +425,12 @@ pub(super) fn existing_action_state_changed(
     })
 }
 
-pub(super) fn action_footer_line(action: &TuiAction, width: usize) -> Option<Line<'static>> {
-    let text = action.footer_text()?;
+pub(super) fn action_footer_line(
+    action: &TuiAction,
+    width: usize,
+    hotkeys_live: bool,
+) -> Option<Line<'static>> {
+    let text = action.footer_text(hotkeys_live)?;
     Some(Line::from(vec![
         Span::styled("ACTION ", theme::accent_style()),
         Span::styled(

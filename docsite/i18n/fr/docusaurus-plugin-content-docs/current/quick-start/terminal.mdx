@@ -53,11 +53,25 @@ Exemples :
 /steer Arrêter la refactorisation et corriger uniquement l'erreur de build d'abord.
 ```
 
+## Approbations de commandes
+
+Les commandes shell risquées et les connexions à des serveurs MCP affichent une carte d'approbation avant de s'exécuter.
+
+| Situation | Comment répondre |
+| --- | --- |
+| Zone de saisie vide | Appuyez sur `y` pour approuver, `n` pour refuser. |
+| La zone de saisie contient du texte | Tapez `y`/`yes` ou `n`/`no` puis appuyez sur Entrée, ou appuyez sur Ctrl+U pour vider la saisie et réutiliser les raccourcis à une touche. |
+
+Le pied de page indique toujours laquelle des deux options est active. Une carte sans réponse expire au bout de 10 minutes, et l'appel de l'outil échoue alors.
+
+Les tâches cron et le mode objectif autonome (`/goal ...`) s'exécutent toujours avec un accès complet, car personne n'est présent pour répondre à une carte et la tâche resterait sinon bloquée jusqu'à l'expiration de celle-ci.
+
 ## Commandes CLI courantes
 
 | Commande | Objectif |
 | --- | --- |
 | `anda` | Ouvrir l'interface utilisateur interactive du terminal. |
+| `anda --full-access` | Ouvrir l'interface du terminal avec les cartes d'approbation shell et MCP désactivées pour cette session. |
 | `anda update` | Mettre à jour une version installée par le script d'installation. |
 | `anda status` | Indiquer si le démon d'arrière-plan est en cours d'exécution. |
 | `anda start` | Démarrer le démon d'arrière-plan. |
