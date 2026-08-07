@@ -15,12 +15,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-    time::timeout,
-};
+use tokio::{sync::Mutex, time::timeout};
 
 use crate::{
     config::{
@@ -31,8 +26,8 @@ use crate::{
 };
 
 use super::{
-    approval_detail, backup_daemon_config, daemon_config_needs_backup, require_mcp_approval,
-    write_daemon_config_atomically,
+    approval_detail, backup_daemon_config, daemon_config_needs_backup, mcp_oauth::McpOAuthFlows,
+    require_mcp_approval, write_daemon_config_atomically,
 };
 
 const APPROVAL_REDACTED: &str = "[redacted]";
@@ -278,6 +273,10 @@ impl McpServerTool {
             transport,
             include: normalize_string_set(include),
             exclude: normalize_string_set(exclude),
+            // Protocol-negotiation and tasks tuning stay operator knobs edited
+            // in mcp.json; a quick add takes the defaults.
+            lifecycle: None,
+            tasks: None,
         };
         let issues = McpSettings {
             servers: vec![server.clone()],
@@ -667,10 +666,13 @@ const OAUTH_REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
 /// Connects an MCP server by URL, transparently running the OAuth flow when the
 /// endpoint requires it.
 ///
-/// Anda Bot runs locally, so authorization uses a native-app loopback redirect
-/// (RFC 8252): the tool binds an ephemeral `127.0.0.1` port, opens the user's
-/// browser at the authorization URL, and captures the redirect to finish the
-/// flow — no copy/paste and no public callback URL.
+/// Authorization uses a native-app loopback redirect (RFC 8252), served by the
+/// gateway at a fixed path rather than by a port bound per attempt — see
+/// [`super::mcp_oauth`] for why that distinction decides whether a remote user
+/// can authorize at all. When the browser opens here, the call waits and
+/// returns a connected server; when it cannot, the call returns the
+/// authorization URL so the agent can hand it to the user, and the gateway
+/// finishes the flow whenever they get to it.
 ///
 /// A successful OAuth connection outlives the daemon: the tokens go to the
 /// provider's credential store and the server (with an `oauth` marker, never
@@ -681,8 +683,7 @@ const OAUTH_REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
 #[derive(Clone)]
 pub struct McpConnectTool {
     provider: Arc<McpToolProvider>,
-    config_path: PathBuf,
-    config_write_lock: Arc<Mutex<()>>,
+    flows: McpOAuthFlows,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -696,24 +697,31 @@ pub struct ConnectMcpServerArgs {
     /// advertises during discovery.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Re-run the browser authorization even though the stored credentials are
+    /// still valid, discarding them first.
+    #[serde(default)]
+    pub reauthorize: bool,
+    /// Full redirect URL copied from the browser's address bar, for finishing an
+    /// authorization whose redirect could not reach this daemon.
+    #[serde(default)]
+    pub redirect_url: Option<String>,
 }
 
 impl McpConnectTool {
     pub const NAME: &'static str = "connect_mcp_server";
 
-    pub fn new(
-        provider: Arc<McpToolProvider>,
-        config_path: PathBuf,
-        config_write_lock: Arc<Mutex<()>>,
-    ) -> Self {
-        Self {
-            provider,
-            config_path,
-            config_write_lock,
-        }
+    pub fn new(provider: Arc<McpToolProvider>, flows: McpOAuthFlows) -> Self {
+        Self { provider, flows }
     }
 
     async fn connect(&self, args: ConnectMcpServerArgs) -> Result<Value, BoxError> {
+        // Finishing a pasted redirect needs nothing but the redirect itself:
+        // `state` names the flow, which already knows its server and scopes.
+        if let Some(redirect_url) = args.redirect_url.as_deref().and_then(normalize_string) {
+            let completed = self.flows.complete(&redirect_url).await?;
+            return Ok(self.connected_summary(&completed.server_id, completed.persisted));
+        }
+
         let url = normalize_string(&args.url).ok_or("MCP server url cannot be empty")?;
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return Err("MCP server url must start with http:// or https://".into());
@@ -723,18 +731,26 @@ impl McpConnectTool {
             None => default_server_id_from_url(&url)?,
         };
         if self.provider.contains_server(&id) {
-            match self.provider.refresh_server(&id).await {
-                Ok(()) => return Ok(self.connected_summary(&id, false)),
-                // Dead credentials (revoked, or the store was cleared): drop the
-                // registration and run a fresh interactive authorization below.
-                Err(err) if err.downcast_ref::<McpAuthorizationRequired>().is_some() => {
-                    self.provider.remove_server(&id);
-                }
-                Err(err) => {
-                    return Err(format!(
-                        "MCP server {id} already exists but is unreachable: {err}"
-                    )
-                    .into());
+            if args.reauthorize {
+                // Sign out before re-consenting. `clear_credentials` discards the
+                // stored grant and drops the session that pinned the old token,
+                // so the flow below cannot silently reuse the previous scopes.
+                self.provider.clear_credentials(&id).await?;
+                self.provider.remove_server(&id);
+            } else {
+                match self.provider.refresh_server(&id).await {
+                    Ok(()) => return Ok(self.connected_summary(&id, false)),
+                    // Dead credentials (revoked, or the store was cleared): drop the
+                    // registration and run a fresh interactive authorization below.
+                    Err(err) if err.downcast_ref::<McpAuthorizationRequired>().is_some() => {
+                        self.provider.remove_server(&id);
+                    }
+                    Err(err) => {
+                        return Err(format!(
+                            "MCP server {id} already exists but is unreachable: {err}"
+                        )
+                        .into());
+                    }
                 }
             }
         }
@@ -749,41 +765,36 @@ impl McpConnectTool {
                 Ok(self.connected_summary(&id, false))
             }
             Some(meta) => {
-                let scopes = self
-                    .authorize_and_connect(&id, url.clone(), args.scopes, meta)
-                    .await?;
-                let persisted = self.persist_oauth_server(&id, url, scopes).await?;
-                Ok(self.connected_summary(&id, persisted))
+                self.authorize_and_connect(&id, url, args.scopes, meta)
+                    .await
             }
         }
     }
 
-    /// Runs the interactive flow and returns the scopes that were requested.
+    /// Starts the interactive flow, and waits for it only when this machine
+    /// could actually open the browser.
+    ///
+    /// The redirect always lands on the gateway, so a flow the user finishes
+    /// later — after carrying the URL to a browser elsewhere — still completes
+    /// on its own. Blocking here would only turn that into a timeout.
     async fn authorize_and_connect(
         &self,
         id: &str,
         url: String,
         scopes: Vec<String>,
         meta: McpOAuthMetadata,
-    ) -> Result<Vec<String>, BoxError> {
-        // Bind the loopback listener first so its port can be advertised as the
-        // redirect URI before the authorization request is built.
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let redirect_uri = format!(
-            "http://127.0.0.1:{}/callback",
-            listener.local_addr()?.port()
-        );
+    ) -> Result<Value, BoxError> {
         let scopes = if scopes.is_empty() {
             meta.scopes_supported
         } else {
             scopes
         };
 
-        let mut config = McpServerConfig::streamable_http(id.to_string(), url);
+        let mut config = McpServerConfig::streamable_http(id.to_string(), url.clone());
         if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
             http.auth = Some(McpOAuthConfig::AuthorizationCode(
                 OAuthAuthorizationCodeConfig {
-                    redirect_uri,
+                    redirect_uri: self.flows.redirect_uri().to_string(),
                     scopes: scopes.clone(),
                     client_name: Some("Anda Bot".to_string()),
                     client_id: None,
@@ -792,82 +803,67 @@ impl McpConnectTool {
         }
         self.provider.register_server(config)?;
 
-        // Any failure past registration must not leave a half-registered server.
-        let result = self.run_authorization(id, listener).await;
-        if result.is_err() {
-            self.provider.remove_server(id);
-        }
-        result.map(|()| scopes)
-    }
-
-    /// Persists an OAuth server to mcp.json so it reconnects after a restart.
-    /// Returns whether a new entry was written (re-authorizations find the
-    /// entry already present). Tokens never touch mcp.json — they live in the
-    /// provider's credential store.
-    async fn persist_oauth_server(
-        &self,
-        id: &str,
-        url: String,
-        scopes: Vec<String>,
-    ) -> Result<bool, BoxError> {
-        let _guard = self.config_write_lock.lock().await;
-        if mcp_config_contains_server(&self.config_path, id).await? {
-            return Ok(false);
-        }
-        let server = McpServerSettings {
-            id: id.to_string(),
-            disabled: false,
-            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-                url,
-                bearer_token: None,
-                headers: BTreeMap::new(),
-                oauth: Some(McpOAuthSettings {
-                    client_id: None,
-                    scopes,
-                }),
-            }),
-            include: BTreeSet::new(),
-            exclude: BTreeSet::new(),
+        let auth_url = match self.provider.begin_authorization(id).await {
+            Ok(auth_url) => auth_url,
+            Err(err) => {
+                // Nothing is pending yet, so only the registration has to go.
+                self.provider.remove_server(id);
+                return Err(err);
+            }
         };
-        persist_mcp_server_config(&self.config_path, server)
+        let waiter = match self
+            .flows
+            .begin(id.to_string(), url, scopes, &auth_url)
             .await
-            .map_err(|err| {
-                format!(
-                    "MCP server {id} is connected, but failed to persist to {}: {err}",
-                    self.config_path.display()
-                )
-            })?;
-        Ok(true)
-    }
-
-    async fn run_authorization(&self, id: &str, listener: TcpListener) -> Result<(), BoxError> {
-        let auth_url = self.provider.begin_authorization(id).await?;
-        log::info!("MCP `{id}` requires authorization. Opening browser: {auth_url}");
-        // Best-effort: open the user's browser. Harmless if it is unavailable —
-        // the URL is also logged for the user to open manually.
-        let _ = open_in_browser(&auth_url);
-
-        let redirect = timeout(OAUTH_REDIRECT_TIMEOUT, wait_for_oauth_redirect(listener)).await;
-        let redirect_url = match redirect {
-            Ok(result) => result?,
-            Err(_) => {
-                let secs = OAUTH_REDIRECT_TIMEOUT.as_secs();
-                // The pending PKCE state and the loopback port die with this
-                // attempt, so finishing the old authorization URL later cannot
-                // work; only a fresh call can.
-                return Err(format!(
-                    "authorization timed out after {secs}s waiting for the browser redirect; \
-                     call connect_mcp_server again to restart authorization"
-                )
-                .into());
+        {
+            Ok(waiter) => waiter,
+            Err(err) => {
+                self.provider.cancel_authorization(id);
+                self.provider.remove_server(id);
+                return Err(err);
             }
         };
 
-        self.provider
-            .complete_authorization(id, &redirect_url)
-            .await?;
-        self.provider.refresh_server(id).await?;
-        Ok(())
+        if open_in_browser(&auth_url).is_err() {
+            // Headless, or no desktop session: hand the URL back so the agent
+            // can give it to the user, and let the gateway finish the flow
+            // whenever they get to it.
+            log::info!("MCP `{id}` requires authorization at {auth_url}");
+            return Ok(json!({
+                "status": "authorization_required",
+                "server_id": id,
+                "authorization_url": auth_url,
+                "redirect_uri": self.flows.redirect_uri(),
+                "instructions": format!(
+                    "Ask the user to open the authorization_url in a browser and approve access. \
+                     The browser is redirected to redirect_uri, which this daemon serves, so a \
+                     remote user needs that port reachable — over SSH that is the tunnel they \
+                     already use for the side panel. The connection completes on its own; call \
+                     {} again with the same url to confirm it. If the redirect cannot reach the \
+                     daemon at all, ask the user for the full URL from their browser address bar \
+                     after approving and pass it as redirect_url.",
+                    Self::NAME
+                ),
+            }));
+        }
+
+        match timeout(OAUTH_REDIRECT_TIMEOUT, waiter).await {
+            // The gateway handled the redirect and completed the connection.
+            Ok(Ok(Ok(()))) => Ok(self.connected_summary(id, true)),
+            Ok(Ok(Err(err))) => Err(format!("MCP `{id}` authorization failed: {err}").into()),
+            // Sender dropped: the flow was expired or abandoned underneath us.
+            Ok(Err(_)) => Err(format!("MCP `{id}` authorization was cancelled").into()),
+            Err(_) => {
+                self.flows.abandon(&auth_url).await;
+                let secs = OAUTH_REDIRECT_TIMEOUT.as_secs();
+                Err(format!(
+                    "authorization timed out after {secs}s waiting for the browser redirect; \
+                     call {} again to restart authorization",
+                    Self::NAME
+                )
+                .into())
+            }
+        }
     }
 
     fn connected_summary(&self, id: &str, newly_persisted: bool) -> Value {
@@ -885,6 +881,49 @@ impl McpConnectTool {
             "tools": tools,
         })
     }
+}
+
+/// Persists an OAuth server to mcp.json so it reconnects after a restart.
+/// Returns whether a new entry was written (re-authorizations find the
+/// entry already present). Tokens never touch mcp.json — they live in the
+/// provider's credential store.
+pub(super) async fn persist_oauth_server(
+    config_path: &Path,
+    config_write_lock: &Mutex<()>,
+    id: &str,
+    url: String,
+    scopes: Vec<String>,
+) -> Result<bool, BoxError> {
+    let _guard = config_write_lock.lock().await;
+    if mcp_config_contains_server(config_path, id).await? {
+        return Ok(false);
+    }
+    let server = McpServerSettings {
+        id: id.to_string(),
+        disabled: false,
+        transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+            url,
+            bearer_token: None,
+            headers: BTreeMap::new(),
+            oauth: Some(McpOAuthSettings {
+                client_id: None,
+                scopes,
+            }),
+        }),
+        include: BTreeSet::new(),
+        exclude: BTreeSet::new(),
+        lifecycle: None,
+        tasks: None,
+    };
+    persist_mcp_server_config(config_path, server)
+        .await
+        .map_err(|err| {
+            format!(
+                "MCP server {id} is connected, but failed to persist to {}: {err}",
+                config_path.display()
+            )
+        })?;
+    Ok(true)
 }
 
 /// Returns whether mcp.json already carries a server with this id. A missing
@@ -915,6 +954,10 @@ impl Tool<BaseCtx> for McpConnectTool {
             "persisted (tokens in the local credential store, server in mcp.json) and survives ",
             "daemon restarts. Calling it again on a connected server verifies the connection, ",
             "and re-runs the browser authorization if the credentials have died. ",
+            "Pass reauthorize=true to sign out and re-consent while the stored credentials are ",
+            "still valid, which is what changing the granted scopes requires. ",
+            "When no browser can be opened here, the call returns status=authorization_required ",
+            "with an authorization_url to give the user; the connection then completes by itself. ",
             "Before calling, tell the user a browser window may open for them to confirm ",
             "authorization. Use add_mcp_server instead for local stdio servers or ",
             "bearer-token/no-auth HTTP servers that should be persisted."
@@ -946,10 +989,22 @@ impl Tool<BaseCtx> for McpConnectTool {
         if !args.scopes.is_empty() {
             details.push(approval_detail("OAuth scopes", &args.scopes, "list"));
         }
+        // Re-authorizing discards a working grant, so the card must say so
+        // rather than reading like an ordinary connect.
+        let title = if args.reauthorize {
+            details.push(approval_detail(
+                "Re-authorize",
+                "discards the stored credentials and asks for consent again",
+                "text",
+            ));
+            format!("Re-authorize MCP server: {safe_url}")
+        } else {
+            format!("Connect MCP server: {safe_url}")
+        };
         require_mcp_approval(
             &ctx,
             Self::NAME,
-            format!("Connect MCP server: {safe_url}"),
+            title,
             details,
             json!({ "url": &safe_url }),
         )
@@ -979,6 +1034,14 @@ fn connect_mcp_server_parameters() -> serde_json::Value {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Optional OAuth scopes to request. Omit to request the scopes the server advertises."
+            },
+            "reauthorize": {
+                "type": "boolean",
+                "description": "Set true to sign out of an already-connected server and run the browser authorization again, for example to grant different scopes. Omit for a normal connect."
+            },
+            "redirect_url": {
+                "type": "string",
+                "description": "Full URL from the browser address bar after the user approved access, used only when the redirect could not reach this daemon. Everything else is ignored when this is set."
             }
         },
         "required": ["url"],
@@ -1001,70 +1064,6 @@ fn default_server_id_from_url(url: &str) -> Result<String, BoxError> {
     .trim_end_matches('.');
     normalize_string(host)
         .ok_or_else(|| "cannot derive an MCP server id from the url; pass an explicit id".into())
-}
-
-/// Serves the loopback redirect endpoint and returns the full redirect URL once
-/// the authorization server sends the user back with `code`/`state`.
-async fn wait_for_oauth_redirect(listener: TcpListener) -> Result<String, BoxError> {
-    loop {
-        let (mut stream, _) = listener.accept().await?;
-        // Per-connection failures (port probes, browser preconnects, clients
-        // hanging up early) must not abort the authorization; keep listening.
-        let Some(request_line) = read_request_line(&mut stream).await else {
-            continue;
-        };
-        let Some(target) = request_line.split_whitespace().nth(1) else {
-            let _ = write_http_response(&mut stream, "400 Bad Request", "Bad Request").await;
-            continue;
-        };
-        // Ignore ancillary requests such as /favicon.ico; wait for the callback.
-        if !(target.contains("code=") || target.contains("error=")) {
-            let _ = write_http_response(&mut stream, "404 Not Found", "Not Found").await;
-            continue;
-        }
-        // Best-effort: the redirect is already captured even if the browser
-        // never renders the confirmation page.
-        let _ = write_http_response(
-            &mut stream,
-            "200 OK",
-            "授权完成，可以关闭此页面并返回 Anda Bot。\nAuthorization complete; you can close this tab.",
-        )
-        .await;
-        return Ok(format!("http://127.0.0.1{target}"));
-    }
-}
-
-/// Reads from the connection until the request line is complete (terminated by
-/// a newline) and returns it. `None` when the client disconnects or errors
-/// before sending one, or floods more than 16 KiB without a line break.
-async fn read_request_line(stream: &mut TcpStream) -> Option<String> {
-    let mut buffer = Vec::with_capacity(2048);
-    let mut chunk = [0u8; 2048];
-    while !buffer.contains(&b'\n') {
-        match stream.read(&mut chunk).await {
-            Ok(0) | Err(_) => return None,
-            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
-        }
-        if buffer.len() > 16 * 1024 {
-            return None;
-        }
-    }
-    let request = String::from_utf8_lossy(&buffer);
-    request.lines().next().map(str::to_string)
-}
-
-async fn write_http_response(
-    stream: &mut TcpStream,
-    status: &str,
-    body: &str,
-) -> Result<(), BoxError> {
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(response.as_bytes()).await?;
-    stream.flush().await?;
-    Ok(())
 }
 
 /// Best-effort launch of the user's default browser at `url`.
@@ -1472,11 +1471,7 @@ mod tests {
         assert!(err.to_string().contains("approval"), "{err}");
 
         let dir = tempfile::tempdir().unwrap();
-        let connect_tool = McpConnectTool::new(
-            Arc::new(McpToolProvider::new(Vec::new()).unwrap()),
-            McpSettings::file_path(dir.path()),
-            Arc::new(Mutex::new(())),
-        );
+        let connect_tool = test_connect_tool(McpSettings::file_path(dir.path()));
         let err = Tool::call(
             &connect_tool,
             anda_engine::engine::EngineBuilder::new().mock_ctx().base,
@@ -1484,6 +1479,8 @@ mod tests {
                 url: "http://127.0.0.1:9/mcp".to_string(),
                 id: None,
                 scopes: Vec::new(),
+                reauthorize: false,
+                redirect_url: None,
             },
             Vec::new(),
         )
@@ -1585,23 +1582,30 @@ mod tests {
 
     fn test_connect_tool(config_path: PathBuf) -> McpConnectTool {
         let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
-        McpConnectTool::new(provider, config_path, Arc::new(Mutex::new(())))
+        let flows = McpOAuthFlows::new(
+            provider.clone(),
+            8042,
+            config_path,
+            Arc::new(Mutex::new(())),
+        );
+        McpConnectTool::new(provider, flows)
     }
 
     #[tokio::test]
     async fn persist_oauth_server_writes_marker_and_skips_existing_entries() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = McpSettings::file_path(dir.path());
-        let tool = test_connect_tool(config_path.clone());
+        let write_lock = Mutex::new(());
 
-        let newly = tool
-            .persist_oauth_server(
-                "alink",
-                "https://api.al.ink/mcp".to_string(),
-                vec!["events:read".to_string()],
-            )
-            .await
-            .unwrap();
+        let newly = persist_oauth_server(
+            &config_path,
+            &write_lock,
+            "alink",
+            "https://api.al.ink/mcp".to_string(),
+            vec!["events:read".to_string()],
+        )
+        .await
+        .unwrap();
         assert!(newly);
 
         // The entry re-parses with the oauth marker and no token material.
@@ -1620,10 +1624,15 @@ mod tests {
         assert!(!content.contains("token"), "no tokens in mcp.json");
 
         // Re-authorization finds the entry already present and does not fail.
-        let newly = tool
-            .persist_oauth_server("alink", "https://api.al.ink/mcp".to_string(), Vec::new())
-            .await
-            .unwrap();
+        let newly = persist_oauth_server(
+            &config_path,
+            &write_lock,
+            "alink",
+            "https://api.al.ink/mcp".to_string(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
         assert!(!newly);
     }
 
@@ -1666,39 +1675,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_redirect_survives_stray_connections_and_split_requests() {
-        use tokio::io::AsyncWriteExt;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let redirect = tokio::spawn(wait_for_oauth_redirect(listener));
-
-        // A probe that connects and hangs up without sending anything.
-        drop(TcpStream::connect(addr).await.unwrap());
-        // An ancillary request (favicon) on its own connection.
-        let mut favicon = TcpStream::connect(addr).await.unwrap();
-        favicon
-            .write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: x\r\n\r\n")
-            .await
+    async fn reauthorize_signs_out_of_a_connected_server_before_re_consenting() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
+        provider
+            .register_server(McpServerConfig::streamable_http(
+                "already".to_string(),
+                "http://127.0.0.1:9/mcp".to_string(),
+            ))
             .unwrap();
-        drop(favicon);
+        let tool = McpConnectTool::new(
+            provider.clone(),
+            McpOAuthFlows::new(
+                provider.clone(),
+                8042,
+                McpSettings::file_path(dir.path()),
+                Arc::new(Mutex::new(())),
+            ),
+        );
+        let args = |reauthorize: bool| ConnectMcpServerArgs {
+            url: "http://127.0.0.1:9/mcp".to_string(),
+            id: Some("already".to_string()),
+            scopes: Vec::new(),
+            reauthorize,
+            redirect_url: None,
+        };
 
-        // The real callback, with the request line split across two writes.
-        let mut callback = TcpStream::connect(addr).await.unwrap();
-        callback.write_all(b"GET /callback?co").await.unwrap();
-        callback.flush().await.unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        callback
-            .write_all(b"de=abc&state=xyz HTTP/1.1\r\nHost: x\r\n\r\n")
-            .await
-            .unwrap();
+        // A plain connect probes the existing registration and keeps it.
+        let err = tool.connect(args(false)).await.unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        assert!(provider.contains_server("already"));
 
-        let url = timeout(Duration::from_secs(5), redirect)
-            .await
-            .expect("redirect must resolve")
-            .unwrap()
-            .unwrap();
-        assert_eq!(url, "http://127.0.0.1/callback?code=abc&state=xyz");
+        // Re-authorizing drops the stored grant and the registration first, so
+        // the call runs a fresh authorization rather than reporting the server
+        // as already connected with its old scopes.
+        let err = tool.connect(args(true)).await.unwrap_err();
+        assert!(!err.to_string().contains("already exists"), "{err}");
+        assert!(!provider.contains_server("already"));
     }
 
     #[tokio::test]
@@ -1710,6 +1723,8 @@ mod tests {
                 url: "ftp://example.test/mcp".to_string(),
                 id: None,
                 scopes: Vec::new(),
+                reauthorize: false,
+                redirect_url: None,
             })
             .await
             .unwrap_err();

@@ -2,7 +2,7 @@ use anda_core::{
     BoxError, Document, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
     Usage,
 };
-use anda_db::schema::Fv;
+use anda_db::{collection::Collection, database::AndaDB, schema::Fv};
 use anda_engine::{
     context::BaseCtx,
     memory::{ConversationStatus, Conversations},
@@ -12,7 +12,7 @@ use anda_kip::Response;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::util::request_meta::request_meta_extra_as;
 
@@ -114,6 +114,12 @@ pub struct AgentInfo {
 #[derive(Debug)]
 pub struct ConversationsTool {
     pub conversations: Conversations,
+    // The collection `conversations` wraps. anda_engine keeps its own handle
+    // private, so this second handle — the same cached `Arc` AndaDB hands out
+    // for the name — is how the tool reaches the collection-level extension
+    // slots it persists its state in, and the document count for the status
+    // report.
+    store: Arc<Collection>,
     default_workspace: String,
     tools_usage: RwLock<HashMap<String, Usage>>,
     source_conversation: RwLock<HashMap<String, SourceState>>,
@@ -126,15 +132,29 @@ pub struct ConversationsTool {
 impl ConversationsTool {
     pub const NAME: &'static str = "conversations_api";
 
-    /// Creates a new ConversationTool instance
-    pub fn new(conversations: Conversations, default_workspace: String) -> Self {
-        Self {
+    /// Opens the named conversations collection and creates the tool over it.
+    pub async fn connect(
+        db: Arc<AndaDB>,
+        name: String,
+        default_workspace: String,
+    ) -> Result<Self, BoxError> {
+        let conversations = Conversations::connect(db.clone(), name.clone()).await?;
+        // `Conversations::connect` has already registered the collection, so
+        // this returns the very handle it holds rather than a second instance.
+        let store = db.open_collection(name, async |_| Ok(())).await?;
+        Ok(Self {
             conversations,
+            store,
             default_workspace,
             tools_usage: RwLock::new(HashMap::new()),
             source_conversation: RwLock::new(HashMap::new()),
             extension_save_lock: tokio::sync::Mutex::new(()),
-        }
+        })
+    }
+
+    /// Number of stored conversations.
+    pub fn conversations_len(&self) -> usize {
+        self.store.len()
     }
 
     pub fn get_source_state(&self, source: &str) -> Option<SourceState> {
@@ -197,8 +217,7 @@ impl ConversationsTool {
             map.insert(source, state);
             Fv::serialized(&*map, None)
         }?;
-        self.conversations
-            .conversations
+        self.store
             .save_extension("source_conversation".to_string(), fv)
             .await?;
         Ok(())
@@ -214,8 +233,7 @@ impl ConversationsTool {
             }
             (removed, Fv::serialized(&*map, None)?)
         };
-        self.conversations
-            .conversations
+        self.store
             .save_extension("source_conversation".to_string(), fv)
             .await?;
         Ok(removed)
@@ -250,8 +268,7 @@ impl ConversationsTool {
             }
             Fv::serialized(&*tools_usage, None)
         }?;
-        self.conversations
-            .conversations
+        self.store
             .save_extension("tools_usage".to_string(), tools_usage)
             .await?;
         Ok(())
@@ -345,8 +362,7 @@ impl Tool<BaseCtx> for ConversationsTool {
     async fn init(&self, _ctx: BaseCtx) -> Result<(), BoxError> {
         {
             let source_conversation: HashMap<String, SourceState> = self
-                .conversations
-                .conversations
+                .store
                 .get_extension_as("source_conversation")
                 .unwrap_or_default();
 
@@ -354,8 +370,7 @@ impl Tool<BaseCtx> for ConversationsTool {
         }
         {
             let tools_usage: HashMap<String, Usage> = self
-                .conversations
-                .conversations
+                .store
                 .get_extension_as("tools_usage")
                 .unwrap_or_default();
 
@@ -688,10 +703,13 @@ mod tests {
         )
         .await
         .unwrap();
-        let conversations = Conversations::connect(Arc::new(db), "conversations".to_string())
-            .await
-            .unwrap();
-        ConversationsTool::new(conversations, "/tmp/default-ws".to_string())
+        ConversationsTool::connect(
+            Arc::new(db),
+            "conversations".to_string(),
+            "/tmp/default-ws".to_string(),
+        )
+        .await
+        .unwrap()
     }
 
     fn meta_with_extra(entries: &[(&str, Value)]) -> RequestMeta {
@@ -779,6 +797,26 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn conversations_len_sees_writes_made_through_conversations() {
+        let tool = test_tool().await;
+        assert_eq!(tool.conversations_len(), 0);
+
+        let conv = Conversation {
+            user: Principal::anonymous(),
+            ..Default::default()
+        };
+        tool.conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+
+        // The extension handle and `Conversations` must be the one collection
+        // instance AndaDB registered for the name: a second, independently
+        // loaded instance would keep its own document index and report 0.
+        assert_eq!(tool.conversations_len(), 1);
     }
 
     #[tokio::test]

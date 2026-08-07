@@ -167,6 +167,12 @@ export interface SkillUsageSummary {
   total_tokens: number
 }
 
+/**
+ * `inline` skills are read into the running agent's own context; only
+ * `subagent` ones are exposed as isolated `SA_<agent_name>` callables.
+ */
+export type SkillExecution = 'inline' | 'subagent'
+
 export interface ManagedSkill {
   id: string
   source: SkillSourceKind
@@ -176,6 +182,7 @@ export interface ManagedSkill {
   agent_name: string
   description: string
   compatibility?: string | null
+  execution: SkillExecution
   allowed_tools: string[]
   metadata: Record<string, unknown>
   path: string

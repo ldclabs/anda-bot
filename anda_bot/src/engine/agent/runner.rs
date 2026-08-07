@@ -28,7 +28,7 @@ use crate::engine::{
     conversation::SourceState,
     goal::{self},
     is_action_message, is_action_message_value, multimodal,
-    prompt::{PromptCommand, skill_subagent},
+    prompt::{PromptCommand, skill_command_directive},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
         system_user_message,
@@ -663,19 +663,12 @@ impl SessionRunner {
                         *next_goal = Some(goal::GoalState::new(prompt));
                     };
                 }
-                PromptCommand::Skill { mut skill, prompt } => {
-                    if let Some(subagent) =
-                        skill_subagent(self.assistant.inner.skill_library.as_ref(), &skill)
-                    {
-                        skill = subagent.name;
-                    }
-                    content.push(
-                        system_runtime_prompt(
-                            "prompt command",
-                            format!("Use the {skill} skill to handle this request"),
-                        )
-                        .into(),
+                PromptCommand::Skill { skill, prompt } => {
+                    let (_, directive) = skill_command_directive(
+                        self.assistant.inner.skill_library.subagent_set(),
+                        &skill,
                     );
+                    content.push(system_runtime_prompt("prompt command", directive).into());
                     prepend_prompt_content(&mut content, prompt);
                     follow_up_batch.append(&mut content);
                 }
@@ -1172,7 +1165,6 @@ mod tests {
     };
     use anda_engine::{
         engine::EngineBuilder,
-        memory::Conversations,
         model::{CompletionFeaturesDyn, Model},
     };
     use ic_auth_types::{ByteBufB64, Xid};
@@ -1348,11 +1340,11 @@ mod tests {
         );
         let brain_client = brain::Client::new(brain_url, Some("t".to_string()))
             .with_http_client(crate::util::http_client::new_reqwest_client());
-        let conversations = Conversations::connect(db.clone(), "bot".to_string())
-            .await
-            .unwrap();
-        let conversations_tool =
-            Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(db.clone(), "bot".to_string(), "/tmp".to_string())
+                .await
+                .unwrap(),
+        );
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
         let skills = SkillLibrary::for_test(std::env::temp_dir().join("runner_skills2_home"));
         let bridge = Arc::new(BrowserBridge::new());
@@ -1429,11 +1421,11 @@ mod tests {
             Some("t".to_string()),
         )
         .with_http_client(http);
-        let conversations = Conversations::connect(db.clone(), "bot".to_string())
-            .await
-            .unwrap();
-        let conversations_tool =
-            Arc::new(ConversationsTool::new(conversations, "/tmp".to_string()));
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(db.clone(), "bot".to_string(), "/tmp".to_string())
+                .await
+                .unwrap(),
+        );
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
         let skills = SkillLibrary::for_test(std::env::temp_dir().join("runner_skills_home"));
         let bridge = Arc::new(BrowserBridge::new());

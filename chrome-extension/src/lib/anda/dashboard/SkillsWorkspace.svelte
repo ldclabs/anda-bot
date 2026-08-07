@@ -820,10 +820,25 @@
 
                   <div class="grid gap-2">
                     <div class="text-xs font-semibold text-muted-foreground">
+                      {getMessage('skillExecution')}
+                    </div>
+                    <div>
+                      <span class={badgeClass('outline')}>{detail.execution}</span>
+                    </div>
+                  </div>
+
+                  <div class="grid gap-2">
+                    <div class="text-xs font-semibold text-muted-foreground">
                       {getMessage('skillAllowedTools')}
                     </div>
                     <div class="flex flex-wrap gap-1.5">
-                      {#if detail.allowed_tools.length}
+                      {#if detail.execution !== 'subagent'}
+                        <!-- An inline skill gets no tool grant of its own: the
+                             agent that reads it keeps using its own tools. -->
+                        <span class="text-xs text-muted-foreground"
+                          >{getMessage('skillInlineTools')}</span
+                        >
+                      {:else if detail.allowed_tools.length}
                         {#each detail.allowed_tools as tool}
                           <span class={badgeClass('secondary')}>{tool}</span>
                         {/each}

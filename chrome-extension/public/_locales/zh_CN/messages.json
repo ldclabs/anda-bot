@@ -1094,6 +1094,12 @@
   "skillAllowedTools": {
     "message": "允许工具"
   },
+  "skillExecution": {
+    "message": "执行方式"
+  },
+  "skillInlineTools": {
+    "message": "在当前对话中执行，使用主智能体自身的工具"
+  },
   "skillDefaultTools": {
     "message": "默认运行时工具"
   },

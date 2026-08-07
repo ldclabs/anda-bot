@@ -13,10 +13,14 @@ ALLOWED_PROPERTIES = {
     "name",
     "description",
     "license",
+    "execution",
     "allowed-tools",
+    "resource-tags",
     "metadata",
     "compatibility",
 }
+
+EXECUTION_MODES = {"inline", "subagent"}
 
 
 def _strip_yaml_scalar(value):
@@ -154,6 +158,21 @@ def validate_skill(skill_path):
             return False, f"Compatibility must be a string, got {type(compatibility).__name__}"
         if len(compatibility) > 500:
             return False, f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters."
+
+    # Validate execution mode if present (optional, defaults to inline)
+    execution = frontmatter.get('execution', '')
+    if execution:
+        if not isinstance(execution, str):
+            return False, f"Execution must be a string, got {type(execution).__name__}"
+        if execution.strip().lower() not in EXECUTION_MODES:
+            return False, (
+                f"Unknown execution mode '{execution}'. "
+                f"Expected one of: {', '.join(sorted(EXECUTION_MODES))}"
+            )
+
+    # `resource-tags` only takes effect for subagent skills
+    if frontmatter.get('resource-tags') and execution.strip().lower() != 'subagent':
+        return False, "resource-tags only applies to skills that declare execution: subagent"
 
     return True, "Skill is valid!"
 

@@ -1094,6 +1094,12 @@
   "skillAllowedTools": {
     "message": "Outils autorisés"
   },
+  "skillExecution": {
+    "message": "Exécution"
+  },
+  "skillInlineTools": {
+    "message": "S'exécute dans la conversation et utilise les outils de l'agent"
+  },
   "skillDefaultTools": {
     "message": "Outils d'exécution par défaut"
   },

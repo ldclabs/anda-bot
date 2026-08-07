@@ -85,12 +85,67 @@ servers, `command` is spawned directly without a shell; when `cwd` is omitted,
 the first Anda workspace is used. If `type` is omitted, Anda infers `stdio` from
 `command` or `http` from `url`.
 
+Two optional per-server fields tune how Anda talks to the endpoint:
+
+| Field | Purpose |
+| --- | --- |
+| `lifecycle` | How the protocol revision is negotiated. `auto` (default) probes the stateless `server/discover` lifecycle and falls back to the legacy `initialize` handshake. Use `discover` to require the newer one, or `initialize` to pin a server that mishandles unknown methods. |
+| `tasks` | Opts into the tasks extension, so a long-running tool can hand back a task Anda polls to completion instead of holding its response open. Takes `{"max_wait_secs": <seconds>}`, default `300`. Omit it and the server must answer every call inline. |
+
+```json
+{
+  "mcpServers": {
+    "legacy": {
+      "type": "http",
+      "url": "https://legacy.example.com/mcp",
+      "lifecycle": "initialize"
+    },
+    "long-running": {
+      "type": "http",
+      "url": "https://batch.example.com/mcp",
+      "tasks": { "max_wait_secs": 900 }
+    }
+  }
+}
+```
+
 The agent can also add a server at runtime with `add_mcp_server`. Set
 `persist: false` for the current daemon only, or `persist: true` to save the
 server into `~/.anda/mcp.json` for future restarts. Its server fields mirror one
 `mcp.json` entry: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
 `enabled`, `include`, and `exclude`, plus the tool-only `id` and `persist`
-fields.
+fields. `lifecycle` and `tasks` are operator knobs, so they are set by editing
+`mcp.json` rather than through the tool.
+
+For OAuth endpoints, `connect_mcp_server` runs the browser authorization and
+stores the tokens in the local credential store. Calling it again on a connected
+server only verifies the connection; pass `reauthorize: true` to sign out and
+consent again, which is what granting a different set of scopes requires.
+
+### Authorizing an MCP server over SSH
+
+The authorization server redirects the browser to
+`http://127.0.0.1:<gateway port>/mcp/oauth/callback`, which the daemon serves
+itself. That address is loopback **from the browser's point of view**, which is
+what authorization servers require of a native app — so when Anda runs on a
+remote machine, the redirect needs the gateway port forwarded:
+
+```bash
+ssh -N -L 8042:127.0.0.1:8042 user@your-server
+```
+
+This is the same tunnel used to reach the side panel, so it is usually already
+open. `-N` runs it without a remote shell; add `-f` to background it.
+
+With no desktop session to open a browser in, `connect_mcp_server` does not
+block. It returns `status: "authorization_required"` together with an
+`authorization_url`; open that URL in your own browser, approve access, and the
+redirect completes the connection through the tunnel. Ask Anda to connect again
+to confirm the server is up.
+
+If no port can be forwarded at all, approve access anyway and copy the full URL
+from the browser's address bar — it holds the `code` and `state` — then have
+Anda call `connect_mcp_server` with that string as `redirect_url`.
 
 ## Local Directory Structure
 

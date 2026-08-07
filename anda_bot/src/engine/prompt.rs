@@ -1,5 +1,5 @@
 use anda_engine::{
-    extension::skill::normalise_skill_agent_name,
+    extension::skill::{SkillManager, normalise_skill_agent_name},
     subagent::{SubAgent, SubAgentSet},
 };
 
@@ -44,8 +44,9 @@ pub enum PromptCommand {
     },
     // '/skill', case-insensitive, followed by the skill name and prompt.
     // '$skill-name prompt' is a shorthand for the same behavior.
-    // Uses the provided skill name to route the prompt to a specific skill-based
-    // subagent.
+    // Routes the prompt through the named skill: a skill declaring
+    // `execution: subagent` is delegated to its callable, and an inline one is
+    // read with `skills_manager` and followed in this conversation.
     Skill {
         skill: String,
         prompt: String,
@@ -126,6 +127,34 @@ pub fn skill_subagent(skill_set: &dyn SubAgentSet, skill: &str) -> Option<SubAge
     skill_set.get_lowercase(&normalise_skill_agent_name(
         skill.strip_prefix("skill_").unwrap_or(skill),
     ))
+}
+
+/// Builds the runtime instruction a `/skill` command turns into, plus the
+/// callable name when the skill opted into subagent execution.
+///
+/// Only a skill declaring `execution: subagent` is dispatchable; the rest run
+/// inline, which means the agent reads SKILL.md through `skills_manager` and
+/// follows it in this conversation, so the instruction has to say which.
+pub fn skill_command_directive(
+    skill_set: &dyn SubAgentSet,
+    skill: &str,
+) -> (Option<String>, String) {
+    match skill_subagent(skill_set, skill) {
+        Some(subagent) => {
+            let directive = format!(
+                "Use the {} skill subagent to handle this request",
+                subagent.name
+            );
+            (Some(subagent.name), directive)
+        }
+        None => (
+            None,
+            format!(
+                "Use the {skill} skill to handle this request: read it with {} and follow it in this conversation",
+                SkillManager::NAME
+            ),
+        ),
+    }
 }
 
 fn required_prompt_command<F>(

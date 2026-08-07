@@ -1,13 +1,11 @@
-use anda_core::{
-    Agent, BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage, select_resources,
-};
+use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage};
 use anda_engine::{
     context::BaseCtx,
     extension::skill::{
-        Skill, SkillManager, find_skill_files, format_skill_md, normalise_skill_agent_name,
-        parse_skill_md, validate_skill_name,
+        Skill, SkillExecution, SkillManager, find_skill_files, format_skill_md,
+        normalise_skill_agent_name, parse_skill_md, validate_skill_name,
     },
-    subagent::{SubAgent, SubAgentSet},
+    subagent::SubAgentSet,
     unix_ms,
 };
 use anda_kip::Response;
@@ -17,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    any::Any,
     collections::{BTreeMap, BTreeSet, HashMap},
     ffi::OsStr,
     io::Read,
@@ -165,6 +162,11 @@ pub struct ManagedSkill {
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<String>,
+    /// How the skill runs. `inline` skills are read into the calling agent's
+    /// own context through `skills_manager`; only `subagent` ones become
+    /// `SA_<agent_name>` callables.
+    #[serde(default)]
+    pub execution: SkillExecution,
     pub allowed_tools: Vec<String>,
     pub metadata: Value,
     pub path: String,
@@ -331,7 +333,6 @@ pub struct SkillLibrary {
     backups_dir: PathBuf,
     trash_dir: PathBuf,
     skill_manager: Arc<SkillManager>,
-    default_skill_tools: Vec<String>,
     known_tools: Arc<BTreeSet<String>>,
     tools_usage_reader: Arc<dyn Fn() -> HashMap<String, Usage> + Send + Sync>,
     operation_lock: Arc<Mutex<()>>,
@@ -347,7 +348,6 @@ impl SkillLibrary {
         bundled_dir: PathBuf,
         shared_dirs: Vec<PathBuf>,
         skill_manager: Arc<SkillManager>,
-        default_skill_tools: Vec<String>,
         known_tools: BTreeSet<String>,
     ) -> Self {
         Self {
@@ -359,7 +359,6 @@ impl SkillLibrary {
             bundled_dir,
             shared_dirs,
             skill_manager,
-            default_skill_tools,
             known_tools: Arc::new(known_tools),
             tools_usage_reader: Arc::new(HashMap::new),
             operation_lock: Arc::new(Mutex::new(())),
@@ -400,7 +399,6 @@ impl SkillLibrary {
             bundled_dir,
             vec![shared_dir],
             raw,
-            default_skill_tools.clone(),
             BTreeSet::from_iter(default_skill_tools),
         ))
     }
@@ -652,6 +650,22 @@ impl SkillLibrary {
         let mut records = self.scan_records(&manifest).await;
         apply_effective_state(&mut records, &manifest);
         self.write_manifest(&manifest).await?;
+
+        // Hand the registry the one decision it cannot make for itself, then let it
+        // reload. `SkillManager` already resolves duplicate names by directory
+        // priority and drops what it cannot parse; only the manifest's disabled set
+        // lives up here. Rejecting a disabled copy also promotes the next directory's
+        // copy of that name, which is what the Dashboard switch is expected to do.
+        let disabled_dirs: BTreeSet<PathBuf> = records
+            .iter()
+            .filter(|record| record.managed.disabled)
+            .map(|record| record.base_dir.clone())
+            .collect();
+        self.skill_manager
+            .set_skill_filter(Some(Arc::new(move |skill: &Skill| {
+                !disabled_dirs.contains(&skill.base_dir)
+            })));
+
         *self.state.write() = SkillLibraryState { records };
         if let Err(err) = self.skill_manager.load().await {
             log::warn!("failed to reload raw skills_manager after library scan: {err}");
@@ -776,6 +790,7 @@ impl SkillLibrary {
                                         &skill.tools,
                                         self.known_tools.as_ref(),
                                     ));
+                                    diagnostics.extend(execution_mode_diagnostics(&skill));
                                     parsed = Some(skill);
                                 }
                                 Err(err) => diagnostics.push(SkillDiagnostic::error(
@@ -896,89 +911,14 @@ impl SkillLibrary {
         candidate
     }
 
-    fn active_record_for_agent(&self, lowercase_name: &str) -> Option<SkillRecord> {
-        self.state
-            .read()
-            .records
-            .iter()
-            .find(|record| {
-                record.managed.active
-                    && record
-                        .managed
-                        .agent_name
-                        .eq_ignore_ascii_case(lowercase_name)
-            })
-            .cloned()
-    }
-
-    fn active_records(&self) -> Vec<SkillRecord> {
-        self.state
-            .read()
-            .records
-            .iter()
-            .filter(|record| record.managed.active)
-            .cloned()
-            .collect()
-    }
-
-    fn subagent_from_record(&self, record: &SkillRecord) -> Option<SubAgent> {
-        let skill = record.parsed.as_ref()?;
-        let mut agent = SubAgent::from(skill);
-        for tool in &self.default_skill_tools {
-            if !agent.tools.contains(tool) {
-                agent.tools.push(tool.clone());
-            }
-        }
-        Some(agent)
-    }
-}
-
-impl SubAgentSet for SkillLibrary {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-
-    fn contains_lowercase(&self, lowercase_name: &str) -> bool {
-        self.active_record_for_agent(lowercase_name).is_some()
-    }
-
-    fn get_lowercase(&self, lowercase_name: &str) -> Option<SubAgent> {
-        self.active_record_for_agent(lowercase_name)
-            .and_then(|record| self.subagent_from_record(&record))
-    }
-
-    fn definitions(&self, names: Option<&[String]>) -> Vec<FunctionDefinition> {
-        let names = names.map(|names| {
-            names
-                .iter()
-                .map(|name| name.to_ascii_lowercase())
-                .collect::<BTreeSet<_>>()
-        });
-        self.active_records()
-            .iter()
-            .filter(|record| {
-                names
-                    .as_ref()
-                    .map(|names| names.contains(&record.managed.agent_name.to_ascii_lowercase()))
-                    .unwrap_or(true)
-            })
-            .filter_map(|record| self.subagent_from_record(record))
-            .map(|agent| agent.definition())
-            .collect()
-    }
-
-    fn select_resources(&self, name: &str, resources: &mut Vec<Resource>) -> Vec<Resource> {
-        if resources.is_empty() {
-            return Vec::new();
-        }
-
-        self.active_record_for_agent(&name.to_ascii_lowercase())
-            .and_then(|record| self.subagent_from_record(&record))
-            .map(|agent| {
-                let supported_tags = agent.supported_resource_tags();
-                select_resources(resources, &supported_tags)
-            })
-            .unwrap_or_default()
+    /// The registry these skills are dispatched through.
+    ///
+    /// `SkillManager` owns loading and materialization, including which skills
+    /// are callable at all — only those declaring `execution: subagent` are.
+    /// This library layers the source, manifest, and diagnostic policy on top
+    /// of it rather than keeping a second registry that could disagree.
+    pub fn subagent_set(&self) -> &dyn SubAgentSet {
+        self.skill_manager.as_ref()
     }
 }
 
@@ -1146,13 +1086,14 @@ fn build_record(input: RecordBuildInput<'_>) -> SkillRecord {
         version,
     } = input;
 
-    let (name, agent_name, description, compatibility, allowed_tools, metadata) =
+    let (name, agent_name, description, compatibility, execution, allowed_tools, metadata) =
         match parsed.as_ref() {
             Some(skill) => (
                 skill.frontmatter.name.clone(),
                 skill.agent_name.clone(),
                 skill.frontmatter.description.clone(),
                 skill.frontmatter.compatibility.clone(),
+                skill.execution,
                 skill.tools.clone(),
                 json!(skill.frontmatter.metadata),
             ),
@@ -1165,6 +1106,7 @@ fn build_record(input: RecordBuildInput<'_>) -> SkillRecord {
                     agent_name,
                     String::new(),
                     None,
+                    SkillExecution::default(),
                     Vec::new(),
                     json!({}),
                 )
@@ -1181,6 +1123,7 @@ fn build_record(input: RecordBuildInput<'_>) -> SkillRecord {
             agent_name,
             description,
             compatibility,
+            execution,
             allowed_tools,
             metadata,
             path: path.display().to_string(),
@@ -1386,6 +1329,21 @@ fn unknown_tool_diagnostics(
             )
         })
         .collect()
+}
+
+/// Flags frontmatter that only takes effect under `execution: subagent`.
+///
+/// An inline skill is read into the calling agent's own context, so it neither
+/// receives a tool grant nor a resource selection of its own — declaring either
+/// looks like a restriction that is silently not applied.
+fn execution_mode_diagnostics(skill: &Skill) -> Vec<SkillDiagnostic> {
+    if skill.is_subagent() || !skill.declares_resource_tags() {
+        return Vec::new();
+    }
+    vec![SkillDiagnostic::warning(
+        "resource_tags_ignored",
+        "resource-tags only applies to skills that declare execution: subagent.",
+    )]
 }
 
 fn diagnostic_summary(diagnostics: &[SkillDiagnostic]) -> String {
@@ -1656,6 +1614,17 @@ mod tests {
         fs::write(dir.join("SKILL.md"), skill_md(name, description)).unwrap();
     }
 
+    /// Writes a skill with extra frontmatter lines after `description`.
+    fn write_skill_with_frontmatter(root: &Path, name: &str, extra: &str) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name} skill\n{extra}---\n\n# {name}\n"),
+        )
+        .unwrap();
+    }
+
     fn library(home: &Path) -> SkillLibrary {
         SkillLibrary::for_test(home.to_path_buf()).as_ref().clone()
     }
@@ -1779,7 +1748,188 @@ mod tests {
                 .iter()
                 .any(|skill| skill.name == "learn")
         );
-        assert_eq!(lib.definitions(None).len(), 1);
+        // Both copies are inline, so neither is callable.
+        assert_eq!(lib.subagent_set().definitions(None).len(), 0);
+    }
+
+    #[tokio::test]
+    async fn only_skills_declaring_subagent_execution_become_callables() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        write_skill(&personal, "learn", "inline by default");
+        write_skill_with_frontmatter(&personal, "worker", "execution: subagent\n");
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let learn = skills.iter().find(|s| s.name == "learn").unwrap();
+        let worker = skills.iter().find(|s| s.name == "worker").unwrap();
+        assert_eq!(learn.execution, SkillExecution::Inline);
+        assert_eq!(worker.execution, SkillExecution::Subagent);
+        assert!(learn.active && worker.active);
+
+        // The inline skill is loaded and readable, but never dispatchable.
+        assert!(!lib.subagent_set().contains_lowercase("skill_learn"));
+        assert!(lib.subagent_set().get_lowercase("skill_learn").is_none());
+        assert!(lib.subagent_set().contains_lowercase("skill_worker"));
+        assert_eq!(lib.subagent_set().definitions(None).len(), 1);
+        assert_eq!(
+            lib.subagent_set()
+                .definitions(Some(&["skill_learn".to_string()]))
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn declared_allowed_tools_are_an_upper_bound() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        write_skill_with_frontmatter(
+            &personal,
+            "narrow",
+            "execution: subagent\nallowed-tools: shell\n",
+        );
+        write_skill_with_frontmatter(&personal, "wide", "execution: subagent\n");
+
+        lib.reload().await.unwrap();
+
+        // A skill that declared its own list gets exactly that list; the
+        // configured defaults must not widen it back out.
+        let narrow = lib.subagent_set().get_lowercase("skill_narrow").unwrap();
+        assert_eq!(narrow.tools, vec!["shell".to_string()]);
+        // A skill that declared nothing inherits the defaults the library
+        // handed to the registry at construction.
+        let wide = lib.subagent_set().get_lowercase("skill_wide").unwrap();
+        assert!(wide.tools.len() > 1 && wide.tools.contains(&"shell".to_string()));
+    }
+
+    /// Writes a subagent skill whose body identifies which copy it is.
+    fn write_subagent_skill(root: &Path, name: &str, body: &str) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: {name} skill\nexecution: subagent\n---\n\n{body}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn disabling_a_skill_hides_it_from_the_registry_and_promotes_the_next_copy() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_subagent_skill(&temp.path().join("skills"), "worker", "Personal body.");
+        write_subagent_skill(
+            &temp.path().join("bundled-skills"),
+            "worker",
+            "Bundled body.",
+        );
+        lib.reload().await.unwrap();
+
+        let mgr = lib.skill_manager();
+        assert!(
+            lib.subagent_set()
+                .get_lowercase("skill_worker")
+                .unwrap()
+                .instructions
+                .contains("Personal body.")
+        );
+
+        lib.set_skill_enabled("personal:worker".to_string(), false)
+            .await
+            .unwrap();
+
+        // The bundled copy takes over rather than the name disappearing, and the
+        // registry — not just the Dashboard listing — reflects it.
+        assert!(
+            lib.subagent_set()
+                .get_lowercase("skill_worker")
+                .unwrap()
+                .instructions
+                .contains("Bundled body.")
+        );
+        let content = Tool::call_raw(
+            mgr.as_ref(),
+            EngineBuilder::new().mock_ctx().base,
+            json!({ "name": "worker" }),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert!(
+            serde_json::to_value(content.output).unwrap()["content"]
+                .as_str()
+                .unwrap()
+                .contains("Bundled body.")
+        );
+
+        // With both copies disabled the skill is gone from dispatch and from the
+        // reader tool, instead of `skills_manager` handing back a callable name
+        // that nothing will resolve.
+        lib.set_skill_enabled("bundled:worker".to_string(), false)
+            .await
+            .unwrap();
+        assert!(!lib.subagent_set().contains_lowercase("skill_worker"));
+        let err = Tool::call_raw(
+            mgr.as_ref(),
+            EngineBuilder::new().mock_ctx().base,
+            json!({ "name": "worker" }),
+            vec![],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn reload_keeps_the_live_session_registry_of_surviving_skills() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_skill_with_frontmatter(
+            &temp.path().join("skills"),
+            "worker",
+            "execution: subagent\n",
+        );
+
+        lib.reload().await.unwrap();
+        let before = lib.subagent_set().get_lowercase("skill_worker").unwrap();
+        lib.reload().await.unwrap();
+        let after = lib.subagent_set().get_lowercase("skill_worker").unwrap();
+
+        // A running session is registered in one instance's registry; rebuilding
+        // it on reload would strand that session.
+        assert!(Arc::ptr_eq(&before.subsessions, &after.subsessions));
+    }
+
+    #[tokio::test]
+    async fn resource_tags_on_an_inline_skill_are_flagged() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        write_skill_with_frontmatter(&personal, "tagged", "resource-tags: image\n");
+        write_skill_with_frontmatter(
+            &personal,
+            "delegated",
+            "execution: subagent\nresource-tags: image\n",
+        );
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let tagged = skills.iter().find(|s| s.name == "tagged").unwrap();
+        assert!(
+            tagged
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "resource_tags_ignored")
+        );
+        let delegated = skills.iter().find(|s| s.name == "delegated").unwrap();
+        assert!(delegated.diagnostics.is_empty());
     }
 
     #[tokio::test]
@@ -1931,6 +2081,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bundled_skills_declare_the_intended_execution_mode() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills");
+        let mut parsed = Vec::new();
+        for entry in fs::read_dir(&root).unwrap() {
+            let dir = entry.unwrap().path();
+            let skill_md = dir.join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            let content = fs::read_to_string(&skill_md).unwrap();
+            parsed.push(
+                parse_skill_md(dir.clone(), &content)
+                    .unwrap_or_else(|err| panic!("{} is invalid: {err}", skill_md.display())),
+            );
+        }
+        assert!(
+            parsed.len() >= 10,
+            "expected the bundled skills to be present, found {}",
+            parsed.len()
+        );
+
+        // Only work that runs to completion without the conversation delegates;
+        // everything else follows the inline default so it keeps the user, the
+        // chat history, and the turn's attachments in reach.
+        let mut subagents: Vec<&str> = parsed
+            .iter()
+            .filter(|skill| skill.is_subagent())
+            .map(|skill| skill.frontmatter.name.as_str())
+            .collect();
+        subagents.sort_unstable();
+        assert_eq!(subagents, ["auto-research", "claude-code", "codex"]);
+
+        // `allowed-tools` is an upper bound, so a delegated skill that declares
+        // one gets nothing else: trimming this list silently removes capability.
+        let auto_research = parsed
+            .iter()
+            .find(|skill| skill.frontmatter.name == "auto-research")
+            .unwrap();
+        for tool in ["shell", "read_file", "write_file", "subagents_manager"] {
+            assert!(
+                auto_research.tools.iter().any(|name| name == tool),
+                "auto-research must keep {tool} in its allowed-tools"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn skills_api_lists_records() {
         let temp = tempdir().unwrap();
@@ -1959,5 +2156,8 @@ mod tests {
         .unwrap();
         let value = serde_json::to_value(output.output).unwrap();
         assert!(value["result"].is_array());
+        // The dashboard types the mode as `'inline' | 'subagent'`, so it has to
+        // reach the wire as that lowercase word.
+        assert_eq!(value["result"][0]["execution"], json!("inline"));
     }
 }

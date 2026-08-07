@@ -1,7 +1,7 @@
 use anda_core::{BoxError, Principal};
 use anda_web3_client::client::{Identity, identity_from_secret};
 use cose2::{Key as CoseKey, Label, Sign1Message};
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey, ed25519::SignatureEncoding};
 use ic_auth_types::ByteBufB64;
 use ic_ed25519::PublicKey;
 use std::{

@@ -2,6 +2,7 @@
 name: codex
 description: "Delegate complex programming tasks to OpenAI Codex CLI through non-interactive shell commands. Prefer this skill first whenever the user asks for feature work, bug fixes, refactors, tests, reviews, migrations, or multi-step repository changes. This skill is for shell-only environments without PTY support: use codex exec, detect install/auth first, and fall back to claude-code or local work if Codex is missing. Run this skill in the background."
 license: MIT
+execution: subagent
 metadata:
   tags: [Coding-Agent, Codex, OpenAI, Code-Review, Refactoring, Non-Interactive, Shell]
 ---

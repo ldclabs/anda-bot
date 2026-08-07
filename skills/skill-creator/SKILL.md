@@ -96,12 +96,34 @@ Frontmatter requirements:
 - `name`: kebab-case, 1-64 characters, lowercase letters/numbers/hyphens.
 - `description`: 1-1024 characters. This is the primary trigger text.
 - `compatibility`: optional, for required programs or services.
-- `allowed-tools`: optional, space-delimited tools if the skill should narrow
-  the default tool set.
+- `execution`: optional, `inline` (default) or `subagent`. See below.
+- `allowed-tools`: optional, space-delimited. Only applies to `subagent`
+  skills, and it is an **upper bound**: a skill that declares it gets exactly
+  those tools, so the list must be complete. A skill that declares nothing
+  inherits the runtime's default skill tools.
+- `resource-tags`: optional, space-delimited. Only applies to `subagent`
+  skills: it narrows which of the caller's resources the worker receives.
+  Absent means `*`, so the current turn's attachments reach it.
 
 The description should state both what the skill does and when to use it. It
 should be specific enough to beat nearby skills, but not a long list of every
 possible query.
+
+### Choose the Execution Mode
+
+Default to `inline` — leave `execution` out. An inline skill is progressive
+disclosure as the Agent Skills specification intends it: `skills_manager`
+returns the whole SKILL.md and the agent holding the conversation follows it
+itself, so the user, the chat history, and the turn's attachments all stay in
+reach.
+
+Declare `execution: subagent` only when the procedure is genuinely independent
+of the conversation — long-running, parallelisable, or context-hungry work that
+runs to completion on its own. A subagent is exposed as an `SA_<agent_name>`
+callable, receives a self-contained prompt plus the resources matching its
+`resource-tags`, and has no channel back to the user, so a skill that needs to
+ask a question, react to what was just said, or read the file the user attached
+must stay inline.
 
 ### Skill Anatomy
 

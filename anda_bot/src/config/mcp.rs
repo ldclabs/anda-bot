@@ -1,7 +1,7 @@
 use anda_core::BoxError;
 use anda_engine::extension::mcp::{
-    McpOAuthConfig, McpServerConfig, McpStdioTransport, McpStreamableHttpTransport,
-    McpTransportConfig, OAuthAuthorizationCodeConfig,
+    McpLifecycle, McpOAuthConfig, McpServerConfig, McpStdioTransport, McpStreamableHttpTransport,
+    McpTasksConfig, McpTransportConfig, OAuthAuthorizationCodeConfig,
 };
 use http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -164,6 +164,13 @@ struct McpJsonServer {
     include: BTreeSet<String>,
     #[serde(default)]
     exclude: BTreeSet<String>,
+    // Taken as a string rather than the enum: inside the untagged
+    // `McpJsonServers` a variant mismatch collapses into "data did not match
+    // any variant", so a mistyped mode has to be reported by name below.
+    #[serde(default)]
+    lifecycle: Option<String>,
+    #[serde(default)]
+    tasks: Option<McpTasksConfig>,
 }
 
 impl McpJsonServer {
@@ -182,9 +189,28 @@ impl McpJsonServer {
             disabled,
             include,
             exclude,
+            lifecycle,
+            tasks,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
+        let lifecycle = match lifecycle
+            .as_deref()
+            .and_then(normalize_string)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            None => None,
+            Some("auto") => Some(McpLifecycle::Auto),
+            Some("discover") => Some(McpLifecycle::Discover),
+            Some("initialize") => Some(McpLifecycle::Initialize),
+            Some(other) => {
+                return Err(format!(
+                    "mcp.json.{root}.{id}.lifecycle has unsupported value {other:?}, expected auto, discover, or initialize"
+                )
+                .into());
+            }
+        };
         let transport_type = transport_type
             .as_deref()
             .and_then(normalize_string)
@@ -240,6 +266,8 @@ impl McpJsonServer {
             transport,
             include,
             exclude,
+            lifecycle,
+            tasks,
         })
     }
 }
@@ -262,6 +290,17 @@ pub struct McpServerSettings {
     /// Optional remote tool denylist.
     #[serde(default)]
     pub exclude: BTreeSet<String>,
+    /// How the session negotiates the MCP protocol revision: `auto` (default,
+    /// probes `server/discover` and falls back to the legacy handshake),
+    /// `discover`, or `initialize` to pin a server that mishandles unknown
+    /// methods. Left out of the file unless the operator set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<McpLifecycle>,
+    /// SEP-2663 tasks extension. Absent leaves it undeclared, so the server
+    /// must answer `tools/call` inline; declaring it lets a long-running tool
+    /// hand back a task the provider polls to completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<McpTasksConfig>,
 }
 
 impl McpServerSettings {
@@ -279,6 +318,8 @@ impl McpServerSettings {
                 .to_transport_config(&base, vars, default_cwd)?,
             include: self.include.clone(),
             exclude: self.exclude.clone(),
+            lifecycle: self.lifecycle.unwrap_or_default(),
+            tasks: self.tasks.clone(),
         })
     }
 }
@@ -841,6 +882,64 @@ mod tests {
             }
             _ => panic!("expected HTTP"),
         }
+    }
+
+    #[test]
+    fn mcp_json_lifecycle_and_tasks_reach_the_server_config() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "legacy": {
+                  "type": "http",
+                  "url": "https://legacy.example.com/mcp",
+                  "lifecycle": "initialize"
+                },
+                "slow": {
+                  "type": "http",
+                  "url": "https://slow.example.com/mcp",
+                  "tasks": { "max_wait_secs": 900 }
+                },
+                "plain": {
+                  "type": "http",
+                  "url": "https://plain.example.com/mcp"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let configs = settings.server_configs(Path::new("/tmp"), None).unwrap();
+        let by_id = |id: &str| {
+            configs
+                .iter()
+                .find(|config| config.id == id)
+                .unwrap_or_else(|| panic!("missing {id}"))
+        };
+        assert_eq!(by_id("legacy").lifecycle, McpLifecycle::Initialize);
+        assert!(by_id("legacy").tasks.is_none());
+        assert_eq!(by_id("slow").tasks.as_ref().unwrap().max_wait_secs, 900);
+        // An entry that says nothing keeps the upstream defaults: probe the
+        // 2026-07-28 lifecycle, and leave the tasks extension undeclared so the
+        // server must answer `tools/call` inline.
+        assert_eq!(by_id("plain").lifecycle, McpLifecycle::Auto);
+        assert!(by_id("plain").tasks.is_none());
+    }
+
+    #[test]
+    fn mcp_json_rejects_an_unknown_lifecycle() {
+        let err = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "broken": {
+                  "type": "http",
+                  "url": "https://example.com/mcp",
+                  "lifecycle": "handshake"
+                }
+              }
+            }"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("lifecycle"), "{err}");
     }
 
     #[test]

@@ -323,7 +323,7 @@ impl Daemon {
         {
             log::warn!(
                 name = "daemon";
-                "gateway binds non-loopback address {addr}: /daemon/status and / are reachable without authentication from the network"
+                "gateway binds non-loopback address {addr}: /daemon/status, / and the MCP OAuth callback are reachable without authentication from the network"
             );
         }
 
@@ -379,6 +379,7 @@ impl Daemon {
             mcp,
             https_proxy: self.cfg.https_proxy.clone(),
             auto_updater,
+            gateway_port: self.cfg.socket_addr()?.port(),
         };
 
         let cron_runtime =

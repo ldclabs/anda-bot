@@ -2,6 +2,7 @@
 name: claude-code
 description: "Delegate complex programming tasks to Claude Code CLI through non-interactive shell commands when Codex is unavailable, unauthenticated, unsuitable, or explicitly not desired. Use this skill for feature work, bug fixes, refactors, tests, reviews, migrations, and multi-step repository changes in shell-only environments. It requires claude -p; never use interactive Claude, tmux, slash commands, or PTY-dependent workflows. Run this skill in the background."
 license: MIT
+execution: subagent
 metadata:
   tags: [Coding-Agent, Claude, Anthropic, Code-Review, Refactoring, Non-Interactive, Shell]
 ---

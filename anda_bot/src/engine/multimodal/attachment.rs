@@ -1,7 +1,7 @@
 use anda_core::{
     AgentContext, AgentOutput, BoxError, ByteBufB64, CompletionFeatures, CompletionRequest,
     ContentPart, RequestMeta, Resource, StateFeatures, inline_data_from_data_url, text_from_bytes,
-    utf8_text_from_bytes,
+    text_from_bytes_with_encoding,
 };
 use anda_engine::{
     context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
@@ -724,8 +724,10 @@ pub(super) fn attachment_text_from_bytes<'a>(
     data: &'a [u8],
     attachment: &OtherAttachment,
 ) -> Option<Cow<'a, str>> {
-    if let Some(text) = utf8_text_from_bytes(data) {
-        return Some(Cow::Borrowed(text));
+    // No fallback encoding means UTF-8 only, which is what every attachment
+    // gets before the legacy check below opens up the platform code page.
+    if let Some(text) = text_from_bytes_with_encoding(data, None) {
+        return Some(text);
     }
 
     if !attachment_allows_legacy_text_fallback(attachment) {
@@ -741,8 +743,8 @@ fn attachment_text_from_bytes_with_windows_code_page<'a>(
     attachment: &OtherAttachment,
     code_page: u32,
 ) -> Option<Cow<'a, str>> {
-    if let Some(text) = utf8_text_from_bytes(data) {
-        return Some(Cow::Borrowed(text));
+    if let Some(text) = text_from_bytes_with_encoding(data, None) {
+        return Some(text);
     }
 
     if !attachment_allows_legacy_text_fallback(attachment) {

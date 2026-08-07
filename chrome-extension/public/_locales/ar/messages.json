@@ -1094,6 +1094,12 @@
   "skillAllowedTools": {
     "message": "الأدوات المسموحة"
   },
+  "skillExecution": {
+    "message": "طريقة التنفيذ"
+  },
+  "skillInlineTools": {
+    "message": "يعمل ضمن المحادثة ويستخدم أدوات الوكيل نفسه"
+  },
   "skillDefaultTools": {
     "message": "أدوات التشغيل الافتراضية"
   },

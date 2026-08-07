@@ -1,7 +1,8 @@
 ---
 name: auto-research
 description: Long-horizon research and implementation loop for Anda Bot. Use when a task should keep moving through registered tools such as goal, subagents_manager, cron scheduling tools, file tools, and file-backed state instead of ending after one response; especially for autonomous research, multi-hour audits, repeated experiments, stall recovery, or unattended follow-up.
-allowed-tools: subagents_manager, create_cron_job, recall_memory, skills_manager
+execution: subagent
+allowed-tools: shell, read_file, write_file, edit_file, search_file, note, todo, subagents_manager, create_cron_job, list_cron_jobs, update_cron_job, manage_cron_job, list_cron_runs, recall_memory, skills_manager, tools_groups, tools_select
 metadata:
   source: https://victorchen96.github.io/auto_research/framework.html
   type: Agent Framework

@@ -42,6 +42,7 @@ mod conversation;
 mod goal;
 mod idle;
 mod mcp_credentials;
+mod mcp_oauth;
 mod mcp_server;
 mod multimodal;
 mod prompt;
@@ -75,6 +76,7 @@ pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub use idle::{BrainSleepIdleHook, IdleHook};
+pub(crate) use mcp_oauth::McpOAuthFlows;
 pub(crate) use mcp_server::{McpConnectTool, McpServerTool};
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
@@ -87,6 +89,7 @@ const ACTIVE_MODEL_LABEL: &str = "";
 
 pub struct Engines {
     state: AppState,
+    mcp_oauth_flows: McpOAuthFlows,
     bot: Arc<AndaBot>,
     brain: brain::Client,
     browser_bridge: Arc<BrowserBridge>,
@@ -116,6 +119,8 @@ pub struct EngineConfig {
     pub mcp: config::McpSettings,
     pub https_proxy: Option<String>,
     pub auto_updater: Arc<AutoUpdater>,
+    /// Port the gateway listens on, used to build the MCP OAuth redirect URI.
+    pub gateway_port: u16,
 }
 
 #[derive(Clone)]
@@ -313,14 +318,17 @@ impl Engines {
             .first()
             .cloned()
             .ok_or("At least one workspace must be provided")?;
-        let anda_conversations = Conversations::connect(db.clone(), "bot".to_string()).await?;
         let subagent_conversations =
             Conversations::connect(db.clone(), "subagent".to_string()).await?;
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await?);
-        let conversations_tool = Arc::new(ConversationsTool::new(
-            anda_conversations,
-            default_workspace.to_string_lossy().to_string(),
-        ));
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(
+                db.clone(),
+                "bot".to_string(),
+                default_workspace.to_string_lossy().to_string(),
+            )
+            .await?,
+        );
         let bookmarks_tool = Arc::new(BookmarksTool::with_models(
             BookmarkStore::connect(db.clone()).await?,
             cfg.models.clone(),
@@ -458,7 +466,6 @@ impl Engines {
                 bundled_skills_dir,
                 shared_skills_dirs,
                 skills_tool.clone(),
-                default_skill_tools,
                 known_skill_tools,
             )
             .with_tools_usage_reader(move || tools_usage_conversations.tools_usage()),
@@ -522,10 +529,15 @@ impl Engines {
             mcp_config_path.clone(),
             config_write_lock.clone(),
         ));
-        let connect_mcp_server_tool = Arc::new(McpConnectTool::new(
+        let mcp_oauth_flows = McpOAuthFlows::new(
             mcp_provider.clone(),
+            cfg.gateway_port,
             mcp_config_path,
             config_write_lock.clone(),
+        );
+        let connect_mcp_server_tool = Arc::new(McpConnectTool::new(
+            mcp_provider.clone(),
+            mcp_oauth_flows.clone(),
         ));
         let mut engine_builder = Engine::builder()
             .with_web3_client(web3)
@@ -618,10 +630,12 @@ impl Engines {
         engine_ref.bind(Arc::downgrade(&engine));
         // A failure scanning the skills directories (e.g. permissions on the
         // shared ~/.agents/skills) should not prevent the daemon from starting.
+        // The reload also installs the library's disabled set on `skills_tool`,
+        // so register it as the subagent set only afterwards.
         if let Err(err) = skill_library.reload().await {
             log::error!("failed to load skills, continuing without them: {err}");
         }
-        engine.sub_agents_manager().insert(skill_library);
+        engine.sub_agents_manager().insert(skills_tool);
 
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
@@ -637,6 +651,7 @@ impl Engines {
         };
         Ok(Self {
             state,
+            mcp_oauth_flows,
             bot,
             brain: brain_client,
             browser_bridge,
@@ -690,13 +705,24 @@ impl Engines {
             .route("/daemon/shutdown", routing::post(daemon_shutdown))
             .with_state(daemon_control_route_state);
 
+        // Unauthenticated by necessity: a browser following the authorization
+        // server's redirect carries no daemon credentials. See `mcp_oauth` for
+        // what makes that safe.
+        let mcp_oauth_router = Router::new()
+            .route(
+                mcp_oauth::CALLBACK_PATH,
+                routing::get(mcp_oauth::mcp_oauth_callback),
+            )
+            .with_state(self.mcp_oauth_flows);
+
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
             .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state)
             .merge(browser_ws_router)
             .merge(auto_update_router)
-            .merge(daemon_control_router);
+            .merge(daemon_control_router)
+            .merge(mcp_oauth_router);
         app
     }
 }
@@ -1343,13 +1369,15 @@ model:
             Some("t".to_string()),
         )
         .with_http_client(http);
-        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(
+                db.clone(),
+                "bot".to_string(),
+                home.to_string_lossy().to_string(),
+            )
             .await
-            .unwrap();
-        let conversations_tool = Arc::new(ConversationsTool::new(
-            conversations,
-            home.to_string_lossy().to_string(),
-        ));
+            .unwrap(),
+        );
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
         let skills = SkillLibrary::for_test(home.clone());
         let bridge = Arc::new(BrowserBridge::new());

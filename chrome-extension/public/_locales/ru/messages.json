@@ -1094,6 +1094,12 @@
   "skillAllowedTools": {
     "message": "Разрешенные инструменты"
   },
+  "skillExecution": {
+    "message": "Выполнение"
+  },
+  "skillInlineTools": {
+    "message": "Выполняется в текущем диалоге и использует инструменты самого агента"
+  },
   "skillDefaultTools": {
     "message": "Инструменты среды выполнения по умолчанию"
   },

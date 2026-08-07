@@ -62,7 +62,7 @@ use super::{
     goal::{self, GoalTool, GoalToolState},
     idle::{IDLE_CHECK_INTERVAL, IDLE_HOOK_THRESHOLD_MS, IdleHook, IdleTracker},
     multimodal,
-    prompt::{PromptCommand, skill_subagent},
+    prompt::{PromptCommand, skill_command_directive},
     resources::ResourceStore,
     side,
     skill_library::SkillLibrary,
@@ -239,7 +239,7 @@ impl AndaBot {
     }
 
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
-        let conversations = self.inner.conversations.conversations.conversations.len() as u64;
+        let conversations = self.inner.conversations.conversations_len() as u64;
         let bs = self.inner.brain.brain_status().await?;
         Ok(AndaBotStatus {
             conversations,
@@ -799,17 +799,13 @@ impl Agent<AgentCtx> for AndaBot {
                 return Err("/cancel requires an active conversation".into());
             }
             PromptCommand::Skill { skill, prompt } => {
-                if let Some(subagent) = skill_subagent(self.inner.skill_library.as_ref(), &skill) {
-                    tools.push(subagent.name);
+                let (callable, directive) =
+                    skill_command_directive(self.inner.skill_library.subagent_set(), &skill);
+                if let Some(callable) = callable {
+                    tools.push(callable);
                 }
 
-                content.push(
-                    system_runtime_prompt(
-                        "prompt command",
-                        format!("Use the {skill} skill to handle this request"),
-                    )
-                    .into(),
-                );
+                content.push(system_runtime_prompt("prompt command", directive).into());
 
                 prompt
             }
@@ -1320,7 +1316,6 @@ mod tests {
     use anda_engine::{
         engine::{AgentInfo, Engine, EngineRef},
         management::{BaseManagement, Visibility},
-        memory::Conversations,
         model::Model,
     };
     use anda_kip::Response as KipResp;
@@ -1435,14 +1430,16 @@ mod tests {
         let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
             .with_http_client(new_reqwest_client());
 
-        let conversations = Conversations::connect(db.clone(), "bot".to_string())
-            .await
-            .unwrap();
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
-        let conversations_tool = Arc::new(ConversationsTool::new(
-            conversations,
-            home.to_string_lossy().to_string(),
-        ));
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(
+                db.clone(),
+                "bot".to_string(),
+                home.to_string_lossy().to_string(),
+            )
+            .await
+            .unwrap(),
+        );
         let bridge = Arc::new(BrowserBridge::new());
         let skills = SkillLibrary::for_test(home.clone());
         let mcp_provider =
@@ -1772,13 +1769,15 @@ mod tests {
         let brain_url = spawn_brain_mock().await;
         let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
             .with_http_client(new_reqwest_client());
-        let conversations = Conversations::connect(db.clone(), "bot".to_string())
+        let conversations_tool = Arc::new(
+            ConversationsTool::connect(
+                db.clone(),
+                "bot".to_string(),
+                home.to_string_lossy().to_string(),
+            )
             .await
-            .unwrap();
-        let conversations_tool = Arc::new(ConversationsTool::new(
-            conversations,
-            home.to_string_lossy().to_string(),
-        ));
+            .unwrap(),
+        );
         let resource_store = Arc::new(ResourceStore::connect(db.clone()).await.unwrap());
         let bridge = Arc::new(BrowserBridge::new());
         let skills = SkillLibrary::for_test(home.clone());
