@@ -26,6 +26,7 @@ use crate::engine::{
     conversation::{RequestState, SourceState},
     system::system_runtime_prompt,
 };
+use crate::util::request_meta::keys;
 
 const STARTUP_SELF_SOURCE: &str = "startup:self";
 
@@ -238,8 +239,8 @@ impl AndaBot {
         let now_ms = unix_ms();
         let mut extra = Map::new();
         let workspace = self.inner.home_dir.to_string_lossy().to_string();
-        extra.insert("workspace".to_string(), workspace.into());
-        extra.insert("source".to_string(), STARTUP_SELF_SOURCE.into());
+        extra.insert(keys::WORKSPACE.to_string(), workspace.into());
+        extra.insert(keys::SOURCE.to_string(), STARTUP_SELF_SOURCE.into());
         let meta = RequestMeta {
             extra,
             ..Default::default()

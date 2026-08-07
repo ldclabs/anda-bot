@@ -7,8 +7,9 @@
 //! Compatibility rules: the two binaries are replaced together by the update
 //! flow, but an already-running launcher keeps driving an updated `anda`
 //! binary until it restarts. Add fields (covered by `#[serde(default)]`)
-//! rather than renaming or retyping them, and let new [`AutoUpdateStatus`]
-//! values degrade to [`AutoUpdateStatus::Unknown`] on old parsers.
+//! rather than renaming or retyping them, and give every enum on the wire an
+//! `#[serde(other)] Unknown` arm so new variants degrade instead of failing
+//! the whole parse on old parsers.
 //! [`AutoUpdateState`] is also persisted in AndaDB (`anda_auto_update`), so
 //! the same rules protect stored state across versions.
 
@@ -23,6 +24,11 @@ pub enum DaemonStatusState {
     ProcessUnresponsive,
     #[default]
     NotRunning,
+    /// A state written by a different anda version that this binary does not
+    /// know. Without this arm a newly added variant would fail the whole
+    /// [`DaemonStatusReport`] parse on an already-running older launcher.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Report printed by `anda status --json` and parsed by the launcher.
@@ -112,4 +118,25 @@ pub struct BrowserTokenReport {
 /// The version tag this binary reports for itself (`v<CARGO_PKG_VERSION>`).
 pub fn current_version_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_wire_enums_degrade_instead_of_failing_the_parse() {
+        // A newer daemon may report states/statuses this binary predates; the
+        // rest of the report must still reach the launcher.
+        let report: DaemonStatusReport =
+            serde_json::from_str(r#"{"state":"starting","summary":"booting","pid":7}"#).unwrap();
+        assert_eq!(report.state, DaemonStatusState::Unknown);
+        assert_eq!(report.summary, "booting");
+        assert_eq!(report.pid, Some(7));
+
+        let state: AutoUpdateState =
+            serde_json::from_str(r#"{"status":"verifying","current_tag":"v1.0.0"}"#).unwrap();
+        assert_eq!(state.status, AutoUpdateStatus::Unknown);
+        assert_eq!(state.current_tag, "v1.0.0");
+    }
 }

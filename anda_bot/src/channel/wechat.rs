@@ -438,7 +438,13 @@ struct WechatMessageHandler {
 impl MessageHandler for WechatMessageHandler {
     async fn on_message(&self, ctx: &MessageContext) -> WeixinResult<()> {
         // The sync-based SDK can redeliver messages after reconnect windows.
-        if self.dedup.is_duplicate(&ctx.message_id).await {
+        // `ctx.message_id` is generated fresh on every parse, so only the
+        // server-assigned id identifies a redelivery; without one, deliver.
+        if self
+            .dedup
+            .is_duplicate(&server_event_id(ctx.server_message_id))
+            .await
+        {
             return Ok(());
         }
 
@@ -534,6 +540,15 @@ async fn channel_message_from_context(
         extra,
         ..Default::default()
     })
+}
+
+/// Dedup key for an inbound WeChat message. Only the server-assigned id is
+/// stable across redeliveries (`MessageContext::message_id` is a fresh
+/// SDK-side random id per parse); an empty key disables suppression.
+fn server_event_id(server_message_id: Option<i64>) -> String {
+    server_message_id
+        .map(|id| id.to_string())
+        .unwrap_or_default()
 }
 
 fn wechat_reply_target(ctx: &MessageContext) -> String {
@@ -1004,6 +1019,21 @@ mod tests {
             allow_external_users: false,
             route_tag: None,
         }
+    }
+
+    #[tokio::test]
+    async fn server_event_id_keys_dedup_on_the_stable_server_id() {
+        // `MessageContext::message_id` is a fresh SDK-side random id per parse,
+        // so only `server_message_id` identifies a redelivered message.
+        let dedup = RecentEventDedup::new(EVENT_DEDUP_WINDOW);
+        assert!(!dedup.is_duplicate(&server_event_id(Some(42))).await);
+        assert!(dedup.is_duplicate(&server_event_id(Some(42))).await);
+        assert!(!dedup.is_duplicate(&server_event_id(Some(43))).await);
+
+        // Without a server id nothing is suppressed.
+        assert_eq!(server_event_id(None), "");
+        assert!(!dedup.is_duplicate(&server_event_id(None)).await);
+        assert!(!dedup.is_duplicate(&server_event_id(None)).await);
     }
 
     #[test]

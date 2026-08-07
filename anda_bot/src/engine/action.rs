@@ -652,7 +652,10 @@ impl Tool<BaseCtx> for ActionsTool {
         if ctx.get_state::<ActionSession>().is_some() {
             return Err("actions_api cannot be called from an active agent session".into());
         }
-        let conversation = ctx.meta().get_extra_as::<u64>("conversation").unwrap_or(0);
+        let conversation = ctx
+            .meta()
+            .get_extra_as::<u64>(keys::CONVERSATION)
+            .unwrap_or(0);
         let caller = ctx.caller().to_text();
         let output = self
             .runtime

@@ -71,7 +71,7 @@ pub async fn run_voice_loop(
     add_cli_voice_context(&mut base_meta);
     let initial_conversation_id = base_meta
         .extra
-        .get("conversation")
+        .get(keys::CONVERSATION)
         .and_then(serde_json::Value::as_u64)
         .unwrap_or_default();
     let mut cursor = initialize_voice_cursor(client, initial_conversation_id).await?;
@@ -105,7 +105,7 @@ pub async fn run_voice_loop(
 
         let mut request_meta = base_meta.clone();
         request_meta.extra.insert(
-            "conversation".to_string(),
+            keys::CONVERSATION.to_string(),
             cursor.conversation_id.unwrap_or_default().into(),
         );
 

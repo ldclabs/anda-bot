@@ -10,7 +10,7 @@ use super::runtime::ChannelSender;
 use super::types::SendMessage;
 use crate::cron::deserialize_optional_usize_from_number_or_string;
 use crate::engine::SessionRequestMeta;
-use crate::util::request_meta::request_meta_extra_as;
+use crate::util::request_meta::{keys, request_meta_extra_as};
 
 /// Stable id of the IM channel messaging capability group.
 pub const CHANNEL_TOOL_GROUP_ID: &str = "im_channel";
@@ -113,7 +113,7 @@ impl Tool<BaseCtx> for SendImMessageTool {
             .map(|state| state.get())
             .unwrap_or_else(|| ctx.meta().clone());
         let conversation =
-            request_meta_extra_as::<u64>(&meta, "conversation").filter(|conv_id| *conv_id > 0);
+            request_meta_extra_as::<u64>(&meta, keys::CONVERSATION).filter(|conv_id| *conv_id > 0);
 
         let message = SendMessage::new(args.content, recipient.clone())
             .in_thread(thread.clone())

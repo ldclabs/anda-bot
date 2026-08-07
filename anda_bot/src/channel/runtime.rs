@@ -677,7 +677,7 @@ impl ChannelRuntimeInner {
     }
 
     fn route_from_meta(&self, meta: &RequestMeta) -> Option<ChannelRoute> {
-        let channel = request_meta_extra_as::<String>(meta, "source")
+        let channel = request_meta_extra_as::<String>(meta, keys::SOURCE)
             .and_then(|value| normalize_non_empty(value.as_str()))?;
         if !self.channels.contains_key(&channel) {
             return None;
@@ -685,7 +685,7 @@ impl ChannelRuntimeInner {
 
         let reply_target = request_meta_extra_as::<String>(meta, keys::REPLY_TARGET)
             .and_then(|value| normalize_non_empty(value.as_str()))?;
-        let thread = request_meta_extra_as::<String>(meta, "thread")
+        let thread = request_meta_extra_as::<String>(meta, keys::THREAD)
             .and_then(|value| normalize_non_empty(value.as_str()));
 
         Some(ChannelRoute {

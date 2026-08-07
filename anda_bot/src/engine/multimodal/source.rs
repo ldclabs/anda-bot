@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use super::catalog::MediaKind;
 use crate::util::file_uri::{is_file_uri, path_from_file_uri};
 use crate::util::http_client::PublicUrlPolicy;
+use crate::util::request_meta::keys;
 
 pub(super) const MAX_MEDIA_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
 
@@ -254,9 +255,9 @@ pub(super) async fn resolve_media_path(
 
 pub(super) fn workspaces_from_meta(meta: &RequestMeta, defaults: &[PathBuf]) -> Vec<PathBuf> {
     let mut workspaces = Vec::new();
-    if let Some(workspace) = meta.get_extra_as::<PathBuf>("workspace") {
+    if let Some(workspace) = meta.get_extra_as::<PathBuf>(keys::WORKSPACE) {
         push_workspace(&mut workspaces, workspace);
-    } else if let Some(extra_workspaces) = meta.get_extra_as::<Vec<PathBuf>>("workspace") {
+    } else if let Some(extra_workspaces) = meta.get_extra_as::<Vec<PathBuf>>(keys::WORKSPACE) {
         for workspace in extra_workspaces {
             push_workspace(&mut workspaces, workspace);
         }
