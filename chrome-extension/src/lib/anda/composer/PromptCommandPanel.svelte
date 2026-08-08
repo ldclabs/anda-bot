@@ -23,10 +23,18 @@
   } = $props()
 
   let listElement: HTMLElement | null = $state(null)
+  let lastScrolledKey = ''
 
   $effect(() => {
-    activeIndex
-    suggestions.length
+    // Follow the keyboard selection, but only when it (or the option set)
+    // actually moved. Keying on the rendered ids keeps a rerender that yields
+    // the same options from scrolling the active option back into view and
+    // fighting a user who is scrolling the list with the wheel.
+    const nextKey = `${activeIndex}:${suggestions.map((suggestion) => suggestion.id).join('|')}`
+    if (nextKey === lastScrolledKey) {
+      return
+    }
+    lastScrolledKey = nextKey
     void tick().then(scrollActivePromptCommandIntoView)
   })
 

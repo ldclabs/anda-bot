@@ -1205,4 +1205,118 @@ describe('Channel.sendPrompt', () => {
     expect(secondReceived.map((item) => item.text)).toEqual(['reply 2'])
     expect(deltaCalls).toBe(2)
   })
+
+  it('follows the child conversation a compacted session continues in', async () => {
+    // The daemon closes a conversation as `completed` and continues the same
+    // session in a child (compaction); the poll loop must follow the chain
+    // instead of freezing the display on the parent's terminal status.
+    const compacted = conversation(1, {
+      messages: [rawMessage('user', 'hello', 10), rawMessage('assistant', 'reply 1', 11)],
+      status: 'completed',
+      updated_at: 11,
+      child: 2
+    })
+    const continued = conversation(2, {
+      messages: [rawMessage('user', 'compaction summary', 12)],
+      status: 'working',
+      ancestors: [1],
+      updated_at: 12
+    })
+    const api = createApi({
+      agentOutputs: [{ content: '', conversation: 1, usage: usage() }],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        switch (args.type) {
+          case 'GetConversation':
+            return toolResult(
+              args._id === 1 ? compacted : conversation(2, { ...continued, status: 'completed' })
+            )
+          case 'GetConversationDelta':
+            return args._id === 1
+              ? toolResult(
+                  conversationDelta(1, {
+                    messages: [rawMessage('assistant', 'reply 1', 11)],
+                    status: 'completed',
+                    updated_at: 11,
+                    child: 2
+                  })
+                )
+              : toolResult(
+                  conversationDelta(2, {
+                    messages: [rawMessage('assistant', 'reply 2', 13)],
+                    status: 'completed',
+                    updated_at: 13
+                  })
+                )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    const poller = await channel.sendPrompt('hello', [])
+    const received: ChatMessage[] = []
+    for await (const current of poller!) {
+      received.push(current)
+    }
+
+    // The turn's subscriber moved to the child instead of ending at the
+    // parent's `completed`.
+    expect(received.map((item) => item.text)).toEqual(['reply 1', 'reply 2'])
+    expect(channel.conversationId).toBe(2)
+
+    const groups = channel.messageGroups.filter(
+      (group) => group._id !== SubmitMessageConversationId
+    )
+    expect(groups.map((group) => group._id)).toEqual([1, 2])
+    expect(groups.map((group) => group.current)).toEqual([false, true])
+    expect(groups[1]!.messages.map((item) => item.text)).toEqual(['compaction summary', 'reply 2'])
+  })
+
+  it('stops following a child chain that points back at a polled conversation', async () => {
+    const conversations: Record<number, Conversation> = {
+      1: conversation(1, { status: 'completed', updated_at: 11, child: 2 }),
+      2: conversation(2, { status: 'completed', updated_at: 12, child: 1 })
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const fetched: number[] = []
+    const api = createApi({
+      agentOutputs: [{ content: '', conversation: 1, usage: usage() }],
+      toolCall: async (input) => {
+        const args = toolArgs(input)
+        const id = Number(args._id)
+        switch (args.type) {
+          case 'GetConversation':
+            fetched.push(id)
+            return toolResult(conversations[id])
+          case 'GetConversationDelta':
+            return toolResult(
+              conversationDelta(id, {
+                status: 'completed',
+                updated_at: conversations[id]!.updated_at,
+                child: conversations[id]!.child
+              })
+            )
+          default:
+            throw new Error(`Unexpected tool call: ${String(args.type)}`)
+        }
+      }
+    })
+    const channel = new Channel('source:test', api)
+
+    try {
+      const poller = await channel.sendPrompt('hello', [])
+      for await (const _current of poller!) {
+        // drain: the loop must settle instead of walking the cycle forever.
+      }
+
+      // sendPrompt fetch, the parent's terminal refresh, the child handoff and
+      // the child's terminal refresh; conversation 1 is never fetched again.
+      expect(fetched).toEqual([1, 1, 2, 2])
+      expect(warn).toHaveBeenCalledWith('conversation child chain contains a cycle at 1')
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

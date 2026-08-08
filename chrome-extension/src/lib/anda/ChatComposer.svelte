@@ -103,7 +103,7 @@
     X
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
-  import { onDestroy, onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
 
   let {
     disabled = false,
@@ -372,18 +372,24 @@
   })
 
   $effect(() => {
+    // A skills-changed event drops the cache so the next open refetches.
+    // `ensurePromptSkillsLoaded` reads the very cache state it writes, so the
+    // body stays untracked: tracking it makes this effect retrigger itself
+    // after every load, which reloads forever and keeps the panel rerendering.
     skillsRevision
-    promptSkillsLoadedAt = 0
-    if (promptCommandPanelOpen) {
-      void ensurePromptSkillsLoaded()
-    }
+    untrack(() => {
+      promptSkillsLoadedAt = 0
+      if (promptCommandPanelOpen) {
+        void ensurePromptSkillsLoaded()
+      }
+    })
   })
 
   $effect(() => {
     // Skills surface in both `/` and `$` completion, so load them whenever
     // the panel opens (cached for promptSkillsCacheMs).
     if (promptCommandPanelOpen) {
-      void ensurePromptSkillsLoaded()
+      untrack(() => void ensurePromptSkillsLoaded())
     }
   })
 

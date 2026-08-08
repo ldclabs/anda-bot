@@ -4,10 +4,32 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-08
+
+### Added
+
+- **`anda --full-access` and unattended approvals**: `anda --full-access` runs the terminal UI without approval cards and shows `full-access` in the status line. Approval mode is resolved from the live request metadata instead of the context frozen at session creation, and unattended runs — cron jobs and `/goal` loops — grant full access automatically rather than publishing a card nobody can answer and failing after the timeout. When a persisted conversation is rebuilt on startup, the cron and approval-mode keys are dropped so recovery cannot resurrect elevation for hand-driven turns.
+- **Answerable approval cards in the TUI**: the composer footer now reports which answer path is live; typing `y`/`yes`/`n`/`no` (or a choice digit) and pressing Enter answers the pending card, and an ignored keystroke explains how to respond instead of silently leaving the card unanswerable.
+- **`anda browser token --json`**: the launcher's bearer-token scrape uses a JSON output mode, with a text fallback for older `anda` binaries.
+
 ### Changed
 
 - **Document parsing moved from LiteParse to `anydoc`**: attachment understanding now converts documents to GitHub-Flavored Markdown with `anydoc` instead of extracting plain text from PDFs with `liteparse`. Coverage widens from PDF alone to PDF, Word (`.doc`/`.docx`), PowerPoint (`.ppt`/`.pptx`), Excel (`.xls`/`.xlsx`/`.xlsb`), OpenDocument (`.odt`/`.ods`/`.odp`), RTF, EPUB, and CSV, and those extensions now route to `attachment_understanding`. Attachments are matched by content signature first, then the plain-text path, then the MIME type or extension.
 - **Native PDF dependencies dropped**: `liteparse`, `liteparse-pdfium-sys`, and the Tesseract OCR feature are gone. `anydoc` is pure Rust, so Windows no longer needs a `pdfium.dll` (the `PDFIUM_LIB_PATH` lookup is removed) and musl builds no longer need OCR gating — every target now uses the same parser. Scanned, image-only PDFs previously handled by OCR on desktop glibc targets now fall through to the model fallback instead.
+- **Skills adopt the anda 0.15 model**: skills run inline by default and only those declaring `execution: subagent` are exposed as `SA_` callables; `SkillManager` is now the single registry, fed the disabled set through the engine's `set_skill_filter` seam. The old `SkillLibrary` rebuilt a `SubAgent` per lookup — stranding running sessions — and could merge configured defaults into skills that declare `allowed-tools`, turning a third-party SKILL.md restriction into an escalation; both are gone.
+- **Stack upgraded to anda 0.15**: `anda_core`, `anda_engine`, `anda_engine_server`, and `anda_web3_client` move to 0.15 and `anda_brain` to 0.11, alongside `http` 1.5, `clap` 4.6, `keyring` 4.1.6, and the `ed25519-dalek` pin lifted to 3.
+- **Version metadata synchronized for the 0.12.0 release**: updated the `anda_bot` crate, Cargo lock metadata, browser extension package, and extension manifests to advertise `0.12.0`.
+
+### Fixed
+
+- **Redelivery suppression extended to Telegram, Discord, and WeChat**: the `RecentEventDedup` guard that only Lark had now covers every channel, keyed on the server message id — the SDK regenerates `message_id` on every parse, so the previous key never suppressed a duplicate and instead accumulated one map entry per message for the full 30-minute window. An absent server id disables suppression rather than dropping the message.
+- **Daemon protocol forward compatibility**: `DaemonStatusState` gained a `#[serde(other)] Unknown` arm, so a newer daemon's status value no longer fails the whole `DaemonStatusReport` parse on an already-running older launcher — which previously rendered the raw JSON's first line as the tray summary.
+- **Cron tool outputs report paused**: paused jobs tell the model the job is paused instead of leaking the `DISABLED_JOB_NEXT_RUN` storage sentinel.
+- **Voice child-chain polling**: following a conversation child chain now guards against cycles, which previously spun the poll loop without sleeping.
+- **Homebrew formula publishing**: the formula no longer emits a redundant version line.
+- **Browser extension — conversation compaction continuation**: the poll loop now follows a conversation's `child` chain (bounded at 64 with cycle detection), so a compacted session keeps streaming in its child conversation instead of freezing on the parent's terminal status, and turn subscribers move along to the child.
+- **Browser extension — skills reload loop**: a skills-changed event no longer re-triggers the prompt-skills load effect forever, because the effect tracked the very cache state it wrote.
+- **Browser extension — prompt panel scrolling**: the command panel scrolls the active option into view only when the selection or option set actually changes, so a rerender no longer fights the user's wheel scrolling.
 
 ## [0.11.6] — 2026-07-31
 

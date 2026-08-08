@@ -33,6 +33,9 @@ const pollingIntervalMs = 3000
 // A subscriber waiting for a turn that never visibly starts (no working status,
 // no assistant message) is released after this many idle poll ticks.
 const maxIdlePollTicksForTurn = 10
+// Mirrors the daemon's MAX_CONVERSATION_CHAIN. Following `child` skips the poll
+// sleep, so a malformed chain must not turn polling into an unbounded loop.
+const maxConversationChain = 64
 
 // A consumer of one prompt turn's assistant output (e.g. voice TTS). The poll
 // loop is shared per conversation; each sendPrompt registers its own
@@ -43,6 +46,13 @@ interface PollSubscriber {
   sawWorking: boolean
   deliveredAssistant: boolean
   idleTicks: number
+}
+
+// Outcome of one poll tick. `next` carries the child conversation the session
+// was continued in, which the loop follows instead of stopping.
+interface PollTick {
+  continue: boolean
+  next?: Conversation
 }
 
 export interface API {
@@ -359,7 +369,7 @@ export class Channel extends EventTarget {
 
   private async pollConversationLoop(): Promise<void> {
     const epoch = this.#sendEpoch
-    const conversation = this.#conversation ? { ...this.#conversation } : null
+    let conversation = this.#conversation ? { ...this.#conversation } : null
     if (!conversation || this.#pollingConversation === conversation._id) {
       // A loop is already polling this conversation; it serves the
       // subscribers registered by follow-up prompts.
@@ -367,9 +377,29 @@ export class Channel extends EventTarget {
     }
 
     this.#pollingConversation = conversation._id
+    // Conversations this loop already walked. The chain is followed without
+    // sleeping, so a cycle would otherwise spin into an unbounded request loop.
+    const polled = new Set<number>([conversation._id])
     while (this.#pollingConversation === conversation._id && epoch === this.#sendEpoch) {
-      const shouldContinue = await this.pollConversationOnce(conversation, epoch)
-      if (!shouldContinue) {
+      const tick = await this.pollConversationOnce(conversation, epoch, polled)
+      if (tick.next) {
+        // Ownership can change while a tick is in flight (a /new cleared the
+        // display, or a newer prompt claimed the loop); never fork a second
+        // loop onto the same conversation.
+        if (this.#pollingConversation !== conversation._id || epoch !== this.#sendEpoch) {
+          break
+        }
+        const previousId = conversation._id
+        conversation = tick.next
+        polled.add(conversation._id)
+        this.#pollingConversation = conversation._id
+        // The turn continues in the child, so its subscribers move along with
+        // it instead of ending at the parent's terminal status.
+        this.movePollSubscribers(previousId, conversation._id)
+        this.updateLatestConversation({ ...conversation })
+        continue
+      }
+      if (!tick.continue) {
         break
       }
       const ms =
@@ -394,6 +424,16 @@ export class Channel extends EventTarget {
       deliveredAssistant: false,
       idleTicks: 0
     })
+  }
+
+  // A compacted session keeps serving the same turn in its child conversation;
+  // move that turn's subscribers so they end at the real turn boundary.
+  private movePollSubscribers(from: number, to: number): void {
+    for (const subscriber of this.#pollSubscribers) {
+      if (subscriber.conversationId === from) {
+        subscriber.conversationId = to
+      }
+    }
   }
 
   private finishPollSubscribers(conversationId?: number): void {
@@ -478,7 +518,11 @@ export class Channel extends EventTarget {
     }
   }
 
-  private async pollConversationOnce(conversation: Conversation, epoch: number): Promise<boolean> {
+  private async pollConversationOnce(
+    conversation: Conversation,
+    epoch: number,
+    polled: Set<number>
+  ): Promise<PollTick> {
     try {
       const {
         output: { result }
@@ -494,7 +538,7 @@ export class Channel extends EventTarget {
       if (epoch !== this.#sendEpoch) {
         // The display was cleared (/new) while this request was in flight;
         // applying the stale result would resurrect the old conversation.
-        return false
+        return { continue: false }
       }
 
       conversation.messages = [...(conversation.messages || []), ...result.messages]
@@ -523,7 +567,7 @@ export class Channel extends EventTarget {
       if (terminal || this.hasPendingLocalAttachments(conversation._id)) {
         const refreshed = await this.fetchConversation(conversation._id)
         if (epoch !== this.#sendEpoch) {
-          return false
+          return { continue: false }
         }
         conversation.messages = refreshed.messages || []
         conversation.artifacts = refreshed.artifacts || []
@@ -535,25 +579,58 @@ export class Channel extends EventTarget {
         this.updateLatestConversation(refreshed)
       }
 
+      // Compaction closes the conversation and continues the same session in a
+      // child; follow it so a running session keeps streaming instead of
+      // freezing on the parent's terminal status.
+      const next = await this.fetchChainedConversation(conversation, epoch, polled)
+      if (next) {
+        return { continue: true, next }
+      }
+
       if (
         terminal ||
         conversation.status === 'completed' ||
         conversation.status === 'cancelled' ||
         conversation.status === 'failed'
       ) {
-        return false
+        return { continue: false }
       }
     } catch (error) {
       if (isTransientWebSocketError(error)) {
         this.#api.updateStatus('reconnecting', null)
-        return true
+        return { continue: true }
       }
 
       this.#api.updateStatus('poll failed', { kind: 'error', text: errorToMessage(error) })
-      return false
+      return { continue: false }
     }
 
-    return true
+    return { continue: true }
+  }
+
+  // The child conversation that continues this session, if any. Runs inside the
+  // poll tick's try block so a failed fetch follows the same retry policy: a
+  // transient error retries on the next tick, a hard one stops the loop.
+  private async fetchChainedConversation(
+    conversation: Conversation,
+    epoch: number,
+    polled: Set<number>
+  ): Promise<Conversation | null> {
+    const childId = conversation.child || 0
+    if (!childId) {
+      return null
+    }
+    if (polled.has(childId)) {
+      console.warn(`conversation child chain contains a cycle at ${childId}`)
+      return null
+    }
+    if (polled.size >= maxConversationChain) {
+      console.warn(`conversation child chain is longer than ${maxConversationChain}`)
+      return null
+    }
+
+    const child = await this.fetchConversation(childId)
+    return epoch === this.#sendEpoch ? child : null
   }
 
   private async requestMeta(): Promise<RequestMeta> {
@@ -673,6 +750,14 @@ export class Channel extends EventTarget {
     const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
     if (idx >= 0) {
       this.#messageGroups.length = idx
+    }
+
+    // Only the newest conversation is the current session: a chained child
+    // leaves its parent group in place, which must give the flag up.
+    for (const existing of this.#messageGroups) {
+      if (existing.current) {
+        existing.current = false
+      }
     }
 
     group.current = true
@@ -983,11 +1068,16 @@ function nextMatchedLocalTarget(
   return ''
 }
 
-function firstMessageAfterTimestamp(messages: ChatMessage[], timestamp: number | undefined): number {
+function firstMessageAfterTimestamp(
+  messages: ChatMessage[],
+  timestamp: number | undefined
+): number {
   if (!timestamp) {
     return -1
   }
-  return messages.findIndex((message) => Boolean(message.timestamp && message.timestamp > timestamp))
+  return messages.findIndex((message) =>
+    Boolean(message.timestamp && message.timestamp > timestamp)
+  )
 }
 
 // Messages without their own timestamp fall back to `conversation.updated_at`,
