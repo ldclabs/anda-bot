@@ -19,7 +19,7 @@
     nativeSelectWrapperClass,
     separatorClass
   } from '$lib/anda/ui'
-  import { delay } from '$lib/utils/helper'
+  import { delay } from '$lib/utils/async'
   import {
     BrainCircuit,
     Check,

@@ -14,7 +14,9 @@
     nativeSelectClass,
     textareaClass
   } from '$lib/anda/ui'
+  import { openAndaSidePanel } from '$lib/anda/dashboard/side-panel'
   import { getMessage } from '$lib/i18n'
+  import { escapeHtml } from '$lib/utils/format'
   import { createPromptDraftRequest, promptDraftRequestStorageKey } from '$lib/anda/prompt-draft'
   import { errorToMessage } from '$lib/service-worker/settings'
   import { cn } from '$lib/utils'
@@ -136,8 +138,8 @@
     error = ''
     try {
       const [nextSources, nextSkills] = await Promise.all([
-        andaClient.listSkillSources(),
-        andaClient.listManagedSkills(true)
+        andaClient.skills.listSources(),
+        andaClient.skills.list(true)
       ])
       sources = nextSources
       skills = sortSkills(nextSkills)
@@ -164,7 +166,7 @@
     reloading = true
     error = ''
     try {
-      skills = sortSkills(await andaClient.reloadSkills())
+      skills = sortSkills(await andaClient.skills.reload())
       await loadLibrary(true)
       notice = getMessage('skillsReloaded')
     } catch (err) {
@@ -179,7 +181,7 @@
     detailLoading = true
     error = ''
     try {
-      const next = await andaClient.getManagedSkill(id)
+      const next = await andaClient.skills.get(id)
       if (requestId !== detailRequestId) {
         return
       }
@@ -215,7 +217,7 @@
     cloning = true
     error = ''
     try {
-      const cloned = await andaClient.cloneSkill(selectedSkill.id)
+      const cloned = await andaClient.skills.clone(selectedSkill.id)
       notice = getMessage('skillCloned')
       selectedId = cloned.id
       detail = cloned
@@ -239,7 +241,7 @@
     toggling = true
     error = ''
     try {
-      skills = sortSkills(await andaClient.setSkillEnabled(selectedSkill.id, enabling))
+      skills = sortSkills(await andaClient.skills.setEnabled(selectedSkill.id, enabling))
       notice = enabling ? getMessage('skillEnabled') : getMessage('skillDisabled')
       await loadLibrary(true)
     } catch (err) {
@@ -259,7 +261,7 @@
     deleting = true
     error = ''
     try {
-      await andaClient.deletePersonalSkill(selectedSkill.id)
+      await andaClient.skills.deletePersonal(selectedSkill.id)
       selectedId = ''
       detail = null
       viewedFileContent = ''
@@ -287,7 +289,7 @@
     }
     fileLoading = true
     try {
-      const loaded = await andaClient.getManagedSkillFile(detail.id, file.path)
+      const loaded = await andaClient.skills.getFile(detail.id, file.path)
       if (selectedFilePath !== file.path) {
         return
       }
@@ -317,44 +319,13 @@
           skillOptimizationPrompt(detail, optimizeGoal)
         )
       })
-      await openSidePanel()
+      await openAndaSidePanel()
       notice = getMessage('skillOptimizationPromptReady')
     } catch (err) {
       error = errorToMessage(err)
     } finally {
       optimizing = false
     }
-  }
-
-  async function openSidePanel() {
-    if (chrome.sidePanel?.open) {
-      try {
-        const tab = await chrome.tabs.getCurrent()
-        if (typeof tab?.id === 'number') {
-          await chrome.sidePanel.open({ tabId: tab.id })
-          return
-        }
-        if (typeof tab?.windowId === 'number') {
-          await chrome.sidePanel.open({ windowId: tab.windowId })
-          return
-        }
-      } catch (_error) {
-        try {
-          const currentWindow = await chrome.windows.getCurrent()
-          if (typeof currentWindow?.id === 'number') {
-            await chrome.sidePanel.open({ windowId: currentWindow.id })
-            return
-          }
-        } catch (_fallbackError) {
-          // Fall through to opening the side panel page as a tab below.
-        }
-      }
-    }
-
-    const url = chrome.runtime.getURL('index.html')
-    chrome.tabs.create({ url, active: true }).catch(() => {
-      window.open(url, '_blank', 'noopener,noreferrer')
-    })
   }
 
   function skillOptimizationPrompt(skill: ManagedSkillDetail, goal: string): string {
@@ -531,14 +502,6 @@
     } catch {
       return escapeHtml(content)
     }
-  }
-
-  function escapeHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
   }
 </script>
 

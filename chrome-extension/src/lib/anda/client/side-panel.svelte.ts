@@ -6,182 +6,49 @@ import {
   normalizeApprovalMode,
   normalizeSettings
 } from '$lib/service-worker/settings'
-import { SvelteMap, SvelteSet } from 'svelte/reactivity'
+import { SvelteMap } from 'svelte/reactivity'
+import { BookmarksApi } from './bookmarks.svelte'
 import { Channel, type API } from './channel.svelte'
-import { getChromeApi } from './chrome'
+import type { DaemonApi } from './daemon'
+import { QuickPrompts } from './quick-prompts.svelte'
+import { SkillsApi } from './skills'
+import { VoiceSession } from './voice-session.svelte'
+import {
+  normalizeAbsoluteWorkspace,
+  normalizeWorkspaceChannelSource,
+  workspaceFromCliSource
+} from './workspace'
+import { getChromeApi } from '$lib/service-worker/chrome'
 import { isImmediatePromptCommand, parsePromptCommand } from './commands'
-import { normalizeMessage } from './conversations'
-import { normalizePromptSkills } from './helper'
 import { getMessage, normalizeUiLanguage, uiLanguageStorageKey } from '$lib/i18n'
 import type {
   AppearanceTheme,
   ActionApiOutput,
   ApprovalMode,
-  Bookmark,
-  BookmarkFolders,
   BookmarkedMessage,
   ChatAttachment,
-  ChatMessage,
   ChromeApi,
   ChromeTabChangeInfo,
   ChromeTabInfo,
-  Conversation,
   DaemonModelState,
-  DaemonVoiceCapabilities,
   ExtensionMessage,
   ExtensionResponse,
-  ManagedSkill,
-  ManagedSkillDetail,
   ModelState,
-  PageAudioResult,
-  PageSpeechResult,
-  PromptSkill,
-  QuickPrompt,
   Resource,
   RpcOutput,
   SettingsState,
-  SkillFileContent,
-  SkillSourceInfo,
-  SkillValidationResult,
   SourceStateMap,
   ToolOutput,
-  TranscriptionToolOutput,
-  TtsToolOutput,
-  VoiceCapabilities,
-  VoiceProvider,
   VoiceRecordingInput
 } from './types'
-import {
-  isAudioResource,
-  normalTextForSpeech,
-  normalizeCapabilityFormats,
-  normalizeVoiceRecordingAudio,
-  playAudioArtifact,
-  playVoiceTtsPipeline,
-  prepareVoiceTtsText,
-  splitVoiceTtsText,
-  voiceTtsChunkChars
-} from './voice'
+import { normalTextForSpeech } from './voice'
 
 const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
-export const quickPromptsStorageKey = 'quickPrompts'
-export const quickPromptsMaxItems = 20
-const quickPromptMaxTextChars = 2_000
 // The launcher persists language switches on disk; the daemon serves them via
 // the `ui_language` RPC, so a modest poll keeps an open panel in sync.
 const uiLanguageSyncIntervalMs = 30_000
 
-function emptyBookmarkFolders(): BookmarkFolders {
-  return {
-    version: 1,
-    next_folder_id: 1,
-    folders: {},
-    updated_at: 0
-  }
-}
-
-function numericTimestamp(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
-}
-
-function normalizeQuickPromptText(value: unknown): string {
-  if (typeof value !== 'string') {
-    return ''
-  }
-  return value.replace(/\r\n/g, '\n').trim().slice(0, quickPromptMaxTextChars).trim()
-}
-
-function quickPromptId(text: string): string {
-  let hash = 2166136261
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return `qp-${(hash >>> 0).toString(36)}-${text.length.toString(36)}`
-}
-
-function sortQuickPromptsForDisplay(items: QuickPrompt[]): QuickPrompt[] {
-  return [...items].sort(
-    (left, right) =>
-      right.usedAt - left.usedAt ||
-      right.updatedAt - left.updatedAt ||
-      right.useCount - left.useCount ||
-      left.text.localeCompare(right.text)
-  )
-}
-
-function limitQuickPrompts(items: QuickPrompt[]): QuickPrompt[] {
-  if (items.length <= quickPromptsMaxItems) {
-    return sortQuickPromptsForDisplay(items)
-  }
-  return sortQuickPromptsForDisplay(
-    [...items]
-      .sort(
-        (left, right) =>
-          right.useCount - left.useCount ||
-          right.usedAt - left.usedAt ||
-          right.updatedAt - left.updatedAt ||
-          right.createdAt - left.createdAt
-      )
-      .slice(0, quickPromptsMaxItems)
-  )
-}
-
-function normalizeQuickPrompts(value: unknown): QuickPrompt[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  const byText = new Map<string, QuickPrompt>()
-  for (const item of value) {
-    const raw = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
-    const text = normalizeQuickPromptText(raw.text)
-    if (!text) {
-      continue
-    }
-    const now = Date.now()
-    const next: QuickPrompt = {
-      id: quickPromptId(text),
-      text,
-      createdAt: numericTimestamp(raw.createdAt, now),
-      updatedAt: numericTimestamp(raw.updatedAt, now),
-      usedAt: numericTimestamp(raw.usedAt, 0),
-      useCount: Math.max(0, Math.floor(numericTimestamp(raw.useCount, 0)))
-    }
-    const existing = byText.get(text)
-    if (existing) {
-      byText.set(text, {
-        ...next,
-        createdAt: Math.min(existing.createdAt, next.createdAt),
-        updatedAt: Math.max(existing.updatedAt, next.updatedAt),
-        usedAt: Math.max(existing.usedAt, next.usedAt),
-        useCount: Math.max(existing.useCount, next.useCount)
-      })
-    } else {
-      byText.set(text, next)
-    }
-  }
-  return limitQuickPrompts(Array.from(byText.values()))
-}
-
-function quickPromptStorageSnapshot(items: QuickPrompt[]): QuickPrompt[] {
-  return items.map((prompt) => ({
-    id: prompt.id,
-    text: prompt.text,
-    createdAt: prompt.createdAt,
-    updatedAt: prompt.updatedAt,
-    usedAt: prompt.usedAt,
-    useCount: prompt.useCount
-  }))
-}
-
-function quickPromptsUpdateErrorMessage(error: unknown): string {
-  const detail = errorToMessage(error)
-  return (
-    getMessage('quickPromptsUpdateFailed', [detail]) || `Could not update quick inputs: ${detail}`
-  )
-}
-
-export class AndaSidePanelClient extends EventTarget {
+export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   readonly chrome: ChromeApi
 
   settings: SettingsState = $state({ ...defaultSettings })
@@ -189,25 +56,30 @@ export class AndaSidePanelClient extends EventTarget {
   sending = $state(false)
   activeChannel = $state<Channel | null>(null)
   channels = new SvelteMap<string, Channel>()
-  // Message ids the caller has bookmarked, kept in sync for star state.
-  bookmarkedIds = new SvelteSet<string>()
   status = $state('starting')
   systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
-  voiceCapabilities = $state<VoiceCapabilities>({
-    transcription: [],
-    daemonTts: [],
-    chromeTts: false
-  })
   modelState = $state<ModelState>(emptyModelState())
-  quickPrompts = $state<QuickPrompt[]>([])
+
+  /** Saved composer prompts, most-recently-used first. */
+  readonly quickPrompts: QuickPrompts
+  /** Speech in and out, plus the page-capture bridge. */
+  readonly voice: VoiceSession
+
+  /** Skill library verbs, and the `skills-changed` event views listen on. */
+  readonly skills = new SkillsApi(this)
+  /** Bookmark verbs plus the star state the transcript renders. */
+  readonly bookmarks = new BookmarksApi(this, {
+    activeSource: () => this.activeSource || '',
+    bookmarkRequestMeta: (bookmark) => this.requestMetaForBookmark(bookmark),
+    reportError: (error) => {
+      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
+    }
+  })
 
   #initPromise: Promise<void> | null = null
   #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
   #resourceCache = new Map<number, Resource>()
   #resourceRequests = new Map<number, Promise<Resource>>()
-  #bookmarkCache = new Map<number, Bookmark | null>()
-  #bookmarkRequests = new Map<number, Promise<Bookmark | null>>()
-  #quickPromptWrite: Promise<void> = Promise.resolve()
   #localChannelSource = ''
   #workspaceChannelSources = new Set<string>()
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
@@ -216,6 +88,12 @@ export class AndaSidePanelClient extends EventTarget {
   constructor() {
     super()
     this.chrome = getChromeApi()
+    this.quickPrompts = new QuickPrompts(this.chrome.storage.local, (text) => {
+      this.systemMessage = { kind: 'error', text }
+    })
+    this.voice = new VoiceSession(this, {
+      send: (type, message) => this.serviceWorkerMessage(type, message)
+    })
   }
 
   async init(): Promise<void> {
@@ -228,7 +106,7 @@ export class AndaSidePanelClient extends EventTarget {
 
   async #init(): Promise<void> {
     await this.loadSettings()
-    await this.loadQuickPrompts()
+    await this.quickPrompts.load()
     await this.loadWorkspaceChannels()
     const localChannel = await browserSession(this.chrome)
     this.#localChannelSource = localChannel
@@ -242,7 +120,7 @@ export class AndaSidePanelClient extends EventTarget {
 
     if (this.settings.token) {
       await this.refreshModelState().catch(() => undefined)
-      await this.refreshVoiceCapabilities().catch(() => undefined)
+      await this.voice.refreshCapabilities().catch(() => undefined)
       await this.refreshChannels().catch(() => undefined)
       await channel.init().catch(() => undefined)
       this.syncUiLanguage().catch(() => undefined)
@@ -432,7 +310,7 @@ export class AndaSidePanelClient extends EventTarget {
     } else {
       this.modelState = emptyModelState()
     }
-    await this.refreshVoiceCapabilities().catch(() => undefined)
+    await this.voice.refreshCapabilities().catch(() => undefined)
   }
 
   async saveAppearanceTheme(appearanceTheme: AppearanceTheme): Promise<void> {
@@ -452,91 +330,6 @@ export class AndaSidePanelClient extends EventTarget {
     }
     this.settings = normalizeSettings({ ...this.settings, approvalMode: normalized })
     await this.chrome.storage.local.set({ approvalMode: this.settings.approvalMode })
-  }
-
-  async loadQuickPrompts(): Promise<void> {
-    const saved = await this.chrome.storage.local.get([quickPromptsStorageKey])
-    this.quickPrompts = normalizeQuickPrompts(saved.quickPrompts)
-  }
-
-  isQuickPrompt(text: string): boolean {
-    const normalized = normalizeQuickPromptText(text)
-    return Boolean(normalized && this.quickPrompts.some((prompt) => prompt.text === normalized))
-  }
-
-  async toggleQuickPrompt(text: string): Promise<void> {
-    if (this.isQuickPrompt(text)) {
-      await this.removeQuickPrompt(text)
-      return
-    }
-    await this.addQuickPrompt(text)
-  }
-
-  async addQuickPrompt(text: string): Promise<void> {
-    const normalized = normalizeQuickPromptText(text)
-    if (!normalized) {
-      return
-    }
-    await this.applyQuickPromptUpdate((quickPrompts) => {
-      const now = Date.now()
-      const existing = quickPrompts.find((prompt) => prompt.text === normalized)
-      const next: QuickPrompt = existing
-        ? {
-            ...existing,
-            updatedAt: now
-          }
-        : {
-            id: quickPromptId(normalized),
-            text: normalized,
-            createdAt: now,
-            updatedAt: now,
-            usedAt: now,
-            useCount: 0
-          }
-      return limitQuickPrompts([
-        next,
-        ...quickPrompts.filter((prompt) => prompt.text !== normalized)
-      ])
-    })
-  }
-
-  async useQuickPrompt(text: string): Promise<void> {
-    const normalized = normalizeQuickPromptText(text)
-    if (!normalized) {
-      return
-    }
-    await this.applyQuickPromptUpdate((quickPrompts) => {
-      const prompt = quickPrompts.find((item) => item.text === normalized)
-      if (!prompt) {
-        return quickPrompts
-      }
-      const now = Date.now()
-      return limitQuickPrompts([
-        {
-          ...prompt,
-          usedAt: now,
-          useCount: prompt.useCount + 1
-        },
-        ...quickPrompts.filter((item) => item.text !== normalized)
-      ])
-    })
-  }
-
-  async removeQuickPrompt(text: string): Promise<void> {
-    const normalized = normalizeQuickPromptText(text)
-    if (!normalized) {
-      return
-    }
-    await this.applyQuickPromptUpdate((quickPrompts) =>
-      quickPrompts.filter((prompt) => prompt.text !== normalized)
-    )
-  }
-
-  async clearQuickPrompts(): Promise<void> {
-    if (this.quickPrompts.length === 0) {
-      return
-    }
-    await this.applyQuickPromptUpdate(() => [])
   }
 
   async testConnection(settings: SettingsState): Promise<void> {
@@ -671,10 +464,7 @@ export class AndaSidePanelClient extends EventTarget {
         }
 
         this.updateStatus('speaking', null)
-        const spokenBy = await this.speakAssistantText(
-          responseText,
-          recording.voiceProvider || 'chrome'
-        )
+        const spokenBy = await this.voice.speak(responseText, recording.voiceProvider || 'chrome')
         if (!spokenBy) {
           const service =
             recording.voiceProvider === 'anda'
@@ -695,188 +485,6 @@ export class AndaSidePanelClient extends EventTarget {
         this.updateStatus('idle', null)
       }
     }
-  }
-
-  async startBrowserSpeechRecognition(language: string): Promise<void> {
-    const response = await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_start', {
-      language
-    })
-    const result = response.result || {}
-    if (result.error || result.started === false) {
-      throw new Error(result.error || getMessage('browserSpeechStartFailed'))
-    }
-  }
-
-  async stopBrowserSpeechRecognition(): Promise<string> {
-    const response = await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_stop')
-    const result = response.result || {}
-    if (result.error) {
-      throw new Error(result.error)
-    }
-    return result.transcript?.trim() || ''
-  }
-
-  async cancelBrowserSpeechRecognition(): Promise<void> {
-    await this.serviceWorkerMessage<PageSpeechResult>('anda_page_speech_cancel').catch(
-      () => undefined
-    )
-  }
-
-  async startBrowserAudioCapture(mimeType?: string): Promise<void> {
-    const response = await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_start', {
-      mimeType
-    })
-    const result = response.result || {}
-    if (result.error || result.started === false) {
-      throw new Error(result.error || getMessage('andaVoiceStartFailed'))
-    }
-  }
-
-  async stopBrowserAudioCapture(): Promise<PageAudioResult> {
-    const response = await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_stop')
-    const result = response.result || {}
-    if (result.error) {
-      throw new Error(result.error)
-    }
-    if (!result.audioBase64 || !result.mimeType) {
-      throw new Error(getMessage('noVoiceCaptured'))
-    }
-    return result
-  }
-
-  async cancelBrowserAudioCapture(): Promise<void> {
-    await this.serviceWorkerMessage<PageAudioResult>('anda_page_audio_cancel').catch(
-      () => undefined
-    )
-  }
-
-  async refreshVoiceCapabilities(): Promise<VoiceCapabilities> {
-    const chromeTts = await this.chromeTtsAvailable().catch(() => false)
-    let next: VoiceCapabilities = { transcription: [], daemonTts: [], chromeTts }
-    if (this.settings.token) {
-      const daemon = await this.rpc<DaemonVoiceCapabilities>('capabilities', [])
-      next = {
-        transcription: normalizeCapabilityFormats(daemon.transcription, ['wav']),
-        daemonTts: normalizeCapabilityFormats(daemon.tts, ['mp3']),
-        chromeTts
-      }
-    }
-    this.voiceCapabilities = next
-    return next
-  }
-
-  async listPromptSkills(): Promise<PromptSkill[]> {
-    if (!this.settings.token) {
-      return []
-    }
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<PromptSkill[]>>('anda_bot_api', {
-      type: 'ListSkills'
-    })
-    return normalizePromptSkills(result)
-  }
-
-  async listSkillSources(): Promise<SkillSourceInfo[]> {
-    if (!this.settings.token) {
-      return []
-    }
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<SkillSourceInfo[]>>('skills_api', {
-      type: 'ListSkillSources'
-    })
-    return Array.isArray(result) ? result : []
-  }
-
-  async listManagedSkills(includeInactive = true): Promise<ManagedSkill[]> {
-    if (!this.settings.token) {
-      return []
-    }
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
-      type: 'ListSkills',
-      include_inactive: includeInactive
-    })
-    return Array.isArray(result) ? result : []
-  }
-
-  async getManagedSkill(id: string): Promise<ManagedSkillDetail> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<ManagedSkillDetail>>('skills_api', {
-      type: 'GetSkill',
-      id
-    })
-    return result
-  }
-
-  async getManagedSkillFile(id: string, path: string): Promise<SkillFileContent> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<SkillFileContent>>('skills_api', {
-      type: 'GetSkillFile',
-      id,
-      path
-    })
-    return result
-  }
-
-  async cloneSkill(id: string, newName?: string): Promise<ManagedSkillDetail> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<ManagedSkillDetail>>('skills_api', {
-      type: 'CloneSkill',
-      id,
-      new_name: newName || null
-    })
-    this.emitSkillsChanged()
-    return result
-  }
-
-  async setSkillEnabled(id: string, enabled: boolean): Promise<ManagedSkill[]> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
-      type: 'SetSkillEnabled',
-      id,
-      enabled
-    })
-    this.emitSkillsChanged()
-    return Array.isArray(result) ? result : []
-  }
-
-  async deletePersonalSkill(id: string): Promise<void> {
-    await this.toolCall<RpcOutput<{ deleted: boolean }>>('skills_api', {
-      type: 'DeletePersonalSkill',
-      id
-    })
-    this.emitSkillsChanged()
-  }
-
-  async validateSkillContent(content: string): Promise<SkillValidationResult> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<SkillValidationResult>>('skills_api', {
-      type: 'ValidateSkill',
-      content
-    })
-    return result
-  }
-
-  async reloadSkills(): Promise<ManagedSkill[]> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<ManagedSkill[]>>('skills_api', {
-      type: 'ReloadSkills'
-    })
-    this.emitSkillsChanged()
-    return Array.isArray(result) ? result : []
-  }
-
-  private emitSkillsChanged(): void {
-    this.dispatchEvent(new Event('skills-changed'))
   }
 
   async refreshModelState(options: { reload?: boolean } = {}): Promise<ModelState> {
@@ -953,7 +561,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
 
     this.updateStatus('transcribing', null)
-    const transcription = await this.transcribeVoiceRecording(recording)
+    const transcription = await this.voice.transcribe(recording)
     return transcription.text.trim()
   }
 
@@ -1029,38 +637,6 @@ export class AndaSidePanelClient extends EventTarget {
     })
   }
 
-  private async updateQuickPrompts(
-    updater: (quickPrompts: QuickPrompt[]) => QuickPrompt[]
-  ): Promise<void> {
-    const write = this.#quickPromptWrite.then(async () => {
-      const current = quickPromptStorageSnapshot(this.quickPrompts)
-      const next = limitQuickPrompts(updater(current))
-      if (JSON.stringify(next) === JSON.stringify(current)) {
-        return
-      }
-      await this.persistQuickPrompts(next)
-      this.quickPrompts = next
-    })
-    this.#quickPromptWrite = write.catch(() => undefined)
-    await write
-  }
-
-  private async applyQuickPromptUpdate(
-    updater: (quickPrompts: QuickPrompt[]) => QuickPrompt[]
-  ): Promise<void> {
-    try {
-      await this.updateQuickPrompts(updater)
-    } catch (error) {
-      this.systemMessage = { kind: 'error', text: quickPromptsUpdateErrorMessage(error) }
-    }
-  }
-
-  private async persistQuickPrompts(items: QuickPrompt[]): Promise<void> {
-    await this.chrome.storage.local.set({
-      [quickPromptsStorageKey]: quickPromptStorageSnapshot(items)
-    })
-  }
-
   private async loadWorkspaceChannels(): Promise<void> {
     const saved = await this.chrome.storage.local.get([workspaceChannelSourcesStorageKey])
     const sources = normalizeWorkspaceChannelSources(saved.workspaceChannelSources)
@@ -1103,7 +679,12 @@ export class AndaSidePanelClient extends EventTarget {
     return tab || null
   }
 
-  private async toolCall<Result>(
+  /** True once a daemon token is configured; see `DaemonApi`. */
+  get authorized(): boolean {
+    return Boolean(this.settings.token)
+  }
+
+  async toolCall<Result>(
     name: string,
     args: Record<string, unknown>,
     resources: Resource[] = [],
@@ -1119,416 +700,6 @@ export class AndaSidePanelClient extends EventTarget {
       throw errorToError(error)
     }
     return rt
-  }
-
-  /** Loads marked message ids for visible conversations into the star-state set. */
-  async loadConversationBookmarks(
-    conversations: number[],
-    options: { force?: boolean } = {}
-  ): Promise<void> {
-    if (!this.settings.token) {
-      return
-    }
-    const ids = Array.from(
-      new Set(
-        conversations.filter((conversation) => Number.isFinite(conversation) && conversation > 0)
-      )
-    )
-    await Promise.all(
-      ids.map((conversation) => this.loadConversationBookmark(conversation, options))
-    )
-  }
-
-  async loadConversationBookmark(
-    conversation: number,
-    options: { force?: boolean } = {}
-  ): Promise<Bookmark | null> {
-    if (!this.settings.token || !Number.isFinite(conversation) || conversation <= 0) {
-      return null
-    }
-    if (!options.force && this.#bookmarkCache.has(conversation)) {
-      return this.#bookmarkCache.get(conversation) || null
-    }
-
-    let request = this.#bookmarkRequests.get(conversation)
-    if (!request) {
-      request = this.toolCall<RpcOutput<Bookmark | null>>('bookmarks_api', {
-        type: 'GetConversationBookmark',
-        conversation
-      })
-        .then(({ output: { result } }) => result || null)
-        .finally(() => {
-          this.#bookmarkRequests.delete(conversation)
-        })
-      this.#bookmarkRequests.set(conversation, request)
-    }
-
-    const bookmark = await request
-    this.updateBookmarkCache(conversation, bookmark)
-    return bookmark
-  }
-
-  isBookmarked(messageId: string): boolean {
-    return this.bookmarkedIds.has(messageId)
-  }
-
-  async toggleBookmark(message: ChatMessage): Promise<void> {
-    if (!this.settings.token || !message.id) {
-      return
-    }
-    if (this.bookmarkedIds.has(message.id)) {
-      await this.removeBookmark(message.id)
-    } else {
-      await this.addBookmark(message)
-    }
-  }
-
-  async addBookmark(message: ChatMessage): Promise<void> {
-    const messageId = message.id
-    if (!this.settings.token || !messageId || this.bookmarkedIds.has(messageId)) {
-      return
-    }
-    // Optimistic: show the star immediately, roll back if the daemon rejects.
-    this.bookmarkedIds.add(messageId)
-    try {
-      await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
-        type: 'AddBookmark',
-        message_id: messageId,
-        conversation: message.conversation,
-        source: this.activeSource || '',
-        role: message.role,
-        text: message.text,
-        folder_ids: []
-      }).then(({ output: { result } }) => {
-        this.updateBookmarkCache(result.conversation, result)
-      })
-    } catch (error) {
-      this.bookmarkedIds.delete(messageId)
-      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
-    }
-  }
-
-  async removeBookmark(messageId: string): Promise<boolean> {
-    if (!this.settings.token || !messageId) {
-      return false
-    }
-    const had = this.bookmarkedIds.delete(messageId)
-    try {
-      const {
-        output: { result }
-      } = await this.toolCall<
-        RpcOutput<{ removed: boolean; conversation?: number; bookmark?: Bookmark | null }>
-      >('bookmarks_api', {
-        type: 'RemoveBookmark',
-        message_id: messageId
-      })
-      const conversation = result.conversation || conversationFromMessageId(messageId)
-      if (conversation > 0) {
-        this.updateBookmarkCache(conversation, result.bookmark || null)
-      }
-      return true
-    } catch (error) {
-      if (had) {
-        this.bookmarkedIds.add(messageId)
-      }
-      this.systemMessage = { kind: 'error', text: errorToMessage(error) }
-      return false
-    }
-  }
-
-  private updateBookmarkCache(conversation: number, bookmark: Bookmark | null): void {
-    for (const id of Array.from(this.bookmarkedIds)) {
-      if (conversationFromMessageId(id) === conversation) {
-        this.bookmarkedIds.delete(id)
-      }
-    }
-    this.#bookmarkCache.set(conversation, bookmark)
-    if (!bookmark) {
-      return
-    }
-    for (const message of bookmark.messages || []) {
-      if (Number.isInteger(message.index) && message.index >= 0) {
-        this.bookmarkedIds.add(`m-${bookmark.conversation}-${message.index}`)
-      }
-    }
-  }
-
-  /** Fetches one newest-first page of bookmarks for the panel. */
-  async listBookmarks(
-    cursor?: string,
-    limit?: number
-  ): Promise<{ items: Bookmark[]; nextCursor: string | null }> {
-    if (!this.settings.token) {
-      return { items: [], nextCursor: null }
-    }
-    const args: Record<string, unknown> = { type: 'ListBookmarks' }
-    if (cursor) {
-      args.cursor = cursor
-    }
-    if (limit) {
-      args.limit = limit
-    }
-    const {
-      output: { result, next_cursor }
-    } = await this.toolCall<RpcOutput<Bookmark[]>>('bookmarks_api', args)
-    return { items: result || [], nextCursor: next_cursor || null }
-  }
-
-  async listBookmarkFolders(): Promise<BookmarkFolders> {
-    if (!this.settings.token) {
-      return emptyBookmarkFolders()
-    }
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
-      type: 'ListBookmarkFolders'
-    })
-    return result || emptyBookmarkFolders()
-  }
-
-  async getConversationMarkdownForBookmark(bookmark: BookmarkedMessage): Promise<string> {
-    if (
-      !this.settings.token ||
-      !Number.isFinite(bookmark.conversation) ||
-      bookmark.conversation <= 0 ||
-      !Number.isInteger(bookmark.message_index) ||
-      bookmark.message_index < 0
-    ) {
-      return ''
-    }
-
-    const meta = await this.requestMetaForBookmark(bookmark)
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<Conversation>>(
-      'conversations_api',
-      {
-        type: 'GetConversation',
-        _id: bookmark.conversation
-      },
-      [],
-      meta
-    )
-    const rawMessage = result.messages?.[bookmark.message_index]
-    if (!rawMessage) {
-      return ''
-    }
-
-    const message = normalizeMessage(rawMessage, {
-      conversation: result._id,
-      index: bookmark.message_index,
-      fallbackTimestamp: result.updated_at
-    })
-    return message?.text || ''
-  }
-
-  async createBookmarkFolder(
-    name: string,
-    parentId: number | null = null
-  ): Promise<BookmarkFolders> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
-      type: 'CreateBookmarkFolder',
-      name,
-      parent_id: parentId
-    })
-    return result || emptyBookmarkFolders()
-  }
-
-  async renameBookmarkFolder(folderId: number, name: string): Promise<BookmarkFolders> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
-      type: 'RenameBookmarkFolder',
-      folder_id: folderId,
-      name
-    })
-    return result || emptyBookmarkFolders()
-  }
-
-  async deleteBookmarkFolder(folderId: number): Promise<BookmarkFolders> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
-      type: 'DeleteBookmarkFolder',
-      folder_id: folderId
-    })
-    return result || emptyBookmarkFolders()
-  }
-
-  async moveBookmarkFolder(
-    folderId: number,
-    parentId: number | null = null,
-    order: number | null = null
-  ): Promise<BookmarkFolders> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<BookmarkFolders>>('bookmarks_api', {
-      type: 'MoveBookmarkFolder',
-      folder_id: folderId,
-      parent_id: parentId,
-      order
-    })
-    return result || emptyBookmarkFolders()
-  }
-
-  async setBookmarkFolders(messageId: string, folderIds: number[]): Promise<Bookmark> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
-      type: 'SetBookmarkFolders',
-      message_id: messageId,
-      folder_ids: folderIds
-    })
-    this.updateBookmarkCache(result.conversation, result)
-    return result
-  }
-
-  async addBookmarkToFolder(messageId: string, folderId: number): Promise<Bookmark> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
-      type: 'AddBookmarkToFolder',
-      message_id: messageId,
-      folder_id: folderId
-    })
-    this.updateBookmarkCache(result.conversation, result)
-    return result
-  }
-
-  async removeBookmarkFromFolder(messageId: string, folderId: number): Promise<Bookmark> {
-    const {
-      output: { result }
-    } = await this.toolCall<RpcOutput<Bookmark>>('bookmarks_api', {
-      type: 'RemoveBookmarkFromFolder',
-      message_id: messageId,
-      folder_id: folderId
-    })
-    this.updateBookmarkCache(result.conversation, result)
-    return result
-  }
-
-  async listBookmarksInFolder(
-    folderId: number,
-    cursor?: string,
-    limit?: number
-  ): Promise<{ items: Bookmark[]; nextCursor: string | null }> {
-    if (!this.settings.token) {
-      return { items: [], nextCursor: null }
-    }
-    const args: Record<string, unknown> = {
-      type: 'ListBookmarksInFolder',
-      folder_id: folderId
-    }
-    if (cursor) {
-      args.cursor = cursor
-    }
-    if (limit) {
-      args.limit = limit
-    }
-    const {
-      output: { result, next_cursor }
-    } = await this.toolCall<RpcOutput<Bookmark[]>>('bookmarks_api', args)
-    return { items: result || [], nextCursor: next_cursor || null }
-  }
-
-  private async transcribeVoiceRecording(
-    recording: VoiceRecordingInput
-  ): Promise<TranscriptionToolOutput> {
-    if (this.voiceCapabilities.transcription.length === 0) {
-      await this.refreshVoiceCapabilities()
-    }
-    if (this.voiceCapabilities.transcription.length === 0) {
-      throw new Error(getMessage('voiceTranscriptionNotConfigured'))
-    }
-    if (!recording.audioBase64 || !recording.fileName) {
-      throw new Error(getMessage('audioCaptureMissingData'))
-    }
-    const normalizedRecording = await normalizeVoiceRecordingAudio(
-      recording,
-      this.voiceCapabilities.transcription
-    )
-    const { output } = await this.toolCall<TranscriptionToolOutput>('transcribe_audio', {
-      file_name: normalizedRecording.fileName,
-      audio_base64: normalizedRecording.audioBase64
-    })
-    return output
-  }
-
-  private async speakAssistantText(
-    text: string,
-    preferredProvider: VoiceProvider
-  ): Promise<'chrome' | 'anda' | null> {
-    const speechText = prepareVoiceTtsText(text)
-    const chunks = splitVoiceTtsText(speechText, voiceTtsChunkChars)
-    if (!chunks.length) {
-      return null
-    }
-
-    if (preferredProvider === 'anda') {
-      return (await this.trySpeakWithAndaTts(chunks)) ? 'anda' : null
-    }
-    return (await this.trySpeakWithChromeTts(chunks)) ? 'chrome' : null
-  }
-
-  private async trySpeakWithChromeTts(chunks: string[]): Promise<boolean> {
-    if (!this.voiceCapabilities.chromeTts) {
-      await this.refreshVoiceCapabilities().catch(() => undefined)
-    }
-    if (!this.voiceCapabilities.chromeTts) {
-      return false
-    }
-    try {
-      for (const chunk of chunks) {
-        await this.speakWithChromeTts(chunk)
-      }
-      return true
-    } catch (_error) {
-      await this.serviceWorkerMessage('anda_chrome_tts_stop').catch(() => undefined)
-      return false
-    }
-  }
-
-  private async trySpeakWithAndaTts(chunks: string[]): Promise<boolean> {
-    if (this.voiceCapabilities.daemonTts.length === 0) {
-      await this.refreshVoiceCapabilities().catch(() => undefined)
-    }
-    if (this.voiceCapabilities.daemonTts.length === 0) {
-      return false
-    }
-
-    try {
-      await playVoiceTtsPipeline(
-        chunks,
-        async (chunk, index) => {
-          const result = await this.toolCall<TtsToolOutput>('synthesize_speech', {
-            text: chunk,
-            artifact_name: `anda_chrome_voice_${Date.now()}_${index + 1}`
-          })
-          const artifact = result.artifacts?.find(isAudioResource)
-          if (!artifact?.blob) {
-            throw new Error('Anda TTS did not return playable audio.')
-          }
-          return artifact
-        },
-        (artifact) => playAudioArtifact(artifact)
-      )
-      return true
-    } catch (_error) {
-      return false
-    }
-  }
-
-  private async speakWithChromeTts(text: string): Promise<void> {
-    await this.serviceWorkerMessage('anda_chrome_tts_speak', { text })
-  }
-
-  private async chromeTtsAvailable(): Promise<boolean> {
-    const response = await this.serviceWorkerMessage<{ available?: boolean }>(
-      'anda_chrome_tts_available'
-    )
-    return Boolean(response.result?.available)
   }
 
   private async syncServiceWorker(): Promise<void> {
@@ -1606,9 +777,7 @@ export class AndaSidePanelClient extends EventTarget {
     }
   }
 
-  private async requestMetaForBookmark(
-    bookmark: BookmarkedMessage
-  ): Promise<Record<string, unknown>> {
+  async requestMetaForBookmark(bookmark: BookmarkedMessage): Promise<Record<string, unknown>> {
     const extra = await this.requestExtra()
     extra.source = bookmark.source
     const workspace = workspaceFromCliSource(bookmark.source)
@@ -1653,57 +822,6 @@ function normalizeWorkspaceChannelSources(value: unknown): string[] {
     }
   }
   return Array.from(sources)
-}
-
-function normalizeWorkspaceChannelSource(source: string): string {
-  const trimmed = source.trim()
-  if (!trimmed.startsWith('cli:')) {
-    return ''
-  }
-
-  if (trimmed.startsWith('cli:voice:')) {
-    const workspace = normalizeAbsoluteWorkspace(trimmed.slice('cli:voice:'.length))
-    return workspace ? `cli:voice:${workspace}` : ''
-  }
-
-  const workspace = normalizeAbsoluteWorkspace(trimmed.slice('cli:'.length))
-  return workspace ? `cli:${workspace}` : ''
-}
-
-function normalizeAbsoluteWorkspace(value: unknown): string {
-  const trimmed = String(value || '').trim()
-  if (!isAbsoluteWorkspacePath(trimmed)) {
-    return ''
-  }
-
-  let normalized = trimmed
-  while (
-    normalized.length > 1 &&
-    /[\\/]$/.test(normalized) &&
-    normalized !== '/' &&
-    !/^[A-Za-z]:[\\/]$/.test(normalized)
-  ) {
-    normalized = normalized.slice(0, -1)
-  }
-  return normalized
-}
-
-function isAbsoluteWorkspacePath(value: string): boolean {
-  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
-}
-
-function conversationFromMessageId(messageId: string): number {
-  const match = /^m-(\d+)-\d+$/.exec(messageId)
-  return match ? Number(match[1]) : 0
-}
-
-function workspaceFromCliSource(source: string): string {
-  if (!source.startsWith('cli:')) {
-    return ''
-  }
-
-  const raw = source.slice(4).trim()
-  return normalizeAbsoluteWorkspace(raw.startsWith('voice:') ? raw.slice(6) : raw)
 }
 
 function normalizeModelState(state: DaemonModelState | null | undefined): ModelState {

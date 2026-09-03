@@ -11,6 +11,46 @@
     ChatAttachment,
     ChatMessage
   } from '$lib/anda/client/types'
+  import {
+    actionApproveLabel,
+    actionChoiceId,
+    actionChoiceInputKey,
+    actionChoiceSelected,
+    actionChoiceText,
+    actionDenyLabel,
+    actionDetailIsBlock,
+    actionDetailLabel,
+    actionDetailText,
+    actionKindLabel,
+    actionMessage,
+    actionPending,
+    actionResponseLabel,
+    actionStatusLabel,
+    actionTitle,
+    actionToolLabel,
+    choiceHasInput,
+    choiceInputPlaceholder,
+    choiceInputRequired,
+    isApprovalAction,
+    isPaymentApproval,
+    isShellApproval
+  } from '$lib/anda/chat/action-view'
+  import {
+    attachmentCacheKey,
+    attachmentDescription,
+    attachmentDownloadUrl,
+    attachmentHasDownloadData,
+    attachmentMetaLabel,
+    attachmentMimeType,
+    attachmentObjectUrl,
+    attachmentResourceBlob,
+    attachmentResourceId,
+    base64ToBytes,
+    bytesToArrayBuffer,
+    safeDownloadName,
+    type AttachmentCaches
+  } from '$lib/anda/chat/attachment-view'
+  import { escapeHtml, formatFileSize, formatTimestamp } from '$lib/utils/format'
   import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
@@ -55,6 +95,11 @@
   let choiceInputValues = $state(new Map<string, string>())
   let resourceBlobs = $state(new Map<number, string>())
   let resourceObjectUrls = $state(new Map<string, string>())
+  // What the attachment presenters need to resolve bytes for this message.
+  const caches = $derived<AttachmentCaches>({
+    resourceBlobs,
+    objectUrls: resourceObjectUrls
+  })
   let loadingResourceIds = $state(new Set<number>())
   let failedResourceIds = $state(new Set<number>())
   const isUser = $derived(message.role === 'user')
@@ -73,9 +118,9 @@
   const canBookmark = $derived(
     isAssistant && hasMainText && !message.pending && /^m-\d+-\d+$/.test(message.id)
   )
-  const bookmarked = $derived(canBookmark && andaClient.isBookmarked(message.id))
+  const bookmarked = $derived(canBookmark && andaClient.bookmarks.isBookmarked(message.id))
   const canToggleQuickPrompt = $derived(isUser && hasMainText && Boolean(onToggleQuickPrompt))
-  const messageTimeLabel = $derived(timeLabel(message.timestamp))
+  const messageTimeLabel = $derived(formatTimestamp(message.timestamp))
   const externalUserSenderLabel = $derived(
     message.externalUser?.sender || message.externalUser?.scope || 'External user'
   )
@@ -124,26 +169,11 @@
     }, 1200)
   }
 
-  function escapeHtml(value: string): string {
-    return value.replace(/[&<>"]/g, (character) => {
-      switch (character) {
-        case '&':
-          return '&amp;'
-        case '<':
-          return '&lt;'
-        case '>':
-          return '&gt;'
-        default:
-          return '&quot;'
-      }
-    })
-  }
-
   function printableAttachmentHtml(): string {
     return (message.attachments || [])
       .map((attachment) => {
         const imageUrl = attachmentMimeType(attachment).startsWith('image/')
-          ? ensureAttachmentObjectUrl(attachment) || attachmentDownloadUrl(attachment)
+          ? ensureAttachmentObjectUrl(attachment) || attachmentDownloadUrl(attachment, caches)
           : ''
         const description = attachmentDescription(attachment)
         return `
@@ -233,171 +263,6 @@
     expandedDetailMessageIds.delete(message.id)
   }
 
-  function timeLabel(value: string | number | null | undefined): string {
-    if (!value) {
-      return ''
-    }
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) {
-      return ''
-    }
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-
-  function fileSizeLabel(size: number | undefined): string {
-    if (!size) {
-      return ''
-    }
-    if (size < 1024) {
-      return `${size} B`
-    }
-    if (size < 1024 * 1024) {
-      return `${(size / 1024).toFixed(1)} KB`
-    }
-    return `${(size / 1024 / 1024).toFixed(1)} MB`
-  }
-
-  function attachmentMimeType(attachment: ChatAttachment): string {
-    return attachment.type || attachment.resource.mime_type || ''
-  }
-
-  function resourceId(attachment: ChatAttachment): number {
-    return attachment.resource._id || 0
-  }
-
-  function attachmentCacheKey(attachment: ChatAttachment): string {
-    const id = resourceId(attachment)
-    return id ? `resource:${id}` : attachment.id
-  }
-
-  function attachmentResourceBlob(attachment: ChatAttachment): string {
-    const inlineBlob = attachment.resource.blob?.trim()
-    if (inlineBlob) {
-      return inlineBlob
-    }
-
-    const id = resourceId(attachment)
-    return id ? (resourceBlobs.get(id) || '').trim() : ''
-  }
-
-  function attachmentObjectUrl(attachment: ChatAttachment): string {
-    return resourceObjectUrls.get(attachmentCacheKey(attachment)) || ''
-  }
-
-  function attachmentMetaLabel(attachment: ChatAttachment): string {
-    return [attachmentMimeType(attachment), fileSizeLabel(attachment.size)]
-      .filter(Boolean)
-      .join(' / ')
-  }
-
-  function attachmentDescription(attachment: ChatAttachment): string {
-    return (attachment.resource.description || '')
-      .trim()
-      .replace(/^\[\$system:[^\]]+\]\s*/i, '')
-      .trim()
-  }
-
-  function attachmentDownloadUrl(attachment: ChatAttachment): string {
-    const objectUrl = attachmentObjectUrl(attachment)
-    if (objectUrl) {
-      return objectUrl
-    }
-
-    const uri = attachment.resource.uri?.trim()
-    if (/^(https?:|file:|data:|blob:)/i.test(uri || '')) {
-      return uri || ''
-    }
-    return ''
-  }
-
-  function safeDownloadName(name: string): string {
-    return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'attachment'
-  }
-
-  function attachmentHasDownloadData(attachment: ChatAttachment): boolean {
-    return Boolean(
-      attachmentDownloadUrl(attachment) ||
-      attachmentResourceBlob(attachment) ||
-      resourceId(attachment)
-    )
-  }
-
-  function actionKindLabel(action: ChatAction): string {
-    if (isApprovalAction(action)) {
-      const toolLabel = actionToolLabel(action)
-      return getMessage('actionApprovalKindLabel', toolLabel)
-    }
-    if (action.kind === 'choice') {
-      return getMessage('actionChoiceKindLabel')
-    }
-    return actionTitle(action) || getMessage('actionFallbackTitle')
-  }
-
-  function actionStatusLabel(action: ChatAction): string {
-    switch (action.status) {
-      case 'pending':
-        return getMessage('actionStatusPending')
-      case 'approved':
-        return getMessage('actionStatusApproved')
-      case 'denied':
-        return getMessage('actionStatusDenied')
-      case 'selected':
-        return getMessage('actionStatusSelected')
-      case 'expired':
-        return getMessage('actionStatusExpired')
-      default:
-        return action.status || getMessage('actionStatusUnknown')
-    }
-  }
-
-  function actionResponseLabel(action: ChatAction): string {
-    if (action.status === 'selected') {
-      const choiceId = actionChoiceId(action)
-      const choice = action.choices?.find((item) => item.id === choiceId)
-      return choice?.label || choiceId
-    }
-    return ''
-  }
-
-  function actionChoiceId(action: ChatAction): string {
-    const choiceId =
-      action.response && typeof action.response === 'object' && !Array.isArray(action.response)
-        ? action.response.choice_id
-        : undefined
-    return typeof choiceId === 'string' ? choiceId : ''
-  }
-
-  function actionChoiceSelected(action: ChatAction, choiceId: string): boolean {
-    return action.status === 'selected' && actionChoiceId(action) === choiceId
-  }
-
-  function actionChoiceText(action: ChatAction): string {
-    const response =
-      action.response && typeof action.response === 'object' && !Array.isArray(action.response)
-        ? action.response
-        : undefined
-    const choiceText = response?.choice_text
-    if (typeof choiceText === 'string') {
-      return choiceText
-    }
-    const value = response?.value
-    const selectedChoice = action.choices?.find((choice) => choice.id === actionChoiceId(action))
-    if (
-      selectedChoice?.input &&
-      typeof value === 'string' &&
-      value &&
-      value !== selectedChoice.label &&
-      value !== selectedChoice.value
-    ) {
-      return value
-    }
-    return ''
-  }
-
-  function actionChoiceInputKey(action: ChatAction, choiceId: string): string {
-    return `${action.id}:${choiceId}`
-  }
-
   function choiceInputValue(action: ChatAction, choiceId: string): string {
     return choiceInputValues.get(actionChoiceInputKey(action, choiceId)) || ''
   }
@@ -408,119 +273,11 @@
     choiceInputValues = next
   }
 
-  function choiceHasInput(choice: ChatActionChoice): boolean {
-    return Boolean(choice.input)
-  }
-
-  function choiceInputRequired(choice: ChatActionChoice): boolean {
-    return Boolean(choice.input?.required)
-  }
-
-  function choiceInputPlaceholder(choice: ChatActionChoice): string {
-    return choice.input?.placeholder || getMessage('actionChoiceInputPlaceholder')
-  }
-
   function choiceInputDisabled(action: ChatAction, choice: ChatActionChoice): boolean {
     return (
       respondingActionIds.has(action.id) ||
       (choiceInputRequired(choice) && !choiceInputValue(action, choice.id).trim())
     )
-  }
-
-  function actionPending(action: ChatAction): boolean {
-    return action.status === 'pending'
-  }
-
-  function isApprovalAction(action: ChatAction): boolean {
-    return action.kind === 'tool_approval' || action.kind === 'shell_command'
-  }
-
-  function actionToolName(action: ChatAction): string {
-    return (action.tool?.name || '').toLowerCase()
-  }
-
-  function isShellApproval(action: ChatAction): boolean {
-    const toolName = actionToolName(action)
-    return action.kind === 'shell_command' || toolName === 'shell' || toolName.includes('shell')
-  }
-
-  function isPaymentApproval(action: ChatAction): boolean {
-    const toolName = actionToolName(action)
-    return toolName.includes('pay') || toolName.includes('payment')
-  }
-
-  function actionToolLabel(action: ChatAction): string {
-    if (isShellApproval(action)) {
-      return getMessage('shellCommandTool')
-    }
-    return action.tool?.label || action.tool?.name || getMessage('actionToolFallback')
-  }
-
-  function actionTitle(action: ChatAction): string {
-    if (isShellApproval(action) && (!action.title || action.title === 'Approve shell command')) {
-      return getMessage('shellApprovalTitle')
-    }
-    return action.title || ''
-  }
-
-  function actionMessage(action: ChatAction): string | null | undefined {
-    if (
-      isShellApproval(action) &&
-      (!action.message || action.message === 'The agent wants to run a local shell command.')
-    ) {
-      return getMessage('shellApprovalMessage')
-    }
-    return action.message
-  }
-
-  function actionApproveLabel(action: ChatAction): string {
-    const label = action.approval?.approveLabel
-    return label && label !== 'Approve' ? label : getMessage('actionApprove')
-  }
-
-  function actionDenyLabel(action: ChatAction): string {
-    const label = action.approval?.denyLabel
-    return label && label !== 'Deny' ? label : getMessage('actionDeny')
-  }
-
-  function actionDetailLabel(detail: ChatActionDetail): string {
-    switch (detail.label) {
-      case 'Command':
-        return getMessage('actionDetailCommand')
-      case 'Workspace':
-        return getMessage('actionDetailWorkspace')
-      case 'Approval reason':
-        return getMessage('actionDetailApprovalReason')
-      case 'Mode':
-        return getMessage('actionDetailMode')
-      case 'Environment keys':
-        return getMessage('actionDetailEnvironmentKeys')
-      default:
-        return detail.label
-    }
-  }
-
-  function detailText(detail: ChatActionDetail): string {
-    const value = detail.value
-    if (typeof value === 'string') {
-      if (detail.label === 'Mode') {
-        if (value === 'background') {
-          return getMessage('actionBackground')
-        }
-        if (value === 'foreground') {
-          return getMessage('actionForeground')
-        }
-      }
-      return value
-    }
-    if (value === null) {
-      return ''
-    }
-    return JSON.stringify(value, null, 2)
-  }
-
-  function detailIsBlock(detail: ChatActionDetail): boolean {
-    return detail.format === 'code' || detail.format === 'json' || detail.format === 'list'
   }
 
   function setActionResponding(actionId: string, value: boolean) {
@@ -586,38 +343,16 @@
   }
 
   function attachmentSaveTitle(attachment: ChatAttachment): string {
-    return attachmentHasDownloadData(attachment)
+    return attachmentHasDownloadData(attachment, caches)
       ? `Save ${attachment.name}`
       : 'No downloadable data'
   }
 
-  function normalizeBase64(value: string): string {
-    const payload = value.trim().replace(/^data:[^,]*,/i, '')
-    const normalized = payload.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
-    const remainder = normalized.length % 4
-    return remainder ? normalized + '='.repeat(4 - remainder) : normalized
-  }
-
-  function base64ToBytes(value: string): Uint8Array {
-    const binary = atob(normalizeBase64(value))
-    const bytes = new Uint8Array(binary.length)
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index)
-    }
-    return bytes
-  }
-
-  function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-    const buffer = new ArrayBuffer(bytes.byteLength)
-    new Uint8Array(buffer).set(bytes)
-    return buffer
-  }
-
   function ensureAttachmentObjectUrl(
     attachment: ChatAttachment,
-    blob = attachmentResourceBlob(attachment)
+    blob = attachmentResourceBlob(attachment, caches)
   ): string {
-    const existingUrl = attachmentObjectUrl(attachment)
+    const existingUrl = attachmentObjectUrl(attachment, caches)
     if (existingUrl || !blob) {
       return existingUrl
     }
@@ -631,7 +366,11 @@
       resourceObjectUrls = new Map([...resourceObjectUrls, [attachmentCacheKey(attachment), url]])
       return url
     } catch (error) {
-      console.warn('Failed to create attachment object URL', resourceId(attachment), error)
+      console.warn(
+        'Failed to create attachment object URL',
+        attachmentResourceId(attachment),
+        error
+      )
       return ''
     }
   }
@@ -650,12 +389,12 @@
     attachment: ChatAttachment,
     options: { retry?: boolean } = {}
   ): Promise<string> {
-    const id = resourceId(attachment)
+    const id = attachmentResourceId(attachment)
     if (!id) {
-      return attachmentResourceBlob(attachment)
+      return attachmentResourceBlob(attachment, caches)
     }
 
-    const existingBlob = attachmentResourceBlob(attachment)
+    const existingBlob = attachmentResourceBlob(attachment, caches)
     if (existingBlob) {
       return existingBlob
     }
@@ -694,18 +433,18 @@
     for (const attachment of message.attachments || []) {
       if (
         attachmentMimeType(attachment).startsWith('image/') &&
-        attachmentResourceBlob(attachment) &&
-        !attachmentObjectUrl(attachment)
+        attachmentResourceBlob(attachment, caches) &&
+        !attachmentObjectUrl(attachment, caches)
       ) {
         ensureAttachmentObjectUrl(attachment)
       }
 
       if (
         attachmentMimeType(attachment).startsWith('image/') &&
-        resourceId(attachment) &&
-        !attachmentResourceBlob(attachment) &&
-        !loadingResourceIds.has(resourceId(attachment)) &&
-        !failedResourceIds.has(resourceId(attachment))
+        attachmentResourceId(attachment) &&
+        !attachmentResourceBlob(attachment, caches) &&
+        !loadingResourceIds.has(attachmentResourceId(attachment)) &&
+        !failedResourceIds.has(attachmentResourceId(attachment))
       ) {
         loadAttachmentResource(attachment).catch(() => undefined)
       }
@@ -713,14 +452,14 @@
   }
 
   async function saveAttachment(attachment: ChatAttachment) {
-    let url = attachmentDownloadUrl(attachment)
-    if (!url && resourceId(attachment)) {
+    let url = attachmentDownloadUrl(attachment, caches)
+    if (!url && attachmentResourceId(attachment)) {
       await loadAttachmentResource(attachment, { retry: true })
-      url = attachmentDownloadUrl(attachment)
+      url = attachmentDownloadUrl(attachment, caches)
     }
-    if (!url && attachmentResourceBlob(attachment)) {
+    if (!url && attachmentResourceBlob(attachment, caches)) {
       ensureAttachmentObjectUrl(attachment)
-      url = attachmentDownloadUrl(attachment)
+      url = attachmentDownloadUrl(attachment, caches)
     }
 
     if (!url) {
@@ -840,13 +579,13 @@
                   <div
                     class="chat-message-attachment-icon grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm border text-emerald-700"
                   >
-                    {#if attachmentMimeType(attachment).startsWith('image/') && attachmentObjectUrl(attachment)}
+                    {#if attachmentMimeType(attachment).startsWith('image/') && attachmentObjectUrl(attachment, caches)}
                       <img
-                        src={attachmentObjectUrl(attachment)}
+                        src={attachmentObjectUrl(attachment, caches)}
                         alt={attachment.name}
                         class="size-full object-cover"
                       />
-                    {:else if attachmentMimeType(attachment).startsWith('image/') && loadingResourceIds.has(resourceId(attachment))}
+                    {:else if attachmentMimeType(attachment).startsWith('image/') && loadingResourceIds.has(attachmentResourceId(attachment))}
                       <LoaderCircle class="size-4 animate-spin" />
                     {:else if attachmentMimeType(attachment).startsWith('image/')}
                       <Image class="size-4" />
@@ -876,14 +615,14 @@
                       'icon-xs',
                       'size-6 rounded-sm text-muted-foreground hover:text-emerald-700'
                     )}
-                    disabled={!attachmentHasDownloadData(attachment) ||
+                    disabled={!attachmentHasDownloadData(attachment, caches) ||
                       downloadingAttachmentIds.has(attachment.id) ||
-                      loadingResourceIds.has(resourceId(attachment))}
+                      loadingResourceIds.has(attachmentResourceId(attachment))}
                     aria-label={`Save ${attachment.name}`}
                     title={attachmentSaveTitle(attachment)}
                     onclick={() => saveAttachment(attachment)}
                   >
-                    {#if downloadingAttachmentIds.has(attachment.id) || loadingResourceIds.has(resourceId(attachment))}
+                    {#if downloadingAttachmentIds.has(attachment.id) || loadingResourceIds.has(attachmentResourceId(attachment))}
                       <LoaderCircle class="size-3 animate-spin" />
                     {:else}
                       <Download class="size-3" />
@@ -924,7 +663,10 @@
                     {/if}
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm font-semibold" title={actionTitle(action) || actionKindLabel(action)}>
+                    <div
+                      class="truncate text-sm font-semibold"
+                      title={actionTitle(action) || actionKindLabel(action)}
+                    >
                       {actionTitle(action) || actionKindLabel(action)}
                     </div>
                     <div class="chat-action-meta truncate">
@@ -937,7 +679,9 @@
                 </div>
 
                 {#if actionMessage(action)}
-                  <div class="chat-action-message leading-relaxed whitespace-pre-wrap wrap-break-word">
+                  <div
+                    class="chat-action-message leading-relaxed whitespace-pre-wrap wrap-break-word"
+                  >
                     {actionMessage(action)}
                   </div>
                 {/if}
@@ -955,16 +699,21 @@
                         <div class="chat-action-meta mb-1 text-[10px] font-semibold uppercase">
                           {actionDetailLabel(detail)}
                         </div>
-                        {#if detailIsBlock(detail)}
-                          <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code>{detailText(detail)}</code></pre>
+                        {#if actionDetailIsBlock(detail)}
+                          <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code
+                              >{actionDetailText(detail)}</code
+                            ></pre>
                         {:else}
-                          <div class="wrap-break-word">{detailText(detail)}</div>
+                          <div class="wrap-break-word">{actionDetailText(detail)}</div>
                         {/if}
                       </div>
                     {/each}
                   </div>
                 {:else if action.command}
-                  <pre class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code>{action.command}</code></pre>
+                  <pre
+                    class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code
+                      >{action.command}</code
+                    ></pre>
                   {#if action.workspace}
                     <div class="chat-action-meta truncate" title={action.workspace}>
                       {action.workspace}
@@ -1011,7 +760,9 @@
                     {#each action.choices as choice (choice.id)}
                       {#if actionPending(action)}
                         {#if choiceHasInput(choice)}
-                          <div class="chat-action-choice-input grid min-w-0 gap-1.5 rounded-md border px-2 py-1.5">
+                          <div
+                            class="chat-action-choice-input grid min-w-0 gap-1.5 rounded-md border px-2 py-1.5"
+                          >
                             <div class="min-w-0">
                               <span class="block font-medium">{choice.label}</span>
                               {#if choice.description}
@@ -1029,8 +780,11 @@
                                 disabled={respondingActionIds.has(action.id)}
                                 rows="3"
                                 oninput={(event) =>
-                                  setChoiceInputValue(action, choice.id, inputValueFromEvent(event))}
-                              ></textarea>
+                                  setChoiceInputValue(
+                                    action,
+                                    choice.id,
+                                    inputValueFromEvent(event)
+                                  )}></textarea>
                             {:else}
                               <input
                                 class="chat-action-choice-input-control w-full rounded-md border px-2 py-1.5 text-xs outline-hidden"
@@ -1040,7 +794,11 @@
                                 aria-label={choice.label}
                                 disabled={respondingActionIds.has(action.id)}
                                 oninput={(event) =>
-                                  setChoiceInputValue(action, choice.id, inputValueFromEvent(event))}
+                                  setChoiceInputValue(
+                                    action,
+                                    choice.id,
+                                    inputValueFromEvent(event)
+                                  )}
                               />
                             {/if}
                             <div class="flex justify-end">
@@ -1104,7 +862,9 @@
                               </span>
                             {/if}
                             {#if actionChoiceSelected(action, choice.id) && actionChoiceText(action)}
-                              <span class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal whitespace-pre-wrap wrap-break-word">
+                              <span
+                                class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal whitespace-pre-wrap wrap-break-word"
+                              >
                                 {actionChoiceText(action)}
                               </span>
                             {/if}
@@ -1230,7 +990,7 @@
             aria-label={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
             aria-pressed={bookmarked}
             title={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
-            onclick={() => andaClient.toggleBookmark(message)}
+            onclick={() => andaClient.bookmarks.toggle(message)}
           >
             {#if bookmarked}
               <BookmarkCheck class="size-3.5" />

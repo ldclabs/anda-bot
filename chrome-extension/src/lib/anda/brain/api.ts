@@ -102,9 +102,12 @@ export class BrainApi {
       return rpcResponse
     }
 
-    const response = await this.request<BrainStatus | BrainResult<BrainStatus>>('/formation_status', {
-      method: 'GET'
-    })
+    const response = await this.request<BrainStatus | BrainResult<BrainStatus>>(
+      '/formation_status',
+      {
+        method: 'GET'
+      }
+    )
     return isBrainResult(response) ? unwrapBrainResult(response, 'Brain status') : response
   }
 
@@ -237,7 +240,7 @@ function getBrainChromeApi(): BrainChromeApi | undefined {
   return (globalThis as typeof globalThis & { chrome?: BrainChromeApi }).chrome
 }
 
-function formatKipError(error: KipError): string {
+export function formatKipError(error: KipError): string {
   const prefix = error.code ? `${error.code}: ` : ''
   const hint = error.hint ? ` ${error.hint}` : ''
   return `${prefix}${error.message}${hint}`

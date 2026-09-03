@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
+  import { escapeHtml } from '$lib/utils/format'
   import {
     ANDA_BOT_SPACE_ID,
     BrainApi,
@@ -34,8 +35,7 @@
   import { cn } from '$lib/utils'
   import Prism from '$lib/utils/prismjs'
   import { defaultSettings, errorToMessage } from '$lib/service-worker/settings'
-  import { CanvasEvent, EdgeEvent, Graph, NodeEvent } from '@antv/g6'
-  import { RadialLayout } from '@antv/layout'
+  import { BrainGraphRenderer, type BrainGraphHighlights } from '$lib/anda/brain/renderer'
   import {
     Braces,
     Check,
@@ -67,11 +67,16 @@
 
   let settings = $state<BrainGraphSettings>(initialSettings)
   let graphData = new BrainGraphData(new BrainApi(initialSettings))
-  let graph: Graph | null = null
   let container: HTMLDivElement | null = $state(null)
-  let resizeObserver: ResizeObserver | null = null
-  let resizeTimer: ReturnType<typeof setTimeout> | null = null
-  let graphRendered = $state(false)
+  const renderer = new BrainGraphRenderer({
+    onSelectNode: (id) => selectGraphNode(id),
+    onExpandNode: (id) => void expandNode(id),
+    onSelectEdge: (id) => {
+      selectedEdgeId = id
+      selectedSummaryId = ''
+    },
+    onCanvasClick: () => handleCanvasClick()
+  })
 
   let loading = $state(false)
   let saving = $state(false)
@@ -151,10 +156,19 @@ LIMIT 6000`)
 
   $effect(() => applyAppearanceTheme(settings.appearanceTheme))
 
+  const highlights = $derived<BrainGraphHighlights>({
+    selectedNodeId,
+    selectedEdgeId,
+    selectedSummaryId,
+    expandingNodeId,
+    searchResults,
+    pinnedNodeIds
+  })
+
   let syncTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
-    graphDataset
-    if (!graph || !graphRendered) {
+    const dataset = graphDataset
+    if (!renderer.rendered) {
       return
     }
     if (syncTimer) {
@@ -162,7 +176,7 @@ LIMIT 6000`)
     }
     syncTimer = setTimeout(() => {
       syncTimer = null
-      syncGraph().catch((error) => {
+      renderer.sync(dataset, highlights).catch((error) => {
         errorMessage = errorToMessage(error)
       })
     }, 120)
@@ -171,20 +185,15 @@ LIMIT 6000`)
   // Give instant selection feedback via element states; the debounced dataset
   // sync converges the underlying styles afterwards.
   $effect(() => {
-    void selectedNodeId
-    void selectedEdgeId
-    void selectedSummaryId
-    void expandingNodeId
-    void searchResults
-    void pinnedNodeIds
-    if (!graph || !graphRendered) {
-      return
-    }
-    applyElementStates()
+    renderer.applyHighlights(highlights)
   })
 
   onMount(() => {
-    initGraph()
+    if (container) {
+      renderer.mount(container, graphDataset, highlights).catch((error) => {
+        errorMessage = errorToMessage(error)
+      })
+    }
     loadBrainGraphSettings()
       .then(async (saved) => {
         settings = saved
@@ -200,446 +209,12 @@ LIMIT 6000`)
       if (syncTimer) {
         clearTimeout(syncTimer)
       }
-      if (resizeTimer) {
-        clearTimeout(resizeTimer)
-      }
       if (inspectorCopyTimer) {
         clearTimeout(inspectorCopyTimer)
       }
-      resizeObserver?.disconnect()
-      resizeObserver = null
-      graph?.destroy()
-      graph = null
+      renderer.destroy()
     }
   })
-
-  function initGraph() {
-    if (!container || graph) {
-      return
-    }
-
-    const stage = graphStageSize()
-    graph = new Graph({
-      container,
-      width: stage.width,
-      height: stage.height,
-      padding: 24,
-      // Animations run on requestAnimationFrame, which is throttled or fully
-      // suspended for hidden extension pages; awaiting them can stall the
-      // sync loop, and on large graphs they hurt interaction latency.
-      animation: false,
-      theme: 'dark',
-      node: {
-        style: {
-          zIndex: 80,
-          labelFontSize: 10,
-          labelPlacement: 'bottom',
-          labelOffsetY: 4,
-          labelBackground: true,
-          labelBackgroundRadius: 3,
-          labelBackgroundLineWidth: 0,
-          halo: true,
-          haloLineWidth: 5
-        },
-        state: {
-          selected: {
-            lineWidth: 3,
-            halo: true,
-            haloLineWidth: 12,
-            haloStroke: 'rgba(20, 184, 166, 0.24)'
-          },
-          highlight: {
-            lineWidth: 3,
-            halo: true,
-            haloLineWidth: 10,
-            haloStroke: 'rgba(245, 158, 11, 0.24)'
-          },
-          dim: {
-            opacity: 0.22,
-            labelOpacity: 0.18
-          },
-          loading: {
-            lineWidth: 4,
-            lineDash: [4, 4],
-            stroke: '#f59e0b'
-          }
-        }
-      },
-      edge: {
-        type: 'line',
-        style: {
-          zIndex: 10,
-          endArrow: true,
-          endArrowSize: 3,
-          strokeOpacity: 0.55
-        },
-        state: {
-          selected: {
-            lineWidth: 2.5,
-            stroke: '#14b8a6',
-            strokeOpacity: 1
-          },
-          highlight: {
-            lineWidth: 2,
-            stroke: '#f59e0b',
-            strokeOpacity: 1
-          },
-          dim: {
-            opacity: 0.18
-          }
-        }
-      },
-      combo: {
-        type: 'circle',
-        style: {
-          lineDash: [5, 5],
-          lineWidth: 1,
-          labelFill: 'rgba(245, 245, 244, 0.68)',
-          labelFontSize: 11,
-          labelPlacement: 'top'
-        }
-      },
-      layout: {
-        ...buildLayoutOptions(graphDataset, stage)
-      },
-      behaviors: [
-        { type: 'drag-canvas', key: 'drag-canvas' },
-        { type: 'zoom-canvas', key: 'zoom-canvas', sensitivity: 1.12 },
-        { type: 'drag-element', key: 'drag-element' },
-        { type: 'hover-activate', key: 'hover-activate' },
-        { type: 'optimize-viewport-transform', key: 'optimize-viewport', debounce: 240 },
-        { type: 'auto-adapt-label', key: 'auto-adapt-label', throttle: 260, padding: 2 }
-      ],
-      plugins: [
-        {
-          type: 'minimap',
-          key: 'minimap',
-          size: [168, 112],
-          position: 'left-bottom'
-        },
-        {
-          type: 'tooltip',
-          key: 'tooltip',
-          trigger: 'hover',
-          getContent: (_event: unknown, items: Array<{ data?: unknown }>) => {
-            const item = items?.[0]?.data
-            return buildTooltip(item)
-          },
-          style: {
-            '.tooltip': {
-              background: 'rgba(28, 25, 23, 0.96)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              'border-radius': '8px',
-              padding: '0',
-              'box-shadow': '0 12px 36px rgba(0, 0, 0, 0.34)',
-              'backdrop-filter': 'blur(10px)',
-              'pointer-events': 'none'
-            }
-          }
-        }
-      ]
-    })
-
-    graph.on(NodeEvent.CLICK, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        selectGraphNode(id)
-      }
-    })
-    graph.on(NodeEvent.DBLCLICK, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        expandNode(id)
-      }
-    })
-    graph.on(NodeEvent.POINTER_ENTER, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        showHoverLabel('node', id)
-      }
-    })
-    graph.on(NodeEvent.POINTER_LEAVE, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        hideHoverLabel('node', id)
-      }
-    })
-    graph.on(EdgeEvent.CLICK, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        selectedEdgeId = id
-        selectedSummaryId = ''
-      }
-    })
-    graph.on(EdgeEvent.POINTER_ENTER, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        showHoverLabel('edge', id)
-      }
-    })
-    graph.on(EdgeEvent.POINTER_LEAVE, (event: any) => {
-      const id = event.target?.id
-      if (id) {
-        hideHoverLabel('edge', id)
-      }
-    })
-    graph.on(CanvasEvent.CLICK, () => {
-      handleCanvasClick()
-    })
-
-    if (import.meta.env.DEV) {
-      ;(window as unknown as { __brainGraph?: Graph }).__brainGraph = graph
-    }
-
-    resizeObserver = new ResizeObserver(() => scheduleGraphResize())
-    resizeObserver.observe(container)
-
-    syncGraph()
-      .then(() => {
-        graphRendered = true
-      })
-      .catch((error) => {
-        errorMessage = errorToMessage(error)
-      })
-  }
-
-  let syncing = false
-  let pendingSync = false
-  let lastTopologyKey = '__initial__'
-  let renderedNodeIds = new Set<string>()
-  let renderedEdgeIds = new Set<string>()
-  const appliedStates = new Map<string, string>()
-  let pendingFocus: { id: string; at: number } | null = null
-  let hoveredLabel: { kind: 'node' | 'edge'; id: string } | null = null
-
-  async function syncGraph() {
-    if (!graph) {
-      return
-    }
-    if (syncing) {
-      pendingSync = true
-      return
-    }
-    syncing = true
-    try {
-      do {
-        pendingSync = false
-        const dataset = graphDataset
-        const topologyKey = datasetTopologyKey(dataset)
-        const topologyChanged = topologyKey !== lastTopologyKey
-        hoveredLabel = null
-        graph.setData(dataset)
-        if (topologyChanged) {
-          lastTopologyKey = topologyKey
-          graph.setOptions({ layout: buildLayoutOptions(dataset) as any })
-          await withRenderWatchdog(graph.render())
-        } else {
-          // Same node topology: keep layout positions and the viewport,
-          // only redraw changed elements (edges, labels, styles).
-          await withRenderWatchdog(graph.draw())
-        }
-        renderedNodeIds = new Set(dataset.nodes.map((node) => String(node.id)))
-        renderedEdgeIds = new Set(dataset.edges.map((edge) => String(edge.id)))
-        for (const id of appliedStates.keys()) {
-          if (!renderedNodeIds.has(id) && !renderedEdgeIds.has(id)) {
-            appliedStates.delete(id)
-          }
-        }
-        applyElementStates()
-        const focus = pendingFocus
-        pendingFocus = null
-        if (dataset.nodes.length === 0) {
-          continue
-        }
-        // Animated camera updates rely on requestAnimationFrame, which is
-        // throttled or suspended for backgrounded extension pages and can
-        // leave their promises pending forever — apply viewport changes
-        // instantly and never await them.
-        if (focus && Date.now() - focus.at < 2000 && renderedNodeIds.has(focus.id)) {
-          graph.focusElement(focus.id, false).catch(() => undefined)
-        } else if (topologyChanged) {
-          graph.fitView(undefined, false).catch(() => undefined)
-        }
-      } while (pendingSync)
-    } finally {
-      syncing = false
-    }
-  }
-
-  function withRenderWatchdog(work: Promise<void>): Promise<void> {
-    // Element animations can also be left dangling when behaviors interrupt
-    // them; cap the wait so the sync loop never deadlocks.
-    return Promise.race([
-      work.catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, 8000))
-    ])
-  }
-
-  function requestFocus(id: string) {
-    pendingFocus = { id, at: Date.now() }
-  }
-
-  function datasetTopologyKey(dataset: BrainGraphView): string {
-    const keys = dataset.nodes.map((node) => `${node.id}|${node.combo || ''}`)
-    keys.sort()
-    return keys.join(',')
-  }
-
-  function scheduleGraphResize() {
-    if (resizeTimer) {
-      clearTimeout(resizeTimer)
-    }
-    resizeTimer = setTimeout(() => {
-      resizeTimer = null
-      // Resizing only adjusts the canvas and refits the view; it never
-      // re-runs the layout.
-      resizeGraphCanvas()
-      if (graph && graphRendered && renderedNodeIds.size > 0) {
-        graph.fitView(undefined, false).catch(() => undefined)
-      }
-    }, 120)
-  }
-
-  function resizeGraphCanvas(): { width: number; height: number } {
-    const stage = graphStageSize()
-    graph?.resize(stage.width, stage.height)
-    return stage
-  }
-
-  function graphStageSize(): { width: number; height: number } {
-    const rect = container?.getBoundingClientRect()
-    return {
-      width: Math.max(320, Math.floor(rect?.width || window.innerWidth || 1024)),
-      height: Math.max(320, Math.floor(rect?.height || window.innerHeight || 720))
-    }
-  }
-
-  function buildLayoutOptions(dataset: BrainGraphView, stage = graphStageSize()) {
-    const comboCount = Math.max(1, dataset.combos.length)
-    const comboScale = Math.sqrt(comboCount)
-    const innerWidth = Math.max(
-      360,
-      Math.min(stage.width * 0.86, (stage.width * 1.18) / comboScale)
-    )
-    const innerHeight = Math.max(
-      320,
-      Math.min(stage.height * 0.86, (stage.height * 1.18) / comboScale)
-    )
-    const spacing = Math.max(28, Math.min(84, Math.min(stage.width, stage.height) / 14))
-    const comboPadding = Math.max(20, Math.min(52, Math.min(stage.width, stage.height) / 18))
-
-    return {
-      type: 'combo-combined',
-      // Iterative layouts with animation enabled return promises that never
-      // settle in this @antv/layout version; the non-animated path computes
-      // final positions synchronously and lets graph.render() resolve.
-      animation: false,
-      comboPadding,
-      spacing,
-      innerLayout: new RadialLayout({
-        width: innerWidth,
-        height: innerHeight,
-        linkDistance: Math.max(80, Math.min(160, Math.min(innerWidth, innerHeight) / 4)),
-        preventOverlap: true,
-        strictRadial: false,
-        nodeSize: 52,
-        nodeSpacing: 18
-      })
-    }
-  }
-
-  function showHoverLabel(kind: 'node' | 'edge', id: string) {
-    if (!graph) {
-      return
-    }
-    if (hoveredLabel && (hoveredLabel.kind !== kind || hoveredLabel.id !== id)) {
-      setElementLabel(hoveredLabel.kind, hoveredLabel.id, '')
-    }
-    const label = kind === 'node' ? nodeLabel(id) : edgeLabel(id)
-    if (!label) {
-      return
-    }
-    hoveredLabel = { kind, id }
-    setElementLabel(kind, id, label)
-  }
-
-  function hideHoverLabel(kind: 'node' | 'edge', id: string) {
-    if (!hoveredLabel || hoveredLabel.kind !== kind || hoveredLabel.id !== id) {
-      return
-    }
-    hoveredLabel = null
-    setElementLabel(kind, id, '')
-  }
-
-  function setElementLabel(kind: 'node' | 'edge', id: string, label: string) {
-    if (!graph) {
-      return
-    }
-    if (kind === 'node') {
-      graph.updateNodeData([{ id, style: { labelText: label } } as any])
-    } else {
-      graph.updateEdgeData([{ id, style: { labelText: label } } as any])
-    }
-    graph.draw().catch(() => undefined)
-  }
-
-  function nodeLabel(id: string): string {
-    const node = graphDataset.nodes.find((item) => String(item.id) === id)
-    const data = node?.data as Partial<Concept> | undefined
-    return data?.name || ''
-  }
-
-  function edgeLabel(id: string): string {
-    const edge = graphDataset.edges.find((item) => String(item.id) === id)
-    const data = edge?.data as Partial<Proposition> | undefined
-    return data?.predicate || ''
-  }
-
-  function applyElementStates() {
-    if (!graph) {
-      return
-    }
-    const searchSet = new Set(searchResults)
-    const batch: Record<string, string[]> = {}
-    let changed = 0
-    const apply = (id: string, states: string[]) => {
-      const key = states.join(' ')
-      if ((appliedStates.get(id) || '') === key) {
-        return
-      }
-      if (key) {
-        appliedStates.set(id, key)
-      } else {
-        appliedStates.delete(id)
-      }
-      batch[id] = states
-      changed += 1
-    }
-    for (const id of renderedNodeIds) {
-      const states: string[] = []
-      if (id === selectedNodeId || id === selectedSummaryId) {
-        states.push('selected')
-      } else if (searchSet.has(id)) {
-        states.push('highlight')
-      } else if (searchSet.size > 0) {
-        states.push('dim')
-      }
-      if (pinnedNodeIds.includes(id) && id !== selectedNodeId) {
-        states.push('highlight')
-      }
-      if (id === expandingNodeId) {
-        states.push('loading')
-      }
-      apply(id, states)
-    }
-    for (const id of renderedEdgeIds) {
-      apply(id, id === selectedEdgeId ? ['selected'] : [])
-    }
-    if (changed > 0) {
-      // One batched state update; tolerate elements that vanished mid-flight.
-      graph.setElementState(batch, false).catch(() => undefined)
-    }
-  }
 
   async function loadGraph() {
     loading = true
@@ -788,7 +363,7 @@ LIMIT 6000`)
       if (!expandedNodeIds.includes(id)) {
         expandedNodeIds = [...expandedNodeIds, id]
       }
-      requestFocus(id)
+      renderer.requestFocus(id)
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {
@@ -822,7 +397,7 @@ LIMIT 6000`)
     selectedSummaryId = ''
     pathRequested = false
     pushBreadcrumb(node)
-    requestFocus(id)
+    renderer.requestFocus(id)
   }
 
   function pushBreadcrumb(node: Concept) {
@@ -846,7 +421,7 @@ LIMIT 6000`)
     selectedSummaryId = ''
     pathRequested = false
     breadcrumb = breadcrumb.slice(0, index + 1)
-    requestFocus(item.id)
+    renderer.requestFocus(item.id)
   }
 
   function showAtlas() {
@@ -868,7 +443,7 @@ LIMIT 6000`)
       breadcrumb = breadcrumb.slice(0, -1)
       selectedNodeId = next?.id || ''
       if (selectedNodeId) {
-        requestFocus(selectedNodeId)
+        renderer.requestFocus(selectedNodeId)
       }
     }
   }
@@ -944,44 +519,20 @@ LIMIT 6000`)
   }
 
   async function focusElement(id = selectedNodeId) {
-    if (!graph || !id) {
+    if (!id) {
       return
     }
     await tick()
-    graph.focusElement(id, false).catch(() => undefined)
+    renderer.focus(id)
   }
 
   async function fitView() {
-    if (!graph) {
-      return
-    }
     await tick()
-    graph.fitView(undefined, false).catch(() => undefined)
+    renderer.fitView()
   }
 
   function zoomBy(scale: number) {
-    if (!graph) {
-      return
-    }
-    const zoom = graph.getZoom()
-    graph.zoomTo(Math.max(0.08, Math.min(zoom * scale, 5)), false)
-  }
-
-  function buildTooltip(item: unknown): string {
-    if (!item || typeof item !== 'object') {
-      return ''
-    }
-    const record = item as Partial<Concept & Proposition>
-    if (record.metadata && (record.metadata as Record<string, unknown>).summary) {
-      return `<div class="brain-tooltip"><strong>${escapeHtml(record.name || '')}</strong><span>${escapeHtml(getMessage('brainSummaryNode'))}</span></div>`
-    }
-    if (record.predicate) {
-      return `<div class="brain-tooltip"><strong>${escapeHtml(record.predicate)}</strong><span>${escapeHtml(getMessage('brainProposition'))}</span></div>`
-    }
-    if (record.name) {
-      return `<div class="brain-tooltip"><strong>${escapeHtml(record.name)}</strong><span>${escapeHtml(record.type || '')}</span></div>`
-    }
-    return ''
+    renderer.zoomBy(scale)
   }
 
   function formatJson(value: unknown): string {
@@ -1002,14 +553,6 @@ LIMIT 6000`)
     } catch {
       return escapeHtml(value)
     }
-  }
-
-  function escapeHtml(value: string): string {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
   }
 </script>
 

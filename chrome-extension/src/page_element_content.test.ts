@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const pageElementMemoryKey = '__andaLastRightClickedElement'
-const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
-const listenerKey = '__andaPageElementContentScriptContextMenuListener'
+import {
+  pageElementDomMemoryKey,
+  pageElementListenerKey as listenerKey,
+  pageElementMemoryKey
+} from '$lib/anda/page-element'
 
 type ContextMenuListener = (event: MouseEvent) => void
 

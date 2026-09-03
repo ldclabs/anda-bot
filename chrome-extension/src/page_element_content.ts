@@ -1,10 +1,16 @@
+// This file is a standalone content-script bundle: the manifest loads it as a
+// classic script, so it must not emit an `import` at runtime. The registry keys
+// below therefore repeat the ones exported from `$lib/anda/page-element`, which
+// the service worker reads back. `page_element_content.test.ts` imports the
+// exported constants and asserts against the values written here, so the two
+// copies cannot drift apart unnoticed.
 const pageElementMemoryKey = '__andaLastRightClickedElement'
 const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
+const pageElementListenerKey = '__andaPageElementContentScriptContextMenuListener'
 const maxTextChars = 200_000
 const maxOuterHtmlChars = 500_000
 const maxAttributeValueChars = 2_000
 const maxAttributes = 80
-const listenerKey = '__andaPageElementContentScriptContextMenuListener'
 
 installContextMenuListener()
 
@@ -28,11 +34,11 @@ function capturePageElement(event: MouseEvent) {
 function installContextMenuListener() {
   const registry = globalThis as unknown as Record<string, EventListener | undefined>
   const listener = capturePageElement as EventListener
-  const previousListener = registry[listenerKey]
+  const previousListener = registry[pageElementListenerKey]
   if (previousListener) {
     document.removeEventListener('contextmenu', previousListener, true)
   }
-  registry[listenerKey] = listener
+  registry[pageElementListenerKey] = listener
   document.addEventListener('contextmenu', listener, true)
 }
 

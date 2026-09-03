@@ -8,7 +8,6 @@
     QuickPrompt,
     SubmitKeyMode,
     VoiceCapabilities,
-    VoiceProvider,
     VoiceRecordingInput
   } from '$lib/anda/client/types'
   import type { PromptDraftRequest } from '$lib/anda/prompt-draft'
@@ -57,21 +56,8 @@
     type PromptCommandSuggestion
   } from '$lib/anda/composer/prompt-commands'
   import PromptCommandPanel from '$lib/anda/composer/PromptCommandPanel.svelte'
-  import {
-    audioCaptureErrorMessage,
-    audioExtensionForMime,
-    blobToBase64,
-    chromeSpeechErrorMessage,
-    isMacPlatform,
-    isPermissionError,
-    preferredRecordingMimeType,
-    speechRecognitionConstructor,
-    speechRecognitionErrorMessage,
-    speechRecognitionSupported,
-    type BrowserSpeechRecognition,
-    type BrowserSpeechRecognitionError,
-    type BrowserSpeechRecognitionEvent
-  } from '$lib/anda/composer/voice'
+  import { isMacPlatform, speechRecognitionSupported } from '$lib/anda/composer/voice'
+  import { VoiceRecorder } from '$lib/anda/composer/recorder.svelte'
   import VoicePanel from '$lib/anda/composer/VoicePanel.svelte'
   import {
     alertClass,
@@ -169,14 +155,26 @@
   let stopPending = $state(false)
   let preparingAttachments = $state(false)
   let inputMode = $state<'text' | 'voice'>('text')
-  let voiceStage = $state<'idle' | 'recording' | 'processing'>('idle')
-  let voiceError = $state('')
-  let voiceTranscript = $state('')
-  let voiceLevel = $state(0)
-  let voiceProvider = $state<VoiceProvider>('anda')
-  let voiceProviderSelected = $state(false)
   let ttsEnabled = $state(false)
   let browserSpeechAvailable = $state(speechRecognitionSupported())
+
+  // The four capture paths (page/local x speech/audio) live in VoiceRecorder;
+  // this component only renders its state and forwards the two verbs.
+  const recorder = new VoiceRecorder({
+    capabilities: () => voiceCapabilities,
+    ttsEnabled: () => ttsEnabled,
+    send: async (input) => {
+      await onVoiceSend?.(input)
+    },
+    page: () => ({
+      startSpeech: onBrowserSpeechStart,
+      stopSpeech: onBrowserSpeechStop,
+      cancelSpeech: onBrowserSpeechCancel,
+      startAudio: onBrowserAudioStart,
+      stopAudio: onBrowserAudioStop,
+      cancelAudio: onBrowserAudioCancel
+    })
+  })
   let textareaElement: HTMLTextAreaElement | null = $state(null)
   let fileInputElement: HTMLInputElement | null = $state(null)
   let textareaFocused = $state(false)
@@ -190,20 +188,6 @@
   let promptSkillsError = $state('')
   let approvalMenuOpen = $state(false)
   let approvalMenuElement: HTMLDivElement | null = $state(null)
-  let speechRecognition: BrowserSpeechRecognition | null = null
-  let speechRecognitionMode: 'local' | 'page' | null = null
-  let speechFinalTranscript = ''
-  let ignoreNextRecognition = false
-  let speechRecognitionStopRequested = false
-  let speechRecognitionFatalError = ''
-  let mediaRecorder: MediaRecorder | null = null
-  let mediaStream: MediaStream | null = null
-  let audioRecordingMode: 'local' | 'page' | null = null
-  let audioChunks: Blob[] = []
-  let audioContext: AudioContext | null = null
-  let analyserNode: AnalyserNode | null = null
-  let levelAnimationFrame: number | null = null
-  let ignoreNextRecording = false
   let lastIncomingAttachmentId = ''
   let lastIncomingDraftId = ''
 
@@ -230,10 +214,10 @@
   )
   const canUseAndaVoice = $derived(voiceAvailable || voiceCapabilities.transcription.length > 0)
   const canUseSelectedVoiceProvider = $derived(
-    voiceProvider === 'chrome' ? canUseBrowserSpeech : canUseAndaVoice
+    recorder.provider === 'chrome' ? canUseBrowserSpeech : canUseAndaVoice
   )
   const selectedVoiceTtsAvailable = $derived(
-    voiceProvider === 'chrome'
+    recorder.provider === 'chrome'
       ? voiceCapabilities.chromeTts
       : voiceCapabilities.daemonTts.length > 0
   )
@@ -243,22 +227,22 @@
       !disabled &&
       !sending &&
       !preparingAttachments &&
-      voiceStage !== 'processing'
+      recorder.stage !== 'processing'
   )
   const voiceProviderLabel = $derived(
-    voiceProvider === 'chrome' ? getMessage('browserVoiceProviderLabel') : 'Anda'
+    recorder.provider === 'chrome' ? getMessage('browserVoiceProviderLabel') : 'Anda'
   )
   const voiceProviderTitle = $derived(
-    voiceProvider === 'chrome' ? getMessage('useBrowserVoice') : getMessage('useAndaVoice')
+    recorder.provider === 'chrome' ? getMessage('useBrowserVoice') : getMessage('useAndaVoice')
   )
   const voiceStatus = $derived(
-    voiceStage === 'recording'
+    recorder.stage === 'recording'
       ? getMessage('listening')
-      : voiceStage === 'processing' || sending
+      : recorder.stage === 'processing' || sending
         ? getMessage('working')
         : getMessage('ready')
   )
-  const voiceOrbStyle = $derived(`--voice-level: ${voiceLevel.toFixed(3)}`)
+  const voiceOrbStyle = $derived(`--voice-level: ${recorder.level.toFixed(3)}`)
   const promptCommandContext = $derived(readPromptCommandContext(text, caretIndex))
   const promptCommandSuggestions = $derived(
     buildPromptCommandSuggestions(
@@ -291,7 +275,7 @@
   let workingTimeout: number | undefined
 
   $effect(() => {
-    if (working || sending || voiceStage === 'processing') {
+    if (working || sending || recorder.stage === 'processing') {
       if (workingTimeout) {
         clearTimeout(workingTimeout)
         workingTimeout = undefined
@@ -308,7 +292,7 @@
 
   $effect(() => {
     if (!canUseVoice && inputMode === 'voice') {
-      void cancelRecording()
+      void recorder.cancel()
       inputMode = 'text'
     }
   })
@@ -321,7 +305,7 @@
     lastIncomingAttachmentId = attachment.id
     attachmentError = ''
     if (inputMode === 'voice') {
-      void cancelRecording()
+      void recorder.cancel()
       inputMode = 'text'
     }
     if (!attachments.some((item) => item.id === attachment.id)) {
@@ -345,7 +329,7 @@
     promptCommandDismissedKey = ''
     caretIndex = text.length
     if (inputMode === 'voice') {
-      void cancelRecording()
+      void recorder.cancel()
       inputMode = 'text'
     }
     void tick().then(() => {
@@ -394,15 +378,15 @@
   })
 
   $effect(() => {
-    if (voiceStage === 'idle') {
-      if (!voiceProviderSelected && canUseAndaVoice && voiceProvider !== 'anda') {
-        voiceProvider = 'anda'
+    if (recorder.stage === 'idle') {
+      if (!recorder.providerSelected && canUseAndaVoice && recorder.provider !== 'anda') {
+        recorder.provider = 'anda'
       }
-      if (voiceProvider === 'anda' && !canUseAndaVoice && canUseBrowserSpeech) {
-        voiceProvider = 'chrome'
+      if (recorder.provider === 'anda' && !canUseAndaVoice && canUseBrowserSpeech) {
+        recorder.provider = 'chrome'
       }
-      if (voiceProvider === 'chrome' && !canUseBrowserSpeech && canUseAndaVoice) {
-        voiceProvider = 'anda'
+      if (recorder.provider === 'chrome' && !canUseBrowserSpeech && canUseAndaVoice) {
+        recorder.provider = 'anda'
       }
     }
     if (ttsEnabled && !selectedVoiceTtsAvailable) {
@@ -417,7 +401,7 @@
 
   onDestroy(() => {
     document.removeEventListener('pointerdown', handleDocumentPointerDown)
-    void cancelRecording()
+    void recorder.cancel()
   })
 
   function handleDocumentPointerDown(event: PointerEvent) {
@@ -786,495 +770,15 @@
 
   function toggleInputMode() {
     if (inputMode === 'voice') {
-      void cancelRecording()
+      void recorder.cancel()
       inputMode = 'text'
       void tick().then(() => textareaElement?.focus())
       return
     }
     if (canUseVoice) {
       inputMode = 'voice'
-      voiceError = ''
+      recorder.error = ''
     }
-  }
-
-  async function toggleRecording() {
-    if (!canRecordVoice) {
-      return
-    }
-    if (voiceStage === 'recording') {
-      stopRecording()
-      return
-    }
-    await startRecording()
-  }
-
-  async function startRecording() {
-    voiceTranscript = ''
-    if (voiceProvider === 'chrome' && canUseBrowserSpeech) {
-      const started = await startSpeechRecognition()
-      if (started) {
-        return
-      }
-      const chromeError = voiceError
-      if (canUseAndaVoice) {
-        voiceProvider = 'anda'
-        voiceError = ''
-        await startAndaRecording()
-        return
-      }
-      voiceError = chromeSpeechErrorMessage(chromeError)
-      return
-    }
-    if (canUseAndaVoice) {
-      voiceProvider = 'anda'
-      await startAndaRecording()
-      return
-    }
-    voiceError = 'Selected voice service is unavailable.'
-  }
-
-  async function startAndaRecording() {
-    if (onBrowserAudioStart && onBrowserAudioStop) {
-      const started = await startPageAudioRecording()
-      if (started) {
-        return
-      }
-      if (isPermissionError(voiceError)) {
-        return
-      }
-    }
-    await startAudioRecording()
-  }
-
-  async function startSpeechRecognition(): Promise<boolean> {
-    if (onBrowserSpeechStart && onBrowserSpeechStop) {
-      return startPageSpeechRecognition()
-    }
-    return startLocalSpeechRecognition()
-  }
-
-  async function startPageSpeechRecognition(): Promise<boolean> {
-    voiceError = ''
-    voiceTranscript = ''
-    speechFinalTranscript = ''
-    ignoreNextRecognition = false
-    speechRecognitionStopRequested = false
-    speechRecognitionFatalError = ''
-    speechRecognitionMode = 'page'
-    voiceStage = 'recording'
-    startSyntheticVoicePulse()
-    try {
-      await onBrowserSpeechStart?.(navigator.language || 'zh-CN')
-      return true
-    } catch (error) {
-      speechRecognitionMode = null
-      cleanupRecordingResources()
-      voiceStage = 'idle'
-      voiceLevel = 0
-      voiceError = chromeSpeechErrorMessage(error instanceof Error ? error.message : String(error))
-      return false
-    }
-  }
-
-  function startLocalSpeechRecognition(): boolean {
-    const Recognition = speechRecognitionConstructor()
-    if (!Recognition) {
-      browserSpeechAvailable = false
-      voiceError = 'Browser speech recognition is unavailable.'
-      return false
-    }
-
-    voiceError = ''
-    voiceTranscript = ''
-    speechFinalTranscript = ''
-    ignoreNextRecognition = false
-    speechRecognitionStopRequested = false
-    speechRecognitionFatalError = ''
-    try {
-      const recognition = new Recognition()
-      recognition.lang = navigator.language || 'zh-CN'
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.onresult = handleSpeechRecognitionResult
-      recognition.onerror = (event) => {
-        handleSpeechRecognitionError(event)
-      }
-      recognition.onend = () => {
-        void handleSpeechRecognitionEnd(recognition)
-      }
-      speechRecognition = recognition
-      speechRecognitionMode = 'local'
-      recognition.start()
-      voiceStage = 'recording'
-      startSyntheticVoicePulse()
-      return true
-    } catch (error) {
-      speechRecognition = null
-      speechRecognitionMode = null
-      voiceStage = 'idle'
-      voiceError = chromeSpeechErrorMessage(error instanceof Error ? error.message : String(error))
-      return false
-    }
-  }
-
-  function selectVoiceProvider(provider: VoiceProvider) {
-    voiceProvider = provider
-    voiceProviderSelected = true
-    voiceError = ''
-  }
-
-  async function startPageAudioRecording(): Promise<boolean> {
-    voiceError = ''
-    voiceTranscript = ''
-    ignoreNextRecording = false
-    audioRecordingMode = 'page'
-    voiceStage = 'recording'
-    startSyntheticVoicePulse()
-    try {
-      await onBrowserAudioStart?.(preferredRecordingMimeType(voiceCapabilities.transcription))
-      return true
-    } catch (error) {
-      audioRecordingMode = null
-      cleanupRecordingResources()
-      voiceStage = 'idle'
-      voiceLevel = 0
-      voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
-      return false
-    }
-  }
-
-  async function startAudioRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      voiceError = 'Voice input is unavailable in this browser.'
-      return
-    }
-    voiceError = ''
-    ignoreNextRecording = false
-    audioRecordingMode = 'local'
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      })
-      const mimeType = preferredRecordingMimeType(voiceCapabilities.transcription)
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-      mediaStream = stream
-      mediaRecorder = recorder
-      audioChunks = []
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data)
-        }
-      }
-      recorder.onstop = () => {
-        void finishRecording(recorder.mimeType || mimeType || 'audio/webm')
-      }
-      startVoiceLevelMeter(stream)
-      recorder.start()
-      voiceStage = 'recording'
-    } catch (error) {
-      cleanupRecordingResources()
-      voiceStage = 'idle'
-      voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
-    }
-  }
-
-  function stopRecording() {
-    if (speechRecognitionMode === 'page') {
-      void finishPageSpeechRecognition()
-      return
-    }
-    if (audioRecordingMode === 'page') {
-      void finishPageAudioRecording()
-      return
-    }
-    if (speechRecognition) {
-      speechRecognitionStopRequested = true
-      voiceStage = 'processing'
-      speechRecognition.stop()
-      return
-    }
-    if (mediaRecorder?.state === 'recording') {
-      voiceStage = 'processing'
-      mediaRecorder.stop()
-    }
-  }
-
-  async function cancelRecording() {
-    ignoreNextRecognition = true
-    speechRecognitionStopRequested = false
-    speechRecognitionFatalError = ''
-    ignoreNextRecording = true
-    if (speechRecognitionMode === 'page') {
-      await onBrowserSpeechCancel?.().catch(() => undefined)
-      speechRecognitionMode = null
-    }
-    if (audioRecordingMode === 'page') {
-      await onBrowserAudioCancel?.().catch(() => undefined)
-      audioRecordingMode = null
-    }
-    if (speechRecognition) {
-      speechRecognition.onend = null
-      try {
-        speechRecognition.abort?.()
-      } catch (_error) {
-        try {
-          speechRecognition.stop()
-        } catch (_stopError) {}
-      }
-      speechRecognition = null
-    }
-    if (mediaRecorder?.state === 'recording') {
-      mediaRecorder.stop()
-    }
-    cleanupRecordingResources()
-    voiceStage = 'idle'
-    voiceLevel = 0
-  }
-
-  function handleSpeechRecognitionResult(event: BrowserSpeechRecognitionEvent) {
-    voiceError = ''
-    let interimTranscript = ''
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const result = event.results[index]
-      const transcript = result[0]?.transcript?.trim() || ''
-      if (!transcript) {
-        continue
-      }
-      if (result.isFinal) {
-        speechFinalTranscript = `${speechFinalTranscript} ${transcript}`.trim()
-      } else {
-        interimTranscript = `${interimTranscript} ${transcript}`.trim()
-      }
-    }
-    voiceTranscript = `${speechFinalTranscript} ${interimTranscript}`.trim()
-    voiceLevel = Math.min(1, Math.max(0.28, voiceLevel + 0.18))
-  }
-
-  function handleSpeechRecognitionError(event: BrowserSpeechRecognitionError) {
-    const errorName = event.error || ''
-    if (errorName === 'no-speech') {
-      return
-    }
-    if (errorName === 'aborted' && ignoreNextRecognition) {
-      return
-    }
-    speechRecognitionFatalError = errorName || event.message || 'Browser speech recognition failed.'
-    voiceError = event.message || speechRecognitionErrorMessage(speechRecognitionFatalError)
-  }
-
-  async function handleSpeechRecognitionEnd(recognition: BrowserSpeechRecognition) {
-    if (ignoreNextRecognition || speechRecognitionFatalError) {
-      await finishSpeechRecognition()
-      return
-    }
-    if (!speechRecognitionStopRequested && voiceStage === 'recording') {
-      try {
-        recognition.start()
-        return
-      } catch (error) {
-        speechRecognitionFatalError = error instanceof Error ? error.message : String(error)
-        voiceError = speechRecognitionErrorMessage(speechRecognitionFatalError)
-      }
-    }
-    await finishSpeechRecognition()
-  }
-
-  async function finishPageSpeechRecognition() {
-    if (!onBrowserSpeechStop) {
-      voiceError = 'Voice mode is not connected.'
-      voiceStage = 'idle'
-      return
-    }
-    speechRecognitionStopRequested = true
-    voiceStage = 'processing'
-    try {
-      const transcript = (await onBrowserSpeechStop()).trim()
-      speechFinalTranscript = transcript
-      voiceTranscript = transcript
-      await finishSpeechRecognition()
-    } catch (error) {
-      speechRecognitionMode = null
-      cleanupRecordingResources()
-      voiceLevel = 0
-      voiceError = error instanceof Error ? error.message : String(error)
-      voiceStage = 'idle'
-    }
-  }
-
-  async function finishSpeechRecognition() {
-    const transcript = voiceTranscript.trim() || speechFinalTranscript.trim()
-    speechRecognition = null
-    speechRecognitionMode = null
-    cleanupRecordingResources()
-    voiceLevel = 0
-    speechRecognitionStopRequested = false
-    if (ignoreNextRecognition) {
-      ignoreNextRecognition = false
-      voiceStage = 'idle'
-      return
-    }
-    if (speechRecognitionFatalError) {
-      speechRecognitionFatalError = ''
-      voiceStage = 'idle'
-      return
-    }
-    if (!transcript) {
-      voiceError = 'No speech was recognized.'
-      voiceStage = 'idle'
-      return
-    }
-    if (!onVoiceSend) {
-      voiceError = 'Voice mode is not connected.'
-      voiceStage = 'idle'
-      return
-    }
-    try {
-      voiceStage = 'processing'
-      await onVoiceSend({ transcript, ttsEnabled, voiceProvider })
-      voiceError = ''
-    } catch (error) {
-      voiceError = error instanceof Error ? error.message : String(error)
-    } finally {
-      voiceStage = 'idle'
-    }
-  }
-
-  async function finishPageAudioRecording() {
-    if (!onBrowserAudioStop) {
-      voiceError = 'Voice mode is not connected.'
-      voiceStage = 'idle'
-      return
-    }
-    voiceStage = 'processing'
-    let result: PageAudioResult | null = null
-    try {
-      result = await onBrowserAudioStop()
-    } catch (error) {
-      voiceError = audioCaptureErrorMessage(error instanceof Error ? error.message : String(error))
-    } finally {
-      cleanupRecordingResources()
-      voiceLevel = 0
-    }
-    if (ignoreNextRecording) {
-      ignoreNextRecording = false
-      voiceStage = 'idle'
-      return
-    }
-    if (!result) {
-      voiceStage = 'idle'
-      return
-    }
-    if (!result.audioBase64 || !result.mimeType) {
-      voiceError = getMessage('noVoiceCaptured')
-      voiceStage = 'idle'
-      return
-    }
-    if (!onVoiceSend) {
-      voiceError = getMessage('voiceNotConnected')
-      voiceStage = 'idle'
-      return
-    }
-    try {
-      await onVoiceSend({
-        voiceProvider: 'anda',
-        audioBase64: result.audioBase64,
-        fileName: `chrome_voice_${Date.now()}.${audioExtensionForMime(result.mimeType)}`,
-        mimeType: result.mimeType,
-        size: result.size,
-        ttsEnabled
-      })
-      voiceError = ''
-    } catch (error) {
-      voiceError = error instanceof Error ? error.message : String(error)
-    } finally {
-      voiceStage = 'idle'
-    }
-  }
-
-  async function finishRecording(mimeType: string) {
-    const chunks = audioChunks
-    cleanupRecordingResources()
-    voiceLevel = 0
-    if (ignoreNextRecording) {
-      ignoreNextRecording = false
-      voiceStage = 'idle'
-      return
-    }
-    const blob = new Blob(chunks, { type: mimeType })
-    if (!blob.size) {
-      voiceError = getMessage('noVoiceCaptured')
-      voiceStage = 'idle'
-      return
-    }
-    if (!onVoiceSend) {
-      voiceError = getMessage('voiceNotConnected')
-      voiceStage = 'idle'
-      return
-    }
-    try {
-      voiceStage = 'processing'
-      await onVoiceSend({
-        voiceProvider,
-        audioBase64: await blobToBase64(blob),
-        fileName: `chrome_voice_${Date.now()}.${audioExtensionForMime(mimeType)}`,
-        mimeType,
-        size: blob.size,
-        ttsEnabled
-      })
-      voiceError = ''
-    } catch (error) {
-      voiceError = error instanceof Error ? error.message : String(error)
-    } finally {
-      voiceStage = 'idle'
-    }
-  }
-
-  function cleanupRecordingResources() {
-    if (levelAnimationFrame !== null) {
-      cancelAnimationFrame(levelAnimationFrame)
-      levelAnimationFrame = null
-    }
-    void audioContext?.close().catch(() => undefined)
-    audioContext = null
-    analyserNode = null
-    mediaStream?.getTracks().forEach((track) => track.stop())
-    mediaStream = null
-    mediaRecorder = null
-    audioRecordingMode = null
-    audioChunks = []
-  }
-
-  function startSyntheticVoicePulse() {
-    if (levelAnimationFrame !== null) {
-      cancelAnimationFrame(levelAnimationFrame)
-    }
-    const tickLevel = () => {
-      voiceLevel = voiceStage === 'recording' ? Math.max(0.12, voiceLevel * 0.86) : 0
-      levelAnimationFrame = requestAnimationFrame(tickLevel)
-    }
-    tickLevel()
-  }
-
-  function startVoiceLevelMeter(stream: MediaStream) {
-    const context = new AudioContext()
-    const source = context.createMediaStreamSource(stream)
-    const analyser = context.createAnalyser()
-    analyser.fftSize = 256
-    source.connect(analyser)
-    audioContext = context
-    analyserNode = analyser
-    const samples = new Uint8Array(analyser.frequencyBinCount)
-    const updateLevel = () => {
-      analyser.getByteFrequencyData(samples)
-      const total = samples.reduce((sum, sample) => sum + sample, 0)
-      voiceLevel = Math.min(1, total / samples.length / 120)
-      levelAnimationFrame = requestAnimationFrame(updateLevel)
-    }
-    updateLevel()
   }
 </script>
 
@@ -1320,17 +824,17 @@
     <div class="grid gap-2">
       {#if inputMode === 'voice'}
         <VoicePanel
-          {voiceStage}
+          voiceStage={recorder.stage}
           {sending}
           {canRecordVoice}
           {voiceOrbStyle}
           {voiceStatus}
-          {voiceProvider}
+          voiceProvider={recorder.provider}
           {canUseBrowserSpeech}
           {canUseAndaVoice}
-          {voiceTranscript}
-          onToggleRecording={toggleRecording}
-          onSelectVoiceProvider={selectVoiceProvider}
+          voiceTranscript={recorder.transcript}
+          onToggleRecording={() => recorder.toggle()}
+          onSelectVoiceProvider={(provider) => recorder.selectProvider(provider)}
         />
       {:else}
         {#if quickPrompts.length}
@@ -1412,7 +916,7 @@
         </div>
       {/if}
 
-      {#if inputMode === 'voice' && voiceError}
+      {#if inputMode === 'voice' && recorder.error}
         <div
           role="alert"
           class={alertClass(
@@ -1420,7 +924,7 @@
           )}
         >
           <div class={alertDescriptionClass('text-xs text-amber-800')}>
-            {voiceError}
+            {recorder.error}
           </div>
         </div>
       {/if}
@@ -1533,7 +1037,7 @@
               )}
               disabled={disabled ||
                 sending ||
-                voiceStage === 'recording' ||
+                recorder.stage === 'recording' ||
                 !selectedVoiceTtsAvailable}
               aria-label={ttsEnabled ? getMessage('disablePlayback') : getMessage('enablePlayback')}
               title={selectedVoiceTtsAvailable

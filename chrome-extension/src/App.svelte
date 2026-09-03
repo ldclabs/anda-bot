@@ -107,7 +107,7 @@
     const nextKey = conversations.join(',')
     if (nextKey && nextKey !== bookmarkConversationKey) {
       bookmarkConversationKey = nextKey
-      void andaClient.loadConversationBookmarks(conversations)
+      void andaClient.bookmarks.loadConversations(conversations)
     }
   })
 
@@ -388,19 +388,19 @@
   }
 
   async function toggleQuickPrompt(text: string) {
-    await andaClient.toggleQuickPrompt(text)
+    await andaClient.quickPrompts.toggle(text)
   }
 
   async function useQuickPrompt(text: string) {
-    await andaClient.useQuickPrompt(text)
+    await andaClient.quickPrompts.use(text)
   }
 
   async function removeQuickPrompt(text: string) {
-    await andaClient.removeQuickPrompt(text)
+    await andaClient.quickPrompts.remove(text)
   }
 
   async function clearQuickPrompts() {
-    await andaClient.clearQuickPrompts()
+    await andaClient.quickPrompts.clear()
   }
 
   async function changeApprovalMode(mode: ApprovalMode) {
@@ -437,31 +437,31 @@
   }
 
   async function loadPromptSkills(): Promise<PromptSkill[]> {
-    return andaClient.listPromptSkills()
+    return andaClient.skills.listPrompts()
   }
 
   async function startBrowserSpeechRecognition(language: string) {
-    await andaClient.startBrowserSpeechRecognition(language)
+    await andaClient.voice.startSpeechRecognition(language)
   }
 
   async function stopBrowserSpeechRecognition() {
-    return andaClient.stopBrowserSpeechRecognition()
+    return andaClient.voice.stopSpeechRecognition()
   }
 
   async function cancelBrowserSpeechRecognition() {
-    await andaClient.cancelBrowserSpeechRecognition()
+    await andaClient.voice.cancelSpeechRecognition()
   }
 
   async function startBrowserAudioCapture(mimeType?: string) {
-    await andaClient.startBrowserAudioCapture(mimeType)
+    await andaClient.voice.startAudioCapture(mimeType)
   }
 
   async function stopBrowserAudioCapture(): Promise<PageAudioResult> {
-    return andaClient.stopBrowserAudioCapture()
+    return andaClient.voice.stopAudioCapture()
   }
 
   async function cancelBrowserAudioCapture() {
-    await andaClient.cancelBrowserAudioCapture()
+    await andaClient.voice.cancelAudioCapture()
   }
 
   function displayMessages(sourceMessages: ChatMessage[]): ChatMessage[] {
@@ -700,7 +700,7 @@
             {#each group.messages as message (message.id)}
               <ChatMessageItem
                 {message}
-                quickPromptActive={andaClient.isQuickPrompt(message.text)}
+                quickPromptActive={andaClient.quickPrompts.has(message.text)}
                 onToggleQuickPrompt={toggleQuickPrompt}
               />
             {/each}
@@ -755,7 +755,7 @@
               {#each visibleSideMessages as message (message.id)}
                 <ChatMessageItem
                   {message}
-                  quickPromptActive={andaClient.isQuickPrompt(message.text)}
+                  quickPromptActive={andaClient.quickPrompts.has(message.text)}
                   onToggleQuickPrompt={toggleQuickPrompt}
                 />
               {/each}
@@ -773,8 +773,8 @@
         {sending}
         working={isBusy}
         {stoppable}
-        voiceAvailable={andaClient.voiceCapabilities.transcription.length > 0}
-        voiceCapabilities={andaClient.voiceCapabilities}
+        voiceAvailable={andaClient.voice.capabilities.transcription.length > 0}
+        voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}
         onApprovalModeChange={changeApprovalMode}
         submitKeyMode={andaClient.settings.submitKeyMode}
@@ -789,7 +789,7 @@
         onBrowserAudioCancel={cancelBrowserAudioCapture}
         onLoadSkills={loadPromptSkills}
         {skillsRevision}
-        quickPrompts={andaClient.quickPrompts}
+        quickPrompts={andaClient.quickPrompts.items}
         incomingAttachment={pageElementComposerAttachment}
         incomingDraft={promptDraftRequest}
         onUseQuickPrompt={(prompt) => useQuickPrompt(prompt.text)}

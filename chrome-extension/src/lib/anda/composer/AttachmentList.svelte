@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
-  import type { ChatAttachment } from '$lib/anda/client'
+  import type { ChatAttachment } from '$lib/anda/client/types'
   import { fileSizeLabel } from '$lib/anda/composer/attachments'
   import { buttonClass } from '$lib/anda/ui'
   import { FileText, Paperclip, X } from '@lucide/svelte'

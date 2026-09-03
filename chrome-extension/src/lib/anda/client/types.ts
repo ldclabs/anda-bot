@@ -1,33 +1,40 @@
+// Types shared with the service worker are declared once, in
+// `$lib/service-worker/types`, and re-exported here. `ExtensionMessage` and
+// `ExtensionResponse` in particular are the two ends of the same
+// `chrome.runtime.sendMessage` wire, so a second declaration would let the
+// panel and the worker drift apart silently.
 import type {
   AppearanceTheme,
   ApprovalMode,
   ChromeApi,
+  ChromeTabInfo,
+  ExtensionMessage,
+  ExtensionResponse,
+  PageAudioResult,
+  PageSpeechResult,
   QuickPrompt,
   SettingsState,
   SubmitKeyMode
 } from '$lib/service-worker/types'
 
-export type { AppearanceTheme, ApprovalMode, ChromeApi, QuickPrompt, SettingsState, SubmitKeyMode }
+export type {
+  AppearanceTheme,
+  ApprovalMode,
+  ChromeApi,
+  ChromeTabInfo,
+  ExtensionMessage,
+  ExtensionResponse,
+  PageAudioResult,
+  PageSpeechResult,
+  QuickPrompt,
+  SettingsState,
+  SubmitKeyMode
+}
 
 export type Principal = string
 export type Xid = string
 
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[]
-
-export interface StorageState extends Partial<SettingsState> {
-  browserSessionId?: string
-  workspaceChannelSources?: string[]
-  uiLanguage?: string
-  quickPrompts?: QuickPrompt[]
-}
-
-export interface ChromeTabInfo {
-  id?: number
-  windowId?: number
-  title?: string
-  url?: string
-  incognito?: boolean
-}
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool' | 'external_user'
 
@@ -331,18 +338,6 @@ export interface MessageGroup {
   current: boolean
 }
 
-export interface ClientSnapshot {
-  settings: SettingsState
-  tab: ChromeTabInfo | null
-  status: string
-  voiceCapabilities: VoiceCapabilities
-}
-
-export interface ChromeEvent<Listener extends (...args: never[]) => void> {
-  addListener(listener: Listener): void
-  removeListener(listener: Listener): void
-}
-
 export interface ChromeTabChangeInfo {
   title?: string
   url?: string
@@ -547,43 +542,9 @@ export interface TtsToolOutput {
   size: number
 }
 
-export interface PageSpeechResult {
-  available?: boolean
-  started?: boolean
-  transcript?: string
-  canceled?: boolean
-  error?: string
-}
-
-export interface PageAudioResult {
-  available?: boolean
-  started?: boolean
-  audioBase64?: string
-  mimeType?: string
-  size?: number
-  canceled?: boolean
-  error?: string
-}
-
 export interface RequestMeta {
   engine?: Principal
   thread?: Xid
   user?: string
   [key: string]: Json | undefined
 }
-
-export interface ExtensionMessage {
-  type: string
-  settings: SettingsState
-  method?: string
-  params?: unknown[]
-  text?: string
-  language?: string
-  mimeType?: string
-}
-
-export type ExtensionResponse<Result> =
-  | { ok: true; result?: Result; status?: string }
-  | { ok: false; error: string; status?: string }
-
-export type SnapshotListener = (snapshot: ClientSnapshot) => void

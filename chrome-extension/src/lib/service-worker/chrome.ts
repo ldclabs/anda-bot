@@ -22,10 +22,22 @@ type NavigatorWithBrowserHints = Navigator & {
   }
 }
 
+/**
+ * Returns the extension APIs, asserting the ones every Anda context relies on.
+ * Shared by the service worker, the side panel, and the dashboard pages so a
+ * missing API fails loudly at startup rather than as an undefined-property
+ * error deep inside a handler.
+ */
 export function getChromeApi(): ChromeApi {
   const chromeApi = (globalThis as typeof globalThis & { chrome?: ChromeApi }).chrome
-  if (!chromeApi?.runtime || !chromeApi.storage?.local || !chromeApi.tabs || !chromeApi.scripting) {
-    throw new Error('Chrome extension APIs are unavailable.')
+  if (
+    !chromeApi?.runtime ||
+    !chromeApi.storage?.local ||
+    !chromeApi.tabs ||
+    !chromeApi.scripting ||
+    !chromeApi.i18n
+  ) {
+    throw new Error('Chrome extension APIs are unavailable. Load the built extension in Chrome.')
   }
   return chromeApi
 }

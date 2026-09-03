@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
-  import type { VoiceProvider } from '$lib/anda/client'
+  import type { VoiceProvider } from '$lib/anda/client/types'
   import { badgeClass, buttonClass, cardClass } from '$lib/anda/ui'
   import { LoaderCircle, Mic, Square } from '@lucide/svelte'
 
@@ -57,9 +57,7 @@
     aria-label={voiceStage === 'recording'
       ? getMessage('stopRecording')
       : getMessage('startRecording')}
-    title={voiceStage === 'recording'
-      ? getMessage('stopRecording')
-      : getMessage('startRecording')}
+    title={voiceStage === 'recording' ? getMessage('stopRecording') : getMessage('startRecording')}
     onclick={onToggleRecording}
   >
     <span class="voice-orb-core"></span>

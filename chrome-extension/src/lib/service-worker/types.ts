@@ -36,6 +36,7 @@ export type ChromeTabInfo = {
   status?: string
   title?: string
   url?: string
+  incognito?: boolean
 }
 
 export type ChromeRuntimeOnInstalledDetails = {

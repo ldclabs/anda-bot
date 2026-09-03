@@ -1,3 +1,4 @@
+import { formatKipError } from './api'
 import type { BrainApi, BrainStatus, Json, KipCommandItem, KipError, KipResponse } from './api'
 import { SvelteMap } from 'svelte/reactivity'
 
@@ -676,12 +677,6 @@ function isKipError(value: unknown): value is KipError {
   return Boolean(
     value && typeof value === 'object' && typeof (value as KipError).message === 'string'
   )
-}
-
-function formatKipError(error: KipError): string {
-  const prefix = error.code ? `${error.code}: ` : ''
-  const hint = error.hint ? ` ${error.hint}` : ''
-  return `${prefix}${error.message}${hint}`
 }
 
 function overviewTypePriority(type: string): number {
