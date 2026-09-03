@@ -379,37 +379,11 @@ fn optional_text(value: &Option<String>) -> Fv {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use chrono::{Duration, Utc};
-    use object_store::{ObjectStore, memory::InMemory};
-    use tempfile::tempdir;
 
-    async fn test_store() -> (tempfile::TempDir, CronStore) {
-        let dir = tempdir().unwrap();
-        let object_store: Arc<dyn ObjectStore> = { Arc::new(InMemory::new()) };
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "cron_test_db".to_string(),
-                description: "cron test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
-        let store = CronStore::connect(Arc::new(db)).await.unwrap();
-        (dir, store)
+    async fn test_store() -> CronStore {
+        let db = crate::test_support::memory_db("cron").await;
+        CronStore::connect(db).await.unwrap()
     }
 
     async fn insert_test_job(store: &CronStore, name: &str) -> CronJob {
@@ -451,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_jobs_cursor_pages_without_overlap() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let inserted: Vec<CronJob> = vec![
             insert_test_job(&store, "job-1").await,
             insert_test_job(&store, "job-2").await,
@@ -482,7 +456,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_jobs_and_runs_survive_zero_limit() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let job = insert_test_job(&store, "job-1").await;
         let _run = store.job_start(job._id, unix_ms()).await.unwrap();
         store.flush(unix_ms()).await.unwrap();
@@ -497,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_runs_cursor_pages_without_overlap() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let job = insert_test_job(&store, "job-1").await;
 
         let _run1 = store.job_start(job._id, unix_ms()).await.unwrap();
@@ -525,7 +499,7 @@ mod tests {
 
     #[tokio::test]
     async fn due_jobs_prefers_earliest_next_run() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let base = Utc::now();
         let job_late = insert_at_job(
             &store,
@@ -562,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn due_jobs_does_not_starve_when_excluding_in_flight_jobs() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let base = Utc::now();
         // Insert in next_run order so the highest document ids are also the
         // ones the range query keeps first; excluding them previously emptied
@@ -607,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_job_changes_fields_preserves_origin_and_history() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let origin = CronJobOrigin {
             user: Some("alice".to_string()),
             source: Some("wechat:daily".to_string()),
@@ -672,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_job_can_replace_origin() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let job = store
             .insert_job(
                 CreateCronJobArgs {
@@ -727,7 +701,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_job_without_schedule_change_keeps_next_run() {
-        let (_dir, store) = test_store().await;
+        let store = test_store().await;
         let job = insert_test_job(&store, "job-1").await;
 
         let updated = store

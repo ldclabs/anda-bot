@@ -5,6 +5,9 @@ rust_i18n::i18n!("locales", fallback = "en");
 #[path = "../daemon_protocol.rs"]
 mod daemon_protocol;
 
+#[path = "../util/locale.rs"]
+mod locale;
+
 #[path = "../provider_env.rs"]
 mod provider_env;
 

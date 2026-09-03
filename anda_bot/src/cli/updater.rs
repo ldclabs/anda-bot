@@ -1053,15 +1053,6 @@ mod tests {
     use axum::{Router, http::StatusCode as AxumStatus, routing::get};
     use std::io::{Cursor, Write};
 
-    async fn spawn_mock(app: Router) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
-    }
-
     fn dead_proxy_client() -> reqwest::Client {
         reqwest::Client::builder()
             .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
@@ -1181,7 +1172,7 @@ mod tests {
                 "/missing",
                 get(|| async { (AxumStatus::NOT_FOUND, "nope") }),
             );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
 
         let dest = tempfile::NamedTempFile::new().unwrap();
@@ -1207,7 +1198,7 @@ mod tests {
                 "/500",
                 get(|| async { (AxumStatus::INTERNAL_SERVER_ERROR, "boom") }),
             );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let dest = tempfile::NamedTempFile::new().unwrap();
 
@@ -1242,7 +1233,7 @@ mod tests {
             )
             .route("/404", get(|| async { (AxumStatus::NOT_FOUND, "") }))
             .route("/bad", get(|| async { "not-a-valid-hash garbage" }));
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
 
         let found = fetch_expected_checksum(&client, &format!("{base}/ok"))
@@ -1291,7 +1282,7 @@ mod tests {
                 }),
             )
             .route("/releases/tag/v3.2.1", get(|| async { "landed" }));
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
 
         let header_resp = client
@@ -1425,7 +1416,7 @@ mod tests {
                     async move { value }
                 }),
             );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join("skills/codex")).unwrap();
@@ -1448,7 +1439,7 @@ mod tests {
             "/anda-skills.zip",
             get(|| async { (AxumStatus::NOT_FOUND, "") }),
         );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let home = tempfile::tempdir().unwrap();
 
@@ -1534,7 +1525,7 @@ mod tests {
                     async move { value }
                 }),
             );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let temp = tempfile::tempdir().unwrap();
         let launcher = temp.path().join("anda_launcher");
@@ -1567,7 +1558,7 @@ mod tests {
             "/anda_launcher-macos-arm64",
             get(|| async { "new-launcher-without-checksum" }),
         );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let temp = tempfile::tempdir().unwrap();
         let launcher = temp.path().join("anda_launcher");

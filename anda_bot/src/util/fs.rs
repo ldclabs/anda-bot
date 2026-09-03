@@ -46,6 +46,81 @@ pub fn restrict_secret_dir_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Reduces an untrusted name (an IM attachment file name, a message id, a URL
+/// segment) to a single path component that is safe to join onto a directory.
+///
+/// Keeps ASCII alphanumerics, `.`, `-` and `_`; every other character — path
+/// separators and `..` included — collapses into a single `_`. The result is
+/// capped at 96 characters and stripped of leading/trailing `.`, `-` and `_`,
+/// so a sanitized name is never `.` or `..`.
+///
+/// `fallback` is returned verbatim when nothing usable survives, so pass a
+/// literal. Passing `""` is the deliberate way to ask for "no usable
+/// component" and does return an empty string — `stored_attachment_name`
+/// relies on that; every other caller should pass a non-empty default.
+pub fn sanitize_path_component(value: &str, fallback: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len().min(96));
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            sanitized.push(ch);
+        } else if !sanitized.ends_with('_') {
+            sanitized.push('_');
+        }
+        if sanitized.len() >= 96 {
+            break;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches(['.', '-', '_']).to_string();
+    if sanitized.is_empty() {
+        fallback.to_string()
+    } else {
+        sanitized
+    }
+}
+
+#[cfg(test)]
+mod path_component_tests {
+    use super::sanitize_path_component;
+
+    #[test]
+    fn keeps_safe_ascii_and_collapses_separators() {
+        assert_eq!(
+            sanitize_path_component(" report-01.json ", "fallback"),
+            "report-01.json"
+        );
+        assert_eq!(
+            sanitize_path_component("hello world.txt", "media.bin"),
+            "hello_world.txt"
+        );
+        assert_eq!(
+            sanitize_path_component("../奇怪 文件?.png", "fallback"),
+            "png"
+        );
+    }
+
+    #[test]
+    fn traversal_and_unusable_names_fall_back() {
+        assert_eq!(sanitize_path_component("../../", "media.bin"), "media.bin");
+        assert_eq!(
+            sanitize_path_component("***", "fallback.bin"),
+            "fallback.bin"
+        );
+        assert_eq!(sanitize_path_component("", "fallback.bin"), "fallback.bin");
+        // `stored_attachment_name` passes an empty fallback to mean "no usable
+        // component" and branches on the empty result.
+        assert_eq!(sanitize_path_component("***", ""), "");
+    }
+
+    #[test]
+    fn long_names_are_capped() {
+        assert_eq!(
+            sanitize_path_component(&"a".repeat(128), "fallback"),
+            "a".repeat(96)
+        );
+    }
+}
+
 // Every test here exercises the Unix permission-bit path; the Windows
 // implementation is a no-op, so the whole module is Unix-only.
 #[cfg(all(test, unix))]

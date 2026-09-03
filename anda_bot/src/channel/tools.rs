@@ -275,14 +275,8 @@ mod tests {
     use crate::channel::{Channel, ChannelMessage, ChannelRuntime};
     use crate::util::json_schema::assert_openai_strict_parameters;
     use anda_core::{Principal, RequestMeta};
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-        unix_ms,
-    };
     use anda_engine::engine::{EngineBuilder, EngineRef};
     use async_trait::async_trait;
-    use object_store::{ObjectStore, memory::InMemory};
     use std::{collections::HashMap, sync::Arc};
     use tokio::sync::{Mutex as AsyncMutex, mpsc};
     use tokio_util::sync::CancellationToken;
@@ -335,31 +329,13 @@ mod tests {
     }
 
     async fn test_sender(channel: Arc<RecordingChannel>) -> ChannelSender {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: format!("channel_tools_test_{}", unix_ms()),
-                description: "channel tools test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
+        let db = crate::test_support::memory_db("channel_tools").await;
 
         let mut channels: HashMap<String, Arc<dyn Channel>> = HashMap::new();
         channels.insert(channel.id(), channel);
 
         ChannelRuntime::connect(
-            Arc::new(db),
+            db,
             Arc::new(EngineRef::new()),
             Principal::management_canister(),
             HashMap::new(),

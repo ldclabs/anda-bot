@@ -1363,7 +1363,6 @@ mod tests {
     use crate::engine::resources::ResourceStore;
     use crate::util::http_client::new_reqwest_client;
     use anda_core::{AgentInput, RequestMeta};
-    use anda_db::{database::DBConfig, storage::StorageConfig};
     use anda_engine::{
         engine::{AgentInfo, Engine, EngineRef},
         management::{BaseManagement, Visibility},
@@ -1371,7 +1370,6 @@ mod tests {
     };
     use anda_kip::Response as KipResp;
     use axum::{Router, routing};
-    use object_store::memory::InMemory;
     use std::collections::BTreeSet;
 
     struct FakeShellTool;
@@ -1408,27 +1406,7 @@ mod tests {
     }
 
     async fn build_test_db() -> Arc<anda_db::database::AndaDB> {
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        Arc::new(
-            anda_db::database::AndaDB::connect(
-                object_store,
-                DBConfig {
-                    name: "anda_bot_run_test".to_string(),
-                    description: "run test".to_string(),
-                    storage: StorageConfig {
-                        cache_max_capacity: 1024,
-                        cache_max_bytes: None,
-                        compress_level: 1,
-                        object_chunk_size: 256 * 1024,
-                        bucket_overload_size: 256 * 1024,
-                        max_small_object_size: 1024 * 1024,
-                    },
-                    lock: None,
-                },
-            )
-            .await
-            .unwrap(),
-        )
+        crate::test_support::memory_db("anda_bot_run").await
     }
 
     async fn spawn_brain_mock() -> String {
@@ -1467,12 +1445,8 @@ mod tests {
                     }))
                 }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}/v1/anda_bot")
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        format!("{base_url}/v1/anda_bot")
     }
 
     async fn build_bot_engine(home: PathBuf) -> (Arc<Engine>, Arc<AndaBot>) {

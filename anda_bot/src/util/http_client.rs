@@ -408,14 +408,10 @@ mod tests {
                 "/file-redirect",
                 get(|| async { Redirect::temporary("file:///etc/passwd") }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let response = fetch_public_url(
-            reqwest::Url::parse(&format!("http://{addr}/redirect")).unwrap(),
+            reqwest::Url::parse(&format!("{base_url}/redirect")).unwrap(),
             PublicUrlPolicy::AllowPrivateForTests,
         )
         .await
@@ -424,7 +420,7 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), "redirected body");
 
         let err = fetch_public_url(
-            reqwest::Url::parse(&format!("http://{addr}/file-redirect")).unwrap(),
+            reqwest::Url::parse(&format!("{base_url}/file-redirect")).unwrap(),
             PublicUrlPolicy::AllowPrivateForTests,
         )
         .await
@@ -486,15 +482,11 @@ mod tests {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let client = build_http_client(None, |builder| builder).unwrap();
         let response = client
-            .get(format!("http://{addr}/flaky"))
+            .get(format!("{base_url}/flaky"))
             .send()
             .await
             .unwrap();
@@ -522,15 +514,11 @@ mod tests {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let client = build_http_client(None, |builder| builder).unwrap();
         let response = client
-            .get(format!("http://{addr}/broken"))
+            .get(format!("{base_url}/broken"))
             .send()
             .await
             .unwrap();

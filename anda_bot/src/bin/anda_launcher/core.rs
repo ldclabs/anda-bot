@@ -24,7 +24,6 @@ use std::{
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE},
-    Globalization::GetUserDefaultLocaleName,
     System::Threading::{CreateMutexW, ReleaseMutex},
 };
 
@@ -34,6 +33,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub type LauncherResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = include_str!("../../../assets/config.yaml");
+use crate::locale;
 use crate::provider_env::CODEX_API_BASE;
 const ANDA_EXE_ENV: &str = "ANDA_EXE";
 const ANDA_LAUNCHER_EXE_ENV: &str = "ANDA_LAUNCHER_EXE";
@@ -624,7 +624,7 @@ struct LauncherUiSettings {
 pub fn load_persisted_language(home: &Path) -> Option<LauncherLanguage> {
     let content = fs::read_to_string(ui_settings_path(home)).ok()?;
     let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
-    language_from_tag(&settings.language)
+    locale::first_match([settings.language.as_str()], language_from_tag)
 }
 
 fn persist_launcher_language(home: &Path, language: LauncherLanguage) -> LauncherResult<()> {
@@ -640,116 +640,129 @@ fn persist_launcher_language(home: &Path, language: LauncherLanguage) -> Launche
 }
 
 fn detect_launcher_language() -> LauncherLanguage {
-    language_from_tags(system_locale_tags().iter().map(String::as_str))
+    language_from_tags(locale::system_locale_tags().iter().map(String::as_str))
 }
 
 fn language_from_tags<'a>(tags: impl IntoIterator<Item = &'a str>) -> LauncherLanguage {
-    for tag in tags {
-        if let Some(language) = language_from_tag(tag) {
-            return language;
-        }
-    }
-    LauncherLanguage::En
+    locale::first_match(tags, language_from_tag).unwrap_or(LauncherLanguage::En)
 }
 
+/// Maps a locale tag normalized by [`locale::normalize_tag`] to a language the
+/// launcher menu has translations for.
 fn language_from_tag(tag: &str) -> Option<LauncherLanguage> {
-    let normalized = tag
-        .trim()
-        .trim_matches('"')
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .replace('_', "-")
-        .to_ascii_lowercase();
-
-    if normalized.starts_with("zh") || normalized.contains("chinese") {
+    if tag.starts_with("zh") || tag.contains("chinese") {
         Some(LauncherLanguage::ZhHans)
-    } else if normalized.starts_with("en") {
+    } else if tag.starts_with("en") {
         Some(LauncherLanguage::En)
-    } else if normalized.starts_with("ru") {
+    } else if tag.starts_with("ru") {
         Some(LauncherLanguage::Ru)
-    } else if normalized.starts_with("ar") {
+    } else if tag.starts_with("ar") {
         Some(LauncherLanguage::Ar)
-    } else if normalized.starts_with("fr") {
+    } else if tag.starts_with("fr") {
         Some(LauncherLanguage::Fr)
-    } else if normalized.starts_with("es") {
+    } else if tag.starts_with("es") {
         Some(LauncherLanguage::Es)
     } else {
         None
     }
 }
 
-fn system_locale_tags() -> Vec<String> {
-    let mut tags = platform_locale_tags();
-    tags.extend(environment_locale_tags());
-    tags
+// ---------------------------------------------------------------------------
+// Platform-independent tray helpers.
+//
+// `macos.rs` and `windows.rs` render the tray differently but drive it with
+// the same background loops and the same status-line strings. These live here
+// so the two platform modules cannot drift — the Windows module is not
+// type-checked on a macOS workstation, which makes silent drift expensive.
+// ---------------------------------------------------------------------------
+
+pub fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
+    thread::spawn(move || {
+        let Some(_guard) = try_begin_menu_action() else {
+            return;
+        };
+        action();
+    });
 }
 
-#[cfg(target_os = "macos")]
-fn platform_locale_tags() -> Vec<String> {
-    let mut tags = macos_defaults_languages();
-    if let Some(locale) = macos_defaults_value("AppleLocale") {
-        tags.push(locale);
-    }
-    tags
+pub fn start_auto_update_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        loop {
+            if !begin_update_check() {
+                thread::sleep(auto_update_poll_interval());
+                continue;
+            }
+
+            match check_update_if_due(&ctx) {
+                Ok(state) => {
+                    finish_update_check(Some(state));
+                }
+                Err(err) => {
+                    finish_update_check(None);
+                    eprintln!("{}: {err}", text().update_check_failed_title);
+                }
+            }
+            thread::sleep(auto_update_poll_interval());
+        }
+    });
 }
 
-#[cfg(target_os = "macos")]
-fn macos_defaults_languages() -> Vec<String> {
-    let Some(output) = macos_defaults_value("AppleLanguages") else {
-        return Vec::new();
-    };
-
-    output
-        .lines()
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .trim_end_matches(',')
-                .trim()
-                .trim_matches('"')
-                .to_string()
-        })
-        .filter(|line| !line.is_empty())
-        .collect()
+pub fn start_status_loop(ctx: LauncherContext) {
+    thread::spawn(move || {
+        loop {
+            refresh_daemon_status_cache(&ctx);
+            thread::sleep(daemon_status_poll_interval());
+        }
+    });
 }
 
-#[cfg(target_os = "macos")]
-fn macos_defaults_value(key: &str) -> Option<String> {
-    let output = Command::new("defaults")
-        .arg("read")
-        .arg("-g")
-        .arg(key)
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+pub fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
+    format!("{}: {}", label, value.unwrap_or(unavailable))
 }
 
-#[cfg(windows)]
-fn platform_locale_tags() -> Vec<String> {
-    let mut buffer = [0u16; 85];
-    let len = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
-    if len <= 1 {
-        return Vec::new();
-    }
-    vec![String::from_utf16_lossy(&buffer[..(len as usize - 1)])]
+pub fn status_pid_title(status: &LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_pid,
+        status.pid.as_deref(),
+        &copy.status_unavailable,
+    )
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
-fn platform_locale_tags() -> Vec<String> {
-    Vec::new()
+pub fn status_gateway_title(status: &LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_gateway_url,
+        status.gateway_url.as_deref(),
+        &copy.status_unavailable,
+    )
 }
 
-fn environment_locale_tags() -> Vec<String> {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .filter_map(|name| env::var(name).ok())
-        .filter(|value| !value.trim().is_empty())
-        .collect()
+pub fn status_conversations_title(status: &LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_conversations,
+        status.conversations.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+pub fn status_memory_nodes_title(status: &LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_nodes,
+        status.memory_nodes.as_deref(),
+        &copy.status_unavailable,
+    )
+}
+
+pub fn status_memory_links_title(status: &LauncherDaemonStatus) -> String {
+    let copy = text();
+    status_value_title(
+        &copy.status_memory_links,
+        status.memory_links.as_deref(),
+        &copy.status_unavailable,
+    )
 }
 
 pub const PROVIDERS: &[ProviderPreset] = &[
@@ -1017,7 +1030,7 @@ pub fn reload_models_or_start_daemon(ctx: &LauncherContext) -> CommandResult {
     }
 }
 
-fn command_error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
+pub fn command_error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
     CommandResult {
         success: false,
         message: err.to_string(),
@@ -2343,7 +2356,7 @@ mod tests {
             assert!(!copy.language.is_empty());
             assert_ne!(copy.language, "launcher.language");
             assert!(!language.native_name().is_empty());
-            assert_eq!(language_from_tag(language.locale()), Some(language));
+            assert_eq!(language_from_tags([language.locale()]), language);
         }
     }
 
@@ -3158,8 +3171,7 @@ model:
 
     #[test]
     fn locale_tag_collectors_return_lists() {
-        // These just read the environment/platform; they must not panic.
-        let _ = system_locale_tags();
-        let _ = environment_locale_tags();
+        // This just reads the environment/platform; it must not panic.
+        let _ = locale::system_locale_tags();
     }
 }

@@ -1081,12 +1081,7 @@ async fn send_message_with_retry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use anda_engine::engine::Engine;
-    use object_store::{ObjectStore, memory::InMemory};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Notify;
     use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -1223,25 +1218,7 @@ mod tests {
         channel_users: HashMap<String, Principal>,
         work_dir: PathBuf,
     ) -> ChannelRuntime {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: format!("channel_runtime_test_{}", unix_ms()),
-                description: "channel runtime test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
+        let db = crate::test_support::memory_db("channel_runtime").await;
 
         let mut channels = HashMap::new();
         let channel_id = channel.id();
@@ -1249,7 +1226,7 @@ mod tests {
         channels.insert(channel_id, channel_impl);
 
         ChannelRuntime::connect(
-            Arc::new(db),
+            db,
             Arc::new(EngineRef::new()),
             default_user,
             channel_users,

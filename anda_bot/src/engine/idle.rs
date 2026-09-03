@@ -227,12 +227,8 @@ mod tests {
             )
             .with_state(state);
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}/v1/anda_bot")
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        format!("{base_url}/v1/anda_bot")
     }
 
     #[tokio::test]

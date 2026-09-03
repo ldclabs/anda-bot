@@ -408,17 +408,11 @@ mod tests {
         let app = axum::Router::new()
             .route(CALLBACK_PATH, axum::routing::get(mcp_oauth_callback))
             .with_state(flows());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
-        let response = reqwest::get(format!(
-            "http://{addr}{CALLBACK_PATH}?code=abc&state=unknown"
-        ))
-        .await
-        .unwrap();
+        let response = reqwest::get(format!("{base_url}{CALLBACK_PATH}?code=abc&state=unknown"))
+            .await
+            .unwrap();
         // Reached the handler, and an unmatched state is refused there rather
         // than at an auth layer.
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);

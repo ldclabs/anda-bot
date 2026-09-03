@@ -29,6 +29,7 @@ use super::{
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
+use crate::util::fs::sanitize_path_component;
 use crate::util::http_client::PublicUrlPolicy;
 
 const MAX_OTHER_TEXT_INLINE_BYTES: usize = 256 * 1024;
@@ -527,28 +528,7 @@ fn fallback_attachment_file_name(attachment: &OtherAttachment) -> String {
         )
     };
 
-    sanitize_fallback_attachment_file_name(candidate.as_ref(), "attachment.bin")
-}
-
-fn sanitize_fallback_attachment_file_name(value: &str, fallback: &str) -> String {
-    let mut sanitized = String::with_capacity(value.len().min(96));
-    for ch in value.trim().chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-            sanitized.push(ch);
-        } else if !sanitized.ends_with('_') {
-            sanitized.push('_');
-        }
-        if sanitized.len() >= 96 {
-            break;
-        }
-    }
-
-    let sanitized = sanitized.trim_matches(['.', '-', '_']).to_string();
-    if sanitized.is_empty() {
-        fallback.to_string()
-    } else {
-        sanitized
-    }
+    sanitize_path_component(candidate.as_ref(), "attachment.bin")
 }
 
 pub(super) fn fallback_other_attachment_prompt(

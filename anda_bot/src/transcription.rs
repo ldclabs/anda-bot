@@ -566,12 +566,8 @@ mod tests {
             "/transcribe",
             routing::post(move || async move { axum::Json(json!({"text": text})) }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}/transcribe")
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        format!("{base_url}/transcribe")
     }
 
     fn enabled_config_with_groq(api_url: String) -> TranscriptionConfig {

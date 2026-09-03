@@ -456,15 +456,6 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     use axum::{Router, routing};
     use serde_json::json;
 
-    async fn spawn_gateway_mock(app: Router) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
-    }
-
     fn authorized(headers: &http::HeaderMap) -> bool {
         headers
             .get(http::header::AUTHORIZATION)
@@ -521,7 +512,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
 
     #[tokio::test]
     async fn status_sends_bearer_token_and_decodes_response() {
-        let base_url = spawn_gateway_mock(status_app()).await;
+        let base_url = crate::test_support::spawn_http_mock(status_app()).await;
 
         let client = Client::new(base_url.clone(), "token-1".to_string())
             .with_http_client(new_reqwest_client());
@@ -542,7 +533,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             "/daemon/status",
             routing::get(|| async { "definitely not json" }),
         );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let client = Client::new(base_url, "token-1".to_string());
         let err = client.status().await.map(|_| ()).unwrap_err();
@@ -573,7 +564,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                     }))
                 }),
             );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
 
         let state = client.auto_update_check().await.unwrap();
@@ -608,7 +599,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                 async move { axum::Json(body) }
             }),
         );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
 
         let result = client
@@ -629,7 +620,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                 async move { axum::Json(body) }
             }),
         );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
 
         let err = client
@@ -656,7 +647,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                 async move { axum::Json(body) }
             }),
         );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
 
         let result: ToolOutput<Json> = client
@@ -677,7 +668,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
 
     #[tokio::test]
     async fn rebased_client_targets_new_base_url() {
-        let base_url = spawn_gateway_mock(status_app()).await;
+        let base_url = crate::test_support::spawn_http_mock(status_app()).await;
 
         let dead = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string());
         assert!(dead.status().await.is_err());
@@ -688,7 +679,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
 
     #[tokio::test]
     async fn wait_for_daemon_ready_succeeds_and_times_out() {
-        let base_url = spawn_gateway_mock(status_app()).await;
+        let base_url = crate::test_support::spawn_http_mock(status_app()).await;
         let client = Client::new(base_url, "token-1".to_string());
         client
             .wait_for_daemon_ready(Duration::from_secs(5))
@@ -774,7 +765,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
                     axum::Json(json!({"result": {"ok": true}, "next_cursor": null}))
                 }),
             );
-        let base_url = spawn_gateway_mock(app).await;
+        let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
 
         let state = client.auto_update_install_and_restart().await.unwrap();
@@ -789,7 +780,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
 
     #[tokio::test]
     async fn ensure_daemon_running_returns_already_running_when_status_ok() {
-        let base_url = spawn_gateway_mock(status_app()).await;
+        let base_url = crate::test_support::spawn_http_mock(status_app()).await;
         let client =
             Client::new(base_url, "token-1".to_string()).with_http_client(new_reqwest_client());
         let dir = tempfile::tempdir().unwrap();

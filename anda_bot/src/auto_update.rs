@@ -483,48 +483,18 @@ mod tests {
         assert_eq!(sanitize_path_segment("v0/7/8"), "v0_7_8");
     }
 
-    use anda_db::{database::DBConfig, storage::StorageConfig};
-    use axum::{Router, routing::get};
-    use object_store::memory::InMemory;
-
     use crate::util::http_client::new_reqwest_client;
-
-    async fn spawn_mock(app: Router) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
-    }
+    use axum::{Router, routing::get};
 
     async fn test_updater() -> AutoUpdater {
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "auto_update_test_db".to_string(),
-                description: "auto update test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
+        let db = crate::test_support::memory_db("auto_update").await;
         // All HTTP requests are routed through a dead proxy so checks fail
         // fast without touching the network.
         let http = reqwest::Client::builder()
             .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
             .build()
             .unwrap();
-        AutoUpdater::new(Arc::new(db), std::env::temp_dir(), http)
+        AutoUpdater::new(db, std::env::temp_dir(), http)
     }
 
     #[test]
@@ -638,7 +608,7 @@ mod tests {
             "/anda-macos-arm64",
             get(|| async { (axum::http::StatusCode::OK, "new-binary") }),
         );
-        let base = spawn_mock(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let client = new_reqwest_client();
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("anda-macos-arm64");

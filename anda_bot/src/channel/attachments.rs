@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::util::file_uri::file_uri_for_path;
+use crate::util::fs::sanitize_path_component;
 
 pub type InferType = infer2::Type;
 
@@ -150,27 +151,6 @@ fn stored_attachment_name(message_key: Option<&str>, file_name: &str) -> String 
     format!("{prefix}-{file_name}")
 }
 
-fn sanitize_path_component(value: &str, fallback: &str) -> String {
-    let mut sanitized = String::with_capacity(value.len().min(96));
-    for ch in value.trim().chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-            sanitized.push(ch);
-        } else if !sanitized.ends_with('_') {
-            sanitized.push('_');
-        }
-        if sanitized.len() >= 96 {
-            break;
-        }
-    }
-
-    let sanitized = sanitized.trim_matches(['.', '-', '_']).to_string();
-    if sanitized.is_empty() {
-        fallback.to_string()
-    } else {
-        sanitized
-    }
-}
-
 async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, BoxError> {
     let candidate = dir.join(file_name);
     if !tokio::fs::try_exists(&candidate).await? {
@@ -206,26 +186,6 @@ async fn unique_attachment_path(dir: &Path, file_name: &str) -> Result<PathBuf, 
 mod tests {
     use super::*;
     use crate::util::file_uri::path_from_file_uri;
-
-    #[test]
-    fn sanitize_path_component_keeps_safe_ascii_and_collapses_separators() {
-        assert_eq!(
-            sanitize_path_component(" report-01.json ", "fallback"),
-            "report-01.json"
-        );
-        assert_eq!(
-            sanitize_path_component("../奇怪 文件?.png", "fallback"),
-            "png"
-        );
-        assert_eq!(
-            sanitize_path_component("***", "fallback.bin"),
-            "fallback.bin"
-        );
-        assert_eq!(
-            sanitize_path_component(&"a".repeat(128), "fallback"),
-            "a".repeat(96)
-        );
-    }
 
     #[test]
     fn stored_attachment_name_uses_sanitized_message_key_and_file_name() {

@@ -1159,10 +1159,6 @@ mod tests {
     use crate::engine::{ActionEvent, ActionRuntime, action::ActionStatus};
     use anda_brain::types::InputContext;
     use anda_core::{AgentOutput, BoxPinFut, RequestMeta};
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use anda_engine::{
         engine::EngineBuilder,
         model::{CompletionFeaturesDyn, Model},
@@ -1307,37 +1303,12 @@ mod tests {
                 "/v1/anda_bot/get_or_init_user",
                 routing::post(|| async { axum::Json(serde_json::json!({"name": "u"})) }),
             );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}/v1/anda_bot")
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        format!("{base_url}/v1/anda_bot")
     }
 
     async fn build_runner_bot_with_brain(brain_url: String) -> AndaBot {
-        let object_store: Arc<dyn object_store::ObjectStore> =
-            Arc::new(object_store::memory::InMemory::new());
-        let db = Arc::new(
-            AndaDB::connect(
-                object_store,
-                DBConfig {
-                    name: "runner_brain_test".to_string(),
-                    description: "runner brain test".to_string(),
-                    storage: StorageConfig {
-                        cache_max_capacity: 1024,
-                        cache_max_bytes: None,
-                        compress_level: 1,
-                        object_chunk_size: 256 * 1024,
-                        bucket_overload_size: 256 * 1024,
-                        max_small_object_size: 1024 * 1024,
-                    },
-                    lock: None,
-                },
-            )
-            .await
-            .unwrap(),
-        );
+        let db = crate::test_support::memory_db("runner_brain").await;
         let brain_client = brain::Client::new(brain_url, Some("t".to_string()))
             .with_http_client(crate::util::http_client::new_reqwest_client());
         let conversations_tool = Arc::new(
@@ -1388,28 +1359,7 @@ mod tests {
     }
 
     async fn build_runner_bot() -> AndaBot {
-        let object_store: Arc<dyn object_store::ObjectStore> =
-            Arc::new(object_store::memory::InMemory::new());
-        let db = Arc::new(
-            AndaDB::connect(
-                object_store,
-                DBConfig {
-                    name: "runner_test".to_string(),
-                    description: "runner test".to_string(),
-                    storage: StorageConfig {
-                        cache_max_capacity: 1024,
-                        cache_max_bytes: None,
-                        compress_level: 1,
-                        object_chunk_size: 256 * 1024,
-                        bucket_overload_size: 256 * 1024,
-                        max_small_object_size: 1024 * 1024,
-                    },
-                    lock: None,
-                },
-            )
-            .await
-            .unwrap(),
-        );
+        let db = crate::test_support::memory_db("runner").await;
         // Dead-proxy brain client: formation submission fails fast (the stop
         // path tolerates the error) without needing a live brain.
         let http = reqwest::Client::builder()

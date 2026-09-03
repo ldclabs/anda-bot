@@ -21,7 +21,9 @@ use super::{
 };
 use crate::{
     config::{self, normalize_identity, normalize_string},
-    util::{file_uri::path_from_file_uri_or_path, text::read_text_file},
+    util::{
+        file_uri::path_from_file_uri_or_path, fs::sanitize_path_component, text::read_text_file,
+    },
 };
 
 const WECHAT_MAX_MESSAGE_LENGTH: usize = 4000;
@@ -978,27 +980,6 @@ fn is_identity_allowed(allowed_users: &[String], identity: &str) -> bool {
             .any(|allowed| allowed == "*" || allowed == &identity)
 }
 
-fn sanitize_path_component(value: &str, fallback: &str) -> String {
-    let mut sanitized = String::with_capacity(value.len().min(96));
-    for ch in value.trim().chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-            sanitized.push(ch);
-        } else if !sanitized.ends_with('_') {
-            sanitized.push('_');
-        }
-        if sanitized.len() >= 96 {
-            break;
-        }
-    }
-
-    let sanitized = sanitized.trim_matches(['.', '-', '_']).to_string();
-    if sanitized.is_empty() {
-        fallback.to_string()
-    } else {
-        sanitized
-    }
-}
-
 fn print_qr_hint(content: &str) {
     println!("\nWeChat QR login required for anda_bot.");
     println!("Open or scan this QR content, then confirm login:");
@@ -1093,15 +1074,6 @@ mod tests {
                 "no characters lost"
             );
         }
-    }
-
-    #[test]
-    fn sanitize_path_component_uses_fallback() {
-        assert_eq!(sanitize_path_component("../../", "media.bin"), "media.bin");
-        assert_eq!(
-            sanitize_path_component("hello world.txt", "media.bin"),
-            "hello_world.txt"
-        );
     }
 
     #[test]

@@ -449,12 +449,8 @@ mod tests {
         let app = Router::new()
             .route("/engine/default", routing::post(agent_gateway_handler))
             .with_state(Arc::new(conversations));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        gateway::Client::new(format!("http://{addr}"), "token".to_string())
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        gateway::Client::new(base_url, "token".to_string())
     }
 
     fn finished_conversation(id: u64, status: ConversationStatus) -> Conversation {

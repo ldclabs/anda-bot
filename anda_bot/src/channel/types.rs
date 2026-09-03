@@ -431,28 +431,44 @@ pub trait Channel: Send + Sync {
     fn should_retry_send(&self, _error: &str) -> bool {
         false
     }
+}
 
-    // NOTE: the typing/draft-streaming API below (start_typing through
-    // finalize_draft) is implemented and unit-tested for Discord/Telegram but
-    // not yet wired into the engine/gateway reply path — nothing calls it in
-    // production. It is kept as a staged feature; remove the #[allow(unused)]
-    // markers when the streaming delivery lands.
-
+/// Progressive-delivery and message-management operations a channel may
+/// support on top of plain [`Channel::send`].
+///
+/// **Staged, not wired.** Every method here is implemented and unit-tested
+/// for the channels that can do it (Discord covers all of them, Telegram and
+/// Lark a subset), but nothing in `ChannelRuntime` calls them yet — replies
+/// still go out through `Channel::send` as one finished message. The trait is
+/// kept separate so that [`Channel`] states only the contract the runtime
+/// actually depends on, and so that adding a channel means implementing nine
+/// methods rather than twenty-four.
+///
+/// Every method defaults to a tolerant no-op, so a channel implements only
+/// what its platform supports; a caller must therefore ask
+/// [`supports_draft_updates`](StreamingChannel::supports_draft_updates) or
+/// [`supports_multi_message_streaming`](StreamingChannel::supports_multi_message_streaming)
+/// before assuming an edit or a reaction had any effect. Message ids are
+/// platform-scoped and only meaningful to the channel that issued them.
+///
+/// When streaming delivery does land, wire it here and drop the
+/// `allow(dead_code)` below — that marker is the one place recording that
+/// this whole trait has no caller yet.
+#[allow(dead_code)]
+#[async_trait]
+pub trait StreamingChannel: Channel {
     /// Signal that the bot is processing a response (e.g. "typing" indicator).
     /// Implementations should repeat the indicator as needed for their platform.
-    #[allow(unused)]
     async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Stop any active typing indicator.
-    #[allow(unused)]
     async fn stop_typing(&self, _recipient: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Whether this channel supports progressive message updates via draft edits.
-    #[allow(unused)]
     fn supports_draft_updates(&self) -> bool {
         false
     }
@@ -460,26 +476,22 @@ pub trait Channel: Send + Sync {
     /// Whether this channel supports multi-message streaming delivery, where
     /// the response is sent as multiple separate messages at paragraph
     /// boundaries as tokens arrive from the provider.
-    #[allow(unused)]
     fn supports_multi_message_streaming(&self) -> bool {
         false
     }
 
     /// Minimum delay (ms) between sending each paragraph in multi-message mode.
     /// Channels should override this to avoid platform rate limits.
-    #[allow(unused)]
     fn multi_message_delay_ms(&self) -> u64 {
         800
     }
 
     /// Send an initial draft message. Returns a platform-specific message ID for later edits.
-    #[allow(unused)]
     async fn send_draft(&self, _message: &SendMessage) -> Result<Option<String>, BoxError> {
         Ok(None)
     }
 
     /// Update a previously sent draft message with new accumulated content.
-    #[allow(unused)]
     async fn update_draft(
         &self,
         _recipient: &str,
@@ -492,7 +504,6 @@ pub trait Channel: Send + Sync {
     /// Show a progress/status update (e.g. tool execution status).
     /// Channels can display this in a status bar rather than in the message body.
     /// Default: no-op (progress is ignored).
-    #[allow(unused)]
     async fn update_draft_progress(
         &self,
         _recipient: &str,
@@ -503,7 +514,6 @@ pub trait Channel: Send + Sync {
     }
 
     /// Finalize a draft with the complete response (e.g. apply Markdown formatting).
-    #[allow(unused)]
     async fn finalize_draft(
         &self,
         _recipient: &str,
@@ -514,7 +524,6 @@ pub trait Channel: Send + Sync {
     }
 
     /// Cancel and remove a previously sent draft message if the channel supports it.
-    #[allow(unused)]
     async fn cancel_draft(&self, _recipient: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
@@ -524,7 +533,6 @@ pub trait Channel: Send + Sync {
     /// `channel_id` is the platform channel/conversation identifier (e.g. Discord channel ID).
     /// `message_id` is the platform-scoped message identifier (e.g. `discord_<snowflake>`).
     /// `emoji` is the Unicode emoji to react with (e.g. "👀", "✅").
-    #[allow(unused)]
     async fn add_reaction(
         &self,
         _channel_id: &str,
@@ -535,7 +543,6 @@ pub trait Channel: Send + Sync {
     }
 
     /// Remove a reaction (emoji) from a message previously added by this bot.
-    #[allow(unused)]
     async fn remove_reaction(
         &self,
         _channel_id: &str,
@@ -546,13 +553,11 @@ pub trait Channel: Send + Sync {
     }
 
     /// Pin a message in the channel.
-    #[allow(unused)]
     async fn pin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
 
     /// Unpin a previously pinned message.
-    #[allow(unused)]
     async fn unpin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
         Ok(())
     }
@@ -562,7 +567,6 @@ pub trait Channel: Send + Sync {
     /// `channel_id` is the platform channel/conversation identifier.
     /// `message_id` is the platform-scoped message identifier.
     /// `reason` is an optional reason for the redaction (may be visible in audit logs).
-    #[allow(unused)]
     async fn redact_message(
         &self,
         _channel_id: &str,
@@ -710,6 +714,11 @@ mod tests {
         }
     }
 
+    // Every streaming operation is left at its default, which is what makes
+    // this the right fixture for asserting they are all tolerant no-ops.
+    #[async_trait]
+    impl StreamingChannel for MinimalChannel {}
+
     #[test]
     fn shared_split_prefers_newlines_then_spaces_then_hard_breaks() {
         // Short input stays whole.
@@ -763,6 +772,12 @@ mod tests {
 
         assert!(channel.health_check().await);
         assert!(!channel.should_retry_send("timeout"));
+    }
+
+    #[tokio::test]
+    async fn streaming_channel_defaults_are_tolerant_no_ops() {
+        let channel = MinimalChannel;
+
         assert!(!channel.supports_draft_updates());
         assert!(!channel.supports_multi_message_streaming());
         assert_eq!(channel.multi_message_delay_ms(), 800);

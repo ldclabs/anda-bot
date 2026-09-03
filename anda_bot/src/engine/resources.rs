@@ -358,31 +358,11 @@ mod tests {
     }
 
     use anda_core::ByteBufB64;
-    use anda_db::{database::DBConfig, storage::StorageConfig};
     use anda_engine::engine::EngineBuilder;
-    use object_store::memory::InMemory;
 
     async fn test_resource_store() -> ResourceStore {
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "resources_test_db".to_string(),
-                description: "resources test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
-        ResourceStore::connect(Arc::new(db)).await.unwrap()
+        let db = crate::test_support::memory_db("resources").await;
+        ResourceStore::connect(db).await.unwrap()
     }
 
     fn sample_resource(name: &str) -> Resource {

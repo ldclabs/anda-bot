@@ -12,8 +12,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    apply_continuation_markers, file_name_for_resource, is_http_url, is_transient_send_error,
-    random_from_pool, resource_from_bytes, split_message_on_word_boundaries,
+    StreamingChannel, apply_continuation_markers, file_name_for_resource, is_http_url,
+    is_transient_send_error, random_from_pool, resource_from_bytes,
+    split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -1220,7 +1221,10 @@ impl Channel for TelegramChannel {
             Ok(Ok(response)) if response.status().is_success()
         )
     }
+}
 
+#[async_trait]
+impl StreamingChannel for TelegramChannel {
     async fn start_typing(&self, recipient: &str) -> Result<(), BoxError> {
         self.stop_typing(recipient).await?;
 
@@ -1518,12 +1522,7 @@ mod tests {
                 routing::get(|| async { "JPEGDATA" }),
             )
             .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
+        crate::test_support::spawn_http_mock(app).await
     }
 
     async fn mock_channel(

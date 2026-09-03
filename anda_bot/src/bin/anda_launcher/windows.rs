@@ -303,11 +303,11 @@ fn show_tray_menu(hwnd: HWND) {
         append_separator(menu);
         let status = core::cached_daemon_status();
         append_disabled_item(menu, &copy.status);
-        append_disabled_item(menu, &status_pid_title(&status));
-        append_disabled_item(menu, &status_gateway_title(&status));
-        append_disabled_item(menu, &status_conversations_title(&status));
-        append_disabled_item(menu, &status_memory_nodes_title(&status));
-        append_disabled_item(menu, &status_memory_links_title(&status));
+        append_disabled_item(menu, &core::status_pid_title(&status));
+        append_disabled_item(menu, &core::status_gateway_title(&status));
+        append_disabled_item(menu, &core::status_conversations_title(&status));
+        append_disabled_item(menu, &core::status_memory_nodes_title(&status));
+        append_disabled_item(menu, &core::status_memory_links_title(&status));
         append_separator(menu);
         append_item(menu, ID_RESTART, &copy.restart_daemon);
         append_item(menu, ID_BROWSER_TOKEN, &copy.browser_extension_token);
@@ -589,55 +589,6 @@ fn show_result(title: &str, result: &CommandResult) {
     message_box(title, &result.message, style);
 }
 
-fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_pid,
-        status.pid.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_gateway_url,
-        status.gateway_url.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_conversations_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_conversations,
-        status.conversations.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_memory_nodes_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_memory_nodes,
-        status.memory_nodes.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_memory_links_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_memory_links,
-        status.memory_links.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
-    format!("{}: {}", label, value.unwrap_or(unavailable))
-}
-
 fn show_browser_extension_token_result(result: &CommandResult) {
     if result.success && copy_to_clipboard(&result.message).is_ok() {
         let token = core::browser_extension_bearer_token(&result.message);
@@ -758,17 +709,8 @@ fn open_anda_terminal_async(ctx: LauncherContext) {
 
 // Serialized through the menu-action gate so rapid repeated tray clicks
 // cannot run concurrent `anda` commands or stack result dialogs.
-fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
-    thread::spawn(move || {
-        let Some(_guard) = core::try_begin_menu_action() else {
-            return;
-        };
-        action();
-    });
-}
-
 fn run_settings_wizard_async(ctx: LauncherContext) {
-    spawn_menu_action(move || match settings::run_wizard(&ctx) {
+    core::spawn_menu_action(move || match settings::run_wizard(&ctx) {
         Ok(true) => show_result(
             &text().app_title,
             &core::reload_models_or_start_daemon(&ctx),
@@ -782,22 +724,23 @@ fn show_command_result_async<F>(title: String, ctx: LauncherContext, command: F)
 where
     F: FnOnce(&LauncherContext) -> LauncherResult<CommandResult> + Send + 'static,
 {
-    spawn_menu_action(move || {
-        let result = command(&ctx).unwrap_or_else(error_result);
+    core::spawn_menu_action(move || {
+        let result = command(&ctx).unwrap_or_else(core::command_error_result);
         show_result(&title, &result);
     });
 }
 
 fn show_browser_extension_token_result_async(ctx: LauncherContext) {
-    spawn_menu_action(move || {
+    core::spawn_menu_action(move || {
         show_browser_extension_token_result(
-            &core::generate_browser_extension_token(&ctx).unwrap_or_else(error_result),
+            &core::generate_browser_extension_token(&ctx)
+                .unwrap_or_else(core::command_error_result),
         );
     });
 }
 
 fn toggle_autostart_async(ctx: LauncherContext) {
-    spawn_menu_action(move || match toggle_autostart(&ctx) {
+    core::spawn_menu_action(move || match toggle_autostart(&ctx) {
         Ok(message) => message_box(&text().app_title, &message, MB_OK | MB_ICONINFORMATION),
         Err(err) => show_error(&text().app_title, &err.to_string()),
     });
@@ -839,8 +782,8 @@ fn start_startup_tasks(ctx: LauncherContext) {
         if let Err(err) = run_startup_setup(&ctx) {
             show_error(&text().app_title, &err.to_string());
         }
-        start_status_loop(ctx.clone());
-        start_auto_update_loop(ctx);
+        core::start_status_loop(ctx.clone());
+        core::start_auto_update_loop(ctx);
     });
 }
 
@@ -856,37 +799,6 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
         let _ = core::start_daemon(ctx);
     }
     Ok(())
-}
-
-fn start_status_loop(ctx: LauncherContext) {
-    thread::spawn(move || {
-        loop {
-            core::refresh_daemon_status_cache(&ctx);
-            thread::sleep(core::daemon_status_poll_interval());
-        }
-    });
-}
-
-fn start_auto_update_loop(ctx: LauncherContext) {
-    thread::spawn(move || {
-        loop {
-            if !core::begin_update_check() {
-                thread::sleep(core::auto_update_poll_interval());
-                continue;
-            }
-
-            match core::check_update_if_due(&ctx) {
-                Ok(state) => {
-                    core::finish_update_check(Some(state));
-                }
-                Err(err) => {
-                    core::finish_update_check(None);
-                    eprintln!("{}: {err}", text().update_check_failed_title);
-                }
-            }
-            thread::sleep(core::auto_update_poll_interval());
-        }
-    });
 }
 
 fn run_manual_update_check(_hwnd: HWND, ctx: LauncherContext) {
@@ -941,7 +853,7 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     // Serialize with other daemon-touching menu actions so a concurrent
     // restart cannot interleave with the install.
     let _guard = core::begin_menu_action();
-    let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
+    let result = core::install_update_and_restart(&ctx).unwrap_or_else(core::command_error_result);
     if result.success {
         core::finish_update_restart_success(&state);
         if let Err(err) = restart_launcher_after_update(&ctx) {
@@ -1012,13 +924,6 @@ fn confirm_update_restart(latest_tag: &str) -> bool {
         &text().update_ready_title,
         &text().update_restart_confirm(latest_tag),
     )
-}
-
-fn error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
-    CommandResult {
-        success: false,
-        message: err.to_string(),
-    }
 }
 
 fn toggle_autostart(ctx: &LauncherContext) -> LauncherResult<String> {

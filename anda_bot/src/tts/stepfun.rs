@@ -339,16 +339,12 @@ mod tests {
                 move || async move { (http::StatusCode::from_u16(status).unwrap(), body) },
             ),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         StepFunTtsProvider::new(
             &config::StepFunTtsConfig {
                 api_key: "sk-test".to_string(),
-                api_url: format!("http://{addr}/tts"),
+                api_url: format!("{base_url}/tts"),
                 ..Default::default()
             },
             "mp3",

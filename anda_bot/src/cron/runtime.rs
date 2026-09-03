@@ -407,31 +407,10 @@ mod tests {
 
     #[tokio::test]
     async fn serve_skips_ticks_without_engine_and_stops_on_cancel() {
-        use anda_db::database::DBConfig;
-        use anda_db::storage::StorageConfig;
         use anda_engine::engine::EngineRef;
-        use object_store::memory::InMemory;
 
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "cron_serve_test_db".to_string(),
-                description: "cron serve test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
-        let runtime = CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+        let db = crate::test_support::memory_db("cron_serve").await;
+        let runtime = CronRuntime::connect(Arc::new(EngineRef::new()), db)
             .await
             .unwrap();
 
@@ -548,30 +527,10 @@ mod tests {
     }
 
     async fn test_runtime() -> CronRuntime {
-        use anda_db::{database::DBConfig, storage::StorageConfig};
         use anda_engine::engine::EngineRef;
-        use object_store::memory::InMemory;
 
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "cron_engine_test_db".to_string(),
-                description: "cron engine test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
-        CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+        let db = crate::test_support::memory_db("cron_engine").await;
+        CronRuntime::connect(Arc::new(EngineRef::new()), db)
             .await
             .unwrap()
     }

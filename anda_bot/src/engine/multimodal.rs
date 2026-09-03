@@ -615,15 +615,6 @@ mod tests {
 
     use axum::{Router, http::StatusCode as AxumStatus, routing::get};
 
-    async fn spawn_router(app: Router) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
-    }
-
     fn mock_ctx() -> AgentCtx {
         anda_engine::engine::EngineBuilder::new().mock_ctx()
     }
@@ -816,7 +807,7 @@ mod tests {
         let app = Router::new()
             .route("/doc.txt", get(|| async { "remote body" }))
             .route("/missing", get(|| async { (AxumStatus::NOT_FOUND, "") }));
-        let base = spawn_router(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let agent = MediaUnderstandingAgent::other(Vec::new())
             .with_http_client(crate::util::http_client::new_reqwest_client());
 
@@ -852,7 +843,7 @@ mod tests {
                     )
                 }),
             );
-        let base = spawn_router(app).await;
+        let base = crate::test_support::spawn_http_mock(app).await;
         let agent = MediaUnderstandingAgent::image(Vec::new())
             .with_http_client(crate::util::http_client::new_reqwest_client());
 

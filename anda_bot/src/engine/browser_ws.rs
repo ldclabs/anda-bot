@@ -18,7 +18,6 @@ use rust_i18n::t;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{
-    env,
     path::PathBuf,
     sync::{Arc, OnceLock},
 };
@@ -34,6 +33,7 @@ use super::{
     browser::{BrowserActionResult, BrowserBridge, BrowserCommand},
 };
 use crate::brain;
+use crate::util::locale;
 #[cfg(target_os = "windows")]
 use crate::util::windows_process::suppress_tokio_console_window;
 use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
@@ -488,116 +488,26 @@ fn workspace_picker_language() -> WorkspacePickerLanguage {
 }
 
 fn detect_workspace_picker_language() -> WorkspacePickerLanguage {
-    language_from_tags(system_locale_tags())
+    language_from_tags(locale::system_locale_tags())
 }
 
 fn language_from_tags<T>(tags: impl IntoIterator<Item = T>) -> WorkspacePickerLanguage
 where
     T: AsRef<str>,
 {
-    for tag in tags {
-        if let Some(language) = language_from_tag(tag.as_ref()) {
-            return language;
-        }
-    }
-    WorkspacePickerLanguage::En
+    locale::first_match(tags, language_from_tag).unwrap_or(WorkspacePickerLanguage::En)
 }
 
+/// Maps a locale tag normalized by [`locale::normalize_tag`] to a language the
+/// workspace picker has translations for.
 fn language_from_tag(tag: &str) -> Option<WorkspacePickerLanguage> {
-    let normalized = tag
-        .trim()
-        .trim_matches('"')
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .replace('_', "-")
-        .to_ascii_lowercase();
-
-    if normalized.starts_with("zh") || normalized.contains("chinese") {
+    if tag.starts_with("zh") || tag.contains("chinese") {
         Some(WorkspacePickerLanguage::ZhHans)
-    } else if normalized.starts_with("en") {
+    } else if tag.starts_with("en") {
         Some(WorkspacePickerLanguage::En)
     } else {
         None
     }
-}
-
-fn system_locale_tags() -> Vec<String> {
-    let mut tags = platform_locale_tags();
-    tags.extend(environment_locale_tags());
-    tags
-}
-
-#[cfg(target_os = "macos")]
-fn platform_locale_tags() -> Vec<String> {
-    let mut tags = macos_defaults_languages();
-    if let Some(locale) = macos_defaults_value("AppleLocale") {
-        tags.push(locale);
-    }
-    tags
-}
-
-#[cfg(target_os = "macos")]
-fn macos_defaults_languages() -> Vec<String> {
-    let Some(output) = macos_defaults_value("AppleLanguages") else {
-        return Vec::new();
-    };
-
-    output
-        .lines()
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .trim_end_matches(',')
-                .trim()
-                .trim_matches('"')
-                .to_string()
-        })
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-#[cfg(target_os = "macos")]
-fn macos_defaults_value(key: &str) -> Option<String> {
-    let output = std::process::Command::new("defaults")
-        .arg("read")
-        .arg("-g")
-        .arg(key)
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn platform_locale_tags() -> Vec<String> {
-    let mut buffer = [0u16; 85];
-    let len = unsafe {
-        windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
-            buffer.as_mut_ptr(),
-            buffer.len() as i32,
-        )
-    };
-    if len <= 1 {
-        return Vec::new();
-    }
-    vec![String::from_utf16_lossy(&buffer[..(len as usize - 1)])]
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn platform_locale_tags() -> Vec<String> {
-    Vec::new()
-}
-
-fn environment_locale_tags() -> Vec<String> {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .filter_map(|name| env::var(name).ok())
-        .filter(|value| !value.trim().is_empty())
-        .collect()
 }
 
 async fn select_workspace_path() -> Result<Option<PathBuf>, String> {
@@ -1063,10 +973,10 @@ fn percent_decode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tag,
-        language_from_tags, launcher_ui_language, normalize_selected_workspace_path,
-        powershell_single_quoted_string, workspace_picker_macos_script,
-        workspace_picker_title_for_language, workspace_picker_windows_script,
+        WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tags,
+        launcher_ui_language, normalize_selected_workspace_path, powershell_single_quoted_string,
+        workspace_picker_macos_script, workspace_picker_title_for_language,
+        workspace_picker_windows_script,
     };
     use std::{env, fs, path::MAIN_SEPARATOR};
 
@@ -1095,17 +1005,14 @@ mod tests {
     #[test]
     fn workspace_picker_language_prefers_chinese_system_tags() {
         assert_eq!(
-            language_from_tag("zh_CN.UTF-8"),
-            Some(WorkspacePickerLanguage::ZhHans)
+            language_from_tags(["zh_CN.UTF-8"]),
+            WorkspacePickerLanguage::ZhHans
         );
         assert_eq!(
-            language_from_tag("Chinese (Simplified)"),
-            Some(WorkspacePickerLanguage::ZhHans)
+            language_from_tags(["Chinese (Simplified)"]),
+            WorkspacePickerLanguage::ZhHans
         );
-        assert_eq!(
-            language_from_tag("en-US"),
-            Some(WorkspacePickerLanguage::En)
-        );
+        assert_eq!(language_from_tags(["en-US"]), WorkspacePickerLanguage::En);
         assert_eq!(
             language_from_tags(["fr-FR", "zh-Hans"]),
             WorkspacePickerLanguage::ZhHans
@@ -1181,10 +1088,6 @@ mod tests {
 
     use super::*;
     use anda_core::{Agent, AgentOutput, FunctionDefinition, Resource, Tool, ToolOutput};
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use anda_engine::{
         context::{AgentCtx, BaseCtx},
         engine::{AgentInfo, Engine},
@@ -1261,28 +1164,7 @@ mod tests {
         crate::identity::Ed25519Key,
     ) {
         let auth_key = crate::identity::Ed25519Key::new([9u8; 32]);
-        let object_store: Arc<dyn object_store::ObjectStore> =
-            Arc::new(object_store::memory::InMemory::new());
-        let db = Arc::new(
-            AndaDB::connect(
-                object_store,
-                DBConfig {
-                    name: "ws_test".to_string(),
-                    description: "ws".to_string(),
-                    storage: StorageConfig {
-                        cache_max_capacity: 1024,
-                        cache_max_bytes: None,
-                        compress_level: 1,
-                        object_chunk_size: 256 * 1024,
-                        bucket_overload_size: 256 * 1024,
-                        max_small_object_size: 1024 * 1024,
-                    },
-                    lock: None,
-                },
-            )
-            .await
-            .unwrap(),
-        );
+        let db = crate::test_support::memory_db("ws").await;
 
         let engine = Arc::new(
             Engine::builder()
@@ -1452,6 +1334,12 @@ mod tests {
         .await;
     }
 
+    /// The WebSocket base for a mock server started by `spawn_http_mock`,
+    /// which hands back an `http://` base URL.
+    fn ws_base(base_url: &str) -> String {
+        base_url.replacen("http://", "ws://", 1)
+    }
+
     #[tokio::test]
     async fn browser_websocket_upgrades_and_round_trips_a_message() {
         use crate::identity::iana;
@@ -1464,18 +1352,14 @@ mod tests {
         let app = axum::Router::new()
             .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
             .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let mut claims =
             crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap();
         claims.extra.insert(iana::CWTClaimScope, "*");
         let token = key.sign_cwt(claims).unwrap();
 
-        let url = format!("ws://{addr}/{}/browser_ws", engine_id.to_text());
+        let url = format!("{}/{}/browser_ws", ws_base(&base_url), engine_id.to_text());
         let mut request = url.into_client_request().unwrap();
         request
             .headers_mut()
@@ -1503,13 +1387,9 @@ mod tests {
         let app = axum::Router::new()
             .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
             .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let base_url = crate::test_support::spawn_http_mock(app).await;
 
-        let url = format!("ws://{addr}/{}/browser_ws", engine_id.to_text());
+        let url = format!("{}/{}/browser_ws", ws_base(&base_url), engine_id.to_text());
         let request = url.into_client_request().unwrap();
         // No Authorization header -> the upgrade is rejected (401), so the
         // handshake fails.

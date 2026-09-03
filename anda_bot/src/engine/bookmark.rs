@@ -1321,10 +1321,6 @@ mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
     use anda_core::{AgentOutput, BoxPinFut};
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use anda_engine::{
         engine::EngineBuilder,
         model::{CompletionFeaturesDyn, Model},
@@ -1340,25 +1336,8 @@ mod tests {
     async fn test_store_with_object_store(
         object_store: Arc<dyn object_store::ObjectStore>,
     ) -> BookmarkStore {
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "bookmarks_test_db".to_string(),
-                description: "bookmarks test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
-        BookmarkStore::connect(Arc::new(db)).await.unwrap()
+        let db = crate::test_support::db_on_object_store(object_store, "bookmarks").await;
+        BookmarkStore::connect(db).await.unwrap()
     }
 
     async fn add_sample(store: &BookmarkStore, user: &str, message_id: &str) -> Bookmark {

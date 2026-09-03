@@ -590,35 +590,12 @@ mod tests {
     }
 
     use super::super::types::{JobKind, ScheduleKind};
-    use anda_db::{
-        database::{AndaDB, DBConfig},
-        storage::StorageConfig,
-    };
     use anda_engine::engine::{EngineBuilder, EngineRef};
-    use object_store::memory::InMemory;
 
     async fn test_cron_runtime() -> Arc<CronRuntime> {
-        let object_store: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
-        let db = AndaDB::connect(
-            object_store,
-            DBConfig {
-                name: "cron_tools_test_db".to_string(),
-                description: "cron tools test db".to_string(),
-                storage: StorageConfig {
-                    cache_max_capacity: 1024,
-                    cache_max_bytes: None,
-                    compress_level: 1,
-                    object_chunk_size: 256 * 1024,
-                    bucket_overload_size: 256 * 1024,
-                    max_small_object_size: 1024 * 1024,
-                },
-                lock: None,
-            },
-        )
-        .await
-        .unwrap();
+        let db = crate::test_support::memory_db("cron_tools").await;
         Arc::new(
-            CronRuntime::connect(Arc::new(EngineRef::new()), Arc::new(db))
+            CronRuntime::connect(Arc::new(EngineRef::new()), db)
                 .await
                 .unwrap(),
         )

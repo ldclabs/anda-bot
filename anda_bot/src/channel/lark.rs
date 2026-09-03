@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
-    resource_from_bytes,
+    StreamingChannel, file_name_for_resource, is_http_url, is_transient_send_error,
+    random_from_pool, resource_from_bytes,
 };
 use crate::config::{self, normalize_identity};
 
@@ -1195,7 +1195,10 @@ impl Channel for LarkChannel {
             Ok(Ok(_))
         )
     }
+}
 
+#[async_trait]
+impl StreamingChannel for LarkChannel {
     async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {
         Ok(())
     }
@@ -2143,12 +2146,7 @@ mod tests {
         let app = Router::new()
             .route("/{*path}", routing::any(lark_handler))
             .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}")
+        crate::test_support::spawn_http_mock(app).await
     }
 
     async fn mock_channel(

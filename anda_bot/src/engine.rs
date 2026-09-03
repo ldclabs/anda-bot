@@ -234,6 +234,143 @@ impl RuntimeModels {
     }
 }
 
+/// The skill registry: the [`skill::SkillManager`] that loads skill packages
+/// from disk, and the [`SkillLibrary`] that decides which of them are enabled.
+///
+/// Returned as a pair because the two are wired to each other:
+/// `SkillLibrary::reload` installs the disabled set on the manager, so callers
+/// must reload the library before registering the manager as the engine's
+/// subagent set.
+///
+/// `known_skill_tools` is the set of tool names a skill package may reference
+/// without being reported as depending on a missing tool. It has to list every
+/// tool `Engines::new` registers below plus the ones `anda_engine` provides
+/// itself, so a tool added there needs a name added here.
+fn build_skill_registry(
+    home_dir: &Path,
+    skills_dir: &Path,
+    conversations_tool: Arc<ConversationsTool>,
+) -> (Arc<skill::SkillManager>, Arc<SkillLibrary>) {
+    // The user's OS home, not the `home_dir` parameter above (`~/.anda`):
+    // shared skills are installed outside the bot's own state directory.
+    let shared_skills_dirs = std::env::home_dir()
+        .map(|user_home| vec![user_home.join(".agents").join("skills")])
+        .unwrap_or_default();
+    let bundled_skills_dir = home_dir.join("bundled-skills");
+    let mut additional_skills_dirs = vec![bundled_skills_dir.clone()];
+    additional_skills_dirs.extend(shared_skills_dirs.clone());
+    let default_skill_tools = vec![
+        "shell".to_string(),
+        "read_file".to_string(),
+        "search_file".to_string(),
+        "note".to_string(),
+        "tools_groups".to_string(),
+        "tools_select".to_string(),
+        AskUserChoiceTool::NAME.to_string(),
+    ];
+    let skills_tool = Arc::new(
+        skill::SkillManager::new_with_dirs(skills_dir.to_path_buf(), additional_skills_dirs)
+            .with_default_skill_tools(default_skill_tools.clone()),
+    );
+    let mut known_skill_tools = BTreeSet::from_iter(default_skill_tools.iter().cloned());
+    known_skill_tools.extend(
+        [
+            brain::Client::NAME,
+            note::NoteTool::NAME,
+            GoalTool::NAME,
+            todo::TodoTool::NAME,
+            fs::ReadFileTool::NAME,
+            fs::SearchFileTool::NAME,
+            fs::EditFileTool::NAME,
+            fs::WriteFileTool::NAME,
+            cron::CreateCronTool::NAME,
+            cron::ListCronJobsTool::NAME,
+            cron::UpdateCronJobTool::NAME,
+            cron::ManageCronJobTool::NAME,
+            cron::ListCronRunsTool::NAME,
+            ChromeBrowserTool::TABS_NAME,
+            ChromeBrowserTool::PAGE_NAME,
+            ChromeBrowserTool::INPUT_NAME,
+            ChromeBrowserTool::SCRIPT_NAME,
+            skill::SkillManager::NAME,
+            SkillLibrary::NAME,
+            McpServerTool::NAME,
+            McpConnectTool::NAME,
+            ResourceStore::NAME,
+            ConversationsTool::NAME,
+            AskUserChoiceTool::NAME,
+            BookmarksTool::NAME,
+            SubAgentManager::NAME,
+            AndaBot::NAME,
+            TtsManager::NAME,
+            TranscriptionManager::NAME,
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+    let skill_library = Arc::new(
+        SkillLibrary::new(
+            home_dir.to_path_buf(),
+            skills_dir.to_path_buf(),
+            bundled_skills_dir,
+            shared_skills_dirs,
+            skills_tool.clone(),
+            known_skill_tools,
+        )
+        .with_tools_usage_reader(move || conversations_tool.tools_usage()),
+    );
+    (skills_tool, skill_library)
+}
+
+/// The agent's shell tool, pre-seeded with the environment a command inherits.
+///
+/// Deliberately unsandboxed: commands run with the daemon user's full
+/// privileges. The safety gate is the approval flow in `engine/action.rs`
+/// (static policy + risk model + human approval outside FullAccess mode),
+/// documented in README.md "Shell Command Execution and Security".
+///
+/// `ANDA_HOME` is always exported; the proxy variables only when the daemon
+/// itself was configured with one, so a command inherits the same egress path
+/// the daemon uses.
+fn build_shell_tool(
+    home_dir: &Path,
+    https_proxy: Option<&str>,
+    default_workspace: &Path,
+) -> shell::ShellTool {
+    let runtime = Arc::new(
+        shell_runtime::NativeShellRuntime::new(default_workspace.to_path_buf()).insecure(),
+    );
+    let mut envs = vec![shell::CustomEnv {
+        key: "ANDA_HOME".to_string(),
+        value: home_dir.to_string_lossy().to_string(),
+        default: true,
+        description: "The home directory for AndaBot, used for storing data and configuration."
+            .to_string(),
+    }];
+
+    if let Some(proxy) = https_proxy {
+        envs.push(shell::CustomEnv {
+            key: "http_proxy".to_string(),
+            value: proxy.to_string(),
+            default: true,
+            description: "Proxy server for HTTP requests.".to_string(),
+        });
+        envs.push(shell::CustomEnv {
+            key: "https_proxy".to_string(),
+            value: proxy.to_string(),
+            default: true,
+            description: "Proxy server for HTTPS requests.".to_string(),
+        });
+        envs.push(shell::CustomEnv {
+            key: "no_proxy".to_string(),
+            value: NO_PROXY.to_string(),
+            default: true,
+            description: "Comma-separated list of hosts that should bypass the proxy.".to_string(),
+        });
+    }
+    shell::ShellTool::new_with_custom_envs(runtime, envs, None)
+}
+
 fn model_setup_issues(config: &config::Config) -> Vec<String> {
     config
         .setup_issues()
@@ -364,114 +501,13 @@ impl Engines {
             manager.is_enabled().then_some(manager)
         };
 
-        let shell_tool = {
-            // Deliberately unsandboxed: commands run with the daemon user's
-            // full privileges. The safety gate is the approval flow in
-            // engine/action.rs (static policy + risk model + human approval
-            // outside FullAccess mode), documented in README.md
-            // "Shell Command Execution and Security".
-            let runtime = Arc::new(
-                shell_runtime::NativeShellRuntime::new(default_workspace.clone()).insecure(),
-            );
-            let mut envs = vec![shell::CustomEnv {
-                key: "ANDA_HOME".to_string(),
-                value: cfg.home_dir.to_string_lossy().to_string(),
-                default: true,
-                description:
-                    "The home directory for AndaBot, used for storing data and configuration."
-                        .to_string(),
-            }];
-
-            if let Some(proxy) = &cfg.https_proxy {
-                envs.push(shell::CustomEnv {
-                    key: "http_proxy".to_string(),
-                    value: proxy.clone(),
-                    default: true,
-                    description: "Proxy server for HTTP requests.".to_string(),
-                });
-                envs.push(shell::CustomEnv {
-                    key: "https_proxy".to_string(),
-                    value: proxy.clone(),
-                    default: true,
-                    description: "Proxy server for HTTPS requests.".to_string(),
-                });
-                envs.push(shell::CustomEnv {
-                    key: "no_proxy".to_string(),
-                    value: NO_PROXY.to_string(),
-                    default: true,
-                    description: "Comma-separated list of hosts that should bypass the proxy."
-                        .to_string(),
-                });
-            }
-            shell::ShellTool::new_with_custom_envs(runtime, envs, None)
-        };
-        let shared_skills_dirs = std::env::home_dir()
-            .map(|home_dir| vec![home_dir.join(".agents").join("skills")])
-            .unwrap_or_default();
-        let bundled_skills_dir = cfg.home_dir.join("bundled-skills");
-        let mut additional_skills_dirs = vec![bundled_skills_dir.clone()];
-        additional_skills_dirs.extend(shared_skills_dirs.clone());
-        let default_skill_tools = vec![
-            "shell".to_string(),
-            "read_file".to_string(),
-            "search_file".to_string(),
-            "note".to_string(),
-            "tools_groups".to_string(),
-            "tools_select".to_string(),
-            AskUserChoiceTool::NAME.to_string(),
-        ];
-        let skills_tool = Arc::new(
-            skill::SkillManager::new_with_dirs(cfg.skills_dir.clone(), additional_skills_dirs)
-                .with_default_skill_tools(default_skill_tools.clone()),
+        let shell_tool = build_shell_tool(
+            &cfg.home_dir,
+            cfg.https_proxy.as_deref(),
+            &default_workspace,
         );
-        let mut known_skill_tools = BTreeSet::from_iter(default_skill_tools.iter().cloned());
-        known_skill_tools.extend(
-            [
-                brain::Client::NAME,
-                note::NoteTool::NAME,
-                GoalTool::NAME,
-                todo::TodoTool::NAME,
-                fs::ReadFileTool::NAME,
-                fs::SearchFileTool::NAME,
-                fs::EditFileTool::NAME,
-                fs::WriteFileTool::NAME,
-                cron::CreateCronTool::NAME,
-                cron::ListCronJobsTool::NAME,
-                cron::UpdateCronJobTool::NAME,
-                cron::ManageCronJobTool::NAME,
-                cron::ListCronRunsTool::NAME,
-                ChromeBrowserTool::TABS_NAME,
-                ChromeBrowserTool::PAGE_NAME,
-                ChromeBrowserTool::INPUT_NAME,
-                ChromeBrowserTool::SCRIPT_NAME,
-                skill::SkillManager::NAME,
-                SkillLibrary::NAME,
-                McpServerTool::NAME,
-                McpConnectTool::NAME,
-                ResourceStore::NAME,
-                ConversationsTool::NAME,
-                AskUserChoiceTool::NAME,
-                BookmarksTool::NAME,
-                SubAgentManager::NAME,
-                AndaBot::NAME,
-                TtsManager::NAME,
-                TranscriptionManager::NAME,
-            ]
-            .into_iter()
-            .map(str::to_string),
-        );
-        let tools_usage_conversations = conversations_tool.clone();
-        let skill_library = Arc::new(
-            SkillLibrary::new(
-                cfg.home_dir.clone(),
-                cfg.skills_dir.clone(),
-                bundled_skills_dir,
-                shared_skills_dirs,
-                skills_tool.clone(),
-                known_skill_tools,
-            )
-            .with_tools_usage_reader(move || tools_usage_conversations.tools_usage()),
-        );
+        let (skills_tool, skill_library) =
+            build_skill_registry(&cfg.home_dir, &cfg.skills_dir, conversations_tool.clone());
         // Put the brain to sleep (full maintenance) once the bot has been
         // fully idle and the last sleep is more than 12 hours old.
         let idle_hooks: Vec<Arc<dyn IdleHook>> =
@@ -1262,33 +1298,11 @@ model:
 
     use crate::auto_update::AutoUpdater;
     use crate::identity::{Ed25519Key, iana};
-    use anda_db::storage::StorageConfig;
     use axum::extract::State;
     use ed25519_dalek::VerifyingKey;
 
     async fn route_test_db() -> Arc<AndaDB> {
-        let object_store: Arc<dyn object_store::ObjectStore> =
-            Arc::new(object_store::memory::InMemory::new());
-        Arc::new(
-            AndaDB::connect(
-                object_store,
-                anda_db::database::DBConfig {
-                    name: "route_test".to_string(),
-                    description: "route test".to_string(),
-                    storage: StorageConfig {
-                        cache_max_capacity: 1024,
-                        cache_max_bytes: None,
-                        compress_level: 1,
-                        object_chunk_size: 256 * 1024,
-                        bucket_overload_size: 256 * 1024,
-                        max_small_object_size: 1024 * 1024,
-                    },
-                    lock: None,
-                },
-            )
-            .await
-            .unwrap(),
-        )
+        crate::test_support::memory_db("route").await
     }
 
     fn minimal_app(pubkeys: Vec<VerifyingKey>) -> AppState {

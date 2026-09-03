@@ -363,15 +363,18 @@ fn populate_menu(menu: &NSMenu, mtm: MainThreadMarker, delegate: &Delegate) {
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_disabled_item(menu, mtm, &copy.status);
     let status = core::cached_daemon_status();
-    let status_pid = add_disabled_item(menu, mtm, &status_pid_title(&status));
+    let status_pid = add_disabled_item(menu, mtm, &core::status_pid_title(&status));
     status_pid.setTag(STATUS_PID_MENU_TAG);
-    let status_gateway = add_disabled_item(menu, mtm, &status_gateway_title(&status));
+    let status_gateway = add_disabled_item(menu, mtm, &core::status_gateway_title(&status));
     status_gateway.setTag(STATUS_GATEWAY_MENU_TAG);
-    let status_conversations = add_disabled_item(menu, mtm, &status_conversations_title(&status));
+    let status_conversations =
+        add_disabled_item(menu, mtm, &core::status_conversations_title(&status));
     status_conversations.setTag(STATUS_CONVERSATIONS_MENU_TAG);
-    let status_memory_nodes = add_disabled_item(menu, mtm, &status_memory_nodes_title(&status));
+    let status_memory_nodes =
+        add_disabled_item(menu, mtm, &core::status_memory_nodes_title(&status));
     status_memory_nodes.setTag(STATUS_MEMORY_NODES_MENU_TAG);
-    let status_memory_links = add_disabled_item(menu, mtm, &status_memory_links_title(&status));
+    let status_memory_links =
+        add_disabled_item(menu, mtm, &core::status_memory_links_title(&status));
     status_memory_links.setTag(STATUS_MEMORY_LINKS_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(
@@ -406,19 +409,19 @@ fn populate_menu(menu: &NSMenu, mtm: MainThreadMarker, delegate: &Delegate) {
 fn refresh_status_menu_items(menu: &NSMenu) {
     let status = core::cached_daemon_status();
     if let Some(item) = menu.itemWithTag(STATUS_PID_MENU_TAG) {
-        item.setTitle(nsstring(&status_pid_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_pid_title(&status)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_GATEWAY_MENU_TAG) {
-        item.setTitle(nsstring(&status_gateway_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_gateway_title(&status)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_CONVERSATIONS_MENU_TAG) {
-        item.setTitle(nsstring(&status_conversations_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_conversations_title(&status)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_MEMORY_NODES_MENU_TAG) {
-        item.setTitle(nsstring(&status_memory_nodes_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_memory_nodes_title(&status)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_MEMORY_LINKS_MENU_TAG) {
-        item.setTitle(nsstring(&status_memory_links_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_memory_links_title(&status)).as_ref());
     }
 }
 
@@ -426,55 +429,6 @@ fn refresh_update_menu_item(menu: &NSMenu) {
     if let Some(item) = menu.itemWithTag(CHECK_UPDATE_MENU_TAG) {
         item.setTitle(nsstring(&core::check_update_menu_label()).as_ref());
     }
-}
-
-fn status_pid_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_pid,
-        status.pid.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_gateway_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_gateway_url,
-        status.gateway_url.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_conversations_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_conversations,
-        status.conversations.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_memory_nodes_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_memory_nodes,
-        status.memory_nodes.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_memory_links_title(status: &core::LauncherDaemonStatus) -> String {
-    let copy = text();
-    status_value_title(
-        &copy.status_memory_links,
-        status.memory_links.as_deref(),
-        &copy.status_unavailable,
-    )
-}
-
-fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
-    format!("{}: {}", label, value.unwrap_or(unavailable))
 }
 
 fn add_settings_submenu(
@@ -673,17 +627,8 @@ fn copy_to_clipboard(value: &str) -> LauncherResult<()> {
 // restart) or as long as the user keeps a wizard open, so they must stay off
 // the AppKit main thread; results are reported through osascript dialogs,
 // which are safe from any thread.
-fn spawn_menu_action(action: impl FnOnce() + Send + 'static) {
-    thread::spawn(move || {
-        let Some(_guard) = core::try_begin_menu_action() else {
-            return;
-        };
-        action();
-    });
-}
-
 fn run_settings_wizard_async(ctx: LauncherContext) {
-    spawn_menu_action(move || match settings::run_wizard(&ctx) {
+    core::spawn_menu_action(move || match settings::run_wizard(&ctx) {
         Ok(true) => {
             let result = core::reload_models_or_start_daemon(&ctx);
             show_background_dialog(&text().app_title, &result.message);
@@ -694,23 +639,24 @@ fn run_settings_wizard_async(ctx: LauncherContext) {
 }
 
 fn restart_daemon_async(ctx: LauncherContext) {
-    spawn_menu_action(move || {
-        let result = core::restart_daemon(&ctx).unwrap_or_else(error_result);
+    core::spawn_menu_action(move || {
+        let result = core::restart_daemon(&ctx).unwrap_or_else(core::command_error_result);
         show_background_dialog(&text().app_title, &result.message);
     });
 }
 
 fn reload_models_async(ctx: LauncherContext) {
-    spawn_menu_action(move || {
-        let result = core::reload_models(&ctx).unwrap_or_else(error_result);
+    core::spawn_menu_action(move || {
+        let result = core::reload_models(&ctx).unwrap_or_else(core::command_error_result);
         show_background_dialog(&text().app_title, &result.message);
     });
 }
 
 fn show_browser_extension_token_result_async(ctx: LauncherContext) {
-    spawn_menu_action(move || {
+    core::spawn_menu_action(move || {
         show_browser_extension_token_result(
-            &core::generate_browser_extension_token(&ctx).unwrap_or_else(error_result),
+            &core::generate_browser_extension_token(&ctx)
+                .unwrap_or_else(core::command_error_result),
         );
     });
 }
@@ -726,8 +672,8 @@ fn start_startup_tasks(ctx: LauncherContext) {
         if let Err(err) = run_startup_setup(&ctx) {
             show_background_dialog(&text().app_title, &err.to_string());
         }
-        start_status_loop(ctx.clone());
-        start_auto_update_loop(ctx);
+        core::start_status_loop(ctx.clone());
+        core::start_auto_update_loop(ctx);
     });
 }
 
@@ -743,37 +689,6 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
         let _ = core::start_daemon(ctx);
     }
     Ok(())
-}
-
-fn start_status_loop(ctx: LauncherContext) {
-    thread::spawn(move || {
-        loop {
-            core::refresh_daemon_status_cache(&ctx);
-            thread::sleep(core::daemon_status_poll_interval());
-        }
-    });
-}
-
-fn start_auto_update_loop(ctx: LauncherContext) {
-    thread::spawn(move || {
-        loop {
-            if !core::begin_update_check() {
-                thread::sleep(core::auto_update_poll_interval());
-                continue;
-            }
-
-            match core::check_update_if_due(&ctx) {
-                Ok(state) => {
-                    core::finish_update_check(Some(state));
-                }
-                Err(err) => {
-                    core::finish_update_check(None);
-                    eprintln!("{}: {err}", text().update_check_failed_title);
-                }
-            }
-            thread::sleep(core::auto_update_poll_interval());
-        }
-    });
 }
 
 fn run_manual_update_check(ctx: LauncherContext) {
@@ -822,7 +737,7 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     // restart cannot interleave with the install.
     let _guard = core::begin_menu_action();
     show_background_notification(&text().update_restart_title, &text().update_restart_started);
-    let result = core::install_update_and_restart(&ctx).unwrap_or_else(error_result);
+    let result = core::install_update_and_restart(&ctx).unwrap_or_else(core::command_error_result);
     if result.success {
         core::finish_update_restart_success(&state);
         if let Err(err) = restart_launcher_after_update(&ctx) {
@@ -1034,13 +949,6 @@ fn show_alert(title: &str, message: &str) {
         alert.runModal();
     } else {
         eprintln!("{title}: {message}");
-    }
-}
-
-fn error_result(err: Box<dyn std::error::Error + Send + Sync>) -> CommandResult {
-    CommandResult {
-        success: false,
-        message: err.to_string(),
     }
 }
 
