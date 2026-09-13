@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
     BoxError, Document, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
     Usage,
@@ -8,7 +9,6 @@ use anda_engine::{
     memory::{ConversationStatus, Conversations},
     rfc3339_datetime,
 };
-use anda_kip::Response;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

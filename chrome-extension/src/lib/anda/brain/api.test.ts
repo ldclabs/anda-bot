@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ANDA_BOT_SPACE_ID, BrainApi, type BrainGraphSettings } from './api'
+import { ANDA_BOT_SPACE_ID, BrainApi, assertKipSucceeded, type BrainGraphSettings } from './api'
 
 function settings(spaceId = ANDA_BOT_SPACE_ID): BrainGraphSettings {
   return {
@@ -20,7 +20,22 @@ describe('BrainApi', () => {
     const sendMessage = vi.fn(async () => ({
       ok: true,
       result: {
-        result: [{ id: 'node-1', type: 'Memory', name: 'Node 1', attributes: {} }]
+        kip: '2.0',
+        status: 'succeeded',
+        results: [
+          {
+            status: 'succeeded',
+            result: [
+              {
+                id: 'C-1',
+                kind: 'concept',
+                schema_ref: 'kip://test@1.0.0/Memory',
+                name: 'Node 1',
+                attributes: {}
+              }
+            ]
+          }
+        ]
       }
     }))
     const fetch = vi.fn()
@@ -28,10 +43,19 @@ describe('BrainApi', () => {
     vi.stubGlobal('fetch', fetch)
 
     const api = new BrainApi(settings())
-    const response = await api.executeKipReadonly({ command: 'FIND(?node) WHERE { ?node {} }' })
+    const response = await api.executeKipReadonly({
+      kip: '2.0',
+      operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }]
+    })
 
-    expect(response.result).toEqual([
-      { id: 'node-1', type: 'Memory', name: 'Node 1', attributes: {} }
+    expect(response.results[0].result).toEqual([
+      {
+        id: 'C-1',
+        kind: 'concept',
+        schema_ref: 'kip://test@1.0.0/Memory',
+        name: 'Node 1',
+        attributes: {}
+      }
     ])
     expect(fetch).not.toHaveBeenCalled()
     expect(sendMessage).toHaveBeenCalledWith({
@@ -44,7 +68,7 @@ describe('BrainApi', () => {
         approvalMode: 'on_risk'
       },
       method: 'brain_kip_readonly',
-      params: [{ command: 'FIND(?node) WHERE { ?node {} }' }]
+      params: [{ kip: '2.0', operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }] }]
     })
   })
 
@@ -80,5 +104,16 @@ describe('BrainApi', () => {
       'http://127.0.0.1:8042/v1/custom/formation_status',
       expect.objectContaining({ method: 'GET' })
     )
+  })
+  it('rejects partial, missing and failed operations without treating partial results as success', () => {
+    const ok = { kip: '2.0', status: 'succeeded', results: [{ status: 'succeeded', result: [] }] }
+    expect(() => assertKipSucceeded(ok, 1)).not.toThrow()
+    expect(() => assertKipSucceeded({ ...ok, status: 'partial' }, 1)).toThrow()
+    expect(() => assertKipSucceeded({ ...ok, results: [] }, 1)).toThrow()
+    expect(() => assertKipSucceeded(ok, 2)).toThrow()
+    expect(() =>
+      assertKipSucceeded({ ...ok, results: [{ status: 'failed', result: [] }] }, 1)
+    ).toThrow()
+    expect(() => assertKipSucceeded({ ...ok, results: [{ status: 'succeeded' }] }, 1)).toThrow()
   })
 })

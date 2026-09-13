@@ -1273,7 +1273,7 @@ mod tests {
             ("brain_status", json!({})),
             (
                 "brain_kip_readonly",
-                json!([{"command": "DESCRIBE PRIMER"}]),
+                json!([anda_kip::Request::single("DESCRIBE PRIMER")]),
             ),
             ("agent_run", json!([{"name": "echo_agent", "prompt": "hi"}])),
             ("tool_call", json!([{"name": "echo_tool", "args": {}}])),

@@ -15,17 +15,17 @@ use super::AndaBot;
 
 static SELF_INSTRUCTIONS: &str = include_str!("../../../assets/SelfInstructions.md");
 
-struct SystemInstructionSections<'a> {
-    self_knowledge: &'a str,
-    notes: &'a str,
-    available_tools: &'a [String],
-    home_dir: &'a str,
-    workspace: &'a str,
-    user_profile: &'a str,
-    local_date: &'a str,
+pub(super) struct SystemInstructionSections<'a> {
+    pub(super) self_knowledge: &'a str,
+    pub(super) notes: &'a str,
+    pub(super) available_tools: &'a [String],
+    pub(super) home_dir: &'a str,
+    pub(super) workspace: &'a str,
+    pub(super) user_profile: &'a str,
+    pub(super) local_date: &'a str,
 }
 
-fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
+pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
         "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Notes\n{notes}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
         ins = SELF_INSTRUCTIONS.trim(),
@@ -97,7 +97,8 @@ impl AndaBot {
             None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
         };
         let local_date = format_local_date(now_ms);
-        let self_knowledge = serde_json::to_string(primer.get("identity").unwrap_or(&primer))?;
+        let self_knowledge =
+            serde_json::to_string(primer.get("cognitive_identity").unwrap_or(&primer))?;
         let notes = serde_json::to_string(&notes.items)?;
         let user_profile = serde_json::to_string(&user_profile)?;
 

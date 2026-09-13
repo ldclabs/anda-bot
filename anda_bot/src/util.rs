@@ -5,4 +5,5 @@ pub mod json_schema;
 pub mod locale;
 pub mod request_meta;
 pub mod text;
+pub mod tool_response;
 pub mod windows_process;

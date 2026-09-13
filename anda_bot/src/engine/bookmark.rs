@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
     BoxError, CompletionRequest, ContentPart, FunctionDefinition, ModelEffort, Resource,
     StateFeatures, Tool, ToolOutput,
@@ -12,7 +13,6 @@ use anda_db::{
     unix_ms,
 };
 use anda_engine::{context::BaseCtx, model::Models, truncate_utf8_to_max_bytes};
-use anda_kip::Response;
 use cbor2::Cbor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

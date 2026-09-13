@@ -1,5 +1,5 @@
-import { formatKipError } from './api'
-import type { BrainApi, BrainStatus, Json, KipCommandItem, KipError, KipResponse } from './api'
+import { assertKipSucceeded } from './api'
+import type { BrainApi, BrainStatus, Json, KipOperation } from './api'
 import { SvelteMap } from 'svelte/reactivity'
 
 export interface Concept {
@@ -9,6 +9,7 @@ export interface Concept {
   name: string
   attributes: Record<string, Json>
   metadata?: Record<string, Json>
+  _raw?: Record<string, Json>
   _expanded?: boolean
   _isExpanding?: boolean
 }
@@ -21,6 +22,7 @@ export interface Proposition {
   predicate: string
   attributes: Record<string, Json>
   metadata?: Record<string, Json>
+  _raw?: Record<string, Json>
   _expanded?: boolean
   _virtual?: boolean
 }
@@ -59,12 +61,13 @@ const INTERNAL_TYPES = new Set(['$ConceptType', '$PropositionType'])
 const OVERVIEW_TYPE_PRIORITY = [
   'Event',
   'Insight',
-  'Domain',
+  'Experience',
+  'Skill',
   'Preference',
   'Person',
   'Release',
   'Project',
-  'SleepTask',
+  'Task',
   'Website',
   'Organization',
   'Conversation',
@@ -158,7 +161,10 @@ export class BrainGraphData {
       stats.propositions += result.propositions
     })
 
-    if (this.status && this.nodes.size < this.status.concepts) {
+    const storedConceptCount = [...this.nodes.values()].filter(
+      (node) => node._raw?.kind === 'concept'
+    ).length
+    if (this.status && storedConceptCount < this.status.concepts) {
       this.partial = true
     }
 
@@ -190,29 +196,38 @@ export class BrainGraphData {
   }
 
   async loadSchema(): Promise<IngestStats> {
-    const response = await this.#api.executeKipReadonly<Array<KipResponse<unknown>>>({
-      commands: [
-        {
-          command: `FIND(?ct)
-WHERE {
-  ?ct {type: "$ConceptType"}
-}
-LIMIT :limit`,
-          parameters: { limit: SCHEMA_ROW_LIMIT }
-        },
-        {
-          command: `FIND(?pt)
-WHERE {
-  ?pt {type: "$PropositionType"}
-}
-LIMIT :limit`,
-          parameters: { limit: SCHEMA_ROW_LIMIT }
-        }
+    const response = await this.#api.executeKipReadonly<unknown>({
+      kip: '2.0',
+      execution: { mode: 'independent' },
+      operations: [
+        { command: 'LIST TYPES LIMIT :limit', parameters: { limit: SCHEMA_ROW_LIMIT } },
+        { command: 'LIST PREDICATES LIMIT :limit', parameters: { limit: SCHEMA_ROW_LIMIT } }
       ]
     })
-    assertNoKipErrors(response.result)
-    this.partial ||= hasNextCursor(response.result)
-    return this.ingest(response.result)
+    assertKipSucceeded(response, 2)
+    this.partial ||= hasNextCursor(response)
+    let concepts = 0
+    response.results.forEach((operation, index) => {
+      if (!Array.isArray(operation.result)) throw new Error('KIP schema list must be an array')
+      for (const value of operation.result) {
+        const row = recordOf(value)
+        if (!row || typeof row.ref !== 'string' || typeof row.local_name !== 'string') {
+          throw new Error('KIP schema list is missing a symbol reference or local name')
+        }
+        // Schema symbols are client-side display nodes, never persisted Concepts.
+        const id = `schema:${index}:${row.ref}`
+        if (!this.nodes.has(id)) concepts += 1
+        this.addConcept({
+          id,
+          type: index === 0 ? '$ConceptType' : '$PropositionType',
+          name: row.local_name,
+          attributes: {},
+          metadata: { schema_ref: row.ref, display_only: true },
+          _raw: row
+        })
+      }
+    })
+    return { concepts, propositions: 0 }
   }
 
   async loadLinksByPredicate(predicateNames = this.propositionTypeNames()): Promise<IngestStats> {
@@ -220,7 +235,7 @@ LIMIT :limit`,
       .filter(Boolean)
       .sort((left, right) => left.localeCompare(right))
       .map(
-        (predicate): KipCommandItem => ({
+        (predicate): KipOperation => ({
           command: `FIND(?link)
 WHERE {
   ?link (?s, :predicate, ?o)
@@ -234,12 +249,14 @@ LIMIT :limit`,
       return { concepts: 0, propositions: 0 }
     }
 
-    const response = await this.#api.executeKipReadonly<Array<KipResponse<unknown>>>({
-      commands
+    const response = await this.#api.executeKipReadonly<unknown>({
+      kip: '2.0',
+      execution: { mode: 'independent' },
+      operations: commands
     })
-    assertNoKipErrors(response.result)
-    this.partial ||= hasNextCursor(response.result)
-    return this.ingest(response.result)
+    assertKipSucceeded(response)
+    this.partial ||= hasNextCursor(response)
+    return this.ingest(response)
   }
 
   async loadOverviewConcepts(): Promise<IngestStats> {
@@ -254,10 +271,10 @@ LIMIT :limit`,
       .filter(Boolean)
       .sort((left, right) => left.localeCompare(right))
       .map(
-        (type): KipCommandItem => ({
+        (type): KipOperation => ({
           command: `FIND(?node)
 WHERE {
-  ?node {type: :type}
+  ?node CONCEPT {type: :type}
 }
 LIMIT :limit`,
           parameters: { type, limit }
@@ -268,24 +285,30 @@ LIMIT :limit`,
       return { concepts: 0, propositions: 0 }
     }
 
-    const response = await this.#api.executeKipReadonly<Array<KipResponse<unknown>>>({
-      commands
+    const response = await this.#api.executeKipReadonly<unknown>({
+      kip: '2.0',
+      execution: { mode: 'independent' },
+      operations: commands
     })
-    assertNoKipErrors(response.result)
-    this.partial ||= hasNextCursor(response.result)
-    return this.ingest(response.result)
+    assertKipSucceeded(response)
+    this.partial ||= hasNextCursor(response)
+    return this.ingest(response)
   }
 
   conceptTypeNames(): string[] {
     return Array.from(this.nodes.values())
       .filter((node) => node.type === '$ConceptType')
-      .map((node) => node.name)
+      .map((node) =>
+        typeof node.metadata?.schema_ref === 'string' ? node.metadata.schema_ref : node.name
+      )
   }
 
   propositionTypeNames(): string[] {
     return Array.from(this.nodes.values())
       .filter((node) => node.type === '$PropositionType')
-      .map((node) => node.name)
+      .map((node) =>
+        typeof node.metadata?.schema_ref === 'string' ? node.metadata.schema_ref : node.name
+      )
   }
 
   overviewConceptTypeNames(): string[] {
@@ -304,20 +327,38 @@ LIMIT :limit`,
       return []
     }
     const response = await this.#api.executeKipReadonly<unknown>({
-      command: 'SEARCH CONCEPT :term LIMIT :limit',
-      parameters: {
-        term: query,
-        limit: SEARCH_LIMIT
-      }
+      kip: '2.0',
+      execution: { mode: 'independent' },
+      operations: [
+        {
+          command: 'SEARCH CONCEPT :term LIMIT :limit',
+          parameters: { term: query, limit: SEARCH_LIMIT }
+        }
+      ]
     })
-    this.ingest(response.result)
-    return collectConcepts(response.result)
+    assertKipSucceeded(response, 1)
+    this.partial ||= hasNextCursor(response)
+    this.ingest(response)
+    return collectConcepts(response)
       .map((concept) => this.nodes.get(concept.id))
       .filter((concept): concept is Concept => Boolean(concept))
   }
 
   async expandConcept(id: string): Promise<IngestStats> {
     const concept = this.nodes.get(id)
+    if (concept?.type === '$ConceptType') {
+      return this.loadConceptsByType(
+        [String(concept.metadata?.schema_ref || concept.name)],
+        EXPAND_LINK_LIMIT
+      )
+    }
+    if (concept?.type === '$PropositionType') {
+      return this.loadLinksByPredicate([String(concept.metadata?.schema_ref || concept.name)])
+    }
+    // Literal/foreign/reference display nodes have no local Concept to expand.
+    if (concept?.metadata?.display_only === true && !/^C-\d+$/.test(id)) {
+      return { concepts: 0, propositions: 0 }
+    }
     if (concept) {
       this.nodes.set(id, {
         ...concept,
@@ -338,12 +379,15 @@ LIMIT :limit`,
 
   async #expandConcept(id: string): Promise<IngestStats> {
     try {
-      const response = await this.#api.executeKipReadonly<Array<KipResponse<unknown>>>({
-        commands: [
+      const response = await this.#api.executeKipReadonly<unknown>({
+        kip: '2.0',
+        execution: { mode: 'independent' },
+        operations: [
           {
             command: `FIND(?link, ?o)
 WHERE {
-  ?link ({id: :id}, ?predicate, ?o)
+  ?node CONCEPT {id: :id}
+  ?link (?node, ?predicate, ?o)
 }
 LIMIT :limit`,
             parameters: { id, limit: EXPAND_LINK_LIMIT }
@@ -351,7 +395,8 @@ LIMIT :limit`,
           {
             command: `FIND(?s, ?link)
 WHERE {
-  ?link (?s, ?predicate, {id: :id})
+  ?node CONCEPT {id: :id}
+  ?link (?s, ?predicate, ?node)
 }
 LIMIT :limit`,
             parameters: { id, limit: EXPAND_LINK_LIMIT }
@@ -359,9 +404,9 @@ LIMIT :limit`,
         ]
       })
 
-      assertNoKipErrors(response.result)
-      this.partial ||= hasNextCursor(response.result)
-      const stats = this.ingest(response.result)
+      assertKipSucceeded(response, 2)
+      this.partial ||= hasNextCursor(response)
+      const stats = this.ingest(response)
       const next = this.nodes.get(id)
       if (next) {
         this.nodes.set(id, {
@@ -386,26 +431,53 @@ LIMIT :limit`,
 
   async executeQuery(command: string): Promise<unknown> {
     const response = await this.#api.executeKipReadonly<unknown>({
-      command
+      kip: '2.0',
+      execution: { mode: 'independent' },
+      operations: [{ command }]
     })
-    this.ingest(response.result)
-    return response.result
+    assertKipSucceeded(response, 1)
+    this.partial ||= hasNextCursor(response)
+    this.ingest(response)
+    return response
   }
 
   ingest(value: unknown): IngestStats {
     const stats: IngestStats = { concepts: 0, propositions: 0 }
     walkKipValue(value, (item) => {
-      if (isConcept(item)) {
-        if (!this.nodes.has(item.id)) {
-          stats.concepts += 1
-        }
-        this.addConcept(item)
-      } else if (isProposition(item)) {
-        if (!this.links.has(item.id)) {
-          stats.propositions += 1
-        }
-        this.addProposition(item)
+      const concept = conceptFromValue(item)
+      if (concept) {
+        if (!this.nodes.has(concept.id)) stats.concepts += 1
+        this.addConcept(concept)
+        return
       }
+      const row = recordOf(item)
+      if (
+        row?.kind !== 'proposition' ||
+        typeof row.id !== 'string' ||
+        typeof row.predicate_ref !== 'string'
+      )
+        return
+      if (!('subject' in row) || !('object' in row)) return
+      const subject = endpointNode(row.subject, row.id, 'subject')
+      const object = endpointNode(row.object, row.id, 'object')
+      for (const endpoint of [subject, object]) {
+        if (!this.hasConcept(endpoint.id)) {
+          this.addConcept(endpoint)
+          stats.concepts += 1
+        } else if (!this.nodes.has(endpoint.id)) {
+          this.addConcept(cloneConcept(this.loadConcept(endpoint.id)!), false)
+        }
+      }
+      if (!this.links.has(row.id)) stats.propositions += 1
+      this.addProposition({
+        id: row.id,
+        subject: subject.id,
+        object: object.id,
+        predicate: localSymbol(row.predicate_ref),
+        attributes: {},
+        metadata: { predicate_ref: row.predicate_ref },
+        _raw: row
+      })
     })
     return stats
   }
@@ -437,10 +509,10 @@ LIMIT :limit`,
     this.nodes.set(concept.id, concept)
 
     if (concept.type === '$ConceptType' || concept.type === '$PropositionType') {
-      this.#typeIds.set(concept.name, concept.id)
+      this.#typeIds.set(String(concept.metadata?.schema_ref || concept.name), concept.id)
     }
 
-    const typeId = this.#typeIds.get(concept.type)
+    const typeId = this.#typeIds.get(String(concept.metadata?.schema_ref || concept.type))
     if (typeId && typeId !== concept.id) {
       this.addProposition(
         {
@@ -604,12 +676,60 @@ function cloneJsonRecord(value: Record<string, Json>): Record<string, Json> {
   return JSON.parse(JSON.stringify(value)) as Record<string, Json>
 }
 
+function recordOf(value: unknown): Record<string, Json> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, Json>)
+    : null
+}
+
+function localSymbol(reference: string): string {
+  return reference.slice(reference.lastIndexOf('/') + 1)
+}
+
+function conceptFromValue(value: unknown): Concept | null {
+  const row = recordOf(value)
+  if (!row || row.kind !== 'concept' || typeof row.id !== 'string' || 'element' in row) return null
+  return {
+    id: row.id,
+    type: typeof row.schema_ref === 'string' ? localSymbol(row.schema_ref) : 'Reference',
+    name: typeof row.name === 'string' ? row.name : row.id,
+    attributes: recordOf(row.attributes) || {},
+    metadata: {
+      ...(recordOf(row._system) || {}),
+      schema_ref: row.schema_ref || '',
+      ...(row.withheld ? { withheld: row.withheld } : {})
+    },
+    _raw: row
+  }
+}
+
+function endpointNode(value: Json, proposition: string, side: string): Concept {
+  const reference = recordOf(value)
+  const localId = reference && typeof reference.id === 'string' ? reference.id : null
+  const canonical = reference && typeof reference.canonical_id === 'string'
+  const foreign =
+    reference && typeof reference.space_id === 'string' && typeof reference.element_id === 'string'
+  // Core literals are bare string/number/boolean/null; arbitrary objects and
+  // arrays are not reference shortcuts. Preserve that distinction on the graph.
+  if (Array.isArray(value) || (reference && !localId && !canonical && !foreign)) {
+    throw new Error(`Invalid KIP tuple endpoint: ${JSON.stringify(value)}`)
+  }
+  const literal = !reference
+  const id = localId || `${literal ? 'literal' : 'reference'}:${proposition}:${side}`
+  return {
+    id,
+    type: literal ? 'Literal' : 'Reference',
+    name: localId || (typeof value === 'string' ? value : JSON.stringify(value)),
+    attributes: { value },
+    metadata: { display_only: true }
+  }
+}
+
 function collectConcepts(value: unknown): Concept[] {
   const concepts: Concept[] = []
   walkKipValue(value, (item) => {
-    if (isConcept(item)) {
-      concepts.push(item)
-    }
+    const concept = conceptFromValue(item)
+    if (concept) concepts.push(concept)
   })
   return concepts
 }
@@ -629,8 +749,9 @@ function walkKipValue(value: unknown, visit: (value: unknown) => void): void {
   visit(value)
 
   const record = value as Record<string, unknown>
-  if (record.result !== undefined || record.error !== undefined) {
-    walkKipValue(record.result, visit)
+  // Only protocol containers are traversed; user attributes/payloads are data.
+  for (const key of ['results', 'result', 'hits', 'element']) {
+    if (record[key] !== undefined) walkKipValue(record[key], visit)
   }
 }
 
@@ -642,45 +763,15 @@ function hasNextCursor(value: unknown): boolean {
     return false
   }
   const record = value as Record<string, unknown>
-  return typeof record.next_cursor === 'string' || hasNextCursor(record.result)
-}
-
-function assertNoKipErrors(value: unknown): void {
-  const error = findKipError(value)
-  if (error) {
-    throw new Error(formatKipError(error))
-  }
-}
-
-function findKipError(value: unknown): KipError | null {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const error = findKipError(item)
-      if (error) {
-        return error
-      }
-    }
-    return null
-  }
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-
-  const record = value as Record<string, unknown>
-  if (isKipError(record.error)) {
-    return record.error
-  }
-  return findKipError(record.result)
-}
-
-function isKipError(value: unknown): value is KipError {
-  return Boolean(
-    value && typeof value === 'object' && typeof (value as KipError).message === 'string'
+  return (
+    typeof record.next_cursor === 'string' ||
+    hasNextCursor(record.results) ||
+    hasNextCursor(record.result)
   )
 }
 
 function overviewTypePriority(type: string): number {
-  const index = OVERVIEW_TYPE_PRIORITY.indexOf(type)
+  const index = OVERVIEW_TYPE_PRIORITY.indexOf(localSymbol(type))
   return index === -1 ? OVERVIEW_TYPE_PRIORITY.length : index
 }
 

@@ -1296,12 +1296,16 @@ mod tests {
             .route(
                 "/v1/anda_bot/execute_kip_readonly",
                 routing::post(|| async {
-                    axum::Json(serde_json::json!({"result": {"identity": "panda"}}))
+                    axum::Json(anda_kip::Response::ok(
+                        serde_json::json!({"cognitive_identity": {"name": "panda"}}),
+                    ))
                 }),
             )
             .route(
                 "/v1/anda_bot/get_or_init_user",
-                routing::post(|| async { axum::Json(serde_json::json!({"name": "u"})) }),
+                routing::post(|| async {
+                    axum::Json(serde_json::json!({"result": {"name": "u"}}))
+                }),
             );
         let base_url = crate::test_support::spawn_http_mock(app).await;
         format!("{base_url}/v1/anda_bot")

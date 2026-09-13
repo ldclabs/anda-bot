@@ -81,7 +81,16 @@ macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 l
 
 也可以使用较新的 Rust 工具链从源码编译运行 Anda Bot：
 
+当前源码构建通过 `[patch.crates-io]` 使用同级 `anda`、`anda-db` 和 `anda-brain` 工作区中的未发布 KIP 2.0 开发版本。请将四个仓库放在同一父目录下；单独克隆 anda-bot 无法构建。内嵌 Brain 使用 KIP 2.0（`kip` + `operations`），普通 Bot 工具仍保留原有 `result`/`error` 响应格式。
+
+可选 `mib` feature 提供仅监听本机的评测宿主：`anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`。入口在生产 home/daemon 初始化之前分流，使用隔离的 Brain 运行。Agent 协议执行 Bot 的 runner-managed 业务模式和 MIB 管理的任务工具；独立的记忆后端协议供 MIB 自有同模型 Agent 使用。生命周期、记忆开关和仍不完整的成本计量见 [MIB 接入](docs/mib-integration.md)。
+
+可选 P6 控制增加强制 Recall 预算（`--recall-max-tokens` 与 `--recall-context-tokens` 同时提供）及评测侧专用的 `learning_audit`。原生比较/复核和无门槛执行仍待绑定，持久记忆不等于已启用学习组。
+
 ```bash
+git clone https://github.com/ldclabs/anda.git
+git clone https://github.com/ldclabs/anda-db.git
+git clone https://github.com/ldclabs/anda-brain.git
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo run -p anda_bot --

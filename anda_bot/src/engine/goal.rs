@@ -1,10 +1,10 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{Agent, BoxError, FunctionDefinition, Message, Resource, Tool, ToolOutput, Usage};
 use anda_engine::{
     context::{AgentCtx, BaseCtx, CompletionRunner, json_candidates},
     subagent::SubAgent,
     unix_ms,
 };
-use anda_kip::Response;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

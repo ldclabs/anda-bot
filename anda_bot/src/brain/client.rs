@@ -90,19 +90,9 @@ impl Client {
 
     pub async fn describe_primer(&self) -> Result<Json, BoxError> {
         let rt = self
-            .execute_kip_readonly(KipRequest {
-                command: "DESCRIBE PRIMER".to_string(),
-                ..Default::default()
-            })
+            .execute_kip_readonly(KipRequest::single("DESCRIBE PRIMER"))
             .await?;
-        match rt {
-            KipResponse::Ok { result, .. } => Ok(result),
-            KipResponse::Err { .. } => Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[BrainClient] describe_primer failed with unknown error".to_string()
-                })
-                .into()),
-        }
+        single_kip_result(rt)
     }
 
     pub async fn execute_kip_readonly(&self, request: KipRequest) -> Result<KipResponse, BoxError> {
@@ -110,11 +100,19 @@ impl Client {
     }
 
     pub async fn user_info(&self, user: String, name: Option<String>) -> Result<Json, BoxError> {
-        let rt: Json = self
+        let rt: RpcResponse<Json> = self
             .post("/get_or_init_user", &GetOrInitUserInput { user, name })
             .await?;
-
-        Ok(rt)
+        if rt.error.is_none()
+            && let Some(result) = rt.result.as_ref()
+        {
+            return Ok(result.clone());
+        }
+        Err(format!(
+            "[BrainClient] user_info failed: {}",
+            serde_json::to_string(&rt).unwrap_or_default()
+        )
+        .into())
     }
 
     pub async fn brain_status(&self) -> Result<FormationStatus, BoxError> {
@@ -226,6 +224,26 @@ impl Client {
             .into())
         }
     }
+}
+
+/// A single operation succeeds only when both envelope levels say so. Partial
+/// results are audit data and must never enter the system prompt as a primer.
+fn single_kip_result(response: KipResponse) -> Result<Json, BoxError> {
+    if response.kip == "2.0"
+        && response.status == anda_kip::TopLevelStatus::Succeeded
+        && response.error.is_none()
+        && response.results.len() == 1
+        && response.results[0].status == anda_kip::OperationStatus::Succeeded
+        && response.results[0].error.is_none()
+        && let Some(result) = response.results[0].result.clone()
+    {
+        return Ok(result);
+    }
+    Err(format!(
+        "[BrainClient] KIP operation did not succeed: {}",
+        serde_json::to_string(&response)?
+    )
+    .into())
 }
 
 impl Tool<BaseCtx> for Client {
@@ -345,6 +363,48 @@ mod tests {
     use axum::{Router, routing};
     use serde_json::Value;
 
+    #[test]
+    fn primer_rejects_partial_failed_and_missing_operation_results() {
+        let payload = json!({"cognitive_identity": {"key": "$self"}});
+        assert_eq!(
+            single_kip_result(KipResponse::ok(payload.clone())).unwrap(),
+            payload
+        );
+        let mut response = KipResponse::ok(payload.clone());
+        response.results[0].status = anda_kip::OperationStatus::Failed;
+        assert!(single_kip_result(response).is_err());
+        let mut response = KipResponse::ok(payload.clone());
+        response.status = anda_kip::TopLevelStatus::Partial;
+        assert!(single_kip_result(response).is_err());
+        let mut response = KipResponse::ok(payload.clone());
+        response.results[0].error =
+            Some(anda_kip::KipError::internal_error("partial result").into());
+        assert!(single_kip_result(response).is_err());
+        assert!(single_kip_result(KipResponse::default()).is_err());
+        let mut response = KipResponse::ok(payload);
+        response.results[0].result = None;
+        assert!(single_kip_result(response).is_err());
+    }
+
+    #[tokio::test]
+    async fn user_info_rejects_rpc_error_instead_of_injecting_it_as_a_profile() {
+        let app = Router::new().route(
+            "/v1/anda_bot/get_or_init_user",
+            routing::post(|| async {
+                axum::Json(json!({"error": {"code": 500, "message": "profile unavailable"}, "result": {"name": "partial profile must not be used"}}))
+            }),
+        );
+        let client = Client::new(spawn_brain_mock(app).await, None);
+        assert!(
+            client
+                .user_info("alice".into(), None)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("profile unavailable")
+        );
+    }
+
     async fn spawn_brain_mock(app: Router) -> String {
         let base_url = crate::test_support::spawn_http_mock(app).await;
         format!("{base_url}/v1/anda_bot")
@@ -456,6 +516,7 @@ mod tests {
 
         let output = client
             .recall(RecallInputRef {
+                budget: &None,
                 query: "what happened",
                 context: &None,
             })
@@ -495,6 +556,7 @@ mod tests {
 
         let err = client
             .recall(RecallInputRef {
+                budget: &None,
                 query: "what happened",
                 context: &None,
             })
@@ -509,7 +571,9 @@ mod tests {
         let app = Router::new().route(
             "/v1/anda_bot/execute_kip_readonly",
             routing::post(|axum::Json(body): axum::Json<Value>| async move {
-                assert_eq!(body["command"], "DESCRIBE PRIMER");
+                assert_eq!(body["kip"], "2.0");
+                assert_eq!(body["operations"][0]["command"], "DESCRIBE PRIMER");
+                assert!(body.get("command").is_none());
                 axum::Json(
                     serde_json::to_value(KipResponse::ok(json!({"identity": "panda"}))).unwrap(),
                 )
@@ -524,10 +588,9 @@ mod tests {
             "/v1/anda_bot/execute_kip_readonly",
             routing::post(|| async {
                 axum::Json(
-                    serde_json::to_value(KipResponse::Err {
-                        error: anda_kip::ErrorObject::new("KIP_2001", "nexus unavailable"),
-                        result: None,
-                    })
+                    serde_json::to_value(KipResponse::failed(anda_kip::KipError::internal_error(
+                        "nexus unavailable",
+                    )))
                     .unwrap(),
                 )
             }),
@@ -543,7 +606,7 @@ mod tests {
         let app = Router::new().route(
             "/v1/anda_bot/get_or_init_user",
             routing::post(|axum::Json(body): axum::Json<Value>| async move {
-                axum::Json(json!({"user": body["user"], "trust": "high"}))
+                axum::Json(json!({"result": {"user": body["user"], "trust": "high"}}))
             }),
         );
         let base_url = spawn_brain_mock(app).await;
@@ -616,6 +679,7 @@ mod tests {
             .call(
                 ctx,
                 RecallInput {
+                    budget: None,
                     query: "What is the project status?".to_string(),
                     context: None,
                 },

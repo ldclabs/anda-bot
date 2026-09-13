@@ -40,6 +40,13 @@ The repository also contains:
 - The package uses Rust edition 2024 and workspace-managed dependencies.
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
+- Source builds use sibling `anda`, `anda-db`, and `anda-brain` checkouts via
+  `[patch.crates-io]` while KIP 2.0 development crates remain unpublished.
+  Keep the path patches aligned with Brain so DB and core types are shared.
+- The Brain KIP endpoint uses the KIP 2.0 envelope; application tools use
+  `util::tool_response::ToolResponse` and preserve their existing wire format.
+- Keep `RUST_MIN_STACK=16777216` on Rust test commands: embedded Brain schema
+  paths can exceed Rust's default debug test-thread stack.
 - The executable entrypoint is `anda_bot/src/main.rs`; daemon lifecycle is in
   `anda_bot/src/daemon.rs`; config parsing lives under `anda_bot/src/config/`.
 - Engine-facing behavior is mostly under `anda_bot/src/engine/`; IM channel

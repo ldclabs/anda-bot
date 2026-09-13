@@ -1,5 +1,5 @@
+use crate::util::tool_response::ToolResponse;
 use anda_core::{BoxError, ToolInput};
-use anda_kip::Response as KipResponse;
 use clap::{Args, Subcommand};
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -67,9 +67,9 @@ async fn get_session(
 async fn call_sessions_tool(
     client: &gateway::Client,
     args: AndaBotToolArgs,
-) -> Result<KipResponse, BoxError> {
+) -> Result<ToolResponse, BoxError> {
     let output = client
-        .tool_call::<AndaBotToolArgs, KipResponse>(&ToolInput::new(
+        .tool_call::<AndaBotToolArgs, ToolResponse>(&ToolInput::new(
             format!("{}_api", AndaBot::NAME),
             args,
         ))
@@ -77,12 +77,12 @@ async fn call_sessions_tool(
     Ok(output.output)
 }
 
-fn decode_ok<T>(response: KipResponse) -> Result<T, BoxError>
+fn decode_ok<T>(response: ToolResponse) -> Result<T, BoxError>
 where
     T: DeserializeOwned,
 {
     match response {
-        KipResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
+        ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
         other => Err(format!("anda_bot sessions API returned an error: {other:?}").into()),
     }
 }
@@ -278,7 +278,7 @@ mod tests {
     }
 
     async fn spawn_sessions_gateway(kip_response: Value) -> gateway::Client {
-        let output: ToolOutput<KipResponse> =
+        let output: ToolOutput<ToolResponse> =
             ToolOutput::new(serde_json::from_value(kip_response).unwrap());
         let payload = ByteBufB64(serde_json::to_vec(&output).unwrap());
         let rpc: RPCResponse = Ok(payload);

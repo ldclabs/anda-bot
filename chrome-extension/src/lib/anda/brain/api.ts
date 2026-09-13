@@ -40,31 +40,60 @@ export type Json =
       [key: string]: Json
     }
 
-export type KipCommandItem =
-  | string
-  | {
-      command: string
-      parameters?: Record<string, Json>
-    }
+export interface KipOperation {
+  command: string
+  op_id?: string
+  parameters?: Record<string, Json>
+}
 
 export interface KipRequest {
-  command?: KipCommandItem
-  commands?: KipCommandItem[]
+  kip: '2.0'
+  operations: KipOperation[]
+  execution?: { mode: 'independent' | 'sequence' | 'atomic' }
   parameters?: Record<string, Json>
-  dry_run?: boolean
+  options?: { dry_run?: boolean }
 }
 
 export interface KipError {
   code: string
   message: string
   hint?: string
-  data?: unknown
+  details?: unknown
 }
 
-export interface KipResponse<T> {
+export interface KipOperationResult<T> {
+  status: string
   result?: T
   error?: KipError
   next_cursor?: string
+}
+
+export interface KipResponse<T = unknown> {
+  kip: string
+  status: string
+  results: KipOperationResult<T>[]
+  error?: KipError
+  next_cursor?: string
+}
+
+/** Partial data never conceals a failed or unexecuted operation. */
+export function assertKipSucceeded(response: KipResponse, expectedOperations?: number): void {
+  const error =
+    response.error ||
+    (Array.isArray(response.results)
+      ? response.results.find((item) => item.error)?.error
+      : undefined)
+  if (error) throw new Error(formatKipError(error))
+  if (
+    response.kip !== '2.0' ||
+    response.status !== 'succeeded' ||
+    !Array.isArray(response.results) ||
+    response.results.length === 0 ||
+    (expectedOperations !== undefined && response.results.length !== expectedOperations) ||
+    response.results.some((item) => item.status !== 'succeeded' || !('result' in item))
+  ) {
+    throw new Error(`KIP operation did not succeed: ${JSON.stringify(response)}`)
+  }
 }
 
 export interface BrainStatus {
@@ -119,9 +148,7 @@ export class BrainApi {
         method: 'POST',
         body: JSON.stringify(request)
       }))
-    if (response.error) {
-      throw new Error(formatKipError(response.error))
-    }
+    assertKipSucceeded(response, request.operations.length)
     return response
   }
 

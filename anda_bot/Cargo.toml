@@ -23,6 +23,10 @@ path = "src/main.rs"
 name = "anda_launcher"
 path = "src/bin/anda_launcher.rs"
 
+[features]
+default = []
+mib = ["anda_brain/experiments"]
+
 [dependencies]
 anda_brain = { workspace = true }
 async-trait = { workspace = true }
@@ -131,4 +135,5 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+anda_cognitive_nexus = { workspace = true }
 tempfile = { workspace = true }

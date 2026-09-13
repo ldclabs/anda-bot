@@ -1,8 +1,8 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
     BoxError, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
 };
 use anda_engine::{context::BaseCtx, unix_ms};
-use anda_kip::Response;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ic_auth_types::Xid;
 use parking_lot::RwLock;

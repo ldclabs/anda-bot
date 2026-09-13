@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
 use anda_engine::{
     context::BaseCtx,
@@ -6,7 +7,6 @@ use anda_engine::{
         McpToolProvider, McpTransportConfig, OAuthAuthorizationCodeConfig,
     },
 };
-use anda_kip::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{

@@ -1223,11 +1223,11 @@ mod tests {
             serde_json::from_slice(&request.params).unwrap();
         let id = input.args["_id"].as_u64().unwrap_or_default();
         let delta = state.get(&id).expect("known conversation");
-        let response = anda_kip::Response::Ok {
+        let response = crate::util::tool_response::ToolResponse::Ok {
             result: serde_json::to_value(delta).unwrap(),
             next_cursor: None,
         };
-        let output: anda_core::ToolOutput<anda_kip::Response> =
+        let output: anda_core::ToolOutput<crate::util::tool_response::ToolResponse> =
             anda_core::ToolOutput::new(response);
         let rpc: anda_core::http::RPCResponse =
             Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));

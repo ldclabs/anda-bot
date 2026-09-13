@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
     BoxError, FunctionDefinition, Principal, Resource, ResourceRef, StateFeatures, Tool,
     ToolOutput, update_resources,
@@ -8,7 +9,6 @@ use anda_db::{
     error::DBError,
 };
 use anda_db_tfs::jieba_tokenizer;
-use anda_kip::Response;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

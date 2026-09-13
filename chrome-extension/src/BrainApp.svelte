@@ -97,11 +97,11 @@
   let pinnedNodeIds = $state<string[]>([])
   let pathRequested = $state(false)
   let breadcrumb = $state<Array<{ id: string; label: string }>>([])
-  let kipCommand = $state(`FIND(?link)
+  let kipCommand = $state(`FIND(?node)
 WHERE {
-  ?link (?s, "belongs_to_domain", ?o)
+  ?node CONCEPT {}
 }
-LIMIT 6000`)
+LIMIT 100`)
   let queryOutput = $state('')
 
   let inspectorCopyTimer: ReturnType<typeof setTimeout> | null = null

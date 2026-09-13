@@ -308,8 +308,8 @@ async fn write_text(path: &Path, text: &str) -> Result<(), BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::tool_response::ToolResponse;
     use anda_core::{ContentPart, ToolInput};
-    use anda_kip::Response as KipResponse;
 
     #[test]
     fn agent_meta_defaults_preserve_explicit_values() {
@@ -435,11 +435,11 @@ mod tests {
                 serde_json::from_slice(&request.params).unwrap();
             let id = input.args["_id"].as_u64().unwrap_or_default();
             let conversation = state.get(&id).expect("known conversation");
-            let response = KipResponse::Ok {
+            let response = ToolResponse::Ok {
                 result: serde_json::to_value(conversation).unwrap(),
                 next_cursor: None,
             };
-            let output: anda_core::ToolOutput<KipResponse> = anda_core::ToolOutput::new(response);
+            let output: anda_core::ToolOutput<ToolResponse> = anda_core::ToolOutput::new(response);
             Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
         };
         axum::Json(serde_json::to_value(&rpc).unwrap())

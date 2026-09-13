@@ -1,9 +1,9 @@
+use crate::util::tool_response::ToolResponse;
 use anda_core::{AgentInput, AgentOutput, BoxError, ContentPart, Message, RequestMeta, ToolInput};
 use anda_engine::{
     memory::{Conversation, ConversationStatus},
     unix_ms,
 };
-use anda_kip::Response as KipResponse;
 use serde_json::Map;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
@@ -416,14 +416,14 @@ impl ChatSession {
 
         let output = self
             .client
-            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
+            .tool_call_with_timeout::<ConversationsToolArgs, ToolResponse>(
                 &input,
                 CONVERSATION_FETCH_TIMEOUT,
             )
             .await?;
 
         let state = match output.output {
-            KipResponse::Ok { result, .. } => serde_json::from_value::<SourceState>(result)?,
+            ToolResponse::Ok { result, .. } => serde_json::from_value::<SourceState>(result)?,
             other => return Err(format!("conversation API returned an error: {other:?}").into()),
         };
         if state.conv_id == 0 {
@@ -924,19 +924,19 @@ mod tests {
             let (input,): (ToolInput<serde_json::Value>,) =
                 serde_json::from_slice(&request.params).unwrap();
             let response = match input.args["type"].as_str() {
-                Some("GetSourceState") => KipResponse::Ok {
+                Some("GetSourceState") => ToolResponse::Ok {
                     result: state.source_state.clone(),
                     next_cursor: None,
                 },
                 Some("GetConversation") => {
                     let id = input.args["_id"].as_u64().unwrap_or_default();
                     match state.conversations.get(&id) {
-                        Some(conv) => KipResponse::Ok {
+                        Some(conv) => ToolResponse::Ok {
                             result: serde_json::to_value(conv).unwrap(),
                             next_cursor: None,
                         },
-                        None => KipResponse::Err {
-                            error: anda_kip::ErrorObject::new(
+                        None => ToolResponse::Err {
+                            error: crate::util::tool_response::ToolError::new(
                                 "KIP_404",
                                 format!("conversation {id} not found"),
                             ),
@@ -946,7 +946,7 @@ mod tests {
                 }
                 other => panic!("unexpected tool args type: {other:?}"),
             };
-            let output: anda_core::ToolOutput<KipResponse> = anda_core::ToolOutput::new(response);
+            let output: anda_core::ToolOutput<ToolResponse> = anda_core::ToolOutput::new(response);
             Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
         };
 

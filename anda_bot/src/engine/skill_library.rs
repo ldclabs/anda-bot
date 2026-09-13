@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage};
 use anda_engine::{
     context::BaseCtx,
@@ -8,7 +9,6 @@ use anda_engine::{
     subagent::SubAgentSet,
     unix_ms,
 };
-use anda_kip::Response;
 use chrono::{SecondsFormat, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

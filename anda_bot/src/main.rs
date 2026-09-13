@@ -21,6 +21,8 @@ mod engine;
 mod gateway;
 mod identity;
 mod logger;
+#[cfg(feature = "mib")]
+mod mib;
 mod provider_env;
 #[cfg(test)]
 mod test_support;
@@ -67,6 +69,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Serve the isolated MIB evaluation adapter (never starts the daemon).
+    #[cfg(feature = "mib")]
+    Mib(mib::MibCommand),
     /// Run the anda daemon in the foreground.
     Daemon,
     /// Stop the anda daemon if it's running.
@@ -186,6 +191,14 @@ async fn run() -> Result<(), BoxError> {
         return Err("--full-access can only be used with the interactive `anda` CLI".into());
     }
 
+    #[cfg(feature = "mib")]
+    if let Some(Commands::Mib(cmd)) = command.as_ref() {
+        if home.is_some() {
+            return Err("MIB runs use private in-memory state; --home is not supported".into());
+        }
+        return mib::serve(cmd).await;
+    }
+
     let home = if let Some(home) = home {
         PathBuf::from(home)
     } else {
@@ -217,6 +230,8 @@ async fn run() -> Result<(), BoxError> {
     }
 
     match command {
+        #[cfg(feature = "mib")]
+        Some(Commands::Mib(_)) => unreachable!("MIB dispatches before daemon initialization"),
         None => {
             log::info!("Starting CLI at {}", daemon.base_url());
             let client = build_control_client(&daemon).await?;

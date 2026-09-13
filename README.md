@@ -90,7 +90,16 @@ Requirements:
 
 Or run Anda Bot from this repository with a recent Rust toolchain:
 
+Source builds currently use sibling `anda`, `anda-db` and `anda-brain` checkouts through `[patch.crates-io]` for the unpublished KIP 2.0 development crates. Keep all four repositories under the same parent directory; a standalone clone cannot build. The embedded Brain speaks KIP 2.0 (`kip` + `operations`), while ordinary Bot tool responses retain their existing `result`/`error` format.
+
+The optional `mib` feature adds a loopback-only evaluation host: `anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`. It starts before production home/daemon initialization and uses isolated Brain runs. The agent protocol executes Bot's runner-managed business profile with MIB-owned task tools; a separate memory-backend protocol supports MIB's evaluator-owned same-model agent. See [MIB integration](docs/mib-integration.md) for lifecycle guarantees, memory controls and incomplete cost accounting.
+
+The optional P6 host controls add forced Recall budgets (`--recall-max-tokens` plus `--recall-context-tokens`) and an evaluator-only `learning_audit`. Native comparison/review and ungated execution bindings remain explicit pending work; persistent memory does not imply an enabled learning condition.
+
 ```bash
+git clone https://github.com/ldclabs/anda.git
+git clone https://github.com/ldclabs/anda-db.git
+git clone https://github.com/ldclabs/anda-brain.git
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo run -p anda_bot --

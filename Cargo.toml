@@ -30,8 +30,9 @@ anda_object_store = "0.11"
 anda_db = { version = "0.11", features = ["full"] }
 anda_db_tfs = { version = "0.11", features = ["full"] }
 anda_db_utils = { version = "0.11" }
-anda_brain = { version = "0.11" }
-anda_kip = "0.11"
+anda_brain = { version = "0.12" }
+anda_kip = "0.13"
+anda_cognitive_nexus = "0.13"
 anydoc = "0.1"
 base64 = "0.23"
 cpal = { version = "0.18" }
@@ -108,6 +109,18 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
+# KIP 2.0 and Brain 0.12 are developed together in sibling checkouts until
+# the matching crates are published. Keep one DB/core type identity throughout
+# the Bot, Brain, Nexus and engine dependency graph.
+anda_brain = { path = "../anda-brain/anda_brain" }
+anda_kip = { path = "../anda-db/rs/anda_kip" }
+anda_cognitive_nexus = { path = "../anda-db/rs/anda_cognitive_nexus" }
+anda_db = { path = "../anda-db/rs/anda_db" }
+anda_db_schema = { path = "../anda-db/rs/anda_db_schema" }
+anda_db_tfs = { path = "../anda-db/rs/anda_db_tfs" }
+anda_db_utils = { path = "../anda-db/rs/anda_db_utils" }
+anda_core = { path = "../anda/anda_core" }
+anda_engine = { path = "../anda/anda_engine" }
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", rev = "f2fe6304b898a2b1759a45c6f7936eafebfd8f65" }
 weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }
 

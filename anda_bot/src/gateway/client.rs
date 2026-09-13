@@ -1,9 +1,10 @@
+use crate::util::tool_response::ToolResponse;
 use anda_core::{
     AgentInput, AgentOutput, BoxError, ByteBufB64, Json, ToolInput, ToolOutput,
     http::{RPCRequestRef, RPCResponse},
 };
 use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
-use anda_kip::{Request as KipRequest, Response as KipResponse};
+use anda_kip::{Request as KipRequest, Response as KipWireResponse};
 use std::{
     io::SeekFrom,
     path::Path,
@@ -90,7 +91,10 @@ impl Client {
     }
 
     #[allow(unused)]
-    pub async fn execute_kip_readonly(&self, req: &KipRequest) -> Result<KipResponse, BoxError> {
+    pub async fn execute_kip_readonly(
+        &self,
+        req: &KipRequest,
+    ) -> Result<KipWireResponse, BoxError> {
         self.post_json("/v1/anda_bot/execute_kip_readonly", &req)
             .await
     }
@@ -163,14 +167,14 @@ impl Client {
     /// Fetch a conversation by id, unwrapping the daemon's KIP envelope.
     pub async fn get_conversation(&self, conversation_id: u64) -> Result<Conversation, BoxError> {
         let output = self
-            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+            .tool_call::<ConversationsToolArgs, ToolResponse>(&ToolInput::new(
                 ConversationsTool::NAME.to_string(),
                 ConversationsToolArgs::GetConversation {
                     _id: conversation_id,
                 },
             ))
             .await?;
-        kip_result(output.output)
+        tool_result(output.output)
     }
 
     /// Like [`Client::get_conversation`], failing fast with a per-call timeout
@@ -181,7 +185,7 @@ impl Client {
         timeout: Duration,
     ) -> Result<Conversation, BoxError> {
         let output = self
-            .tool_call_with_timeout::<ConversationsToolArgs, KipResponse>(
+            .tool_call_with_timeout::<ConversationsToolArgs, ToolResponse>(
                 &ToolInput::new(
                     ConversationsTool::NAME.to_string(),
                     ConversationsToolArgs::GetConversation {
@@ -191,7 +195,7 @@ impl Client {
                 timeout,
             )
             .await?;
-        kip_result(output.output)
+        tool_result(output.output)
     }
 
     /// Fetch only the messages and artifacts appended after the given offsets.
@@ -202,7 +206,7 @@ impl Client {
         artifacts_offset: usize,
     ) -> Result<ConversationDelta, BoxError> {
         let output = self
-            .tool_call::<ConversationsToolArgs, KipResponse>(&ToolInput::new(
+            .tool_call::<ConversationsToolArgs, ToolResponse>(&ToolInput::new(
                 ConversationsTool::NAME.to_string(),
                 ConversationsToolArgs::GetConversationDelta {
                     _id: conversation_id,
@@ -211,7 +215,7 @@ impl Client {
                 },
             ))
             .await?;
-        kip_result(output.output)
+        tool_result(output.output)
     }
 
     pub async fn ensure_daemon_running(&self, daemon: &Daemon) -> Result<LaunchState, BoxError> {
@@ -355,12 +359,12 @@ pub fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
     )
 }
 
-fn kip_result<T>(response: KipResponse) -> Result<T, BoxError>
+fn tool_result<T>(response: ToolResponse) -> Result<T, BoxError>
 where
     T: serde::de::DeserializeOwned,
 {
     match response {
-        KipResponse::Ok { result, .. } => Ok(serde_json::from_value::<T>(result)?),
+        ToolResponse::Ok { result, .. } => Ok(serde_json::from_value::<T>(result)?),
         other => Err(format!("conversation API returned an error: {other:?}").into()),
     }
 }
@@ -761,9 +765,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             )
             .route(
                 "/v1/anda_bot/execute_kip_readonly",
-                routing::post(|| async {
-                    axum::Json(json!({"result": {"ok": true}, "next_cursor": null}))
-                }),
+                routing::post(|| async { axum::Json(anda_kip::Response::ok(json!({"ok": true}))) }),
             );
         let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
@@ -775,7 +777,8 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             .execute_kip_readonly(&anda_kip::Request::default())
             .await
             .unwrap();
-        assert!(matches!(kip, anda_kip::Response::Ok { .. }));
+        assert_eq!(kip.status, anda_kip::TopLevelStatus::Succeeded);
+        assert_eq!(kip.first_result(), Some(&json!({"ok": true})));
     }
 
     #[tokio::test]
@@ -819,16 +822,16 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     }
 
     #[test]
-    fn kip_result_unwraps_ok_and_reports_errors() {
-        let ok: u64 = kip_result(anda_kip::Response::Ok {
+    fn tool_result_unwraps_ok_and_reports_errors() {
+        let ok: u64 = tool_result(ToolResponse::Ok {
             result: serde_json::json!(7),
             next_cursor: None,
         })
         .unwrap();
         assert_eq!(ok, 7);
 
-        let err = kip_result::<u64>(anda_kip::Response::Err {
-            error: anda_kip::ErrorObject::new("KIP_404", "nope".to_string()),
+        let err = tool_result::<u64>(ToolResponse::Err {
+            error: crate::util::tool_response::ToolError::new("KIP_404", "nope".to_string()),
             result: None,
         })
         .unwrap_err();

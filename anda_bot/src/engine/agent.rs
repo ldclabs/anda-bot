@@ -1,3 +1,4 @@
+use crate::util::tool_response::ToolResponse as Response;
 use anda_brain::types::{FormationInputRef, InputContext};
 use anda_core::{
     Agent, AgentContext, AgentOutput, BoxError, CompletionRequest, ContentPart, Document,
@@ -24,7 +25,6 @@ use anda_engine::{
     subagent::SubAgentManager,
     unix_ms,
 };
-use anda_kip::Response;
 use futures::future::join_all;
 use ic_auth_types::Xid;
 use parking_lot::RwLock;
@@ -42,6 +42,8 @@ use std::{
 mod instructions;
 mod meta;
 mod runner;
+#[cfg(feature = "mib")]
+mod runner_managed;
 mod session;
 mod startup;
 
@@ -1421,7 +1423,7 @@ mod tests {
             )
             .route(
                 "/v1/anda_bot/get_or_init_user",
-                routing::post(|| async { axum::Json(json!({"name": "tester"})) }),
+                routing::post(|| async { axum::Json(json!({"result": {"name": "tester"}})) }),
             )
             .route(
                 "/v1/anda_bot/formation",

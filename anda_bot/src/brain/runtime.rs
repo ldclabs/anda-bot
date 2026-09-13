@@ -215,6 +215,183 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn embedded_brain_kip2_client_and_graph_queries_use_real_nexus_shapes() {
+        let key = Ed25519Key::new([17; 32]);
+        let brain = Brain::new(
+            Arc::new(InMemory::new()),
+            BrainConfig {
+                managers: vec![key.pubkey()],
+                https_proxy: None,
+                models: brain_models(),
+            },
+        )
+        .await
+        .unwrap();
+        let mut claims =
+            crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap();
+        claims.audience = Some("*".into());
+        claims
+            .extra
+            .insert(crate::identity::iana::CWTClaimScope, "*");
+        let token = key.sign_cwt(claims).unwrap();
+        let space = brain
+            .state
+            .load_space(config::ANDA_BOT_SPACE_ID, true)
+            .await
+            .unwrap();
+        let base_url = crate::test_support::spawn_http_mock(brain.into_router()).await;
+        let client = crate::brain::Client::new(format!("{base_url}/v1/anda_bot"), Some(token));
+        let primer = client.describe_primer().await.unwrap();
+        assert!(primer.get("cognitive_identity").is_some());
+        let person = client
+            .user_info("contract-person".into(), Some("Contract Person".into()))
+            .await
+            .unwrap();
+        assert_eq!(person["kind"], "concept");
+        assert!(person["schema_ref"].as_str().unwrap().ends_with("/Person"));
+        let id = person["id"].as_str().unwrap();
+        // The browser submits these together. Single-operation checks cannot
+        // catch a missing mandatory execution mode on a real KIP 2.0 batch.
+        let mut batch = serde_json::json!({
+            "kip": "2.0",
+            "operations": [
+                {"command": "LIST TYPES LIMIT 500"},
+                {"command": "LIST PREDICATES LIMIT 500"}
+            ]
+        });
+        let invalid: anda_kip::Request = serde_json::from_value(batch.clone()).unwrap();
+        assert!(invalid.validate().is_err());
+        batch["execution"] = serde_json::json!({"mode": "independent"});
+        let valid: anda_kip::Request = serde_json::from_value(batch).unwrap();
+        valid.validate().unwrap();
+        let response = client.execute_kip_readonly(valid).await.unwrap();
+        assert_eq!(response.status, anda_kip::TopLevelStatus::Succeeded);
+        assert_eq!(response.results.len(), 2);
+        for result in response.results {
+            assert_eq!(result.status, anda_kip::OperationStatus::Succeeded);
+            assert!(result.result.unwrap().is_array());
+        }
+        for command in [
+            "LIST TYPES LIMIT 500".to_string(),
+            "LIST PREDICATES LIMIT 500".to_string(),
+            r#"FIND(?node) WHERE { ?node CONCEPT {type: "Person"} } LIMIT 12"#.to_string(),
+            format!(
+                r#"FIND(?link, ?o) WHERE {{ ?node CONCEPT {{id: "{id}"}} ?link (?node, ?predicate, ?o) }} LIMIT 180"#
+            ),
+            format!(
+                r#"FIND(?s, ?link) WHERE {{ ?node CONCEPT {{id: "{id}"}} ?link (?s, ?predicate, ?node) }} LIMIT 180"#
+            ),
+            r#"SEARCH CONCEPT "Contract Person" LIMIT 32"#.to_string(),
+        ] {
+            let response = client
+                .execute_kip_readonly(anda_kip::Request::single(&command))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status,
+                anda_kip::TopLevelStatus::Succeeded,
+                "{command}: {response:?}"
+            );
+            assert_eq!(
+                response.results[0].status,
+                anda_kip::OperationStatus::Succeeded
+            );
+            let value = response.first_result().unwrap();
+            if command.starts_with("LIST") {
+                assert!(
+                    value
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|row| row["ref"].is_string() && row["local_name"].is_string())
+                );
+            } else if command.starts_with("SEARCH") {
+                assert!(value["hits"].is_array());
+                assert!(
+                    value["hits"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|hit| hit["element"]["id"] == id)
+                );
+                assert!(value.get("search_context").is_some());
+            }
+        }
+        space.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn nonempty_graph_expansion_projects_real_nexus_tuples() {
+        use anda_cognitive_nexus::{
+            CognitiveNexus,
+            nexus::DEFAULT_SPACE,
+            schema::{PackageState, SchemaLock, SchemaPackage},
+        };
+        use anda_kip::{Executor, Request, TopLevelStatus};
+        let db = crate::test_support::memory_db("graph_wire_contract").await;
+        let nexus = CognitiveNexus::connect(db.clone()).await.unwrap();
+        nexus
+            .install_package(
+                &SchemaPackage::parse(anda_cognitive_nexus::profiles::COGNITIVE_MEMORY).unwrap(),
+                "test",
+            )
+            .await
+            .unwrap();
+        let mut lock = SchemaLock::default();
+        lock.packages
+            .insert("kip://profiles/cognitive-memory".into(), "2.1.0".into());
+        lock.states.insert(
+            "kip://profiles/cognitive-memory".into(),
+            PackageState::Active,
+        );
+        nexus.activate_schema(DEFAULT_SPACE, lock).await.unwrap();
+        let commands = [
+            r#"MUTATE {
+                CREATE CONCEPT ?person { TYPE "Person" NAME "Graph Person" }
+                CREATE CONCEPT ?preference { TYPE "Preference" NAME "Dark mode" }
+                ENSURE PROPOSITION ?p (?person, "prefers", ?preference)
+            }"#,
+            r#"FIND(?link, ?o) WHERE { ?node CONCEPT {name: "Graph Person"} ?link (?node, ?predicate, ?o) } LIMIT 180"#,
+            r#"FIND(?s, ?link) WHERE { ?node CONCEPT {name: "Dark mode"} ?link (?s, ?predicate, ?node) } LIMIT 180"#,
+        ];
+        for (index, command) in commands.iter().enumerate() {
+            let request = Request::single(*command);
+            let response = nexus
+                .execute(
+                    anda_kip::parse_kip(command).unwrap(),
+                    &request,
+                    &request.operations[0],
+                )
+                .await;
+            assert_eq!(
+                response.status,
+                TopLevelStatus::Succeeded,
+                "{command}: {response:?}"
+            );
+            if index > 0 {
+                let rows = response.first_result().unwrap().as_array().unwrap();
+                assert_eq!(rows.len(), 1);
+                let tuple = rows[0].as_array().unwrap();
+                assert_eq!(tuple.len(), 2);
+                let proposition = &tuple[if index == 1 { 0 } else { 1 }];
+                let concept = &tuple[if index == 1 { 1 } else { 0 }];
+                assert_eq!(proposition["kind"], "proposition");
+                assert!(
+                    proposition["predicate_ref"]
+                        .as_str()
+                        .unwrap()
+                        .ends_with("/prefers")
+                );
+                assert!(proposition["subject"]["id"].is_string());
+                assert!(proposition["object"]["id"].is_string());
+                assert_eq!(concept["kind"], "concept");
+                assert!(concept["schema_ref"].is_string());
+            }
+        }
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn brain_requires_at_least_one_manager() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
