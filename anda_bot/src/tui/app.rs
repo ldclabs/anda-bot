@@ -204,6 +204,25 @@ impl App {
             return Ok(());
         }
 
+        if text == "/brain" || text.starts_with("/brain ") {
+            let output = self.brain_command(&text).await;
+            match output {
+                Ok(content) => {
+                    self.chat.messages.push(anda_core::Message {
+                        role: "system".into(),
+                        content: vec![content.into()],
+                        ..Default::default()
+                    });
+                    self.input_buf.clear();
+                    self.input_cursor = 0;
+                    self.input_preferred_col = None;
+                    self.notice.clear();
+                }
+                Err(err) => self.notice = err.to_string(),
+            }
+            return Ok(());
+        }
+
         let resets_display = gateway::is_new_conversation_command(&text);
 
         self.input_buf.clear();
@@ -219,6 +238,50 @@ impl App {
         }
 
         Ok(())
+    }
+
+    async fn brain_command(&self, text: &str) -> Result<String, BoxError> {
+        let brain = self.client.brain();
+        let command = text.strip_prefix("/brain").unwrap_or_default().trim();
+        let result = if command == "status" {
+            serde_json::to_value(brain.runtime_status().await?)?
+        } else if let Some(id) = command.strip_prefix("formation ") {
+            serde_json::to_value(brain.formation_conversation(id.parse()?).await?)?
+        } else if command.is_empty() || command == "inbox" || command.starts_with("next ") {
+            serde_json::to_value(
+                brain
+                    .attention(&crate::brain::AttentionQuery {
+                        cursor: command.strip_prefix("next ").map(|s| s.trim().to_string()),
+                        limit: Some(20),
+                    })
+                    .await?,
+            )?
+        } else if command.starts_with("answer ") || command.starts_with("statement ") {
+            let mut parts = command.splitn(4, ' ');
+            let kind = parts.next().unwrap_or_default();
+            let id = parts.next().ok_or("missing attention id")?;
+            let event_key = parts.next().ok_or("missing stable event key")?.to_string();
+            let answer = parts
+                .next()
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("missing response text")?
+                .to_string();
+            let response = if kind == "answer" {
+                crate::brain::AttentionResponse::Clarification { event_key, answer }
+            } else {
+                crate::brain::AttentionResponse::AgentStatement {
+                    event_key,
+                    statement: answer,
+                }
+            };
+            serde_json::to_value(brain.respond(id, &response).await?)?
+        } else {
+            return Ok("/brain inbox · /brain status · /brain next <cursor>\n/brain answer <id> <event_key> <answer>\n/brain statement <id> <event_key> <statement>\nRetry with the same event key and text. Answers do not grant execution authority. / 重试须保留相同事件键和正文；回答不授予执行权限。".into());
+        };
+        Ok(format!(
+            "Brain\n```json\n{}\n```",
+            serde_json::to_string_pretty(&result)?
+        ))
     }
 
     async fn submit_choice_input(&mut self) -> Result<(), BoxError> {

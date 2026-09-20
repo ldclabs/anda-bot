@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Inbox from '$lib/anda/brain/Inbox.svelte'
   import { getMessage } from '$lib/i18n'
   import { escapeHtml } from '$lib/utils/format'
   import {
@@ -84,6 +85,7 @@
   let statusText = $state(getMessage('brainStatusIdle'))
   let settingsOpen = $state(false)
   let queryOpen = $state(false)
+  let inboxOpen = $state(false)
   let inspectorCopyState = $state<'idle' | 'copied'>('idle')
 
   let selectedNodeId = $state('')
@@ -609,6 +611,13 @@ LIMIT 100`)
 
   <main class="brain-workspace">
     <aside class="brain-sidebar">
+      <button
+        class={buttonClass('outline', 'sm')}
+        aria-pressed={inboxOpen}
+        onclick={() => (inboxOpen = !inboxOpen)}
+      >
+        {getMessage(inboxOpen ? 'brainBackToGraph' : 'brainInbox')}
+      </button>
       {#if settingsOpen}
         <section class="brain-panel">
           <div class="brain-panel-heading">
@@ -1113,6 +1122,16 @@ LIMIT 100`)
         {/if}
       </section>
     </aside>
+    {#if inboxOpen}
+      <div class="brain-inbox-overlay">
+        <button class={buttonClass('ghost', 'sm')} onclick={() => (inboxOpen = false)}
+          >{getMessage('brainBackToGraph')}</button
+        >
+        {#key `${settings.baseUrl}|${settings.spaceId}|${settings.token}`}
+          <Inbox {settings} />
+        {/key}
+      </div>
+    {/if}
   </main>
 </div>
 
@@ -1164,6 +1183,19 @@ LIMIT 100`)
 {/snippet}
 
 <style>
+  .brain-inbox-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+  }
+  .brain-inbox-overlay > :global(button) {
+    align-self: flex-start;
+    margin: 0.5rem 1rem 0;
+  }
+
   .brain-shell {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
@@ -1200,6 +1232,7 @@ LIMIT 100`)
   }
 
   .brain-workspace {
+    position: relative;
     display: grid;
     grid-template-columns: minmax(17rem, 20rem) minmax(0, 1fr) minmax(18rem, 22rem);
     min-height: 0;

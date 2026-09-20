@@ -126,3 +126,12 @@ Cependant, les fournisseurs de modèles peuvent toujours recevoir des prompts, d
 :::tip
 Utilisez `anda --home /chemin/vers/.anda` lorsque vous avez besoin de données isolées pour différentes identités, projets ou tests.
 :::
+
+## Brain runtime
+
+Définissez `brain.runtime_config` vers un fichier JSON/YAML de confiance, relatif au dossier de configuration ; `BRAIN_RUNTIME_CONFIG` est prioritaire. Redémarrez pour installer les liaisons avant le chargement du Space. La boîte Brain du navigateur et `/brain inbox`, `/brain status`, `/brain formation <id>` dans le terminal conservent l’identité authentifiée. La lecture n’autorise aucune exécution ; réessayez une réponse avec le même événement et texte. Un reçu Recall prouve seulement la livraison ; accepter Formation ne signifie pas le terminer. La fonctionnalité `learning` est indépendante de `mib` ; sémantique, utility, trust et apprentissage automatique exigent une configuration native explicite. Les transports IM actuels ne sont pas des adaptateurs d’action automatique. Le mode MIB persistent ne garantit ni apprentissage normal/ungated ni coûts complets.
+
+```yaml
+brain:
+  runtime_config: null
+```

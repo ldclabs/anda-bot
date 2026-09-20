@@ -281,6 +281,7 @@ fn build_skill_registry(
             .with_default_skill_tools(default_skill_tools.clone()),
     );
     let mut known_skill_tools = BTreeSet::from_iter(default_skill_tools.iter().cloned());
+    known_skill_tools.extend(brain::RuntimeTool::NAMES.map(String::from));
     known_skill_tools.extend(
         [
             brain::Client::NAME,
@@ -408,6 +409,7 @@ impl Engines {
     pub async fn new(
         cfg: EngineConfig,
         db: Arc<AndaDB>,
+        brain_host: brain::Host,
         engine_ref: Arc<EngineRef>,
         cron_runtime: Arc<cron::CronRuntime>,
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
@@ -462,7 +464,11 @@ impl Engines {
         let brain_token = cfg.id_key.sign_cwt(claims)?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
-            .with_http_client(brain_http_client);
+            .with_http_client(brain_http_client)
+            .with_host(
+                brain_host.clone(),
+                brain::Journal::new(object_store.clone()),
+            );
 
         let default_workspace = cfg
             .workspaces
@@ -632,6 +638,17 @@ impl Engines {
             .register_tool(conversations_tool.clone())?
             .register_tool(bookmarks_tool.clone())?
             .register_tool(bot.clone())?;
+
+        for operation in [
+            brain::RuntimeOperation::Attention,
+            brain::RuntimeOperation::Respond,
+            brain::RuntimeOperation::Status,
+        ] {
+            engine_builder = engine_builder.register_tool(Arc::new(brain::RuntimeTool::new(
+                brain_host.clone(),
+                operation,
+            )))?;
+        }
 
         if let Some(manager) = tts_manager {
             engine_builder = engine_builder.register_tool(manager)?;
@@ -836,8 +853,8 @@ async fn register_cli_workspace(
     AxumJson(request): AxumJson<RegisterCliWorkspaceRequest>,
 ) -> impl IntoResponse {
     let caller = match state.app.verify_user(&headers, unix_ms(), None, None) {
-        Ok(caller) => caller,
-        Err(_) => {
+        Ok(caller) if caller != Principal::anonymous() => caller,
+        _ => {
             return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
         }
     };

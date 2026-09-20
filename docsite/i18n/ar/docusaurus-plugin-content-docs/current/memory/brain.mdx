@@ -57,3 +57,14 @@ model:
       api_key: "YOUR_API_KEY"
       labels: ["primary", "brain"]
 ```
+
+## بيئة أصلية اختيارية
+
+اضبط `brain.runtime_config` على ملف JSON/YAML موثوق بمسار نسبي إلى دليل الإعدادات؛ تكون الأولوية لـ `BRAIN_RUNTIME_CONFIG`. أعد التشغيل لتثبيت الروابط قبل تحميل Space. يحتفظ صندوق Brain في المتصفح وأوامر `/brain inbox` و`/brain status` و`/brain formation <id>` بالهوية الموثقة. القراءة لا تمنح إذن التنفيذ؛ أعد إرسال الرد بالحدث والنص نفسيهما. إيصال Recall يثبت التسليم فقط، وقبول Formation لا يعني اكتماله. ميزة `learning` مستقلة عن `mib`؛ الدلالات وutility وtrust والتعلم التلقائي تتطلب إعداداً أصلياً صريحاً. وسائل IM الحالية ليست محولات إجراءات تلقائية. وضع MIB persistent لا يدّعي تعلم normal/ungated أو اكتمال حساب التكاليف.
+
+```yaml
+brain:
+  runtime_config: brain-runtime.yaml
+```
+
+أعد تصدير الرموز القديمة باستخدام `anda browser token` وحدّث إعدادات الإضافة؛ تحتفظ الطلبات بالهوية الأصلية وتتطلب جمهور Brain.

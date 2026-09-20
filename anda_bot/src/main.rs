@@ -733,6 +733,7 @@ fn build_control_client_from_owner_secret(
     // one client for the whole session. A few minutes would make every request
     // 401 mid-session; one day keeps the credential bounded without that.
     let mut claims = identity::expiring_claims(Duration::from_secs(24 * 60 * 60))?;
+    claims.audience = Some(config::ANDA_BOT_SPACE_ID.into());
     claims.extra.insert(identity::iana::CWTClaimScope, "*");
     let gateway_token = user_key.sign_cwt(claims)?;
     let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
@@ -770,6 +771,7 @@ async fn build_browser_extension_token_with_store(
     let mut claims = identity::Claims {
         issued_at: Some(now_secs.into()),
         expiration: Some(expires_secs.into()),
+        audience: Some(config::ANDA_BOT_SPACE_ID.into()),
         ..Default::default()
     };
     claims.extra.insert(identity::iana::CWTClaimScope, "*");
@@ -954,14 +956,68 @@ mod tests {
 
         // Building the control client provisions the user key and succeeds.
         let identity_store = std::sync::Arc::new(identity::MemoryIdentityKeyStore::default());
-        let _client = build_control_client_with_store(&daemon, identity_store.clone())
+        let client = build_control_client_with_store(&daemon, identity_store.clone())
             .await
             .unwrap();
 
-        let token = build_browser_extension_token_with_store(&daemon, 9999, identity_store)
+        let token = build_browser_extension_token_with_store(&daemon, 9999, identity_store.clone())
             .await
             .unwrap();
         assert!(!token.is_empty());
+        let secrets =
+            identity::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
+                .await
+                .unwrap();
+        let owner = identity::Ed25519Key::new(*secrets.owner);
+        let brain = brain::Brain::new(
+            std::sync::Arc::new(object_store::memory::InMemory::new()),
+            brain::BrainConfig {
+                managers: vec![owner.pubkey()],
+                models: std::sync::Arc::new(anda_engine::model::Models::default()),
+                https_proxy: None,
+                runtime_config: None,
+            },
+        )
+        .await
+        .unwrap();
+        let space = brain
+            .state
+            .load_space(config::ANDA_BOT_SPACE_ID, true)
+            .await
+            .unwrap();
+        assert!(
+            brain
+                .state
+                .check_auth(
+                    &token,
+                    config::ANDA_BOT_SPACE_ID,
+                    anda_brain::types::TokenScope::Read,
+                    anda_engine::unix_ms()
+                )
+                .is_ok()
+        );
+        assert!(
+            brain
+                .state
+                .check_auth(
+                    &token,
+                    "other_space",
+                    anda_brain::types::TokenScope::Read,
+                    anda_engine::unix_ms()
+                )
+                .is_err()
+        );
+        let url = crate::test_support::spawn_http_mock(brain.into_router()).await;
+        assert!(
+            !client
+                .rebased(url)
+                .brain()
+                .runtime_status()
+                .await
+                .unwrap()
+                .configured
+        );
+        space.close().await.unwrap();
     }
 
     #[tokio::test]

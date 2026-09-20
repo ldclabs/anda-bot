@@ -57,3 +57,14 @@ model:
       api_key: "YOUR_API_KEY"
       labels: ["primary", "brain"]
 ```
+
+## Optional native runtime
+
+Set `brain.runtime_config` to a trusted JSON/YAML file relative to the configuration directory; `BRAIN_RUNTIME_CONFIG` overrides it. Restart to install bindings before Space loading. The browser Brain inbox and TUI `/brain inbox`, `/brain status`, `/brain formation <id>` use the authenticated caller. Reading is not execution permission; retry an answer with the same event key and text. Recall receipts prove delivery only, and Formation acceptance is not completion. The `learning` feature is independent of `mib`; semantic, utility, trust and automatic learning require explicit native configuration and authority. Current IM transports are not automatic action adapters. MIB persistent memory does not claim normal/ungated learning or complete costs.
+
+```yaml
+brain:
+  runtime_config: brain-runtime.yaml
+```
+
+Re-export older browser tokens with `anda browser token` and update the extension settings: runtime requests now retain the original user identity and require the Brain audience.

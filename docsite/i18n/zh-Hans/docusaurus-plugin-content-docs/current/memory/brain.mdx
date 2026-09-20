@@ -57,3 +57,14 @@ model:
       api_key: "YOUR_API_KEY"
       labels: ["pro", "brain"]
 ```
+
+## 可选原生运行时
+
+通过 `brain.runtime_config` 指定可信 JSON/YAML，路径相对配置目录解析；`BRAIN_RUNTIME_CONFIG` 优先。重启后在首次加载 Space 前安装绑定。浏览器记忆待办及 TUI `/brain inbox`、`/brain status`、`/brain formation <id>` 保留真实调用者身份。读取不授予执行权限，回答重试须保留相同事件键和正文。Recall 收据只证明交付，Formation 接受不等于完成。`learning` 与 `mib` 独立；语义求值、utility、trust、自动学习均需显式原生配置与权限。现有 IM 发送接口不是自动动作适配器；MIB persistent 不宣称 normal/ungated 学习或完整计量。
+
+```yaml
+brain:
+  runtime_config: brain-runtime.yaml
+```
+
+旧浏览器令牌需要用 `anda browser token` 重新导出并更新扩展设置：运行时请求保留原用户身份，令牌必须包含 Brain audience。

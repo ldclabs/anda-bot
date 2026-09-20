@@ -197,7 +197,6 @@ export class BrainGraphData {
 
   async loadSchema(): Promise<IngestStats> {
     const response = await this.#api.executeKipReadonly<unknown>({
-      kip: '2.0',
       execution: { mode: 'independent' },
       operations: [
         { command: 'LIST TYPES LIMIT :limit', parameters: { limit: SCHEMA_ROW_LIMIT } },
@@ -250,7 +249,6 @@ LIMIT :limit`,
     }
 
     const response = await this.#api.executeKipReadonly<unknown>({
-      kip: '2.0',
       execution: { mode: 'independent' },
       operations: commands
     })
@@ -286,7 +284,6 @@ LIMIT :limit`,
     }
 
     const response = await this.#api.executeKipReadonly<unknown>({
-      kip: '2.0',
       execution: { mode: 'independent' },
       operations: commands
     })
@@ -327,7 +324,6 @@ LIMIT :limit`,
       return []
     }
     const response = await this.#api.executeKipReadonly<unknown>({
-      kip: '2.0',
       execution: { mode: 'independent' },
       operations: [
         {
@@ -380,7 +376,6 @@ LIMIT :limit`,
   async #expandConcept(id: string): Promise<IngestStats> {
     try {
       const response = await this.#api.executeKipReadonly<unknown>({
-        kip: '2.0',
         execution: { mode: 'independent' },
         operations: [
           {
@@ -431,7 +426,6 @@ LIMIT :limit`,
 
   async executeQuery(command: string): Promise<unknown> {
     const response = await this.#api.executeKipReadonly<unknown>({
-      kip: '2.0',
       execution: { mode: 'independent' },
       operations: [{ command }]
     })

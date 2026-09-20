@@ -65,6 +65,14 @@ impl Client {
         client
     }
 
+    pub fn brain(&self) -> crate::brain::Client {
+        crate::brain::Client::new(
+            format!("{}/v1/anda_bot", self.base_url),
+            Some(self.auth_token.clone()),
+        )
+        .with_http_client(self.http.clone())
+    }
+
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
         let req = self
             .request(reqwest::Method::GET, "/daemon/status")
@@ -105,8 +113,11 @@ impl Client {
         &self,
         req: &KipRequest,
     ) -> Result<KipWireResponse, BoxError> {
-        self.post_json("/v1/anda_bot/execute_kip_readonly", &req)
-            .await
+        self.post_json(
+            "/v1/anda_bot/execute_kip_readonly",
+            &crate::brain::http_kip_args(req.clone())?,
+        )
+        .await
     }
 
     pub async fn agent_run(&self, input: &AgentInput) -> Result<AgentOutput, BoxError> {
@@ -821,7 +832,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
         assert!(state.latest_tag.is_none());
 
         let kip = client
-            .execute_kip_readonly(&anda_kip::Request::default())
+            .execute_kip_readonly(&anda_kip::Request::single("DESCRIBE PRIMER"))
             .await
             .unwrap();
         assert_eq!(kip.status, anda_kip::TopLevelStatus::Succeeded);

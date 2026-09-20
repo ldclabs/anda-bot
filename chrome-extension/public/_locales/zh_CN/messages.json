@@ -1123,5 +1123,47 @@
   },
   "optimizeSkillWithAnda": {
     "message": "让 Anda 优化"
+  },
+  "brainInbox": {
+    "message": "记忆待办"
+  },
+  "brainInboxHint": {
+    "message": "查看和回答持久记忆待办。回答是数据，不授予执行权限。"
+  },
+  "brainRuntimeConfigured": {
+    "message": "运行时已配置"
+  },
+  "brainRuntimeUnconfigured": {
+    "message": "运行时未配置"
+  },
+  "brainRuntimeStatus": {
+    "message": "运行状态"
+  },
+  "brainInboxEmpty": {
+    "message": "此页没有可见待办。"
+  },
+  "brainResponsePending": {
+    "message": "回答尚待确认。重试会保留相同事件和正文。"
+  },
+  "brainClarificationAnswer": {
+    "message": "澄清回答"
+  },
+  "brainAgentStatement": {
+    "message": "归属陈述"
+  },
+  "brainRetryResponse": {
+    "message": "重试回答"
+  },
+  "brainSendResponse": {
+    "message": "提交回答"
+  },
+  "brainNextPage": {
+    "message": "下一页"
+  },
+  "brainPageCompleteHint": {
+    "message": "分页结束不表示待办已完成。"
+  },
+  "brainBackToGraph": {
+    "message": "返回图谱"
   }
 }

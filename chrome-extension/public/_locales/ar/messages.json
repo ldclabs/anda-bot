@@ -1123,5 +1123,47 @@
   },
   "optimizeSkillWithAnda": {
     "message": "اطلب من Anda التحسين"
+  },
+  "brainInbox": {
+    "message": "مهام الذاكرة"
+  },
+  "brainInboxHint": {
+    "message": "اعرض مهام الذاكرة الدائمة وأجب عنها. الإجابات لا تمنح صلاحية التنفيذ."
+  },
+  "brainRuntimeConfigured": {
+    "message": "بيئة التشغيل مهيأة"
+  },
+  "brainRuntimeUnconfigured": {
+    "message": "بيئة التشغيل غير مهيأة"
+  },
+  "brainRuntimeStatus": {
+    "message": "حالة التشغيل"
+  },
+  "brainInboxEmpty": {
+    "message": "لا توجد عناصر مرئية في هذه الصفحة."
+  },
+  "brainResponsePending": {
+    "message": "الرد بانتظار التأكيد. تحتفظ إعادة المحاولة بالحدث والنص نفسيهما."
+  },
+  "brainClarificationAnswer": {
+    "message": "إجابة توضيحية"
+  },
+  "brainAgentStatement": {
+    "message": "إفادة منسوبة"
+  },
+  "brainRetryResponse": {
+    "message": "إعادة إرسال الرد"
+  },
+  "brainSendResponse": {
+    "message": "إرسال الرد"
+  },
+  "brainNextPage": {
+    "message": "الصفحة التالية"
+  },
+  "brainPageCompleteHint": {
+    "message": "نهاية الصفحة لا تعني اكتمال المهام."
+  },
+  "brainBackToGraph": {
+    "message": "العودة إلى الرسم"
   }
 }

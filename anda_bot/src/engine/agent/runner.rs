@@ -529,13 +529,26 @@ impl SessionRunner {
         let timestamp = rfc3339_datetime(now_ms);
         match self
             .assistant
-            .submit_formation(&messages, &self.session.formation_context, &timestamp)
+            .submit_formation(
+                crate::brain::FormationSubmission {
+                    bot_conversation: self.conversation._id,
+                    window_start: self.session.submit_formation_at.load(Ordering::SeqCst) as usize,
+                    window_end: next_submit_formation_at,
+                    submitted_at: now_ms,
+                    brain_conversation: None,
+                    state: crate::brain::FormationState::Pending,
+                    error: None,
+                },
+                &messages,
+                &self.session.formation_context,
+                &timestamp,
+            )
             .await
         {
-            Ok(_) => {
+            Ok(submission) => {
                 self.session
                     .submit_formation_at
-                    .store(next_submit_formation_at as u64, Ordering::SeqCst);
+                    .store(submission.window_end as u64, Ordering::SeqCst);
                 self.session
                     .formation_backoff_until
                     .store(0, Ordering::SeqCst);
@@ -755,6 +768,14 @@ impl SessionRunner {
         }
         self.drain_action_events().await;
         if let Ok(Some(res)) = &mut next_result {
+            if let Some(trace) = self
+                .runner
+                .ctx()
+                .base
+                .get_state::<crate::brain::RecallTurn>()
+            {
+                trace.prepare(self.conversation._id, &res.tool_calls);
+            }
             res.chat_history = self.runner.chat_history().clone();
         }
         self.assistant

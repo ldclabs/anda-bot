@@ -47,11 +47,11 @@ export interface KipOperation {
 }
 
 export interface KipRequest {
-  kip: '2.0'
   operations: KipOperation[]
   execution?: { mode: 'independent' | 'sequence' | 'atomic' }
   parameters?: Record<string, Json>
-  options?: { dry_run?: boolean }
+  dry_run?: boolean
+  read?: Record<string, Json>
 }
 
 export interface KipError {
@@ -107,6 +107,66 @@ export interface BrainStatus {
   maintenance_processed_id: number
 }
 
+export interface AttentionItem {
+  id: string
+  wake_ref: string
+  parent_id?: string
+  summary: string
+  state: string
+  reason?: string
+  decision_ref?: string
+  attempt_ref?: string
+  dispatch_ref?: string
+  clarification?: unknown
+  delivery?: unknown
+}
+export interface AttentionPage {
+  scope: { space_id: string; space_instance: string }
+  items: AttentionItem[]
+  next_cursor?: string
+  complete: boolean
+}
+export type AttentionResponse =
+  | { kind: 'clarification'; event_key: string; answer: string }
+  | { kind: 'agent_statement'; event_key: string; statement: string }
+export interface ResponseReceipt {
+  receipt_id: string
+  status: string
+  evidence_ref?: string
+}
+export interface RuntimeStatus {
+  /** Verified engine caller on the built-in Anda Bot WebSocket proxy. */
+  caller?: string
+  configured: boolean
+  attention_enabled: boolean
+  actions_enabled: boolean
+  observation_enabled: boolean
+  observer_authenticated: boolean
+  blocked_reasons: string[]
+  visible_items: number
+  inventory_complete: boolean
+  learning: Record<string, unknown>
+  utility: Record<string, unknown>
+  trust: Record<string, unknown>
+  semantic_attention: Record<string, unknown>
+}
+
+export async function brainPendingStorageKey(
+  settings: BrainGraphSettings,
+  caller?: string
+): Promise<string> {
+  // The verified caller is stable across bearer refreshes. Custom direct
+  // Brain endpoints do not expose it, so retain credential isolation there.
+  const identity = caller ? ['caller', caller] : ['credential', settings.token]
+  const bytes = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify([settings.baseUrl, settings.spaceId, identity]))
+  )
+  return `brain-responses:${Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('')}`
+}
+
 export interface BrainGraphSettings extends SettingsState {
   spaceId: string
 }
@@ -150,6 +210,40 @@ export class BrainApi {
       }))
     assertKipSucceeded(response, request.operations.length)
     return response
+  }
+
+  async attention(cursor?: string): Promise<AttentionPage> {
+    const query = { cursor: cursor ?? null, limit: 20 }
+    const rpc = await this.extensionRpc<AttentionPage>('brain_attention', [query])
+    if (rpc) return rpc
+    const params = new URLSearchParams({ limit: '20' })
+    if (cursor) params.set('cursor', cursor)
+    return unwrapBrainResult(
+      await this.request<BrainResult<AttentionPage>>(`/attention?${params}`, { method: 'GET' }),
+      'Brain inbox'
+    )
+  }
+
+  async runtimeStatus(): Promise<RuntimeStatus> {
+    const rpc = await this.extensionRpc<RuntimeStatus>('brain_runtime_status', [])
+    if (rpc) return rpc
+    return unwrapBrainResult(
+      await this.request<BrainResult<RuntimeStatus>>('/runtime/status', { method: 'GET' }),
+      'Brain runtime'
+    )
+  }
+
+  async respond(id: string, response: AttentionResponse): Promise<ResponseReceipt> {
+    if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('Invalid attention item id')
+    const rpc = await this.extensionRpc<ResponseReceipt>('brain_respond', [id, response])
+    if (rpc) return rpc
+    return unwrapBrainResult(
+      await this.request<BrainResult<ResponseReceipt>>(`/attention/${id}/responses`, {
+        method: 'POST',
+        body: JSON.stringify(response)
+      }),
+      'Brain response'
+    )
   }
 
   private async extensionRpc<T>(method: string, params: unknown[]): Promise<T | null> {

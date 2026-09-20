@@ -168,7 +168,7 @@ Useful top-level settings:
 - Esc shows status.
 - Ctrl+C quits.
 
-When a response succeeds, conversation turns are sent to Anda Brain for memory formation. I keep conversation state locally, so later prompts in the same workspace can continue with the right context.
+When a response succeeds, conversation turns are sent to Anda Brain for asynchronous memory formation. Accepted conversation IDs are persisted; acceptance is not completion. I keep conversation state locally, so later prompts in the same workspace can continue with the right context.
 
 ## Teach My Memory
 
@@ -317,3 +317,8 @@ What lives there:
 Copyright © LDC Labs
 
 Licensed under Apache-2.0. See the repository-level [LICENSE](../LICENSE).
+
+
+## Optional Brain runtime
+
+Set `brain.runtime_config` in the user config (relative to its directory), or override it with `BRAIN_RUNTIME_CONFIG`. The browser Brain inbox and TUI `/brain inbox`, `/brain status`, `/brain formation <id>` retain the caller identity. Model tools are discovered through `tools_select`; independent Outcomes and trust governance are not model tools. The separate `learning` feature enables the native workflow adapter, with automatic switches off unless explicitly configured. See [runtime integration](../docs/brain-integration.md) / [中文](../docs/brain-integration_cn.md).

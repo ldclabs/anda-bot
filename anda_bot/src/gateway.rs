@@ -26,11 +26,15 @@ pub async fn serve(
     completion_hooks: Vec<Arc<dyn engine::CompletionHook>>,
     channel_sender: channel::ChannelSender,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
+    let runtime_config = brain_cfg.runtime_config.clone();
     let brain = brain::Brain::new(db.object_store(), brain_cfg).await?;
     let brain_state = brain.state.clone();
+    let brain_host = brain::Host::new(brain_state.clone(), runtime_config.as_ref())?
+        .with_journal(brain::Journal::new(db.object_store()));
     let engines = engine::Engines::new(
         engine_cfg,
         db,
+        brain_host,
         engine_ref,
         cron,
         completion_hooks,

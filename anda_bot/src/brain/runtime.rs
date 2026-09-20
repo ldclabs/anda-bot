@@ -15,6 +15,7 @@ pub struct BrainConfig {
     pub managers: Vec<Ed25519PubKey>,
     pub https_proxy: Option<String>,
     pub models: Arc<Models>,
+    pub runtime_config: Option<anda_brain::runtime_api::config::RuntimeConfig>,
 }
 
 pub struct Brain {
@@ -25,6 +26,14 @@ impl Brain {
     pub async fn new(
         object_store: Arc<dyn ObjectStore>,
         cfg: BrainConfig,
+    ) -> Result<Self, BoxError> {
+        Self::new_with_secrets(object_store, cfg, |name| std::env::var(name).ok()).await
+    }
+
+    async fn new_with_secrets(
+        object_store: Arc<dyn ObjectStore>,
+        cfg: BrainConfig,
+        resolve_secret: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, BoxError> {
         let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
         let management = Arc::new(BaseManagement {
@@ -52,7 +61,7 @@ impl Brain {
             .first()
             .map(|k| k.id())
             .ok_or("At least one manager is required")?;
-        let app_state = AppState::new(
+        let mut app_state = AppState::new(
             object_store,
             Arc::new(db_config),
             management.clone(),
@@ -63,6 +72,10 @@ impl Brain {
             config::APP_VERSION.to_string(),
             0,
         );
+
+        if let Some(runtime_config) = cfg.runtime_config {
+            app_state = app_state.with_runtime_config(runtime_config, resolve_secret)?;
+        }
 
         let _ = match app_state.load_space(config::ANDA_BOT_SPACE_ID, true).await {
             Ok(space) => space,
@@ -111,6 +124,20 @@ impl Brain {
             )
             .route("/v1/{space_id}/formation", routing::post(post_formation))
             .route("/v1/{space_id}/recall", routing::post(post_recall))
+            .route(
+                "/v1/{space_id}/recall_structured",
+                routing::post(post_recall_structured),
+            )
+            .route("/v1/{space_id}/attention", routing::get(get_attention))
+            .route(
+                "/v1/{space_id}/attention/{id}/responses",
+                routing::post(post_attention_response),
+            )
+            .route("/v1/{space_id}/outcomes", routing::post(post_outcome))
+            .route(
+                "/v1/{space_id}/runtime/status",
+                routing::get(get_runtime_status),
+            )
             .route(
                 "/v1/{space_id}/maintenance",
                 routing::post(post_maintenance),
@@ -171,13 +198,14 @@ impl Brain {
 
 #[cfg(test)]
 mod tests {
+    mod integration;
     use super::*;
     use crate::identity::Ed25519Key;
     use crate::util::http_client::new_reqwest_client;
     use anda_engine::model::ModelConfig;
     use object_store::memory::InMemory;
 
-    fn brain_models() -> Arc<Models> {
+    pub(super) fn brain_models() -> Arc<Models> {
         let models = Models::from_configs(
             &[ModelConfig {
                 family: "openai".to_string(),
@@ -204,6 +232,7 @@ mod tests {
                 managers: vec![manager],
                 https_proxy: None,
                 models: brain_models(),
+                runtime_config: None,
             },
         )
         .await
@@ -223,6 +252,7 @@ mod tests {
                 managers: vec![key.pubkey()],
                 https_proxy: None,
                 models: brain_models(),
+                runtime_config: None,
             },
         )
         .await
@@ -401,6 +431,7 @@ mod tests {
                 managers: Vec::new(),
                 https_proxy: None,
                 models: brain_models(),
+                runtime_config: None,
             },
         )
         .await

@@ -321,3 +321,9 @@ channels: {}
 #       platform: lark # or feishu
 #       receive_mode: websocket # or webhook
 #       ack_reactions: true
+
+# Optional trusted Brain runtime; BRAIN_RUNTIME_CONFIG overrides this path.
+# Relative paths resolve from this configuration directory. Restart to apply.
+# See brain-runtime.example.yaml; no runtime bindings are installed by default.
+brain:
+  runtime_config: null

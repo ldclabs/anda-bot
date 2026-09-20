@@ -1,0 +1,415 @@
+//! Small host associations, separate from model context and native authority.
+//! Versioned object keys use the existing MetaStore's conditional writes.
+use anda_brain::recall_receipt::RecallReceiptRef;
+use anda_core::{AgentOutput, BoxError, Usage};
+use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, path::Path};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::{collections::HashMap, sync::Arc};
+
+#[derive(Clone)]
+pub struct Journal {
+    store: Arc<dyn ObjectStore>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecallDelivery {
+    pub invocation: String,
+    pub caller: String,
+    pub bot_conversation: Option<u64>,
+    pub bot_turn: Option<String>,
+    pub tool_call: Option<String>,
+    pub brain_conversation: Option<u64>,
+    pub receipt: Option<RecallReceiptRef>,
+    pub delivered_at: u64,
+    pub failed: bool,
+    pub usage: Usage,
+    pub tools_usage: HashMap<String, Usage>,
+    /// Provider prices and omitted measurements are unknown, never zero.
+    pub accounting_complete: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FormationSubmission {
+    pub bot_conversation: u64,
+    pub window_start: usize,
+    pub window_end: usize,
+    pub submitted_at: u64,
+    pub brain_conversation: Option<u64>,
+    pub state: FormationState,
+    pub error: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FormationState {
+    Pending,
+    Accepted,
+    Processing,
+    Completed,
+    Failed,
+    Unknown,
+}
+
+impl Journal {
+    pub fn new(store: Arc<dyn ObjectStore>) -> Self {
+        Self { store }
+    }
+    pub async fn read<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, BoxError> {
+        match self
+            .store
+            .get(&Path::from(format!("bot-brain/v1/{key}")))
+            .await
+        {
+            Ok(value) => Ok(Some(serde_json::from_slice(&value.bytes().await?)?)),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+    pub async fn write<T: Serialize>(&self, key: &str, value: &T) -> Result<(), BoxError> {
+        self.store
+            .put(
+                &Path::from(format!("bot-brain/v1/{key}")),
+                serde_json::to_vec(value)?.into(),
+            )
+            .await?;
+        Ok(())
+    }
+    pub async fn create<T: Serialize>(&self, key: &str, value: &T) -> Result<bool, BoxError> {
+        match self
+            .store
+            .put_opts(
+                &Path::from(format!("bot-brain/v1/{key}")),
+                serde_json::to_vec(value)?.into(),
+                PutOptions {
+                    mode: PutMode::Create,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(
+                object_store::Error::AlreadyExists { .. }
+                | object_store::Error::Precondition { .. },
+            ) => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    }
+    pub async fn record_recall(&self, delivery: &RecallDelivery) -> Result<(), BoxError> {
+        self.write(&format!("recall/{}", delivery.invocation), delivery)
+            .await
+    }
+    pub async fn submit_formation(
+        &self,
+        client: &super::Client,
+        mut submission: FormationSubmission,
+        input: anda_brain::types::FormationInputRef<'_>,
+    ) -> Result<FormationSubmission, BoxError> {
+        let key = format!(
+            "formation/{}/{}",
+            submission.bot_conversation, submission.window_start
+        );
+        let requested_window = submission.clone();
+        if !self.create(&key, &submission).await? {
+            submission = self
+                .read(&key)
+                .await?
+                .ok_or("formation journal disappeared")?;
+            // A crash or transport failure may have happened after acceptance.
+            // No server idempotency key exists; do not blindly resend this window.
+            if submission.brain_conversation.is_some() {
+                self.refresh_formation(client, &mut submission).await?;
+                return Ok(submission);
+            }
+            if submission.state == FormationState::Failed {
+                submission = requested_window;
+                submission.state = FormationState::Pending;
+                self.write(&key, &submission).await?;
+            } else {
+                return Err("formation acceptance is unknown; retained the original window for reconciliation".into());
+            }
+        }
+        let result = client.formation(input).await;
+        match result {
+            Ok(AgentOutput {
+                conversation,
+                failed_reason,
+                ..
+            }) => {
+                submission.brain_conversation = conversation;
+                submission.state = if failed_reason.is_some() {
+                    FormationState::Failed
+                } else if conversation.is_some() {
+                    FormationState::Accepted
+                } else {
+                    FormationState::Unknown
+                };
+                submission.error = failed_reason.map(|s| s.chars().take(512).collect());
+            }
+            Err(err) => {
+                // Any completed HTTP/RPC response is a definite rejection and
+                // can be retried with backoff. Only transport failures may have
+                // lost an acceptance response and must remain unresolved.
+                let confirmed_http_status = err
+                    .downcast_ref::<super::HttpError>()
+                    .map(|response| response.status);
+                submission.state = if confirmed_http_status.is_some()
+                    || err.downcast_ref::<super::RpcFailure>().is_some()
+                {
+                    FormationState::Failed
+                } else {
+                    FormationState::Unknown
+                };
+                submission.error = Some(err.to_string().chars().take(512).collect());
+            }
+        }
+        self.write(&key, &submission).await?;
+        if submission.state == FormationState::Accepted {
+            Ok(submission)
+        } else {
+            Err(format!("formation {}: {:?}", key, submission.state).into())
+        }
+    }
+    pub async fn refresh_formation(
+        &self,
+        client: &super::Client,
+        submission: &mut FormationSubmission,
+    ) -> Result<(), BoxError> {
+        use anda_engine::memory::ConversationStatus;
+        let id = submission
+            .brain_conversation
+            .ok_or("formation acceptance is unknown")?;
+        let conversation = client.formation_conversation(id).await?;
+        submission.state = match conversation.status {
+            ConversationStatus::Submitted => FormationState::Accepted,
+            ConversationStatus::Working | ConversationStatus::Idle => FormationState::Processing,
+            ConversationStatus::Completed => FormationState::Completed,
+            ConversationStatus::Failed | ConversationStatus::Cancelled => FormationState::Failed,
+        };
+        submission.error = conversation
+            .failed_reason
+            .map(|s| s.chars().take(512).collect());
+        self.write(
+            &format!(
+                "formation/{}/{}",
+                submission.bot_conversation, submission.window_start
+            ),
+            submission,
+        )
+        .await
+    }
+}
+
+/// Prepared by the host when the model emits tool calls. Only a unique match
+/// receives the model's call id; ambiguous parallel duplicates remain unassigned.
+#[derive(Clone, Default)]
+pub struct RecallTurn(pub Arc<parking_lot::Mutex<RecallTurnState>>);
+#[derive(Default)]
+pub struct RecallTurnState {
+    pub conversation: u64,
+    pub turn: String,
+    pub calls: Vec<(serde_json::Value, Option<String>)>,
+}
+impl RecallTurn {
+    pub fn prepare(&self, conversation: u64, calls: &[anda_core::ToolCall]) {
+        let mut state = self.0.lock();
+        state.conversation = conversation;
+        state.turn = ic_auth_types::Xid::new().to_string();
+        state.calls = calls
+            .iter()
+            .filter(|call| call.name == super::Client::NAME && call.result.is_none())
+            .filter_map(|call| {
+                serde_json::from_value::<anda_brain::types::RecallInput>(call.args.clone())
+                    .ok()
+                    .and_then(|args| serde_json::to_value(args).ok())
+                    .map(|args| (args, call.call_id.clone()))
+            })
+            .collect();
+    }
+    pub fn identify(
+        &self,
+        args: &anda_brain::types::RecallInput,
+    ) -> (Option<u64>, Option<String>, Option<String>) {
+        let state = self.0.lock();
+        let args = serde_json::to_value(args).unwrap_or_default();
+        let matches: Vec<_> = state
+            .calls
+            .iter()
+            .filter(|(input, _)| *input == args)
+            .collect();
+        (
+            Some(state.conversation),
+            Some(state.turn.clone()),
+            if matches.len() == 1 {
+                matches[0].1.clone()
+            } else {
+                None
+            },
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Router, response::IntoResponse, routing};
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn submission() -> FormationSubmission {
+        FormationSubmission {
+            bot_conversation: 42,
+            window_start: 0,
+            window_end: 2,
+            submitted_at: 1,
+            brain_conversation: None,
+            state: FormationState::Pending,
+            error: None,
+        }
+    }
+    #[tokio::test]
+    async fn formation_acceptance_survives_restart_and_exact_status_is_read() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let app = Router::new().route("/formation", routing::post(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { axum::Json(json!({"result": AgentOutput { conversation: Some(7), ..Default::default() }})) }
+        })).route("/conversations/7", routing::get(|| async {
+            axum::Json(json!({"result": anda_engine::memory::Conversation { _id:7, status: anda_engine::memory::ConversationStatus::Completed, ..Default::default() }}))
+        }));
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let client = super::super::Client::new(url, None);
+        let input = || anda_brain::types::FormationInputRef {
+            messages: &[],
+            context: &None,
+            timestamp: &None,
+        };
+        let journal = Journal::new(store.clone());
+        let accepted = journal
+            .submit_formation(&client, submission(), input())
+            .await
+            .unwrap();
+        assert_eq!(accepted.brain_conversation, Some(7));
+        assert_eq!(accepted.state, FormationState::Accepted);
+        drop(journal);
+        let recovered = Journal::new(store)
+            .submit_formation(&client, submission(), input())
+            .await
+            .unwrap();
+        assert_eq!(recovered.state, FormationState::Completed);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn lost_acceptance_is_durable_and_never_blindly_resent() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let app = Router::new().route(
+            "/formation",
+            routing::post(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { "truncated response after acceptance" }
+            }),
+        );
+        let client =
+            super::super::Client::new(crate::test_support::spawn_http_mock(app).await, None);
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        for end in [2, 4] {
+            let mut window = submission();
+            window.window_end = end;
+            let journal = Journal::new(store.clone());
+            assert!(
+                journal
+                    .submit_formation(
+                        &client,
+                        window,
+                        anda_brain::types::FormationInputRef {
+                            messages: &[],
+                            context: &None,
+                            timestamp: &None
+                        }
+                    )
+                    .await
+                    .is_err()
+            );
+            let row: FormationSubmission = journal.read("formation/42/0").await.unwrap().unwrap();
+            assert_eq!(row.state, FormationState::Unknown);
+            assert!(row.brain_conversation.is_none());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    async fn confirmed_failure_retries(status: Option<http::StatusCode>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let app = Router::new().route(
+            "/formation",
+            routing::post(move || {
+                let attempt = count.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        let body = axum::Json(json!({"error": {"message": "queue full"}}));
+                        return match status {
+                            Some(status) => (status, body).into_response(),
+                            None => body.into_response(),
+                        };
+                    }
+                    axum::Json(json!({
+                        "result": AgentOutput {
+                            conversation: Some(8),
+                            ..Default::default()
+                        }
+                    }))
+                    .into_response()
+                }
+            }),
+        );
+        let client =
+            super::super::Client::new(crate::test_support::spawn_http_mock(app).await, None);
+        let journal = Journal::new(Arc::new(object_store::memory::InMemory::new()));
+        let input = || anda_brain::types::FormationInputRef {
+            messages: &[],
+            context: &None,
+            timestamp: &None,
+        };
+
+        assert!(
+            journal
+                .submit_formation(&client, submission(), input())
+                .await
+                .is_err()
+        );
+        let failed: FormationSubmission = journal.read("formation/42/0").await.unwrap().unwrap();
+        assert_eq!(failed.state, FormationState::Failed);
+
+        let mut expanded = submission();
+        expanded.window_end = 4;
+        let accepted = journal
+            .submit_formation(&client, expanded, input())
+            .await
+            .unwrap();
+        assert_eq!(accepted.state, FormationState::Accepted);
+        assert_eq!(accepted.window_end, 4);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn confirmed_http_and_rpc_failures_remain_retryable() {
+        confirmed_failure_retries(Some(http::StatusCode::SERVICE_UNAVAILABLE)).await;
+        confirmed_failure_retries(None).await;
+    }
+
+    #[test]
+    fn recall_turn_preserves_unique_call_identity_without_guessing_duplicates() {
+        let trace = RecallTurn::default();
+        let call = anda_core::ToolCall {
+            name: super::super::Client::NAME.into(),
+            args: json!({"query":"prior task","context":null,"budget":null}),
+            call_id: Some("call-1".into()),
+            ..Default::default()
+        };
+        let args = serde_json::from_value(call.args.clone()).unwrap();
+        trace.prepare(9, std::slice::from_ref(&call));
+        assert_eq!(trace.identify(&args).2.as_deref(), Some("call-1"));
+        trace.prepare(9, &[call.clone(), call]);
+        assert_eq!(trace.identify(&args).2, None);
+    }
+}

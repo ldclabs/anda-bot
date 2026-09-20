@@ -1,0 +1,27 @@
+# Copy outside the repository, replace the CWT subject with your actual owner
+# principal, then reference this file from brain.runtime_config in config.yaml.
+format: anda-brain:runtime-api-v1
+spaces:
+  anda_bot:
+    bootstrap: true
+    subjects:
+      - credential:
+          kind: cwt_subject
+          subject: REPLACE_WITH_OWNER_PRINCIPAL
+        principal: kip:principal:bot-owner
+        observer: false
+        audit_recipients: false
+    audience: [kip:principal:bot-owner]
+    observers: []
+    adapter:
+      id: attention_inbox_v1
+      controller_principal: kip:principal:bot-attention-controller
+      recipient_principal: kip:principal:bot-owner
+      message: A memory needs your attention.
+      question: null
+      reply_timeout_ms: 86400000
+      context: null
+    semantic: null
+    utility: null
+    trust: null
+    learning: null

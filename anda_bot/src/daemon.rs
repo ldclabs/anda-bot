@@ -355,6 +355,7 @@ impl Daemon {
         let brain_models = Arc::new(anda_engine::model::Models::default());
         brain_models.set_model(brain_model);
         let brain_cfg = brain::BrainConfig {
+            runtime_config: self.cfg.brain.load_runtime_config(&self.home).await?,
             managers: brain_managers,
             models: brain_models.clone(),
             https_proxy: self.cfg.https_proxy.clone(),

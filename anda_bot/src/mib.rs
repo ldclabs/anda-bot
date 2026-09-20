@@ -70,10 +70,10 @@ pub struct MibCommand {
     pub idle_seconds: u64,
     #[arg(long, default_value_t = 4096)]
     pub max_output_tokens: usize,
-    /// Force the P5 memory packet cap; supply both Recall limits together.
+    /// Force the Recall memory packet cap; supply both Recall limits together.
     #[arg(long, requires = "recall_context_tokens")]
     pub recall_max_tokens: Option<u32>,
-    /// Cumulative normalized Recall planner input cap, using the fixed P5 codec.
+    /// Cumulative normalized Recall planner input cap, using the fixed Brain codec.
     #[arg(long, requires = "recall_max_tokens")]
     pub recall_context_tokens: Option<u32>,
 }

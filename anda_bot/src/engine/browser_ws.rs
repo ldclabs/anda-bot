@@ -1,7 +1,7 @@
 use anda_core::{AgentInput, BoxError, Json, Principal, ToolInput};
+use anda_engine::memory::KipArgs;
 use anda_engine::unix_ms;
 use anda_engine_server::handler::AppState;
-use anda_kip::Request as KipRequest;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -125,6 +125,18 @@ pub async fn browser_websocket(
     let Some(sec_key) = websocket_key(request.headers()) else {
         return (StatusCode::BAD_REQUEST, "missing WebSocket upgrade headers").into_response();
     };
+
+    // Brain must revalidate the original caller's bearer, including expiry and
+    // native mapping. Never substitute the daemon-wide Brain credential.
+    let Some(bearer) = auth_headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+    };
+    let mut state = state;
+    state.brain = state.brain.with_auth_token(bearer.to_string());
 
     let upgraded = upgrade::on(&mut request);
     tokio::spawn(async move {
@@ -323,6 +335,15 @@ async fn handle_browser_ws_request(
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
         "brain_status" => handle_brain_status(state).await,
         "brain_kip_readonly" => handle_brain_kip_readonly(incoming.params, state).await,
+        "brain_attention" | "brain_respond" | "brain_runtime_status" => {
+            handle_brain_runtime(
+                incoming.method.as_deref().unwrap_or_default(),
+                incoming.params,
+                state,
+                caller,
+            )
+            .await
+        }
         "information" => handle_information(state, engine_id),
         "ui_language" => handle_ui_language(state),
         "pick_workspace" => handle_pick_workspace().await,
@@ -409,14 +430,52 @@ async fn handle_brain_status(state: &BrowserWebSocketState) -> Result<Value, Str
     serde_json::to_value(status).map_err(|err| err.to_string())
 }
 
+async fn handle_brain_runtime(
+    method: &str,
+    params: Value,
+    state: &BrowserWebSocketState,
+    caller: Principal,
+) -> Result<Value, String> {
+    let result: Result<Value, BoxError> = async {
+        match method {
+            "brain_attention" => {
+                let (query,): (brain::AttentionQuery,) = params_from_value(params)?;
+                Ok(serde_json::to_value(state.brain.attention(&query).await?)?)
+            }
+            "brain_respond" => {
+                let (id, response): (String, brain::AttentionResponse) = params_from_value(params)?;
+                Ok(serde_json::to_value(
+                    state.brain.respond(&id, &response).await?,
+                )?)
+            }
+            _ => {
+                let mut status = serde_json::to_value(state.brain.runtime_status().await?)?;
+                if let Some(status) = status.as_object_mut() {
+                    // This is the already verified WebSocket caller. The UI
+                    // uses it only to retain pending idempotency keys across
+                    // bearer-token rotation without mixing different users.
+                    status.insert("caller".into(), caller.to_text().into());
+                }
+                Ok(status)
+            }
+        }
+    }
+    .await;
+    result.map_err(|err| err.to_string())
+}
+
 async fn handle_brain_kip_readonly(
     params: Value,
     state: &BrowserWebSocketState,
 ) -> Result<Value, String> {
-    let (request,): (KipRequest,) = params_from_value(params)?;
+    let (request,): (KipArgs,) = params_from_value(params)?;
     let response = state
         .brain
-        .execute_kip_readonly(request)
+        .execute_kip_readonly(
+            request
+                .into_readonly_request()
+                .map_err(|err| err.to_string())?,
+        )
         .await
         .map_err(|err| format!("failed to execute read-only Brain KIP: {err:?}"))?;
     serde_json::to_value(response).map_err(|err| err.to_string())
@@ -1467,6 +1526,87 @@ mod tests {
         let reply = ws.next().await.expect("a reply frame").unwrap();
         assert!(reply.is_text());
 
+        ws.close(None).await.ok();
+    }
+
+    #[tokio::test]
+    async fn websocket_brain_proxy_forwards_verified_bearer_and_application_kip_args() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let mut claims =
+            crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap();
+        claims
+            .extra
+            .insert(crate::identity::iana::CWTClaimScope, "*");
+        let token = key.sign_cwt(claims).unwrap();
+        let expected = format!("Bearer {token}");
+        let brain = axum::Router::new()
+            .route(
+                "/v1/anda_bot/execute_kip_readonly",
+                axum::routing::post(
+                    move |headers: HeaderMap, axum::Json(body): axum::Json<Value>| {
+                        let expected = expected.clone();
+                        async move {
+                            assert_eq!(headers[AUTHORIZATION], expected);
+                            assert!(body.get("kip").is_none());
+                            assert_eq!(body["operations"][0]["op_id"], "read-one");
+                            assert_eq!(body["parameters"]["name"], "safe bound name");
+                            axum::Json(anda_kip::Response::ok(
+                                json!({"identity":"original caller"}),
+                            ))
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/v1/anda_bot/runtime/status",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"result": {
+                        "supported": true,
+                        "configured": false,
+                        "scope": null,
+                        "attention_enabled": false,
+                        "actions_enabled": false,
+                        "observation_enabled": false,
+                        "observer_authenticated": false,
+                        "blocked_reasons": ["runtime_bindings_not_installed"],
+                        "visible_items": 0,
+                        "inventory_complete": false
+                    }}))
+                }),
+            );
+        let brain_url = crate::test_support::spawn_http_mock(brain).await;
+        state.brain = brain::Client::new(
+            format!("{brain_url}/v1/anda_bot"),
+            Some("must-not-use-global-token".into()),
+        );
+        let app = axum::Router::new()
+            .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
+            .with_state(state);
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let mut request = format!("{}/{}/browser_ws", ws_base(&url), engine_id.to_text())
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        ws.send(Message::Text(json!({"id":9,"method":"brain_kip_readonly","params":[{"operations":[{"op_id":"read-one","command":"DESCRIBE PRIMER"}],"parameters":{"name":"safe bound name"}}]}).to_string().into())).await.unwrap();
+        let reply = ws.next().await.unwrap().unwrap().into_text().unwrap();
+        let reply: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["result"]["status"], "succeeded", "{reply}");
+
+        ws.send(Message::Text(
+            json!({"id":10,"method":"brain_runtime_status","params":[]})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let reply = ws.next().await.unwrap().unwrap().into_text().unwrap();
+        let reply: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["result"]["caller"], key.id().to_text(), "{reply}");
         ws.close(None).await.ok();
     }
 

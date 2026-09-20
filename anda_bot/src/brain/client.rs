@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 
 use crate::util::http_client::new_reqwest_client;
 
+pub use anda_brain::runtime_api::{
+    AttentionPage, AttentionQuery, AttentionResponse, ResponseReceipt, RuntimeStatus,
+};
+pub use anda_brain::types::RecallOutput;
 pub use anda_brain::{
     payload::RpcResponse,
     types::{
@@ -13,6 +17,64 @@ pub use anda_brain::{
         RecallInput, RecallInputRef,
     },
 };
+
+/// HTTP status remains available to callers (e.g. restart an expired cursor on
+/// 409, but never turn a revoked 403 into an anonymous request).
+#[derive(Debug)]
+pub struct HttpError {
+    pub status: reqwest::StatusCode,
+    pub message: String,
+}
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for HttpError {}
+
+/// A syntactically valid Brain RPC response that explicitly reported failure.
+/// Unlike a timeout or interrupted connection, this proves the request reached
+/// the service and received a negative response.
+#[derive(Debug)]
+pub struct RpcFailure {
+    pub message: String,
+}
+impl std::fmt::Display for RpcFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for RpcFailure {}
+
+fn rpc_result<T: serde::Serialize>(mut response: RpcResponse<T>) -> Result<T, BoxError> {
+    if response.error.is_none()
+        && let Some(result) = response.result.take()
+    {
+        return Ok(result);
+    }
+    Err(Box::new(RpcFailure {
+        message: format!("[BrainClient] {}", serde_json::to_string(&response)?),
+    }))
+}
+
+fn recall_tool_output(output: AgentOutput, budgeted: bool) -> ToolOutput<String> {
+    let is_error = output.failed_reason.as_ref().map(|_| true);
+    let content = match output.failed_reason {
+        Some(_) if budgeted => output.content,
+        Some(reason) => format!(
+            "Recall failed: {}",
+            reason.chars().take(512).collect::<String>()
+        ),
+        None => output.content,
+    };
+    ToolOutput {
+        output: content,
+        is_error,
+        usage: output.usage,
+        tools_usage: output.tools_usage,
+        artifacts: Vec::new(),
+    }
+}
 
 // Recall runs LLM work inline in the brain handler. Keep its client-side
 // timeout explicit so slow calls fail predictably while lightweight reads
@@ -26,6 +88,8 @@ pub struct Client {
     // Base URL of the Brain space, e.g., "http://localhost:8042/v1/{space_id}"
     base_url: String,
     auth_token: Option<String>,
+    host: Option<super::Host>,
+    journal: Option<super::Journal>,
 }
 
 impl Client {
@@ -35,6 +99,8 @@ impl Client {
             http: new_reqwest_client(),
             base_url,
             auth_token,
+            host: None,
+            journal: None,
         }
     }
 
@@ -43,18 +109,109 @@ impl Client {
         self
     }
 
+    pub fn with_host(mut self, host: super::Host, journal: super::Journal) -> Self {
+        self.host = Some(host);
+        self.journal = Some(journal);
+        self
+    }
+
+    pub async fn submit_formation_window(
+        &self,
+        submission: super::FormationSubmission,
+        input: FormationInputRef<'_>,
+    ) -> Result<super::FormationSubmission, BoxError> {
+        match &self.journal {
+            Some(journal) => journal.submit_formation(self, submission, input).await,
+            None => {
+                let output = self.formation(input).await?;
+                if let Some(reason) = output.failed_reason {
+                    return Err(reason.into());
+                }
+                Ok(super::FormationSubmission {
+                    brain_conversation: output.conversation,
+                    state: super::FormationState::Accepted,
+                    ..submission
+                })
+            }
+        }
+    }
+
+    /// Forward the original verified bearer across a transport boundary.
+    pub fn with_auth_token(&self, token: String) -> Self {
+        let mut client = self.clone();
+        client.auth_token = Some(token);
+        client
+    }
+
+    pub async fn attention(&self, query: &AttentionQuery) -> Result<AttentionPage, BoxError> {
+        let mut url = reqwest::Url::parse(&format!("{}/attention", self.base_url))?;
+        {
+            let mut params = url.query_pairs_mut();
+            if let Some(cursor) = &query.cursor {
+                params.append_pair("cursor", cursor);
+            }
+            if let Some(limit) = query.limit {
+                params.append_pair("limit", &limit.to_string());
+            }
+        }
+        let path = format!("/attention?{}", url.query().unwrap_or_default());
+        rpc_result(self.get(&path).await?)
+    }
+
+    pub async fn respond(
+        &self,
+        id: &str,
+        response: &AttentionResponse,
+    ) -> Result<ResponseReceipt, BoxError> {
+        if id.len() != 64
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        {
+            return Err("use the URL-safe attention item id returned by Brain".into());
+        }
+        rpc_result(
+            self.post(&format!("/attention/{id}/responses"), response)
+                .await?,
+        )
+    }
+
+    pub async fn runtime_status(&self) -> Result<RuntimeStatus, BoxError> {
+        rpc_result(self.get("/runtime/status").await?)
+    }
+
+    /// For independently authenticated instruments only; never registered as a model tool.
+    #[allow(dead_code)]
+    pub async fn submit_outcome(
+        &self,
+        input: &anda_brain::consequence::OutcomeInput,
+    ) -> Result<anda_brain::consequence::ObservationReceipt, BoxError> {
+        rpc_result(self.post("/outcomes", input).await?)
+    }
+
+    #[allow(dead_code)]
+    pub async fn recall_structured(&self, input: &RecallInput) -> Result<RecallOutput, BoxError> {
+        rpc_result(
+            self.post_with_timeout("/recall_structured", input, RECALL_TIMEOUT)
+                .await?,
+        )
+    }
+
+    pub async fn formation_conversation(
+        &self,
+        id: u64,
+    ) -> Result<anda_engine::memory::Conversation, BoxError> {
+        rpc_result(
+            self.get(&format!("/conversations/{id}?collection=formation"))
+                .await?,
+        )
+    }
+
     pub async fn formation<'a>(
         &self,
         input: FormationInputRef<'a>,
     ) -> Result<AgentOutput, BoxError> {
-        let rt: RpcResponse<AgentOutput> = self.post("/formation", &input).await?;
-        if let Some(result) = rt.result {
-            Ok(result)
-        } else {
-            Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| "[BrainClient] formation failed with unknown error".to_string())
-                .into())
-        }
+        rpc_result(self.post("/formation", &input).await?)
     }
 
     pub async fn recall<'a>(&self, input: RecallInputRef<'a>) -> Result<AgentOutput, BoxError> {
@@ -78,14 +235,7 @@ impl Client {
             }
         }
 
-        let rt = result?;
-        if let Some(result) = rt.result {
-            Ok(result)
-        } else {
-            Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| "[BrainClient] recall failed with unknown error".to_string())
-                .into())
-        }
+        rpc_result(result?)
     }
 
     pub async fn describe_primer(&self) -> Result<Json, BoxError> {
@@ -96,7 +246,8 @@ impl Client {
     }
 
     pub async fn execute_kip_readonly(&self, request: KipRequest) -> Result<KipResponse, BoxError> {
-        self.post("/execute_kip_readonly", &request).await
+        self.post("/execute_kip_readonly", &super::http_kip_args(request)?)
+            .await
     }
 
     pub async fn user_info(&self, user: String, name: Option<String>) -> Result<Json, BoxError> {
@@ -217,11 +368,13 @@ impl Client {
                 method,
                 path
             );
-            Err(format!(
-                "[BrainClient] request failed for {} {}: {status}, body: {msg}",
-                method, path
-            )
-            .into())
+            Err(Box::new(HttpError {
+                status,
+                message: format!(
+                    "[BrainClient] request failed for {} {}: {status}, body: {msg}",
+                    method, path
+                ),
+            }))
         }
     }
 }
@@ -268,6 +421,17 @@ impl Tool<BaseCtx> for Client {
                 "query": {
                   "type": "string",
                   "description": "A natural language question about older or out-of-context memory. Be specific and include the subject, timeframe, and topic when known. Examples: 'What do we know about the current user's communication preferences?', 'What happened in our last discussion about Project Aurora?', 'Who are the members of the engineering team?'"
+                },
+                "budget": {
+                  "type": ["object", "null"],
+                  "description": "Optional Recall packet and input limits. No budget keeps legacy recall behavior; a receipt proves delivery only.",
+                  "properties": {
+                    "tokenizer": {"type":"string", "enum":[anda_brain::recall_budget::TOKENIZER]},
+                    "max_tokens": {"type":"integer", "minimum":1, "maximum":65536},
+                    "context_tokens": {"type":"integer", "minimum":1, "maximum":131072}
+                  },
+                  "required":["tokenizer","max_tokens","context_tokens"],
+                  "additionalProperties": false
                 },
                 "context": {
                   "type": [
@@ -316,7 +480,8 @@ impl Tool<BaseCtx> for Client {
               },
               "required": [
                 "query",
-                "context"
+                "context",
+                "budget"
               ],
               "additionalProperties": false
             }),
@@ -326,12 +491,48 @@ impl Tool<BaseCtx> for Client {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         request: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let rt = self.recall((&request).into()).await?;
-        Ok(ToolOutput::new(rt.content))
+        if let (Some(host), Some(journal)) = (&self.host, &self.journal) {
+            use anda_core::StateFeatures;
+            let receipt = match rt.conversation {
+                Some(id) => host.recall_receipt(id).await,
+                None => Ok(None),
+            };
+            let (conversation, turn, tool_call) = ctx
+                .get_state::<super::RecallTurn>()
+                .map(|trace| trace.identify(&request))
+                .unwrap_or_default();
+            let delivery = super::RecallDelivery {
+                invocation: ic_auth_types::Xid::new().to_string(),
+                caller: ctx.caller().to_string(),
+                bot_conversation: conversation,
+                bot_turn: turn,
+                tool_call,
+                brain_conversation: rt.conversation,
+                receipt: receipt.as_ref().ok().cloned().flatten(),
+                delivered_at: anda_engine::unix_ms(),
+                failed: rt.failed_reason.is_some(),
+                usage: rt.usage.clone(),
+                tools_usage: rt.tools_usage.clone(),
+                accounting_complete: false,
+            };
+            let persisted = journal.record_recall(&delivery).await;
+            if let Err(err) = receipt.map(|_| ()).and(persisted) {
+                // Retain measured usage even when host evidence persistence fails.
+                let mut output = recall_tool_output(rt, request.budget.is_some());
+                output.is_error = Some(true);
+                output.output = format!(
+                    "Recall delivery could not be recorded: {}",
+                    err.to_string().chars().take(256).collect::<String>()
+                );
+                return Ok(output);
+            }
+        }
+        Ok(recall_tool_output(rt, request.budget.is_some()))
     }
 }
 
@@ -339,6 +540,48 @@ impl Tool<BaseCtx> for Client {
 mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
+
+    #[test]
+    fn recall_failure_and_nested_usage_survive_the_tool_boundary() {
+        let mut output = AgentOutput {
+            content: "partial internal diagnostics".into(),
+            failed_reason: Some("failure".repeat(2000)),
+            usage: anda_core::Usage {
+                input_tokens: 41,
+                output_tokens: 7,
+                requests: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        output.tools_usage.insert(
+            "nested".into(),
+            anda_core::Usage {
+                input_tokens: 12,
+                requests: 1,
+                ..Default::default()
+            },
+        );
+        let result = recall_tool_output(output, false);
+        assert_eq!(result.is_error, Some(true));
+        assert!(!result.output.contains("partial internal"));
+        assert!(result.output.len() < 600);
+        assert_eq!(result.usage.input_tokens, 41);
+        assert_eq!(result.usage.output_tokens, 7);
+        assert_eq!(result.tools_usage["nested"].input_tokens, 12);
+        let packet = r#"{"format":"anda-brain-recall/1","status":"insufficient"}"#;
+        let result = recall_tool_output(
+            AgentOutput {
+                content: packet.into(),
+                failed_reason: Some("insufficient".into()),
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(result.output, packet);
+        assert_eq!(result.is_error, Some(true));
+        assert!(result.artifacts.is_empty());
+    }
 
     #[test]
     fn recall_memory_schema_is_openai_strict() {
@@ -571,7 +814,7 @@ mod tests {
         let app = Router::new().route(
             "/v1/anda_bot/execute_kip_readonly",
             routing::post(|axum::Json(body): axum::Json<Value>| async move {
-                assert_eq!(body["kip"], "2.0");
+                assert!(body.get("kip").is_none());
                 assert_eq!(body["operations"][0]["command"], "DESCRIBE PRIMER");
                 assert!(body.get("command").is_none());
                 axum::Json(

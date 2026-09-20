@@ -90,15 +90,13 @@ Requirements:
 
 Or run Anda Bot from this repository with a recent Rust toolchain:
 
-Source builds currently use sibling `anda`, `anda-db` and `anda-brain` checkouts through `[patch.crates-io]` for the unpublished KIP 2.0 development crates. Keep all four repositories under the same parent directory; a standalone clone cannot build. The embedded Brain speaks KIP 2.0 (`kip` + `operations`), while ordinary Bot tool responses retain their existing `result`/`error` format.
+Source builds currently patch only `anda_brain` to a sibling `anda-brain` checkout. Core/Engine, DB, Nexus and KIP use registry releases. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
 
 The optional `mib` feature adds a loopback-only evaluation host: `anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`. It starts before production home/daemon initialization and uses isolated Brain runs. The agent protocol executes Bot's runner-managed business profile with MIB-owned task tools; a separate memory-backend protocol supports MIB's evaluator-owned same-model agent. See [MIB integration](docs/mib-integration.md) for lifecycle guarantees, memory controls and incomplete cost accounting.
 
-The optional P6 host controls add forced Recall budgets (`--recall-max-tokens` plus `--recall-context-tokens`) and an evaluator-only `learning_audit`. Native comparison/review and ungated execution bindings remain explicit pending work; persistent memory does not imply an enabled learning condition.
+The optional MIB host controls add forced Recall budgets (`--recall-max-tokens` plus `--recall-context-tokens`) and an evaluator-only `learning_audit`. MIB normal/ungated conditions still require complete independent instrumentation; persistent memory does not imply an enabled learning condition.
 
 ```bash
-git clone https://github.com/ldclabs/anda.git
-git clone https://github.com/ldclabs/anda-db.git
 git clone https://github.com/ldclabs/anda-brain.git
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
@@ -159,7 +157,9 @@ Start the terminal UI with `anda --full-access` to skip the cards for that sessi
 
 Cron jobs and autonomous goal mode (`/goal ...`) always run with full access, because nobody is present to answer a card and the task would otherwise stall until the card expires.
 
-Successful conversation turns are submitted to Anda Brain for memory formation in the background. Users do not need to manage memory files manually.
+Successful conversation turns are submitted to Anda Brain for memory formation in the background. Users do not need to manage memory files manually. Accepted Formation IDs and Recall delivery receipts are retained separately from completion and actual memory use.
+
+Optional `brain.runtime_config` (overridden by `BRAIN_RUNTIME_CONFIG`) installs the native persistent inbox before Space loading. The browser Brain view and TUI `/brain inbox` / `/brain status` expose caller-scoped work. `learning` is a separate Cargo feature; semantic, utility, trust and automatic learning require explicit configuration and native authorization. Current IM transports are not automatic action adapters. See [Brain runtime integration](docs/brain-integration.md) for configuration, receipt semantics and learning service contracts.
 
 Good prompts for long-term memory:
 

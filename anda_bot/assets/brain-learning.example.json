@@ -1,0 +1,113 @@
+{
+  "format": "anda-brain:runtime-api-v1",
+  "spaces": {
+    "anda_bot": {
+      "bootstrap": false,
+      "subjects": [
+        {
+          "credential": {
+            "kind": "cwt_subject",
+            "subject": "gllqn-eyk"
+          },
+          "principal": "kip:principal:runtime-auditor",
+          "observer": false,
+          "audit_recipients": true
+        },
+        {
+          "credential": {
+            "kind": "cwt_subject",
+            "subject": "ixidm-bil"
+          },
+          "principal": "kip:principal:workflow-observer",
+          "observer": true,
+          "audit_recipients": false
+        }
+      ],
+      "audience": [
+        "kip:principal:runtime-auditor"
+      ],
+      "observers": [],
+      "adapter": null,
+      "learning": {
+        "id": "workflow_http_v1",
+        "registration": {
+          "registration_id": "reviewed-workflow-v1",
+          "task_family": "tool_workflow.precondition.v1",
+          "controller_control_domain": "brain-controller",
+          "executor_principal": "kip:principal:workflow-executor",
+          "executor_control_domain": "business-workflow-host",
+          "observer": {
+            "principal_id": "kip:principal:workflow-observer",
+            "configuration_digest": "sha256:42b914e08503ea0809ae1118318eb186dcc37da93648ec7aca3a525cf47112e0",
+            "control_domain": "independent-workflow-instrument"
+          },
+          "model_digest": "sha256:faf7e4d978742449ef22553e3444aea92f15d9c0459ec0ef89006175dca4e40d",
+          "tool_versions": {
+            "workflow": "1"
+          },
+          "budget": {
+            "tool_calls": 8,
+            "elapsed_ms": 10000,
+            "input_tokens": 4096,
+            "output_tokens": 1024
+          },
+          "alpha": 0.05,
+          "minimum_effect": 0.1,
+          "maximum_failure_rate": 0.1,
+          "minimum_pairs": 32,
+          "maximum_pairs": 128,
+          "maximum_jobs": 4,
+          "reconcile_timeout_ms": 3000,
+          "rule_digest": "sha256:483825326176e7cf196c9a4f0c4922897e9a4427dd57d7c2de611f3ee9b292ff",
+          "calibration_digest": "sha256:bec6fb1e176aa58e0c4114c408f4b67859ebf08ca190bd062d824f37d0d51058"
+        },
+        "identity": {
+          "principal_id": "kip:principal:workflow-executor",
+          "control_domain": "business-workflow-host",
+          "model_digest": "sha256:faf7e4d978742449ef22553e3444aea92f15d9c0459ec0ef89006175dca4e40d",
+          "environment_digest": "sha256:6677807fe91190a3272f8da0e053a828183866afb5bef18f8f4479b65ac30d6e",
+          "base_memory_digest": "sha256:ee215d08bbf4ba7bb5939ecec85b1b5e4b345b599fcf04b2c035f301342f4ec0",
+          "tool_versions": {
+            "workflow": "1"
+          },
+          "budget_digest": "sha256:788df3c32d47095dd42dfb1acde239629e26b97823848ab127eebd07b38917d3"
+        },
+        "automation": {
+          "trials": false,
+          "reviews": false,
+          "archive": false,
+          "safety": false
+        },
+        "storage": {
+          "maximum_records": 4096,
+          "maximum_reserved_bytes": 274877906944
+        },
+        "executor_endpoint": "https://workflow.example.invalid/executor/",
+        "observer_endpoint": "https://instrument.example.invalid/observer/",
+        "source_endpoint": "https://plans.example.invalid/source/",
+        "executor_token_env": "WORKFLOW_EXECUTOR_TOKEN",
+        "observer_token_env": "WORKFLOW_OBSERVER_TOKEN",
+        "source_token_env": "WORKFLOW_SOURCE_TOKEN",
+        "source_id": "reviewed-workflow-source",
+        "source_digest": "sha256:93782e0b4604c6281d103ecba993a50df47779d37934a85f98ff6efe02c30c95",
+        "calibration": {
+          "format": "anda-brain:learning-calibration-v1",
+          "reviewed_by": "kip:principal:deployment-reviewer",
+          "approved_for_automatic_trials": false,
+          "contract_digest": "sha256:2999f0ee9898a7809cc683a40a3aa80bc0c051c62758b712086526b079316c25",
+          "environment_digest": "sha256:6677807fe91190a3272f8da0e053a828183866afb5bef18f8f4479b65ac30d6e",
+          "training_manifest": {
+            "replace_with": "actual training manifest"
+          },
+          "validation_manifest": {
+            "replace_with": "actual disjoint validation manifest"
+          },
+          "report": {
+            "replace_with": "actual MIB calibration report"
+          }
+        },
+        "callback_timeout_ms": 10000
+      }
+    }
+  }
+}

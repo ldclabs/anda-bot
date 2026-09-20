@@ -128,3 +128,12 @@ Anda 的本地状态、记忆图谱、会话、频道状态、Cron、日志和�
 :::tip
 为不同身份、项目或测试准备独立数据时，使用 `anda --home /path/to/.anda`。
 :::
+
+## Brain runtime
+
+通过 `brain.runtime_config` 指定可信 JSON/YAML，路径相对配置目录解析；`BRAIN_RUNTIME_CONFIG` 优先。重启后在首次加载 Space 前安装绑定。浏览器记忆待办及 TUI `/brain inbox`、`/brain status`、`/brain formation <id>` 保留真实调用者身份。读取不授予执行权限，回答重试须保留相同事件键和正文。Recall 收据只证明交付，Formation 接受不等于完成。`learning` 与 `mib` 独立；语义求值、utility、trust、自动学习均需显式原生配置与权限。现有 IM 发送接口不是自动动作适配器；MIB persistent 不宣称 normal/ungated 学习或完整计量。
+
+```yaml
+brain:
+  runtime_config: null
+```

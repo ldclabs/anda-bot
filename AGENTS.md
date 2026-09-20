@@ -40,11 +40,17 @@ The repository also contains:
 - The package uses Rust edition 2024 and workspace-managed dependencies.
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
-- Source builds use sibling `anda`, `anda-db`, and `anda-brain` checkouts via
-  `[patch.crates-io]` while KIP 2.0 development crates remain unpublished.
-  Keep the path patches aligned with Brain so DB and core types are shared.
-- The Brain KIP endpoint uses the KIP 2.0 envelope; application tools use
+- Source builds currently patch only `anda_brain` to the sibling `anda-brain`
+  checkout. Core/Engine, DB, Nexus and KIP use registry releases; keep a single
+  DB/core type identity and verify Cargo metadata before changing patches.
+- Brain HTTP accepts Engine `KipArgs` (no `kip`, top-level `dry_run`) and returns
+  KIP 2.0 responses; native Rust execution uses `anda_kip::Request`. Application tools use
   `util::tool_response::ToolResponse` and preserve their existing wire format.
+- Install optional `brain.runtime_config` before the first Space load. Preserve
+  authenticated caller mappings for inbox access; do not proxy a user through
+  the global Bot identity or expose independent outcomes as a model tool.
+- `learning` and `mib` are separate optional features. Compiling either does not
+  enable automatic learning or complete MIB cost accounting.
 - Keep `RUST_MIN_STACK=16777216` on Rust test commands: embedded Brain schema
   paths can exceed Rust's default debug test-thread stack.
 - The executable entrypoint is `anda_bot/src/main.rs`; daemon lifecycle is in

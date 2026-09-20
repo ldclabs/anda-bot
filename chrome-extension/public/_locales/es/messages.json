@@ -1123,5 +1123,47 @@
   },
   "optimizeSkillWithAnda": {
     "message": "Pedir a Anda que optimice"
+  },
+  "brainInbox": {
+    "message": "Bandeja de atención"
+  },
+  "brainInboxHint": {
+    "message": "Consulta y responde tareas de memoria persistentes. Las respuestas no otorgan permisos."
+  },
+  "brainRuntimeConfigured": {
+    "message": "Ejecución configurada"
+  },
+  "brainRuntimeUnconfigured": {
+    "message": "Ejecución sin configurar"
+  },
+  "brainRuntimeStatus": {
+    "message": "Estado de ejecución"
+  },
+  "brainInboxEmpty": {
+    "message": "No hay elementos visibles en esta página."
+  },
+  "brainResponsePending": {
+    "message": "Respuesta pendiente de confirmación. El reintento conserva el mismo evento y texto."
+  },
+  "brainClarificationAnswer": {
+    "message": "Respuesta de aclaración"
+  },
+  "brainAgentStatement": {
+    "message": "Declaración atribuida"
+  },
+  "brainRetryResponse": {
+    "message": "Reintentar respuesta"
+  },
+  "brainSendResponse": {
+    "message": "Enviar respuesta"
+  },
+  "brainNextPage": {
+    "message": "Página siguiente"
+  },
+  "brainPageCompleteHint": {
+    "message": "El final de una página no significa que las tareas hayan terminado."
+  },
+  "brainBackToGraph": {
+    "message": "Volver al grafo"
   }
 }

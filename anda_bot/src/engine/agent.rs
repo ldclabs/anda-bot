@@ -335,6 +335,7 @@ impl AndaBot {
             }),
         });
 
+        ctx.base.set_state(brain::RecallTurn::default());
         ctx.base.set_state(GoalToolState::new(
             session.goal.clone(),
             session.active_at.clone(),
@@ -482,24 +483,22 @@ impl AndaBot {
 
     async fn submit_formation(
         &self,
+        submission: brain::FormationSubmission,
         messages: &[Message],
         context: &Option<InputContext>,
         timestamp: &Option<String>,
-    ) -> Result<(), BoxError> {
-        if messages.is_empty() {
-            return Ok(());
-        }
-
-        let _ = self
-            .inner
+    ) -> Result<brain::FormationSubmission, BoxError> {
+        self.inner
             .brain
-            .formation(FormationInputRef {
-                messages,
-                context,
-                timestamp,
-            })
-            .await?;
-        Ok(())
+            .submit_formation_window(
+                submission,
+                FormationInputRef {
+                    messages,
+                    context,
+                    timestamp,
+                },
+            )
+            .await
     }
 
     async fn run_side_command(

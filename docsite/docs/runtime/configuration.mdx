@@ -194,3 +194,12 @@ However, model providers may still receive prompts, tool-result summaries, and m
 :::tip
 Use `anda --home /path/to/.anda` when you need isolated data for different identities, projects, or tests.
 :::
+
+## Brain runtime
+
+Set `brain.runtime_config` to a trusted JSON/YAML file relative to the configuration directory; `BRAIN_RUNTIME_CONFIG` overrides it. Restart to install bindings before Space loading. The browser Brain inbox and TUI `/brain inbox`, `/brain status`, `/brain formation <id>` use the authenticated caller. Reading is not execution permission; retry an answer with the same event key and text. Recall receipts prove delivery only, and Formation acceptance is not completion. The `learning` feature is independent of `mib`; semantic, utility, trust and automatic learning require explicit native configuration and authority. Current IM transports are not automatic action adapters. MIB persistent memory does not claim normal/ungated learning or complete costs.
+
+```yaml
+brain:
+  runtime_config: null
+```

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ANDA_BOT_SPACE_ID, BrainApi, assertKipSucceeded, type BrainGraphSettings } from './api'
+import {
+  ANDA_BOT_SPACE_ID,
+  BrainApi,
+  assertKipSucceeded,
+  brainPendingStorageKey,
+  type BrainGraphSettings
+} from './api'
 
 function settings(spaceId = ANDA_BOT_SPACE_ID): BrainGraphSettings {
   return {
@@ -44,7 +50,6 @@ describe('BrainApi', () => {
 
     const api = new BrainApi(settings())
     const response = await api.executeKipReadonly({
-      kip: '2.0',
       operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }]
     })
 
@@ -68,7 +73,7 @@ describe('BrainApi', () => {
         approvalMode: 'on_risk'
       },
       method: 'brain_kip_readonly',
-      params: [{ kip: '2.0', operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }] }]
+      params: [{ operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }] }]
     })
   })
 
@@ -115,5 +120,77 @@ describe('BrainApi', () => {
       assertKipSucceeded({ ...ok, results: [{ status: 'failed', result: [] }] }, 1)
     ).toThrow()
     expect(() => assertKipSucceeded({ ...ok, results: [{ status: 'succeeded' }] }, 1)).toThrow()
+  })
+  it('preserves application KIP fields and the caller bearer over direct HTTP', async () => {
+    vi.stubGlobal('chrome', undefined)
+    const fetch = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            kip: '2.0',
+            status: 'succeeded',
+            results: [{ status: 'succeeded', result: [] }]
+          }),
+          { status: 200 }
+        )
+    )
+    vi.stubGlobal('fetch', fetch)
+    const request = {
+      operations: [{ op_id: 'read-1', command: 'DESCRIBE PRIMER', parameters: { name: 'bound' } }],
+      execution: { mode: 'independent' as const },
+      read: { snapshot_token: 'opaque' },
+      parameters: { shared: 1 },
+      dry_run: true
+    }
+    await new BrainApi(settings()).executeKipReadonly(request)
+    const init = fetch.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(init.body as string)).toEqual(request)
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer browser-token')
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('kip')
+  })
+
+  it('uses separate runtime RPCs and preserves stable response event identity', async () => {
+    const sendMessage = vi.fn(async (_message: unknown) => ({
+      ok: true,
+      result: { receipt_id: 'r', status: 'answer_received_not_authorization' }
+    }))
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
+    const api = new BrainApi(settings())
+    const response = { kind: 'clarification' as const, event_key: 'same-event', answer: 'Tomorrow' }
+    const id = 'a'.repeat(64)
+    await api.respond(id, response)
+    await api.respond(id, response)
+    expect(sendMessage.mock.calls[0][0]).toMatchObject({
+      method: 'brain_respond',
+      params: [id, response],
+      settings: { token: 'browser-token' }
+    })
+    expect(sendMessage.mock.calls[1][0]).toEqual(sendMessage.mock.calls[0][0])
+    await api.runtimeStatus()
+    expect(sendMessage.mock.calls[2][0]).toMatchObject({ method: 'brain_runtime_status' })
+    await expect(api.respond(`wake/v1/${id}`, response)).rejects.toThrow('Invalid attention')
+  })
+
+  it('does not fall back to another identity after a runtime rejection', async () => {
+    vi.stubGlobal('chrome', {
+      runtime: { sendMessage: vi.fn(async () => ({ ok: false, error: '403: revoked' })) }
+    })
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    await expect(new BrainApi(settings()).attention('expired-cursor')).rejects.toThrow('revoked')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps pending response identity stable across bearer rotation', async () => {
+    const before = settings()
+    const after = { ...before, token: 'rotated-browser-token' }
+
+    expect(await brainPendingStorageKey(before, 'owner-principal')).toBe(
+      await brainPendingStorageKey(after, 'owner-principal')
+    )
+    expect(await brainPendingStorageKey(before, 'owner-principal')).not.toBe(
+      await brainPendingStorageKey(after, 'other-principal')
+    )
+    expect(await brainPendingStorageKey(before)).not.toBe(await brainPendingStorageKey(after))
   })
 })

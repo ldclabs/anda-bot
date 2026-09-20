@@ -514,7 +514,7 @@ impl CompletionFeaturesDyn for GraphFixture {
                     .into_iter()
                     .map(|(name, command)| ToolCall {
                         name: name.into(),
-                        args: json!(anda_kip::Request::single(command)),
+                        args: json!({"command": command}),
                         ..Default::default()
                     })
                     .collect(),

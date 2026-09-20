@@ -48,6 +48,9 @@ pub struct Config {
     pub model: ModelSettings,
 
     #[serde(default)]
+    pub brain: BrainSettings,
+
+    #[serde(default)]
     pub tts: TtsConfig,
 
     #[serde(default)]
@@ -60,6 +63,53 @@ pub struct Config {
     pub channels: ChannelSettings,
 }
 
+/// Trusted startup configuration; model requests cannot change runtime bindings.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BrainSettings {
+    pub runtime_config: Option<PathBuf>,
+}
+
+impl BrainSettings {
+    pub fn runtime_config_path(
+        &self,
+        config_dir: &Path,
+        override_path: Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        override_path
+            .or_else(|| self.runtime_config.clone())
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| {
+                if p.is_absolute() {
+                    p
+                } else {
+                    config_dir.join(p)
+                }
+            })
+    }
+
+    pub async fn load_runtime_config(
+        &self,
+        config_dir: &Path,
+    ) -> Result<Option<anda_brain::runtime_api::config::RuntimeConfig>, BoxError> {
+        let path = self.runtime_config_path(
+            config_dir,
+            std::env::var_os("BRAIN_RUNTIME_CONFIG").map(PathBuf::from),
+        );
+        match path {
+            Some(path) => {
+                let content = read_text_file(&path)
+                    .await
+                    .map_err(|err| format!("Brain runtime config {}: {err}", path.display()))?;
+                Ok(Some(serde_saphyr::from_str(&content).map_err(|err| {
+                    format!("Brain runtime config {}: {err}", path.display())
+                })?))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -68,6 +118,7 @@ impl Default for Config {
             https_proxy: None,
             workspaces: Vec::new(),
             model: ModelSettings::default(),
+            brain: BrainSettings::default(),
             users: Vec::new(),
             channels: ChannelSettings::default(),
             tts: TtsConfig::default(),
@@ -349,6 +400,26 @@ mod tests {
     use super::*;
     use crate::util::http_client::new_reqwest_client;
     use anda_engine::model::ModelConfig;
+
+    #[test]
+    fn brain_runtime_paths_use_config_directory_and_explicit_override() {
+        let config =
+            Config::from_contents("brain:\n  runtime_config: brain-runtime.yaml\n").unwrap();
+        let dir = Path::new("/tmp/anda-config");
+        assert_eq!(
+            config.brain.runtime_config_path(dir, None).unwrap(),
+            dir.join("brain-runtime.yaml")
+        );
+        assert_eq!(
+            config
+                .brain
+                .runtime_config_path(dir, Some("override.json".into()))
+                .unwrap(),
+            dir.join("override.json")
+        );
+        assert_eq!(Config::default().brain.runtime_config_path(dir, None), None);
+        assert!(Config::from_contents("brain:\n  runtime_confgi: typo.yaml\n").is_err());
+    }
 
     #[test]
     fn config_contents_read_selected_provider_and_channels() {

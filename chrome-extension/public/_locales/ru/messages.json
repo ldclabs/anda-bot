@@ -1123,5 +1123,47 @@
   },
   "optimizeSkillWithAnda": {
     "message": "Попросить Anda оптимизировать"
+  },
+  "brainInbox": {
+    "message": "Входящие задачи"
+  },
+  "brainInboxHint": {
+    "message": "Просматривайте задачи долговременной памяти. Ответ не даёт разрешения на действия."
+  },
+  "brainRuntimeConfigured": {
+    "message": "Среда настроена"
+  },
+  "brainRuntimeUnconfigured": {
+    "message": "Среда не настроена"
+  },
+  "brainRuntimeStatus": {
+    "message": "Состояние среды"
+  },
+  "brainInboxEmpty": {
+    "message": "На этой странице нет доступных задач."
+  },
+  "brainResponsePending": {
+    "message": "Ответ ожидает подтверждения. Повтор сохраняет то же событие и текст."
+  },
+  "brainClarificationAnswer": {
+    "message": "Ответ на уточнение"
+  },
+  "brainAgentStatement": {
+    "message": "Заявление с авторством"
+  },
+  "brainRetryResponse": {
+    "message": "Повторить ответ"
+  },
+  "brainSendResponse": {
+    "message": "Отправить ответ"
+  },
+  "brainNextPage": {
+    "message": "Следующая страница"
+  },
+  "brainPageCompleteHint": {
+    "message": "Конец страницы не означает завершение задач."
+  },
+  "brainBackToGraph": {
+    "message": "Вернуться к графу"
   }
 }
