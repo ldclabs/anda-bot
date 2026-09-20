@@ -405,13 +405,18 @@ describe('AndaSidePanelClient.openWorkspaceChannel', () => {
       appearanceTheme: 'system'
     }
 
-    vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+    const rpc = vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
       if (method === 'pick_workspace') {
         return { path: '/tmp/anda/workspace/' } as any
       }
+      if (method === 'register_workspace') {
+        return { workspace: '/tmp/anda/workspace' } as any
+      }
+      if (method === 'tool_call') {
+        return { output: { result: {} } } as any
+      }
       throw new Error(`unexpected RPC method: ${method}`)
     })
-    const switchChannel = vi.spyOn(client, 'switchChannel').mockResolvedValue()
 
     await client.openWorkspaceChannel()
 
@@ -420,6 +425,80 @@ describe('AndaSidePanelClient.openWorkspaceChannel', () => {
         workspaceChannelSources: ['cli:/tmp/anda/workspace']
       })
     )
-    expect(switchChannel).toHaveBeenCalledWith('cli:/tmp/anda/workspace')
+    expect(rpc).toHaveBeenCalledWith('register_workspace', ['/tmp/anda/workspace'])
+    expect(client.activeSource).toBe('cli:/tmp/anda/workspace')
+  })
+
+  it('registers an existing directory channel before activating it', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...client.settings, token: 'token' }
+    const rpc = vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+      if (method === 'register_workspace') {
+        return { workspace: '/tmp/project' } as any
+      }
+      if (method === 'tool_call') {
+        return { output: { result: {} } } as any
+      }
+      throw new Error(`unexpected RPC method: ${method}`)
+    })
+
+    await client.switchChannel('/tmp/project')
+
+    expect(rpc).toHaveBeenCalledWith('register_workspace', ['/tmp/project'])
+    expect(client.activeSource).toBe('/tmp/project')
+  })
+
+  it('keeps the previous channel when directory registration fails', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...client.settings, token: 'token' }
+    vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+      if (method === 'register_workspace') {
+        throw new Error('registration denied')
+      }
+      if (method === 'tool_call') {
+        return { output: { result: {} } } as any
+      }
+      throw new Error(`unexpected RPC method: ${method}`)
+    })
+    await client.switchChannel('browser:chrome:1')
+
+    await client.switchChannel('cli:/tmp/project')
+
+    expect(client.activeSource).toBe('browser:chrome:1')
+    expect(client.systemMessage?.text).toContain('registration denied')
+  })
+
+  it('does not reactivate a folder after a newer channel switch', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...client.settings, token: 'token' }
+    let finishRegistration!: (value: unknown) => void
+    const registration = new Promise<unknown>((resolve) => {
+      finishRegistration = resolve
+    })
+    vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+      if (method === 'register_workspace') {
+        return registration as any
+      }
+      if (method === 'tool_call') {
+        return { output: { result: {} } } as any
+      }
+      throw new Error(`unexpected RPC method: ${method}`)
+    })
+
+    const folderSwitch = client.switchChannel('cli:/tmp/project')
+    await client.switchChannel('browser:chrome:1')
+    finishRegistration({ workspace: '/tmp/project' })
+    await folderSwitch
+
+    expect(client.activeSource).toBe('browser:chrome:1')
   })
 })

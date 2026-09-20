@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     RuntimeModels,
     browser::{BrowserActionResult, BrowserBridge, BrowserCommand},
+    shell_runtime::CliWorkspaceGrants,
 };
 use crate::brain;
 use crate::util::locale;
@@ -51,6 +52,7 @@ pub struct BrowserWebSocketState {
     pub auto_updater: Arc<AutoUpdater>,
     pub home_dir: PathBuf,
     pub(crate) runtime_models: RuntimeModels,
+    pub(super) cli_workspaces: CliWorkspaceGrants,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -324,6 +326,7 @@ async fn handle_browser_ws_request(
         "information" => handle_information(state, engine_id),
         "ui_language" => handle_ui_language(state),
         "pick_workspace" => handle_pick_workspace().await,
+        "register_workspace" => handle_register_workspace(incoming.params, state, caller).await,
         "capabilities" => handle_capabilities(state, engine_id),
         "model_names" => handle_model_names(state).await,
         "reload_models" => handle_reload_models(state).await,
@@ -436,6 +439,23 @@ async fn handle_pick_workspace() -> Result<Value, String> {
     Ok(json!({
         "path": path.map(|path| path.to_string_lossy().to_string())
     }))
+}
+
+async fn handle_register_workspace(
+    params: Value,
+    state: &BrowserWebSocketState,
+    caller: Principal,
+) -> Result<Value, String> {
+    if caller != state.cli_workspaces.owner() {
+        return Err("only the local owner can register a workspace".to_string());
+    }
+    let (workspace,): (PathBuf,) = params_from_value(params)?;
+    let workspace = state
+        .cli_workspaces
+        .register(&workspace)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(json!({ "workspace": workspace }))
 }
 
 fn handle_ui_language(state: &BrowserWebSocketState) -> Result<Value, String> {
@@ -1230,6 +1250,7 @@ mod tests {
             auto_updater,
             home_dir: home,
             runtime_models,
+            cli_workspaces: CliWorkspaceGrants::new(auth_key.id()),
         };
         (state, engine_id, auth_key)
     }
@@ -1332,6 +1353,77 @@ mod tests {
             &request_tasks,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn browser_workspace_registration_requires_owner_and_existing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<BrowserCommand>(1);
+        let connection = BrowserWsConnection {
+            id: 1,
+            sender: cmd_tx,
+        };
+        let (write_tx, mut write_rx) = mpsc::channel::<String>(4);
+        let request = |path: &std::path::Path| {
+            serde_json::from_value::<BrowserWsIncoming>(json!({
+                "id": 1,
+                "method": "register_workspace",
+                "params": [path],
+            }))
+            .unwrap()
+        };
+
+        handle_browser_ws_request(
+            request(&workspace),
+            &state,
+            Principal::anonymous(),
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+        let denied: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert!(
+            denied["error"]
+                .as_str()
+                .unwrap()
+                .contains("only the local owner")
+        );
+
+        handle_browser_ws_request(
+            request(&workspace),
+            &state,
+            key.id(),
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+        let granted: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            granted["result"]["workspace"],
+            json!(workspace.canonicalize().unwrap())
+        );
+
+        handle_browser_ws_request(
+            request(&dir.path().join("missing")),
+            &state,
+            key.id(),
+            engine_id,
+            &connection,
+            &write_tx,
+        )
+        .await;
+        let invalid: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert!(
+            invalid["error"]
+                .as_str()
+                .unwrap()
+                .contains("cannot resolve workspace")
+        );
     }
 
     /// The WebSocket base for a mock server started by `spawn_http_mock`,

@@ -44,14 +44,16 @@ describe('normalizeAbsoluteWorkspace', () => {
 })
 
 describe('workspaceFromCliSource', () => {
-  it('reads the workspace from both CLI source shapes', () => {
+  it('reads directory-backed CLI, voice, and plain path sources', () => {
     expect(workspaceFromCliSource('cli:/srv/app')).toBe('/srv/app')
     expect(workspaceFromCliSource('cli:voice:/srv/app/')).toBe('/srv/app')
     expect(workspaceFromCliSource('cli: /srv/app ')).toBe('/srv/app')
+    expect(workspaceFromCliSource('/srv/app/')).toBe('/srv/app')
   })
 
   it('answers empty for other channels or relative paths', () => {
     expect(workspaceFromCliSource('browser:chrome:1700000000000')).toBe('')
+    expect(workspaceFromCliSource('voice:/srv/app')).toBe('')
     expect(workspaceFromCliSource('cli:app')).toBe('')
     expect(workspaceFromCliSource('')).toBe('')
   })

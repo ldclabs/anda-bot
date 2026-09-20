@@ -80,6 +80,16 @@ impl Client {
         self.post_json("/daemon/models/reload", &()).await
     }
 
+    /// Register this interactive CLI's launch directory with the daemon.
+    /// Only the local owner's bearer token is accepted by this endpoint.
+    pub async fn register_cli_workspace(&self, workspace: &Path) -> Result<(), BoxError> {
+        let request = serde_json::json!({
+            "workspace": workspace.to_string_lossy(),
+        });
+        let _: Json = self.post_json("/daemon/cli-workspace", &request).await?;
+        Ok(())
+    }
+
     #[allow(unused)]
     pub async fn auto_update_install_and_restart(&self) -> Result<AutoUpdateState, BoxError> {
         self.post_json("/auto_update/install_and_restart", &())
@@ -528,6 +538,43 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
         // A wrong token is rejected by the server and surfaced as a status error.
         let unauthorized = Client::new(base_url, "wrong".to_string());
         let err = unauthorized.status().await.map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("request failed, status: 401"));
+    }
+
+    #[tokio::test]
+    async fn cli_workspace_registration_posts_the_path_with_authentication() {
+        let app = Router::new().route(
+            "/daemon/cli-workspace",
+            routing::post(
+                |headers: http::HeaderMap, axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    if !authorized(&headers) {
+                        return (
+                            http::StatusCode::UNAUTHORIZED,
+                            axum::Json(json!({ "error": "unauthorized" })),
+                        );
+                    }
+                    if body["workspace"] != "/tmp/anda-project" {
+                        return (
+                            http::StatusCode::BAD_REQUEST,
+                            axum::Json(json!({ "error": "wrong workspace" })),
+                        );
+                    }
+                    (http::StatusCode::OK, axum::Json(body))
+                },
+            ),
+        );
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        let client = Client::new(base_url.clone(), "token-1".to_string());
+        client
+            .register_cli_workspace(Path::new("/tmp/anda-project"))
+            .await
+            .unwrap();
+
+        let unauthorized = Client::new(base_url, "wrong".to_string());
+        let err = unauthorized
+            .register_cli_workspace(Path::new("/tmp/anda-project"))
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("request failed, status: 401"));
     }
 

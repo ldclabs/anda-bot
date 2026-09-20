@@ -341,7 +341,7 @@ See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.ya
 
 ## Files, Skills, And Automations
 
-The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default.
+The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension likewise registers a directory-backed channel when you enter it, so its shell commands start in that directory. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces.
 
 Custom runtime skills can be added under `~/.anda/skills`. Release-managed skills are installed in `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into the personal library via the Dashboard. Integrated cron capabilities enable scheduling shell commands or automated agent prompts, with execution histories stored locally.
 

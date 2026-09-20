@@ -482,6 +482,9 @@ async fn run() -> Result<(), BoxError> {
 
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
+            client
+                .register_cli_workspace(&std::env::current_dir()?)
+                .await?;
             cli::voice::run_voice_loop(&client, &daemon.cfg, cmd).await?;
         }
     }
@@ -765,8 +768,8 @@ async fn build_browser_extension_token_with_store(
     let expires_secs = now_secs.saturating_add(days * 24 * 60 * 60);
 
     let mut claims = identity::Claims {
-        issued_at: Some(now_secs),
-        expiration: Some(expires_secs),
+        issued_at: Some(now_secs.into()),
+        expiration: Some(expires_secs.into()),
         ..Default::default()
     };
     claims.extra.insert(identity::iana::CWTClaimScope, "*");

@@ -222,6 +222,14 @@ fn required<'a>(body: &'a Value, key: &str) -> Result<&'a str, BoxError> {
         .ok_or_else(|| format!("missing or invalid {key}").into())
 }
 
+fn observation_role(kind: &str) -> &'static str {
+    match kind {
+        "conversation" | "agent_message" | "action" => "assistant",
+        "tool_result" => "tool",
+        _ => "user",
+    }
+}
+
 impl Host {
     fn descriptor(&self, protocol: &str) -> Value {
         let memory = protocol == MEMORY;
@@ -628,7 +636,9 @@ impl Host {
             }
             "session_boundary" => {
                 self.finish_task(run, state).await?;
-                run.brain.session_boundary().await?;
+                if self.mode == Mode::Persistent {
+                    run.brain.session_boundary().await?;
+                }
                 Ok(json!({"accepted":true,"transient_cleared":true}))
             }
             "retrieve" if req.protocol == MEMORY => {
@@ -692,7 +702,8 @@ impl Host {
                 if state.pending_tool.is_some() {
                     return Err("pending runner tool result has not arrived".into());
                 }
-                let active = state.active_task.as_ref().ok_or("missing task")?.clone();
+                let mut active = state.active_task.as_ref().ok_or("missing task")?.clone();
+                active["continuation"] = continuation.into();
                 let mut tools = Vec::new();
                 let mut runner_names = BTreeMap::new();
                 for t in active
@@ -791,12 +802,7 @@ impl Host {
             .observe(
                 FormationInput {
                     messages: vec![Message {
-                        role: if obs.kind == "conversation" {
-                            "assistant"
-                        } else {
-                            "user"
-                        }
-                        .into(),
+                        role: observation_role(&obs.kind).into(),
                         content: vec![serde_json::to_string(obs)?.into()],
                         ..Default::default()
                     }],
@@ -1024,6 +1030,15 @@ fn parse_output(text: &str, allowed: &[&str]) -> Result<Value, BoxError> {
         .is_some_and(|v| !v.is_null() && !v.is_string())
     {
         return Err("invalid response content".into());
+    }
+    match value["type"].as_str().unwrap() {
+        "message" if !value.get("content").is_some_and(Value::is_string) => {
+            return Err("message output requires string content".into());
+        }
+        "structured" if value.get("value").is_none() => {
+            return Err("structured output requires value".into());
+        }
+        _ => {}
     }
     Ok(value)
 }

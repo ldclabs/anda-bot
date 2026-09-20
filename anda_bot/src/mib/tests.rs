@@ -139,6 +139,24 @@ async fn call(h: &Arc<Host>, r: Request) -> Value {
 fn ok(v: &Value) {
     assert_eq!(v["status"], "ok", "{v}");
 }
+
+#[test]
+fn observation_roles_preserve_agent_and_tool_provenance() {
+    assert_eq!(observation_role("user_message"), "user");
+    assert_eq!(observation_role("agent_message"), "assistant");
+    assert_eq!(observation_role("action"), "assistant");
+    assert_eq!(observation_role("tool_result"), "tool");
+}
+
+#[test]
+fn model_output_contract_requires_payloads_for_message_and_structured_results() {
+    assert!(parse_output(r#"{"type":"message"}"#, &["message"]).is_err());
+    assert!(parse_output(r#"{"type":"message","content":null}"#, &["message"]).is_err());
+    assert!(parse_output(r#"{"type":"structured"}"#, &["structured"]).is_err());
+    assert!(parse_output(r#"{"type":"message","content":"ok"}"#, &["message"]).is_ok());
+    assert!(parse_output(r#"{"type":"structured","value":null}"#, &["structured"]).is_ok());
+}
+
 #[tokio::test]
 async fn duplicate_requests_and_observations_do_not_repeat_formation() {
     let (h, m) = host(Mode::Persistent);
@@ -192,6 +210,10 @@ async fn no_memory_keeps_current_runner_tool_result_and_clears_at_task_end() {
     {
         let prompts = m.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 3);
+        let first: Value = serde_json::from_str(&prompts[0].prompt).unwrap();
+        let continuation: Value = serde_json::from_str(&prompts[1].prompt).unwrap();
+        assert_eq!(first["request"]["continuation"], false);
+        assert_eq!(continuation["request"]["continuation"], true);
         assert!(prompts[1].prompt.contains("CURRENT_TASK"));
         assert!(!prompts[2].prompt.contains("CURRENT_TASK"));
         assert!(prompts.iter().all(|p| !p.prompt.contains("SECRET_HISTORY")));

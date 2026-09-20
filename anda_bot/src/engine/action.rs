@@ -210,13 +210,13 @@ impl ActionSession {
         let conversation = self
             .conversation_id
             .load(std::sync::atomic::Ordering::SeqCst);
-        let workspace = ctx
-            .meta()
+        let meta = live_request_meta(ctx);
+        let workspace = meta
             .get_extra_as::<String>(keys::WORKSPACE)
             .unwrap_or_default();
         let approval_mode = ApprovalMode::from_ctx(ctx);
-        let language_hint = shell_risk_language_hint(ctx.meta())
-            .or_else(|| launcher_ui_language_hint(&self.home_dir));
+        let language_hint =
+            shell_risk_language_hint(&meta).or_else(|| launcher_ui_language_hint(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
             &args,
             approval_mode,

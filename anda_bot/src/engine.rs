@@ -99,6 +99,7 @@ pub struct Engines {
     auto_updater: Arc<AutoUpdater>,
     runtime_models: RuntimeModels,
     config_write_lock: Arc<Mutex<()>>,
+    cli_workspaces: shell_runtime::CliWorkspaceGrants,
     home_dir: PathBuf,
 }
 
@@ -110,6 +111,7 @@ pub trait CompletionHook: Send + Sync {
 pub struct EngineConfig {
     pub id_key: Ed25519Key,
     pub managers: Vec<Ed25519PubKey>,
+    pub owner: Principal,
     pub models: Arc<Models>,
     pub brain_models: Arc<Models>,
     pub brain_base_url: String,
@@ -156,6 +158,12 @@ struct DaemonControlRouteState {
     // Serializes config updates so concurrent PUTs cannot interleave
     // the backup check, backup copy, and file write.
     config_write_lock: Arc<Mutex<()>>,
+    cli_workspaces: shell_runtime::CliWorkspaceGrants,
+}
+
+#[derive(Deserialize)]
+struct RegisterCliWorkspaceRequest {
+    workspace: PathBuf,
 }
 
 #[derive(Serialize)]
@@ -336,9 +344,12 @@ fn build_shell_tool(
     home_dir: &Path,
     https_proxy: Option<&str>,
     default_workspace: &Path,
+    cli_workspaces: shell_runtime::CliWorkspaceGrants,
 ) -> shell::ShellTool {
     let runtime = Arc::new(
-        shell_runtime::NativeShellRuntime::new(default_workspace.to_path_buf()).insecure(),
+        shell_runtime::NativeShellRuntime::new(default_workspace.to_path_buf())
+            .with_cli_workspaces(cli_workspaces)
+            .insecure(),
     );
     let mut envs = vec![shell::CustomEnv {
         key: "ANDA_HOME".to_string(),
@@ -402,6 +413,7 @@ impl Engines {
         completion_hooks: Vec<Arc<dyn CompletionHook>>,
         channel_sender: channel::ChannelSender,
     ) -> Result<Self, BoxError> {
+        let cli_workspaces = shell_runtime::CliWorkspaceGrants::new(cfg.owner);
         let active_im_channels = channel_sender.channels();
         let config_path = config::Config::file_path(&cfg.home_dir);
         let mcp_config_path = config::McpSettings::file_path(&cfg.home_dir);
@@ -445,7 +457,7 @@ impl Engines {
         // credentials while still satisfying the server's bounded-token rule.
         let mut claims =
             crate::identity::expiring_claims(Duration::from_secs(3650 * 24 * 60 * 60))?;
-        claims.audience = Some("*".to_string());
+        claims.audience = Some("*".into());
         claims.extra.insert(iana::CWTClaimScope, "*");
         let brain_token = cfg.id_key.sign_cwt(claims)?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
@@ -505,6 +517,7 @@ impl Engines {
             &cfg.home_dir,
             cfg.https_proxy.as_deref(),
             &default_workspace,
+            cli_workspaces.clone(),
         );
         let (skills_tool, skill_library) =
             build_skill_registry(&cfg.home_dir, &cfg.skills_dir, conversations_tool.clone());
@@ -697,6 +710,7 @@ impl Engines {
             auto_updater: cfg.auto_updater,
             runtime_models,
             config_write_lock,
+            cli_workspaces,
             home_dir: cfg.home_dir,
         })
     }
@@ -712,6 +726,7 @@ impl Engines {
             cancel_token,
             runtime_models: self.runtime_models.clone(),
             config_write_lock: self.config_write_lock.clone(),
+            cli_workspaces: self.cli_workspaces.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
             app: self.state.clone(),
@@ -721,6 +736,7 @@ impl Engines {
             auto_updater: self.auto_updater,
             home_dir: self.home_dir,
             runtime_models: self.runtime_models.clone(),
+            cli_workspaces: self.cli_workspaces.clone(),
         };
         let browser_ws_router = Router::new()
             .route("/ws/engine/{*id}", routing::get(browser_websocket))
@@ -740,6 +756,10 @@ impl Engines {
                 routing::get(get_daemon_config).put(update_daemon_config),
             )
             .route("/daemon/models/reload", routing::post(reload_daemon_models))
+            .route(
+                "/daemon/cli-workspace",
+                routing::post(register_cli_workspace),
+            )
             .route("/daemon/shutdown", routing::post(daemon_shutdown))
             .with_state(daemon_control_route_state);
 
@@ -808,6 +828,30 @@ async fn daemon_shutdown(
 
     state.cancel_token.cancel();
     AxumJson(json!({ "status": "shutting_down" })).into_response()
+}
+
+async fn register_cli_workspace(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+    AxumJson(request): AxumJson<RegisterCliWorkspaceRequest>,
+) -> impl IntoResponse {
+    let caller = match state.app.verify_user(&headers, unix_ms(), None, None) {
+        Ok(caller) => caller,
+        Err(_) => {
+            return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
+        }
+    };
+    if caller != state.cli_workspaces.owner() {
+        return (
+            StatusCode::FORBIDDEN,
+            "only the local owner can register a CLI workspace",
+        )
+            .into_response();
+    }
+    match state.cli_workspaces.register(&request.workspace).await {
+        Ok(workspace) => AxumJson(json!({ "workspace": workspace })).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
+    }
 }
 
 async fn get_status(State(state): State<DaemonControlRouteState>) -> impl IntoResponse {
@@ -1422,7 +1466,8 @@ model:
             .unwrap();
         let db = route_test_db().await;
         let key = Ed25519Key::new([6u8; 32]);
-        let app = minimal_app(vec![key.pubkey().into()]);
+        let other_key = Ed25519Key::new([7u8; 32]);
+        let app = minimal_app(vec![key.pubkey().into(), other_key.pubkey().into()]);
         let bot = build_route_bot(db, dir.path().to_path_buf()).await;
         let runtime_models = runtime_models_at(config_path.clone());
         let state = DaemonControlRouteState {
@@ -1431,7 +1476,40 @@ model:
             cancel_token: CancellationToken::new(),
             runtime_models,
             config_write_lock: Arc::new(Mutex::new(())),
+            cli_workspaces: shell_runtime::CliWorkspaceGrants::new(key.id()),
         };
+
+        // The CLI workspace route requires the owner's signed bearer token.
+        let workspace = dir.path().join("project");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let request = || {
+            AxumJson(RegisterCliWorkspaceRequest {
+                workspace: workspace.clone(),
+            })
+        };
+        let resp = register_cli_workspace(State(state.clone()), HeaderMap::new(), request())
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp =
+            register_cli_workspace(State(state.clone()), authed_headers(&other_key), request())
+                .await
+                .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let resp = register_cli_workspace(State(state.clone()), authed_headers(&key), request())
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let invalid = register_cli_workspace(
+            State(state.clone()),
+            authed_headers(&key),
+            AxumJson(RegisterCliWorkspaceRequest {
+                workspace: dir.path().join("missing"),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 
         // get_status hits the (dead-proxy) brain and surfaces an error.
         let resp = get_status(State(state.clone())).await.into_response();

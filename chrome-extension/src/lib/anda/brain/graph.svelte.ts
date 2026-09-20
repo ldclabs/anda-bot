@@ -706,16 +706,26 @@ function conceptFromValue(value: unknown): Concept | null {
 function endpointNode(value: Json, proposition: string, side: string): Concept {
   const reference = recordOf(value)
   const localId = reference && typeof reference.id === 'string' ? reference.id : null
-  const canonical = reference && typeof reference.canonical_id === 'string'
-  const foreign =
-    reference && typeof reference.space_id === 'string' && typeof reference.element_id === 'string'
+  const canonicalId =
+    reference && typeof reference.canonical_id === 'string' ? reference.canonical_id : null
+  const foreignSpaceId =
+    reference && typeof reference.space_id === 'string' ? reference.space_id : null
+  const foreignElementId =
+    reference && typeof reference.element_id === 'string' ? reference.element_id : null
+  const foreign = foreignSpaceId !== null && foreignElementId !== null
   // Core literals are bare string/number/boolean/null; arbitrary objects and
   // arrays are not reference shortcuts. Preserve that distinction on the graph.
-  if (Array.isArray(value) || (reference && !localId && !canonical && !foreign)) {
+  if (Array.isArray(value) || (reference && !localId && canonicalId === null && !foreign)) {
     throw new Error(`Invalid KIP tuple endpoint: ${JSON.stringify(value)}`)
   }
   const literal = !reference
-  const id = localId || `${literal ? 'literal' : 'reference'}:${proposition}:${side}`
+  const id = localId
+    ? localId
+    : canonicalId !== null
+      ? `reference:canonical:${encodeURIComponent(canonicalId)}`
+      : foreign
+        ? `reference:foreign:${encodeURIComponent(foreignSpaceId)}:${encodeURIComponent(foreignElementId)}`
+        : `literal:${proposition}:${side}`
   return {
     id,
     type: literal ? 'Literal' : 'Reference',

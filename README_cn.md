@@ -330,7 +330,7 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
 
 ## 文件、技能与自动化
 
-Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。
+Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。交互式 CLI 连接时，会使用本机 owner 身份向 daemon 注册启动目录；该 CLI 会话的原生 Shell 命令从已注册的目录运行。进入 Chrome 扩展中的文件目录频道时，扩展也会注册该目录，此频道的 Shell 命令从该目录启动。其他来源不能只靠请求元数据指定任意 Shell 目录。文件工具仍只能访问已配置的工作区。
 
 用户可将自定义运行时技能放入 `~/.anda/skills`。发布版内置技能会安装到 `~/.anda/bundled-skills`，而在 `~/.agents/skills` 下的跨 Agent 技能可在 Dashboard 中导入到个人库。内置的 Cron 任务调度器支持安排未来的 Shell 任务或 Agent 提示词，并保留运行历史。
 

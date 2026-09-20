@@ -368,6 +368,7 @@ impl Daemon {
         let engine_cfg = engine::EngineConfig {
             id_key,
             managers: user_pubkeys,
+            owner: user_pubkey.id(),
             models: models.clone(),
             brain_models,
             brain_base_url: self.cfg.brain_base_url(),

@@ -336,6 +336,9 @@
   async function jumpToBookmark(bookmark: BookmarkedMessage) {
     if (bookmark.source && bookmark.source !== activeSource) {
       await switchChannel(bookmark.source)
+      if (andaClient.activeSource !== bookmark.source) {
+        return
+      }
     }
 
     await tick()

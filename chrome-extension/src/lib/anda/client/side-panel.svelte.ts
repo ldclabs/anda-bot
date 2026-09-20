@@ -82,6 +82,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   #resourceRequests = new Map<number, Promise<Resource>>()
   #localChannelSource = ''
   #workspaceChannelSources = new Set<string>()
+  #channelSwitchEpoch = 0
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
   #tabUpdatedListener?: (tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
 
@@ -215,6 +216,22 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       return
     }
 
+    const epoch = ++this.#channelSwitchEpoch
+    const workspace = workspaceFromCliSource(nextSource)
+    if (workspace) {
+      try {
+        await this.rpc('register_workspace', [workspace])
+      } catch (error) {
+        if (epoch === this.#channelSwitchEpoch) {
+          this.updateStatus('open folder failed', { kind: 'error', text: errorToMessage(error) })
+        }
+        return
+      }
+      if (epoch !== this.#channelSwitchEpoch) {
+        return
+      }
+    }
+
     const channel = this.ensureChannel(nextSource)
     this.activeChannel = channel
     this.updateStatus(channel.status, null)
@@ -248,6 +265,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
         source: sourceKey
       })
       await this.removeWorkspaceChannelSource(sourceKey)
+      // A directory registration may still be in flight for this channel.
+      ++this.#channelSwitchEpoch
 
       const wasActive = this.activeChannel?.source === sourceKey
       if (sourceKey === this.#localChannelSource) {
@@ -289,8 +308,10 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       }
 
       const source = `cli:${workspace}`
-      await this.saveWorkspaceChannelSource(source)
       await this.switchChannel(source)
+      if (this.activeSource === source) {
+        await this.saveWorkspaceChannelSource(source)
+      }
     } catch (error) {
       this.updateStatus('open folder failed', { kind: 'error', text: errorToMessage(error) })
     }
@@ -591,6 +612,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   private async switchToFallbackChannel(): Promise<void> {
+    ++this.#channelSwitchEpoch
     const next =
       this.channelList[0] ||
       (this.#localChannelSource ? this.ensureChannel(this.#localChannelSource) : null)

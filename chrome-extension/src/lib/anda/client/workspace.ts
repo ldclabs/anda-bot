@@ -1,7 +1,8 @@
 /**
- * Reading a CLI workspace path out of a channel source.
+ * Reading a workspace path out of a directory-backed channel source.
  *
- * Channel sources are `cli:<path>` or `cli:voice:<path>`. Only an absolute path
+ * Directory-backed sources are `cli:<path>`, `cli:voice:<path>`, or a plain
+ * absolute path. Only an absolute path
  * counts as a workspace — POSIX (`/srv/app`), Windows drive (`C:\app`), or UNC
  * (`\\host\share`) — because a relative path would resolve differently in the
  * daemon than it did in the terminal that produced it. Everything here answers
@@ -32,12 +33,16 @@ export function normalizeAbsoluteWorkspace(value: unknown): string {
   return normalized
 }
 
-/** The workspace a `cli:` / `cli:voice:` source points at, or ''. */
+/** The workspace a directory-backed channel source points at, or ''. */
 export function workspaceFromCliSource(source: string): string {
-  if (!source.startsWith('cli:')) {
+  const trimmed = source.trim()
+  if (isAbsoluteWorkspacePath(trimmed)) {
+    return normalizeAbsoluteWorkspace(trimmed)
+  }
+  if (!trimmed.startsWith('cli:')) {
     return ''
   }
-  const raw = source.slice('cli:'.length).trim()
+  const raw = trimmed.slice('cli:'.length).trim()
   return normalizeAbsoluteWorkspace(raw.startsWith('voice:') ? raw.slice('voice:'.length) : raw)
 }
 

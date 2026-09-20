@@ -22,14 +22,14 @@ async-trait = "0.1"
 # Default features already cover http1/json/matched-path/query/tokio; only
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
-anda_core = { version = "0.15" }
-anda_engine = { version = "0.15.0" }
-anda_engine_server = { version = "0.15" }
-anda_web3_client = { version = "0.15", features = ["client"] }
-anda_object_store = "0.11"
-anda_db = { version = "0.11", features = ["full"] }
-anda_db_tfs = { version = "0.11", features = ["full"] }
-anda_db_utils = { version = "0.11" }
+anda_core = { version = "0.16" }
+anda_engine = { version = "0.16" }
+anda_engine_server = { version = "0.16" }
+anda_web3_client = { version = "0.16", features = ["client"] }
+anda_object_store = "0.13"
+anda_db = { version = "0.13", features = ["full"] }
+anda_db_tfs = { version = "0.13", features = ["full"] }
+anda_db_utils = { version = "0.13" }
 anda_brain = { version = "0.12" }
 anda_kip = "0.13"
 anda_cognitive_nexus = "0.13"
@@ -37,7 +37,7 @@ anydoc = "0.1"
 base64 = "0.23"
 cpal = { version = "0.18" }
 cbor2 = "1"
-cose2 = "0.4"
+cose2 = "0.5"
 ed25519-dalek = "3"
 # Keep this exact: credential-store initialization has regressed in keyring
 # patch releases before, so upgrades should be validated explicitly.
@@ -113,14 +113,6 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # the matching crates are published. Keep one DB/core type identity throughout
 # the Bot, Brain, Nexus and engine dependency graph.
 anda_brain = { path = "../anda-brain/anda_brain" }
-anda_kip = { path = "../anda-db/rs/anda_kip" }
-anda_cognitive_nexus = { path = "../anda-db/rs/anda_cognitive_nexus" }
-anda_db = { path = "../anda-db/rs/anda_db" }
-anda_db_schema = { path = "../anda-db/rs/anda_db_schema" }
-anda_db_tfs = { path = "../anda-db/rs/anda_db_tfs" }
-anda_db_utils = { path = "../anda-db/rs/anda_db_utils" }
-anda_core = { path = "../anda/anda_core" }
-anda_engine = { path = "../anda/anda_engine" }
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", rev = "f2fe6304b898a2b1759a45c6f7936eafebfd8f65" }
 weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }
 

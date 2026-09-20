@@ -16,8 +16,8 @@ use super::{Claims, iana};
 pub fn expiring_claims(lifetime: Duration) -> Result<Claims, BoxError> {
     let issued_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     Ok(Claims {
-        issued_at: Some(issued_at),
-        expiration: Some(issued_at.saturating_add(lifetime.as_secs())),
+        issued_at: Some(issued_at.into()),
+        expiration: Some(issued_at.saturating_add(lifetime.as_secs()).into()),
         ..Default::default()
     })
 }

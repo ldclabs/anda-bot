@@ -220,9 +220,29 @@ describe('BrainGraphData', () => {
   it('keeps literal endpoints distinct from reference ids and preserves raw audit data', () => {
     const { api } = createApi()
     const graph = new BrainGraphData(api)
-    graph.ingest(ok([person, tuple, { ...tuple, id: 'P-2', object: 'C-2' }]))
+    graph.ingest(
+      ok([
+        person,
+        tuple,
+        { ...tuple, id: 'P-2', object: 'C-2' },
+        { ...tuple, id: 'P-3', object: { canonical_id: 'did:example:alice' } },
+        { ...tuple, id: 'P-4', object: { canonical_id: 'did:example:alice' } },
+        {
+          ...tuple,
+          id: 'P-5',
+          object: { space_id: 'public://research', element_id: 'C-9' }
+        },
+        {
+          ...tuple,
+          id: 'P-6',
+          object: { space_id: 'public://research', element_id: 'C-9' }
+        }
+      ])
+    )
     expect(graph.links.get('P-1')?.object).toBe('C-2')
     expect(graph.links.get('P-2')?.object).toBe('literal:P-2:object')
+    expect(graph.links.get('P-3')?.object).toBe(graph.links.get('P-4')?.object)
+    expect(graph.links.get('P-5')?.object).toBe(graph.links.get('P-6')?.object)
     expect(graph.nodes.get('literal:P-2:object')).toMatchObject({
       type: 'Literal',
       attributes: { value: 'C-2' }
@@ -230,7 +250,7 @@ describe('BrainGraphData', () => {
     expect(graph.links.get('P-2')?._raw?.object).toBe('C-2')
     expect(graph.links.get('P-2')?.attributes).not.toHaveProperty('confidence')
     expect(() =>
-      graph.ingest(ok([{ ...tuple, id: 'P-3', object: { arbitrary: 'not a reference' } }]))
+      graph.ingest(ok([{ ...tuple, id: 'P-7', object: { arbitrary: 'not a reference' } }]))
     ).toThrow('Invalid KIP tuple endpoint')
   })
 

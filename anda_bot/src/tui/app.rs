@@ -303,13 +303,14 @@ impl App {
             return;
         }
 
-        match self
+        let connected = match self
             .client
             .ensure_daemon_running(&self.runtime_daemon())
             .await
         {
             Ok(LaunchState::AlreadyRunning) => {
                 self.notice = format!("Connected to daemon at {}.", self.runtime_cfg.base_url());
+                true
             }
             Ok(LaunchState::Started(child)) => {
                 self.notice = format!(
@@ -317,9 +318,23 @@ impl App {
                     child.pid,
                     child.log_path.display()
                 );
+                true
             }
             Err(err) => {
                 self.notice = format!("Daemon unavailable: {err}. Press Enter to retry.");
+                false
+            }
+        };
+
+        if connected {
+            let registration = match std::env::current_dir() {
+                Ok(workspace) => self.client.register_cli_workspace(&workspace).await,
+                Err(err) => Err(err.into()),
+            };
+            if let Err(err) = registration {
+                self.notice =
+                    format!("Cannot register CLI workspace: {err}. Press Enter to retry.");
+                return;
             }
         }
 
