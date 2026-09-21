@@ -3,7 +3,6 @@ use std::io;
 use anda_core::BoxError;
 use ratatui::{
     Frame, Terminal,
-    backend::CrosstermBackend,
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     text::Line,
@@ -12,6 +11,7 @@ use ratatui::{
 
 use super::{
     App, STATUS_MAX_WIDTH,
+    backend::TuiBackend,
     input::{
         input_placeholder, input_prompt_prefix_width, input_separator_lines, input_viewport,
         split_input_area,
@@ -166,7 +166,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 pub(super) fn flush_static_scrollback(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TuiBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<(), BoxError> {
     let area = terminal.get_frame().area();
@@ -199,7 +199,7 @@ pub(super) fn flush_static_scrollback(
 }
 
 fn insert_lines_before(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TuiBackend<io::Stdout>>,
     lines: Vec<Line<'static>>,
 ) -> Result<(), BoxError> {
     if lines.is_empty() {

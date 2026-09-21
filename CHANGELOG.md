@@ -25,6 +25,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Chinese text in the TUI with upstream Ratatui**: inline scrollback now skips cells covered by a wide character before sending them to Crossterm, preventing trailing spaces from erasing Chinese text in messages and status output. Normal frame diffs retain their style-clearing and emoji handling.
 - **Legacy memory migration and startup readiness**: adopt Nexus 0.13.4 migration repairs and allow up to ten minutes for a newly spawned daemon to become ready while its KIP 1.x store migrates. An exited child still fails promptly instead of waiting for the timeout; original legacy task statuses and results remain available in `LegacyRecord`.
 - **Recall failures and partial results**: failed recalls are marked as tool errors while preserving measured usage, and bounded Recall packets retain coverage and warning information. Small budgets may yield compact partial candidates; optional runtime status no longer implies that memories are missing when runtime bindings are unconfigured.
 - **Caller identity across Brain transports**: HTTP and WebSocket access retain the caller's bearer and Brain audience, subject, scope, and bounded expiry. Inbox queues and pending-response storage remain separated by caller instead of inheriting the global Bot identity.

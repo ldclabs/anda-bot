@@ -72,16 +72,10 @@ impl Widget for Banner {
 /// without the `LineComposer` machinery so we can opt out of `Wrap` and keep
 /// the rendering deterministic.
 ///
-/// Note on East-Asian Width and broken-font terminals: Unicode classifies CJK
-/// glyphs as Wide (2 columns) and ratatui's diff emits an absolute `MoveTo`
-/// to the start of every 2-column cell. On terminals/fonts that *paint* CJK
-/// in only 1 column (e.g. Terminal.app + Sarasa Mono SC Nerd Font), this
-/// leaves a visible gap. Earlier revisions of this widget tried to pack a
-/// whole span into a single cell to make ratatui emit a single `Print`; that
-/// triggered ratatui's `invalidated` clear logic and caused trailing
-/// characters to be overwritten. The reliable fix is to use a font whose CJK
-/// glyphs occupy the full 2 columns ratatui reserves (e.g. Sarasa Term SC
-/// instead of the Mono Nerd Font variant).
+/// Wide graphemes occupy a leading cell plus reserved trailing columns.
+/// `TuiBackend` keeps those trailing cells from overwriting the glyph when
+/// inline scrollback bypasses Ratatui's normal buffer diff. Keep one grapheme
+/// per leading cell here so layout and terminal cursor widths stay aligned.
 pub struct PackedLines<'a> {
     lines: Vec<Line<'a>>,
     base_style: Style,

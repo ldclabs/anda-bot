@@ -15,7 +15,7 @@ use crossterm::{
         Clear, ClearType, disable_raw_mode, enable_raw_mode, size, supports_keyboard_enhancement,
     },
 };
-use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
+use ratatui::{Terminal, TerminalOptions, Viewport, layout::Rect};
 #[cfg(unix)]
 use std::io::IsTerminal;
 
@@ -24,6 +24,7 @@ use crate::{daemon::Daemon, gateway};
 use super::{
     App, STATUS_REFRESH_INTERVAL,
     action::{TuiActionState, action_state_snapshot},
+    backend::TuiBackend,
     layout::{dynamic_viewport_height, input_navigation_content_width},
     render::{flush_static_scrollback, render},
 };
@@ -117,7 +118,7 @@ impl Drop for TerminalModesGuard {
     }
 }
 async fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut Terminal<TuiBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<(), BoxError> {
     let mut last_status_refresh = Instant::now();
@@ -294,9 +295,9 @@ fn status_render_snapshot(app: &App) -> StatusRenderSnapshot {
 }
 fn create_terminal_with_height(
     viewport_height: u16,
-) -> Result<Terminal<CrosstermBackend<io::Stdout>>, BoxError> {
+) -> Result<Terminal<TuiBackend<io::Stdout>>, BoxError> {
     let mut terminal = Terminal::with_options(
-        CrosstermBackend::new(io::stdout()),
+        TuiBackend::new(io::stdout()),
         TerminalOptions {
             viewport: Viewport::Inline(viewport_height.max(1)),
         },
