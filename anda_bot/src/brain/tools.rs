@@ -79,7 +79,7 @@ impl Tool<BaseCtx> for RuntimeTool {
         match self.operation {
             RuntimeOperation::Attention => "Read your durable Brain inbox. Reading is not a claim or execution permission. A completed page is not completed work. If a cursor expires, restart without it.",
             RuntimeOperation::Respond => "Answer a Brain clarification or record an attributed statement. Use the item's returned id and keep the same event_key AND text when retrying. An answer grants no authority and a statement is not an independent outcome.",
-            RuntimeOperation::Status => "Read your Brain runtime configuration and bounded visible status; unavailable features are not active learning.",
+            RuntimeOperation::Status => "Inspect optional attention, action and learning runtime configuration and inbox visibility. Visible items count inbox entries. Memory recall availability and migration completion require separate checks; configured=false alone does not indicate missing memories.",
         }.into()
     }
     fn definition(&self) -> FunctionDefinition {

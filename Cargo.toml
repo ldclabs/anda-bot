@@ -32,7 +32,7 @@ anda_db_tfs = { version = "0.13", features = ["full"] }
 anda_db_utils = { version = "0.13" }
 anda_brain = { version = "0.12" }
 anda_kip = "0.13"
-anda_cognitive_nexus = "0.13"
+anda_cognitive_nexus = "0.13.4"
 anydoc = "0.1"
 base64 = "0.23"
 cpal = { version = "0.18" }
@@ -109,8 +109,8 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Only Brain 0.12 currently comes from a sibling checkout. Core/Engine, DB,
-# Nexus and KIP use registry releases with one shared DB/core type identity.
+# Brain uses the sibling checkout; shared DB/KIP and Core/Engine dependencies
+# resolve from registry releases, including Nexus 0.13.4 migration corrections.
 anda_brain = { path = "../anda-brain/anda_brain" }
 ratatui = { git = "https://github.com/ldclabs/ratatui.git", rev = "f2fe6304b898a2b1759a45c6f7936eafebfd8f65" }
 weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }

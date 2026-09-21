@@ -21,6 +21,9 @@ use crate::{
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
+// First access to a populated KIP 1.x store migrates it before the gateway
+// can answer status requests. A child that exits still fails immediately.
+const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 // Agent runs routinely outlast the shared HTTP client's 120s default timeout
 // (tool loops, model retries). Callers that need a quick failure signal, such
@@ -268,7 +271,7 @@ impl Client {
             daemon.spawn_background()?
         };
         if let Err(err) = self
-            .wait_for_spawned_daemon_ready(&mut child, Duration::from_secs(20))
+            .wait_for_spawned_daemon_ready(&mut child, DAEMON_STARTUP_TIMEOUT)
             .await
         {
             return Err(format!("{err}; logs: {}", child.log_path.display()).into());

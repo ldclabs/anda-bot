@@ -15,6 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Checkout Brain source dependency
+        uses: actions/checkout@v6
+        with:
+          repository: ldclabs/anda-brain
+          ref: ee6feb12ce784827b02b715959f66df36ee5381d
+          path: .ci/anda-brain
+          persist-credentials: false
+
+      - name: Place Brain beside the Bot workspace
+        shell: bash
+        run: mv .ci/anda-brain ../anda-brain
+
       - name: Install Protoc
         uses: taiki-e/install-action@v2
         with:
@@ -37,4 +49,6 @@ jobs:
         run: cargo clippy --all-targets --all-features
 
       - name: Run tests
+        env:
+          RUST_MIN_STACK: 16777216
         run: cargo test --workspace -- --nocapture

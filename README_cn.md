@@ -81,7 +81,9 @@ macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 l
 
 也可以使用较新的 Rust 工具链从源码编译运行 Anda Bot：
 
-当前源码构建仅通过 `[patch.crates-io]` 引用同级 `anda-brain` 中的 `anda_brain`。Core/Engine、DB、Nexus、KIP 使用 registry 发布版本。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+当前源码构建使用同级 `anda-brain`。Nexus 0.13.4、DB/KIP 和 Core/Engine 使用 registry 发布版本，并保持单一类型，包含旧数据迁移修复。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+
+首次使用 KIP 1.x 数据库启动时，会先迁移记忆再开放网关，可能需要数分钟。启动新 daemon 时最多等待十分钟；子进程若退出会及时报错。升级前请备份数据库；迁移后旧任务的原始状态和结果仍保存在 `LegacyRecord` 中。
 
 可选 `mib` feature 提供仅监听本机的评测宿主：`anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`。入口在生产 home/daemon 初始化之前分流，使用隔离的 Brain 运行。Agent 协议执行 Bot 的 runner-managed 业务模式和 MIB 管理的任务工具；独立的记忆后端协议供 MIB 自有同模型 Agent 使用。生命周期、记忆开关和仍不完整的成本计量见 [MIB 接入](docs/mib-integration_cn.md)。
 

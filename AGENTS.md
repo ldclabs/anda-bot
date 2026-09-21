@@ -40,9 +40,9 @@ The repository also contains:
 - The package uses Rust edition 2024 and workspace-managed dependencies.
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
-- Source builds currently patch only `anda_brain` to the sibling `anda-brain`
-  checkout. Core/Engine, DB, Nexus and KIP use registry releases; keep a single
-  DB/core type identity and verify Cargo metadata before changing patches.
+- Source builds patch `anda_brain` to the sibling checkout. Nexus 0.13.4,
+  DB/KIP and Core/Engine use registry releases. Keep a single DB/core type
+  identity and verify Cargo metadata before changing patches.
 - Brain HTTP accepts Engine `KipArgs` (no `kip`, top-level `dry_run`) and returns
   KIP 2.0 responses; native Rust execution uses `anda_kip::Request`. Application tools use
   `util::tool_response::ToolResponse` and preserve their existing wire format.

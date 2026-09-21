@@ -284,9 +284,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.13.2"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea4363dfb6988ca9f532faec3ec22260dc8ce8646d9b83e039ec0667a59bc3b0"
+checksum = "0231f7ec48ca0656b42a89c7a1bad3694606f9f718accd3fac64ea113c43c34d"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -341,9 +341,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d341f0cd25db84efad367eeb5785f18271005c40fb8cc90df3ca5a22fddb106a"
+checksum = "f189471a3324fae4946c3252ab556c71da5afd571453a5eda9a9d9ca40465e42"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -418,9 +418,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09af63c0fe8c797fd37fbd81bd912ad38cc0140924832b6e0f3d8b837afdb570"
+checksum = "32e75e957b9c4c0027a03cac290b781e7b5d8b5d7f65153f8acc465e4cb4d0d4"
 dependencies = [
  "anda_db_derive",
  "base64 0.22.1",

@@ -424,7 +424,7 @@ impl Tool<BaseCtx> for Client {
                 },
                 "budget": {
                   "type": ["object", "null"],
-                  "description": "Optional Recall packet and input limits. No budget keeps legacy recall behavior; a receipt proves delivery only.",
+                  "description": "Default to null for ordinary natural-language memory recall. Set explicit packet and cumulative input limits when a bounded structured memory packet is needed. Small budgets may return compact partial candidates; inspect coverage and warning items. Required constraints must all fit the packet. A receipt proves delivery only.",
                   "properties": {
                     "tokenizer": {"type":"string", "enum":[anda_brain::recall_budget::TOKENIZER]},
                     "max_tokens": {"type":"integer", "minimum":1, "maximum":65536},

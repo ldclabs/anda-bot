@@ -90,7 +90,9 @@ Requirements:
 
 Or run Anda Bot from this repository with a recent Rust toolchain:
 
-Source builds currently patch only `anda_brain` to a sibling `anda-brain` checkout. Core/Engine, DB, Nexus and KIP use registry releases. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+Source builds use a sibling `anda-brain` checkout. Nexus 0.13.4, DB/KIP and Core/Engine use registry releases with a single type identity, including the legacy-migration corrections. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+
+The first start with a KIP 1.x database migrates stored memory before the gateway becomes ready and can take several minutes. Commands starting a new daemon wait up to ten minutes and report an exited child promptly. Back up the database before upgrading; original task statuses and results remain available in `LegacyRecord` after migration.
 
 The optional `mib` feature adds a loopback-only evaluation host: `anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`. It starts before production home/daemon initialization and uses isolated Brain runs. The agent protocol executes Bot's runner-managed business profile with MIB-owned task tools; a separate memory-backend protocol supports MIB's evaluator-owned same-model agent. See [MIB integration](docs/mib-integration.md) for lifecycle guarantees, memory controls and incomplete cost accounting.
 
