@@ -1,6 +1,6 @@
 # Brain runtime integration
 
-Anda Bot 0.12 embeds Brain 0.12. The ordinary Formation/Recall/Maintenance loop works without a runtime configuration. Durable inbox actions, independent observations, semantic attention, utility, trust and learning are separately configured capabilities. Compilation, installed bindings, enabled automation, mechanism tests and measured business improvement are different states.
+Anda Bot 0.13 embeds Brain 0.12. The ordinary Formation/Recall/Maintenance loop works without a runtime configuration. Durable inbox actions, independent observations, semantic attention, utility, trust and learning are separately configured capabilities. Compilation, installed bindings, enabled automation, mechanism tests and measured business improvement are different states.
 
 ## Startup
 

@@ -1,6 +1,6 @@
 # Brain 运行时集成
 
-Anda Bot 0.12 内嵌 Brain 0.12。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
+Anda Bot 0.13 内嵌 Brain 0.12。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
 
 ## 启动配置
 

@@ -13,7 +13,7 @@ Run `anda mib --model-config /absolute/path/model.json --api-key-env MIB_MODEL_A
 - In every successful response, `body.costs` is a cumulative run snapshot with `cost_scope` set to `cumulative_run`. Use the last snapshot per run; do not sum responses. Unknown token counts and durations remain null. Provider-internal retries and observer usage may still be unmeasured, so `accounting_complete=false`. The business output cap is not a total budget for all model work.
 - Idempotency is in-process. The descriptor exposes a host epoch. Process restart requires a fresh evaluation; it cannot resume old in-memory runs. Limits: 8 active runs, 1024 total run records, 10,000 request receipts/32 MiB per run. Capacity exhaustion is explicit. Default operation/idle deadlines: 180/900 seconds.
 
-Detailed implementation, migration and evidence: [Brain MIB integration](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration). Source builds patch only `anda_brain` to the sibling `anda-brain`; other core dependencies use the locked registry versions.
+Detailed implementation, migration and evidence: [Brain MIB integration](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration). Source builds use locked registry versions of Brain and the other core dependencies. Uncomment the sibling `anda_brain` patch in `Cargo.toml` only for local Brain development.
 
 Validation: `env -u LIBRARY_PATH RUST_MIN_STACK=16777216 cargo test -p anda_bot --features mib mib::`. The ignored `serve_local_transport_fixture` test is an explicit local model fixture for HTTP pipeline verification, not an empirical benchmark or an improvement claim.
 

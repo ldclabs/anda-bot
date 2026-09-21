@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anda_brain",
  "anda_cognitive_nexus",
@@ -231,6 +231,8 @@ dependencies = [
 [[package]]
 name = "anda_brain"
 version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44781c128b2a983018fedb1701782b041b04e80f79dd39b89b252070eae82018"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -1616,16 +1618,15 @@ dependencies = [
 
 [[package]]
 name = "compact_str"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
 dependencies = [
  "castaway",
  "cfg-if",
  "itoa",
- "rustversion",
- "ryu",
  "static_assertions",
+ "zmij",
 ]
 
 [[package]]
@@ -1839,9 +1840,9 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "croaring"
-version = "2.6.0"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0e813b58ac55ac5ccea5ec63beb8c80f37dedd78da3f594c848313415a08c8c"
+checksum = "47162d8e387839a2d780b0341e9726a1152c351ad1402650abc57a92199de85d"
 dependencies = [
  "allocator-api2 0.4.0",
  "croaring-sys",
@@ -1849,9 +1850,9 @@ dependencies = [
 
 [[package]]
 name = "croaring-sys"
-version = "4.7.1"
+version = "5.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62bdd6feb27873ce157167bd66e14893a4c1c6b46256b1434c0e4754649b99f5"
+checksum = "c8af2b4ce0b99e344b198e3b6a920cbf932beffb3f6253fb52fc4418df885b5f"
 dependencies = [
  "cc",
 ]
@@ -3363,9 +3364,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.9"
+version = "0.27.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
+checksum = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
 dependencies = [
  "http",
  "hyper",
@@ -5651,9 +5652,9 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pdf-inspector"
-version = "1.21.0"
+version = "1.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00fa11f6e9c7cba91bed3386201c2d5cc4643e8a5f23ac0a00be984a2d029e62"
+checksum = "3e237d63ad7c7ea7a7258ef158456194ea389dc1ebe5c9c1faaa942fdaa8a2d2"
 dependencies = [
  "env_logger",
  "include_dir",
@@ -5664,6 +5665,7 @@ dependencies = [
  "regex",
  "thiserror 2.0.20",
  "ttf-parser",
+ "unicode-bidi",
  "unicode-normalization",
 ]
 
@@ -5712,9 +5714,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pest"
-version = "2.9.1"
+version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d45aeb61b4bf818e12d4205f2466f8c4748f85f4fce0146d1c03d69d753f0ad"
+checksum = "45d3aca230fad2e6f6317ca0a72724338c4960cb97168a85cdee66df4a9a21a8"
 dependencies = [
  "memchr",
  "ucd-trie",
@@ -5722,9 +5724,9 @@ dependencies = [
 
 [[package]]
 name = "pest_derive"
-version = "2.9.1"
+version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89cc5a242e25ed4e7704d0be240f2cfbe20a8c27e7e252d94835be93d92dc39f"
+checksum = "284b60557f2c4a2e72ad3f2d34d42685a2fa4a6a61d0d2a10c0ae2a5e916c2cf"
 dependencies = [
  "pest",
  "pest_generator",
@@ -5732,9 +5734,9 @@ dependencies = [
 
 [[package]]
 name = "pest_generator"
-version = "2.9.1"
+version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7abf21475cc3820fe4b2ca2dc2142902f67a02189f3b5b3a229f4febc01a43e5"
+checksum = "1d9d1f08a115309ee99268cf85e5228e0e56aa9caf8841ec12866b6be07c3109"
 dependencies = [
  "pest",
  "pest_meta",
@@ -5745,9 +5747,9 @@ dependencies = [
 
 [[package]]
 name = "pest_meta"
-version = "2.9.1"
+version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adba4db388f687393c18c51348d44a41d870ca9df71a2c98172ea3035dc6936e"
+checksum = "ed93ba1a9ffcca32130a5188701c81c0c49cf00d4b7c5007d5148951d743adcb"
 dependencies = [
  "pest",
 ]
@@ -6319,13 +6321,14 @@ checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
 
 [[package]]
 name = "ratatui"
-version = "0.30.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+version = "0.30.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "instability",
  "ratatui-core",
  "ratatui-crossterm",
  "ratatui-macros",
+ "ratatui-termina",
  "ratatui-termwiz",
  "ratatui-widgets",
  "serde",
@@ -6333,15 +6336,14 @@ dependencies = [
 
 [[package]]
 name = "ratatui-core"
-version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+version = "0.1.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "bitflags 2.13.2",
  "compact_str",
  "critical-section",
  "hashbrown 0.17.1",
- "indoc",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "kasuari",
  "lru 0.18.4",
  "palette",
@@ -6355,8 +6357,8 @@ dependencies = [
 
 [[package]]
 name = "ratatui-crossterm"
-version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+version = "0.1.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "cfg-if",
  "crossterm",
@@ -6366,17 +6368,27 @@ dependencies = [
 
 [[package]]
 name = "ratatui-macros"
-version = "0.7.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+version = "0.7.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "ratatui-core",
  "ratatui-widgets",
 ]
 
 [[package]]
-name = "ratatui-termwiz"
+name = "ratatui-termina"
 version = "0.1.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
+dependencies = [
+ "instability",
+ "ratatui-core",
+ "termina",
+]
+
+[[package]]
+name = "ratatui-termwiz"
+version = "0.1.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "ratatui-core",
  "termwiz",
@@ -6384,14 +6396,14 @@ dependencies = [
 
 [[package]]
 name = "ratatui-widgets"
-version = "0.3.0"
-source = "git+https://github.com/ldclabs/ratatui.git?rev=f2fe6304b898a2b1759a45c6f7936eafebfd8f65#f2fe6304b898a2b1759a45c6f7936eafebfd8f65"
+version = "0.3.2"
+source = "git+https://github.com/ratatui/ratatui.git?rev=3603d21f6b318007bbab0a0f1baefe337ebeae39#3603d21f6b318007bbab0a0f1baefe337ebeae39"
 dependencies = [
  "bitflags 2.13.2",
  "hashbrown 0.17.1",
  "indoc",
  "instability",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "line-clipping",
  "ratatui-core",
  "serde",
@@ -7805,6 +7817,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "termina"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "881a7f20ade48167027822c52a0aeca879afa3174b15c71997827826bce669f9"
+dependencies = [
+ "bitflags 2.13.2",
+ "parking_lot",
+ "rustix",
+ "signal-hook",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8384,11 +8409,11 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-truncate"
-version = "2.0.1"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16b380a1238663e5f8a691f9039c73e1cdae598a30e9855f541d29b08b53e9a5"
+checksum = "f5dde200aa133f5b6d9cc616878815ffaa45ad9529ef4a2f04d86bab91d63984"
 dependencies = [
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "unicode-segmentation",
  "unicode-width",
 ]

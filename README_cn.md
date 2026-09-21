@@ -79,9 +79,11 @@ macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 l
 
 - 至少一个可用的模型提供方 API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
 
-也可以使用较新的 Rust 工具链从源码编译运行 Anda Bot：
+也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
 
-当前源码构建使用同级 `anda-brain`。Nexus 0.13.4、DB/KIP 和 Core/Engine 使用 registry 发布版本，并保持单一类型，包含旧数据迁移修复。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+当前源码构建使用 Brain、Nexus 0.13.4、DB/KIP 和 Core/Engine 的 registry 发布版本，并保持单一类型，包含旧数据迁移修复。如需本地开发 Brain，可取消 `Cargo.toml` 中同级 `anda-brain` patch 的注释。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+
+开发和测试构建对依赖包启用基础优化，将 macOS 展开表控制在链接器的 16 MiB 限制以内。`anda_bot` 自身仍不启用优化，并保留调试信息和 panic 展开。首次编译依赖会稍慢，后续构建会复用这些产物。
 
 首次使用 KIP 1.x 数据库启动时，会先迁移记忆再开放网关，可能需要数分钟。启动新 daemon 时最多等待十分钟；子进程若退出会及时报错。升级前请备份数据库；迁移后旧任务的原始状态和结果仍保存在 `LegacyRecord` 中。
 

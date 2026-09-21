@@ -88,9 +88,11 @@ Requirements:
   the setup wizard; CLI users can put it in `~/.anda/config.yaml` or a supported
   environment variable.
 
-Or run Anda Bot from this repository with a recent Rust toolchain:
+Or run Anda Bot from this repository with Rust 1.95 or newer:
 
-Source builds use a sibling `anda-brain` checkout. Nexus 0.13.4, DB/KIP and Core/Engine use registry releases with a single type identity, including the legacy-migration corrections. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+Source builds use registry releases of Brain, Nexus 0.13.4, DB/KIP and Core/Engine with a single type identity, including the legacy-migration corrections. For local Brain development, uncomment the sibling `anda-brain` patch in `Cargo.toml`. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+
+Development and test builds use basic optimization for dependencies to keep macOS unwind tables below the linker's 16 MiB limit. `anda_bot` itself remains unoptimized, with debug information and panic unwinding preserved. The first dependency build takes longer; subsequent builds reuse those artifacts.
 
 The first start with a KIP 1.x database migrates stored memory before the gateway becomes ready and can take several minutes. Commands starting a new daemon wait up to ten minutes and report an exited child promptly. Back up the database before upgrading; original task statuses and results remain available in `LegacyRecord` after migration.
 

@@ -14,7 +14,7 @@ categories = [
   "text-processing",
 ]
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.95"
 license = "Apache-2.0"
 
 [workspace.dependencies]
@@ -109,11 +109,18 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Brain uses the sibling checkout; shared DB/KIP and Core/Engine dependencies
-# resolve from registry releases, including Nexus 0.13.4 migration corrections.
-anda_brain = { path = "../anda-brain/anda_brain" }
-ratatui = { git = "https://github.com/ldclabs/ratatui.git", rev = "f2fe6304b898a2b1759a45c6f7936eafebfd8f65" }
+# Brain and shared DB/KIP and Core/Engine dependencies use registry releases,
+# including Nexus 0.13.4 migration corrections. Uncomment for local Brain work.
+# anda_brain = { path = "../anda-brain/anda_brain" }
+ratatui = { git = "https://github.com/ratatui/ratatui.git", rev = "3603d21f6b318007bbab0a0f1baefe337ebeae39" }
 weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }
+
+[profile.dev.package."*"]
+# Shrink dependency code and unwind tables so macOS debug builds fit the
+# compact-unwind format's 24-bit DWARF offsets (16 MiB). Keep anda_bot itself
+# unoptimized for debugging, and retain debug info and panic unwinding.
+# The test profile inherits this override from dev.
+opt-level = 1
 
 [profile.release]
 lto = true
