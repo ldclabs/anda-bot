@@ -1355,6 +1355,9 @@
   "memoryDraftStored": {
     "message": "The draft is saved on this device. Closing this window does not confirm or cancel a change."
   },
+  "memoryDraftNotCreated": {
+    "message": "No preview exists on the server. Review this saved request again or discard it."
+  },
   "memoryResumeChange": {
     "message": "Resume memory change"
   },

@@ -716,6 +716,26 @@ export class Channel extends EventTarget {
     }
   }
 
+  /** Load one older conversation for a source jump without changing the active session. */
+  async loadConversationForJump(conversationId: number): Promise<boolean> {
+    if (!Number.isSafeInteger(conversationId) || conversationId <= 0) return false
+    if (this.#messageGroups.some((group) => group._id === conversationId)) return true
+
+    const epoch = this.#sendEpoch
+    const conversation = await this.fetchConversation(conversationId)
+    if (epoch !== this.#sendEpoch) return false
+
+    const group = conversationToGroup(conversation)
+    if (!group.messages.length) return false
+    group.current = this.#conversation?._id === conversationId
+    const groups = this.#messageGroups.filter((existing) => existing._id !== conversationId)
+    if (group.current) groups.forEach((existing) => (existing.current = false))
+    groups.push(group)
+    groups.sort((a, b) => a._id - b._id)
+    this.#messageGroups = groups
+    return true
+  }
+
   private async agentRun(input: AgentInput, isStale?: () => boolean): Promise<AgentOutput | null> {
     const meta = await this.requestMeta()
     if (isStale?.()) {

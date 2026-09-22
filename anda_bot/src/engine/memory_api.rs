@@ -575,6 +575,17 @@ fn service_error(err: anda_core::BoxError) -> (StatusCode, ToolResponse) {
             StatusCode::TOO_MANY_REQUESTS,
             error("capacity", "Too many memory changes are pending."),
         ),
+        "payload_too_large" => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            error("payload_too_large", "Query exceeds 8192 UTF-8 bytes."),
+        ),
+        "search_result_unknown" => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            error(
+                "search_result_unknown",
+                "No complete search result was received. A new search may incur another model charge.",
+            ),
+        ),
         "invalid_request" => (
             StatusCode::BAD_REQUEST,
             error("invalid_request", "Invalid memory request."),
@@ -995,5 +1006,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn memory_search_preserves_validation_and_unknown_result_errors() {
+        let (mut state, owner, _) = fixture();
+        let brain = axum::Router::new().route(
+            "/recall_structured",
+            axum::routing::post(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error":"accepted work result unavailable"})),
+                )
+            }),
+        );
+        let brain_url = crate::test_support::spawn_http_mock(brain).await;
+        state.service = MemoryService::new(Client::new(brain_url, None));
+        let auth = headers(&owner, false);
+        assert_eq!(
+            state
+                .websocket_dispatch(&auth, "memory_search", json!([{"query":"x"}]))
+                .await["error"]["code"],
+            "search_result_unknown"
+        );
+        assert_eq!(
+            state
+                .websocket_dispatch(&auth, "memory_search", json!([{"query":"中".repeat(3000)}]))
+                .await["error"]["code"],
+            "payload_too_large"
+        );
+
+        let api_url = crate::test_support::spawn_http_mock(state.into_router()).await;
+        let response = crate::util::http_client::new_reqwest_client()
+            .post(format!("{api_url}/daemon/memory/v1/search"))
+            .headers(auth)
+            .json(&json!({"query":"中".repeat(3000)}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"]["code"],
+            "payload_too_large"
+        );
     }
 }

@@ -230,7 +230,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.12.0"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10bbdf69d14bac24989ffbfe82615e2867fab47e1caea4ff4b52d6a851b189f5"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",

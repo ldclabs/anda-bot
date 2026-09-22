@@ -1355,6 +1355,9 @@
   "memoryDraftStored": {
     "message": "Le brouillon est enregistré sur cet appareil. Fermer ne confirme ni n’annule la modification."
   },
+  "memoryDraftNotCreated": {
+    "message": "Aucun aperçu n’existe sur le serveur. Revérifiez la demande enregistrée ou abandonnez-la."
+  },
   "memoryResumeChange": {
     "message": "Reprendre la modification"
   },

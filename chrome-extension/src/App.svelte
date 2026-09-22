@@ -366,6 +366,21 @@
       return
     }
 
+    // A verified memory source may be in an older, independent conversation.
+    // Loading its exact ID only adds it to the display; sends still target the
+    // channel's current conversation.
+    if (Number.isSafeInteger(bookmark.conversation) && bookmark.conversation > 0) {
+      try {
+        if (await andaClient.activeChannel?.loadConversationForJump(bookmark.conversation)) {
+          await tick()
+          if (scrollToBookmarkMessage(bookmark.message_id)) return
+        }
+      } catch {
+        // The existing ancestor walk can still locate a message if the direct
+        // read is temporarily unavailable.
+      }
+    }
+
     for (let attempt = 0; attempt < 12; attempt += 1) {
       if (!andaClient.activeChannel?.hasPreviousConversations) {
         break

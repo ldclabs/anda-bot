@@ -58,6 +58,13 @@ struct StoredChange {
     native: anda_brain::product::ChangeReceipt,
 }
 
+fn confirmed_and_clean(record: &StoredChange) -> bool {
+    record.view.state == "confirmed"
+        && record.view.error.is_none()
+        && (record.input.kind != anda_brain::product::ChangeKind::Delete
+            || record.view.before.is_none())
+}
+
 pub struct MutationService {
     access: Arc<MemoryAccess>,
     journal: Journal,
@@ -304,7 +311,7 @@ impl MutationService {
         if record.view.preview_digest != preview_digest {
             return Err("revision_conflict".into());
         }
-        if record.view.state == "confirmed" {
+        if confirmed_and_clean(&record) {
             return Ok(record.view);
         }
         let key = key(caller, &id)?;
@@ -342,7 +349,7 @@ impl MutationService {
         let _gate = self.access.gate.lock().await;
         let _engine = self.access.keep_engine_alive()?;
         let mut record = self.read(caller, id).await?;
-        if record.view.state == "confirmed" {
+        if confirmed_and_clean(&record) {
             return Ok(record.view);
         }
         let space = self
@@ -367,40 +374,41 @@ impl MutationService {
             .state
             .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
             .await?;
-        match space
+        let (native, admission_uncertain) = match space
             .product_commit(caller, id.into(), record.native.preview_digest.clone())
             .await
         {
-            Ok(native) => {
-                record.view.state = native.state.clone();
-                record.view.replacement_record = native.replacement_record.clone();
-                record.native = native;
-                if record.view.state == "confirmed" {
-                    if self.access.synchronize_locked().await.is_err() {
-                        record.view.state = "cleanup_pending".into();
-                        record.view.error = Some("notes_reset_pending".into());
-                    } else {
-                        record.view.error = None;
-                        if record.input.kind == anda_brain::product::ChangeKind::Delete {
-                            record.view.before = None;
-                            record.view.affected_records.clear();
-                        }
-                    }
+            Ok(native) => (native, false),
+            Err(_) => (space.product_change(caller, id).await?, true),
+        };
+        record.view.state = native.state.clone();
+        record.view.replacement_record = native.replacement_record.clone();
+        record.native = native;
+        if record.view.state == "confirmed" {
+            // A native commit may persist its receipt and then fail while
+            // returning it. Confirmation is only complete after Bot Notes are
+            // coherent and a deleted preview has been cleared.
+            if self.access.synchronize_locked().await.is_err() {
+                record.view.state = "cleanup_pending".into();
+                record.view.error = Some("notes_reset_pending".into());
+            } else {
+                record.view.error = None;
+                if record.input.kind == anda_brain::product::ChangeKind::Delete {
+                    record.view.before = None;
+                    record.view.affected_records.clear();
                 }
             }
-            Err(_) => {
-                let native = space.product_change(caller, id).await?;
-                record.view.state = native.state.clone();
-                record.native = native;
-                record.view.error = Some(
-                    if record.view.state == "prepared" {
-                        "preview_needs_review"
-                    } else {
-                        "acceptance_unknown"
-                    }
-                    .into(),
-                );
-            }
+        } else if admission_uncertain {
+            record.view.error = Some(
+                if record.view.state == "prepared" {
+                    "preview_needs_review"
+                } else {
+                    "acceptance_unknown"
+                }
+                .into(),
+            );
+        } else {
+            record.view.error = None;
         }
         self.journal
             .write(&format!("changes/{key}"), &record)
@@ -437,7 +445,8 @@ impl MutationService {
             if matches!(
                 record.view.state.as_str(),
                 "committing" | "reconciling" | "cleanup_pending"
-            ) {
+            ) || (record.view.state == "confirmed" && !confirmed_and_clean(&record))
+            {
                 if let Ok(caller) = record.caller.parse() {
                     let _ = self
                         .commit(

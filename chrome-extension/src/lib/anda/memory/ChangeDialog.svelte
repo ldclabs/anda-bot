@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { MemoryApi, type MemoryRecord, type ChangeInput, type ChangeView } from './api'
+  import {
+    MemoryApi,
+    MemoryApiError,
+    type MemoryRecord,
+    type ChangeInput,
+    type ChangeView
+  } from './api'
   import { buttonClass, textareaClass } from '../ui'
   import { getMessage } from '$lib/i18n'
 
@@ -38,12 +44,13 @@
     localStorage.setItem(storageKey, JSON.stringify({ input, view }))
   }
   async function prepare() {
-    if (!record || busy) return
+    if ((!record && !input) || busy) return
     busy = true
     error = ''
     unknown = false
     try {
-      if (!input)
+      if (!input) {
+        if (!record) throw new Error('missing_record')
         input = {
           operation_id: crypto.randomUUID(),
           record_id: record.id,
@@ -51,6 +58,7 @@
           kind,
           new_value: kind === 'correct' ? text : null
         }
+      }
       save()
       const result = await api.prepareChange(input)
       if (disposed) return
@@ -102,8 +110,16 @@
       if (!disposed) receive(result)
     } catch (e) {
       if (!disposed) {
-        unknown = true
-        error = String(e)
+        if (e instanceof MemoryApiError && e.code === 'not_found' && !view) {
+          // No preview was returned and the server has no operation to query.
+          // Reusing this prepare intent or discarding it cannot commit a change.
+          unknown = false
+          restored = false
+          error = getMessage('memoryDraftNotCreated')
+        } else {
+          unknown = true
+          error = String(e)
+        }
       }
     } finally {
       if (!disposed) busy = false
@@ -157,6 +173,8 @@
         if (typeof saved.input?.operation_id !== 'string')
           throw new Error('missing_change_identity')
         input = saved.input
+        view = saved.view?.schema_version === 1 ? saved.view : null
+        text = typeof saved.input.new_value === 'string' ? saved.input.new_value : text
         // Refresh server state before allowing a restored draft to be confirmed.
         unknown = true
         void check()
@@ -219,7 +237,9 @@
           {getMessage('memoryChangePending')}
         </p>{/if}
     {:else if !restored}
-      <p class="mt-4 whitespace-pre-wrap break-words text-sm">{record?.object_label}</p>
+      <p class="mt-4 whitespace-pre-wrap break-words text-sm">
+        {record?.object_label || input?.record_id}
+      </p>
       {#if kind === 'correct'}<label class="mt-4 block text-sm"
           >{getMessage('memoryNewValue')}<textarea
             class={textareaClass('mt-2 min-h-24')}

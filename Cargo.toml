@@ -113,7 +113,7 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # including Nexus 0.13.4 migration corrections.
 # Temporary, explicitly authorized memory-product integration. Switch back to
 # the published release after its native product contracts are released.
-anda_brain = { path = "../anda-brain/anda_brain" }
+# anda_brain = { path = "../anda-brain/anda_brain" }
 ratatui = { git = "https://github.com/ratatui/ratatui.git", rev = "3603d21f6b318007bbab0a0f1baefe337ebeae39" }
 weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev = "12096bac4d5401884573fb3e7991825f67ccc6f5" }
 

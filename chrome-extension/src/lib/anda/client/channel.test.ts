@@ -267,11 +267,7 @@ describe('mergePendingLocalMessages', () => {
 
     mergePendingLocalMessages(group, [existing], knownServerMessageCount(existing, group))
 
-    expect(group.messages.map((message) => message.text)).toEqual([
-      'hello',
-      '/stop',
-      'later reply'
-    ])
+    expect(group.messages.map((message) => message.text)).toEqual(['hello', '/stop', 'later reply'])
     expect(group.messages[1]).toMatchObject({ id: 'm-5-1500-1', pending: true })
   })
 })
@@ -292,6 +288,36 @@ describe('preserveMessageTimestamps', () => {
 
     expect(group.messages[0]?.timestamp).toBe(1000)
     expect(group.messages[1]?.timestamp).toBe(2000)
+  })
+})
+
+describe('Channel source jumps', () => {
+  it('loads an older independent conversation without replacing the active session', async () => {
+    const backend = createBackend({
+      conversations: [
+        conversation({ _id: 5 }),
+        conversation({
+          _id: 3,
+          status: 'completed',
+          messages: [{ role: 'user', content: [{ type: 'Text', text: 'Original preference' }] }]
+        })
+      ],
+      sourceState: { conv_id: 5, status: 'idle', timestamp: 1000 }
+    })
+    const channel = new Channel('browser:test', backend.api)
+    await channel.init()
+
+    try {
+      expect(channel.messageGroups.map((group) => group._id)).toEqual([5])
+      expect(await channel.loadConversationForJump(3)).toBe(true)
+      expect(channel.messageGroups.map((group) => group._id)).toEqual([3, 5])
+      expect(channel.messageGroups[0]?.messages[0]?.id).toBe('m-3-0')
+      expect(channel.messageGroups[0]?.current).toBe(false)
+      expect(channel.messageGroups[1]?.current).toBe(true)
+      expect(channel.conversationId).toBe(5)
+    } finally {
+      channel.destroy()
+    }
   })
 })
 

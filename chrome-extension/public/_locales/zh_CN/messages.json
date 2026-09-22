@@ -1355,6 +1355,9 @@
   "memoryDraftStored": {
     "message": "草稿保存在此设备。关闭窗口不会确认或取消变更。"
   },
+  "memoryDraftNotCreated": {
+    "message": "服务端没有这份预览。可以重新查看已保存的请求，或丢弃草稿。"
+  },
   "memoryResumeChange": {
     "message": "继续查看记忆变更"
   },

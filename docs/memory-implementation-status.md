@@ -22,7 +22,7 @@
 
 ## 原生合同与可用范围
 
-用户已授权同时完善同级 `anda-brain`，通过临时本地 patch 联调，原生发布后切回 registry。Brain 的版本号保持 0.12.0，新增合同放在未发布变更中；不能声称当前 registry 0.12.0 已有这些接口。Worker、MIB 外部项目和部署资产未改动。
+用户已授权同时完善同级 `anda-brain`，通过临时本地 patch 联调，原生发布后切回 registry。同级 Brain 当前声明版本 0.12.1；本轮尚未验证 registry 可用性及其合同一致性。Bot 仓库未改外部 MIB 项目和部署资产。
 
 | 门槛 | 本地联调结论 | 证据/边界 |
 | --- | --- | --- |
@@ -50,15 +50,17 @@
 
 验证均使用现有离线依赖与本地合成夹具，没有真实模型费用或生产配置变更：
 
-- Bot 默认主程序：1,071 项通过；最终全功能主程序：1,094 项通过、1 个既有手动 HTTP fixture 忽略。`memory_` 针对性回归和 2 项 CLI integration tests 通过，包含真实模型工具分发、压缩策略继承、操作对账、无重试搜索、评测截止清理与截断日志重建。
+- Bot 默认主程序：1,072 项通过；全功能主程序：1,095 项通过、1 个既有手动 HTTP fixture 忽略。`memory_` 针对性回归和 2 项 CLI integration tests 通过，包含真实模型工具分发、压缩策略继承、操作对账、无重试搜索、评测截止清理与截断日志重建。
 - 启动器：75 项在沙箱内通过；进程组测试因 `zsh: operation not permitted: ps` 失败，已单独在所需权限下通过，没有修改启动器代码。
-- Brain 默认精简库：330 项通过；全功能：524 库测试、17 binary 测试、28 独立集成测试通过。
-- Browser：310 项通过，check 无错误/警告，六语言无缺失键，生产构建通过。
+- Brain 初始交付时的独立验证：默认精简库 330 项通过；全功能 524 库测试、17 binary 测试、28 独立集成测试通过。
+- Browser：312 项通过，check 无错误/警告，六语言无缺失键，生产构建通过。
 - Docsite：typecheck 及 en/zh-Hans/es/fr/ru/ar 构建全部通过；本地 Docusaurus 更新检查提示权限不足不影响构建产物。
 - CLI 离线 guide 的无 home/身份副作用测试通过。
 - 在明确标识的合成组件页面检查桌面与 390px 窄屏、设置预览/重启提示、显式搜索、更正编辑/范围/确认/丢弃、订阅与取消。临时页面及开发服务已清理。没有把 localhost 组件夹具当作真实 Chrome 扩展安装验收。
 - Brain 全功能 Clippy、Wiki-only/MCP-only 编译检查通过；Bot 全 targets/全 features Clippy 及两边格式检查通过。
-- Cargo metadata 确认 Brain 0.12 为唯一 local path 包，Nexus 0.13.4、DB 0.13.2、KIP 0.13.1、Core/Engine 0.16 各只有一个 registry 包身份。
+- Cargo metadata 确认 Brain 0.12.1 为唯一 local path 包，Nexus 0.13.4、DB 0.13.2、KIP 0.13.1、Core/Engine 0.16 各只有一个 registry 包身份。
+
+2026-09-23 复核修复：原生收据确认但返回失败时，Bot 仍完成 Notes 对账与删除预览清理；未建立的变更草稿可重新预览或丢弃；来源跳转按指定会话加载原消息；搜索保留超限与结果未知的错误码。回归覆盖已确认原生变更的宿主恢复、HTTP/WS 搜索错误及跨独立会话的来源定位。本轮未重跑同级 Brain 0.12.1 的独立测试套件；Bot 使用当前本地 patch 完成全功能联调。
 
 ## 发行与回滚
 

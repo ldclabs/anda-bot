@@ -89,4 +89,20 @@ describe('memory product API', () => {
       })
     )
   })
+  it('preserves a missing draft status so recovery can offer review or discard', async () => {
+    vi.stubGlobal('chrome', undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: 'not_found', message: 'No operation' } }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          })
+      )
+    )
+    await expect(new MemoryApi(settings).changeStatus('saved-prepare-id')).rejects.toMatchObject({
+      code: 'not_found'
+    })
+  })
 })

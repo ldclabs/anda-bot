@@ -25,7 +25,7 @@ anda agent run --memory-mode off --prompt '只使用这个新对话的信息帮�
 
 `/daemon/memory/v1` 是使用 Bot `ToolResponse` 的所有者管理入口，与原生 KIP、模型工具分开。HTTP 和 WebSocket 每次请求都重新验证原凭证。概览、记录、搜索、变更预览/提交/查询/丢弃、待办设置与记录订阅复用同一服务。活动查询还支持已认证调用者自己拥有的指定会话，不暴露其他记录或计数。产品响应的标识统一为字符串。
 
-当前代码按用户授权临时将 `anda_brain` patch 到同级 `../anda-brain/anda_brain`，联调新的原生产品合同。Brain 版本仍为 0.12.0，不能把新增接口当成已发布 0.12 crate 的能力。原生版本发布后更新 registry 约束和锁文件、仅移除 Brain patch，并重跑[实施记录](memory-implementation-status.md)中的合同矩阵。DB/KIP/Core/Engine 保持单一 registry 类型身份。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
+当前代码按用户授权临时将 `anda_brain` patch 到同级 `../anda-brain/anda_brain`，联调新的原生产品合同。同级源码当前声明版本 0.12.1；本轮尚未验证 registry 可用性及其合同一致性。原生版本发布后更新 registry 约束和锁文件、仅移除 Brain patch，并重跑[实施记录](memory-implementation-status.md)中的合同矩阵。DB/KIP/Core/Engine 保持单一 registry 类型身份。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
 
 ## 需要跨会话确认时，再设置待办
 

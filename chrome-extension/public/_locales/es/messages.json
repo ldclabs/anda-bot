@@ -1355,6 +1355,9 @@
   "memoryDraftStored": {
     "message": "El borrador se guarda en este dispositivo. Cerrar no confirma ni cancela el cambio."
   },
+  "memoryDraftNotCreated": {
+    "message": "No hay una vista previa en el servidor. Revisa de nuevo la solicitud guardada o descártala."
+  },
   "memoryResumeChange": {
     "message": "Continuar cambio de memoria"
   },

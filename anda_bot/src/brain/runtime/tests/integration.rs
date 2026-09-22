@@ -794,13 +794,14 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
             input_digest: None,
         }),
     };
+    let timestamp = Some("2026-09-22T00:00:00.000Z".to_string());
     let accepted = client
         .submit_formation_window(
             submission,
             anda_brain::types::FormationInputRef {
                 messages: std::slice::from_ref(&message),
                 context: &None,
-                timestamp: &None,
+                timestamp: &timestamp,
             },
         )
         .await
@@ -921,6 +922,41 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         new_value: None,
     };
     let preview = service.prepare_change(owner, remove.clone()).await.unwrap();
+    let native_preview = space
+        .product_change(owner, &remove.operation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        space
+            .product_commit(
+                owner,
+                remove.operation_id.clone(),
+                native_preview.preview_digest,
+            )
+            .await
+            .unwrap()
+            .state,
+        "confirmed"
+    );
+    let notes: NoteArgs = serde_json::from_value(
+        json!({"op":"set","items":[{"id":"stale","content":"Must be cleared after deletion"}]}),
+    )
+    .unwrap();
+    NoteTool::new()
+        .call(ctx.child_base(NoteTool::NAME).unwrap(), notes, vec![])
+        .await
+        .unwrap();
+    // Simulate a Bot receipt from the old error path: native confirmed, while
+    // the Bot still retained its preview and had not reset Notes.
+    let key = anda_cognitive_nexus::content_digest(
+        &json!({"caller":owner.to_string(),"operation_id":remove.operation_id}),
+    )
+    .unwrap();
+    let path = format!("changes/{}", &key[7..]);
+    let mut saved: serde_json::Value = journal.read(&path).await.unwrap().unwrap();
+    saved["view"]["state"] = "confirmed".into();
+    saved["view"]["error"] = "acceptance_unknown".into();
+    journal.write(&path, &saved).await.unwrap();
     let confirmed = service
         .commit_change(
             owner,
@@ -933,6 +969,8 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         .unwrap();
     assert_eq!(confirmed.state, "confirmed");
     assert!(confirmed.before.is_none());
+    assert!(confirmed.error.is_none());
+    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
     assert!(service.record(owner, &replacement.id).await.is_err());
     // Preparing the same logical operation after deletion returns its receipt,
     // without requiring a record that has intentionally ceased to exist.

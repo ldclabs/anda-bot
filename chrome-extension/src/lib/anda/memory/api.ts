@@ -146,8 +146,18 @@ interface Envelope<T> {
   next_cursor?: string | null
 }
 
+export class MemoryApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
+    super(`${code}: ${message}`)
+    this.name = 'MemoryApiError'
+  }
+}
+
 export function unwrap<T extends { schema_version: number }>(envelope: Envelope<T>): T {
-  if (envelope.error) throw new Error(`${envelope.error.code}: ${envelope.error.message}`)
+  if (envelope.error) throw new MemoryApiError(envelope.error.code, envelope.error.message)
   if (!envelope.result || envelope.result.schema_version !== 1)
     throw new Error('unsupported_memory_api')
   return envelope.result
