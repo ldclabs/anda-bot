@@ -325,7 +325,9 @@ impl AndaBot {
             formation_backoff_until: AtomicU64::new(0),
             goal_check_backoff_until: AtomicU64::new(0),
             active_at: Arc::new(AtomicU64::new(spec.active_at_ms)),
-            finish_when_idle: AtomicBool::new(false),
+            finish_when_idle: AtomicBool::new(
+                request_meta_extra_as::<bool>(spec.meta, keys::FINISH_WHEN_IDLE).unwrap_or(false),
+            ),
             runner_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
                 counterparty: formation_counterparty,
@@ -822,6 +824,11 @@ impl Agent<AgentCtx> for AndaBot {
                     // Release the lock first: enqueueing can wait on a full
                     // channel and must not stall unrelated requests.
                     drop(guard);
+                    if request_meta_extra_as::<bool>(ctx.meta(), keys::FINISH_WHEN_IDLE)
+                        .unwrap_or(false)
+                    {
+                        session.finish_when_idle.store(true, Ordering::SeqCst);
+                    }
                     let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                     let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
                     session.request_meta.set(meta);
@@ -869,9 +876,11 @@ impl Agent<AgentCtx> for AndaBot {
         let ConversationInput {
             command,
             resources,
-            extra,
+            mut extra,
             ..
         } = input;
+        // Session lifecycle control is not user context for the model.
+        extra.remove(keys::FINISH_WHEN_IDLE);
         let instructions =
             instructions.expect("system instructions are built before session creation");
 
@@ -1600,6 +1609,32 @@ mod tests {
         Principal::from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9])
     }
 
+    async fn assert_conversation_reaches_status(
+        bot: &AndaBot,
+        conversation_id: u64,
+        expected: ConversationStatus,
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let conversation = bot
+                .inner
+                .conversations
+                .conversations
+                .get_conversation(conversation_id)
+                .await
+                .unwrap();
+            if conversation.status == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "conversation did not reach {expected:?}; current status is {:?}",
+                conversation.status
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     #[tokio::test]
     async fn anda_bot_run_creates_conversation_via_full_engine() {
         let dir = tempfile::tempdir().unwrap();
@@ -1611,6 +1646,63 @@ mod tests {
         let input = AgentInput::new(AndaBot::NAME.to_string(), "hello there".to_string());
         let output = engine.agent_run(test_caller(), input).await.unwrap();
         assert!(output.conversation.is_some() || output.session.is_some());
+    }
+
+    #[tokio::test]
+    async fn one_shot_request_completes_after_model_becomes_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let mut input = AgentInput::new(AndaBot::NAME.to_string(), "hello there".to_string());
+        let mut meta = RequestMeta::default();
+        meta.extra
+            .insert(keys::FINISH_WHEN_IDLE.to_string(), true.into());
+        input.meta = Some(meta);
+
+        let output = engine.agent_run(test_caller(), input).await.unwrap();
+        let conversation_id = output.conversation.expect("conversation id");
+        assert_conversation_reaches_status(
+            bot.as_ref(),
+            conversation_id,
+            ConversationStatus::Completed,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn one_shot_request_finishes_a_joined_idle_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let source = "cli:one-shot-join";
+        let mut first = AgentInput::new(AndaBot::NAME.to_string(), "first turn".to_string());
+        let mut first_meta = RequestMeta::default();
+        first_meta
+            .extra
+            .insert(keys::SOURCE.to_string(), source.into());
+        first.meta = Some(first_meta);
+
+        let first_output = engine.agent_run(test_caller(), first).await.unwrap();
+        let conversation_id = first_output.conversation.expect("conversation id");
+        assert_conversation_reaches_status(bot.as_ref(), conversation_id, ConversationStatus::Idle)
+            .await;
+
+        let mut second = AgentInput::new(AndaBot::NAME.to_string(), "second turn".to_string());
+        let mut second_meta = RequestMeta::default();
+        second_meta
+            .extra
+            .insert(keys::SOURCE.to_string(), source.into());
+        second_meta
+            .extra
+            .insert(keys::FINISH_WHEN_IDLE.to_string(), true.into());
+        second.meta = Some(second_meta);
+
+        let second_output = engine.agent_run(test_caller(), second).await.unwrap();
+        assert_eq!(second_output.conversation, Some(conversation_id));
+        assert_conversation_reaches_status(
+            bot.as_ref(),
+            conversation_id,
+            ConversationStatus::Completed,
+        )
+        .await;
     }
 
     #[tokio::test]

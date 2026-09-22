@@ -145,6 +145,12 @@ fn apply_agent_meta_defaults(
     workspace: Option<&Path>,
     session_id: Option<&str>,
 ) {
+    // `agent run` is a one-shot command. The daemon otherwise keeps its
+    // unbound runner idle for later interactive turns, so polling would never
+    // observe a terminal conversation state after the model stops.
+    meta.extra
+        .insert(keys::FINISH_WHEN_IDLE.to_string(), true.into());
+
     if let Some(workspace) = workspace {
         meta.extra
             .entry(keys::WORKSPACE.to_string())
@@ -312,10 +318,11 @@ mod tests {
     use anda_core::{ContentPart, ToolInput};
 
     #[test]
-    fn agent_meta_defaults_preserve_explicit_values() {
+    fn agent_meta_defaults_preserve_explicit_values_and_enable_one_shot() {
         let mut meta: RequestMeta = serde_json::from_value(json!({
             "source": "custom",
             "workspace": "/tmp/custom",
+            "finish_when_idle": false,
         }))
         .unwrap();
 
@@ -334,6 +341,7 @@ mod tests {
             meta.get_extra_as::<String>("thread"),
             Some("s1".to_string())
         );
+        assert_eq!(meta.get_extra_as::<bool>("finish_when_idle"), Some(true));
     }
 
     #[test]

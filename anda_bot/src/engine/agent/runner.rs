@@ -604,9 +604,11 @@ impl SessionRunner {
             let ConversationInput {
                 command,
                 resources,
-                extra,
+                mut extra,
                 usage,
             } = input;
+            // Session lifecycle control is not user context for the model.
+            extra.remove(crate::util::request_meta::keys::FINISH_WHEN_IDLE);
 
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&usage);

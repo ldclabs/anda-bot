@@ -49,13 +49,14 @@ pub(super) fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String 
 /// verbatim, so recovery has to drop them: replaying `cron_job_id` would keep a
 /// resumed session permanently marked as an unattended cron run, and replaying
 /// `approval_mode` would pin it to the approval policy of a client that is no
-/// longer connected. Both grant approval-free shell and MCP access to later
-/// turns the user drives by hand.
-const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 4] = [
+/// longer connected. `finish_when_idle` belongs only to a one-shot request and
+/// must not make a recovered interactive session close itself.
+const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 5] = [
     keys::CRON_JOB_ID,
     keys::CRON_JOB_NAME,
     keys::CRON_JOB_KIND,
     keys::APPROVAL_MODE,
+    keys::FINISH_WHEN_IDLE,
 ];
 
 pub(super) fn request_meta_from_conversation(
@@ -362,6 +363,7 @@ mod tests {
                 "cron_job_name": "nightly",
                 "cron_job_kind": "agent",
                 "approval_mode": "full_access",
+                "finish_when_idle": true,
             })),
             ..Default::default()
         };
@@ -372,6 +374,7 @@ mod tests {
         assert_eq!(meta.get_extra_as::<String>("cron_job_name"), None);
         assert_eq!(meta.get_extra_as::<String>("cron_job_kind"), None);
         assert_eq!(meta.get_extra_as::<String>("approval_mode"), None);
+        assert_eq!(meta.get_extra_as::<bool>("finish_when_idle"), None);
         // Routing keys still have to survive so replies return to the source.
         assert_eq!(
             meta.get_extra_as::<String>("source"),

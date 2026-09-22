@@ -30,6 +30,10 @@ pub mod keys {
     pub const APPROVAL_MODE: &str = "approval_mode";
     /// `APPROVAL_MODE` value that disables approval prompts entirely.
     pub const APPROVAL_MODE_FULL_ACCESS: &str = "full_access";
+    /// `true` asks an interactive session runner to close the conversation as
+    /// soon as it becomes idle. Used by one-shot clients such as `agent run`.
+    /// Transient: dropped on conversation recovery.
+    pub const FINISH_WHEN_IDLE: &str = "finish_when_idle";
     /// Id of the cron job that fired this request. Marks the run as
     /// unattended. Transient: dropped on conversation recovery.
     pub const CRON_JOB_ID: &str = "cron_job_id";

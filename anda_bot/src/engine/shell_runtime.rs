@@ -293,6 +293,17 @@ mod tests {
         if cfg!(windows) { "cd" } else { "pwd" }
     }
 
+    fn assert_same_directory(actual: Option<&str>, expected: &Path) {
+        let actual = actual.expect("shell should report its working directory");
+        let actual = Path::new(actual.trim())
+            .canonicalize()
+            .expect("reported working directory should resolve");
+        let expected = expected
+            .canonicalize()
+            .expect("expected working directory should resolve");
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn new_exposes_native_runtime_metadata() {
         let workspace = PathBuf::from("/tmp/anda-shell-test");
@@ -374,7 +385,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output.workspace.as_deref(), project.to_str());
-        assert_eq!(output.stdout.as_deref().map(str::trim), project.to_str());
+        assert_same_directory(output.stdout.as_deref(), &project);
 
         let raw_source_ctx = anda_engine::engine::EngineBuilder::new()
             .mock_ctx()
@@ -439,10 +450,7 @@ mod tests {
             .unwrap();
         let second_project = second_project.canonicalize().unwrap();
         assert_eq!(second_output.workspace.as_deref(), second_project.to_str());
-        assert_eq!(
-            second_output.stdout.as_deref().map(str::trim),
-            second_project.to_str()
-        );
+        assert_same_directory(second_output.stdout.as_deref(), &second_project);
     }
 
     #[tokio::test]
@@ -511,11 +519,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output.workspace.as_deref(), default.to_str());
-        let canonical_default = default.canonicalize().unwrap();
-        assert_eq!(
-            output.stdout.as_deref().map(str::trim),
-            canonical_default.to_str()
-        );
+        assert_same_directory(output.stdout.as_deref(), &default);
     }
 
     #[cfg(not(target_os = "windows"))]
