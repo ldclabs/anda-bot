@@ -1121,7 +1121,7 @@ fn router(host: Arc<Host>) -> Router {
         .with_state(host)
 }
 
-pub async fn serve(cmd: &MibCommand) -> Result<(), BoxError> {
+async fn create_host(cmd: &MibCommand) -> Result<Arc<Host>, BoxError> {
     if !cmd.listen.ip().is_loopback() {
         return Err("MIB host must bind a loopback address".into());
     }
@@ -1191,6 +1191,11 @@ pub async fn serve(cmd: &MibCommand) -> Result<(), BoxError> {
         shutdown: CancellationToken::new(),
         epoch: format!("{}-{}", std::process::id(), unix_ms()),
     });
+    Ok(host)
+}
+
+pub async fn serve(cmd: &MibCommand) -> Result<(), BoxError> {
+    let host = create_host(cmd).await?;
     let listener = tokio::net::TcpListener::bind(cmd.listen).await?;
     eprintln!("MIB host listening on {}", listener.local_addr()?);
     let reaper_host = host.clone();
@@ -1210,6 +1215,8 @@ pub async fn serve(cmd: &MibCommand) -> Result<(), BoxError> {
     let _ = reaper.await;
     result.map_err(Into::into)
 }
+
+pub mod evaluator;
 
 #[cfg(test)]
 mod tests;

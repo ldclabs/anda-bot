@@ -140,6 +140,8 @@ async fn run_app(
         }
 
         needs_render |= app.finish_pending_update_check();
+        needs_render |= app.finish_pending_memory();
+        needs_render |= app.finish_pending_memory_inbox();
 
         // Recreate the terminal when the outer terminal was resized, or when
         // the dynamic bottom area (input + status footer) changed height in

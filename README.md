@@ -28,6 +28,11 @@ External coding tools are fully integrated into this execution loop. When needed
 
 ## Memory & Knowledge Graph
 
+Start with `anda memory guide` (offline), then tell Anda a preference in an ordinary chat. After background processing, open a new conversation with `/new` and ask about it. `anda memory` and TUI `/memory` show connection and processing status without model calls; the browser **Memory** workspace shows records, verified sources and reviewable corrections/removals. A chat acknowledgement is not proof of a saved fact.
+
+Use `anda agent run --memory-mode no-store --prompt '…'` or `--memory-mode off` to start a fresh conversation with enforced Brain/Notes restrictions. Chat history, files and provider processing remain. Persistent questions are optional: `anda memory inbox setup` previews the configuration before an explicit apply and restart. See [the memory guide and scope](docs/brain-integration.md#start-with-ordinary-memory).
+
+
 Anda Brain is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
 
 - **Formation:** Conversations are encoded into structured memory fragments (entities, relationships, events, preferences, and patterns).
@@ -90,7 +95,7 @@ Requirements:
 
 Or run Anda Bot from this repository with Rust 1.95 or newer:
 
-Source builds use registry releases of Brain, Nexus 0.13.4, DB/KIP and Core/Engine with a single type identity, including the legacy-migration corrections. For local Brain development, uncomment the sibling `anda-brain` patch in `Cargo.toml`. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+This development checkout temporarily patches Brain to sibling `../anda-brain/anda_brain` for the memory product contracts; publish those native contracts and switch back to registry before a standalone source release. Nexus 0.13.4, DB/KIP and Core/Engine retain one registry type identity, including the legacy-migration corrections. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
 
 Development and test builds use basic optimization for dependencies to keep macOS unwind tables below the linker's 16 MiB limit. `anda_bot` itself remains unoptimized, with debug information and panic unwinding preserved. The first dependency build takes longer; subsequent builds reuse those artifacts.
 

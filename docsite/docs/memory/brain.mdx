@@ -6,6 +6,21 @@ description: The Formation, Recall, and Maintenance loop behind Anda Brain long-
 
 # Brain Memory Brain
 
+## Start in one conversation
+
+Run `anda memory guide` for an offline introduction. No extra Brain or MIB setup is needed for ordinary memory. Tell Anda: “Remember that I prefer short release notes with a risk section.” After background processing, use `/new` and ask what it remembers. A reply saying “remembered” is not a storage receipt.
+
+`anda memory` and TUI `/memory` show connection and processing status without model calls. The browser **Memory** workspace shows source-backed records and conversation activity; **Explore relationships** opens the graph. Source quotes link to original messages when their stored mapping and digests match. Search may call a model and does not retry automatically.
+
+Review a record's **Correct**, **Stop using** or **Delete** preview before confirming. Stopping use retains archived records; deletion purges the previewed native set. Source exclusions survive restart, and processing Notes are reset. Original chats, files, logs, backups and already delivered context remain. Unsupported or incomplete source scopes cannot be removed through this interface.
+
+The composer offers memory modes for a fresh conversation. CLI equivalents are `anda agent run --memory-mode no-store --prompt '…'` and `--memory-mode off`. They constrain automatic Brain/Notes access, including background writes; they are not incognito modes for chat or providers. Restricted modes also reject nested agents, bookmarks and cron changes.
+
+For questions that must survive across conversations, use **Set up a memory inbox** or `anda memory inbox setup`. Review and apply the configuration, then explicitly run `anda restart`. Custom runtime files and environment overrides are preserved. Subscribe to a record to get a real native inbox item when it changes. In TUI, use `/memory inbox`, `/memory answer <number> <text>` and `/memory retry <number>`; retries reuse the saved event and text.
+
+MIB comparisons and business learning are advanced, separate features. `anda memory evaluate plan --help` describes the isolated CLI workflow in MIB-enabled builds. Costs may be incomplete. A memory comparison does not approve business learning or prove improvement.
+
+
 Anda Brain is the long-term memory system behind Anda Bot. It is not a plain vector database or an ever-growing Markdown file; it is a memory brain designed for agents.
 
 Brain turns conversations, files, tool results, and channel context into a growing Cognitive Nexus: people, projects, preferences, events, decisions, timelines, and the relationships between them.

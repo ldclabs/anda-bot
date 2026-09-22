@@ -322,6 +322,8 @@ channels: {}
 #       receive_mode: websocket # or webhook
 #       ack_reactions: true
 
+# Ordinary memory needs no runtime config. Start with `anda memory guide`.
+# `anda memory inbox setup` previews a minimal owner inbox; explicit apply/restart required.
 # Optional trusted Brain runtime; BRAIN_RUNTIME_CONFIG overrides this path.
 # Relative paths resolve from this configuration directory. Restart to apply.
 # See brain-runtime.example.yaml; no runtime bindings are installed by default.

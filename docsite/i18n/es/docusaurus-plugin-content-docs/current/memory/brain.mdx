@@ -6,6 +6,21 @@ description: El bucle de Formación, Recuerdo y Mantenimiento detrás de la memo
 
 # Cerebro de memoria Brain
 
+## Empieza con una conversación
+
+Ejecuta `anda memory guide` para una guía sin conexión. La memoria cotidiana no necesita configurar Brain ni MIB. Indica una preferencia estable, espera al procesamiento y abre otra conversación con `/new` para preguntar qué recuerda. Una respuesta «recordado» no demuestra que el dato esté guardado.
+
+`anda memory` y `/memory` en la TUI consultan estado sin llamar a modelos. El espacio **Memoria** del navegador muestra registros, citas verificadas y actividad; el grafo sigue en **Explorar relaciones**. La búsqueda puede llamar a un modelo y no se repite automáticamente.
+
+Revisa la vista previa antes de corregir, desactivar o eliminar. Desactivar conserva los registros archivados; eliminar purga el conjunto nativo mostrado. Las exclusiones de origen sobreviven al reinicio y se vacían las Notes de procesamiento. Permanecen chats, archivos, registros, copias y contexto ya entregado. Se rechazan ámbitos con fuentes incompletas o no admitidos.
+
+El compositor permite elegir un modo para una conversación nueva. En CLI: `anda agent run --memory-mode no-store --prompt '…'` o `--memory-mode off`. Restringen el acceso automático a Brain/Notes; no son navegación privada para chats o proveedores. También bloquean subagentes, marcadores y cambios de cron.
+
+Para conservar preguntas entre conversaciones, usa la configuración de pendientes o `anda memory inbox setup`. Revisa, aplica y ejecuta explícitamente `anda restart`. Se preservan archivos personalizados y variables de entorno. Una suscripción a un registro genera una pregunta real cuando cambia. En TUI: `/memory inbox`, `/memory answer <número> <texto>` y `/memory retry <número>`; el reintento conserva evento y texto.
+
+La evaluación MIB y el aprendizaje empresarial son funciones avanzadas independientes. Consulta `anda memory evaluate plan --help` en una compilación con MIB. Los costes pueden ser incompletos. Una comparación de memoria no aprueba el aprendizaje empresarial ni demuestra una mejora general.
+
+
 Anda Brain es el sistema de memoria a largo plazo que impulsa a Anda Bot. No es una base de datos vectorial simple ni un archivo Markdown en constante crecimiento; es un cerebro de memoria diseñado específicamente para agentes de IA.
 
 El Brain convierte las conversaciones, los archivos, los resultados de las herramientas y el contexto de los canales en un Cognitive Nexus (nexo cognitivo) en constante crecimiento: personas, proyectos, preferencias, eventos, decisiones, líneas de tiempo y las relaciones entre ellos.

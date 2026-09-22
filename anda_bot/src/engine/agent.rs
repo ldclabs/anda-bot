@@ -40,6 +40,7 @@ use std::{
 };
 
 mod instructions;
+pub(crate) mod memory_policy;
 mod meta;
 mod runner;
 #[cfg(feature = "mib")]
@@ -83,6 +84,7 @@ pub struct AndaBot {
 }
 
 struct AndaBotInner {
+    memory_access: Option<Arc<brain::MemoryAccess>>,
     brain: brain::Client,
     models: Arc<Models>,
     actions: Arc<ActionRuntime>,
@@ -240,6 +242,7 @@ impl AndaBot {
 
         Self {
             inner: Arc::new(AndaBotInner {
+                memory_access: None,
                 brain,
                 models,
                 actions,
@@ -259,6 +262,13 @@ impl AndaBot {
                 session_creation_lock: tokio::sync::Mutex::new(()),
             }),
         }
+    }
+
+    pub(crate) fn with_memory_access(mut self, access: Arc<brain::MemoryAccess>) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure memory access before sharing the Bot")
+            .memory_access = Some(access);
+        self
     }
 
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
@@ -300,7 +310,19 @@ impl AndaBot {
 
         let conversation_id = Arc::new(AtomicU64::new(spec.conversation_id));
         let session_id = spec.sess_id.to_string();
+        let mut memory_source =
+            brain::product::source_identity(&spec.caller, spec.conversation_id, Some(&session_id));
+        memory_source.parents.extend(
+            ctx.base
+                .get_state::<memory_policy::InheritedMemorySources>()
+                .unwrap_or_default()
+                .0,
+        );
+        memory_source.parents.sort();
+        memory_source.parents.dedup();
+        ctx.base.set_state(memory_source);
         let session = Arc::new(Session {
+            memory_policy: memory_policy::MemoryPolicy::current(&ctx.base),
             id: spec.sess_id,
             caller: spec.caller.clone(),
             workspace: spec.workspace,
@@ -694,6 +716,85 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let now_ms = unix_ms();
+        use memory_policy::{MODE_KEY, MemoryMode, MemoryPolicy, POLICY_KEY};
+        if (ctx.meta().extra.contains_key(POLICY_KEY)
+            || ctx.meta().extra.contains_key("memory_source_parents"))
+            && ctx.base.get_state::<MemoryPolicy>().is_none()
+        {
+            return Err(
+                "memory_policy is host-owned; select memory_mode for a new conversation".into(),
+            );
+        }
+        let requested = ctx
+            .meta()
+            .extra
+            .get(MODE_KEY)
+            .map(|value| serde_json::from_value::<MemoryMode>(value.clone()))
+            .transpose()?;
+        if requested.is_some()
+            && request_meta_extra_as::<bool>(ctx.meta(), keys::EXTERNAL_USER).unwrap_or(false)
+        {
+            return Err("External channel senders cannot select owner memory policies".into());
+        }
+        let state = self.inner.conversations.state_from_meta(ctx.meta());
+        let existing_id = if state.conversation > 0 {
+            state.conversation
+        } else {
+            state.source_state.conv_id
+        };
+        let inherited = ctx.base.get_state::<MemoryPolicy>();
+        let mut inherited_sources = ctx
+            .base
+            .get_state::<anda_brain::product::SourceIdentity>()
+            .map(|source| {
+                let mut keys = source.parents;
+                keys.push(source.key);
+                keys
+            })
+            .unwrap_or_default();
+        let policy = if !matches!(command, PromptCommand::New { .. }) && existing_id > 0 {
+            let conversation = self
+                .latest_conversation_in_chain(existing_id, Some(*caller))
+                .await?;
+            let policy = MemoryPolicy::from_conversation(&conversation)?;
+            if let Some(parents) = conversation
+                .extra
+                .as_ref()
+                .and_then(|v| v.get("memory_source_parents"))
+            {
+                inherited_sources.extend(serde_json::from_value::<Vec<String>>(parents.clone())?);
+            }
+            if requested.is_some_and(|mode| mode != policy.mode) {
+                return Err("Change memory mode in a new conversation with /new".into());
+            }
+            policy
+        } else {
+            MemoryPolicy::new(
+                requested
+                    .unwrap_or_else(|| inherited.as_ref().map_or(MemoryMode::Standard, |p| p.mode)),
+            )
+        };
+        if inherited.as_ref().is_some_and(|p| policy.mode < p.mode) {
+            return Err("A child conversation cannot relax its parent's memory policy".into());
+        }
+        if inherited
+            .as_ref()
+            .is_some_and(|parent| parent.mode != policy.mode)
+        {
+            return Err("Nested calls cannot change their inherited memory mode".into());
+        }
+        if !policy.may_write() && matches!(command, PromptCommand::Side { .. }) {
+            return Err("Side tasks are unavailable in restricted memory mode".into());
+        }
+        ctx.base.set_state(policy.clone());
+        inherited_sources.sort();
+        inherited_sources.dedup();
+        if inherited_sources.len() > 15 {
+            return Err("Memory source ancestry exceeds the supported nesting limit".into());
+        }
+        ctx.base.set_state(memory_policy::InheritedMemorySources(
+            inherited_sources.clone(),
+        ));
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let available_tools = available_tool_names(&ctx).await;
 
@@ -794,6 +895,11 @@ impl Agent<AgentCtx> for AndaBot {
                 .or_else(|| self.get_session_by_source(&source_key))
                 .filter(|session| session.caller == caller.to_string());
             if let Some(session) = active_session {
+                if !matches!(input.command, PromptCommand::New { .. })
+                    && requested.is_some_and(|mode| mode != session.memory_policy.mode)
+                {
+                    return Err("Change memory mode in a new conversation with /new".into());
+                }
                 if matches!(input.command, PromptCommand::New { .. }) {
                     detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                     if let Some(session) = self.detach_session(&session.id) {
@@ -998,7 +1104,12 @@ impl Agent<AgentCtx> for AndaBot {
                     history_conversations.push(conv.clone());
                 }
 
-                if !history_conversations.is_empty() {
+                history_conversations = self
+                    .inner
+                    .conversations
+                    .filter_memory_sources(history_conversations)
+                    .await?;
+                if policy.may_read() && !history_conversations.is_empty() {
                     new_chat_history_message.content.push(
                         Documents::new(
                             "user_history_conversations".to_string(),
@@ -1022,10 +1133,15 @@ impl Agent<AgentCtx> for AndaBot {
                 period: now_ms / 3600 / 1000,
                 created_at: now_ms,
                 updated_at: now_ms,
-                extra: Some(if force_standalone_conversation {
-                    json!(conversation_extra_without_id(ctx.meta()))
-                } else {
-                    json!(ctx.meta().extra)
+                extra: Some({
+                    let mut extra = if force_standalone_conversation {
+                        conversation_extra_without_id(ctx.meta())
+                    } else {
+                        ctx.meta().extra.clone()
+                    };
+                    policy.persist(&mut extra);
+                    extra.insert("memory_source_parents".into(), json!(inherited_sources));
+                    json!(extra)
                 }),
                 ..Default::default()
             };
@@ -1460,8 +1576,14 @@ mod tests {
     }
 
     async fn build_bot_engine(home: PathBuf) -> (Arc<Engine>, Arc<AndaBot>) {
+        build_bot_engine_with_brain(home, spawn_brain_mock().await).await
+    }
+
+    async fn build_bot_engine_with_brain(
+        home: PathBuf,
+        brain_url: String,
+    ) -> (Arc<Engine>, Arc<AndaBot>) {
         let db = build_test_db().await;
-        let brain_url = spawn_brain_mock().await;
         let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
             .with_http_client(new_reqwest_client());
 
@@ -1632,6 +1754,113 @@ mod tests {
                 conversation.status
             );
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_policy_full_runs_never_submit_restricted_sources_and_restore_without_profile_initialization()
+     {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for mode in [
+            memory_policy::MemoryMode::Off,
+            memory_policy::MemoryMode::NoStore,
+        ] {
+            let reads = Arc::new(AtomicUsize::new(0));
+            let writes = Arc::new(AtomicUsize::new(0));
+            let r = reads.clone();
+            let w = writes.clone();
+            let f = writes.clone();
+            let app = Router::new()
+                .route(
+                    "/execute_kip_readonly",
+                    routing::post(move || {
+                        let r = r.clone();
+                        async move {
+                            r.fetch_add(1, Ordering::SeqCst);
+                            axum::Json(serde_json::to_value(KipResp::ok(json!([]))).unwrap())
+                        }
+                    }),
+                )
+                .route(
+                    "/get_or_init_user",
+                    routing::post(move || {
+                        let w = w.clone();
+                        async move {
+                            w.fetch_add(1, Ordering::SeqCst);
+                            axum::Json(json!({"result":{}}))
+                        }
+                    }),
+                )
+                .route(
+                    "/formation",
+                    routing::post(move || {
+                        let f = f.clone();
+                        async move {
+                            f.fetch_add(1, Ordering::SeqCst);
+                            axum::Json(json!({"result":{"content":""}}))
+                        }
+                    }),
+                );
+            let url = crate::test_support::spawn_http_mock(app).await;
+            let dir = tempfile::tempdir().unwrap();
+            let (engine, bot) = build_bot_engine_with_brain(dir.path().into(), url).await;
+            let mut input = AgentInput::new(AndaBot::NAME.into(), "/new private source".into());
+            input.meta = Some(RequestMeta {
+                extra: serde_json::Map::from_iter([
+                    ("memory_mode".into(), json!(mode)),
+                    (keys::FINISH_WHEN_IDLE.into(), true.into()),
+                ]),
+                ..Default::default()
+            });
+            let output = engine.agent_run(test_caller(), input).await.unwrap();
+            let id = output.conversation.unwrap();
+            assert_conversation_reaches_status(&bot, id, ConversationStatus::Completed).await;
+            let conversation = bot
+                .inner
+                .conversations
+                .conversations
+                .get_conversation(id)
+                .await
+                .unwrap();
+            assert_eq!(
+                memory_policy::MemoryPolicy::from_conversation(&conversation)
+                    .unwrap()
+                    .mode,
+                mode
+            );
+            let ctx = engine
+                .ctx_with(test_caller(), AndaBot::NAME, "", RequestMeta::default())
+                .unwrap();
+            ctx.base
+                .set_state(memory_policy::MemoryPolicy::from_conversation(&conversation).unwrap());
+            bot.build_system_instructions(
+                &ctx,
+                "fixture-home",
+                "fixture-workspace",
+                &[],
+                unix_ms(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                writes.load(Ordering::SeqCst),
+                0,
+                "restricted mode must never initialize or submit memory"
+            );
+            if mode == memory_policy::MemoryMode::Off {
+                assert_eq!(reads.load(Ordering::SeqCst), 0)
+            } else {
+                assert!(reads.load(Ordering::SeqCst) >= 2)
+            }
+            let mut forged = AgentInput::new(AndaBot::NAME.into(), "hello".into());
+            forged.meta = Some(RequestMeta {
+                extra: serde_json::Map::from_iter([(
+                    "memory_source_parents".into(),
+                    json!(["forged"]),
+                )]),
+                ..Default::default()
+            });
+            assert!(engine.agent_run(test_caller(), forged).await.is_err());
         }
     }
 

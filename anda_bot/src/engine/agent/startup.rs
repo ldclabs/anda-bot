@@ -112,6 +112,22 @@ impl AndaBot {
         prompt: String,
     ) -> Result<(), BoxError> {
         let mut conversation = candidate.conversation;
+        let parents = conversation
+            .extra
+            .as_ref()
+            .and_then(|v| v.get("memory_source_parents"))
+            .map(|value| serde_json::from_value::<Vec<String>>(value.clone()))
+            .transpose()?
+            .unwrap_or_default();
+        if parents.len() > 15 {
+            return Err("Memory source ancestry exceeds the supported nesting limit".into());
+        }
+        ctx.base
+            .set_state(super::memory_policy::InheritedMemorySources(parents));
+        ctx.base
+            .set_state(super::memory_policy::MemoryPolicy::from_conversation(
+                &conversation,
+            )?);
         if let Some(thread) = &conversation.thread
             && self.get_session(thread).is_some()
         {

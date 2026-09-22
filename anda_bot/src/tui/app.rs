@@ -55,6 +55,10 @@ pub(super) struct App {
     pub(super) pending_scrollback_purge: bool,
     pub(super) input_focused: bool,
     pub(super) pending_update_check: Option<oneshot::Receiver<Result<AutoUpdateState, String>>>,
+    pub(super) pending_memory: Option<oneshot::Receiver<Result<String, String>>>,
+    pub(super) pending_memory_inbox:
+        Option<oneshot::Receiver<Result<crate::brain::AttentionPage, String>>>,
+    pub(super) memory_inbox: Option<crate::brain::AttentionPage>,
     pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
     pub(super) choice_input: Option<TuiActionChoiceDraft>,
     pub(super) full_access: bool,
@@ -86,6 +90,9 @@ impl App {
             pending_scrollback_purge: false,
             input_focused: true,
             pending_update_check: None,
+            pending_memory: None,
+            pending_memory_inbox: None,
+            memory_inbox: None,
             pending_action_response: None,
             choice_input: None,
             full_access,
@@ -204,7 +211,140 @@ impl App {
             return Ok(());
         }
 
-        if text == "/brain" || text.starts_with("/brain ") {
+        if text == "/memory inbox" || text == "/memory next" {
+            let cursor = if text == "/memory next" {
+                self.memory_inbox
+                    .as_ref()
+                    .and_then(|page| page.next_cursor.clone())
+            } else {
+                None
+            };
+            if text == "/memory next" && cursor.is_none() {
+                self.notice = "No next inbox page / 没有下一页".into();
+                return Ok(());
+            }
+            if self.pending_memory_inbox.is_none() {
+                let client = self.client.clone();
+                let (tx, rx) = oneshot::channel();
+                tokio::spawn(async move {
+                    let result = client
+                        .brain()
+                        .attention(&crate::brain::AttentionQuery {
+                            cursor,
+                            limit: Some(20),
+                        })
+                        .await
+                        .map_err(|error| error.to_string());
+                    let _ = tx.send(result);
+                });
+                self.pending_memory_inbox = Some(rx);
+                self.notice = "Reading inbox / 正在读取待办".into();
+            }
+            self.input_buf.clear();
+            self.input_cursor = 0;
+            return Ok(());
+        }
+        if let Some(answer) = text
+            .strip_prefix("/memory answer ")
+            .or_else(|| text.strip_prefix("/memory retry "))
+        {
+            let retry = text.starts_with("/memory retry ");
+            let Some((number, answer)) = (if retry {
+                Some((answer, ""))
+            } else {
+                answer.split_once(' ')
+            }) else {
+                self.notice = "/memory answer <number> <text>".into();
+                return Ok(());
+            };
+            let item = number
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|n| {
+                    self.memory_inbox
+                        .as_ref()
+                        .and_then(|page| page.items.get(n))
+                })
+                .cloned();
+            let Some(item) = item else {
+                self.notice =
+                    "Open /memory inbox and select a visible item number / 请先查看待办编号".into();
+                return Ok(());
+            };
+            if self.pending_memory.is_none() {
+                let client = self.client.clone();
+                let home = self.home.clone();
+                let text = answer.to_string();
+                let (tx, rx) = oneshot::channel();
+                tokio::spawn(async move {
+                    let result = if retry {
+                        crate::brain::outbox::retry(&client, &home, &item).await
+                    } else {
+                        crate::brain::outbox::reply(&client, &home, &item, text).await
+                    }
+                    .map(|receipt| format!("{}\n/memory inbox", receipt.status))
+                    .map_err(|error| error.to_string());
+                    let _ = tx.send(result);
+                });
+                self.pending_memory = Some(rx);
+                self.notice = "Sending answer / 正在提交回答".into();
+            }
+            self.input_buf.clear();
+            self.input_cursor = 0;
+            return Ok(());
+        }
+
+        if text == "/brain" || text == "/memory" || text.starts_with("/memory ") {
+            self.input_buf.clear();
+            self.input_cursor = 0;
+            self.input_preferred_col = None;
+            if text == "/memory help" || text == "/memory guide" {
+                self.append_memory_output(crate::brain::product::MEMORY_GUIDE.into());
+            } else if text == "/brain"
+                || text == "/memory"
+                || text == "/memory status"
+                || text == "/memory activity"
+            {
+                if self.pending_memory.is_none() {
+                    let client = self.client.clone();
+                    let (tx, rx) = oneshot::channel();
+                    let conversation = self.chat.conversation.as_ref().map(|c| c._id.to_string());
+                    tokio::spawn(async move {
+                        if text == "/memory activity" {
+                            let result = match conversation {
+                                Some(conversation) => client
+                                    .memory_activity(&crate::brain::activity::ActivityQuery {
+                                        conversation: Some(conversation),
+                                        cursor: None,
+                                        limit: Some(20),
+                                    })
+                                    .await
+                                    .map(|p| p.render())
+                                    .map_err(|e| e.to_string()),
+                                None => Ok("No current conversation / 当前还没有对话记录".into()),
+                            };
+                            let _ = tx.send(result);
+                            return;
+                        }
+                        let _ = tx.send(
+                            client
+                                .memory_overview()
+                                .await
+                                .map(|v| v.render())
+                                .map_err(|e| e.to_string()),
+                        );
+                    });
+                    self.pending_memory = Some(rx);
+                    self.notice = "Checking memory… / 正在检查记忆…".into();
+                }
+            } else {
+                self.notice = "Use /memory, /memory status or /memory help".into();
+            }
+            return Ok(());
+        }
+
+        if text.starts_with("/brain ") {
             let output = self.brain_command(&text).await;
             match output {
                 Ok(content) => {
@@ -284,6 +424,64 @@ impl App {
         ))
     }
 
+    fn append_memory_output(&mut self, content: String) {
+        self.chat.messages.push(anda_core::Message {
+            role: "system".into(),
+            content: vec![content.into()],
+            ..Default::default()
+        });
+        self.notice.clear();
+    }
+
+    pub(super) fn finish_pending_memory(&mut self) -> bool {
+        let Some(rx) = self.pending_memory.as_mut() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                self.pending_memory = None;
+                match result {
+                    Ok(content) => self.append_memory_output(content),
+                    Err(error) => self.notice = error,
+                }
+                true
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_memory = None;
+                self.notice = "Memory status request ended / 记忆状态查询已结束".into();
+                true
+            }
+        }
+    }
+
+    pub(super) fn finish_pending_memory_inbox(&mut self) -> bool {
+        let Some(receiver) = self.pending_memory_inbox.as_mut() else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.pending_memory_inbox = None;
+                match result {
+                    Ok(page) => {
+                        self.append_memory_output(crate::brain::outbox::render(&page));
+                        self.memory_inbox = Some(page);
+                    }
+                    Err(error) => {
+                        self.memory_inbox = None;
+                        self.notice = error;
+                    }
+                }
+                true
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_memory_inbox = None;
+                false
+            }
+        }
+    }
+
     async fn submit_choice_input(&mut self) -> Result<(), BoxError> {
         if self.action_response_pending() {
             return Ok(());
@@ -318,6 +516,9 @@ impl App {
         self.daemon_running = false;
         self.setup = SetupState::default();
         self.pending_update_check = None;
+        self.pending_memory = None;
+        self.pending_memory_inbox = None;
+        self.memory_inbox = None;
         self.pending_action_response = None;
         self.choice_input = None;
 

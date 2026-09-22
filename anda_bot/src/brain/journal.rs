@@ -4,11 +4,15 @@ use anda_brain::recall_receipt::RecallReceiptRef;
 use anda_core::{AgentOutput, BoxError, Usage};
 use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, path::Path};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 #[derive(Clone)]
 pub struct Journal {
     store: Arc<dyn ObjectStore>,
+    formation_locks: Arc<parking_lot::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecallDelivery {
@@ -35,6 +39,50 @@ pub struct FormationSubmission {
     pub brain_conversation: Option<u64>,
     pub state: FormationState,
     pub error: Option<String>,
+    #[serde(default)]
+    pub provenance: Option<FormationProvenance>,
+    #[serde(default)]
+    pub updated_at: Option<u64>,
+    #[serde(default)]
+    pub failure_stage: Option<FormationFailure>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FormationProvenance {
+    #[serde(default)]
+    pub policy_revision: Option<String>,
+    pub version: u32,
+    pub caller: String,
+    #[serde(default)]
+    pub session: Option<String>,
+    #[serde(default)]
+    pub source_identity: Option<anda_brain::product::SourceIdentity>,
+    pub source: String,
+    pub reply_target: Option<String>,
+    pub thread: Option<String>,
+    pub external_user: bool,
+    pub counterparty: Option<String>,
+    pub source_messages: Vec<SourceMessageRef>,
+    pub input_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SourceMessageRef {
+    // Public IDs/indices are strings to avoid loss of precision in JS.
+    pub conversation: String,
+    pub index: String,
+    pub role: String,
+    pub content_digest: String,
+    #[serde(default)]
+    pub submitted_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormationFailure {
+    SubmissionRejected,
+    NativeFailed,
+    Unknown,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -45,11 +93,37 @@ pub enum FormationState {
     Completed,
     Failed,
     Unknown,
+    Suppressed,
 }
 
 impl Journal {
     pub fn new(store: Arc<dyn ObjectStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            formation_locks: Default::default(),
+        }
+    }
+
+    fn formation_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.formation_locks.lock();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        let lock = locks
+            .get(key)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
+        locks.insert(key.into(), Arc::downgrade(&lock));
+        lock
+    }
+
+    pub(super) fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.store.clone()
+    }
+
+    pub(super) fn submission_in_flight(&self, key: &str) -> bool {
+        self.formation_locks
+            .lock()
+            .get(key)
+            .is_some_and(|lock| lock.strong_count() > 0)
     }
     pub async fn read<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, BoxError> {
         match self
@@ -106,16 +180,22 @@ impl Journal {
             "formation/{}/{}",
             submission.bot_conversation, submission.window_start
         );
+        let lock = self.formation_lock(&key);
+        let _guard = lock.lock().await;
         let requested_window = submission.clone();
         if !self.create(&key, &submission).await? {
             submission = self
                 .read(&key)
                 .await?
                 .ok_or("formation journal disappeared")?;
+            if submission.state == FormationState::Suppressed {
+                return Ok(submission);
+            }
             // A crash or transport failure may have happened after acceptance.
             // No server idempotency key exists; do not blindly resend this window.
             if submission.brain_conversation.is_some() {
-                self.refresh_formation(client, &mut submission).await?;
+                self.refresh_formation_unlocked(client, &mut submission)
+                    .await?;
                 return Ok(submission);
             }
             if submission.state == FormationState::Failed {
@@ -126,7 +206,7 @@ impl Journal {
                 return Err("formation acceptance is unknown; retained the original window for reconciliation".into());
             }
         }
-        let result = client.formation(input).await;
+        let result = client.formation_submission(input, &submission).await;
         match result {
             Ok(AgentOutput {
                 conversation,
@@ -142,8 +222,23 @@ impl Journal {
                     FormationState::Unknown
                 };
                 submission.error = failed_reason.map(|s| s.chars().take(512).collect());
+                submission.failure_stage = match submission.state {
+                    FormationState::Failed => Some(FormationFailure::SubmissionRejected),
+                    FormationState::Unknown => Some(FormationFailure::Unknown),
+                    _ => None,
+                };
             }
             Err(err) => {
+                if matches!(
+                    err.downcast_ref::<anda_brain::product::SourceAdmissionError>(),
+                    Some(anda_brain::product::SourceAdmissionError::Suppressed)
+                ) {
+                    submission.state = FormationState::Suppressed;
+                    submission.updated_at = Some(anda_engine::unix_ms());
+                    submission.error = None;
+                    self.write(&key, &submission).await?;
+                    return Ok(submission);
+                }
                 // Any completed HTTP/RPC response is a definite rejection and
                 // can be retried with backoff. Only transport failures may have
                 // lost an acceptance response and must remain unresolved.
@@ -158,8 +253,14 @@ impl Journal {
                     FormationState::Unknown
                 };
                 submission.error = Some(err.to_string().chars().take(512).collect());
+                submission.failure_stage = Some(if submission.state == FormationState::Failed {
+                    FormationFailure::SubmissionRejected
+                } else {
+                    FormationFailure::Unknown
+                });
             }
         }
+        submission.updated_at = Some(anda_engine::unix_ms());
         self.write(&key, &submission).await?;
         if submission.state == FormationState::Accepted {
             Ok(submission)
@@ -172,6 +273,29 @@ impl Journal {
         client: &super::Client,
         submission: &mut FormationSubmission,
     ) -> Result<(), BoxError> {
+        let key = format!(
+            "formation/{}/{}",
+            submission.bot_conversation, submission.window_start
+        );
+        let lock = self.formation_lock(&key);
+        let _guard = lock.lock().await;
+        if let Some(latest) = self.read(&key).await? {
+            *submission = latest;
+        }
+        self.refresh_formation_unlocked(client, submission).await
+    }
+
+    async fn refresh_formation_unlocked(
+        &self,
+        client: &super::Client,
+        submission: &mut FormationSubmission,
+    ) -> Result<(), BoxError> {
+        if matches!(
+            submission.state,
+            FormationState::Completed | FormationState::Failed | FormationState::Suppressed
+        ) {
+            return Ok(());
+        }
         use anda_engine::memory::ConversationStatus;
         let id = submission
             .brain_conversation
@@ -186,6 +310,9 @@ impl Journal {
         submission.error = conversation
             .failed_reason
             .map(|s| s.chars().take(512).collect());
+        submission.updated_at = Some(anda_engine::unix_ms());
+        submission.failure_stage =
+            (submission.state == FormationState::Failed).then_some(FormationFailure::NativeFailed);
         self.write(
             &format!(
                 "formation/{}/{}",
@@ -262,6 +389,9 @@ mod tests {
             brain_conversation: None,
             state: FormationState::Pending,
             error: None,
+            provenance: None,
+            updated_at: None,
+            failure_stage: None,
         }
     }
     #[tokio::test]

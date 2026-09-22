@@ -1165,5 +1165,344 @@
   },
   "brainBackToGraph": {
     "message": "Back to graph"
+  },
+  "memoryTitle": {
+    "message": "Memory"
+  },
+  "memoryIntro": {
+    "message": "Useful preferences and project context can carry into your next conversation. Everyday memory needs no extra setup."
+  },
+  "memoryService": {
+    "message": "Memory service"
+  },
+  "memoryOpenInbox": {
+    "message": "Open inbox"
+  },
+  "memoryTry": {
+    "message": "Try a preference"
+  },
+  "memoryExample": {
+    "message": "Remember: I prefer concise release notes with a short risk section."
+  },
+  "memoryTryHint": {
+    "message": "Paste this into a conversation. After background processing, use /new and ask about the preference without repeating the answer."
+  },
+  "memoryActivity": {
+    "message": "Processing activity"
+  },
+  "memoryEvidenceHint": {
+    "message": "A completed conversation was processed; this does not prove that every fact was saved."
+  },
+  "memoryExplore": {
+    "message": "Explore relationships"
+  },
+  "memoryConversation": {
+    "message": "Conversation"
+  },
+  "memoryStale": {
+    "message": "Awaiting refresh"
+  },
+  "memoryNoActivity": {
+    "message": "No processing records are visible yet."
+  },
+  "memoryPartial": {
+    "message": "The activity index is still incomplete."
+  },
+  "memoryPrivacyHint": {
+    "message": "Memory is local by default. Your configured model providers may process its content and charge for it. These status checks do not invoke a model."
+  },
+  "memoryTechnicalDetails": {
+    "message": "Technical details"
+  },
+  "memoryConnectionHelp": {
+    "message": "Check the connection and owner token. Older servers may not support this memory view."
+  },
+  "memoryState_reachable": {
+    "message": "Connected"
+  },
+  "memoryState_available": {
+    "message": "Available"
+  },
+  "memoryState_not_configured": {
+    "message": "Not configured (optional)"
+  },
+  "memoryState_unauthorized": {
+    "message": "Sign-in required"
+  },
+  "memoryState_forbidden": {
+    "message": "No access for this identity"
+  },
+  "memoryState_unavailable": {
+    "message": "Unavailable"
+  },
+  "memoryState_timeout": {
+    "message": "Timed out"
+  },
+  "memoryState_submitting": {
+    "message": "Submitting"
+  },
+  "memoryState_accepted": {
+    "message": "Waiting for processing"
+  },
+  "memoryState_processing": {
+    "message": "Organizing conversations"
+  },
+  "memoryState_completed": {
+    "message": "Conversation processed"
+  },
+  "memoryState_rejected": {
+    "message": "Submission rejected"
+  },
+  "memoryState_failed": {
+    "message": "Processing failed"
+  },
+  "memoryState_legacy_unattributed": {
+    "message": "Historical record"
+  },
+  "memoryState_unknown": {
+    "message": "Acceptance unknown"
+  },
+  "memoryCopy": {
+    "message": "Copy preference"
+  },
+  "memoryCopied": {
+    "message": "Copied"
+  },
+  "memoryRecords": {
+    "message": "Remembered claims"
+  },
+  "memoryYou": {
+    "message": "You"
+  },
+  "memorySource": {
+    "message": "View source"
+  },
+  "memorySourceUnavailable": {
+    "message": "The source association is incomplete."
+  },
+  "memoryNoRecords": {
+    "message": "No verifiable memory records are available yet."
+  },
+  "memoryClaimSupport": {
+    "message": "Stated"
+  },
+  "memoryClaimReject": {
+    "message": "Denied"
+  },
+  "memoryClaimUncertain": {
+    "message": "Uncertain"
+  },
+  "memoryRecordCurrent": {
+    "message": "Current claim"
+  },
+  "memoryRecordSuperseded": {
+    "message": "Replaced"
+  },
+  "memoryRecordRetracted": {
+    "message": "Withdrawn"
+  },
+  "memoryRecordUnknown": {
+    "message": "Other status"
+  },
+  "memoryCorrectionSource": {
+    "message": "Correction record"
+  },
+  "memoryState_suppressed": {
+    "message": "Source no longer contributes memory"
+  },
+  "memoryCorrect": {
+    "message": "Correct"
+  },
+  "memoryDelete": {
+    "message": "Delete…"
+  },
+  "memoryChangeConfirmed": {
+    "message": "The change is complete. Start a new conversation to use the updated memory."
+  },
+  "memoryChangeAffected": {
+    "message": "Affected linked records: $1"
+  },
+  "memoryChangeScope": {
+    "message": "Only the listed claims, cited messages and recorded dependents are changed. Working notes are reset and old source conversations stop contributing memory. Chat, files, logs, backups, other independent records and already-delivered context remain."
+  },
+  "memoryChangePending": {
+    "message": "The accepted change is still being processed."
+  },
+  "memoryNewValue": {
+    "message": "New value"
+  },
+  "memoryReviewHint": {
+    "message": "Review the exact scope before confirming. Preparing this preview does not change the memory graph."
+  },
+  "memoryUnknownHint": {
+    "message": "The result is unknown. Check the original operation; do not send a new change."
+  },
+  "memoryClose": {
+    "message": "Close"
+  },
+  "memoryCheckResult": {
+    "message": "Check result"
+  },
+  "memoryConfirmDelete": {
+    "message": "Confirm deletion"
+  },
+  "memoryConfirmCorrection": {
+    "message": "Confirm correction"
+  },
+  "memoryReviewChange": {
+    "message": "Review change"
+  },
+  "memoryDraftStored": {
+    "message": "The draft is saved on this device. Closing this window does not confirm or cancel a change."
+  },
+  "memoryResumeChange": {
+    "message": "Resume memory change"
+  },
+  "memoryChangeDiscarded": {
+    "message": "The draft was discarded or expired."
+  },
+  "memoryDiscardDraft": {
+    "message": "Discard draft"
+  },
+  "memorySetupTitle": {
+    "message": "Set up a memory inbox"
+  },
+  "memorySetupScope": {
+    "message": "Keep questions about changed memories across conversations. This adds a private owner inbox only. Subscribing later grants the controller permission to cancel that specific subscription. No learning or execution authority is enabled."
+  },
+  "memorySetupPreview": {
+    "message": "Review this configuration change. A private backup is kept. Nothing takes effect until you restart Anda."
+  },
+  "memorySetupApply": {
+    "message": "Save configuration"
+  },
+  "memorySetupRestart": {
+    "message": "Configuration saved. Finish your current tasks, then run the command below. Return here afterward to check access."
+  },
+  "memorySearch": {
+    "message": "Search memory"
+  },
+  "memorySearchPlaceholder": {
+    "message": "What did I say about release notes?"
+  },
+  "memorySearchCost": {
+    "message": "Search may call a model. Default limits: 4,096 packet tokens and 32,768 planner input tokens; these are not a total cost cap."
+  },
+  "memorySearchUnknown": {
+    "message": "No automatic retry. Starting another search may incur another charge."
+  },
+  "memorySearchPacket": {
+    "message": "Retrieved context includes coverage and warnings. It is not proof that a fact is saved or permission to act."
+  },
+  "memoryCopyPacket": {
+    "message": "Copy context with sources and warnings"
+  },
+  "memoryWatch": {
+    "message": "Ask me when this memory changes"
+  },
+  "memoryWatching": {
+    "message": "Watching this record. Questions will appear in the memory inbox."
+  },
+  "memoryWatchCancel": {
+    "message": "Cancel subscription"
+  },
+  "memoryWatchRetry": {
+    "message": "Check / retry this subscription"
+  },
+  "memoryModeLabel": {
+    "message": "Memory mode"
+  },
+  "memoryModeNew": {
+    "message": "Next text conversation"
+  },
+  "memoryModeKeep": {
+    "message": "Continue current mode"
+  },
+  "memoryMode_standard": {
+    "message": "Use and save memory"
+  },
+  "memoryMode_no_store": {
+    "message": "Do not save long-term memory"
+  },
+  "memoryMode_off": {
+    "message": "Do not use long-term memory"
+  },
+  "memoryMode_unknown": {
+    "message": "Unknown policy version"
+  },
+  "memoryModeScope": {
+    "message": "Applies to automatic Brain and Notes access. Chat history, files, logs and provider processing remain. Restricted modes also disable nested agents, bookmarks and cron changes."
+  },
+  "memoryModeFirstMessage": {
+    "message": "Send a regular text message to start a fresh conversation in this mode. Previous context is not copied."
+  },
+  "memorySuppress": {
+    "message": "Stop using"
+  },
+  "memoryConfirmSuppress": {
+    "message": "Confirm stopping use"
+  },
+  "memoryRecordSuppressed": {
+    "message": "Stopped from automatic use"
+  },
+  "memorySuppressScope": {
+    "message": "The previewed claims, cited inputs and recorded dependents are retained but archived. Their source conversations stop contributing new memory. Processing Notes and history context are reset. Chat, files, backups and already delivered context remain."
+  },
+  "memoryUndoPreview": {
+    "message": "Preview a new correction to undo"
+  },
+  "memoryOpenSource": {
+    "message": "Open original message"
+  },
+  "memorySourceTruncated": {
+    "message": "This quote is shortened. Open the original for the complete message."
+  },
+  "memorySearchConstraint": {
+    "message": "Constraint or warning"
+  },
+  "memorySearchEmpty": {
+    "message": "No usable memory was returned."
+  },
+  "memorySearchCoverage": {
+    "message": "Full result, coverage and warnings"
+  },
+  "memoryState_recalled": {
+    "message": "Memory search returned"
+  },
+  "memoryState_recall_failed": {
+    "message": "Memory search incomplete"
+  },
+  "memoryLearningTitle": {
+    "message": "Advanced: evaluate and learn"
+  },
+  "memoryLearningScope": {
+    "message": "Business learning supports the precondition workflow template only. It requires separate executor, observer and task source, reviewed calibration, deployment approval and native rollback. Ordinary memory does not need it."
+  },
+  "memoryLearning_not_compiled": {
+    "message": "This build does not include business learning."
+  },
+  "memoryLearning_services_missing": {
+    "message": "The required business services are not installed."
+  },
+  "memoryLearning_identity_mismatch": {
+    "message": "Service identities or pinned contracts do not match."
+  },
+  "memoryLearning_calibration_missing": {
+    "message": "Review calibration for this task family first."
+  },
+  "memoryLearning_awaiting_approval": {
+    "message": "Configured; awaiting explicit automation and deployment approval."
+  },
+  "memoryLearning_ready": {
+    "message": "Isolated learning is ready. Business application still needs separate approval; native authority and services are rechecked for each work item."
+  },
+  "memoryLearning_unavailable": {
+    "message": "Readiness could not be checked. Restore the runtime connection and access first."
+  },
+  "memoryEvaluationCli": {
+    "message": "Isolated memory comparison is available from the CLI in builds with MIB. Create a plan before explicitly running it. Model costs may be incomplete."
+  },
+  "memorySearchFee": {
+    "message": "Search may call a model and incur a charge. It never retries automatically."
   }
 }

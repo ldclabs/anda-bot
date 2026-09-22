@@ -111,8 +111,8 @@ pub struct AgentInfo {
 }
 
 /// A tool for conversation API
-#[derive(Debug)]
 pub struct ConversationsTool {
+    memory_host: Option<crate::brain::Host>,
     pub conversations: Conversations,
     // The collection `conversations` wraps. anda_engine keeps its own handle
     // private, so this second handle — the same cached `Arc` AndaDB hands out
@@ -129,6 +129,14 @@ pub struct ConversationsTool {
     extension_save_lock: tokio::sync::Mutex<()>,
 }
 
+impl std::fmt::Debug for ConversationsTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConversationsTool")
+            .field("default_workspace", &self.default_workspace)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConversationsTool {
     pub const NAME: &'static str = "conversations_api";
 
@@ -143,6 +151,7 @@ impl ConversationsTool {
         // this returns the very handle it holds rather than a second instance.
         let store = db.open_collection(name, async |_| Ok(())).await?;
         Ok(Self {
+            memory_host: None,
             conversations,
             store,
             default_workspace,
@@ -150,6 +159,58 @@ impl ConversationsTool {
             source_conversation: RwLock::new(HashMap::new()),
             extension_save_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    pub fn with_memory_host(mut self, host: crate::brain::Host) -> Self {
+        self.memory_host = Some(host);
+        self
+    }
+
+    pub(crate) async fn may_reuse_memory(
+        &self,
+        conversation: &anda_engine::memory::Conversation,
+    ) -> Result<bool, BoxError> {
+        if !crate::engine::MemoryPolicy::from_conversation(conversation)?.may_write() {
+            return Ok(false);
+        }
+        let Some(host) = &self.memory_host else {
+            return Ok(true);
+        };
+        let session = conversation.thread.as_ref().map(ToString::to_string);
+        let mut source = crate::brain::product::source_identity(
+            &conversation.user.to_string(),
+            conversation._id,
+            session.as_deref(),
+        );
+        if let Some(parents) = conversation
+            .extra
+            .as_ref()
+            .and_then(|value| value.get("memory_source_parents"))
+        {
+            source
+                .parents
+                .extend(serde_json::from_value::<Vec<String>>(parents.clone())?);
+            source.parents.sort();
+            source.parents.dedup();
+        }
+        Ok(host
+            .state
+            .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
+            .await?
+            .product_source_allowed(&source))
+    }
+
+    pub(crate) async fn filter_memory_sources(
+        &self,
+        conversations: Vec<anda_engine::memory::Conversation>,
+    ) -> Result<Vec<anda_engine::memory::Conversation>, BoxError> {
+        let mut visible = Vec::new();
+        for conversation in conversations {
+            if self.may_reuse_memory(&conversation).await? {
+                visible.push(conversation)
+            }
+        }
+        Ok(visible)
     }
 
     /// Number of stored conversations.
@@ -465,6 +526,9 @@ impl Tool<BaseCtx> for ConversationsTool {
                 if &conversation.user != ctx.caller() {
                     return Err("permission denied".into());
                 }
+                if is_agent && !self.may_reuse_memory(&conversation).await? {
+                    return Err("This conversation is excluded from automatic memory reuse.".into());
+                }
 
                 let result = if is_agent {
                     let doc = Document::from(conversation);
@@ -487,6 +551,9 @@ impl Tool<BaseCtx> for ConversationsTool {
                 if &conversation.user != ctx.caller() {
                     return Err("permission denied".into());
                 }
+                if is_agent && !self.may_reuse_memory(&conversation).await? {
+                    return Err("This conversation is excluded from automatic memory reuse.".into());
+                }
 
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(conversation.into_delta(messages_offset, artifacts_offset)),
@@ -494,10 +561,13 @@ impl Tool<BaseCtx> for ConversationsTool {
                 }))
             }
             ConversationsToolArgs::BatchGetConversations { ids } => {
-                let result = self
+                let mut result = self
                     .conversations
                     .batch_get_conversations(ctx.caller(), ids)
                     .await?;
+                if is_agent {
+                    result = self.filter_memory_sources(result).await?;
+                }
 
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(result),
@@ -511,7 +581,9 @@ impl Tool<BaseCtx> for ConversationsTool {
                     .await?;
 
                 let result = if is_agent {
-                    let docs = conversations
+                    let docs = self
+                        .filter_memory_sources(conversations)
+                        .await?
                         .into_iter()
                         .map(Document::from)
                         .collect::<Vec<_>>();
@@ -532,7 +604,9 @@ impl Tool<BaseCtx> for ConversationsTool {
                     .await?;
 
                 let result = if is_agent {
-                    let docs = conversations
+                    let docs = self
+                        .filter_memory_sources(conversations)
+                        .await?
                         .into_iter()
                         .map(Document::from)
                         .collect::<Vec<_>>();

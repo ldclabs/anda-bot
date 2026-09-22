@@ -1165,5 +1165,344 @@
   },
   "brainBackToGraph": {
     "message": "返回图谱"
+  },
+  "memoryTitle": {
+    "message": "记忆"
+  },
+  "memoryIntro": {
+    "message": "让有用的偏好和项目背景延续到下一次对话。日常记忆无需额外配置。"
+  },
+  "memoryService": {
+    "message": "记忆服务"
+  },
+  "memoryOpenInbox": {
+    "message": "查看待确认事项"
+  },
+  "memoryTry": {
+    "message": "从一条偏好开始"
+  },
+  "memoryExample": {
+    "message": "记住：我喜欢简短的发布说明，但要保留风险段落。"
+  },
+  "memoryTryHint": {
+    "message": "粘贴到对话中，等后台整理后用 /new 开新对话询问这条偏好，提问中不要重复答案。"
+  },
+  "memoryActivity": {
+    "message": "整理记录"
+  },
+  "memoryEvidenceHint": {
+    "message": "对话整理完成，不代表每条事实都已保存。"
+  },
+  "memoryExplore": {
+    "message": "探索关系"
+  },
+  "memoryConversation": {
+    "message": "对话"
+  },
+  "memoryStale": {
+    "message": "待刷新"
+  },
+  "memoryNoActivity": {
+    "message": "暂时没有可见的整理记录。"
+  },
+  "memoryPartial": {
+    "message": "整理记录的索引尚不完整。"
+  },
+  "memoryPrivacyHint": {
+    "message": "记忆默认存本机，配置的模型服务可能处理相关内容并产生费用。这里的状态检查不调用模型。"
+  },
+  "memoryTechnicalDetails": {
+    "message": "技术详情"
+  },
+  "memoryConnectionHelp": {
+    "message": "请检查连接和 owner 令牌，旧版服务可能不支持这个记忆页面。"
+  },
+  "memoryState_reachable": {
+    "message": "已连接"
+  },
+  "memoryState_available": {
+    "message": "可用"
+  },
+  "memoryState_not_configured": {
+    "message": "未配置（可选）"
+  },
+  "memoryState_unauthorized": {
+    "message": "需要登录"
+  },
+  "memoryState_forbidden": {
+    "message": "当前身份无权访问"
+  },
+  "memoryState_unavailable": {
+    "message": "暂不可用"
+  },
+  "memoryState_timeout": {
+    "message": "查询超时"
+  },
+  "memoryState_submitting": {
+    "message": "正在提交"
+  },
+  "memoryState_accepted": {
+    "message": "等待整理"
+  },
+  "memoryState_processing": {
+    "message": "正在整理对话"
+  },
+  "memoryState_completed": {
+    "message": "对话整理完成"
+  },
+  "memoryState_rejected": {
+    "message": "提交失败"
+  },
+  "memoryState_failed": {
+    "message": "整理未完成"
+  },
+  "memoryState_legacy_unattributed": {
+    "message": "历史处理记录"
+  },
+  "memoryState_unknown": {
+    "message": "接受结果待确认"
+  },
+  "memoryCopy": {
+    "message": "复制偏好"
+  },
+  "memoryCopied": {
+    "message": "已复制"
+  },
+  "memoryRecords": {
+    "message": "记忆内容"
+  },
+  "memoryYou": {
+    "message": "你"
+  },
+  "memorySource": {
+    "message": "查看来源"
+  },
+  "memorySourceUnavailable": {
+    "message": "来源关联尚不完整。"
+  },
+  "memoryNoRecords": {
+    "message": "暂时没有可核对的记忆记录。"
+  },
+  "memoryClaimSupport": {
+    "message": "已陈述"
+  },
+  "memoryClaimReject": {
+    "message": "否定"
+  },
+  "memoryClaimUncertain": {
+    "message": "待确认"
+  },
+  "memoryRecordCurrent": {
+    "message": "当前陈述"
+  },
+  "memoryRecordSuperseded": {
+    "message": "已被替代"
+  },
+  "memoryRecordRetracted": {
+    "message": "已撤回"
+  },
+  "memoryRecordUnknown": {
+    "message": "其他状态"
+  },
+  "memoryCorrectionSource": {
+    "message": "更正记录"
+  },
+  "memoryState_suppressed": {
+    "message": "来源已停止自动整理"
+  },
+  "memoryCorrect": {
+    "message": "更正"
+  },
+  "memoryDelete": {
+    "message": "删除…"
+  },
+  "memoryChangeConfirmed": {
+    "message": "变更已完成。请用新对话使用更新后的记忆。"
+  },
+  "memoryChangeAffected": {
+    "message": "影响的关联记录：$1"
+  },
+  "memoryChangeScope": {
+    "message": "仅修改所列陈述、引用消息和已记录的派生关系。工作笔记将重置，旧来源对话将停止自动整理。聊天、文件、日志、备份、其他独立记录以及已交付的上下文会保留。"
+  },
+  "memoryChangePending": {
+    "message": "已接受的变更仍在处理中。"
+  },
+  "memoryNewValue": {
+    "message": "新的内容"
+  },
+  "memoryReviewHint": {
+    "message": "确认前先核对实际影响范围。准备预览不会修改记忆图谱。"
+  },
+  "memoryUnknownHint": {
+    "message": "目前无法确认结果。请检查原操作，不要另发一项变更。"
+  },
+  "memoryClose": {
+    "message": "关闭"
+  },
+  "memoryCheckResult": {
+    "message": "检查结果"
+  },
+  "memoryConfirmDelete": {
+    "message": "确认删除"
+  },
+  "memoryConfirmCorrection": {
+    "message": "确认更正"
+  },
+  "memoryReviewChange": {
+    "message": "查看变更预览"
+  },
+  "memoryDraftStored": {
+    "message": "草稿保存在此设备。关闭窗口不会确认或取消变更。"
+  },
+  "memoryResumeChange": {
+    "message": "继续查看记忆变更"
+  },
+  "memoryChangeDiscarded": {
+    "message": "草稿已丢弃或过期。"
+  },
+  "memoryDiscardDraft": {
+    "message": "丢弃草稿"
+  },
+  "memorySetupTitle": {
+    "message": "设置记忆待办"
+  },
+  "memorySetupScope": {
+    "message": "跨会话保留记忆变化后的确认问题。这里只设置所有者的私有待办；之后订阅时，控制器仅获得取消该订阅的权限。不会启用学习或执行授权。"
+  },
+  "memorySetupPreview": {
+    "message": "请核对配置改动。旧配置会私密备份，重启 Anda 后才生效。"
+  },
+  "memorySetupApply": {
+    "message": "保存配置"
+  },
+  "memorySetupRestart": {
+    "message": "配置已保存。请先完成当前任务，再运行以下命令重启；回来刷新以检查待办是否可用。"
+  },
+  "memorySearch": {
+    "message": "搜索记忆"
+  },
+  "memorySearchPlaceholder": {
+    "message": "我对发布说明有什么偏好？"
+  },
+  "memorySearchCost": {
+    "message": "搜索可能调用模型。默认结果包上限 4,096 token、规划输入上限 32,768 token；这不是总费用上限。"
+  },
+  "memorySearchUnknown": {
+    "message": "不会自动重试。再次搜索可能再次计费。"
+  },
+  "memorySearchPacket": {
+    "message": "检索内容包含覆盖范围和警告，不代表事实已保存，也不授予执行权限。"
+  },
+  "memoryCopyPacket": {
+    "message": "复制内容、来源与警告"
+  },
+  "memoryWatch": {
+    "message": "这条记忆变化时向我确认"
+  },
+  "memoryWatching": {
+    "message": "已订阅这条记录，确认问题将进入记忆待办。"
+  },
+  "memoryWatchCancel": {
+    "message": "取消订阅"
+  },
+  "memoryWatchRetry": {
+    "message": "确认或重试本次订阅"
+  },
+  "memoryModeLabel": {
+    "message": "记忆模式"
+  },
+  "memoryModeNew": {
+    "message": "下次文字对话"
+  },
+  "memoryModeKeep": {
+    "message": "沿用当前模式"
+  },
+  "memoryMode_standard": {
+    "message": "正常使用记忆"
+  },
+  "memoryMode_no_store": {
+    "message": "本次不保存长期记忆"
+  },
+  "memoryMode_off": {
+    "message": "本次不使用长期记忆"
+  },
+  "memoryMode_unknown": {
+    "message": "未知策略版本"
+  },
+  "memoryModeScope": {
+    "message": "约束自动读取和写入 Brain、Notes。聊天记录、文件、日志和模型服务处理仍会保留。受限模式也会禁用子任务、书签和定时任务变更。"
+  },
+  "memoryModeFirstMessage": {
+    "message": "发送一条普通文字消息，将以此模式开启空白新对话，不复制之前的上下文。"
+  },
+  "memorySuppress": {
+    "message": "停用"
+  },
+  "memoryConfirmSuppress": {
+    "message": "确认停用"
+  },
+  "memoryRecordSuppressed": {
+    "message": "已停止自动使用"
+  },
+  "memorySuppressScope": {
+    "message": "保留但归档预览中的声明、引用输入和已记录的派生项；相关来源会话停止贡献新记忆。处理用的 Notes 和历史上下文会清空。聊天、文件、备份和已交付的上下文仍保留。"
+  },
+  "memoryUndoPreview": {
+    "message": "预览反向更正"
+  },
+  "memoryOpenSource": {
+    "message": "打开原消息"
+  },
+  "memorySourceTruncated": {
+    "message": "此处为截短引用，完整内容请查看原消息。"
+  },
+  "memorySearchConstraint": {
+    "message": "约束或警告"
+  },
+  "memorySearchEmpty": {
+    "message": "没有返回可用记忆。"
+  },
+  "memorySearchCoverage": {
+    "message": "完整结果、覆盖范围与警告"
+  },
+  "memoryState_recalled": {
+    "message": "记忆检索已返回"
+  },
+  "memoryState_recall_failed": {
+    "message": "记忆检索未完成"
+  },
+  "memoryLearningTitle": {
+    "message": "高级：评测与学习"
+  },
+  "memoryLearningScope": {
+    "message": "业务学习仅支持前置条件工作流模板，需要独立的执行器、观察器、任务源、经过审阅的校准、部署批准和原生回退。日常记忆不需要这些配置。"
+  },
+  "memoryLearning_not_compiled": {
+    "message": "此构建不含业务学习组件。"
+  },
+  "memoryLearning_services_missing": {
+    "message": "所需业务服务尚未安装。"
+  },
+  "memoryLearning_identity_mismatch": {
+    "message": "服务身份或固定合同不匹配。"
+  },
+  "memoryLearning_calibration_missing": {
+    "message": "请先审阅该任务族的校准证据。"
+  },
+  "memoryLearning_awaiting_approval": {
+    "message": "已配置，等待明确的自动化与部署批准。"
+  },
+  "memoryLearning_ready": {
+    "message": "隔离学习流程已就绪。业务应用仍须独立批准，每项工作也会重新核对原生权限与服务状态。"
+  },
+  "memoryLearning_unavailable": {
+    "message": "暂时无法检查准备度，请先恢复运行时连接与访问权限。"
+  },
+  "memoryEvaluationCli": {
+    "message": "含 MIB 的构建可在 CLI 运行隔离对照评测。先生成计划，再显式运行；模型费用可能无法完整计量。"
+  },
+  "memorySearchFee": {
+    "message": "搜索可能调用模型并产生费用，不会自动重试。"
   }
 }

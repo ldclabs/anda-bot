@@ -1165,5 +1165,344 @@
   },
   "brainBackToGraph": {
     "message": "Volver al grafo"
+  },
+  "memoryTitle": {
+    "message": "Memoria"
+  },
+  "memoryIntro": {
+    "message": "Las preferencias y el contexto de tus proyectos pueden continuar en futuras conversaciones, sin configuración adicional."
+  },
+  "memoryService": {
+    "message": "Servicio de memoria"
+  },
+  "memoryOpenInbox": {
+    "message": "Abrir bandeja"
+  },
+  "memoryTry": {
+    "message": "Prueba una preferencia"
+  },
+  "memoryExample": {
+    "message": "Recuerda: prefiero notas de versión breves con una sección de riesgos."
+  },
+  "memoryTryHint": {
+    "message": "Pega esto en una conversación. Tras el procesamiento, usa /new y pregunta por la preferencia sin repetir la respuesta."
+  },
+  "memoryActivity": {
+    "message": "Actividad de procesamiento"
+  },
+  "memoryEvidenceHint": {
+    "message": "Una conversación procesada no demuestra que cada dato se haya guardado."
+  },
+  "memoryExplore": {
+    "message": "Explorar relaciones"
+  },
+  "memoryConversation": {
+    "message": "Conversación"
+  },
+  "memoryStale": {
+    "message": "Pendiente de actualización"
+  },
+  "memoryNoActivity": {
+    "message": "Todavía no hay registros visibles."
+  },
+  "memoryPartial": {
+    "message": "El índice de actividad aún está incompleto."
+  },
+  "memoryPrivacyHint": {
+    "message": "La memoria es local por defecto. Los modelos configurados pueden procesar su contenido y generar costes. Estas comprobaciones no llaman a un modelo."
+  },
+  "memoryTechnicalDetails": {
+    "message": "Detalles técnicos"
+  },
+  "memoryConnectionHelp": {
+    "message": "Revisa la conexión y el token del propietario. Los servidores antiguos pueden no admitir esta vista."
+  },
+  "memoryState_reachable": {
+    "message": "Conectado"
+  },
+  "memoryState_available": {
+    "message": "Disponible"
+  },
+  "memoryState_not_configured": {
+    "message": "Sin configurar (opcional)"
+  },
+  "memoryState_unauthorized": {
+    "message": "Inicia sesión"
+  },
+  "memoryState_forbidden": {
+    "message": "Esta identidad no tiene acceso"
+  },
+  "memoryState_unavailable": {
+    "message": "No disponible"
+  },
+  "memoryState_timeout": {
+    "message": "Tiempo agotado"
+  },
+  "memoryState_submitting": {
+    "message": "Enviando"
+  },
+  "memoryState_accepted": {
+    "message": "Pendiente de procesamiento"
+  },
+  "memoryState_processing": {
+    "message": "Organizando conversaciones"
+  },
+  "memoryState_completed": {
+    "message": "Conversación procesada"
+  },
+  "memoryState_rejected": {
+    "message": "Envío rechazado"
+  },
+  "memoryState_failed": {
+    "message": "Error de procesamiento"
+  },
+  "memoryState_legacy_unattributed": {
+    "message": "Registro histórico"
+  },
+  "memoryState_unknown": {
+    "message": "Aceptación desconocida"
+  },
+  "memoryCopy": {
+    "message": "Copiar preferencia"
+  },
+  "memoryCopied": {
+    "message": "Copiado"
+  },
+  "memoryRecords": {
+    "message": "Afirmaciones recordadas"
+  },
+  "memoryYou": {
+    "message": "Tú"
+  },
+  "memorySource": {
+    "message": "Ver fuente"
+  },
+  "memorySourceUnavailable": {
+    "message": "La asociación con la fuente está incompleta."
+  },
+  "memoryNoRecords": {
+    "message": "Todavía no hay recuerdos verificables."
+  },
+  "memoryClaimSupport": {
+    "message": "Afirmado"
+  },
+  "memoryClaimReject": {
+    "message": "Negado"
+  },
+  "memoryClaimUncertain": {
+    "message": "Incierto"
+  },
+  "memoryRecordCurrent": {
+    "message": "Afirmación actual"
+  },
+  "memoryRecordSuperseded": {
+    "message": "Reemplazado"
+  },
+  "memoryRecordRetracted": {
+    "message": "Retirado"
+  },
+  "memoryRecordUnknown": {
+    "message": "Otro estado"
+  },
+  "memoryCorrectionSource": {
+    "message": "Registro de corrección"
+  },
+  "memoryState_suppressed": {
+    "message": "La fuente ya no contribuye a la memoria"
+  },
+  "memoryCorrect": {
+    "message": "Corregir"
+  },
+  "memoryDelete": {
+    "message": "Eliminar…"
+  },
+  "memoryChangeConfirmed": {
+    "message": "Cambio completado. Inicia una conversación nueva para usar la memoria actualizada."
+  },
+  "memoryChangeAffected": {
+    "message": "Registros relacionados afectados: $1"
+  },
+  "memoryChangeScope": {
+    "message": "Solo cambian las afirmaciones indicadas, los mensajes citados y las dependencias registradas. Se restablecen las notas de trabajo y las conversaciones de origen dejan de aportar memoria. Se conservan chats, archivos, registros, copias de seguridad, otros datos independientes y el contexto ya entregado."
+  },
+  "memoryChangePending": {
+    "message": "El cambio aceptado sigue procesándose."
+  },
+  "memoryNewValue": {
+    "message": "Nuevo contenido"
+  },
+  "memoryReviewHint": {
+    "message": "Revisa el alcance antes de confirmar. Preparar la vista previa no modifica el grafo."
+  },
+  "memoryUnknownHint": {
+    "message": "Resultado desconocido. Consulta la operación original sin enviar otro cambio."
+  },
+  "memoryClose": {
+    "message": "Cerrar"
+  },
+  "memoryCheckResult": {
+    "message": "Consultar resultado"
+  },
+  "memoryConfirmDelete": {
+    "message": "Confirmar eliminación"
+  },
+  "memoryConfirmCorrection": {
+    "message": "Confirmar corrección"
+  },
+  "memoryReviewChange": {
+    "message": "Revisar cambio"
+  },
+  "memoryDraftStored": {
+    "message": "El borrador se guarda en este dispositivo. Cerrar no confirma ni cancela el cambio."
+  },
+  "memoryResumeChange": {
+    "message": "Continuar cambio de memoria"
+  },
+  "memoryChangeDiscarded": {
+    "message": "Borrador descartado o caducado."
+  },
+  "memoryDiscardDraft": {
+    "message": "Descartar borrador"
+  },
+  "memorySetupTitle": {
+    "message": "Configurar pendientes de memoria"
+  },
+  "memorySetupScope": {
+    "message": "Conserva preguntas sobre cambios entre conversaciones. Solo crea una bandeja privada del propietario. Cada suscripción permite al controlador cancelar únicamente esa suscripción. No activa aprendizaje ni ejecución."
+  },
+  "memorySetupPreview": {
+    "message": "Revisa el cambio. Se guarda una copia privada. Se aplica al reiniciar Anda."
+  },
+  "memorySetupApply": {
+    "message": "Guardar configuración"
+  },
+  "memorySetupRestart": {
+    "message": "Configuración guardada. Termina tus tareas y ejecuta el comando. Vuelve después para comprobar el acceso."
+  },
+  "memorySearch": {
+    "message": "Buscar en la memoria"
+  },
+  "memorySearchPlaceholder": {
+    "message": "¿Qué dije sobre las notas de versión?"
+  },
+  "memorySearchCost": {
+    "message": "La búsqueda puede llamar a un modelo. Límites: 4096 tokens de resultado y 32 768 de entrada del planificador; no son un tope de coste total."
+  },
+  "memorySearchUnknown": {
+    "message": "No hay reintento automático. Otra búsqueda puede generar otro cargo."
+  },
+  "memorySearchPacket": {
+    "message": "El contexto incluye cobertura y advertencias. No prueba que un hecho esté guardado ni autoriza acciones."
+  },
+  "memoryCopyPacket": {
+    "message": "Copiar contexto, fuentes y advertencias"
+  },
+  "memoryWatch": {
+    "message": "Preguntarme si cambia este recuerdo"
+  },
+  "memoryWatching": {
+    "message": "Suscripción activa. Las preguntas aparecerán en pendientes."
+  },
+  "memoryWatchCancel": {
+    "message": "Cancelar suscripción"
+  },
+  "memoryWatchRetry": {
+    "message": "Comprobar / reintentar la suscripción"
+  },
+  "memoryModeLabel": {
+    "message": "Modo de memoria"
+  },
+  "memoryModeNew": {
+    "message": "Próxima conversación escrita"
+  },
+  "memoryModeKeep": {
+    "message": "Mantener el modo actual"
+  },
+  "memoryMode_standard": {
+    "message": "Usar y guardar memoria"
+  },
+  "memoryMode_no_store": {
+    "message": "No guardar memoria a largo plazo"
+  },
+  "memoryMode_off": {
+    "message": "No usar memoria a largo plazo"
+  },
+  "memoryMode_unknown": {
+    "message": "Versión de política desconocida"
+  },
+  "memoryModeScope": {
+    "message": "Limita el acceso automático a Brain y Notes. Se conservan chats, archivos, registros y procesamiento del proveedor. Los modos restringidos desactivan subagentes, marcadores y cambios de cron."
+  },
+  "memoryModeFirstMessage": {
+    "message": "Envía un mensaje normal para iniciar una conversación nueva en este modo, sin copiar el contexto anterior."
+  },
+  "memorySuppress": {
+    "message": "Dejar de usar"
+  },
+  "memoryConfirmSuppress": {
+    "message": "Confirmar desactivación"
+  },
+  "memoryRecordSuppressed": {
+    "message": "Excluido del uso automático"
+  },
+  "memorySuppressScope": {
+    "message": "Las afirmaciones, fuentes y dependientes de la vista previa se conservan archivados. Sus conversaciones dejan de aportar memoria. Se reinician Notes y contexto de procesamiento. Chats, archivos, copias y contexto entregado permanecen."
+  },
+  "memoryUndoPreview": {
+    "message": "Vista previa de una corrección inversa"
+  },
+  "memoryOpenSource": {
+    "message": "Abrir mensaje original"
+  },
+  "memorySourceTruncated": {
+    "message": "La cita está abreviada. Abre el mensaje original."
+  },
+  "memorySearchConstraint": {
+    "message": "Restricción o advertencia"
+  },
+  "memorySearchEmpty": {
+    "message": "No se devolvió memoria utilizable."
+  },
+  "memorySearchCoverage": {
+    "message": "Resultado completo, cobertura y advertencias"
+  },
+  "memoryState_recalled": {
+    "message": "Búsqueda de memoria recibida"
+  },
+  "memoryState_recall_failed": {
+    "message": "Búsqueda de memoria incompleta"
+  },
+  "memoryLearningTitle": {
+    "message": "Avanzado: evaluar y aprender"
+  },
+  "memoryLearningScope": {
+    "message": "El aprendizaje empresarial solo admite la plantilla de precondiciones. Requiere ejecutor, observador y fuente separados, calibración revisada, aprobación y reversión nativa. La memoria cotidiana no lo necesita."
+  },
+  "memoryLearning_not_compiled": {
+    "message": "Esta compilación no incluye aprendizaje empresarial."
+  },
+  "memoryLearning_services_missing": {
+    "message": "Faltan los servicios empresariales requeridos."
+  },
+  "memoryLearning_identity_mismatch": {
+    "message": "Las identidades o contratos fijados no coinciden."
+  },
+  "memoryLearning_calibration_missing": {
+    "message": "Revisa la calibración de esta familia de tareas."
+  },
+  "memoryLearning_awaiting_approval": {
+    "message": "Configurado; pendiente de aprobación de automatización y despliegue."
+  },
+  "memoryLearning_ready": {
+    "message": "El aprendizaje aislado está listo. Su uso empresarial necesita aprobación independiente y verificaciones por tarea."
+  },
+  "memoryLearning_unavailable": {
+    "message": "No se pudo comprobar el estado. Restablece la conexión y el acceso."
+  },
+  "memoryEvaluationCli": {
+    "message": "La comparación aislada está en la CLI con MIB. Crea un plan antes de ejecutarlo. El coste puede medirse parcialmente."
+  },
+  "memorySearchFee": {
+    "message": "La búsqueda puede llamar a un modelo y generar un cargo. No se repite automáticamente."
   }
 }

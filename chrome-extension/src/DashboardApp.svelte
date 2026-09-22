@@ -1,5 +1,5 @@
 <script lang="ts">
-  import BrainApp from './BrainApp.svelte'
+  import MemoryWorkspace from '$lib/anda/memory/MemoryWorkspace.svelte'
   import ConfigApp from './ConfigApp.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
   import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
@@ -34,7 +34,7 @@
   const workspaces: Workspace[] = [
     {
       id: 'brain',
-      label: 'Brain',
+      label: getMessage('memoryTitle'),
       detail: getMessage('dashboardBrainDetail'),
       icon: BrainCircuit
     },
@@ -291,7 +291,7 @@
 
     <main class="min-h-0 min-w-0 overflow-hidden bg-background">
       {#if activeWorkspace === 'brain'}
-        <BrainApp embedded />
+        <MemoryWorkspace />
       {:else if activeWorkspace === 'bookmarks'}
         <BookmarksWorkspace />
       {:else if activeWorkspace === 'skills'}

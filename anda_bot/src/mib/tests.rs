@@ -4,7 +4,7 @@ use anda_engine::model::{CompletionFeaturesDyn, Model};
 use std::sync::atomic::AtomicUsize;
 
 #[derive(Default)]
-struct Fixture {
+pub(super) struct Fixture {
     calls: AtomicUsize,
     block_business: std::sync::atomic::AtomicBool,
     panic_business: std::sync::atomic::AtomicBool,
@@ -74,7 +74,7 @@ impl CompletionFeaturesDyn for Fixture {
         })
     }
 }
-fn host(mode: Mode) -> (Arc<Host>, Arc<Fixture>) {
+pub(super) fn host(mode: Mode) -> (Arc<Host>, Arc<Fixture>) {
     let fixture = Arc::new(Fixture::default());
     let models = Arc::new(Models::default());
     models.set_model(Model::with_completer(fixture.clone()));

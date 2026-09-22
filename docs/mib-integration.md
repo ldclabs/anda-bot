@@ -2,6 +2,25 @@
 
 [中文版](mib-integration_cn.md)
 
+## Run an isolated comparison
+
+The product entry point is `anda memory evaluate` in a build with `mib`. It runs before production home/identity initialization and rejects `--home`. It never reads your normal memory or model credentials. Provide a separate `ModelConfig` with `api_key` empty and a named environment variable.
+
+```sh
+anda memory evaluate plan --model-config /absolute/path/model.json --track memory --output ./memory-plan.json
+# Review the frozen plan and its limits before this explicit, potentially paid step:
+anda memory evaluate run --plan ./memory-plan.json --output ./memory-run
+anda memory evaluate report ./memory-run
+```
+
+`plan` calls no models; `report` only rebuilds saved results. `run` refuses existing output directories and mismatched plan, executable, model, dataset or prompt digests. Each case/repeat/arm has its own native run and namespace. The four frozen synthetic cases cover preferences, changed facts, names in different projects and missing information. Only `persistent` and `no_memory` are supported. Track `memory` fixes the business model/prompt outside the memory host; `agent` measures the existing bounded agent adapter, not the whole desktop daemon. Scores and expected answers do not enter observed training messages.
+
+Output contains `plan.json`, `manifest.json`, `events.jsonl`, `cases/*.json`, `report.json` and `report.md`. Reports retain completed, invalid, not-started and unknown runs, valid paired denominators, final cumulative cost snapshots, cleanup and native capability descriptors. Rebuilding a report recovers the latest complete cost event after a torn final append. It never retries or re-executes a case. Ctrl+C or the evaluation deadline requests local host shutdown; in-flight results stay unknown, and external provider settlement may remain unmeasured.
+
+The plan bounds protocol operations, time, output tokens and local Recall packet/planner context. These are not a hard total currency cap or a bound on every provider retry. `accounting_complete=false`, unknown cost is null, and uncertainty is `not_estimated`. The shipped template is a small synthetic comparison, not a claim of general improvement or calibrated business learning. The repository tests use mechanism fixtures; no paid trial was run for this implementation.
+
+Business deployment uses a different [reviewable workflow contract](../anda_bot/assets/memory/workflow-template.json). Runtime readiness distinguishes compiled code, installed services, matching identities, reviewed calibration and explicit automation approval. A ready isolated learning flow is not permission to deploy an action against a business system. Keep the native registration/grants, deployment approval and rollback evidence separate.
+
 Build with `env -u LIBRARY_PATH cargo build -p anda_bot --features mib --bin anda`.
 Run `anda mib --model-config /absolute/path/model.json --api-key-env MIB_MODEL_API_KEY --listen 127.0.0.1:8043 --memory-mode persistent`.
 `model.json` is an Anda Engine `ModelConfig` object; use an empty `api_key` with the named environment variable. Never commit real credentials to the repository. `--home` is rejected. Normal production home, identity, IM, cron, browser, automatic updates and desktop session recovery are never initialized by this entry point.
@@ -13,7 +32,7 @@ Run `anda mib --model-config /absolute/path/model.json --api-key-env MIB_MODEL_A
 - In every successful response, `body.costs` is a cumulative run snapshot with `cost_scope` set to `cumulative_run`. Use the last snapshot per run; do not sum responses. Unknown token counts and durations remain null. Provider-internal retries and observer usage may still be unmeasured, so `accounting_complete=false`. The business output cap is not a total budget for all model work.
 - Idempotency is in-process. The descriptor exposes a host epoch. Process restart requires a fresh evaluation; it cannot resume old in-memory runs. Limits: 8 active runs, 1024 total run records, 10,000 request receipts/32 MiB per run. Capacity exhaustion is explicit. Default operation/idle deadlines: 180/900 seconds.
 
-Detailed implementation, migration and evidence: [Brain MIB integration](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration). Source builds use locked registry versions of Brain and the other core dependencies. Uncomment the sibling `anda_brain` patch in `Cargo.toml` only for local Brain development.
+Detailed implementation, migration and evidence: [Brain MIB integration](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration). This development checkout uses the explicitly authorized sibling Brain patch for native product contracts; switch back to registry after the native release. Other core dependencies remain locked registry packages.
 
 Validation: `env -u LIBRARY_PATH RUST_MIN_STACK=16777216 cargo test -p anda_bot --features mib mib::`. The ignored `serve_local_transport_fixture` test is an explicit local model fixture for HTTP pipeline verification, not an empirical benchmark or an improvement claim.
 

@@ -47,6 +47,8 @@ pub async fn serve(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let server_cancel_token = cancel_token.clone();
     let background_cancel_token = cancel_token.clone();
+    let memory = engines.memory.clone();
+    let memory_cancel_token = cancel_token.clone();
     let app = Router::new()
         .merge(engines.into_router(cancel_token.clone()))
         .merge(brain.into_router())
@@ -74,9 +76,10 @@ pub async fn serve(
         );
 
         let background_tasks_handle = tokio::spawn(async move {
-            brain_state
-                .start_background_tasks(background_cancel_token)
-                .await;
+            tokio::join!(
+                brain_state.start_background_tasks(background_cancel_token),
+                memory.run_background(memory_cancel_token)
+            );
         });
 
         let (server_result, background_result) =

@@ -2,6 +2,25 @@
 
 [English](mib-integration.md)
 
+## 运行隔离对照评测
+
+产品入口是含 `mib` 的构建中的 `anda memory evaluate`。它在生产 home/身份初始化前分流，拒绝 `--home`，不读取正常记忆或生产模型凭证。请显式提供独立的 `ModelConfig`，其中 `api_key` 留空，并通过命名环境变量提供密钥。
+
+```sh
+anda memory evaluate plan --model-config /absolute/path/model.json --track memory --output ./memory-plan.json
+# 核对冻结计划与限制后，再显式执行可能产生费用的步骤：
+anda memory evaluate run --plan ./memory-plan.json --output ./memory-run
+anda memory evaluate report ./memory-run
+```
+
+`plan` 不调用模型，`report` 仅重建已有记录。`run` 拒绝覆盖已有输出目录，也拒绝计划、可执行文件、模型、数据或提示词摘要不匹配。每个 case/repeat/arm 都使用独立原生运行及命名空间。四个冻结合成样例覆盖偏好保持、事实更新、项目同名区分和信息缺失，仅支持 `persistent` 与 `no_memory`。`memory` Track 在记忆宿主外固定业务模型和提示词；`agent` Track 衡量现有有界 Agent 适配器，不代表完整桌面 daemon。预期答案和评分材料不进入训练观察。
+
+输出包含 `plan.json`、`manifest.json`、`events.jsonl`、`cases/*.json`、`report.json`、`report.md`。报告保留完成、无效、未开始和未知样例，有效配对分母、最后累计成本快照、清理结果和原生能力描述。重建报告会在末尾日志写入中断时恢复此前完整的最新成本事件，不重试或重跑样例。Ctrl+C 和评测截止时间会请求本地宿主关闭；在途结果保留 unknown，外部服务商的最终结算可能仍无法测量。
+
+计划限制协议操作数、时间、输出 token 和局部 Recall 结果包/规划上下文。这些不是总金额硬上限，也不能限制每次服务商内部重试。`accounting_complete=false`，未知费用为 null，不确定性为 `not_estimated`。内置模板只是小型合成对照，不构成泛化提升或业务学习校准证据。本实现仅运行机制夹具，没有运行付费试验。
+
+业务部署另有[可审阅的工作流合同](../anda_bot/assets/memory/workflow-template.json)。准备度区分已编译、服务已安装、身份匹配、校准已审阅和自动化已明确批准。隔离学习流程 ready 不等于获准操作业务系统；原生注册/权限、部署批准与回退证据需独立保存。
+
 使用 `env -u LIBRARY_PATH cargo build -p anda_bot --features mib --bin anda` 编译。
 通过 `anda mib --model-config /absolute/path/model.json --api-key-env MIB_MODEL_API_KEY --listen 127.0.0.1:8043 --memory-mode persistent` 启动。
 `model.json` 是 Anda Engine 的 `ModelConfig` 对象；使用指定环境变量提供凭证时，将 `api_key` 留空。不要把真实凭证提交到仓库。入口拒绝 `--home`，不会初始化生产 home、身份、IM、cron、浏览器、自动更新和桌面会话恢复。
@@ -13,7 +32,7 @@
 - 所有成功响应的 `body.costs` 都是累计 run 快照，`cost_scope` 为 `cumulative_run`；每 run 取最后一份，不能逐响应求和。未知 token 数和耗时保留 null，provider 内部重试和 observer 用量仍可能缺测，因此 `accounting_complete=false`。业务输出上限不等于全部模型工作的总预算。
 - 幂等性仅在进程内有效。descriptor 暴露宿主 epoch；进程重启后必须开始新的评测，不能恢复旧的内存运行。容量限制：8 个活跃 run、1024 条 run 记录，每个 run 最多 10,000 条请求收据及 32 MiB。容量耗尽时会明确报错。默认操作超时为 180 秒，空闲期限为 900 秒。
 
-详细实现、迁移说明和证据见 [Brain MIB 集成](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration)。源码构建使用 Brain 和其他核心依赖锁定的 registry 版本。仅在本地开发 Brain 时，才取消 `Cargo.toml` 中同级 `anda_brain` patch 的注释。
+详细实现、迁移说明和证据见 [Brain MIB 集成](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration)。当前开发分支使用已授权的同级 Brain 临时 patch；发布原生合同后切回 registry，详见 Brain 集成文档。其他核心依赖仍使用锁定的 registry 版本。
 
 验证：`env -u LIBRARY_PATH RUST_MIN_STACK=16777216 cargo test -p anda_bot --features mib mib::`。被忽略的 `serve_local_transport_fixture` 测试是用于 HTTP 流水线验证、需显式运行的本地模型测试夹具，不是实测基准或改进声明。
 

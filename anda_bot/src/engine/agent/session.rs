@@ -66,6 +66,8 @@ impl From<&InputContext> for SessionFormationContext {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionState {
+    #[serde(default)]
+    pub memory_policy: super::memory_policy::MemoryPolicy,
     pub summary: SessionSummary,
     pub formation_context: Option<SessionFormationContext>,
     pub goal: Option<GoalStateSnapshot>,
@@ -74,6 +76,7 @@ pub struct SessionState {
 }
 
 pub(super) struct Session {
+    pub(super) memory_policy: super::memory_policy::MemoryPolicy,
     pub(super) id: Xid,
     pub(super) caller: String,
     pub(super) workspace: String,
@@ -232,6 +235,7 @@ impl Session {
 
     pub(super) fn state(&self, now_ms: u64) -> SessionState {
         SessionState {
+            memory_policy: self.memory_policy.clone(),
             summary: self.summary(now_ms),
             formation_context: self
                 .formation_context
@@ -258,6 +262,17 @@ impl CompletionHook for Session {
 
 #[async_trait]
 impl AgentHook for Session {
+    async fn before_agent_run(
+        &self,
+        _ctx: &AgentCtx,
+        prompt: String,
+        resources: Vec<Resource>,
+    ) -> Result<(String, Vec<Resource>), BoxError> {
+        if !self.memory_policy.may_write() {
+            return Err("Nested agents are unavailable in restricted memory mode.".into());
+        }
+        Ok((prompt, resources))
+    }
     async fn on_background_start(
         &self,
         ctx: &AgentCtx,
@@ -485,6 +500,7 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Session {
+            memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
@@ -587,6 +603,7 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(3));
         let session = Session {
+            memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),

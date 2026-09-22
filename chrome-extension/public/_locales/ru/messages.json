@@ -1165,5 +1165,344 @@
   },
   "brainBackToGraph": {
     "message": "Вернуться к графу"
+  },
+  "memoryTitle": {
+    "message": "Память"
+  },
+  "memoryIntro": {
+    "message": "Полезные предпочтения и контекст проектов могут сохраняться для следующих разговоров без дополнительной настройки."
+  },
+  "memoryService": {
+    "message": "Сервис памяти"
+  },
+  "memoryOpenInbox": {
+    "message": "Открыть входящие"
+  },
+  "memoryTry": {
+    "message": "Попробуйте сохранить предпочтение"
+  },
+  "memoryExample": {
+    "message": "Запомни: я предпочитаю краткие заметки к выпуску с разделом о рисках."
+  },
+  "memoryTryHint": {
+    "message": "Отправьте это в разговор. После обработки начните /new и спросите о предпочтении, не повторяя ответ."
+  },
+  "memoryActivity": {
+    "message": "История обработки"
+  },
+  "memoryEvidenceHint": {
+    "message": "Обработка разговора не доказывает сохранение каждого факта."
+  },
+  "memoryExplore": {
+    "message": "Исследовать связи"
+  },
+  "memoryConversation": {
+    "message": "Разговор"
+  },
+  "memoryStale": {
+    "message": "Ожидает обновления"
+  },
+  "memoryNoActivity": {
+    "message": "Пока нет доступных записей обработки."
+  },
+  "memoryPartial": {
+    "message": "Индекс записей ещё не полон."
+  },
+  "memoryPrivacyHint": {
+    "message": "По умолчанию память хранится локально. Настроенные модели могут обрабатывать данные за плату. Эти проверки не вызывают модель."
+  },
+  "memoryTechnicalDetails": {
+    "message": "Технические сведения"
+  },
+  "memoryConnectionHelp": {
+    "message": "Проверьте подключение и токен владельца. Старые серверы могут не поддерживать этот экран."
+  },
+  "memoryState_reachable": {
+    "message": "Подключено"
+  },
+  "memoryState_available": {
+    "message": "Доступно"
+  },
+  "memoryState_not_configured": {
+    "message": "Не настроено (необязательно)"
+  },
+  "memoryState_unauthorized": {
+    "message": "Требуется вход"
+  },
+  "memoryState_forbidden": {
+    "message": "Нет доступа для этого пользователя"
+  },
+  "memoryState_unavailable": {
+    "message": "Недоступно"
+  },
+  "memoryState_timeout": {
+    "message": "Время ожидания истекло"
+  },
+  "memoryState_submitting": {
+    "message": "Отправка"
+  },
+  "memoryState_accepted": {
+    "message": "Ожидает обработки"
+  },
+  "memoryState_processing": {
+    "message": "Обработка разговоров"
+  },
+  "memoryState_completed": {
+    "message": "Разговор обработан"
+  },
+  "memoryState_rejected": {
+    "message": "Отправка отклонена"
+  },
+  "memoryState_failed": {
+    "message": "Ошибка обработки"
+  },
+  "memoryState_legacy_unattributed": {
+    "message": "Историческая запись"
+  },
+  "memoryState_unknown": {
+    "message": "Принятие не подтверждено"
+  },
+  "memoryCopy": {
+    "message": "Скопировать предпочтение"
+  },
+  "memoryCopied": {
+    "message": "Скопировано"
+  },
+  "memoryRecords": {
+    "message": "Сохранённые утверждения"
+  },
+  "memoryYou": {
+    "message": "Вы"
+  },
+  "memorySource": {
+    "message": "Посмотреть источник"
+  },
+  "memorySourceUnavailable": {
+    "message": "Связь с источником неполна."
+  },
+  "memoryNoRecords": {
+    "message": "Проверяемых записей памяти пока нет."
+  },
+  "memoryClaimSupport": {
+    "message": "Утверждено"
+  },
+  "memoryClaimReject": {
+    "message": "Отрицается"
+  },
+  "memoryClaimUncertain": {
+    "message": "Неопределённо"
+  },
+  "memoryRecordCurrent": {
+    "message": "Текущее утверждение"
+  },
+  "memoryRecordSuperseded": {
+    "message": "Заменено"
+  },
+  "memoryRecordRetracted": {
+    "message": "Отозвано"
+  },
+  "memoryRecordUnknown": {
+    "message": "Другое состояние"
+  },
+  "memoryCorrectionSource": {
+    "message": "Запись исправления"
+  },
+  "memoryState_suppressed": {
+    "message": "Источник больше не пополняет память"
+  },
+  "memoryCorrect": {
+    "message": "Исправить"
+  },
+  "memoryDelete": {
+    "message": "Удалить…"
+  },
+  "memoryChangeConfirmed": {
+    "message": "Изменение завершено. Начните новый разговор, чтобы использовать обновлённую память."
+  },
+  "memoryChangeAffected": {
+    "message": "Затронуто связанных записей: $1"
+  },
+  "memoryChangeScope": {
+    "message": "Изменяются только перечисленные утверждения, цитируемые сообщения и известные зависимости. Рабочие заметки сбрасываются; старые исходные разговоры больше не пополняют память. Чаты, файлы, журналы, резервные копии, независимые записи и уже переданный контекст сохраняются."
+  },
+  "memoryChangePending": {
+    "message": "Принятое изменение ещё обрабатывается."
+  },
+  "memoryNewValue": {
+    "message": "Новое значение"
+  },
+  "memoryReviewHint": {
+    "message": "Проверьте область изменения перед подтверждением. Подготовка не меняет граф памяти."
+  },
+  "memoryUnknownHint": {
+    "message": "Результат неизвестен. Проверьте исходную операцию, не создавая новую."
+  },
+  "memoryClose": {
+    "message": "Закрыть"
+  },
+  "memoryCheckResult": {
+    "message": "Проверить результат"
+  },
+  "memoryConfirmDelete": {
+    "message": "Подтвердить удаление"
+  },
+  "memoryConfirmCorrection": {
+    "message": "Подтвердить исправление"
+  },
+  "memoryReviewChange": {
+    "message": "Проверить изменение"
+  },
+  "memoryDraftStored": {
+    "message": "Черновик сохранён на этом устройстве. Закрытие не подтверждает и не отменяет изменение."
+  },
+  "memoryResumeChange": {
+    "message": "Продолжить изменение памяти"
+  },
+  "memoryChangeDiscarded": {
+    "message": "Черновик удалён или срок истёк."
+  },
+  "memoryDiscardDraft": {
+    "message": "Удалить черновик"
+  },
+  "memorySetupTitle": {
+    "message": "Настроить входящие памяти"
+  },
+  "memorySetupScope": {
+    "message": "Сохраняйте вопросы об изменениях между беседами. Создаётся только личный ящик владельца. Контроллер получает право отменить лишь конкретную подписку. Обучение и выполнение действий не включаются."
+  },
+  "memorySetupPreview": {
+    "message": "Проверьте изменение. Сохраняется закрытая резервная копия. Настройка вступит в силу после перезапуска Anda."
+  },
+  "memorySetupApply": {
+    "message": "Сохранить настройки"
+  },
+  "memorySetupRestart": {
+    "message": "Настройки сохранены. Завершите текущие задачи и выполните команду. Затем вернитесь для проверки доступа."
+  },
+  "memorySearch": {
+    "message": "Поиск в памяти"
+  },
+  "memorySearchPlaceholder": {
+    "message": "Что я говорил о заметках к выпуску?"
+  },
+  "memorySearchCost": {
+    "message": "Поиск может вызывать модель. Лимиты: 4096 токенов результата и 32 768 входных токенов планировщика; это не предел общей стоимости."
+  },
+  "memorySearchUnknown": {
+    "message": "Автоматического повтора нет. Новый поиск может снова тарифицироваться."
+  },
+  "memorySearchPacket": {
+    "message": "Контекст содержит охват и предупреждения. Он не доказывает сохранение факта и не разрешает действия."
+  },
+  "memoryCopyPacket": {
+    "message": "Копировать контекст, источники и предупреждения"
+  },
+  "memoryWatch": {
+    "message": "Спросить меня при изменении этой памяти"
+  },
+  "memoryWatching": {
+    "message": "Подписка активна. Вопросы появятся во входящих памяти."
+  },
+  "memoryWatchCancel": {
+    "message": "Отменить подписку"
+  },
+  "memoryWatchRetry": {
+    "message": "Проверить / повторить подписку"
+  },
+  "memoryModeLabel": {
+    "message": "Режим памяти"
+  },
+  "memoryModeNew": {
+    "message": "Следующая текстовая беседа"
+  },
+  "memoryModeKeep": {
+    "message": "Сохранить текущий режим"
+  },
+  "memoryMode_standard": {
+    "message": "Использовать и сохранять память"
+  },
+  "memoryMode_no_store": {
+    "message": "Не сохранять долгосрочную память"
+  },
+  "memoryMode_off": {
+    "message": "Не использовать долгосрочную память"
+  },
+  "memoryMode_unknown": {
+    "message": "Неизвестная версия политики"
+  },
+  "memoryModeScope": {
+    "message": "Ограничивает автоматический доступ к Brain и Notes. История, файлы, журналы и обработка провайдером сохраняются. Подагенты, закладки и изменения cron отключаются."
+  },
+  "memoryModeFirstMessage": {
+    "message": "Отправьте обычное сообщение для новой беседы в этом режиме. Старый контекст не копируется."
+  },
+  "memorySuppress": {
+    "message": "Прекратить использование"
+  },
+  "memoryConfirmSuppress": {
+    "message": "Подтвердить отключение"
+  },
+  "memoryRecordSuppressed": {
+    "message": "Исключено из автоматического использования"
+  },
+  "memorySuppressScope": {
+    "message": "Показанные утверждения, источники и зависимости сохраняются в архиве. Исходные беседы больше не пополняют память. Notes и контекст обработки очищаются. Чаты, файлы, копии и уже переданный контекст остаются."
+  },
+  "memoryUndoPreview": {
+    "message": "Просмотреть обратное исправление"
+  },
+  "memoryOpenSource": {
+    "message": "Открыть исходное сообщение"
+  },
+  "memorySourceTruncated": {
+    "message": "Цитата сокращена. Откройте исходное сообщение."
+  },
+  "memorySearchConstraint": {
+    "message": "Ограничение или предупреждение"
+  },
+  "memorySearchEmpty": {
+    "message": "Доступная память не найдена."
+  },
+  "memorySearchCoverage": {
+    "message": "Полный результат, охват и предупреждения"
+  },
+  "memoryState_recalled": {
+    "message": "Поиск памяти завершён"
+  },
+  "memoryState_recall_failed": {
+    "message": "Поиск памяти не завершён"
+  },
+  "memoryLearningTitle": {
+    "message": "Дополнительно: оценка и обучение"
+  },
+  "memoryLearningScope": {
+    "message": "Бизнес-обучение поддерживает только шаблон предусловий. Нужны независимые исполнитель, наблюдатель и источник задач, проверенная калибровка, одобрение и штатный откат. Для обычной памяти это не требуется."
+  },
+  "memoryLearning_not_compiled": {
+    "message": "В этой сборке нет бизнес-обучения."
+  },
+  "memoryLearning_services_missing": {
+    "message": "Не установлены необходимые бизнес-сервисы."
+  },
+  "memoryLearning_identity_mismatch": {
+    "message": "Не совпадают идентификаторы сервисов или контракты."
+  },
+  "memoryLearning_calibration_missing": {
+    "message": "Сначала проверьте калибровку для этого семейства задач."
+  },
+  "memoryLearning_awaiting_approval": {
+    "message": "Настроено; ожидается одобрение автоматизации и развёртывания."
+  },
+  "memoryLearning_ready": {
+    "message": "Изолированное обучение готово. Для бизнес-применения требуется отдельное одобрение и проверки каждой задачи."
+  },
+  "memoryLearning_unavailable": {
+    "message": "Не удалось проверить готовность. Восстановите подключение и доступ."
+  },
+  "memoryEvaluationCli": {
+    "message": "Изолированное сравнение доступно в CLI со сборкой MIB. Сначала создайте план. Учёт затрат может быть неполным."
+  },
+  "memorySearchFee": {
+    "message": "Поиск может вызывать модель и тарифицироваться. Автоматического повтора нет."
   }
 }

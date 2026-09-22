@@ -6,6 +6,21 @@ description: Anda Brain 的 Formation、Recall、Maintenance 长期记忆循环�
 
 # Brain 记忆大脑
 
+## 从一次聊天开始
+
+运行 `anda memory guide` 查看离线介绍。日常记忆无需额外设置 Brain 或 MIB。告诉 Anda：“记住：我喜欢简短的发布说明，但要保留风险段落。”等后台整理后，用 `/new` 开新对话询问。助手说“记住了”不等于保存收据。
+
+`anda memory` 和 TUI `/memory` 不调用模型，只查看连接与处理状态。浏览器“记忆”工作区展示有来源的记录和对话活动，“探索关系”打开图谱。来源映射及摘要都匹配时可跳转原消息。搜索可能调用模型，不自动重试。
+
+请核对记录的“更正”“停用”“删除”预览后再确认。停用保留已归档的记录，删除清除预览中的原生集合。来源排除在重启后仍有效，处理 Notes 会清空。原聊天、文件、日志、备份和已交付的上下文仍保留。来源不完整或范围不受支持时，此入口会拒绝操作。
+
+输入框可为新对话选择记忆模式。CLI 使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off`。它们约束 Brain/Notes 自动读写及后台提交，不是聊天或服务商的无痕模式；受限模式也拒绝子任务、书签及 cron 变更。
+
+需要跨会话保留确认问题时，使用“设置记忆待办”或 `anda memory inbox setup`。预览并确认配置后，显式运行 `anda restart`。自定义文件和环境覆盖会保留。对记录订阅后，变化会触发真实原生待办。TUI 使用 `/memory inbox`、`/memory answer <编号> <正文>`、`/memory retry <编号>`，重试沿用原事件与正文。
+
+MIB 对照评测和业务学习是独立的高级功能。含 MIB 的构建可运行 `anda memory evaluate plan --help` 查看隔离评测流程，费用可能不完整。普通记忆对照不能充当业务学习批准，也不能证明实际提升。
+
+
 Anda Brain 是 Anda Bot 的长期记忆系统。它不是普通向量库，也不是一份越写越长的 Markdown 记忆，而是一颗面向智能体的记忆大脑。
 
 Brain 会把对话、文件、工具结果和频道上下文转化为一个持续生长的 Cognitive Nexus：里面有用户、项目、偏好、事件、决策、时间线，以及这些节点之间的关系。

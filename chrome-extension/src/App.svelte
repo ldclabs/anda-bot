@@ -6,11 +6,12 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import { memoryModeLabel } from '$lib/anda/memory/labels'
+  import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
     type ApprovalMode,
-    type BookmarkedMessage,
     type ChatAttachment,
     type ChatMessage,
     type MessageGroup,
@@ -28,7 +29,8 @@
     bookmarkJumpRequestMaxAgeMs,
     bookmarkJumpRequestStorageKey,
     isBookmarkJumpRequest,
-    type BookmarkJumpRequest
+    type BookmarkJumpRequest,
+    type MessageLocation
   } from '$lib/anda/bookmark-jump'
   import {
     isPromptDraftRequest,
@@ -53,6 +55,8 @@
   } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
 
+  const memoryActivity = new ConversationMemoryActivity()
+  let nextMemoryMode = $state<'' | 'standard' | 'no_store' | 'off'>('')
   let settingsOpen = $state(false)
   let setupGuideOpen = $state(false)
   let sideMessagesOpen = $state(false)
@@ -97,6 +101,22 @@
   const channels = $derived(andaClient.channelList)
   const activeSource = $derived(andaClient.activeSource)
 
+  $effect(() => {
+    const id = andaClient.activeChannel?.conversationId || 0
+    memoryActivity.configure(
+      { ...andaClient.settings, spaceId: 'anda_bot' },
+      Number.isSafeInteger(id) && id > 0 ? String(id) : '',
+      sending || status === 'working' || status === 'submitted'
+    )
+  })
+  onMount(() => {
+    const changed = () => memoryActivity.visibilityChanged()
+    document.addEventListener('visibilitychange', changed)
+    return () => {
+      memoryActivity.stop()
+      document.removeEventListener('visibilitychange', changed)
+    }
+  })
   $effect(() => applyAppearanceTheme(andaClient.settings.appearanceTheme))
 
   let bookmarkConversationKey = $state('')
@@ -333,7 +353,7 @@
     }
   }
 
-  async function jumpToBookmark(bookmark: BookmarkedMessage) {
+  async function jumpToBookmark(bookmark: MessageLocation) {
     if (bookmark.source && bookmark.source !== activeSource) {
       await switchChannel(bookmark.source)
       if (andaClient.activeSource !== bookmark.source) {
@@ -418,7 +438,11 @@
     if (!andaClient.settings.token) {
       settingsOpen = true
     }
-    await andaClient.sendPrompt(payload.text, payload.attachments)
+    if (nextMemoryMode) {
+      if (command) throw new Error(getMessage('memoryModeFirstMessage'))
+      await andaClient.sendPrompt(`/new ${payload.text}`, payload.attachments, nextMemoryMode)
+      nextMemoryMode = ''
+    } else await andaClient.sendPrompt(payload.text, payload.attachments)
   }
 
   async function stopActiveTask() {
@@ -703,6 +727,7 @@
             {#each group.messages as message (message.id)}
               <ChatMessageItem
                 {message}
+                memoryActivity={memoryActivity.messages[message.id]}
                 quickPromptActive={andaClient.quickPrompts.has(message.text)}
                 onToggleQuickPrompt={toggleQuickPrompt}
               />
@@ -769,6 +794,30 @@
     {/if}
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
+      <details class="mb-2 px-1 text-xs text-muted-foreground">
+        <summary class="cursor-pointer"
+          >{getMessage('memoryModeLabel')} · {memoryModeLabel(
+            andaClient.activeChannel?.memoryMode || 'standard'
+          )}</summary
+        >
+        <label class="mt-2 flex flex-wrap items-center gap-2">
+          {getMessage('memoryModeNew')}
+          <select
+            class="rounded border border-border bg-background p-1 text-foreground"
+            bind:value={nextMemoryMode}
+            disabled={isBusy}
+          >
+            <option value="">{getMessage('memoryModeKeep')}</option>
+            <option value="standard">{getMessage('memoryMode_standard')}</option>
+            <option value="no_store">{getMessage('memoryMode_no_store')}</option>
+            <option value="off">{getMessage('memoryMode_off')}</option>
+          </select>
+        </label>
+        <p class="mt-2 leading-relaxed">{getMessage('memoryModeScope')}</p>
+        {#if nextMemoryMode}<p class="mt-2 leading-relaxed">
+            {getMessage('memoryModeFirstMessage')}
+          </p>{/if}
+      </details>
       <ChatComposer
         placeholder={andaClient.settings.token
           ? getMessage('placeholderMessage')
@@ -776,7 +825,7 @@
         {sending}
         working={isBusy}
         {stoppable}
-        voiceAvailable={andaClient.voice.capabilities.transcription.length > 0}
+        voiceAvailable={!nextMemoryMode && andaClient.voice.capabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}
         onApprovalModeChange={changeApprovalMode}

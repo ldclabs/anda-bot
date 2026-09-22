@@ -44,6 +44,7 @@ mod idle;
 mod mcp_credentials;
 mod mcp_oauth;
 mod mcp_server;
+mod memory_api;
 mod multimodal;
 mod prompt;
 mod resources;
@@ -70,6 +71,7 @@ pub(crate) use action::{
     is_action_message_value, payload_action_id, payload_is_pending, payload_responded_at,
     require_mcp_approval, update_action_payload_resolution,
 };
+pub(crate) use agent::memory_policy::{MemoryMode, MemoryPolicy};
 pub use agent::{
     AndaBot, AndaBotStatus, AndaBotToolArgs, SessionRequestMeta, SessionState, SessionSummary,
 };
@@ -94,6 +96,7 @@ pub struct Engines {
     mcp_oauth_flows: McpOAuthFlows,
     bot: Arc<AndaBot>,
     brain: brain::Client,
+    pub(crate) memory: brain::MemoryService,
     browser_bridge: Arc<BrowserBridge>,
     voice_capabilities: BrowserVoiceCapabilities,
     auto_updater: Arc<AutoUpdater>,
@@ -463,12 +466,10 @@ impl Engines {
         claims.extra.insert(iana::CWTClaimScope, "*");
         let brain_token = cfg.id_key.sign_cwt(claims)?;
         let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
+        let brain_journal = brain::Journal::new(object_store.clone());
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
             .with_http_client(brain_http_client)
-            .with_host(
-                brain_host.clone(),
-                brain::Journal::new(object_store.clone()),
-            );
+            .with_host(brain_host.clone(), brain_journal.clone());
 
         let default_workspace = cfg
             .workspaces
@@ -484,12 +485,38 @@ impl Engines {
                 "bot".to_string(),
                 default_workspace.to_string_lossy().to_string(),
             )
-            .await?,
+            .await?
+            .with_memory_host(brain_host.clone()),
         );
         let bookmarks_tool = Arc::new(BookmarksTool::with_models(
             BookmarkStore::connect(db.clone()).await?,
             cfg.models.clone(),
         ));
+        let memory_access = Arc::new(brain::MemoryAccess::new(
+            brain_host.clone(),
+            brain_journal.clone(),
+            engine_ref.clone(),
+            cfg.owner,
+        ));
+        let memory_activity = brain::activity::ActivityStore::connect(
+            db.clone(),
+            conversations_tool.clone(),
+            brain_journal.clone(),
+            brain_client.clone(),
+        )
+        .await?;
+        let memory = brain::MemoryService::new(brain_client.clone())
+            .with_activity(memory_activity.clone())
+            .with_mutations(brain::mutation::MutationService::new(
+                memory_access.clone(),
+                brain_journal.clone(),
+                memory_activity,
+            ))
+            .with_setup(brain::setup::InboxSetup::new(
+                cfg.home_dir.clone(),
+                brain_journal.clone(),
+                config_write_lock.clone(),
+            ));
         let browser_bridge = Arc::new(BrowserBridge::new());
         let browser_tabs_tool = Arc::new(
             ChromeBrowserTool::tabs(browser_bridge.clone())
@@ -531,20 +558,23 @@ impl Engines {
         // fully idle and the last sleep is more than 12 hours old.
         let idle_hooks: Vec<Arc<dyn IdleHook>> =
             vec![Arc::new(BrainSleepIdleHook::new(brain_client.clone()))];
-        let bot = Arc::new(AndaBot::new(
-            brain_client.clone(),
-            cfg.models.clone(),
-            cfg.home_dir.clone(),
-            conversations_tool.clone(),
-            resource_store.clone(),
-            completion_hooks,
-            idle_hooks,
-            skill_library.clone(),
-            browser_tabs_tool.clone(),
-            tts_manager.clone(),
-            transcription_manager.clone(),
-            active_im_channels,
-        ));
+        let bot = Arc::new(
+            AndaBot::new(
+                brain_client.clone(),
+                cfg.models.clone(),
+                cfg.home_dir.clone(),
+                conversations_tool.clone(),
+                resource_store.clone(),
+                completion_hooks,
+                idle_hooks,
+                skill_library.clone(),
+                browser_tabs_tool.clone(),
+                tts_manager.clone(),
+                transcription_manager.clone(),
+                active_im_channels,
+            )
+            .with_memory_access(memory_access.clone()),
+        );
         let image_understanding_agent =
             Arc::new(MediaUnderstandingAgent::image(cfg.workspaces.clone()));
         let audio_understanding_agent =
@@ -596,7 +626,11 @@ impl Engines {
             mcp_provider.clone(),
             mcp_oauth_flows.clone(),
         ));
+        use agent::memory_policy::{MemoryPolicyAgent, MemoryPolicyTool};
+        let mut hooks = anda_engine::hook::Hooks::new();
+        hooks.add(Box::new(agent::memory_policy::MemoryPolicyHook));
         let mut engine_builder = Engine::builder()
+            .with_hooks(Arc::new(hooks))
             .with_web3_client(web3)
             .with_store(Store::new(object_store))
             .with_management(management)
@@ -606,7 +640,10 @@ impl Engines {
             .register_tool(Arc::new(shell_tool))?
             .register_tool(Arc::new(ActionsTool::new(bot.action_runtime())))?
             .register_tool(Arc::new(AskUserChoiceTool))?
-            .register_tool(Arc::new(note::NoteTool::new()))?
+            .register_tool(Arc::new(
+                MemoryPolicyTool::new(Arc::new(note::NoteTool::new()))
+                    .with_access(memory_access.clone()),
+            ))?
             .register_tool(Arc::new(GoalTool::new()))?
             .register_tool(Arc::new(todo::TodoTool::new()))?
             .register_tool(Arc::new(fs::ReadFileTool::with_workspaces(
@@ -621,10 +658,16 @@ impl Engines {
             .register_tool(Arc::new(fs::WriteFileTool::with_workspaces(
                 cfg.workspaces.clone(),
             )))?
-            .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+                cron::CreateCronTool::new(cron_runtime.clone()),
+            ))))?
             .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
-            .register_tool(Arc::new(cron::UpdateCronJobTool::new(cron_runtime.clone())))?
-            .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))?
+            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+                cron::UpdateCronJobTool::new(cron_runtime.clone()),
+            ))))?
+            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+                cron::ManageCronJobTool::new(cron_runtime.clone()),
+            ))))?
             .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
             .register_tool(browser_tabs_tool)?
             .register_tool(browser_page_tool)?
@@ -636,7 +679,7 @@ impl Engines {
             .register_tool(connect_mcp_server_tool)?
             .register_tool(resource_store.clone())?
             .register_tool(conversations_tool.clone())?
-            .register_tool(bookmarks_tool.clone())?
+            .register_tool(Arc::new(MemoryPolicyTool::new(bookmarks_tool.clone())))?
             .register_tool(bot.clone())?;
 
         for operation in [
@@ -667,22 +710,25 @@ impl Engines {
 
         let engine = engine_builder
             .register_agent(
-                image_understanding_agent.clone(),
+                Arc::new(MemoryPolicyAgent::new(image_understanding_agent.clone())),
                 Some(image_understanding_agent.model_label().to_string()),
             )?
             .register_agent(
-                audio_understanding_agent.clone(),
+                Arc::new(MemoryPolicyAgent::new(audio_understanding_agent.clone())),
                 Some(audio_understanding_agent.model_label().to_string()),
             )?
             .register_agent(
-                video_understanding_agent.clone(),
+                Arc::new(MemoryPolicyAgent::new(video_understanding_agent.clone())),
                 Some(video_understanding_agent.model_label().to_string()),
             )?
             .register_agent(
-                other_understanding_agent.clone(),
+                Arc::new(MemoryPolicyAgent::new(other_understanding_agent.clone())),
                 Some(other_understanding_agent.model_label().to_string()),
             )?
-            .register_agent(bot.clone(), Some(ACTIVE_MODEL_LABEL.to_string()))?
+            .register_agent(
+                Arc::new(MemoryPolicyAgent::new(bot.clone())),
+                Some(ACTIVE_MODEL_LABEL.to_string()),
+            )?
             .export_tools(vec![
                 ConversationsTool::NAME.to_string(),
                 ActionsTool::NAME.to_string(),
@@ -696,6 +742,7 @@ impl Engines {
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
         let engine = Arc::new(engine);
         engine_ref.bind(Arc::downgrade(&engine));
+        memory_access.synchronize().await?;
         // A failure scanning the skills directories (e.g. permissions on the
         // shared ~/.agents/skills) should not prevent the daemon from starting.
         // The reload also installs the library's disabled set on `skills_tool`,
@@ -722,6 +769,7 @@ impl Engines {
             mcp_oauth_flows,
             bot,
             brain: brain_client,
+            memory,
             browser_bridge,
             voice_capabilities,
             auto_updater: cfg.auto_updater,
@@ -733,6 +781,11 @@ impl Engines {
     }
 
     pub fn into_router(self, cancel_token: CancellationToken) -> Router<()> {
+        let memory_state = memory_api::MemoryApiState {
+            app: self.state.clone(),
+            owner: self.cli_workspaces.owner(),
+            service: self.memory,
+        };
         let auto_update_route_state = AutoUpdateRouteState {
             app: self.state.clone(),
             auto_updater: self.auto_updater.clone(),
@@ -746,6 +799,8 @@ impl Engines {
             cli_workspaces: self.cli_workspaces.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
+            memory: memory_state.clone(),
+            auth_headers: HeaderMap::new(),
             app: self.state.clone(),
             brain: self.brain,
             bridge: self.browser_bridge,
@@ -795,6 +850,7 @@ impl Engines {
             .route("/engine/{*id}", routing::post(anda_engine))
             .with_state(self.state)
             .merge(browser_ws_router)
+            .merge(memory_state.into_router())
             .merge(auto_update_router)
             .merge(daemon_control_router)
             .merge(mcp_oauth_router);
@@ -990,10 +1046,14 @@ pub(crate) async fn write_daemon_config_atomically(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(config::CONFIG_FILE_NAME);
-    let temp_path = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
+    let temp_path = path.with_file_name(format!(".{file_name}.{}.tmp", ic_auth_types::Xid::new()));
 
     let result = async {
-        let mut file = tokio::fs::File::create(&temp_path).await?;
+        let mut options = tokio::fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temp_path).await?;
         file.write_all(content).await?;
         file.sync_all().await?;
         drop(file);

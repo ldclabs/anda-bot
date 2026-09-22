@@ -109,6 +109,11 @@ impl Tool<BaseCtx> for RuntimeTool {
         args: Json,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        if !crate::engine::MemoryPolicy::current(&ctx).allows_tool(&self.name()) {
+            return Err(
+                "Memory runtime actions are disabled by this conversation's memory policy.".into(),
+            );
+        }
         // IM runtimes may execute under an owner's engine identity for routing.
         // That never promotes an external sender to a native inbox recipient.
         let meta = ctx

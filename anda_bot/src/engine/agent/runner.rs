@@ -386,7 +386,21 @@ impl SessionRunner {
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
             updated_at: now_ms,
-            extra: Some(json!(self.ctx.meta().extra)),
+            extra: Some({
+                let mut extra = self.ctx.meta().extra.clone();
+                self.session.memory_policy.persist(&mut extra);
+                extra.insert(
+                    "memory_source_parents".into(),
+                    json!(
+                        self.ctx
+                            .base
+                            .get_state::<super::memory_policy::InheritedMemorySources>()
+                            .unwrap_or_default()
+                            .0
+                    ),
+                );
+                json!(extra)
+            }),
             ..Default::default()
         };
 
@@ -498,20 +512,65 @@ impl SessionRunner {
     }
 
     async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
+        if !self.session.memory_policy.may_write() {
+            self.session
+                .submit_formation_at
+                .store(chat_history.len() as u64, Ordering::SeqCst);
+            return;
+        }
         if now_ms < self.session.formation_backoff_until.load(Ordering::SeqCst) {
             return;
         }
 
+        // Persist the exact original message indices before filtering/pruning
+        // the Formation input. Update messages only: inbound queues are owned
+        // by the conversation API and must not be overwritten by this snapshot.
+        let mut snapshot = self.conversation.clone();
+        snapshot.messages.clear();
+        snapshot.append_messages(chat_history.to_vec());
+        let persisted = async {
+            let mut changes = snapshot.to_changes()?;
+            changes.retain(|key, _| key == "messages");
+            self.assistant
+                .inner
+                .conversations
+                .conversations
+                .update_conversation(snapshot._id, changes)
+                .await?;
+            Ok::<_, BoxError>(())
+        }
+        .await;
+        if let Err(error) = persisted {
+            self.session.formation_backoff_until.store(
+                now_ms.saturating_add(FORMATION_RETRY_BACKOFF_MS),
+                Ordering::SeqCst,
+            );
+            log::error!(
+                "Cannot persist Formation source conversation {}: {error}",
+                snapshot._id
+            );
+            return;
+        }
+        let mut source_messages = Vec::new();
         let mut messages = chat_history
             .iter()
+            .enumerate()
             .skip(self.session.submit_formation_at.load(Ordering::SeqCst) as usize)
-            .filter(|msg| !is_action_message(msg))
-            .filter_map(|msg| {
+            .filter(|(_, msg)| !is_action_message(msg))
+            .filter_map(|(index, msg)| {
+                let digest = anda_cognitive_nexus::content_digest(&serde_json::json!(msg)).ok()?;
                 let mut msg = msg.clone();
                 let pruned = msg.prune_content();
                 if msg.content.is_empty() || pruned > 0 && msg.content.len() <= 1 {
                     None
                 } else {
+                    source_messages.push(crate::brain::SourceMessageRef {
+                        conversation: snapshot._id.to_string(),
+                        index: index.to_string(),
+                        role: msg.role.clone(),
+                        content_digest: digest,
+                        submitted_digest: None,
+                    });
                     Some(msg)
                 }
             })
@@ -527,6 +586,8 @@ impl SessionRunner {
         }
 
         let timestamp = rfc3339_datetime(now_ms);
+        let meta = self.session.request_meta.get();
+        use crate::util::request_meta::{keys, request_meta_extra_as};
         match self
             .assistant
             .submit_formation(
@@ -538,6 +599,30 @@ impl SessionRunner {
                     brain_conversation: None,
                     state: crate::brain::FormationState::Pending,
                     error: None,
+                    provenance: Some(crate::brain::FormationProvenance {
+                        policy_revision: Some(self.session.memory_policy.revision.clone()),
+                        version: 1,
+                        caller: self.session.caller.clone(),
+                        session: Some(self.session.id.to_string()),
+                        source_identity: self
+                            .ctx
+                            .base
+                            .get_state::<anda_brain::product::SourceIdentity>(),
+                        source: self.session.source_key.clone(),
+                        reply_target: request_meta_extra_as(&meta, keys::REPLY_TARGET),
+                        thread: request_meta_extra_as(&meta, keys::THREAD),
+                        external_user: request_meta_extra_as(&meta, keys::EXTERNAL_USER)
+                            .unwrap_or(false),
+                        counterparty: self
+                            .session
+                            .formation_context
+                            .as_ref()
+                            .and_then(|c| c.counterparty.clone()),
+                        source_messages,
+                        input_digest: None,
+                    }),
+                    updated_at: None,
+                    failure_stage: None,
                 },
                 &messages,
                 &self.session.formation_context,
@@ -609,6 +694,9 @@ impl SessionRunner {
             } = input;
             // Session lifecycle control is not user context for the model.
             extra.remove(crate::util::request_meta::keys::FINISH_WHEN_IDLE);
+            extra.remove(super::memory_policy::MODE_KEY);
+            extra.remove(super::memory_policy::POLICY_KEY);
+            extra.remove("memory_source_parents");
 
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&usage);
@@ -1433,6 +1521,7 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Arc::new(Session {
+            memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
@@ -1988,6 +2077,65 @@ mod tests {
             request_text(&recorded[2])
                 .contains("Continue the active work from the compaction handoff")
         );
+    }
+
+    #[tokio::test]
+    async fn memory_policy_compaction_preserves_restrictions_and_source_ancestry_without_formation()
+    {
+        use super::super::memory_policy::{InheritedMemorySources, MemoryMode, MemoryPolicy};
+        for mode in [MemoryMode::NoStore, MemoryMode::Off] {
+            let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let count = writes.clone();
+            let app = axum::Router::new().route(
+                "/formation",
+                axum::routing::post(move || {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        axum::Json(json!({"result":{"content":""}}))
+                    }
+                }),
+            );
+            let url = crate::test_support::spawn_http_mock(app).await;
+            let bot = build_runner_bot_with_brain(url).await;
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let ctx = recording_usage_ctx(requests);
+            let policy = MemoryPolicy::new(mode);
+            ctx.base.set_state(policy.clone());
+            ctx.base
+                .set_state(InheritedMemorySources(vec!["trusted-parent-source".into()]));
+            let (mut runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+            Arc::get_mut(&mut runner.session).unwrap().memory_policy = policy.clone();
+            let mut extra = serde_json::Map::new();
+            policy.persist(&mut extra);
+            runner.conversation.extra = Some(json!(extra));
+            let parent = persist_runner_conversation(&mut runner).await;
+            let mut snapshot = HashMap::new();
+            runner
+                .run(
+                    vec![input(PromptCommand::Plain {
+                        prompt: "private source".into(),
+                    })],
+                    &mut snapshot,
+                )
+                .await
+                .unwrap();
+            runner.run(vec![], &mut snapshot).await.unwrap();
+            assert_ne!(runner.conversation._id, parent);
+            let child = bot
+                .inner
+                .conversations
+                .conversations
+                .get_conversation(runner.conversation._id)
+                .await
+                .unwrap();
+            assert_eq!(MemoryPolicy::from_conversation(&child).unwrap().mode, mode);
+            assert_eq!(
+                child.extra.as_ref().unwrap()["memory_source_parents"],
+                json!(["trusted-parent-source"])
+            );
+            assert_eq!(writes.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[tokio::test]

@@ -24,6 +24,9 @@ pub enum AgentCommand {
 
 #[derive(Args)]
 pub struct AgentRunCommand {
+    /// Start a fresh conversation with this Brain/Notes policy (not incognito).
+    #[arg(long, value_enum)]
+    memory_mode: Option<crate::engine::MemoryMode>,
     /// Agent name. Empty value uses the default agent.
     #[arg(long, default_value = "")]
     name: String,
@@ -68,7 +71,7 @@ pub async fn run(client: &gateway::Client, cmd: AgentCommand) -> Result<(), BoxE
 }
 
 async fn run_once(client: &gateway::Client, cmd: AgentRunCommand) -> Result<(), BoxError> {
-    let prompt = read_prompt(cmd.prompt.as_deref(), cmd.prompt_file.as_ref()).await?;
+    let mut prompt = read_prompt(cmd.prompt.as_deref(), cmd.prompt_file.as_ref()).await?;
     let workspace = match cmd.workspace.as_ref() {
         Some(path) => {
             let workspace = absolute_workspace(path)?;
@@ -78,6 +81,14 @@ async fn run_once(client: &gateway::Client, cmd: AgentRunCommand) -> Result<(), 
     };
 
     let mut meta = parse_meta(cmd.meta)?;
+    if let Some(mode) = cmd.memory_mode {
+        if !cmd.name.is_empty() && cmd.name != crate::engine::AndaBot::NAME {
+            return Err("--memory-mode is supported only by the Anda Bot agent".into());
+        }
+        meta.extra
+            .insert("memory_mode".into(), serde_json::to_value(mode)?);
+        prompt = format!("/new {prompt}");
+    }
     apply_agent_meta_defaults(&mut meta, workspace.as_deref(), cmd.session_id.as_deref());
 
     let mut input = AgentInput::new(cmd.name, prompt.clone());
@@ -492,6 +503,7 @@ mod tests {
         run_once(
             &client,
             AgentRunCommand {
+                memory_mode: None,
                 name: String::new(),
                 prompt: Some("do the thing".to_string()),
                 prompt_file: None,
@@ -521,6 +533,7 @@ mod tests {
         let err = run_once(
             &client,
             AgentRunCommand {
+                memory_mode: None,
                 name: String::new(),
                 prompt: Some("do the thing".to_string()),
                 prompt_file: None,

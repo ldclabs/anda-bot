@@ -48,11 +48,15 @@ fn format_available_tools(available_tools: &[String]) -> String {
 }
 
 pub(super) async fn available_tool_names(ctx: &AgentCtx) -> Vec<String> {
+    let policy = super::memory_policy::MemoryPolicy::current(&ctx.base);
     ctx.definitions(None)
         .await
         .into_iter()
         .filter_map(|def| {
-            if def.name == AndaBot::NAME || def.name == ActionsTool::NAME {
+            if def.name == AndaBot::NAME
+                || def.name == ActionsTool::NAME
+                || !policy.allows_tool(&def.name)
+            {
                 None
             } else {
                 Some(def.name)
@@ -90,19 +94,77 @@ impl AndaBot {
         available_tools: &[String],
         now_ms: u64,
     ) -> Result<String, BoxError> {
-        let primer = self.inner.brain.describe_primer().await?;
-        let user_profile = self.inner.brain.user_info(user.to_string(), None).await?;
-        let notes = match load_notes(ctx).await {
-            Some(notes) => notes,
-            None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
+        let policy = super::memory_policy::MemoryPolicy::current(&ctx.base);
+        let _memory_guard = if policy.may_read()
+            && let Some(access) = &self.inner.memory_access
+        {
+            let guard = access.gate.lock().await;
+            let epoch = if policy.may_write() {
+                access.synchronize_locked().await?
+            } else {
+                access.coherent_epoch_locked().await?
+            };
+            if ctx
+                .base
+                .get_state::<crate::brain::MemoryEpoch>()
+                .is_some_and(|captured| captured.0 != epoch)
+            {
+                return Err("Memory changed; start a new conversation.".into());
+            }
+            ctx.base.set_state(crate::brain::MemoryEpoch(epoch));
+            Some(guard)
+        } else {
+            None
+        };
+        let primer = if policy.may_read() {
+            self.inner.brain.describe_primer().await?
+        } else {
+            serde_json::json!({})
+        };
+        let user_profile = if policy.may_write() {
+            self.inner.brain.user_info(user.to_string(), None).await?
+        } else if policy.may_read() {
+            self.inner
+                .brain
+                .user_info_readonly(user.to_string())
+                .await?
+        } else {
+            serde_json::json!({})
+        };
+        let notes = if !policy.may_read() {
+            Default::default()
+        } else {
+            match load_notes(ctx).await {
+                Some(notes) => notes,
+                None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
+            }
         };
         let local_date = format_local_date(now_ms);
         let self_knowledge =
             serde_json::to_string(primer.get("cognitive_identity").unwrap_or(&primer))?;
         let notes = serde_json::to_string(&notes.items)?;
         let user_profile = serde_json::to_string(&user_profile)?;
+        if policy.may_read()
+            && let Some(access) = &self.inner.memory_access
+        {
+            let space = access
+                .host
+                .state
+                .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
+                .await?;
+            if !space.product_available()
+                || ctx
+                    .base
+                    .get_state::<crate::brain::MemoryEpoch>()
+                    .is_some_and(|captured| captured.0 != space.product_epoch())
+            {
+                return Err(
+                    "Memory changed while preparing context; retry in a new conversation.".into(),
+                );
+            }
+        }
 
-        Ok(render_system_instructions(SystemInstructionSections {
+        let mut instructions = render_system_instructions(SystemInstructionSections {
             self_knowledge: &self_knowledge,
             notes: &notes,
             available_tools,
@@ -110,7 +172,11 @@ impl AndaBot {
             workspace,
             user_profile: &user_profile,
             local_date: &local_date,
-        }))
+        });
+        if !policy.may_write() {
+            instructions.push_str(&format!("\n\n# Host memory policy\nMode: {:?}. This conversation must not write Brain or Notes. {} Nested agents, memory actions, bookmarks and cron creation/modification are unavailable in this mode. Chat history, files and provider processing are not an incognito session.",policy.mode,if policy.may_read() {"Existing memory may be recalled."}else{"Do not read Brain or Notes."}));
+        }
+        Ok(instructions)
     }
 }
 

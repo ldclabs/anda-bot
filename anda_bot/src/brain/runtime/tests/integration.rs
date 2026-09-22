@@ -15,6 +15,101 @@ const READER: &str = "kip:principal:bot-reader";
 const OTHER: &str = "kip:principal:bot-other";
 const OBSERVER: &str = "kip:principal:bot-observer";
 
+#[tokio::test]
+async fn memory_record_watch_is_recipient_scoped_and_retries_never_rearm() {
+    let keys = [
+        Ed25519Key::new([87; 32]),
+        Ed25519Key::new([88; 32]),
+        Ed25519Key::new([89; 32]),
+    ];
+    let config = runtime_config(&keys, Some("Does this need an update?"));
+    let brain = create(Arc::new(InMemory::new()), &keys, Some(config.clone())).await;
+    let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let result=command(&space,r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "Preference" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#,json!({})).await;
+    let target = result["handles"]["a"].as_str().unwrap().to_string();
+    assert!(
+        host.watch_record(
+            keys[1].id(),
+            "watch-other".into(),
+            target.clone(),
+            "Private memory update".into()
+        )
+        .await
+        .is_err()
+    );
+    let created = host
+        .watch_record(
+            keys[0].id(),
+            "watch-owner".into(),
+            target.clone(),
+            "Private memory update".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.state, "armed");
+    let cancelled = host
+        .cancel_record_watch(keys[0].id(), "watch-owner".into())
+        .await
+        .unwrap();
+    assert_eq!(cancelled.state, "cancelled");
+    let retried = host
+        .watch_record(
+            keys[0].id(),
+            "watch-owner".into(),
+            target.clone(),
+            "Private memory update".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retried.state, "cancelled");
+    assert_eq!(created.watch_id, retried.watch_id);
+    let second = host
+        .watch_record(
+            keys[0].id(),
+            "watch-new".into(),
+            target.clone(),
+            "Memory changed".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.state, "armed");
+    let url = crate::test_support::spawn_http_mock(brain.into_router()).await;
+    let client = Client::new(format!("{url}/v1/anda_bot"), Some(token(&keys[0])));
+    command(
+        &space,
+        "TRANSITION :id TO \"retracted\"",
+        json!({"id":target}),
+    )
+    .await;
+    let _delivery = delivery(&space, &client).await;
+    let page = client.attention(&AttentionQuery::default()).await.unwrap();
+    assert!(
+        page.items
+            .iter()
+            .all(|item| item.watch_ref != created.watch_id)
+    );
+    let question = page
+        .items
+        .iter()
+        .find(|item| item.clarification.is_some())
+        .expect("parent item retains the committed question");
+    let response = AttentionResponse::Clarification {
+        event_key: "product-watch-answer".into(),
+        answer: "Please update the preference".into(),
+    };
+    let receipt = client.respond(&question.id, &response).await.unwrap();
+    assert_eq!(
+        client
+            .respond(&question.id, &response)
+            .await
+            .unwrap()
+            .receipt_id,
+        receipt.receipt_id
+    );
+    space.close().await.unwrap();
+}
+
 fn runtime_config(keys: &[Ed25519Key], question: Option<&str>) -> RuntimeConfig {
     serde_json::from_value(json!({"format":"anda-brain:runtime-api-v1","spaces":{"anda_bot":{
         "bootstrap":true,
@@ -595,5 +690,255 @@ async fn real_structured_recall_and_tool_keep_off_graph_delivery_association() {
         .unwrap();
     assert_eq!(structured.memory_budget.unwrap().token_limit, 32);
     assert!(anda_brain::recall_budget::count(&structured.answer).unwrap() <= 32);
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_notes() {
+    use crate::brain::{
+        FormationProvenance, FormationState, FormationSubmission, Journal, MemoryAccess,
+        MemoryService, SourceMessageRef,
+        activity::ActivityStore,
+        mutation::{ChangeRequest, CommitRequest, MutationService},
+    };
+    use anda_core::{Agent, AgentOutput, Message, RequestMeta};
+    use anda_engine::{
+        context::AgentCtx,
+        engine::{EngineBuilder, EngineRef},
+        extension::note::{NoteArgs, NoteTool, load_notes},
+        memory::{Conversation, ConversationRef},
+    };
+    struct Stub;
+    impl Agent<AgentCtx> for Stub {
+        fn name(&self) -> String {
+            crate::engine::AndaBot::NAME.into()
+        }
+        fn description(&self) -> String {
+            "Fixture without model work".into()
+        }
+        async fn run(
+            &self,
+            _ctx: AgentCtx,
+            _prompt: String,
+            _resources: Vec<anda_core::Resource>,
+        ) -> Result<AgentOutput, BoxError> {
+            Ok(AgentOutput::default())
+        }
+    }
+    let keys = [
+        Ed25519Key::new([91; 32]),
+        Ed25519Key::new([92; 32]),
+        Ed25519Key::new([93; 32]),
+    ];
+    let config = runtime_config(&keys, None);
+    let brain = create(Arc::new(InMemory::new()), &keys, Some(config.clone())).await;
+    let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let db = crate::test_support::memory_db("memory_product_host").await;
+    let conversations = Arc::new(
+        crate::engine::ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+            .await
+            .unwrap(),
+    );
+    let owner = keys[0].id();
+    let message = Message {
+        role: "user".into(),
+        content: vec!["Keep release notes short".to_string().into()],
+        ..Default::default()
+    };
+    let mut conv = Conversation {
+        user: owner,
+        ..Default::default()
+    };
+    conv.append_messages(vec![message.clone()]);
+    let conversation = conversations
+        .conversations
+        .add_conversation(ConversationRef::from(&conv))
+        .await
+        .unwrap();
+    let journal = Journal::new(db.object_store());
+    let client =
+        Client::new("http://127.0.0.1:0".into(), None).with_host(host.clone(), journal.clone());
+    let source = crate::brain::product::source_identity(&owner.to_string(), conversation, None);
+    let submission = FormationSubmission {
+        bot_conversation: conversation,
+        window_start: 0,
+        window_end: 1,
+        submitted_at: anda_engine::unix_ms(),
+        brain_conversation: None,
+        state: FormationState::Pending,
+        error: None,
+        updated_at: None,
+        failure_stage: None,
+        provenance: Some(FormationProvenance {
+            version: 1,
+            policy_revision: Some("fixture-standard".into()),
+            caller: owner.to_string(),
+            session: None,
+            source_identity: Some(source),
+            source: "cli:fixture".into(),
+            reply_target: None,
+            thread: None,
+            external_user: false,
+            counterparty: Some(owner.to_string()),
+            source_messages: vec![SourceMessageRef {
+                conversation: conversation.to_string(),
+                index: "0".into(),
+                role: "user".into(),
+                content_digest: anda_cognitive_nexus::content_digest(
+                    &serde_json::to_value(&message).unwrap(),
+                )
+                .unwrap(),
+                submitted_digest: None,
+            }],
+            input_digest: None,
+        }),
+    };
+    let accepted = client
+        .submit_formation_window(
+            submission,
+            anda_brain::types::FormationInputRef {
+                messages: std::slice::from_ref(&message),
+                context: &None,
+                timestamp: &None,
+            },
+        )
+        .await
+        .unwrap();
+    let native = accepted.brain_conversation.unwrap();
+    let key = format!("formation/{conversation}/0");
+    let mut submission = journal
+        .read::<FormationSubmission>(&key)
+        .await
+        .unwrap()
+        .unwrap();
+    submission.state = FormationState::Completed;
+    journal.write(&key, &submission).await.unwrap();
+    let created=command(&space,r#"MUTATE {
+        CREATE CONCEPT ?owner {TYPE "Person" NAME "Owner" SET FIELDS {key: :owner}}
+        CREATE CONCEPT ?value {TYPE "Preference" NAME "Short release notes"}
+        CREATE EVIDENCE ?input {CLIENT KEY :key SET FIELDS {evidence_class:"user_statement",payload: :payload,observed_at:"2026-09-22T00:00:00.000Z"}}
+        ASSERT ?claim (?owner,"prefers",?value) {by:?owner,mode:"stated",evidence:?input}
+    }"#,json!({"owner":owner.to_string(),"key":format!("formation:conversation:{native}:1"),"payload":message})).await;
+    let id = created["handles"]["claim"].as_str().unwrap();
+    let activity = ActivityStore::connect(db, conversations, journal.clone(), client.clone())
+        .await
+        .unwrap();
+    activity.reconcile().await.unwrap();
+    let engine = Arc::new(
+        EngineBuilder::new()
+            .with_management(Arc::new(anda_engine::management::BaseManagement {
+                controller: owner,
+                managers: Default::default(),
+                visibility: anda_engine::management::Visibility::Public,
+            }))
+            .register_tool(Arc::new(NoteTool::new()))
+            .unwrap()
+            .register_agent(Arc::new(Stub), None)
+            .unwrap()
+            .build(crate::engine::AndaBot::NAME.into())
+            .await
+            .unwrap(),
+    );
+    let engine_ref = Arc::new(EngineRef::new());
+    engine_ref.bind(Arc::downgrade(&engine));
+    let access = Arc::new(MemoryAccess::new(host, journal.clone(), engine_ref, owner));
+    let mutations = MutationService::new(access.clone(), journal.clone(), activity.clone());
+    let service = MemoryService::new(client)
+        .with_activity(activity)
+        .with_mutations(mutations.clone());
+    let before = service.record(owner, id).await.unwrap();
+    assert!(before.sources_complete);
+    assert_eq!(
+        before.sources[0].text.as_deref(),
+        Some("Keep release notes short")
+    );
+    assert!(service.record(keys[1].id(), id).await.is_err());
+    let input = ChangeRequest {
+        operation_id: "host-correction".into(),
+        record_id: id.into(),
+        expected_revision: before.revision,
+        kind: anda_brain::product::ChangeKind::Correct,
+        new_value: Some("Risks first".into()),
+    };
+    let preview = service.prepare_change(owner, input.clone()).await.unwrap();
+    let ctx = engine
+        .ctx_with(
+            owner,
+            crate::engine::AndaBot::NAME,
+            "",
+            RequestMeta::default(),
+        )
+        .unwrap();
+    let notes: NoteArgs = serde_json::from_value(
+        json!({"op":"set","items":[{"id":"old","content":"Old processing context"}]}),
+    )
+    .unwrap();
+    NoteTool::new()
+        .call(ctx.child_base(NoteTool::NAME).unwrap(), notes, vec![])
+        .await
+        .unwrap();
+    let confirmed = service
+        .commit_change(
+            owner,
+            input.operation_id.clone(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirmed.state, "confirmed");
+    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
+    assert_eq!(
+        service
+            .prepare_change(owner, input.clone())
+            .await
+            .unwrap()
+            .state,
+        "confirmed"
+    );
+    assert!(
+        service
+            .change(keys[1].id(), &input.operation_id)
+            .await
+            .is_err()
+    );
+    let mut conflict = input.clone();
+    conflict.new_value = Some("Different text".into());
+    assert!(service.prepare_change(owner, conflict).await.is_err());
+    let replacement = service
+        .record(owner, confirmed.replacement_record.as_deref().unwrap())
+        .await
+        .unwrap();
+    assert!(replacement.sources_complete);
+    assert_eq!(replacement.sources[0].kind, "correction");
+    let remove = ChangeRequest {
+        operation_id: "host-delete".into(),
+        record_id: replacement.id.clone(),
+        expected_revision: replacement.revision,
+        kind: anda_brain::product::ChangeKind::Delete,
+        new_value: None,
+    };
+    let preview = service.prepare_change(owner, remove.clone()).await.unwrap();
+    let confirmed = service
+        .commit_change(
+            owner,
+            remove.operation_id.clone(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirmed.state, "confirmed");
+    assert!(confirmed.before.is_none());
+    assert!(service.record(owner, &replacement.id).await.is_err());
+    // Preparing the same logical operation after deletion returns its receipt,
+    // without requiring a record that has intentionally ceased to exist.
+    assert_eq!(
+        service.prepare_change(owner, remove).await.unwrap().state,
+        "confirmed"
+    );
     space.close().await.unwrap();
 }

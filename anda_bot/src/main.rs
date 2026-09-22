@@ -80,6 +80,8 @@ pub enum Commands {
     Start,
     /// Show whether the anda daemon is running.
     Status(StatusCommand),
+    /// Get started with long-term memory and inspect the running service.
+    Memory(cli::memory::MemoryCommand),
     /// Restart the anda daemon. If the daemon is not running, this will start it.
     Restart,
     /// Equal to running `anda restart`.
@@ -191,6 +193,33 @@ async fn run() -> Result<(), BoxError> {
         return Err("--full-access can only be used with the interactive `anda` CLI".into());
     }
 
+    // Memory guide/status are read-only and must never initialize a home,
+    // credentials, logging or a daemon as a side effect of inspection.
+    if let Some(Commands::Memory(cmd)) = command.as_ref() {
+        cmd.validate()?;
+        if let Some(evaluation) = cmd.evaluation() {
+            if home.is_some() {
+                return Err("Memory evaluations are isolated; --home is not supported".into());
+            }
+            return cli::memory_eval::run(evaluation).await;
+        }
+        if cmd.is_guide() {
+            cmd.print_guide();
+            return Ok(());
+        }
+        let memory_home = home
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(default_home);
+        let cfg = config::Config::from_file(&config::Config::file_path(&memory_home)).await?;
+        let daemon = daemon::Daemon::new(memory_home.clone(), cfg);
+        let owner = identity::load_identity_secret_with_location_with_store(
+            &identity::IdentityKeyRef::owner(&memory_home), identity::os_identity_key_store(),
+        ).await.map_err(|_| "No existing owner identity is available. Run `anda start` to initialize Anda. / 无法读取已有身份，请先运行 anda start。")?;
+        let client = build_control_client_from_owner_secret(&daemon, owner.secret)?;
+        return cli::memory::run(&client, cmd).await;
+    }
+
     #[cfg(feature = "mib")]
     if let Some(Commands::Mib(cmd)) = command.as_ref() {
         if home.is_some() {
@@ -230,6 +259,7 @@ async fn run() -> Result<(), BoxError> {
     }
 
     match command {
+        Some(Commands::Memory(_)) => unreachable!("memory dispatches before daemon initialization"),
         #[cfg(feature = "mib")]
         Some(Commands::Mib(_)) => unreachable!("MIB dispatches before daemon initialization"),
         None => {

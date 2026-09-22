@@ -1,0 +1,38 @@
+Memory / 长期记忆
+
+Anda can carry useful preferences and project context into later conversations.
+No extra Brain configuration or MIB build is needed for ordinary memory.
+Anda 可以把有用的偏好和项目背景带进后续对话，无需额外配置 Brain 或编译 MIB。
+
+1. Tell Anda a stable preference / 告诉 Anda 一条偏好：
+   记住：我喜欢简短的发布说明，但要保留风险段落。
+2. Allow background processing, then use /new and ask / 等后台整理后，用 /new 开新对话再问：
+   我喜欢什么样的发布说明？请查一下长期记忆，找不到就直说。
+3. State changes naturally / 有变化时直接说明：
+   更新一下：以后发布说明先写风险，再写变更。
+
+Saving is asynchronous. A chat reply saying “remembered” is not proof of storage.
+A natural-language correction submits new information; it is not a verified edit or deletion.
+记忆异步整理。助手说“记住了”不等于已经保存；自然语言纠正是提交新信息，不代表已完成精确修改或删除。
+
+anda memory / TUI /memory: connection and processing status / 连接与处理状态
+/brain inbox: optional attention inbox / 可选记忆待办
+/brain status: advanced runtime details / 高级运行时详情
+
+Memory is local by default. Configured model providers may process its content and charge for it.
+The guide and connection checks do not invoke a model. Status checks do not start the daemon.
+记忆默认存本机；配置的模型服务可能处理相关内容并产生费用。
+指南与连接检查不调用模型，状态检查不自动启动服务。
+
+MIB is an isolated developer evaluation host, not a requirement for everyday memory.
+MIB 是隔离的开发者评测服务，日常记忆无需使用。
+
+Browser Memory / 浏览器“记忆”：verified sources, search, correction, stop using and deletion previews / 来源、搜索、更正、停用和删除预览。
+Search may call a model. / 搜索可能调用模型。
+New restricted conversation / 新建受限会话：
+  anda agent run --memory-mode no-store --prompt 'Help with this task'
+  anda agent run --memory-mode off --prompt 'Use only this new conversation'
+These constrain Brain/Notes, not chat, files, logs or providers. / 只约束 Brain/Notes，聊天、文件、日志和服务商处理仍保留。
+Optional inbox / 可选待办：anda memory inbox setup → review/apply → anda restart
+TUI /memory inbox → /memory answer <number> <text>; /memory retry <number> reuses the saved answer and event key.
+TUI /memory inbox 查看编号；/memory answer <编号> <正文> 回答；/memory retry <编号> 用已保存的原正文和事件键重试。

@@ -35,7 +35,7 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
                 Span::styled("? ", theme::accent_style()),
                 Span::styled(
                     truncate_visual(
-                        "/new [message]  •  /goal message  •  /loop message  •  /skill skill-name message  •  /side message  •  /steer message  •  /stop task  •  /cancel session",
+                        "/new [message]  •  /memory  •  /goal message  •  /loop message  •  /skill skill-name message  •  /side message  •  /steer message  •  /stop task  •  /cancel session",
                         width.saturating_sub(2),
                     ),
                     theme::subtle_style(),

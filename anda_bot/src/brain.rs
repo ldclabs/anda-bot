@@ -1,14 +1,24 @@
+mod access;
+pub mod activity;
 mod attention;
+pub mod catalog;
 mod client;
 mod host;
 mod journal;
 mod kip;
+pub mod mutation;
+pub mod outbox;
+pub mod product;
 mod runtime;
+mod service;
+pub mod setup;
 mod tools;
 
+pub use access::{MemoryAccess, MemoryEpoch};
 pub use client::*;
 pub use host::*;
 pub use journal::*;
 pub use kip::http_kip_args;
 pub use runtime::*;
+pub use service::MemoryService;
 pub use tools::*;

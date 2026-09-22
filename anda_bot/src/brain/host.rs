@@ -85,6 +85,35 @@ impl Host {
         let (runtime, caller) = self.runtime(caller).await?;
         Ok(runtime.inbox(&caller, query).await?)
     }
+
+    pub async fn watch_record(
+        &self,
+        caller: Principal,
+        operation_id: String,
+        target: String,
+        summary: String,
+    ) -> Result<anda_brain::runtime_api::RecordWatch, BoxError> {
+        let (runtime, caller) = self.runtime(caller).await?;
+        runtime
+            .create_record_watch(caller, operation_id, target, summary)
+            .await
+    }
+    pub async fn record_watch(
+        &self,
+        caller: Principal,
+        operation_id: &str,
+    ) -> Result<anda_brain::runtime_api::RecordWatch, BoxError> {
+        let (runtime, caller) = self.runtime(caller).await?;
+        runtime.record_watch(&caller, operation_id).await
+    }
+    pub async fn cancel_record_watch(
+        &self,
+        caller: Principal,
+        operation_id: String,
+    ) -> Result<anda_brain::runtime_api::RecordWatch, BoxError> {
+        let (runtime, caller) = self.runtime(caller).await?;
+        runtime.cancel_record_watch(caller, operation_id).await
+    }
     pub async fn respond(
         &self,
         caller: Principal,

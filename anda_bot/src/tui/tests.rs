@@ -50,6 +50,23 @@ fn ready_app() -> App {
     app
 }
 
+#[tokio::test]
+async fn memory_guide_stays_local_and_status_returns_without_blocking_chat() {
+    let mut app = ready_app();
+    app.client = gateway::Client::new("http://127.0.0.1:0".into(), String::new());
+    app.input_buf = "/memory help".into();
+    app.submit_input().await.unwrap();
+    assert_eq!(app.chat.messages.len(), 1);
+    assert!(!app.chat.sending);
+    app.input_buf = "/memory".into();
+    tokio::time::timeout(std::time::Duration::from_millis(100), app.submit_input())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(app.pending_memory.is_some());
+    assert!(!app.chat.sending);
+}
+
 fn push_text_message(app: &mut App, role: &str, text: &str) {
     app.chat.messages.push(anda_core::Message {
         role: role.to_string(),

@@ -45,6 +45,8 @@ const SEC_WEBSOCKET_VERSION: &str = "sec-websocket-version";
 
 #[derive(Clone)]
 pub struct BrowserWebSocketState {
+    pub(super) memory: super::memory_api::MemoryApiState,
+    pub(super) auth_headers: HeaderMap,
     pub app: AppState,
     pub brain: brain::Client,
     pub bridge: Arc<BrowserBridge>,
@@ -137,6 +139,7 @@ pub async fn browser_websocket(
     };
     let mut state = state;
     state.brain = state.brain.with_auth_token(bearer.to_string());
+    state.auth_headers = auth_headers;
 
     let upgraded = upgrade::on(&mut request);
     tokio::spawn(async move {
@@ -334,6 +337,10 @@ async fn handle_browser_ws_request(
         "agent_run" => handle_agent_run(incoming.params, state, caller, engine_id).await,
         "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
         "brain_status" => handle_brain_status(state).await,
+        method if method.starts_with("memory_") => Ok(state
+            .memory
+            .websocket_dispatch(&state.auth_headers, method, incoming.params)
+            .await),
         "brain_kip_readonly" => handle_brain_kip_readonly(incoming.params, state).await,
         "brain_attention" | "brain_respond" | "brain_runtime_status" => {
             handle_brain_runtime(
@@ -1302,6 +1309,12 @@ mod tests {
         let auto_updater = Arc::new(AutoUpdater::new(db, home.clone(), http));
 
         let state = BrowserWebSocketState {
+            memory: super::super::memory_api::MemoryApiState {
+                app: app.clone(),
+                owner: auth_key.id(),
+                service: brain::MemoryService::new(brain.clone()),
+            },
+            auth_headers: HeaderMap::new(),
             app,
             brain,
             bridge: Arc::new(BrowserBridge::new()),

@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+  import type { Activity } from './memory/api'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import type {
     ChatAction,
@@ -78,10 +79,12 @@
 
   let {
     message,
+    memoryActivity,
     quickPromptActive = false,
     onToggleQuickPrompt
   }: {
     message: ChatMessage
+    memoryActivity?: Activity
     quickPromptActive?: boolean
     onToggleQuickPrompt?: (text: string) => Promise<void> | void
   } = $props()
@@ -999,6 +1002,16 @@
             {/if}
           </button>
         {/if}
+      {/if}
+      {#if memoryActivity}
+        <span
+          class="px-1 text-[11px] text-muted-foreground"
+          title={getMessage('memoryEvidenceHint')}
+        >
+          {getMessage(`memoryState_${memoryActivity.state}`)}{memoryActivity.stale
+            ? ` · ${getMessage('memoryStale')}`
+            : ''}
+        </span>
       {/if}
       {#if messageTimeLabel}
         <span class="chat-message-time px-1">{messageTimeLabel}</span>

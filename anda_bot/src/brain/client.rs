@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crate::util::http_client::new_reqwest_client;
 
 pub use anda_brain::runtime_api::{
-    AttentionPage, AttentionQuery, AttentionResponse, ResponseReceipt, RuntimeStatus,
+    AttentionItem, AttentionPage, AttentionQuery, AttentionResponse, ResponseReceipt, RuntimeStatus,
 };
 pub use anda_brain::types::RecallOutput;
 pub use anda_brain::{
@@ -117,9 +117,22 @@ impl Client {
 
     pub async fn submit_formation_window(
         &self,
-        submission: super::FormationSubmission,
+        mut submission: super::FormationSubmission,
         input: FormationInputRef<'_>,
     ) -> Result<super::FormationSubmission, BoxError> {
+        if let Some(provenance) = submission.provenance.as_mut() {
+            if provenance.source_messages.len() != input.messages.len() {
+                return Err("Formation source mapping length mismatch".into());
+            }
+            for (source, message) in provenance.source_messages.iter_mut().zip(input.messages) {
+                source.submitted_digest = Some(anda_cognitive_nexus::content_digest(
+                    &serde_json::to_value(message)?,
+                )?);
+            }
+            provenance.input_digest = Some(anda_cognitive_nexus::content_digest(
+                &serde_json::to_value(&input)?,
+            )?);
+        }
         match &self.journal {
             Some(journal) => journal.submit_formation(self, submission, input).await,
             None => {
@@ -134,6 +147,56 @@ impl Client {
                 })
             }
         }
+    }
+
+    pub(super) fn embedded_host(&self) -> Option<super::Host> {
+        self.host.clone()
+    }
+    pub(super) fn journal(&self) -> Option<super::Journal> {
+        self.journal.clone()
+    }
+
+    pub(super) async fn formation_submission(
+        &self,
+        input: FormationInputRef<'_>,
+        submission: &super::FormationSubmission,
+    ) -> Result<AgentOutput, BoxError> {
+        if let (Some(host), Some(provenance)) = (&self.host, &submission.provenance) {
+            let space = host
+                .state
+                .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
+                .await?;
+            return space
+                .ingest_product(
+                    anda_brain::agents::SELF_USER_ID,
+                    anda_brain::types::FormationInput {
+                        messages: input.messages.to_vec(),
+                        context: input.context.clone(),
+                        timestamp: input.timestamp.clone(),
+                    },
+                    provenance.source_identity.clone().unwrap_or_else(|| {
+                        super::product::source_identity(
+                            &provenance.caller,
+                            submission.bot_conversation,
+                            provenance.session.as_deref(),
+                        )
+                    }),
+                )
+                .await
+                .map_err(|error| {
+                    if matches!(
+                        error.downcast_ref::<anda_brain::product::SourceAdmissionError>(),
+                        Some(anda_brain::product::SourceAdmissionError::Busy)
+                    ) {
+                        Box::new(RpcFailure {
+                            message: "memory_change_pending".into(),
+                        }) as BoxError
+                    } else {
+                        error
+                    }
+                });
+        }
+        self.formation(input).await
     }
 
     /// Forward the original verified bearer across a transport boundary.
@@ -266,17 +329,23 @@ impl Client {
         .into())
     }
 
+    /// Existing profile only: restricted conversations never initialize a Person.
+    pub async fn user_info_readonly(&self, user: String) -> Result<Json, BoxError> {
+        let mut request = KipRequest::single(
+            "FIND(?person) WHERE {?person CONCEPT {type: \"Person\", key: :key}} LIMIT 1",
+        );
+        request.parameters = Some(serde_json::Map::from_iter([("key".into(), user.into())]));
+        let result = single_kip_result(self.execute_kip_readonly(request).await?)?;
+        Ok(result
+            .as_array()
+            .and_then(|rows| rows.first())
+            .cloned()
+            .unwrap_or(Json::Null))
+    }
+
     pub async fn brain_status(&self) -> Result<FormationStatus, BoxError> {
         let rt: RpcResponse<FormationStatus> = self.get("/formation_status").await?;
-        if let Some(result) = rt.result {
-            Ok(result)
-        } else {
-            Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[BrainClient] brain_state failed with unknown error".to_string()
-                })
-                .into())
-        }
+        rpc_result(rt)
     }
 
     /// Triggers a maintenance cycle. The brain runs the cycle asynchronously
@@ -495,6 +564,9 @@ impl Tool<BaseCtx> for Client {
         request: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        if !crate::engine::MemoryPolicy::current(&ctx).may_read() {
+            return Err("Memory recall is disabled for this conversation".into());
+        }
         let rt = self.recall((&request).into()).await?;
         if let (Some(host), Some(journal)) = (&self.host, &self.journal) {
             use anda_core::StateFeatures;

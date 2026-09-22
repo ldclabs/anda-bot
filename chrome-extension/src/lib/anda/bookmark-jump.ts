@@ -3,13 +3,15 @@ import type { BookmarkedMessage } from '$lib/anda/client/types'
 export const bookmarkJumpRequestStorageKey = 'andaBookmarkJumpRequest'
 export const bookmarkJumpRequestMaxAgeMs = 5 * 60 * 1000
 
+export type MessageLocation = Pick<BookmarkedMessage, 'message_id' | 'conversation' | 'source'>
+
 export interface BookmarkJumpRequest {
   id: string
   createdAt: number
-  bookmark: BookmarkedMessage
+  bookmark: MessageLocation
 }
 
-export function createBookmarkJumpRequest(bookmark: BookmarkedMessage): BookmarkJumpRequest {
+export function createBookmarkJumpRequest(bookmark: MessageLocation): BookmarkJumpRequest {
   return {
     id: `${bookmark.message_id}:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
     createdAt: Date.now(),

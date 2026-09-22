@@ -1165,5 +1165,344 @@
   },
   "brainBackToGraph": {
     "message": "العودة إلى الرسم"
+  },
+  "memoryTitle": {
+    "message": "الذاكرة"
+  },
+  "memoryIntro": {
+    "message": "يمكن أن تنتقل التفضيلات المفيدة وسياق المشاريع إلى محادثتك التالية دون إعداد إضافي."
+  },
+  "memoryService": {
+    "message": "خدمة الذاكرة"
+  },
+  "memoryOpenInbox": {
+    "message": "فتح الوارد"
+  },
+  "memoryTry": {
+    "message": "جرّب تفضيلاً"
+  },
+  "memoryExample": {
+    "message": "تذكّر: أفضل ملاحظات إصدار مختصرة مع قسم للمخاطر."
+  },
+  "memoryTryHint": {
+    "message": "ألصق هذا في محادثة. بعد المعالجة، ابدأ محادثة باستخدام /new واسأل عن التفضيل دون تكرار الإجابة."
+  },
+  "memoryActivity": {
+    "message": "سجل المعالجة"
+  },
+  "memoryEvidenceHint": {
+    "message": "اكتمال معالجة المحادثة لا يثبت حفظ كل معلومة."
+  },
+  "memoryExplore": {
+    "message": "استكشاف العلاقات"
+  },
+  "memoryConversation": {
+    "message": "المحادثة"
+  },
+  "memoryStale": {
+    "message": "بانتظار التحديث"
+  },
+  "memoryNoActivity": {
+    "message": "لا توجد سجلات معالجة مرئية بعد."
+  },
+  "memoryPartial": {
+    "message": "فهرس السجل غير مكتمل بعد."
+  },
+  "memoryPrivacyHint": {
+    "message": "تُحفظ الذاكرة محلياً افتراضياً. قد تعالج خدمات النماذج المهيأة محتواها مقابل تكلفة. فحوص الحالة هذه لا تستدعي نموذجاً."
+  },
+  "memoryTechnicalDetails": {
+    "message": "تفاصيل تقنية"
+  },
+  "memoryConnectionHelp": {
+    "message": "تحقق من الاتصال ورمز المالك. قد لا تدعم الخوادم القديمة هذه الواجهة."
+  },
+  "memoryState_reachable": {
+    "message": "متصل"
+  },
+  "memoryState_available": {
+    "message": "متاح"
+  },
+  "memoryState_not_configured": {
+    "message": "غير مهيأ (اختياري)"
+  },
+  "memoryState_unauthorized": {
+    "message": "يلزم تسجيل الدخول"
+  },
+  "memoryState_forbidden": {
+    "message": "لا تملك هذه الهوية صلاحية الوصول"
+  },
+  "memoryState_unavailable": {
+    "message": "غير متاح"
+  },
+  "memoryState_timeout": {
+    "message": "انتهت المهلة"
+  },
+  "memoryState_submitting": {
+    "message": "جارٍ الإرسال"
+  },
+  "memoryState_accepted": {
+    "message": "بانتظار المعالجة"
+  },
+  "memoryState_processing": {
+    "message": "جارٍ تنظيم المحادثات"
+  },
+  "memoryState_completed": {
+    "message": "تمت معالجة المحادثة"
+  },
+  "memoryState_rejected": {
+    "message": "رُفض الإرسال"
+  },
+  "memoryState_failed": {
+    "message": "فشلت المعالجة"
+  },
+  "memoryState_legacy_unattributed": {
+    "message": "سجل سابق"
+  },
+  "memoryState_unknown": {
+    "message": "لم يتأكد القبول"
+  },
+  "memoryCopy": {
+    "message": "نسخ التفضيل"
+  },
+  "memoryCopied": {
+    "message": "تم النسخ"
+  },
+  "memoryRecords": {
+    "message": "عبارات محفوظة"
+  },
+  "memoryYou": {
+    "message": "أنت"
+  },
+  "memorySource": {
+    "message": "عرض المصدر"
+  },
+  "memorySourceUnavailable": {
+    "message": "الربط بالمصدر غير مكتمل."
+  },
+  "memoryNoRecords": {
+    "message": "لا توجد سجلات ذاكرة قابلة للتحقق بعد."
+  },
+  "memoryClaimSupport": {
+    "message": "مذكور"
+  },
+  "memoryClaimReject": {
+    "message": "منفي"
+  },
+  "memoryClaimUncertain": {
+    "message": "غير مؤكد"
+  },
+  "memoryRecordCurrent": {
+    "message": "عبارة حالية"
+  },
+  "memoryRecordSuperseded": {
+    "message": "تم استبدالها"
+  },
+  "memoryRecordRetracted": {
+    "message": "تم سحبها"
+  },
+  "memoryRecordUnknown": {
+    "message": "حالة أخرى"
+  },
+  "memoryCorrectionSource": {
+    "message": "سجل التصحيح"
+  },
+  "memoryState_suppressed": {
+    "message": "لم يعد المصدر يضيف إلى الذاكرة"
+  },
+  "memoryCorrect": {
+    "message": "تصحيح"
+  },
+  "memoryDelete": {
+    "message": "حذف…"
+  },
+  "memoryChangeConfirmed": {
+    "message": "اكتمل التغيير. ابدأ محادثة جديدة لاستخدام الذاكرة المحدثة."
+  },
+  "memoryChangeAffected": {
+    "message": "السجلات المرتبطة المتأثرة: $1"
+  },
+  "memoryChangeScope": {
+    "message": "يتغير فقط ما ورد في المعاينة من عبارات ورسائل مستشهد بها واعتمادات مسجلة. تُعاد تهيئة ملاحظات العمل وتتوقف المحادثات المصدر القديمة عن إضافة ذاكرة. تبقى المحادثات والملفات والسجلات والنسخ الاحتياطية والسجلات المستقلة والسياق الذي سبق إرساله."
+  },
+  "memoryChangePending": {
+    "message": "ما زال التغيير المقبول قيد المعالجة."
+  },
+  "memoryNewValue": {
+    "message": "المحتوى الجديد"
+  },
+  "memoryReviewHint": {
+    "message": "راجع النطاق قبل التأكيد. إعداد المعاينة لا يغيّر مخطط الذاكرة."
+  },
+  "memoryUnknownHint": {
+    "message": "النتيجة غير معروفة. تحقق من العملية الأصلية ولا ترسل تغييراً جديداً."
+  },
+  "memoryClose": {
+    "message": "إغلاق"
+  },
+  "memoryCheckResult": {
+    "message": "فحص النتيجة"
+  },
+  "memoryConfirmDelete": {
+    "message": "تأكيد الحذف"
+  },
+  "memoryConfirmCorrection": {
+    "message": "تأكيد التصحيح"
+  },
+  "memoryReviewChange": {
+    "message": "مراجعة التغيير"
+  },
+  "memoryDraftStored": {
+    "message": "تُحفظ المسودة على هذا الجهاز. إغلاق النافذة لا يؤكد التغيير ولا يلغيه."
+  },
+  "memoryResumeChange": {
+    "message": "متابعة تغيير الذاكرة"
+  },
+  "memoryChangeDiscarded": {
+    "message": "تم تجاهل المسودة أو انتهت صلاحيتها."
+  },
+  "memoryDiscardDraft": {
+    "message": "تجاهل المسودة"
+  },
+  "memorySetupTitle": {
+    "message": "إعداد صندوق الذاكرة"
+  },
+  "memorySetupScope": {
+    "message": "احتفظ بأسئلة تغيّر الذكريات بين المحادثات. يُنشأ صندوق خاص بالمالك فقط. يمنح كل اشتراك المتحكم حق إلغاء ذلك الاشتراك وحده. لا يُفعّل التعلم أو صلاحيات التنفيذ."
+  },
+  "memorySetupPreview": {
+    "message": "راجع التغيير. تُحفظ نسخة احتياطية خاصة. يسري الإعداد بعد إعادة تشغيل Anda."
+  },
+  "memorySetupApply": {
+    "message": "حفظ الإعدادات"
+  },
+  "memorySetupRestart": {
+    "message": "حُفظت الإعدادات. أنهِ مهامك الحالية ثم نفّذ الأمر. عُد بعد ذلك للتحقق من الوصول."
+  },
+  "memorySearch": {
+    "message": "البحث في الذاكرة"
+  },
+  "memorySearchPlaceholder": {
+    "message": "ماذا قلت عن ملاحظات الإصدار؟"
+  },
+  "memorySearchCost": {
+    "message": "قد يستدعي البحث نموذجًا. الحد الافتراضي 4096 رمزًا للنتيجة و32768 رمزًا لمدخل المخطط؛ وليس سقفًا للتكلفة الإجمالية."
+  },
+  "memorySearchUnknown": {
+    "message": "لا توجد إعادة تلقائية. قد يترتب على بحث جديد رسم آخر."
+  },
+  "memorySearchPacket": {
+    "message": "يتضمن السياق نطاق التغطية والتنبيهات. لا يثبت حفظ حقيقة ولا يمنح إذنًا بالتصرف."
+  },
+  "memoryCopyPacket": {
+    "message": "نسخ السياق والمصادر والتنبيهات"
+  },
+  "memoryWatch": {
+    "message": "اسألني عند تغير هذه الذاكرة"
+  },
+  "memoryWatching": {
+    "message": "الاشتراك نشط. ستظهر الأسئلة في صندوق الذاكرة."
+  },
+  "memoryWatchCancel": {
+    "message": "إلغاء الاشتراك"
+  },
+  "memoryWatchRetry": {
+    "message": "التحقق من الاشتراك أو إعادة محاولته"
+  },
+  "memoryModeLabel": {
+    "message": "وضع الذاكرة"
+  },
+  "memoryModeNew": {
+    "message": "المحادثة النصية التالية"
+  },
+  "memoryModeKeep": {
+    "message": "متابعة الوضع الحالي"
+  },
+  "memoryMode_standard": {
+    "message": "استخدام الذاكرة وحفظها"
+  },
+  "memoryMode_no_store": {
+    "message": "عدم حفظ ذاكرة طويلة الأمد"
+  },
+  "memoryMode_off": {
+    "message": "عدم استخدام الذاكرة طويلة الأمد"
+  },
+  "memoryMode_unknown": {
+    "message": "إصدار سياسة غير معروف"
+  },
+  "memoryModeScope": {
+    "message": "ينطبق على الوصول التلقائي إلى Brain وNotes. تبقى المحادثات والملفات والسجلات ومعالجة المزود. تُعطّل الأوضاع المقيّدة الوكلاء الفرعيين والإشارات المرجعية وتعديلات cron."
+  },
+  "memoryModeFirstMessage": {
+    "message": "أرسل رسالة نصية عادية لبدء محادثة جديدة بهذا الوضع. لن يُنسخ السياق السابق."
+  },
+  "memorySuppress": {
+    "message": "إيقاف الاستخدام"
+  },
+  "memoryConfirmSuppress": {
+    "message": "تأكيد إيقاف الاستخدام"
+  },
+  "memoryRecordSuppressed": {
+    "message": "مستبعد من الاستخدام التلقائي"
+  },
+  "memorySuppressScope": {
+    "message": "تُحفظ الادعاءات والمصادر والتبعيات المعروضة في الأرشيف. تتوقف محادثاتها عن إضافة ذاكرة جديدة. تُصفّر Notes وسياقات المعالجة. تبقى المحادثات والملفات والنسخ الاحتياطية والسياق المُسلّم."
+  },
+  "memoryUndoPreview": {
+    "message": "معاينة تصحيح عكسي"
+  },
+  "memoryOpenSource": {
+    "message": "فتح الرسالة الأصلية"
+  },
+  "memorySourceTruncated": {
+    "message": "الاقتباس مختصر. افتح الرسالة الأصلية للنص الكامل."
+  },
+  "memorySearchConstraint": {
+    "message": "قيد أو تنبيه"
+  },
+  "memorySearchEmpty": {
+    "message": "لم تُرجع ذاكرة قابلة للاستخدام."
+  },
+  "memorySearchCoverage": {
+    "message": "النتيجة الكاملة والتغطية والتنبيهات"
+  },
+  "memoryState_recalled": {
+    "message": "اكتمل بحث الذاكرة"
+  },
+  "memoryState_recall_failed": {
+    "message": "بحث الذاكرة غير مكتمل"
+  },
+  "memoryLearningTitle": {
+    "message": "متقدم: التقييم والتعلم"
+  },
+  "memoryLearningScope": {
+    "message": "يدعم تعلم الأعمال قالب الشروط المسبقة فقط. يحتاج منفذًا ومراقبًا ومصدر مهام منفصلة، ومعايرة مراجعة، وموافقة نشر وتراجعًا أصليًا. الذاكرة اليومية لا تحتاج ذلك."
+  },
+  "memoryLearning_not_compiled": {
+    "message": "هذا الإصدار لا يتضمن تعلم الأعمال."
+  },
+  "memoryLearning_services_missing": {
+    "message": "خدمات الأعمال المطلوبة غير مثبتة."
+  },
+  "memoryLearning_identity_mismatch": {
+    "message": "هويات الخدمات أو العقود المثبتة غير متطابقة."
+  },
+  "memoryLearning_calibration_missing": {
+    "message": "راجع معايرة عائلة المهام هذه أولًا."
+  },
+  "memoryLearning_awaiting_approval": {
+    "message": "تم الإعداد؛ بانتظار الموافقة الصريحة على الأتمتة والنشر."
+  },
+  "memoryLearning_ready": {
+    "message": "التعلم المعزول جاهز. يتطلب تطبيقه في الأعمال موافقة منفصلة والتحقق لكل مهمة."
+  },
+  "memoryLearning_unavailable": {
+    "message": "تعذر التحقق من الجاهزية. استعد الاتصال والوصول أولًا."
+  },
+  "memoryEvaluationCli": {
+    "message": "المقارنة المعزولة متاحة من CLI في إصدارات MIB. أنشئ خطة قبل التشغيل الصريح. قد يكون قياس التكلفة غير مكتمل."
+  },
+  "memorySearchFee": {
+    "message": "قد يستدعي البحث نموذجًا ويترتب عليه رسم. لا يُعاد تلقائيًا."
   }
 }

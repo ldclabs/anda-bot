@@ -49,6 +49,9 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
     pub fn new(base_url: String, auth_token: String) -> Self {
         Self {
             http: new_reqwest_client(),
@@ -81,6 +84,93 @@ impl Client {
             .request(reqwest::Method::GET, "/daemon/status")
             .timeout(STATUS_TIMEOUT);
         self.decode_response(req.send().await?).await
+    }
+
+    pub async fn memory_overview(&self) -> Result<crate::brain::product::MemoryOverview, BoxError> {
+        let response = self
+            .request(reqwest::Method::GET, "/daemon/memory/v1/overview")
+            .timeout(Duration::from_secs(12))
+            .send()
+            .await?;
+        let envelope = self.decode_response::<ToolResponse>(response).await?;
+        match envelope {
+            ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
+            ToolResponse::Err { error, .. } => {
+                Err(format!("{}: {}", error.code, error.message).into())
+            }
+        }
+    }
+
+    pub async fn memory_setup(
+        &self,
+        apply: Option<&str>,
+    ) -> Result<crate::brain::setup::SetupPreview, BoxError> {
+        let envelope: ToolResponse = match apply {
+            Some(preview_digest) => {
+                self.post_json(
+                    "/daemon/memory/v1/inbox/setup/commit",
+                    &serde_json::json!({"preview_digest":preview_digest}),
+                )
+                .await?
+            }
+            None => {
+                self.post_json(
+                    "/daemon/memory/v1/inbox/setup/prepare",
+                    &serde_json::json!({}),
+                )
+                .await?
+            }
+        };
+        match envelope {
+            ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
+            ToolResponse::Err { error, .. } => {
+                Err(format!("{}: {}", error.code, error.message).into())
+            }
+        }
+    }
+
+    pub async fn memory_activity(
+        &self,
+        query: &crate::brain::activity::ActivityQuery,
+    ) -> Result<crate::brain::activity::ActivityPage, BoxError> {
+        let mut url = reqwest::Url::parse(&format!("{}/daemon/memory/v1/activity", self.base_url))?;
+        {
+            let mut params = url.query_pairs_mut();
+            if let Some(conversation) = &query.conversation {
+                params.append_pair("conversation", conversation);
+            }
+            if let Some(cursor) = &query.cursor {
+                params.append_pair("cursor", cursor);
+            }
+            if let Some(limit) = query.limit {
+                params.append_pair("limit", &limit.to_string());
+            }
+        }
+        let response = self
+            .request(
+                reqwest::Method::GET,
+                &format!(
+                    "/daemon/memory/v1/activity?{}",
+                    url.query().unwrap_or_default()
+                ),
+            )
+            .timeout(Duration::from_secs(12))
+            .send()
+            .await?;
+        match self.decode_response::<ToolResponse>(response).await? {
+            ToolResponse::Ok {
+                result,
+                next_cursor,
+            } => {
+                let mut page: crate::brain::activity::ActivityPage =
+                    serde_json::from_value(result)?;
+                page.next_cursor = next_cursor;
+                Ok(page)
+            }
+            ToolResponse::Err { error, .. } => {
+                Err(format!("{}: {}", error.code, error.message).into())
+            }
+        }
     }
 
     pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {
