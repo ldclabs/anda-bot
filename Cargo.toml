@@ -122,6 +122,17 @@ weixin-agent = { git = "https://github.com/ldclabs/weixin-agent-sdk-rs.git", rev
 # The test profile inherits this override from dev.
 opt-level = 1
 
+# CI starts from disposable runners, where incremental state and debug symbols
+# cost more to build and cache than they save. Reset the dependency override so
+# the native test matrix compiles its large dependency graph without optimization.
+[profile.ci]
+inherits = "test"
+debug = 0
+incremental = false
+
+[profile.ci.package."*"]
+opt-level = 0
+
 [profile.release]
 lto = true
 strip = true

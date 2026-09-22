@@ -5,6 +5,34 @@ on:
   pull_request:
     branches: ["main"]
 jobs:
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Protoc
+        uses: taiki-e/install-action@v2
+        with:
+          tool: protoc@3.23.4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets --all-features
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -14,18 +42,6 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
-
-      - name: Checkout Brain source dependency
-        uses: actions/checkout@v6
-        with:
-          repository: ldclabs/anda-brain
-          ref: ee6feb12ce784827b02b715959f66df36ee5381d
-          path: .ci/anda-brain
-          persist-credentials: false
-
-      - name: Place Brain beside the Bot workspace
-        shell: bash
-        run: mv .ci/anda-brain ../anda-brain
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2
@@ -40,15 +56,12 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features
+        with:
+          cache-on-failure: true
 
       - name: Run tests
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --workspace -- --nocapture
+        run: cargo test --locked --workspace --profile ci

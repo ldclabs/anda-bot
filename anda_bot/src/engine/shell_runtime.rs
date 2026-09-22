@@ -408,7 +408,11 @@ mod tests {
         let mut trailing_meta = cli_meta(&project);
         trailing_meta.extra.insert(
             keys::SOURCE.to_string(),
-            json!(format!("cli:{}/", project.display())),
+            json!(format!(
+                "cli:{}{}",
+                project.display(),
+                std::path::MAIN_SEPARATOR
+            )),
         );
         trailing_source_ctx.set_state(SessionRequestMeta::new(trailing_meta));
         assert_eq!(
