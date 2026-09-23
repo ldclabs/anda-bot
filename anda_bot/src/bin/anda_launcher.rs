@@ -11,6 +11,11 @@ mod locale;
 #[path = "../provider_env.rs"]
 mod provider_env;
 
+#[cfg(any(windows, test))]
+#[path = "../update_protocol.rs"]
+#[allow(dead_code)]
+mod update_protocol;
+
 #[path = "anda_launcher/core.rs"]
 mod core;
 #[path = "anda_launcher/settings.rs"]

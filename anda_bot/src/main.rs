@@ -29,6 +29,9 @@ mod test_support;
 mod transcription;
 mod tts;
 mod tui;
+#[cfg(any(windows, test))]
+#[allow(dead_code)]
+mod update_protocol;
 mod util;
 
 #[global_allocator]

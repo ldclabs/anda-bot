@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::core::{
     LauncherContext, LauncherResult, WizardConfig, default_model_for_provider, provider_by_id,
-    provider_ids, text, write_initial_minimal_config, write_minimal_config,
+    provider_ids, text, write_minimal_config,
 };
 
 #[cfg(windows)]
@@ -24,14 +24,6 @@ pub fn run_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
         return Ok(false);
     };
     write_minimal_config(ctx, &config)?;
-    Ok(true)
-}
-
-pub fn run_initial_setup_wizard(ctx: &LauncherContext) -> LauncherResult<bool> {
-    let Some(config) = show_settings_dialog(ctx)? else {
-        return Ok(false);
-    };
-    write_initial_minimal_config(ctx, &config)?;
     Ok(true)
 }
 

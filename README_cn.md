@@ -80,6 +80,12 @@ irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 
 
 macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon，也可以从菜单栏检查更新，并在更新下载完成后提示安装并重启。Linux shell 安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
+使用 `anda_launcher --home <目录>`（或为 launcher 设置 `ANDA_HOME`）可指定状态目录。
+launcher 会将该目录传给 daemon 命令，并保留在登录自启和重启入口中。模型设置只更新
+选中的模型，保留其他 provider 和注释，保存前会验证配置。macOS 登录自启开关从下次
+登录生效，当前 launcher 会继续运行。托盘状态在空闲时每分钟刷新一次，打开菜单或
+完成 daemon 操作时也会异步刷新。
+
 前置要求：
 
 - 至少一个可用的模型提供方 API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。

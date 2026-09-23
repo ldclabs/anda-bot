@@ -295,6 +295,7 @@ fn window_responds(hwnd: HWND) -> bool {
 }
 
 fn show_tray_menu(hwnd: HWND) {
+    core::request_status_refresh();
     unsafe {
         let copy = text();
         let menu = CreatePopupMenu();
@@ -303,11 +304,12 @@ fn show_tray_menu(hwnd: HWND) {
         append_separator(menu);
         let status = core::cached_daemon_status();
         append_disabled_item(menu, &copy.status);
-        append_disabled_item(menu, &core::status_pid_title(&status));
-        append_disabled_item(menu, &core::status_gateway_title(&status));
-        append_disabled_item(menu, &core::status_conversations_title(&status));
-        append_disabled_item(menu, &core::status_memory_nodes_title(&status));
-        append_disabled_item(menu, &core::status_memory_links_title(&status));
+        append_disabled_item(menu, &status.summary);
+        append_disabled_item(menu, &core::status_pid_title(&status, &copy));
+        append_disabled_item(menu, &core::status_gateway_title(&status, &copy));
+        append_disabled_item(menu, &core::status_conversations_title(&status, &copy));
+        append_disabled_item(menu, &core::status_memory_nodes_title(&status, &copy));
+        append_disabled_item(menu, &core::status_memory_links_title(&status, &copy));
         append_separator(menu);
         append_item(menu, ID_RESTART, &copy.restart_daemon);
         append_item(menu, ID_BROWSER_TOKEN, &copy.browser_extension_token);
@@ -791,12 +793,12 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
     // Hold the menu-action gate so a tray click cannot race the initial
     // setup wizard with a second wizard or daemon command.
     let _guard = core::begin_menu_action();
-    if core::config_needs_setup(ctx) {
-        if settings::run_initial_setup_wizard(ctx)? {
-            show_result(&text().app_title, &core::start_daemon(ctx)?);
-        }
-    } else {
-        let _ = core::start_daemon(ctx);
+    if core::config_needs_setup(ctx)? && !settings::run_wizard(ctx)? {
+        return Ok(());
+    }
+    let result = core::start_daemon(ctx)?;
+    if !result.success {
+        return Err(result.message.into());
     }
     Ok(())
 }
@@ -873,36 +875,39 @@ fn prompt_update_ready(ctx: LauncherContext, state: core::LauncherAutoUpdateStat
     }
 }
 
-fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
+fn launcher_restart_script(ctx: &LauncherContext, current_pid: u32) -> String {
     let launcher = ps_single(&ctx.launcher_exe.to_string_lossy());
-    let current_pid = std::process::id();
-    let script = format!(
-        r#"$ErrorActionPreference = 'SilentlyContinue'
+    let arguments = ps_single(&windows_command_line([
+        OsStr::new("--home"),
+        ctx.home.as_os_str(),
+    ]));
+    let completion =
+        ps_single(&crate::update_protocol::completion_path(&ctx.launcher_exe).to_string_lossy());
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
 $launcher = '{launcher}'
-$launcherPid = {current_pid}
-$previousWrite = $null
-try {{ $previousWrite = (Get-Item -LiteralPath $launcher).LastWriteTimeUtc }} catch {{}}
-try {{ Wait-Process -Id $launcherPid -Timeout 30 }} catch {{}}
-$replaceDeadline = (Get-Date).AddSeconds(30)
-while ($null -ne $previousWrite -and (Get-Date) -lt $replaceDeadline) {{
-  try {{
-    $currentWrite = (Get-Item -LiteralPath $launcher).LastWriteTimeUtc
-    if ($currentWrite -ne $previousWrite) {{ break }}
-  }} catch {{}}
-  Start-Sleep -Milliseconds 500
+$status = '{completion}'
+Wait-Process -Id {current_pid} -Timeout 30 -ErrorAction SilentlyContinue
+$deadline = (Get-Date).AddSeconds(70)
+$result = 'installed'
+while (Test-Path -LiteralPath $status) {{
+  $result = Get-Content -Raw -LiteralPath $status
+  if ($result.Trim() -ne 'pending') {{ break }}
+  if ((Get-Date) -ge $deadline) {{ $result = 'Launcher replacement timed out'; break }}
+  Start-Sleep -Milliseconds 100
 }}
-$deadline = (Get-Date).AddSeconds(30)
-while ((Get-Date) -lt $deadline) {{
-  try {{
-    Start-Process -FilePath $launcher -ErrorAction Stop | Out-Null
-    exit 0
-  }} catch {{
-    Start-Sleep -Milliseconds 500
-  }}
+# Restore the tray even if the optional launcher replacement failed.
+Start-Process -FilePath $launcher -ArgumentList '{arguments}'
+if ($result.Trim() -ne 'installed') {{
+  Add-Type -AssemblyName System.Windows.Forms
+  [System.Windows.Forms.MessageBox]::Show($result, 'Anda Bot update') | Out-Null
 }}
 "#,
-    );
+    )
+}
 
+fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
+    let script = launcher_restart_script(ctx, std::process::id());
     let mut command = Command::new("powershell.exe");
     command.creation_flags(CREATE_NO_WINDOW);
     command
@@ -943,18 +948,35 @@ fn launcher_autostart_installed() -> bool {
 }
 
 fn ensure_launch_entrypoints(ctx: &LauncherContext) -> LauncherResult<()> {
+    if launcher_autostart_installed() {
+        set_run_autostart(ctx)?;
+    }
     if !is_default_windows_install(&ctx.launcher_exe) {
         return Ok(());
     }
 
     let icon_path = ensure_launcher_icon_file(ctx)?;
-    let script = windows_shortcut_script(ctx, &icon_path)?;
+    let stamp_dir = ctx.home.join("launcher");
+    std::fs::create_dir_all(&stamp_dir)?;
+    let stamp_path = stamp_dir.join("entrypoints.txt");
+    let script = windows_shortcut_script(ctx, &icon_path, !stamp_path.exists())?;
+    // The normalized script records the desired targets/home; missing shortcuts
+    // after this first pass are deliberate user removals and stay removed.
+    let desired = format!(
+        "{}\n{}",
+        env!("CARGO_PKG_VERSION"),
+        windows_shortcut_script(ctx, &icon_path, false)?
+    );
+    if std::fs::read_to_string(&stamp_path).ok().as_deref() == Some(&desired) {
+        return Ok(());
+    }
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"])
         .arg(script)
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
     if output.status.success() {
+        core::write_if_changed(&stamp_path, desired.as_bytes())?;
         return Ok(());
     }
 
@@ -997,7 +1019,7 @@ fn ensure_launcher_icon_file(ctx: &LauncherContext) -> LauncherResult<PathBuf> {
         return Err("could not resolve launcher install directory".into());
     };
     let icon_path = install_dir.join(LAUNCHER_ICON_FILE);
-    std::fs::write(&icon_path, launcher_icon_ico())?;
+    core::write_if_changed(&icon_path, &launcher_icon_ico())?;
     Ok(icon_path)
 }
 
@@ -1033,13 +1055,22 @@ fn ico_dimension_byte(value: u32) -> Option<u8> {
     }
 }
 
-fn windows_shortcut_script(ctx: &LauncherContext, icon_path: &Path) -> LauncherResult<String> {
+fn windows_shortcut_script(
+    ctx: &LauncherContext,
+    icon_path: &Path,
+    create_missing: bool,
+) -> LauncherResult<String> {
     let Some(install_dir) = ctx.launcher_exe.parent() else {
         return Err("could not resolve launcher install directory".into());
     };
     let launcher = ps_single(&ctx.launcher_exe.to_string_lossy());
     let icon = ps_single(&icon_path.to_string_lossy());
     let working_directory = ps_single(&install_dir.to_string_lossy());
+    let arguments = ps_single(&windows_command_line([
+        OsStr::new("--home"),
+        ctx.home.as_os_str(),
+    ]));
+    let create_missing = if create_missing { "$true" } else { "$false" };
 
     Ok(format!(
         r#"$ErrorActionPreference = 'Stop'
@@ -1053,10 +1084,12 @@ $targets = @(
 )
 foreach ($target in $targets) {{
   if ([string]::IsNullOrWhiteSpace($target.Directory)) {{ continue }}
+  $shortcutPath = Join-Path $target.Directory $target.Name
+  if (-not {create_missing} -and -not (Test-Path -LiteralPath $shortcutPath)) {{ continue }}
   New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null
-  $shortcut = $shell.CreateShortcut((Join-Path $target.Directory $target.Name))
+  $shortcut = $shell.CreateShortcut($shortcutPath)
   $shortcut.TargetPath = $launcher
-  $shortcut.Arguments = ''
+  $shortcut.Arguments = '{arguments}'
   $shortcut.WorkingDirectory = $workingDirectory
   $shortcut.IconLocation = $icon
   $shortcut.WindowStyle = 7
@@ -1067,7 +1100,14 @@ foreach ($target in $targets) {{
 }
 
 fn set_run_autostart(ctx: &LauncherContext) -> LauncherResult<()> {
-    let command = windows_command_line([ctx.launcher_exe.as_os_str()]);
+    let command = windows_command_line([
+        ctx.launcher_exe.as_os_str(),
+        OsStr::new("--home"),
+        ctx.home.as_os_str(),
+    ]);
+    if run_autostart_command().as_deref() == Some(command.as_str()) {
+        return Ok(());
+    }
     let value = wide_null(&command);
     let value_name = wide_null(AUTOSTART_RUN_VALUE);
     let key = RegistryKey::create(AUTOSTART_RUN_KEY, KEY_SET_VALUE)?;
@@ -1102,9 +1142,13 @@ fn delete_run_autostart() -> LauncherResult<()> {
 }
 
 fn run_autostart_exists() -> bool {
+    run_autostart_command().is_some_and(|command| !command.is_empty())
+}
+
+fn run_autostart_command() -> Option<String> {
     let value_name = wide_null(AUTOSTART_RUN_VALUE);
     let Ok(Some(key)) = RegistryKey::open_optional(AUTOSTART_RUN_KEY, KEY_QUERY_VALUE) else {
-        return false;
+        return None;
     };
     let mut value_type = 0;
     let mut value_len = 0;
@@ -1119,7 +1163,25 @@ fn run_autostart_exists() -> bool {
         )
     };
 
-    status == ERROR_SUCCESS && value_type == REG_SZ && value_len > 0
+    if status != ERROR_SUCCESS || value_type != REG_SZ || value_len == 0 {
+        return None;
+    }
+    let mut value = vec![0u16; (value_len as usize).div_ceil(size_of::<u16>())];
+    let status = unsafe {
+        RegQueryValueExW(
+            key.raw(),
+            value_name.as_ptr(),
+            ptr::null(),
+            &mut value_type,
+            value.as_mut_ptr().cast(),
+            &mut value_len,
+        )
+    };
+    if status != ERROR_SUCCESS || value_type != REG_SZ {
+        return None;
+    }
+    let end = value.iter().position(|&ch| ch == 0).unwrap_or(value.len());
+    Some(String::from_utf16_lossy(&value[..end]))
 }
 
 fn delete_legacy_scheduled_tasks() {
@@ -1294,4 +1356,32 @@ fn wide_null(value: &str) -> Vec<u16> {
 
 fn wide_null_os(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shortcuts_and_restart_preserve_quoted_home() {
+        let ctx = LauncherContext {
+            launcher_exe: PathBuf::from(r"C:\Anda Bot\anda_launcher.exe"),
+            anda_exe: PathBuf::from(r"C:\Anda Bot\anda.exe"),
+            home: PathBuf::from(r"C:\Users\test user\Anda's home"),
+        };
+        let shortcut =
+            windows_shortcut_script(&ctx, Path::new(r"C:\Anda Bot\anda.ico"), false).unwrap();
+        assert!(
+            shortcut
+                .contains(r#"$shortcut.Arguments = '--home "C:\Users\test user\Anda''s home"'"#)
+        );
+        assert!(
+            shortcut.contains("if (-not $false -and -not (Test-Path -LiteralPath $shortcutPath))")
+        );
+        let restart = launcher_restart_script(&ctx, 4242);
+        assert!(restart.contains("Wait-Process -Id 4242"));
+        assert!(restart.contains(r#"-ArgumentList '--home "C:\Users\test user\Anda''s home"'"#));
+        assert!(restart.contains("anda_launcher.exe.update-status"));
+        assert!(!restart.contains("LastWriteTimeUtc"));
+    }
 }

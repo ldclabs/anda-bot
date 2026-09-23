@@ -87,6 +87,15 @@ shell installs register daemon autostart directly. For PowerShell, use
 `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set
 `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
+Use `anda_launcher --home <directory>` (or set `ANDA_HOME` for the launcher)
+to select a custom state directory. The launcher passes this directory to its
+daemon commands and preserves it in login and restart entrypoints. Model settings
+update the selected model, preserve other providers and comments, and validate
+the configuration before saving. On macOS, the login-startup toggle applies to
+the next login and leaves the current launcher running. Tray status refreshes
+once a minute while idle, and also refreshes asynchronously when you open the
+menu or finish a daemon action.
+
 Requirements:
 
 - At least one model provider API key. Windows installer users can enter it in

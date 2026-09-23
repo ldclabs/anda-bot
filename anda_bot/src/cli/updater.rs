@@ -799,45 +799,41 @@ pub(crate) async fn install_update(
     staged_path: &Path,
     current_exe: &Path,
 ) -> Result<UpdateFinish, BoxError> {
+    use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let source = powershell_single_quoted_path(staged_path);
-    let target = powershell_single_quoted_path(current_exe);
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'; \
-         $source = {source}; \
-         $target = {target}; \
-         $deadline = (Get-Date).AddSeconds(60); \
-         while ($true) {{ \
-             try {{ Move-Item -Force -LiteralPath $source -Destination $target; break }} \
-             catch {{ \
-                 if ((Get-Date) -gt $deadline) {{ \
-                     Write-Error \"Could not replace $target. Close running anda processes and rerun anda update.\"; \
-                     exit 1 \
-                 }}; \
-                 Start-Sleep -Milliseconds 500 \
-             }} \
-         }}"
-    );
+    let status_path = crate::update_protocol::completion_path(current_exe);
+    std::fs::write(&status_path, crate::update_protocol::PENDING)?;
+    let updater_pid = if std::env::current_exe()?.as_path() == current_exe {
+        Some(std::process::id())
+    } else {
+        std::env::var(crate::update_protocol::LAUNCHER_PID_ENV)
+            .ok()
+            .and_then(|pid| pid.parse::<u32>().ok())
+    };
+    let script =
+        crate::update_protocol::windows_install_script(staged_path, current_exe, updater_pid);
 
+    // The helper outlives `anda update`; inherited capture pipes would keep
+    // the launcher blocked until the helper itself exits.
     Command::new("powershell.exe")
+        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
         .arg("-NoProfile")
         .arg("-ExecutionPolicy")
         .arg("Bypass")
         .arg("-Command")
         .arg(script)
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .map_err(|err| format!("Could not start Windows update helper: {err}"))?;
+        .map_err(|err| {
+            let message = format!("Could not start Windows update helper: {err}");
+            let _ = std::fs::write(&status_path, &message);
+            message
+        })?;
 
     Ok(UpdateFinish::Scheduled)
-}
-
-#[cfg(windows)]
-fn powershell_single_quoted_path(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
 pub(crate) fn staged_update_path(install_dir: &Path, current_exe: &Path) -> PathBuf {
@@ -1331,6 +1327,12 @@ mod tests {
             // On Windows the replacement is handed off to an async PowerShell
             // helper, so the swap is scheduled rather than applied inline.
             assert_eq!(finish, UpdateFinish::Scheduled);
+            crate::update_protocol::wait_for_completion(
+                &current,
+                crate::update_protocol::COMPLETION_TIMEOUT,
+            )
+            .unwrap();
+            assert_eq!(std::fs::read(&current).unwrap(), b"new binary");
         }
     }
 
@@ -1549,6 +1551,12 @@ mod tests {
         {
             // On Windows the swap is deferred to an async PowerShell helper.
             assert_eq!(finish, Some(UpdateFinish::Scheduled));
+            crate::update_protocol::wait_for_completion(
+                &launcher,
+                crate::update_protocol::COMPLETION_TIMEOUT,
+            )
+            .unwrap();
+            assert_eq!(std::fs::read(&launcher).unwrap(), body);
         }
     }
 

@@ -7,13 +7,13 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Output},
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, OnceLock, mpsc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::os::fd::AsRawFd;
+use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 
 #[cfg(windows)]
 use std::{
@@ -452,6 +452,7 @@ static LAUNCHER_LANGUAGE: Mutex<Option<LauncherLanguage>> = Mutex::new(None);
 static UPDATE_UI_STATE: OnceLock<Mutex<LauncherUpdateUiState>> = OnceLock::new();
 static DAEMON_STATUS_CACHE: OnceLock<Mutex<Option<LauncherDaemonStatus>>> = OnceLock::new();
 static MENU_ACTION_GATE: Mutex<()> = Mutex::new(());
+static STATUS_REFRESH: OnceLock<mpsc::SyncSender<()>> = OnceLock::new();
 
 impl LauncherLanguage {
     pub const ALL: [LauncherLanguage; 6] = [
@@ -586,8 +587,8 @@ pub fn launcher_language() -> LauncherLanguage {
         return language;
     }
 
-    // Resolved outside the lock: the home-detection fallback path calls
-    // text(), which would re-enter this function and deadlock.
+    // Resolve persisted settings and system locale without holding the mutex.
+    // Home detection must return plain errors, without calling text() again.
     let language = initial_launcher_language();
     *lock_launcher_language().get_or_insert(language)
 }
@@ -708,20 +709,69 @@ pub fn start_auto_update_loop(ctx: LauncherContext) {
 }
 
 pub fn start_status_loop(ctx: LauncherContext) {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    if STATUS_REFRESH.set(sender).is_err() {
+        return;
+    }
     thread::spawn(move || {
         loop {
             refresh_daemon_status_cache(&ctx);
-            thread::sleep(daemon_status_poll_interval());
+            let _ = receiver.recv_timeout(daemon_status_poll_interval());
         }
     });
+}
+
+/// Coalesces menu-open and command-completion refreshes on the status worker.
+pub fn request_status_refresh() {
+    if let Some(sender) = STATUS_REFRESH.get() {
+        let _ = sender.try_send(());
+    }
+}
+
+pub fn write_if_changed(path: &Path, contents: &[u8]) -> io::Result<bool> {
+    match fs::read(path) {
+        Ok(existing) if existing == contents => return Ok(false),
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    fs::write(path, contents)?;
+    Ok(true)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub fn files_have_same_contents(source: &Path, destination: &Path) -> io::Result<bool> {
+    use std::io::Read;
+    let mut source = fs::File::open(source)?;
+    let mut destination = match fs::File::open(destination) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let len = source.metadata()?.len();
+    if len != destination.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut left = [0; 8192];
+    let mut right = [0; 8192];
+    let mut remaining = len;
+    while remaining > 0 {
+        let size = remaining.min(left.len() as u64) as usize;
+        source.read_exact(&mut left[..size])?;
+        destination.read_exact(&mut right[..size])?;
+        if left[..size] != right[..size] {
+            return Ok(false);
+        }
+        remaining -= size as u64;
+    }
+    Ok(true)
 }
 
 pub fn status_value_title(label: &str, value: Option<&str>, unavailable: &str) -> String {
     format!("{}: {}", label, value.unwrap_or(unavailable))
 }
 
-pub fn status_pid_title(status: &LauncherDaemonStatus) -> String {
-    let copy = text();
+pub fn status_pid_title(status: &LauncherDaemonStatus, copy: &LauncherText) -> String {
     status_value_title(
         &copy.status_pid,
         status.pid.as_deref(),
@@ -729,8 +779,7 @@ pub fn status_pid_title(status: &LauncherDaemonStatus) -> String {
     )
 }
 
-pub fn status_gateway_title(status: &LauncherDaemonStatus) -> String {
-    let copy = text();
+pub fn status_gateway_title(status: &LauncherDaemonStatus, copy: &LauncherText) -> String {
     status_value_title(
         &copy.status_gateway_url,
         status.gateway_url.as_deref(),
@@ -738,8 +787,7 @@ pub fn status_gateway_title(status: &LauncherDaemonStatus) -> String {
     )
 }
 
-pub fn status_conversations_title(status: &LauncherDaemonStatus) -> String {
-    let copy = text();
+pub fn status_conversations_title(status: &LauncherDaemonStatus, copy: &LauncherText) -> String {
     status_value_title(
         &copy.status_conversations,
         status.conversations.as_deref(),
@@ -747,8 +795,7 @@ pub fn status_conversations_title(status: &LauncherDaemonStatus) -> String {
     )
 }
 
-pub fn status_memory_nodes_title(status: &LauncherDaemonStatus) -> String {
-    let copy = text();
+pub fn status_memory_nodes_title(status: &LauncherDaemonStatus, copy: &LauncherText) -> String {
     status_value_title(
         &copy.status_memory_nodes,
         status.memory_nodes.as_deref(),
@@ -756,8 +803,7 @@ pub fn status_memory_nodes_title(status: &LauncherDaemonStatus) -> String {
     )
 }
 
-pub fn status_memory_links_title(status: &LauncherDaemonStatus) -> String {
-    let copy = text();
+pub fn status_memory_links_title(status: &LauncherDaemonStatus, copy: &LauncherText) -> String {
     status_value_title(
         &copy.status_memory_links,
         status.memory_links.as_deref(),
@@ -823,6 +869,11 @@ impl LauncherContext {
             .unwrap_or(detected_launcher_exe);
         let anda_exe = detect_anda_exe(&launcher_exe);
         let home = detect_anda_home()?;
+        let home = if home.is_absolute() {
+            home
+        } else {
+            env::current_dir()?.join(home)
+        };
         Ok(Self {
             launcher_exe,
             anda_exe,
@@ -946,30 +997,13 @@ fn wide_null_os(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(Some(0)).collect()
 }
 
-pub fn config_needs_setup(ctx: &LauncherContext) -> bool {
-    if ensure_config_file_exists(ctx).is_err() {
-        return false;
-    }
-
-    match fs::read_to_string(ctx.config_path()) {
-        Ok(content) => parsed_config_needs_setup(&content),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
-        Err(_) => false,
-    }
+pub fn config_needs_setup(ctx: &LauncherContext) -> LauncherResult<bool> {
+    ensure_config_file_exists(ctx)?;
+    let content = fs::read_to_string(ctx.config_path())?;
+    Ok(parse_existing_config(&content)?.needs_setup())
 }
 
 pub fn write_minimal_config(ctx: &LauncherContext, wizard: &WizardConfig) -> LauncherResult<()> {
-    update_model_config(ctx, wizard)
-}
-
-pub fn write_initial_minimal_config(
-    ctx: &LauncherContext,
-    wizard: &WizardConfig,
-) -> LauncherResult<()> {
-    update_model_config(ctx, wizard)
-}
-
-fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> LauncherResult<()> {
     let provider = provider_by_id(&wizard.provider_id)
         .ok_or_else(|| text().unsupported_provider(&wizard.provider_id))?;
     let model = normalize_non_empty(&wizard.model).unwrap_or_else(|| provider.model.to_string());
@@ -981,6 +1015,15 @@ fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> Launcher
     ensure_config_file_exists(ctx)?;
     let config_path = ctx.config_path();
     let content = fs::read_to_string(&config_path)?;
+    let existing = parse_existing_config(&content)?;
+    if existing
+        .model
+        .providers
+        .iter()
+        .any(|item| item.model == model && item.api_base != provider.api_base)
+    {
+        return Err(format!("model {model} already exists with a different API base").into());
+    }
     let updated = apply_model_config_update(
         if content.trim().is_empty() {
             DEFAULT_CONFIG_TEMPLATE
@@ -993,6 +1036,27 @@ fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> Launcher
             api_key: api_key.as_deref().unwrap_or_default(),
         },
     );
+    // Keep comments in the textual edit, but never commit malformed YAML.
+    // Read back the selected model as well: unsupported layouts must leave
+    // the original file intact instead of silently changing another entry.
+    let parsed = parse_existing_config(&updated)?;
+    if parsed.model.active != model
+        || parsed
+            .model
+            .providers
+            .iter()
+            .filter(|item| item.model == model)
+            .count()
+            != 1
+        || !parsed.model.providers.iter().any(|item| {
+            item.model == model
+                && item.family == provider.family
+                && item.api_base == provider.api_base
+                && item.api_key == api_key.as_deref().unwrap_or_default()
+        })
+    {
+        return Err("could not safely update the selected model configuration".into());
+    }
 
     if content != updated {
         backup_config_file(&config_path)?;
@@ -1002,20 +1066,28 @@ fn update_model_config(ctx: &LauncherContext, wizard: &WizardConfig) -> Launcher
 }
 
 pub fn start_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
-    run_anda(ctx, &["start"])
+    let result = run_anda(ctx, &["start"]);
+    request_status_refresh();
+    result
 }
 
 #[allow(unused)]
 pub fn stop_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
-    run_anda(ctx, &["stop"])
+    let result = run_anda(ctx, &["stop"]);
+    request_status_refresh();
+    result
 }
 
 pub fn restart_daemon(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
-    run_anda(ctx, &["restart"])
+    let result = run_anda(ctx, &["restart"]);
+    request_status_refresh();
+    result
 }
 
 pub fn reload_models(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
-    run_anda(ctx, &["models", "reload"])
+    let result = run_anda(ctx, &["models", "reload"]);
+    request_status_refresh();
+    result
 }
 
 pub fn reload_models_or_start_daemon(ctx: &LauncherContext) -> CommandResult {
@@ -1024,9 +1096,18 @@ pub fn reload_models_or_start_daemon(ctx: &LauncherContext) -> CommandResult {
         return reload;
     }
 
-    match daemon_status_json(ctx) {
-        Ok(status) if status.success => reload,
-        _ => start_daemon(ctx).unwrap_or(reload),
+    match daemon_status_json(ctx)
+        .ok()
+        .filter(|result| result.success)
+        .and_then(|result| {
+            serde_json::from_str::<crate::daemon_protocol::DaemonStatusReport>(&result.message).ok()
+        })
+        .map(|report| report.state)
+    {
+        Some(crate::daemon_protocol::DaemonStatusState::NotRunning) => {
+            start_daemon(ctx).unwrap_or_else(command_error_result)
+        }
+        _ => reload,
     }
 }
 
@@ -1066,7 +1147,7 @@ pub fn refresh_daemon_status_cache(ctx: &LauncherContext) -> LauncherDaemonStatu
 }
 
 pub fn daemon_status_poll_interval() -> Duration {
-    Duration::from_secs(15)
+    Duration::from_secs(60)
 }
 
 pub fn generate_browser_extension_token(ctx: &LauncherContext) -> LauncherResult<CommandResult> {
@@ -1241,6 +1322,8 @@ pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<Comma
     // the executable lock; Unix can replace the binary before restarting.
     #[cfg(windows)]
     {
+        crate::update_protocol::clear_completion(&ctx.anda_exe)?;
+        crate::update_protocol::clear_completion(&ctx.launcher_exe)?;
         let stop = stop_daemon(ctx)?;
         if !stop.success {
             return Ok(stop);
@@ -1257,6 +1340,18 @@ pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<Comma
             success: false,
             message: err.to_string(),
         },
+    };
+    #[cfg(windows)]
+    let update = if update.success {
+        match crate::update_protocol::wait_for_completion(
+            &ctx.anda_exe,
+            crate::update_protocol::COMPLETION_TIMEOUT,
+        ) {
+            Ok(()) => update,
+            Err(err) => combine_command_results(update, command_error_result(err.into())),
+        }
+    } else {
+        update
     };
     if !update.success {
         #[cfg(windows)]
@@ -1278,7 +1373,6 @@ pub fn install_update_and_restart(ctx: &LauncherContext) -> LauncherResult<Comma
         return Ok(update);
     }
 
-    thread::sleep(Duration::from_secs(2));
     let restart = restart_daemon(ctx)?;
     Ok(combine_command_results(update, restart))
 }
@@ -1291,7 +1385,14 @@ pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandR
     let mut command = Command::new(&ctx.anda_exe);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
-    command.args(args);
+    #[cfg(windows)]
+    if args == ["update"] {
+        command.env(
+            crate::update_protocol::LAUNCHER_PID_ENV,
+            std::process::id().to_string(),
+        );
+    }
+    command.arg("--home").arg(&ctx.home).args(args);
     #[cfg(unix)]
     let output = output_with_busy_retry(&mut command);
     #[cfg(not(unix))]
@@ -1338,7 +1439,13 @@ fn run_update_check(ctx: &LauncherContext, force: bool) -> LauncherResult<Launch
 pub fn command_result(output: Output) -> CommandResult {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let message = if !stdout.is_empty() {
+    let message = if !output.status.success() && !stderr.is_empty() {
+        if stdout.is_empty() {
+            stderr
+        } else {
+            format!("{stderr}\n{stdout}")
+        }
+    } else if !stdout.is_empty() {
         stdout
     } else if !stderr.is_empty() {
         stderr
@@ -1571,7 +1678,7 @@ fn detect_anda_home() -> LauncherResult<PathBuf> {
     }
     let user_home = env::var_os("USERPROFILE")
         .or_else(|| env::var_os("HOME"))
-        .ok_or_else(|| text().detect_home_failed)?;
+        .ok_or("could not detect the user home directory")?;
     Ok(PathBuf::from(user_home).join(".anda"))
 }
 
@@ -1583,17 +1690,17 @@ where
     while let Some(arg) = args.next() {
         if arg == OsStr::new("--home") {
             let Some(home) = args.next() else {
-                return Err(text().missing_home_arg().into());
+                return Err("--home requires a directory".into());
             };
             if home.as_os_str().is_empty() {
-                return Err(text().missing_home_arg().into());
+                return Err("--home requires a directory".into());
             }
             return Ok(Some(PathBuf::from(home)));
         }
 
         if let Some(home) = arg.to_str().and_then(|value| value.strip_prefix("--home=")) {
             if home.is_empty() {
-                return Err(text().missing_home_arg().into());
+                return Err("--home requires a directory".into());
             }
             return Ok(Some(PathBuf::from(home)));
         }
@@ -1626,7 +1733,7 @@ fn write_config_atomic(path: &Path, content: &str) -> io::Result<()> {
     tmp_name.push(".tmp");
     let tmp_path = path.with_file_name(tmp_name);
 
-    let result = fs::File::create(&tmp_path)
+    let result = create_private_file(&tmp_path)
         .and_then(|mut file| {
             file.write_all(content.as_bytes())?;
             file.sync_all()
@@ -1640,8 +1747,24 @@ fn write_config_atomic(path: &Path, content: &str) -> io::Result<()> {
 
 fn backup_config_file(config_path: &Path) -> LauncherResult<PathBuf> {
     let backup_path = unique_backup_path(config_path);
-    fs::copy(config_path, &backup_path)?;
+    let mut source = fs::File::open(config_path)?;
+    let mut destination = create_private_file(&backup_path)?;
+    io::copy(&mut source, &mut destination)?;
     Ok(backup_path)
+}
+
+fn create_private_file(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
 }
 
 fn unique_backup_path(config_path: &Path) -> PathBuf {
@@ -1667,6 +1790,7 @@ fn unique_backup_path(config_path: &Path) -> PathBuf {
     config_path.with_file_name(format!("{name}.{stamp}.bak"))
 }
 
+#[cfg(test)]
 fn parsed_config_needs_setup(content: &str) -> bool {
     parse_existing_config(content)
         .map(|existing| existing.needs_setup())
@@ -1846,7 +1970,11 @@ fn upsert_bool_line(
 }
 
 fn replace_yaml_value(line: &str, indent: usize, key: &str, value: &str) -> String {
-    let prefix = format!("{}{}:", " ".repeat(indent), key);
+    let prefix = if line.trim_start().starts_with("- ") {
+        format!("{}- {key}:", " ".repeat(indent - 2))
+    } else {
+        format!("{}{key}:", " ".repeat(indent))
+    };
     let comment = yaml_inline_comment(line).unwrap_or("");
     if comment.is_empty() {
         format!("{prefix} {value}")
@@ -1887,9 +2015,15 @@ fn find_key_in_range(
     key: &str,
 ) -> Option<usize> {
     let prefix = format!("{}{}:", " ".repeat(indent), key);
+    let item_prefix = indent
+        .checked_sub(2)
+        .map(|n| format!("{}- {key}:", " ".repeat(n)));
     (start..end.min(lines.len())).find(|&idx| {
         let line = &lines[idx];
-        !line.trim_start().starts_with('#') && line.starts_with(&prefix)
+        line.starts_with(&prefix)
+            || item_prefix
+                .as_ref()
+                .is_some_and(|prefix| line.starts_with(prefix))
     })
 }
 
@@ -1917,8 +2051,7 @@ fn find_provider_item(
             let item_end = find_item_end_bounded(lines, idx, end);
             let item = parse_provider_item(lines, idx, item_end);
             if item.api_base.as_deref() == Some(update.provider.api_base)
-                || item.model.as_deref() == Some(update.provider.model)
-                || item.model.as_deref() == Some(update.model)
+                && item.model.as_deref() == Some(update.model)
             {
                 return Some((idx, item_end));
             }
@@ -2002,40 +2135,14 @@ fn leading_spaces(line: &str) -> usize {
     line.chars().take_while(|ch| *ch == ' ').count()
 }
 
-#[cfg(test)]
-fn render_minimal_config(provider: &ProviderPreset, model: &str, api_key: &str) -> String {
-    let mut config = String::new();
-    config.push_str("addr: 127.0.0.1:8042\n");
-    config.push_str("log_level: warn\n\n");
-    config.push_str("model:\n");
-    config.push_str(&format!("  active: {}\n", yaml_string(model)));
-    config.push_str("  providers:\n");
-    config.push_str(&format!("    - family: {}\n", yaml_string(provider.family)));
-    config.push_str(&format!("      model: {}\n", yaml_string(model)));
-    config.push_str(&format!(
-        "      api_base: {}\n",
-        yaml_string(provider.api_base)
-    ));
-    config.push_str(&format!("      api_key: {}\n", yaml_string(api_key)));
-    config.push_str("      effort: high\n");
-    config.push_str("      context_window: 400000\n");
-    config.push_str("      max_output: 128000\n");
-    config.push_str("      labels: [\"memory\", \"image\", \"audio\", \"video\"]\n");
-    config.push_str("      disabled: false\n");
-    if provider.bearer_auth {
-        config.push_str("      bearer_auth: true\n");
-    }
-    config
-}
-
 fn normalize_non_empty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
 }
 
 fn yaml_string(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    // JSON strings are valid YAML scalars, including escaped control characters.
+    serde_json::to_string(value).expect("serializing a string cannot fail")
 }
 
 fn yaml_bare_or_string(value: &str) -> String {
@@ -2492,7 +2599,14 @@ mod tests {
     #[test]
     fn minimal_config_is_setup_complete() {
         let provider = provider_by_id("openai").unwrap();
-        let config = render_minimal_config(provider, "gpt-test", "sk-test");
+        let config = apply_model_config_update(
+            DEFAULT_CONFIG_TEMPLATE,
+            &ModelConfigUpdate {
+                provider,
+                model: "gpt-test",
+                api_key: "sk-test",
+            },
+        );
         parse_existing_config(&config).unwrap();
 
         assert!(!parsed_config_needs_setup(&config));
@@ -2533,7 +2647,7 @@ model:
         )
         .unwrap();
 
-        assert!(!config_needs_setup(&ctx));
+        assert!(!config_needs_setup(&ctx).unwrap());
     }
 
     #[test]
@@ -2557,11 +2671,14 @@ tts:
 "#;
         fs::write(ctx.config_path(), existing).unwrap();
 
-        write_minimal_config(&ctx, &wizard_config()).unwrap();
+        let mut wizard = wizard_config();
+        wizard.model = "gpt-5.4".into();
+        write_minimal_config(&ctx, &wizard).unwrap();
 
         let updated = fs::read_to_string(ctx.config_path()).unwrap();
+        parse_existing_config(&updated).unwrap();
         assert!(updated.contains("# keep top comment"));
-        assert!(updated.contains("  active: \"gpt-test\" # active comment"));
+        assert!(updated.contains("  active: \"gpt-5.4\" # active comment"));
         assert!(updated.contains("      api_key: \"sk-test\" # key comment"));
         assert!(updated.contains("      labels: [\"custom\"]"));
         assert!(updated.contains("  # keep tts comment"));
@@ -2580,7 +2697,7 @@ tts:
         let home = tempfile::tempdir().unwrap();
         let ctx = launcher_context(home.path());
 
-        write_initial_minimal_config(&ctx, &wizard_config()).unwrap();
+        write_minimal_config(&ctx, &wizard_config()).unwrap();
 
         let config = fs::read_to_string(ctx.config_path()).unwrap();
         assert!(config.contains("## anda_bot runtime configuration"));
@@ -2599,6 +2716,201 @@ tts:
             fs::read_to_string(ctx.config_path()).unwrap(),
             DEFAULT_CONFIG_TEMPLATE
         );
+    }
+
+    #[test]
+    fn all_wizard_presets_produce_valid_idempotent_configs() {
+        for provider in PROVIDERS {
+            let home = tempfile::tempdir().unwrap();
+            let ctx = launcher_context(home.path());
+            let wizard = WizardConfig {
+                provider_id: provider.id.into(),
+                model: provider.model.into(),
+                api_key: "test-key".into(),
+            };
+            write_minimal_config(&ctx, &wizard).unwrap();
+            let first = fs::read_to_string(ctx.config_path()).unwrap();
+            let parsed = parse_existing_config(&first).unwrap();
+            assert_eq!(parsed.model.active, provider.model);
+            let selected = parsed
+                .model
+                .providers
+                .iter()
+                .filter(|item| item.model == provider.model)
+                .collect::<Vec<_>>();
+            assert_eq!(selected.len(), 1);
+            assert_eq!(selected[0].family, provider.family);
+            assert_eq!(selected[0].api_key, "test-key");
+            assert!(!config_needs_setup(&ctx).unwrap());
+            write_minimal_config(&ctx, &wizard).unwrap();
+            assert_eq!(fs::read_to_string(ctx.config_path()).unwrap(), first);
+            assert_eq!(
+                fs::read_dir(home.path()).unwrap().count(),
+                2,
+                "unchanged saves must not create more backups"
+            );
+        }
+    }
+
+    #[test]
+    fn selecting_existing_or_new_model_preserves_other_providers() {
+        for (id, model) in [
+            ("anthropic", "claude-haiku-4-5"),
+            ("gemini", "gemini-flash-latest"),
+            ("openai", "gpt-custom"),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let ctx = launcher_context(home.path());
+            fs::write(ctx.config_path(), DEFAULT_CONFIG_TEMPLATE).unwrap();
+            write_minimal_config(
+                &ctx,
+                &WizardConfig {
+                    provider_id: id.into(),
+                    model: model.into(),
+                    api_key: "new-key".into(),
+                },
+            )
+            .unwrap();
+            let before: serde_json::Value =
+                serde_saphyr::from_str(DEFAULT_CONFIG_TEMPLATE).unwrap();
+            let after: serde_json::Value =
+                serde_saphyr::from_str(&fs::read_to_string(ctx.config_path()).unwrap()).unwrap();
+            for original in before["model"]["providers"].as_array().unwrap() {
+                if original["model"] != model {
+                    assert!(
+                        after["model"]["providers"]
+                            .as_array()
+                            .unwrap()
+                            .contains(original)
+                    );
+                }
+            }
+            assert_eq!(
+                after["model"]["providers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|item| item["model"] == model)
+                    .count(),
+                1
+            );
+            assert_eq!(after["model"]["active"], model);
+        }
+    }
+
+    #[test]
+    fn invalid_or_unsupported_config_edits_leave_original_intact() {
+        for content in [
+            "model: [invalid",
+            "model: {active: old, providers: []}\n",
+            "model:\n  active: gpt-test\n  providers:\n    - family: openai\n      model: gpt-test\n      api_base: https://custom.invalid/v1\n",
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let ctx = launcher_context(home.path());
+            fs::write(ctx.config_path(), content).unwrap();
+            assert!(write_minimal_config(&ctx, &wizard_config()).is_err());
+            assert_eq!(fs::read_to_string(ctx.config_path()).unwrap(), content);
+            assert!(!home.path().join("config.yaml.bak").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_config_and_backup_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let ctx = launcher_context(home.path());
+        fs::write(ctx.config_path(), DEFAULT_CONFIG_TEMPLATE).unwrap();
+        fs::set_permissions(ctx.config_path(), fs::Permissions::from_mode(0o644)).unwrap();
+        // Exercise an existing permissive temporary file as well.
+        let tmp = home.path().join("config.yaml.tmp");
+        fs::write(&tmp, "old").unwrap();
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).unwrap();
+        write_minimal_config(&ctx, &wizard_config()).unwrap();
+        for path in [ctx.config_path(), home.path().join("config.yaml.bak")] {
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn unchanged_entrypoint_files_are_not_replaced() {
+        let home = tempfile::tempdir().unwrap();
+        let source = home.path().join("source");
+        let destination = home.path().join("destination");
+        assert!(write_if_changed(&source, b"old").unwrap());
+        let modified = fs::metadata(&source).unwrap().modified().unwrap();
+        assert!(!write_if_changed(&source, b"old").unwrap());
+        assert_eq!(fs::metadata(&source).unwrap().modified().unwrap(), modified);
+        assert!(!files_have_same_contents(&source, &destination).unwrap());
+        fs::write(&destination, b"old").unwrap();
+        assert!(files_have_same_contents(&source, &destination).unwrap());
+        assert!(write_if_changed(&source, b"new").unwrap());
+        assert!(!files_have_same_contents(&source, &destination).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_starts_only_a_confirmed_stopped_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        for (state, should_start) in [
+            ("not_running", true),
+            ("running", false),
+            ("process_unresponsive", false),
+            ("future_state", false),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let ctx = launcher_context(home.path());
+            fs::write(
+                &ctx.anda_exe,
+                format!(
+                    r#"#!/bin/sh
+shift 2
+case "$1" in
+  models) echo 'reload failed' >&2; exit 1;;
+  status) echo '{{"state":"{state}"}}'; exit 0;;
+  start) echo 'started'; exit 0;;
+esac
+exit 1
+"#
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&ctx.anda_exe, fs::Permissions::from_mode(0o700)).unwrap();
+            let result = reload_models_or_start_daemon(&ctx);
+            assert_eq!(result.success, should_start, "{state}: {}", result.message);
+            assert_eq!(
+                result.message,
+                if should_start {
+                    "started"
+                } else {
+                    "reload failed"
+                }
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_commands_keep_stderr_and_successful_json_stays_parseable() {
+        let failure = Command::new("/bin/sh")
+            .args(["-c", "echo checking; echo 'download failed' >&2; exit 1"])
+            .output()
+            .unwrap();
+        let result = command_result(failure);
+        assert!(!result.success);
+        assert!(result.message.starts_with("download failed"));
+        assert!(result.message.contains("checking"));
+        let success = Command::new("/bin/sh")
+            .args(["-c", "echo '{\"state\":\"running\"}'; echo warning >&2"])
+            .output()
+            .unwrap();
+        let result = command_result(success);
+        assert!(result.success);
+        assert!(serde_json::from_str::<serde_json::Value>(&result.message).is_ok());
     }
 
     #[test]
@@ -2918,6 +3230,17 @@ echo "boom" 1>&2
 exit 1
 "#
         };
+        let script = script.replacen(
+            "#!/bin/sh\n",
+            r#"#!/bin/sh
+if [ "$1" != "--home" ] || [ "$2" != "$(dirname "$0")" ]; then
+  echo 'incorrect launcher home' >&2
+  exit 1
+fi
+shift 2
+"#,
+            1,
+        );
         fs::write(&anda_exe, script).unwrap();
         fs::set_permissions(&anda_exe, fs::Permissions::from_mode(0o755)).unwrap();
         LauncherContext {
@@ -3080,6 +3403,7 @@ exit 1
 
     #[test]
     fn check_update_menu_label_reflects_ui_state() {
+        let _guard = UPDATE_UI_TEST_LOCK.lock().unwrap();
         reset_update_ui_state_for_test();
         // Default (no state) shows the check label.
         assert!(!check_update_menu_label().is_empty());

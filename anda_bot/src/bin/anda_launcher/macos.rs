@@ -42,6 +42,7 @@ const LAUNCHER_APP_ICON: &str = "AndaBot";
 const LAUNCHER_APP_ICON_FILE: &str = "AndaBot.icns";
 const LAUNCHER_APP_SOURCE_FILE: &str = "LauncherPath";
 const CHECK_UPDATE_MENU_TAG: isize = 1009;
+const STATUS_SUMMARY_MENU_TAG: isize = 1011;
 const STATUS_PID_MENU_TAG: isize = 1012;
 const STATUS_GATEWAY_MENU_TAG: isize = 1013;
 const STATUS_CONVERSATIONS_MENU_TAG: isize = 1014;
@@ -166,6 +167,7 @@ define_class!(
                     Ok(message) => show_info(&text().app_title, &message),
                     Err(err) => show_error(&text().app_title, &err.to_string()),
                 }
+                self.rebuild_menu();
             }
         }
 
@@ -189,6 +191,7 @@ define_class!(
 
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, menu: &NSMenu) {
+            core::request_status_refresh();
             refresh_status_menu_items(menu);
             refresh_update_menu_item(menu);
         }
@@ -363,18 +366,20 @@ fn populate_menu(menu: &NSMenu, mtm: MainThreadMarker, delegate: &Delegate) {
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_disabled_item(menu, mtm, &copy.status);
     let status = core::cached_daemon_status();
-    let status_pid = add_disabled_item(menu, mtm, &core::status_pid_title(&status));
+    let summary = add_disabled_item(menu, mtm, &status.summary);
+    summary.setTag(STATUS_SUMMARY_MENU_TAG);
+    let status_pid = add_disabled_item(menu, mtm, &core::status_pid_title(&status, &copy));
     status_pid.setTag(STATUS_PID_MENU_TAG);
-    let status_gateway = add_disabled_item(menu, mtm, &core::status_gateway_title(&status));
+    let status_gateway = add_disabled_item(menu, mtm, &core::status_gateway_title(&status, &copy));
     status_gateway.setTag(STATUS_GATEWAY_MENU_TAG);
     let status_conversations =
-        add_disabled_item(menu, mtm, &core::status_conversations_title(&status));
+        add_disabled_item(menu, mtm, &core::status_conversations_title(&status, &copy));
     status_conversations.setTag(STATUS_CONVERSATIONS_MENU_TAG);
     let status_memory_nodes =
-        add_disabled_item(menu, mtm, &core::status_memory_nodes_title(&status));
+        add_disabled_item(menu, mtm, &core::status_memory_nodes_title(&status, &copy));
     status_memory_nodes.setTag(STATUS_MEMORY_NODES_MENU_TAG);
     let status_memory_links =
-        add_disabled_item(menu, mtm, &core::status_memory_links_title(&status));
+        add_disabled_item(menu, mtm, &core::status_memory_links_title(&status, &copy));
     status_memory_links.setTag(STATUS_MEMORY_LINKS_MENU_TAG);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     add_item(
@@ -407,21 +412,25 @@ fn populate_menu(menu: &NSMenu, mtm: MainThreadMarker, delegate: &Delegate) {
 }
 
 fn refresh_status_menu_items(menu: &NSMenu) {
+    let copy = text();
     let status = core::cached_daemon_status();
+    if let Some(item) = menu.itemWithTag(STATUS_SUMMARY_MENU_TAG) {
+        item.setTitle(nsstring(&status.summary).as_ref());
+    }
     if let Some(item) = menu.itemWithTag(STATUS_PID_MENU_TAG) {
-        item.setTitle(nsstring(&core::status_pid_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_pid_title(&status, &copy)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_GATEWAY_MENU_TAG) {
-        item.setTitle(nsstring(&core::status_gateway_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_gateway_title(&status, &copy)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_CONVERSATIONS_MENU_TAG) {
-        item.setTitle(nsstring(&core::status_conversations_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_conversations_title(&status, &copy)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_MEMORY_NODES_MENU_TAG) {
-        item.setTitle(nsstring(&core::status_memory_nodes_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_memory_nodes_title(&status, &copy)).as_ref());
     }
     if let Some(item) = menu.itemWithTag(STATUS_MEMORY_LINKS_MENU_TAG) {
-        item.setTitle(nsstring(&core::status_memory_links_title(&status)).as_ref());
+        item.setTitle(nsstring(&core::status_memory_links_title(&status, &copy)).as_ref());
     }
 }
 
@@ -681,12 +690,12 @@ fn run_startup_setup(ctx: &LauncherContext) -> LauncherResult<()> {
     // Hold the menu-action gate so a menu click cannot race the initial
     // setup wizard with a second wizard or daemon command.
     let _guard = core::begin_menu_action();
-    if core::config_needs_setup(ctx) {
-        if settings::run_initial_setup_wizard(ctx)? {
-            let _ = core::start_daemon(ctx);
-        }
-    } else {
-        let _ = core::start_daemon(ctx);
+    if core::config_needs_setup(ctx)? && !settings::run_wizard(ctx)? {
+        return Ok(());
+    }
+    let result = core::start_daemon(ctx)?;
+    if !result.success {
+        return Err(result.message.into());
     }
     Ok(())
 }
@@ -762,6 +771,7 @@ fn restart_launcher_after_update(ctx: &LauncherContext) -> LauncherResult<()> {
     spawn_restart_script(
         launcher_restart_script(
             &ctx.launcher_exe,
+            &ctx.home,
             launcher_app_path().ok().as_deref(),
             launch_agent_path().ok().as_deref(),
             std::process::id(),
@@ -792,6 +802,7 @@ fn relaunch_as_application_bundle_if_needed(ctx: &LauncherContext) -> LauncherRe
     spawn_restart_script(
         launcher_restart_script(
             &ctx.launcher_exe,
+            &ctx.home,
             Some(app_path.as_path()),
             launch_agent_path().ok().as_deref(),
             std::process::id(),
@@ -830,14 +841,17 @@ fn current_process_is_app_executable(app_executable: &Path) -> bool {
 
 fn launcher_restart_script(
     launcher_exe: &Path,
+    home: &Path,
     app_path: Option<&Path>,
     launch_agent_path: Option<&Path>,
     current_pid: u32,
     uid: u32,
 ) -> String {
     let launcher = shell_single_quote(&launcher_exe.to_string_lossy());
+    let home = shell_single_quote(&home.to_string_lossy());
     let mut script = format!(
         r#"LAUNCHER={launcher}
+ANDA_HOME={home}
 OLD_PID={current_pid}
 WAIT_ATTEMPTS=100
 
@@ -875,7 +889,7 @@ fi
         script.push_str(&format!(
             r#"APP_DIR={app_dir}
 if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
-  if open -n -g "$APP_DIR" >/dev/null 2>&1; then
+  if open -n -g "$APP_DIR" --args --home "$ANDA_HOME" >/dev/null 2>&1; then
     exit 0
   fi
 fi
@@ -886,7 +900,7 @@ fi
 
     script.push_str(
         r#"if [ -x "$LAUNCHER" ]; then
-  nohup "$LAUNCHER" >/dev/null 2>&1 &
+  nohup "$LAUNCHER" --home "$ANDA_HOME" >/dev/null 2>&1 &
   exit $?
 fi
 
@@ -953,9 +967,10 @@ fn show_alert(title: &str, message: &str) {
 }
 
 fn toggle_launch_at_login(ctx: &LauncherContext) -> LauncherResult<String> {
+    // Changing the next-login registration must not boot out this running
+    // launcher, or bootstrap a competing instance while we hold its lock.
     if launch_agent_installed() {
         let path = launch_agent_path()?;
-        let _ = launchctl_bootout(&path);
         match fs::remove_file(&path) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -969,8 +984,6 @@ fn toggle_launch_at_login(ctx: &LauncherContext) -> LauncherResult<String> {
             .ok_or_else(|| text().resolve_launch_agents_failed)?;
         fs::create_dir_all(parent)?;
         fs::write(&path, launch_agent_plist(ctx))?;
-        let _ = launchctl_bootout(&path);
-        let _ = launchctl_bootstrap(&path);
         Ok(text().launch_at_login_enabled)
     }
 }
@@ -1009,10 +1022,13 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
 
     fs::create_dir_all(&macos_dir)?;
     fs::create_dir_all(&resources_dir)?;
-    fs::write(contents.join("Info.plist"), launcher_app_info_plist())?;
-    fs::write(
-        resources_dir.join(LAUNCHER_APP_ICON_FILE),
-        launcher_icon_icns(),
+    let plist_changed = core::write_if_changed(
+        &contents.join("Info.plist"),
+        launcher_app_info_plist().as_bytes(),
+    )?;
+    let icon_changed = core::write_if_changed(
+        &resources_dir.join(LAUNCHER_APP_ICON_FILE),
+        LAUNCHER_APP_ICON_ICNS,
     )?;
     let source = launcher_app_binary_source(ctx, &executable);
     write_launcher_app_source(&resources_dir, &source)?;
@@ -1021,7 +1037,9 @@ fn ensure_application_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
     let mut permissions = fs::metadata(&executable)?.permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(executable, permissions)?;
-    let _ = Command::new("touch").arg(app_path).status();
+    if plist_changed || icon_changed {
+        let _ = Command::new("touch").arg(app_path).status();
+    }
     Ok(())
 }
 
@@ -1040,6 +1058,9 @@ fn ensure_launch_agent_entrypoint(ctx: &LauncherContext) -> LauncherResult<()> {
 
 fn install_launcher_app_executable(source: &Path, executable: &Path) -> LauncherResult<()> {
     if paths_refer_to_same_file(source, executable) {
+        return Ok(());
+    }
+    if core::files_have_same_contents(source, executable)? {
         return Ok(());
     }
 
@@ -1078,9 +1099,9 @@ fn launcher_app_binary_source(ctx: &LauncherContext, app_executable: &Path) -> P
 }
 
 fn write_launcher_app_source(resources_dir: &Path, source: &Path) -> LauncherResult<()> {
-    fs::write(
-        resources_dir.join(LAUNCHER_APP_SOURCE_FILE),
-        format!("{}\n", source.display()),
+    core::write_if_changed(
+        &resources_dir.join(LAUNCHER_APP_SOURCE_FILE),
+        format!("{}\n", source.display()).as_bytes(),
     )?;
     Ok(())
 }
@@ -1155,10 +1176,6 @@ fn launcher_app_info_plist() -> String {
     )
 }
 
-fn launcher_icon_icns() -> Vec<u8> {
-    LAUNCHER_APP_ICON_ICNS.to_vec()
-}
-
 fn launch_agent_path() -> LauncherResult<PathBuf> {
     let home = std::env::home_dir().ok_or_else(|| text().detect_home_failed)?;
     Ok(home
@@ -1168,14 +1185,14 @@ fn launch_agent_path() -> LauncherResult<PathBuf> {
 }
 
 fn launch_agent_plist(ctx: &LauncherContext) -> String {
-    launch_agent_plist_for_program(&launch_agent_program_path(ctx))
+    launch_agent_plist_for_program(&launch_agent_program_path(ctx), &ctx.home)
 }
 
 fn launch_agent_program_path(ctx: &LauncherContext) -> PathBuf {
     launcher_app_executable_path().unwrap_or_else(|_| ctx.launcher_exe.clone())
 }
 
-fn launch_agent_plist_for_program(program: &Path) -> String {
+fn launch_agent_plist_for_program(program: &Path, home: &Path) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1186,6 +1203,8 @@ fn launch_agent_plist_for_program(program: &Path) -> String {
   <key>ProgramArguments</key>
   <array>
     <string>{launcher}</string>
+    <string>--home</string>
+    <string>{home}</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -1194,24 +1213,7 @@ fn launch_agent_plist_for_program(program: &Path) -> String {
 "#,
         label = LAUNCH_AGENT_LABEL,
         launcher = xml_escape(&program.to_string_lossy()),
-    )
-}
-
-fn launchctl_bootstrap(path: &std::path::Path) -> LauncherResult<()> {
-    run_command(
-        Command::new("launchctl")
-            .arg("bootstrap")
-            .arg(format!("gui/{}", unsafe { libc::geteuid() }))
-            .arg(path),
-    )
-}
-
-fn launchctl_bootout(path: &std::path::Path) -> LauncherResult<()> {
-    run_command(
-        Command::new("launchctl")
-            .arg("bootout")
-            .arg(format!("gui/{}", unsafe { libc::geteuid() }))
-            .arg(path),
+        home = xml_escape(&home.to_string_lossy()),
     )
 }
 
@@ -1230,28 +1232,13 @@ fn kickstart_launch_agent() -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn run_command(command: &mut Command) -> LauncherResult<()> {
-    let output = command.output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
-    Err(text().command_failed(&detail).into())
-}
-
 fn open_anda_terminal(ctx: &LauncherContext) {
     let command = format!(
         "tell application \"Terminal\" to do script {}",
         applescript_string(&format!(
-            "\"{}\" --home \"{}\"",
-            ctx.anda_exe.display(),
-            ctx.home.display()
+            "{} --home {}",
+            shell_single_quote(&ctx.anda_exe.to_string_lossy()),
+            shell_single_quote(&ctx.home.to_string_lossy())
         ))
     );
     let _ = Command::new("osascript").arg("-e").arg(command).spawn();
@@ -1291,13 +1278,13 @@ mod tests {
     fn launch_agent_plist_escapes_launcher_path() {
         let program = Path::new("/Users/me/Applications/Anda & Bot.app/Contents/MacOS/Anda Bot");
 
-        let plist = launch_agent_plist_for_program(program);
+        let plist = launch_agent_plist_for_program(program, Path::new("/Users/me/.anda custom"));
         assert!(
             plist.contains("/Users/me/Applications/Anda &amp; Bot.app/Contents/MacOS/Anda Bot")
         );
         assert!(plist.contains(LAUNCH_AGENT_LABEL));
-        assert!(!plist.contains("--home"));
-        assert!(!plist.contains("/Users/me/.anda"));
+        assert!(plist.contains("--home"));
+        assert!(plist.contains("/Users/me/.anda custom"));
     }
 
     #[test]
@@ -1415,6 +1402,7 @@ mod tests {
     fn launcher_restart_script_uses_visible_entrypoints_after_old_pid_exits() {
         let script = launcher_restart_script(
             std::path::Path::new("/Users/me/bin/anda launcher"),
+            std::path::Path::new("/Users/me/.anda custom"),
             Some(std::path::Path::new("/Users/me/Applications/Anda Bot.app")),
             Some(std::path::Path::new(
                 "/Users/me/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist",
@@ -1430,6 +1418,9 @@ mod tests {
         assert!(script.contains("launchctl kickstart -k \"gui/501/ai.anda.anda-bot.launcher\""));
         assert!(script.contains("open -n -g \"$APP_DIR\""));
         assert!(script.contains("nohup \"$LAUNCHER\""));
+        assert!(script.contains("ANDA_HOME='/Users/me/.anda custom'"));
+        assert!(script.contains("--args --home \"$ANDA_HOME\""));
+        assert!(script.contains("nohup \"$LAUNCHER\" --home \"$ANDA_HOME\""));
         assert!(!script.contains("exec \"$1\""));
         assert!(!script.contains("open -gj"));
     }
@@ -1465,14 +1456,13 @@ mod tests {
 
     #[test]
     fn launcher_icon_icns_uses_embedded_asset() {
-        let icon = launcher_icon_icns();
+        let icon = LAUNCHER_APP_ICON_ICNS;
 
         assert_eq!(&icon[..4], b"icns");
         assert_eq!(
             u32::from_be_bytes(icon[4..8].try_into().unwrap()) as usize,
             icon.len()
         );
-        assert_eq!(icon, LAUNCHER_APP_ICON_ICNS);
     }
 
     #[test]
