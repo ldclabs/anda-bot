@@ -41,6 +41,8 @@ anda agent run --memory-mode off --prompt '只使用这个新对话的信息帮�
 
 TUI 使用 `/memory inbox`、`/memory next`、`/memory answer <编号> <正文>`、`/memory retry <编号>`。终端和浏览器都在发送前保存原正文与事件键；回复丢失后沿用原数据重试，不允许悄悄替换待发正文。acknowledged 仅表示回答已被接受，不表示业务任务已成功。
 
+使用 `anda memory inbox` 读取待办，按输出提示运行 `anda memory inbox --cursor <next_cursor>` 读取下一页。使用 `--json` 时，游标位于 `result.next_cursor`。
+
 
 ## 启动配置
 

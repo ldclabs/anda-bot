@@ -208,6 +208,8 @@ Update an install-script release to the latest version:
 anda update
 ```
 
+A newer local build is kept, including its launcher and bundled skills. Use `anda update --force` to explicitly install the latest release even if it is older. The same rule applies to `anda update --skills`.
+
 Manage the background daemon:
 
 ```bash
@@ -225,13 +227,17 @@ Send a one-time prompt and wait for the complete result without opening the term
 anda agent run --prompt "Summarize what you remember about my current project"
 ```
 
+`--prompt` and `--prompt-file` are mutually exclusive; one is required. Add `--wait-timeout-secs 120` to bound submission and completion polling together. The default `0` disables the overall timeout. A timeout stops the CLI wait; the daemon task may continue.
+
+Read the memory inbox with `anda memory inbox`. If another page is available, follow the printed `anda memory inbox --cursor <next_cursor>` command; `--json` includes the cursor in `result.next_cursor`.
+
 Start a voice conversation:
 
 ```bash
 anda voice --record-secs 8
 ```
 
-Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output.
+Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output. Voice mode waits for the current answer to finish before starting the next recording. Ctrl-C also stops speech synthesis and playback.
 
 ## Integrations
 

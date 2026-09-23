@@ -349,7 +349,7 @@ fn add_user_to_config_text(content: &str, id: &str, pubkey: &str) -> Result<Stri
 fn insert_user_entry_into_existing_users(
     lines: &mut Vec<String>,
     users_index: usize,
-    entry: Vec<String>,
+    mut entry: Vec<String>,
 ) -> Result<(), BoxError> {
     let value = top_level_value(&lines[users_index]).unwrap_or_default();
     if value == "[]" {
@@ -362,6 +362,18 @@ fn insert_user_entry_into_existing_users(
     }
 
     let mut insert_index = next_top_level_key(lines, users_index + 1).unwrap_or(lines.len());
+    if let Some(indent) = lines[users_index + 1..insert_index]
+        .iter()
+        .find_map(|line| {
+            let trimmed = line.trim_start();
+            (trimmed == "-" || trimmed.starts_with("- "))
+                .then_some(&line[..line.len() - trimmed.len()])
+        })
+    {
+        for line in &mut entry {
+            *line = format!("{indent}{}", line.strip_prefix("  ").unwrap_or(line));
+        }
+    }
     while insert_index > users_index + 1 && lines[insert_index - 1].trim().is_empty() {
         insert_index -= 1;
     }
@@ -496,6 +508,23 @@ channels: {}
 
         assert!(updated.contains("  - id: \"bob\"\n    pubkey: \""));
         assert!(updated.contains("\n\nchannels: {}"));
+    }
+
+    #[test]
+    fn add_user_preserves_existing_list_indentation_and_comments() {
+        for indent in ["", "  ", "    "] {
+            let original = format!(
+                "# trusted users\nusers:\n{indent}- id: alice\n{indent}  pubkey: \"{}\"\n\n# channel settings\nchannels: {{}}\n",
+                test_pubkey()
+            );
+            let updated = add_user_to_config_text(&original, "bob", &test_pubkey()).unwrap();
+            let cfg = Config::from_contents(&updated).unwrap();
+            assert_eq!(cfg.users.len(), 2, "indent {indent:?}");
+            assert_eq!(cfg.users[1].id().as_deref(), Some("bob"));
+            assert!(updated.contains(&format!("\n{indent}- id: \"bob\"\n")));
+            assert!(updated.contains("# trusted users"));
+            assert!(updated.contains("# channel settings"));
+        }
     }
 
     #[test]

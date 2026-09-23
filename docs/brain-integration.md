@@ -41,6 +41,8 @@ After setup, **Ask me when this memory changes** creates an actual recipient-own
 
 Use `/memory inbox`, `/memory next`, `/memory answer <number> <text>` and `/memory retry <number>` in the TUI. The terminal and browser save the original response/event key before sending. A lost response can be retried with the same data; changed pending text is rejected. An acknowledgement means the answer was accepted, not that a business task succeeded.
 
+Read the inbox with `anda memory inbox`. Follow the printed `anda memory inbox --cursor <next_cursor>` command for another page. With `--json`, the cursor is in `result.next_cursor`.
+
 
 ## Startup
 

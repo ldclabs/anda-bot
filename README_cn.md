@@ -196,6 +196,8 @@ anda
 anda update
 ```
 
+本地构建版本较新时，会保留现有程序、启动器和内置技能。使用 `anda update --force` 可明确安装最新发布版，即使它比本地版本旧。此规则也适用于 `anda update --skills`。
+
 管理后台 daemon：
 
 ```bash
@@ -213,13 +215,17 @@ anda autostart status
 anda agent run --prompt "总结一下你记得的当前项目背景"
 ```
 
+`--prompt` 与 `--prompt-file` 必须且只能提供一个。添加 `--wait-timeout-secs 120` 可限制提交请求与等待完成的总时间，默认 `0` 表示不设总超时。超时只停止 CLI 等待，daemon 中的任务可能继续运行。
+
+使用 `anda memory inbox` 读取记忆待办。如果还有下一页，运行输出提示中的 `anda memory inbox --cursor <next_cursor>`；`--json` 在 `result.next_cursor` 中返回游标。
+
 启动语音对话：
 
 ```bash
 anda voice --record-secs 8
 ```
 
-语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。
+语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。 语音模式会等本轮答复完成后再开始下一轮录音。Ctrl-C 也可停止语音合成和播放。
 
 ## 多场景集成
 

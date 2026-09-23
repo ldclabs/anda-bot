@@ -83,3 +83,11 @@ Les tâches cron et le mode objectif autonome (`/goal ...`) s'exécutent toujour
 | `anda voice --record-secs 8` | Démarrer la saisie vocale ; requiert la configuration de la transcription. |
 
 La lecture vocale requiert également `tts.enabled: true`. Si vous souhaitez uniquement une entrée vocale et une sortie textuelle, ajoutez `--no-playback`.
+
+Fournissez exactement une option parmi `--prompt` et `--prompt-file`. `--wait-timeout-secs 120` limite la durée totale de soumission et d’attente ; `0` (par défaut) désactive cette limite. À expiration, la CLI cesse d’attendre, mais la tâche du daemon peut continuer.
+
+Le mode vocal attend la fin de la réponse avant d’enregistrer le tour suivant. Ctrl-C arrête aussi la synthèse et la lecture audio.
+
+`anda update` et `anda update --skills` conservent une version locale plus récente et ses ressources. Utilisez `--force` pour installer explicitement la dernière version publiée même si elle est plus ancienne.
+
+Consultez la boîte avec `anda memory inbox`. Suivez la commande affichée `anda memory inbox --cursor <next_cursor>` pour lire la page suivante. Avec `--json`, le curseur se trouve dans `result.next_cursor`.

@@ -87,3 +87,11 @@ Cron jobs and autonomous goal mode (`/goal ...`) always run with full access, be
 | `anda voice --record-secs 8` | Start voice input; requires transcription configuration. |
 
 Voice playback also requires `tts.enabled: true`. If you only want spoken input and text output, add `--no-playback`.
+
+Provide exactly one of `--prompt` and `--prompt-file`. `--wait-timeout-secs 120` bounds submission and completion polling together; `0` (the default) disables the overall timeout. A timeout stops the CLI wait, while the daemon task may continue.
+
+Voice mode waits for the current answer to finish before recording the next turn. Ctrl-C also stops synthesis and playback.
+
+`anda update` and `anda update --skills` keep a newer local version and its bundled artifacts. Use `--force` to explicitly install the latest release even if it is older.
+
+Read the inbox with `anda memory inbox`. Follow the printed `anda memory inbox --cursor <next_cursor>` command for another page. With `--json`, the cursor is in `result.next_cursor`.

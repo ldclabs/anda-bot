@@ -1,11 +1,11 @@
 use anda_core::{AgentInput, AgentOutput, BoxError, Message, RequestMeta, Usage};
 use anda_engine::memory::{Conversation, ConversationStatus};
-use clap::{Args, Subcommand};
+use clap::{ArgGroup, Args, Subcommand};
 use serde_json::json;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crate::{
@@ -23,6 +23,7 @@ pub enum AgentCommand {
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("prompt_source").required(true).args(["prompt", "prompt_file"])))]
 pub struct AgentRunCommand {
     /// Start a fresh conversation with this Brain/Notes policy (not incognito).
     #[arg(long, value_enum)]
@@ -55,7 +56,7 @@ pub struct AgentRunCommand {
     #[arg(long)]
     output_json: Option<PathBuf>,
 
-    /// Maximum seconds to wait for completion. 0 means wait indefinitely.
+    /// Maximum seconds for submission and completion. 0 disables the overall timeout.
     #[arg(long, default_value_t = 0)]
     wait_timeout_secs: u64,
 
@@ -91,23 +92,23 @@ async fn run_once(client: &gateway::Client, cmd: AgentRunCommand) -> Result<(), 
     }
     apply_agent_meta_defaults(&mut meta, workspace.as_deref(), cmd.session_id.as_deref());
 
-    let mut input = AgentInput::new(cmd.name, prompt.clone());
+    let mut input = AgentInput::new(cmd.name, prompt);
     input.meta = Some(meta);
 
-    let initial_output = client.agent_run(&input).await?;
-    let output = wait_for_agent_output(
+    let output = run_agent_to_completion(
         client,
-        initial_output,
+        &input,
         wait_timeout(cmd.wait_timeout_secs),
         Duration::from_millis(cmd.poll_interval_ms.max(500)),
     )
     .await?;
 
+    let json = serde_json::to_string_pretty(&output)?;
     if let Some(path) = cmd.output_json.as_ref() {
-        write_text(path, &serde_json::to_string_pretty(&output)?).await?;
+        write_text(path, &json).await?;
     }
 
-    println!("\n{}", serde_json::to_string_pretty(&output)?);
+    println!("\n{json}");
 
     if let Some(reason) = output.failed_reason.as_deref()
         && !reason.trim().is_empty()
@@ -175,22 +176,52 @@ fn apply_agent_meta_defaults(
     }
 }
 
+async fn run_agent_to_completion(
+    client: &gateway::Client,
+    input: &AgentInput,
+    timeout: Option<Duration>,
+    poll_interval: Duration,
+) -> Result<AgentOutput, BoxError> {
+    let operation = async {
+        let initial = client.agent_run(input).await?;
+        wait_for_agent_output(client, initial, poll_interval).await
+    };
+    match timeout {
+        Some(timeout) => tokio::time::timeout(timeout, operation)
+            .await
+            .map_err(|_| format!("agent did not complete within {timeout:?}; the daemon may still be running the task"))?,
+        None => operation.await,
+    }
+}
+
 async fn wait_for_agent_output(
     client: &gateway::Client,
     initial: AgentOutput,
-    timeout: Option<Duration>,
     poll_interval: Duration,
 ) -> Result<AgentOutput, BoxError> {
     let Some(root_id) = initial.conversation else {
         return Ok(initial);
     };
 
-    let started_at = Instant::now();
     let mut conversations = Vec::new();
     let mut seen = HashSet::new();
     let mut current_id = root_id;
+    let mut messages_offset = 0;
+    let mut artifacts_offset = 0;
 
     loop {
+        let delta = client
+            .get_conversation_delta(current_id, messages_offset, artifacts_offset)
+            .await?;
+        messages_offset += delta.messages.len();
+        artifacts_offset += delta.artifacts.len();
+        if delta.child.is_none() && !is_terminal_conversation_status(&delta.status) {
+            tokio::time::sleep(poll_interval).await;
+            continue;
+        }
+
+        // Final snapshots preserve in-place history edits (for example approval
+        // actions) that append-only deltas cannot describe.
         let conversation = client.get_conversation(current_id).await?;
         upsert_conversation(&mut conversations, &mut seen, conversation)?;
 
@@ -205,21 +236,13 @@ async fn wait_for_agent_output(
                 );
             }
             current_id = child_id;
+            messages_offset = 0;
+            artifacts_offset = 0;
             continue;
         }
 
         if is_terminal_conversation_status(&last.status) {
-            return Ok(output_from_conversation_chain(initial, &conversations));
-        }
-
-        if let Some(timeout) = timeout
-            && started_at.elapsed() >= timeout
-        {
-            return Err(format!(
-                "agent did not complete conversation {root_id} within {}s",
-                timeout.as_secs()
-            )
-            .into());
+            return Ok(output_from_conversation_chain(initial, conversations));
         }
 
         tokio::time::sleep(poll_interval).await;
@@ -256,23 +279,29 @@ fn upsert_conversation(
 
 fn output_from_conversation_chain(
     mut output: AgentOutput,
-    conversations: &[Conversation],
+    conversations: Vec<Conversation>,
 ) -> AgentOutput {
     let Some(last) = conversations.last() else {
         return output;
     };
+    output.conversation = Some(last._id);
+    output.failed_reason = last.failed_reason.clone().or_else(|| match last.status {
+        ConversationStatus::Cancelled => Some("conversation cancelled".to_string()),
+        ConversationStatus::Failed => Some("conversation failed".to_string()),
+        _ => None,
+    });
 
     let mut usage = Usage::default();
     let mut chat_history = Vec::new();
     let mut artifacts = Vec::new();
     for conversation in conversations {
         usage.accumulate(&conversation.usage);
-        artifacts.extend(conversation.artifacts.clone());
+        artifacts.extend(conversation.artifacts);
         chat_history.extend(
             conversation
                 .messages
-                .iter()
-                .filter_map(|message| serde_json::from_value::<Message>(message.clone()).ok()),
+                .into_iter()
+                .filter_map(|message| serde_json::from_value::<Message>(message).ok()),
         );
     }
 
@@ -281,16 +310,6 @@ fn output_from_conversation_chain(
     output.usage = usage;
     output.chat_history = chat_history;
     output.artifacts = artifacts;
-    output.conversation = Some(last._id);
-    output.failed_reason = last.failed_reason.clone().or_else(|| {
-        if matches!(last.status, ConversationStatus::Cancelled) {
-            Some("conversation cancelled".to_string())
-        } else if matches!(last.status, ConversationStatus::Failed) {
-            Some("conversation failed".to_string())
-        } else {
-            None
-        }
-    });
     output
 }
 
@@ -424,7 +443,7 @@ mod tests {
             ..Default::default()
         };
 
-        let output = output_from_conversation_chain(AgentOutput::default(), &[root, child]);
+        let output = output_from_conversation_chain(AgentOutput::default(), vec![root, child]);
 
         assert_eq!(output.content, "done");
         assert_eq!(output.conversation, Some(2));
@@ -454,8 +473,17 @@ mod tests {
                 serde_json::from_slice(&request.params).unwrap();
             let id = input.args["_id"].as_u64().unwrap_or_default();
             let conversation = state.get(&id).expect("known conversation");
+            let result = if input.args["type"] == "GetConversationDelta" {
+                serde_json::to_value(conversation.clone().into_delta(
+                    input.args["messages_offset"].as_u64().unwrap() as usize,
+                    input.args["artifacts_offset"].as_u64().unwrap() as usize,
+                ))
+                .unwrap()
+            } else {
+                serde_json::to_value(conversation).unwrap()
+            };
             let response = ToolResponse::Ok {
-                result: serde_json::to_value(conversation).unwrap(),
+                result,
                 next_cursor: None,
             };
             let output: anda_core::ToolOutput<ToolResponse> = anda_core::ToolOutput::new(response);
@@ -552,6 +580,167 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completion_deadline_covers_submission_fetches_and_poll_sleep() {
+        for slow_phase in [
+            "agent_run",
+            "GetConversationDelta",
+            "GetConversation",
+            "sleep",
+        ] {
+            let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed = reached.clone();
+            let app = Router::new().route(
+                "/engine/default",
+                routing::post(
+                    move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
+                        let reached = observed.clone();
+                        async move {
+                            let phase = if request.method == "agent_run" {
+                                "agent_run".to_string()
+                            } else {
+                                let (input,): (ToolInput<serde_json::Value>,) =
+                                    serde_json::from_slice(&request.params).unwrap();
+                                input.args["type"].as_str().unwrap().to_string()
+                            };
+                            if phase == slow_phase {
+                                reached.store(true, std::sync::atomic::Ordering::SeqCst);
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                            }
+                            let payload = if phase == "agent_run" {
+                                serde_json::to_vec(&AgentOutput {
+                                    conversation: Some(1),
+                                    ..Default::default()
+                                })
+                                .unwrap()
+                            } else {
+                                let mut conversation =
+                                    finished_conversation(1, ConversationStatus::Completed);
+                                if slow_phase == "sleep" {
+                                    reached.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    conversation.status = ConversationStatus::Working;
+                                }
+                                let result = if phase == "GetConversationDelta" {
+                                    serde_json::to_value(conversation.into_delta(0, 0)).unwrap()
+                                } else {
+                                    serde_json::to_value(conversation).unwrap()
+                                };
+                                serde_json::to_vec(&anda_core::ToolOutput::new(ToolResponse::Ok {
+                                    result,
+                                    next_cursor: None,
+                                }))
+                                .unwrap()
+                            };
+                            let rpc: anda_core::http::RPCResponse = Ok(ByteBufB64(payload));
+                            axum::Json(serde_json::to_value(rpc).unwrap())
+                        }
+                    },
+                ),
+            );
+            let client = gateway::Client::new(
+                crate::test_support::spawn_http_mock(app).await,
+                "token".into(),
+            );
+            let started = std::time::Instant::now();
+            let err = run_agent_to_completion(
+                &client,
+                &AgentInput::new(String::new(), "test".into()),
+                Some(Duration::from_millis(250)),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("did not complete"),
+                "{slow_phase}: {err}"
+            );
+            assert!(
+                reached.load(std::sync::atomic::Ordering::SeqCst),
+                "{slow_phase}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(1), "{slow_phase}");
+        }
+    }
+
+    #[tokio::test]
+    async fn polling_uses_offsets_and_fetches_final_snapshots_across_compaction() {
+        let calls = Arc::new(parking_lot::Mutex::new(Vec::<(String, u64, usize)>::new()));
+        let observed = calls.clone();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(
+                move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
+                    let calls = observed.clone();
+                    async move {
+                        let (input,): (ToolInput<serde_json::Value>,) =
+                            serde_json::from_slice(&request.params).unwrap();
+                        let kind = input.args["type"].as_str().unwrap();
+                        let id = input.args["_id"].as_u64().unwrap();
+                        let offset =
+                            input.args["messages_offset"].as_u64().unwrap_or_default() as usize;
+                        let first_poll = calls.lock().is_empty();
+                        calls.lock().push((kind.to_string(), id, offset));
+                        let mut conversation =
+                            finished_conversation(id, ConversationStatus::Completed);
+                        if id == 1 {
+                            conversation.child = Some(2);
+                            // The final snapshot updates a message at an existing index.
+                            conversation.messages[0]["content"][0]["text"] =
+                                "corrected history".into();
+                        }
+                        let result = if kind == "GetConversationDelta" {
+                            if first_poll {
+                                conversation.status = ConversationStatus::Working;
+                                conversation.child = None;
+                                conversation.messages[0]["content"][0]["text"] =
+                                    "old history".into();
+                            }
+                            serde_json::to_value(conversation.into_delta(offset, 0)).unwrap()
+                        } else {
+                            serde_json::to_value(conversation).unwrap()
+                        };
+                        let output = anda_core::ToolOutput::new(ToolResponse::Ok {
+                            result,
+                            next_cursor: None,
+                        });
+                        let rpc: anda_core::http::RPCResponse =
+                            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+                        axum::Json(serde_json::to_value(rpc).unwrap())
+                    }
+                },
+            ),
+        );
+        let client = gateway::Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token".into(),
+        );
+        let output = wait_for_agent_output(
+            &client,
+            AgentOutput {
+                conversation: Some(1),
+                ..Default::default()
+            },
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.content, "final answer 2");
+        assert_eq!(
+            output.chat_history[0].text().as_deref(),
+            Some("corrected history")
+        );
+        assert_eq!(
+            *calls.lock(),
+            vec![
+                ("GetConversationDelta".into(), 1, 0),
+                ("GetConversationDelta".into(), 1, 1),
+                ("GetConversation".into(), 1, 0),
+                ("GetConversationDelta".into(), 2, 0),
+                ("GetConversation".into(), 2, 0),
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn wait_for_agent_output_times_out_and_detects_cycles() {
         // No conversation id: the initial output is returned untouched.
         let client = spawn_agent_gateway(HashMap::new()).await;
@@ -559,7 +748,7 @@ mod tests {
             content: "direct".to_string(),
             ..Default::default()
         };
-        let output = wait_for_agent_output(&client, initial, None, Duration::from_millis(1))
+        let output = wait_for_agent_output(&client, initial, Duration::from_millis(1))
             .await
             .unwrap();
         assert_eq!(output.content, "direct");
@@ -570,14 +759,10 @@ mod tests {
             finished_conversation(1, ConversationStatus::Working),
         )]))
         .await;
-        let initial = AgentOutput {
-            conversation: Some(1),
-            ..Default::default()
-        };
-        let err = wait_for_agent_output(
+        let err = run_agent_to_completion(
             &client,
-            initial,
-            Some(Duration::ZERO),
+            &AgentInput::new(String::new(), "test".into()),
+            Some(Duration::from_millis(20)),
             Duration::from_millis(1),
         )
         .await
@@ -593,7 +778,7 @@ mod tests {
             conversation: Some(1),
             ..Default::default()
         };
-        let err = wait_for_agent_output(&client, initial, None, Duration::from_millis(1))
+        let err = wait_for_agent_output(&client, initial, Duration::from_millis(1))
             .await
             .map(|_| ())
             .unwrap_err();

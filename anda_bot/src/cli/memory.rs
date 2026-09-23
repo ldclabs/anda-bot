@@ -15,6 +15,9 @@ pub struct MemoryCommand {
 enum MemorySubcommand {
     /// Read the attention inbox or prepare its minimal owner configuration.
     Inbox {
+        /// Continue an inbox page using its next_cursor.
+        #[arg(long)]
+        cursor: Option<String>,
         #[command(subcommand)]
         command: Option<InboxCommand>,
     },
@@ -53,6 +56,15 @@ impl MemoryCommand {
         matches!(self.command, Some(MemorySubcommand::Guide))
     }
     pub fn validate(&self) -> Result<(), BoxError> {
+        if matches!(
+            &self.command,
+            Some(MemorySubcommand::Inbox {
+                cursor: Some(_),
+                command: Some(_),
+            })
+        ) {
+            return Err("--cursor cannot be combined with inbox setup".into());
+        }
         if self.evaluation().is_some() && self.json {
             return Err(
                 "evaluate writes its own structured artifacts; --json is not supported".into(),
@@ -69,8 +81,14 @@ impl MemoryCommand {
 }
 
 pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), BoxError> {
-    if let Some(MemorySubcommand::Inbox { command }) = &cmd.command {
-        if let Some(InboxCommand::Setup { apply }) = command {
+    cmd.validate()?;
+    match &cmd.command {
+        Some(MemorySubcommand::Guide) => cmd.print_guide(),
+        Some(MemorySubcommand::Evaluate(command)) => return super::memory_eval::run(command).await,
+        Some(MemorySubcommand::Inbox {
+            command: Some(InboxCommand::Setup { apply }),
+            ..
+        }) => {
             let view = client.memory_setup(apply.as_deref()).await?;
             if cmd.json {
                 println!(
@@ -91,11 +109,15 @@ pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), Bo
                     println!("Restart to install bindings / 重启以安装绑定:\nanda restart");
                 }
             }
-        } else {
+        }
+        Some(MemorySubcommand::Inbox {
+            cursor,
+            command: None,
+        }) => {
             let page = client
                 .brain()
                 .attention(&crate::brain::AttentionQuery {
-                    cursor: None,
+                    cursor: cursor.clone(),
                     limit: Some(20),
                 })
                 .await?;
@@ -105,47 +127,130 @@ pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), Bo
                     serde_json::to_string_pretty(&serde_json::json!({"result":page}))?
                 );
             } else {
-                println!("{}", crate::brain::outbox::render(&page));
+                println!("{}", render_inbox_page(&page));
             }
         }
-        return Ok(());
-    }
-    if let Some(MemorySubcommand::Activity {
-        conversation,
-        cursor,
-    }) = &cmd.command
-    {
-        let mut page = client
-            .memory_activity(&crate::brain::activity::ActivityQuery {
-                conversation: conversation.clone(),
-                cursor: cursor.clone(),
-                limit: Some(20),
-            })
-            .await?;
-        if cmd.json {
-            let cursor = page.next_cursor.take();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &serde_json::json!({"result":page,"next_cursor":cursor})
-                )?
-            );
-        } else {
-            println!("{}", page.render());
+        Some(MemorySubcommand::Activity {
+            conversation,
+            cursor,
+        }) => {
+            let mut page = client
+                .memory_activity(&crate::brain::activity::ActivityQuery {
+                    conversation: conversation.clone(),
+                    cursor: cursor.clone(),
+                    limit: Some(20),
+                })
+                .await?;
+            if cmd.json {
+                let cursor = page.next_cursor.take();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"result":page,"next_cursor":cursor})
+                    )?
+                );
+            } else {
+                println!("{}", page.render());
+            }
         }
-        return Ok(());
-    }
-    let overview = client.memory_overview().await?;
-    if cmd.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({"result":overview}))?
-        );
-    } else {
-        println!("{}", overview.render());
-    }
-    if !overview.is_connected() {
-        return Err("Memory status unavailable; check `anda status`. / 无法读取记忆状态，请检查 `anda status`。".into());
+        None | Some(MemorySubcommand::Status) => {
+            let overview = client.memory_overview().await?;
+            if cmd.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({"result":overview}))?
+                );
+            } else {
+                println!("{}", overview.render());
+            }
+            if !overview.is_connected() {
+                return Err("Memory status unavailable; check `anda status`. / 无法读取记忆状态，请检查 `anda status`。".into());
+            }
+        }
     }
     Ok(())
+}
+
+fn render_inbox_page(page: &crate::brain::AttentionPage) -> String {
+    let mut text = crate::brain::outbox::render(page);
+    if let Some(cursor) = &page.next_cursor {
+        text.push_str(&format!(
+            "\nMore items may follow / 尚未读取全部事项:\nanda memory inbox --cursor {cursor}\n"
+        ));
+    } else if !page.complete {
+        text.push_str("\nInbox snapshot is incomplete; retry `anda memory inbox`. / 待办快照不完整，请重试 anda memory inbox。\n");
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{Json, Router, extract::Query, routing::get};
+    use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
+
+    #[tokio::test]
+    async fn inbox_reads_next_page_and_shows_continuation() {
+        let first = json!({
+            "scope":{"space_id":"anda_bot","space_instance":"test"},
+            "items":[],"next_cursor":"page-two","complete":false,
+        });
+        let mut second = first.clone();
+        second["next_cursor"] = serde_json::Value::Null;
+        second["complete"] = true.into();
+        assert!(
+            render_inbox_page(&serde_json::from_value(first.clone()).unwrap())
+                .contains("anda memory inbox --cursor page-two")
+        );
+        assert!(
+            !render_inbox_page(&serde_json::from_value(second.clone()).unwrap())
+                .contains("--cursor")
+        );
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let observed = requests.clone();
+        let app = Router::new().route(
+            "/v1/anda_bot/attention",
+            get(move |Query(query): Query<HashMap<String, String>>| {
+                let observed = observed.clone();
+                let first = first.clone();
+                let second = second.clone();
+                async move {
+                    assert_eq!(query.get("limit").map(String::as_str), Some("20"));
+                    let cursor = query.get("cursor").cloned();
+                    observed.lock().push(cursor.clone());
+                    let page = match cursor.as_deref() {
+                        None => first,
+                        Some("page-two") => second,
+                        other => panic!("unexpected cursor {other:?}"),
+                    };
+                    Json(json!({"result":page}))
+                }
+            }),
+        );
+        let client = gateway::Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token".into(),
+        );
+        for json in [false, true] {
+            for cursor in [None, Some("page-two".into())] {
+                run(
+                    &client,
+                    &MemoryCommand {
+                        json,
+                        command: Some(MemorySubcommand::Inbox {
+                            cursor,
+                            command: None,
+                        }),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+        }
+        assert_eq!(
+            *requests.lock(),
+            vec![None, Some("page-two".into()), None, Some("page-two".into())]
+        );
+    }
 }

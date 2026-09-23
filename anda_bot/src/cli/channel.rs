@@ -17,7 +17,7 @@ pub enum ChannelCommand {
     /// Run a channel-specific direct initialization workflow.
     Init {
         /// Channel id, type, or local id (for example: wechat:personal, wechat, personal).
-        #[arg(value_name = "CHANNEL")]
+        #[arg(value_name = "CHANNEL", conflicts_with = "all")]
         target: Option<String>,
         /// Initialize every configured channel.
         #[arg(long)]

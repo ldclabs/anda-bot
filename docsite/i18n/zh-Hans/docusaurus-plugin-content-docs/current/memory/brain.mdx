@@ -18,6 +18,8 @@ description: Anda Brain 的 Formation、Recall、Maintenance 长期记忆循环�
 
 需要跨会话保留确认问题时，使用“设置记忆待办”或 `anda memory inbox setup`。预览并确认配置后，显式运行 `anda restart`。自定义文件和环境覆盖会保留。对记录订阅后，变化会触发真实原生待办。TUI 使用 `/memory inbox`、`/memory answer <编号> <正文>`、`/memory retry <编号>`，重试沿用原事件与正文。
 
+使用 `anda memory inbox` 读取待办，按输出提示运行 `anda memory inbox --cursor <next_cursor>` 读取下一页。使用 `--json` 时，游标位于 `result.next_cursor`。
+
 MIB 对照评测和业务学习是独立的高级功能。含 MIB 的构建可运行 `anda memory evaluate plan --help` 查看隔离评测流程，费用可能不完整。普通记忆对照不能充当业务学习批准，也不能证明实际提升。
 
 

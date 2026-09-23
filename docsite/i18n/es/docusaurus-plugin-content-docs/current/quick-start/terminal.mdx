@@ -83,3 +83,11 @@ Las tareas cron y el modo de objetivo autónomo (`/goal ...`) siempre se ejecuta
 | `anda voice --record-secs 8` | Inicia la entrada de voz; requiere la configuración de transcripción. |
 
 La reproducción de voz también requiere que `tts.enabled: true` esté configurado. Si solo desea entrada por voz y salida de texto, añada `--no-playback`.
+
+Indica exactamente una opción: `--prompt` o `--prompt-file`. `--wait-timeout-secs 120` limita el tiempo total de envío y espera del resultado; `0` (predeterminado) desactiva ese límite. Al agotarse, la CLI deja de esperar, pero la tarea del daemon puede continuar.
+
+El modo de voz espera a que termine la respuesta antes de grabar el siguiente turno. Ctrl-C también detiene la síntesis y la reproducción.
+
+`anda update` y `anda update --skills` conservan una versión local más reciente y sus recursos. Usa `--force` para instalar explícitamente la última versión publicada aunque sea anterior.
+
+Lee los pendientes con `anda memory inbox`. Sigue el comando mostrado `anda memory inbox --cursor <next_cursor>` para acceder a la siguiente página. Con `--json`, el cursor está en `result.next_cursor`.

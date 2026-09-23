@@ -4,22 +4,25 @@
 //! artifacts returned by the daemon. Wake-word detection is not handled here; a
 //! future wake model can decide when to invoke these helpers.
 
-use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource};
+use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource, ToolInput};
 use anda_engine::memory::ConversationStatus;
-use clap::Args;
 use ic_auth_types::Xid;
 use std::{
     future::Future,
     io::{self, Write},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::OnceLock,
     time::Duration,
 };
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config, gateway, gateway::is_terminal_conversation_status, transcription, tts, util,
-    util::request_meta::keys,
+    config, gateway,
+    gateway::is_terminal_conversation_status,
+    transcription, tts, util,
+    util::{request_meta::keys, tool_response::ToolResponse},
 };
 
 const VOICE_POLL_INTERVAL: Duration = Duration::from_millis(1500);
@@ -28,21 +31,7 @@ const VOICE_TTS_CHUNK_CHARS: usize = 800;
 const VOICE_TTS_SHORT_CHUNK_CHARS: usize = 80;
 const VOICE_TTS_MAX_SHORT_LINES: usize = 4;
 
-#[derive(Args)]
-pub struct VoiceCommand {
-    /// Agent name. Empty value uses the default agent.
-    #[arg(long, default_value = "")]
-    name: String,
-    /// Recording duration in seconds for each voice turn.
-    #[arg(long, default_value_t = 5)]
-    record_secs: u64,
-    /// Do not play returned speech audio artifacts.
-    #[arg(long)]
-    no_playback: bool,
-    /// Optional request metadata as a JSON object.
-    #[arg(long)]
-    meta: Option<String>,
-}
+pub use super::voice_args::VoiceCommand;
 
 struct VoiceRuntime {
     transcription: transcription::TranscriptionManager,
@@ -69,12 +58,7 @@ pub async fn run_voice_loop(
     let voice_channel = VoiceChannel::new();
     let mut base_meta = parse_request_meta(cmd.meta)?.unwrap_or_default();
     add_cli_voice_context(&mut base_meta);
-    let initial_conversation_id = base_meta
-        .extra
-        .get(keys::CONVERSATION)
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_default();
-    let mut cursor = initialize_voice_cursor(client, initial_conversation_id).await?;
+    let mut cursor = initialize_voice_cursor(client, &base_meta).await?;
     let mut turn = 1u64;
 
     eprintln!("Starting voice conversation. Press Ctrl-C to stop.");
@@ -186,6 +170,27 @@ async fn play_voice_response(
     text: &str,
     turn: u64,
 ) -> Result<bool, BoxError> {
+    let cancel = CancellationToken::new();
+    let operation = play_voice_response_inner(tts, voice_channel, text, turn, &cancel);
+    tokio::pin!(operation);
+    tokio::select! {
+        result = &mut operation => result.map(|()| true),
+        _ = tokio::signal::ctrl_c() => {
+            cancel.cancel();
+            operation.await?;
+            eprintln!("Voice conversation stopped.");
+            Ok(false)
+        }
+    }
+}
+
+async fn play_voice_response_inner(
+    tts: &tts::TtsManager,
+    voice_channel: &VoiceChannel,
+    text: &str,
+    turn: u64,
+    cancel: &CancellationToken,
+) -> Result<(), BoxError> {
     let speech_text = prepare_voice_tts_text(text);
     if speech_text.is_empty() {
         return Err("assistant response did not contain speakable text".into());
@@ -198,15 +203,10 @@ async fn play_voice_response(
 
     let total = chunks.len();
     eprintln!("Synthesizing speech in {total} segment(s)...");
-    let first_status = format!("Synthesizing speech segment 1/{total}");
-    let mut current_artifact = match wait_with_voice_status(
-        &first_status,
-        synthesize_voice_artifact(tts, first_chunk, turn, 0, total),
-    )
-    .await?
-    {
-        Some(artifact) => artifact,
-        None => return Ok(false),
+    let Some(mut current_artifact) =
+        synthesize_voice_artifact(tts, first_chunk, turn, 0, total, cancel).await?
+    else {
+        return Ok(());
     };
 
     for (index, next_chunk) in chunks.iter().enumerate().skip(1) {
@@ -217,18 +217,22 @@ async fn play_voice_response(
             index + 1,
             total
         );
-        let playback = voice_channel.play_audio_artifacts(std::slice::from_ref(&current_artifact));
-        let synthesis = synthesize_voice_artifact(tts, next_chunk, turn, index, total);
+        let playback =
+            voice_channel.play_audio_artifacts(std::slice::from_ref(&current_artifact), cancel);
+        let synthesis = synthesize_voice_artifact(tts, next_chunk, turn, index, total, cancel);
         let (playback_result, synthesis_result) = tokio::join!(playback, synthesis);
         playback_result?;
-        current_artifact = synthesis_result?;
+        let Some(next_artifact) = synthesis_result? else {
+            return Ok(());
+        };
+        current_artifact = next_artifact;
     }
 
     eprintln!("Playing speech segment {total}/{total}...");
     voice_channel
-        .play_audio_artifacts(std::slice::from_ref(&current_artifact))
+        .play_audio_artifacts(std::slice::from_ref(&current_artifact), cancel)
         .await?;
-    Ok(true)
+    Ok(())
 }
 
 async fn synthesize_voice_artifact(
@@ -237,14 +241,20 @@ async fn synthesize_voice_artifact(
     turn: u64,
     index: usize,
     total: usize,
-) -> Result<Resource, BoxError> {
-    let audio = tts.synthesize(chunk).await?;
+    cancel: &CancellationToken,
+) -> Result<Option<Resource>, BoxError> {
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Ok(None),
+        result = tts.synthesize(chunk) => result,
+    };
+    let audio = result.inspect_err(|_| cancel.cancel())?;
     let name = if total == 1 {
         format!("anda_voice_turn_{turn}")
     } else {
         format!("anda_voice_turn_{turn}_part_{}", index + 1)
     };
-    Ok(tts.audio_artifact(audio, Some(name)))
+    Ok(Some(tts.audio_artifact(audio, Some(name))))
 }
 
 fn prepare_voice_tts_text(text: &str) -> String {
@@ -288,10 +298,18 @@ fn strip_markdown_line_prefix(line: &str) -> &str {
         return rest.trim_start();
     }
 
-    let Some((prefix, rest)) = trimmed.split_once(['.', '、', ')']) else {
+    let Some((index, marker)) = trimmed
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, '.' | '、' | ')'))
+    else {
         return trimmed;
     };
-    if !prefix.is_empty() && prefix.chars().all(|ch| ch.is_ascii_digit()) {
+    let (prefix, suffix) = trimmed.split_at(index);
+    let rest = &suffix[marker.len_utf8()..];
+    if !prefix.is_empty()
+        && prefix.chars().all(|ch| ch.is_ascii_digit())
+        && (marker == '、' || rest.starts_with(char::is_whitespace))
+    {
         rest.trim_start()
     } else {
         trimmed
@@ -412,12 +430,15 @@ fn push_voice_tts_segment(
     }
 
     let mut hard_chunk = String::new();
+    let mut hard_chars = 0;
     for ch in segment.chars() {
-        if hard_chunk.chars().count() >= max_chars {
+        if hard_chars >= max_chars {
             chunks.push(hard_chunk.trim().to_string());
             hard_chunk.clear();
+            hard_chars = 0;
         }
         hard_chunk.push(ch);
+        hard_chars += 1;
     }
     if !hard_chunk.trim().is_empty() {
         current.push_str(hard_chunk.trim());
@@ -492,18 +513,47 @@ async fn transcribe_voice_resource(
 
 async fn initialize_voice_cursor(
     client: &gateway::Client,
-    conversation_id: u64,
+    meta: &RequestMeta,
 ) -> Result<VoiceConversationCursor, BoxError> {
+    let mut conversation_id = meta
+        .get_extra_as::<u64>(keys::CONVERSATION)
+        .unwrap_or_default();
+    if conversation_id == 0 {
+        // Voice uses a stable source just like the TUI. Seed offsets before
+        // sending so an existing idle session cannot replay its old answer.
+        let mut input = ToolInput::new(
+            crate::engine::ConversationsTool::NAME.to_string(),
+            crate::engine::ConversationsToolArgs::GetSourceState {},
+        );
+        input.meta = Some(meta.clone());
+        let output = client.tool_call::<_, ToolResponse>(&input).await?;
+        let state: crate::engine::SourceState = match output.output {
+            ToolResponse::Ok { result, .. } => serde_json::from_value(result)?,
+            other => return Err(format!("voice source state unavailable: {other:?}").into()),
+        };
+        conversation_id = state.conv_id;
+    }
     if conversation_id == 0 {
         return Ok(VoiceConversationCursor::default());
     }
 
-    let conversation = client.get_conversation(conversation_id).await?;
-    Ok(VoiceConversationCursor {
-        conversation_id: Some(conversation._id),
-        seen_messages: conversation.messages.len(),
-        seen_artifacts: conversation.artifacts.len(),
-    })
+    let mut visited = Vec::new();
+    loop {
+        if visited.contains(&conversation_id) || visited.len() >= gateway::MAX_CONVERSATION_CHAIN {
+            return Err("voice conversation child chain contains a cycle or is too long".into());
+        }
+        visited.push(conversation_id);
+        let conversation = client.get_conversation(conversation_id).await?;
+        if let Some(child) = conversation.child {
+            conversation_id = child;
+            continue;
+        }
+        return Ok(VoiceConversationCursor {
+            conversation_id: Some(conversation._id),
+            seen_messages: conversation.messages.len(),
+            seen_artifacts: conversation.artifacts.len(),
+        });
+    }
 }
 
 async fn poll_voice_response(
@@ -517,23 +567,37 @@ async fn poll_voice_response(
     // poll sleep, so a malformed chain (cycle, or absurd length) would spin
     // into an unbounded sequence of HTTP requests.
     let mut visited: Vec<u64> = vec![conversation_id];
+    let mut response_text = String::new();
+    let mut received_messages = false;
 
     loop {
         let delta = client
             .get_conversation_delta(conversation_id, cursor.seen_messages, cursor.seen_artifacts)
             .await?;
 
-        let response_text = assistant_text_from_messages(&delta.messages);
+        received_messages |= !delta.messages.is_empty();
+        let text = assistant_text_from_messages(&delta.messages);
+        if !text.trim().is_empty() {
+            response_text = text;
+        }
         cursor.seen_messages += delta.messages.len();
         cursor.seen_artifacts += delta.artifacts.len();
 
-        if !response_text.trim().is_empty() {
-            return Ok(response_text);
+        if matches!(
+            delta.status,
+            ConversationStatus::Failed | ConversationStatus::Cancelled
+        ) {
+            let reason = delta.failed_reason.as_deref().unwrap_or_else(|| {
+                if delta.status == ConversationStatus::Cancelled {
+                    "conversation cancelled"
+                } else {
+                    "conversation failed"
+                }
+            });
+            return Err(format!("voice conversation turn failed: {reason}").into());
         }
 
-        if let Some(child_id) = delta.child
-            && child_id != conversation_id
-        {
+        if let Some(child_id) = delta.child {
             if visited.contains(&child_id) {
                 return Err(
                     format!("conversation child chain contains a cycle at {child_id}").into(),
@@ -549,15 +613,15 @@ async fn poll_voice_response(
             visited.push(child_id);
             conversation_id = child_id;
             reset_voice_cursor_if_needed(cursor, conversation_id);
+            received_messages = false;
             continue;
         }
 
-        if is_terminal_conversation_status(&delta.status) {
+        if is_terminal_conversation_status(&delta.status)
+            || received_messages && delta.status == ConversationStatus::Idle
+        {
             if let Some(reason) = delta.failed_reason.as_deref() {
                 return Err(format!("voice conversation turn failed: {reason}").into());
-            }
-            if matches!(delta.status, ConversationStatus::Cancelled) {
-                return Err("voice conversation turn was cancelled".into());
             }
             return Ok(response_text);
         }
@@ -579,6 +643,7 @@ fn assistant_text_from_messages(messages: &[serde_json::Value]) -> String {
         .iter()
         .filter_map(|raw| serde_json::from_value::<Message>(raw.clone()).ok())
         .filter(|message| message.role == "assistant")
+        .filter(|message| message.tool_calls().is_empty())
         .filter_map(|message| message.text())
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
@@ -670,6 +735,7 @@ impl VoiceChannel {
             return Err("no audio samples captured from default input device".into());
         }
 
+        drop(_stream);
         let name = format!("anda_bot_voice_{}.wav", Xid::new());
         let wav_bytes = encode_wav_from_f32(&samples, input.sample_rate, input.channels);
         Ok(audio_resource_from_bytes(
@@ -680,26 +746,33 @@ impl VoiceChannel {
     }
 
     /// Play the first-party audio artifacts returned by the agent/TTS pipeline.
-    pub async fn play_audio_artifacts(&self, artifacts: &[Resource]) -> Result<(), BoxError> {
-        let mut played = false;
-        for artifact in artifacts {
-            if transcription::is_audio_resource(artifact)
-                && let Some(blob) = &artifact.blob
-            {
-                let path = write_temp_audio_artifact(artifact, &blob.0).await?;
-                let play_result = play_audio_file(&path).await;
-                let _ = tokio::fs::remove_file(path).await;
-                play_result?;
-                played = true;
+    async fn play_audio_artifacts(
+        &self,
+        artifacts: &[Resource],
+        cancel: &CancellationToken,
+    ) -> Result<(), BoxError> {
+        let result = async {
+            let mut played = false;
+            for artifact in artifacts {
+                if cancel.is_cancelled() {
+                    return Ok(());
+                }
+                if transcription::is_audio_resource(artifact)
+                    && let Some(blob) = &artifact.blob
+                {
+                    let path = write_temp_audio_artifact(artifact, &blob.0).await?;
+                    let play_result = play_audio_file(&path, cancel).await;
+                    let _ = tokio::fs::remove_file(path).await;
+                    play_result?;
+                    played = true;
+                }
             }
-        }
-
-        if !played {
-            eprintln!(
-                "No playable audio artifact was returned. Check tts.enabled and provider config."
-            );
-        }
-        Ok(())
+            if !played {
+                eprintln!("No playable audio artifact was returned. Check tts.enabled and provider config.");
+            }
+            Ok::<(), BoxError>(())
+        }.await;
+        result.inspect_err(|_| cancel.cancel())
     }
 }
 
@@ -891,37 +964,37 @@ async fn write_temp_audio_artifact(resource: &Resource, bytes: &[u8]) -> Result<
     Ok(path)
 }
 
-async fn play_audio_file(path: &Path) -> Result<(), BoxError> {
-    let output = path.to_str().ok_or("invalid temporary playback path")?;
+async fn play_audio_file(path: &Path, cancel: &CancellationToken) -> Result<(), BoxError> {
+    static PLAYERS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    let players = PLAYERS.get_or_init(|| {
+        ["ffplay", "afplay", "play"]
+            .into_iter()
+            .filter(|player| {
+                (*player != "afplay" || cfg!(target_os = "macos")) && command_available(player)
+            })
+            .collect()
+    });
     let mut errors = Vec::new();
-
-    if command_available("ffplay") {
-        let mut command = tokio::process::Command::new("ffplay");
-        command.args(["-nodisp", "-autoexit", "-loglevel", "quiet", output]);
-        match run_process(command, "ffplay").await {
+    for &player in players {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        let mut command = tokio::process::Command::new(player);
+        match player {
+            "ffplay" => {
+                command.args(["-nodisp", "-autoexit", "-loglevel", "quiet"]);
+            }
+            "play" => {
+                command.arg("-q");
+            }
+            _ => {}
+        }
+        command.arg(path);
+        match run_process(command, player, cancel).await {
             Ok(()) => return Ok(()),
             Err(err) => errors.push(err.to_string()),
         }
     }
-
-    if cfg!(target_os = "macos") && command_available("afplay") {
-        let mut command = tokio::process::Command::new("afplay");
-        command.arg(output);
-        match run_process(command, "afplay").await {
-            Ok(()) => return Ok(()),
-            Err(err) => errors.push(err.to_string()),
-        }
-    }
-
-    if command_available("play") {
-        let mut command = tokio::process::Command::new("play");
-        command.args(["-q", output]);
-        match run_process(command, "play").await {
-            Ok(()) => return Ok(()),
-            Err(err) => errors.push(err.to_string()),
-        }
-    }
-
     if errors.is_empty() {
         Err("audio playback requires `ffplay`, `afplay`, or `play` on PATH".into())
     } else {
@@ -929,14 +1002,25 @@ async fn play_audio_file(path: &Path) -> Result<(), BoxError> {
     }
 }
 
-async fn run_process(mut command: tokio::process::Command, label: &str) -> Result<(), BoxError> {
-    let output = command.output().await?;
-    if output.status.success() {
-        return Ok(());
+async fn run_process(
+    mut command: tokio::process::Command,
+    label: &str,
+    cancel: &CancellationToken,
+) -> Result<(), BoxError> {
+    let mut child = command.kill_on_drop(true).stdin(Stdio::null()).spawn()?;
+    let status = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            child.kill().await?;
+            return Ok(());
+        }
+        status = child.wait() => status?,
+    };
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{label} failed ({status})").into())
     }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("{label} failed ({}): {}", output.status, stderr.trim()).into())
 }
 
 fn command_available(command: &str) -> bool {
@@ -1100,6 +1184,10 @@ mod tests {
         // Non-numeric prefix before a separator is left intact.
         assert_eq!(strip_markdown_line_prefix("一、列表"), "一、列表");
         assert_eq!(strip_markdown_line_prefix("v1.0 release"), "v1.0 release");
+        for text in ["3.14 is pi", "2026.09.23", "1.2.3", "12)items"] {
+            assert_eq!(prepare_voice_tts_text(text), text);
+        }
+        assert_eq!(strip_markdown_line_prefix("12) step"), "step");
     }
 
     #[test]
@@ -1252,6 +1340,231 @@ mod tests {
             failed_reason: None,
             updated_at: 0,
             child,
+        }
+    }
+
+    fn assistant_message(text: &str) -> serde_json::Value {
+        serde_json::json!({"role":"assistant", "content":[{"type":"Text", "text":text}]})
+    }
+
+    #[tokio::test]
+    async fn voice_waits_past_stale_idle_and_intermediate_text_until_turn_is_idle() {
+        let mut stale = working_delta(1, None);
+        stale.status = ConversationStatus::Idle;
+        let mut intermediate = working_delta(1, None);
+        intermediate.messages = vec![assistant_message("Checking the files...")];
+        let mut final_answer = working_delta(1, None);
+        final_answer.messages = vec![assistant_message("The answer is 42.")];
+        let mut idle = working_delta(1, None);
+        idle.status = ConversationStatus::Idle;
+        let script = Arc::new(parking_lot::Mutex::new(std::collections::VecDeque::from([
+            (5, stale),
+            (5, intermediate),
+            (6, final_answer),
+            (7, idle),
+        ])));
+        let observed = script.clone();
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(
+                move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
+                    let script = observed.clone();
+                    async move {
+                        let (input,): (ToolInput<serde_json::Value>,) =
+                            serde_json::from_slice(&request.params).unwrap();
+                        let (offset, delta) = script.lock().pop_front().expect("expected poll");
+                        assert_eq!(input.args["messages_offset"], offset);
+                        let output = anda_core::ToolOutput::new(ToolResponse::Ok {
+                            result: serde_json::to_value(delta).unwrap(),
+                            next_cursor: None,
+                        });
+                        let rpc: anda_core::http::RPCResponse =
+                            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+                        axum::Json(serde_json::to_value(rpc).unwrap())
+                    }
+                },
+            ),
+        );
+        let client = gateway::Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token".into(),
+        );
+        let mut cursor = VoiceConversationCursor {
+            conversation_id: Some(1),
+            seen_messages: 5,
+            seen_artifacts: 0,
+        };
+        let answer = poll_voice_response(&client, &mut cursor, 1).await.unwrap();
+        assert_eq!(answer, "The answer is 42.");
+        assert!(script.lock().is_empty());
+        assert_eq!(cursor.seen_messages, 7);
+    }
+
+    #[tokio::test]
+    async fn voice_follows_child_before_returning_text_and_surfaces_failure() {
+        let mut parent = working_delta(1, Some(2));
+        parent.status = ConversationStatus::Completed;
+        parent.messages = vec![assistant_message("Before compaction")];
+        let mut child = working_delta(2, None);
+        child.status = ConversationStatus::Idle;
+        child.messages = vec![assistant_message("Final answer")];
+        let client = spawn_voice_gateway(HashMap::from([(1, parent), (2, child)])).await;
+        let mut cursor = VoiceConversationCursor::default();
+        assert_eq!(
+            poll_voice_response(&client, &mut cursor, 1).await.unwrap(),
+            "Final answer"
+        );
+        assert_eq!(cursor.conversation_id, Some(2));
+
+        for status in [ConversationStatus::Failed, ConversationStatus::Cancelled] {
+            let mut delta = working_delta(3, None);
+            delta.status = status;
+            delta.messages = vec![assistant_message("Partial output")];
+            let client = spawn_voice_gateway(HashMap::from([(3, delta)])).await;
+            assert!(
+                poll_voice_response(&client, &mut VoiceConversationCursor::default(), 3)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn voice_initializes_offsets_from_source_and_latest_child() {
+        let app = Router::new().route(
+            "/engine/default",
+            routing::post(
+                |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| async move {
+                    let (input,): (ToolInput<serde_json::Value>,) =
+                        serde_json::from_slice(&request.params).unwrap();
+                    let result = match input.args["type"].as_str().unwrap() {
+                        "GetSourceState" => {
+                            assert_eq!(
+                                input
+                                    .meta
+                                    .unwrap()
+                                    .get_extra_as::<String>("source")
+                                    .as_deref(),
+                                Some("cli:voice:test")
+                            );
+                            serde_json::json!({"c":1})
+                        }
+                        "GetConversation" => {
+                            let id = input.args["_id"].as_u64().unwrap();
+                            serde_json::to_value(anda_engine::memory::Conversation {
+                                _id: id,
+                                child: (id == 1).then_some(2),
+                                messages: vec![assistant_message("Old answer")],
+                                ..Default::default()
+                            })
+                            .unwrap()
+                        }
+                        _ => panic!("unexpected request"),
+                    };
+                    let output = anda_core::ToolOutput::new(ToolResponse::Ok {
+                        result,
+                        next_cursor: None,
+                    });
+                    let rpc: anda_core::http::RPCResponse =
+                        Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+                    axum::Json(serde_json::to_value(rpc).unwrap())
+                },
+            ),
+        );
+        let client = gateway::Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token".into(),
+        );
+        let meta = serde_json::from_value(serde_json::json!({"source":"cli:voice:test"})).unwrap();
+        let cursor = initialize_voice_cursor(&client, &meta).await.unwrap();
+        assert_eq!(cursor.conversation_id, Some(2));
+        assert_eq!(cursor.seen_messages, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn playback_cancellation_reaps_the_child() {
+        let temp = tempfile::tempdir().unwrap();
+        let pid_path = temp.path().join("player.pid");
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "echo $$ > \"$1\"; exec sleep 30", "player"])
+            .arg(&pid_path);
+        let cancel = CancellationToken::new();
+        let operation = run_process(command, "test player", &cancel);
+        let stop = async {
+            let pid: i32 = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Ok(text) = tokio::fs::read_to_string(&pid_path).await
+                        && let Ok(pid) = text.trim().parse()
+                    {
+                        break pid;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            cancel.cancel();
+            pid
+        };
+        let (result, pid) = tokio::time::timeout(Duration::from_secs(6), async {
+            tokio::join!(operation, stop)
+        })
+        .await
+        .unwrap();
+        result.unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "player must be reaped");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[tokio::test]
+    async fn synthesis_cancellation_interrupts_first_and_prefetched_segments() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let observed = started.clone();
+        let app = Router::new().route(
+            "/speech",
+            routing::post(move || {
+                let started = observed.clone();
+                async move {
+                    started.notify_one();
+                    std::future::pending::<&'static str>().await
+                }
+            }),
+        );
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let tts = tts::TtsManager::new(
+            &config::TtsConfig {
+                enabled: true,
+                default_provider: "stepfun".into(),
+                stepfun: Some(config::StepFunTtsConfig {
+                    api_key: "test".into(),
+                    api_url: format!("{url}/speech"),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            crate::util::http_client::new_reqwest_client(),
+        )
+        .unwrap();
+        for index in [0, 1] {
+            let cancel = CancellationToken::new();
+            let stop = async {
+                started.notified().await;
+                cancel.cancel();
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(
+                    synthesize_voice_artifact(&tts, "hello", 1, index, 2, &cancel),
+                    stop
+                )
+            })
+            .await
+            .unwrap();
+            assert!(result.unwrap().is_none());
         }
     }
 

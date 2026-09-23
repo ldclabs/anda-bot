@@ -18,6 +18,8 @@ The composer offers memory modes for a fresh conversation. CLI equivalents are `
 
 For questions that must survive across conversations, use **Set up a memory inbox** or `anda memory inbox setup`. Review and apply the configuration, then explicitly run `anda restart`. Custom runtime files and environment overrides are preserved. Subscribe to a record to get a real native inbox item when it changes. In TUI, use `/memory inbox`, `/memory answer <number> <text>` and `/memory retry <number>`; retries reuse the saved event and text.
 
+Read the inbox with `anda memory inbox`. Follow the printed `anda memory inbox --cursor <next_cursor>` command for another page. With `--json`, the cursor is in `result.next_cursor`.
+
 MIB comparisons and business learning are advanced, separate features. `anda memory evaluate plan --help` describes the isolated CLI workflow in MIB-enabled builds. Costs may be incomplete. A memory comparison does not approve business learning or prove improvement.
 
 

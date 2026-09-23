@@ -315,7 +315,7 @@ fn check_due(state: &AutoUpdateState, now_ms: u64) -> bool {
     }
 }
 
-fn is_newer_release(latest_tag: &str, current_tag: &str) -> bool {
+pub(crate) fn is_newer_release(latest_tag: &str, current_tag: &str) -> bool {
     if latest_tag == current_tag {
         return false;
     }

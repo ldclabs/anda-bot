@@ -1,5 +1,5 @@
 use anda_core::BoxError;
-use clap::Args;
+use clap::{ArgGroup, Args};
 use reqwest::{StatusCode, header};
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,12 +18,13 @@ pub(crate) const LAUNCHER_BINARY_NAME: &str = "anda_launcher";
 const SKILLS_ARCHIVE_NAME: &str = "anda-skills.zip";
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("update_check").args(["check", "check_if_due"])))]
 pub struct UpdateCommand {
-    /// Reinstall the latest release even when this binary is already current.
+    /// Install the latest release even when this binary is current or newer.
     #[arg(long)]
     force: bool,
     /// Only update curated skills in the Anda home directory.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "update_check")]
     skills: bool,
     /// Check for a new release and download it without installing.
     #[arg(long)]
@@ -32,7 +33,7 @@ pub struct UpdateCommand {
     #[arg(long, hide = true)]
     check_if_due: bool,
     /// Emit machine-readable update state for launcher integrations.
-    #[arg(long, hide = true)]
+    #[arg(long, hide = true, requires = "update_check")]
     json: bool,
 }
 
@@ -48,6 +49,23 @@ pub(crate) enum UpdateFinish {
     Installed,
     #[cfg(windows)]
     Scheduled,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReleaseAction {
+    KeepNewer,
+    SyncExtras,
+    Install,
+}
+
+fn release_action(current: &str, latest: &str, force: bool) -> ReleaseAction {
+    if force || auto_update::is_newer_release(latest, current) {
+        ReleaseAction::Install
+    } else if current == latest {
+        ReleaseAction::SyncExtras
+    } else {
+        ReleaseAction::KeepNewer
+    }
 }
 
 struct StagedFile {
@@ -176,6 +194,13 @@ pub async fn run(
     let latest_tag = fetch_latest_version(client).await?;
     println!("Latest version: {latest_tag}");
 
+    let action = release_action(&current_tag, &latest_tag, cmd.force);
+    if action == ReleaseAction::KeepNewer {
+        println!(
+            "Keeping {current_tag}; the latest release {latest_tag} is not newer. Use --force to install it anyway."
+        );
+        return Ok(());
+    }
     let base_url = release_download_base_url(&latest_tag);
 
     if cmd.skills {
@@ -190,7 +215,7 @@ pub async fn run(
         .ok_or("Could not detect the current executable directory")?
         .to_path_buf();
 
-    if !cmd.force && latest_tag == current_tag {
+    if action == ReleaseAction::SyncExtras {
         if let Some(finish) =
             install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
         {
@@ -212,40 +237,19 @@ pub async fn run(
     #[cfg(not(windows))]
     let staged = StagedFile::new(staged_path);
 
-    if let Some(downloaded_path) =
+    let downloaded_path = if let Some(path) =
         auto_update::downloaded_update_path(daemon, &latest_tag, &asset_name).await
     {
         println!("Using previously downloaded {asset_name}...");
-        stage_update(&downloaded_path, staged.path()).await?;
-        prepare_executable(staged.path(), &current_exe).await?;
-        let finish = install_update(staged.path(), &current_exe).await?;
-
-        #[cfg(windows)]
-        if finish == UpdateFinish::Scheduled {
-            staged.keep();
-        }
-
-        install_secondary_release_artifacts(
-            client,
-            &base_url,
-            target,
-            &install_dir,
-            home_dir,
-            latest_tag.as_str(),
-        )
-        .await;
-        auto_update::mark_installed(daemon, &latest_tag).await;
-        print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
-        return Ok(());
-    }
-
-    println!("Downloading {asset_name}...");
-    let actual_hash = download_binary(client, &asset_url, download.path()).await?;
-
-    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
-    verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
-
-    stage_update(download.path(), staged.path()).await?;
+        path
+    } else {
+        println!("Downloading {asset_name}...");
+        let actual_hash = download_binary(client, &asset_url, download.path()).await?;
+        let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
+        verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
+        download.path().to_path_buf()
+    };
+    stage_update(&downloaded_path, staged.path()).await?;
     prepare_executable(staged.path(), &current_exe).await?;
     let finish = install_update(staged.path(), &current_exe).await?;
 
@@ -898,6 +902,28 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::util::text::read_text_file_sync;
+
+    #[test]
+    fn release_action_keeps_newer_builds_unless_forced() {
+        assert_eq!(
+            release_action("v0.13.0", "v0.12.0", false),
+            ReleaseAction::KeepNewer
+        );
+        assert_eq!(
+            release_action("v0.13.0", "v0.13.0", false),
+            ReleaseAction::SyncExtras
+        );
+        assert_eq!(
+            release_action("v0.13.0", "v0.14.0", false),
+            ReleaseAction::Install
+        );
+        for latest in ["v0.12.0", "v0.13.0", "v0.14.0"] {
+            assert_eq!(
+                release_action("v0.13.0", latest, true),
+                ReleaseAction::Install
+            );
+        }
+    }
 
     #[test]
     fn release_target_matches_published_assets() {

@@ -18,6 +18,8 @@ El compositor permite elegir un modo para una conversación nueva. En CLI: `anda
 
 Para conservar preguntas entre conversaciones, usa la configuración de pendientes o `anda memory inbox setup`. Revisa, aplica y ejecuta explícitamente `anda restart`. Se preservan archivos personalizados y variables de entorno. Una suscripción a un registro genera una pregunta real cuando cambia. En TUI: `/memory inbox`, `/memory answer <número> <texto>` y `/memory retry <número>`; el reintento conserva evento y texto.
 
+Lee los pendientes con `anda memory inbox`. Sigue el comando mostrado `anda memory inbox --cursor <next_cursor>` para acceder a la siguiente página. Con `--json`, el cursor está en `result.next_cursor`.
+
 La evaluación MIB y el aprendizaje empresarial son funciones avanzadas independientes. Consulta `anda memory evaluate plan --help` en una compilación con MIB. Los costes pueden ser incompletos. Una comparación de memoria no aprueba el aprendizaje empresarial ni demuestra una mejora general.
 
 

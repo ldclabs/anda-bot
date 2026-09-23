@@ -87,3 +87,11 @@ Cron 定时任务和自主目标模式（`/goal ...`）始终以完全访问权�
 | `anda voice --record-secs 8` | 启动语音输入；需要配置 transcription。 |
 
 语音播放还需要 `tts.enabled: true`。如果只想语音输入、文字输出，可以加 `--no-playback`。
+
+`--prompt` 与 `--prompt-file` 必须且只能提供一个。`--wait-timeout-secs 120` 限制提交请求与等待完成的总时间；默认 `0` 表示不设总超时。超时只停止 CLI 等待，daemon 中的任务可能继续运行。
+
+语音模式会等本轮答复完成后再录制下一轮。Ctrl-C 也能停止语音合成和播放。
+
+`anda update` 和 `anda update --skills` 会保留较新的本地版本及其附属资源。使用 `--force` 可明确安装最新发布版，即使它比本地版本旧。
+
+使用 `anda memory inbox` 读取待办，按输出提示运行 `anda memory inbox --cursor <next_cursor>` 读取下一页。使用 `--json` 时，游标位于 `result.next_cursor`。
