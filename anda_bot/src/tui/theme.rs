@@ -91,10 +91,6 @@ pub fn badge_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-pub fn panel_glow_style() -> Style {
-    Style::default().fg(PANDA_WHITE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,7 +107,6 @@ mod tests {
         assert_eq!(warn_style().fg, Some(WARN_AMBER));
         assert_eq!(danger_style().fg, Some(ERROR_RED));
         assert_eq!(subtle_style().fg, Some(BAMBOO_DIM));
-        assert_eq!(panel_glow_style().fg, Some(PANDA_WHITE));
     }
 
     #[test]

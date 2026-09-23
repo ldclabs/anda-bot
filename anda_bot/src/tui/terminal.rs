@@ -8,13 +8,14 @@ use crossterm::{
     ExecutableCommand,
     cursor::{MoveTo, MoveToNextLine},
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     terminal::{
         Clear, ClearType, disable_raw_mode, enable_raw_mode, size, supports_keyboard_enhancement,
     },
 };
+use futures::{FutureExt, StreamExt};
 use ratatui::{Terminal, TerminalOptions, Viewport, layout::Rect};
 #[cfg(unix)]
 use std::io::IsTerminal;
@@ -23,7 +24,6 @@ use crate::{daemon::Daemon, gateway};
 
 use super::{
     App, STATUS_REFRESH_INTERVAL,
-    action::{TuiActionState, action_state_snapshot},
     backend::TuiBackend,
     layout::{dynamic_viewport_height, input_navigation_content_width},
     render::{flush_static_scrollback, render},
@@ -38,7 +38,7 @@ pub async fn run(
     reopen_stdin_from_tty()?;
 
     let mut app = App::new(daemon.home, daemon.cfg, client, full_access);
-    app.bootstrap().await;
+    app.start_bootstrap();
 
     enable_raw_mode()?;
     let mut terminal_modes_guard = TerminalModesGuard::new();
@@ -126,22 +126,27 @@ async fn run_app(
     term_h = term_h.max(1);
     let mut current_viewport_height = terminal.get_frame().area().height;
     let mut needs_render = true;
+    let mut events = event::EventStream::new();
+    let mut ticks = tokio::time::interval(Duration::from_millis(150));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        let before_send = chat_render_snapshot(app);
-        let notice_before_send = app.notice.clone();
+        needs_render |= app.finish_pending_bootstrap();
+        needs_render |= app.finish_pending_status();
+        let revision = app.chat.revision();
         if app.chat_enabled() {
-            if let Some(err) = app.chat.finish_pending_send().await {
+            if let Some(err) = app.chat.finish_pending_send() {
                 app.notice = err;
+                needs_render = true;
             }
-            needs_render |= app.finish_pending_action_response().await;
-            needs_render |=
-                before_send != chat_render_snapshot(app) || notice_before_send != app.notice;
+            needs_render |= app.chat.finish_pending_poll();
+            needs_render |= app.finish_pending_action_response();
         }
-
+        needs_render |= revision != app.chat.revision();
         needs_render |= app.finish_pending_update_check();
         needs_render |= app.finish_pending_memory();
         needs_render |= app.finish_pending_memory_inbox();
+        needs_render |= app.refresh_actions();
 
         // Recreate the terminal when the outer terminal was resized, or when
         // the dynamic bottom area (input + status footer) changed height in
@@ -200,38 +205,31 @@ async fn run_app(
         }
 
         if last_status_refresh.elapsed() >= STATUS_REFRESH_INTERVAL {
-            let status_before = status_render_snapshot(app);
-            let was_running = app.daemon_running;
-            let _ = app.refresh_status().await;
-            if app.setup.is_ready() && was_running && !app.daemon_running && app.notice.is_empty() {
-                app.notice =
-                    "Daemon connection lost. Press Enter to reload config.yaml and reconnect."
-                        .to_string();
-            }
-            needs_render |= status_before != status_render_snapshot(app);
+            app.start_status_refresh();
             last_status_refresh = Instant::now();
         }
-
         if app.chat_enabled() {
-            let before_poll = chat_render_snapshot(app);
-            let received = app.chat.poll(None).await;
-            let after_poll = chat_render_snapshot(app);
-            needs_render |= received || before_poll != after_poll;
+            app.chat.start_poll(None);
         }
 
-        if !event::poll(Duration::from_millis(150))? {
-            continue;
+        let mut next_event = tokio::select! {
+            _ = ticks.tick() => continue,
+            event = events.next() => event,
+        };
+        if next_event.is_none() {
+            break;
         }
-
-        // Drain every buffered event before looping back to render, so bursts
-        // of keystrokes (fast typing, IME composition, key auto-repeat)
-        // coalesce into a single frame instead of one render per key.
-        loop {
-            match event::read()? {
+        // Coalesce buffered typing into one frame, without blocking a Tokio
+        // worker or waiting for any HTTP request in the input path.
+        while let Some(event) = next_event {
+            match event? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    let input_content_width =
-                        input_navigation_content_width(app, terminal.get_frame().area());
-                    if let Err(err) = app.handle_key(key, input_content_width).await {
+                    let width = if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+                        input_navigation_content_width(app, terminal.get_frame().area())
+                    } else {
+                        1
+                    };
+                    if let Err(err) = app.handle_key(key, width).await {
                         app.notice = err.to_string();
                     }
                     needs_render = true;
@@ -240,61 +238,18 @@ async fn run_app(
                     app.handle_paste(text);
                     needs_render = true;
                 }
-                Event::Resize(_, _) => {
-                    needs_render = true;
-                }
+                Event::Resize(_, _) => needs_render = true,
                 _ => {}
             }
-
-            if app.should_quit || !event::poll(Duration::ZERO)? {
+            if app.should_quit {
                 break;
             }
+            next_event = events.next().now_or_never().flatten();
         }
     }
     Ok(())
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct ChatRenderSnapshot {
-    conv_id: Option<u64>,
-    conversation_id: Option<u64>,
-    messages_len: usize,
-    errors_len: usize,
-    sending: bool,
-    thinking: bool,
-    status_label: &'static str,
-    action_states: Vec<TuiActionState>,
-}
-
-fn chat_render_snapshot(app: &App) -> ChatRenderSnapshot {
-    ChatRenderSnapshot {
-        conv_id: app.chat.conv_id,
-        conversation_id: app.chat.conversation.as_ref().map(|conv| conv._id),
-        messages_len: app.chat.messages.len(),
-        errors_len: app.chat.errors.len(),
-        sending: app.chat.sending,
-        thinking: app.chat.is_thinking(),
-        status_label: app.chat.status_label(),
-        action_states: action_state_snapshot(&app.chat.messages),
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct StatusRenderSnapshot {
-    pid: Option<u32>,
-    daemon_running: bool,
-    setup_ready: bool,
-    notice: String,
-}
-
-fn status_render_snapshot(app: &App) -> StatusRenderSnapshot {
-    StatusRenderSnapshot {
-        pid: app.pid,
-        daemon_running: app.daemon_running,
-        setup_ready: app.setup.is_ready(),
-        notice: app.notice.clone(),
-    }
-}
 fn create_terminal_with_height(
     viewport_height: u16,
 ) -> Result<Terminal<TuiBackend<io::Stdout>>, BoxError> {

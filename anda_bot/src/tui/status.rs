@@ -4,7 +4,7 @@ use crate::config::APP_VERSION;
 
 use super::{
     App, STATUS_FOOTER_MAX_LINES,
-    text::{compact_cjk_spacing, display_width, truncate_visual},
+    text::{display_width, truncate_visual},
     theme,
 };
 
@@ -13,6 +13,16 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
     let mut lines = Vec::new();
     if let Some(line) = app.action_footer_line(width) {
         lines.push(line);
+    }
+
+    if !app.notice.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("! ", theme::warn_style()),
+            Span::styled(
+                truncate_visual(&app.notice, width.saturating_sub(2)),
+                theme::warn_style(),
+            ),
+        ]));
     }
 
     if app.input_focused
@@ -44,17 +54,6 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
         ]);
     } else {
         lines.push(status_line(app, width));
-    }
-
-    if !app.notice.is_empty() && lines.len() < STATUS_FOOTER_MAX_LINES {
-        let notice = compact_cjk_spacing(&app.notice);
-        lines.push(Line::from(vec![
-            Span::styled("! ", theme::warn_style()),
-            Span::styled(
-                truncate_visual(notice.as_ref(), width.saturating_sub(2)),
-                theme::warn_style(),
-            ),
-        ]));
     }
 
     lines.truncate(STATUS_FOOTER_MAX_LINES);
@@ -101,23 +100,14 @@ pub(super) fn status_line(app: &App, width: usize) -> Line<'static> {
     };
 
     let prefix = format!("{badge} ");
-    let text = compact_cjk_spacing(&text);
     Line::from(vec![
         Span::styled(prefix.clone(), style),
         Span::styled(
-            truncate_visual(text.as_ref(), width.saturating_sub(display_width(&prefix))),
+            truncate_visual(&text, width.saturating_sub(display_width(&prefix))),
             theme::subtle_style(),
         ),
     ])
 }
-pub(super) fn panel_lines(_app: &App) -> Vec<Line<'static>> {
-    // vec![Line::from(format!(
-    //     "Gateway {}",
-    //     app.runtime_cfg.base_url()
-    // ))]
-    vec![]
-}
-
 pub(super) fn panel_header_line(_app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled("Born of panda. Awakened as Anda. ", theme::subtle_style()),

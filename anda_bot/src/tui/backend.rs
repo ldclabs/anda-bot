@@ -32,23 +32,37 @@ impl<W: Write> Backend for TuiBackend<W> {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
+        let mut content = content.peekable();
+        let mut deferred = None;
         let mut covered: Option<(u16, std::ops::Range<u32>)> = None;
-        self.inner.draw(content.filter(|(x, y, cell)| {
-            if covered
-                .as_ref()
-                .is_some_and(|(row, columns)| row == y && columns.contains(&u32::from(*x)))
-            {
-                return false;
+        self.inner.draw(std::iter::from_fn(move || {
+            loop {
+                let (x, y, cell) = deferred.take().or_else(|| content.next())?;
+                if covered
+                    .as_ref()
+                    .is_some_and(|(row, columns)| *row == y && columns.contains(&u32::from(x)))
+                {
+                    continue;
+                }
+                let width = cell.cell_width();
+                let following = u32::from(x) + 1..u32::from(x) + u32::from(width);
+                // insert_before supplies complete rows. Clear a VS16 cluster's
+                // reserved cells before its leading cell, just like Buffer::diff:
+                // terminals may draw that cluster in either one or two columns.
+                if width > 1
+                    && cell.symbol().contains('\u{FE0F}')
+                    && content.peek().is_some_and(|(next_x, next_y, _)| {
+                        *next_y == y && following.contains(&u32::from(*next_x))
+                    })
+                {
+                    deferred = Some((x, y, cell));
+                    return content.next();
+                }
+                // Ratatui frame diffs already emit trailing clears before wide
+                // glyphs. Filtering only following cells preserves that order.
+                covered = (width > 1).then_some((y, following));
+                return Some((x, y, cell));
             }
-
-            let width = cell.cell_width();
-            // VS16 emoji have terminal-dependent width. Preserve Ratatui's
-            // explicit trailing-cell updates for those sequences. Frame diffs
-            // also clear stale wide-cell styles before repainting the leading
-            // cell; the strictly following range below leaves that order intact.
-            covered = (width > 1 && !cell.symbol().contains('\u{FE0F}'))
-                .then(|| (*y, u32::from(*x) + 1..u32::from(*x) + u32::from(width)));
-            true
         }))
     }
 
@@ -210,6 +224,27 @@ mod tests {
                 expected,
                 "{before:?} -> {after:?}"
             );
+        }
+    }
+    #[test]
+    fn scrollback_preserves_combined_emoji_and_following_text() {
+        for glyph in ["❤️", "👩‍💻", "⚠️"] {
+            let area = Rect::new(0, 0, 8, 1);
+            let mut buf = Buffer::empty(area);
+            PackedLines::new(vec![Line::from(format!("{glyph}X"))]).render(area, &mut buf);
+            let output = draw(all_cells(&buf));
+            assert_eq!(buf[(2, 0)].symbol(), "X");
+            if glyph.contains('\u{FE0F}') {
+                assert!(
+                    output.find(&MoveTo(1, 0).to_string()).unwrap()
+                        < output.find(&MoveTo(0, 0).to_string()).unwrap(),
+                    "{output:?}"
+                );
+            } else {
+                assert!(!output.contains(&MoveTo(1, 0).to_string()), "{output:?}");
+            }
+            assert!(output.contains(glyph), "{output:?}");
+            assert!(output.contains('X'), "{output:?}");
         }
     }
 }

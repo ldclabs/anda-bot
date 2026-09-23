@@ -17,13 +17,13 @@ use super::{
         split_input_area,
     },
     layout::{centered_area, dynamic_layout_heights, static_panel_height, status_footer_panel},
-    status::{panel_header_line, panel_lines, status_footer_lines},
+    status::{panel_header_line, status_footer_lines},
     theme,
     transcript::chat_message_lines_for_messages,
     widgets::{Banner, PackedLines},
 };
 
-pub(super) fn render(frame: &mut Frame, app: &mut App) {
+pub(super) fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let (input_height, status_height) = dynamic_layout_heights(app, area);
     let chunks = Layout::default()
@@ -45,13 +45,11 @@ fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
     let area = centered_area(area, STATUS_MAX_WIDTH);
 
     let header = panel_header_line(app);
-    let lines = panel_lines(app);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(Banner::height().min(area.height.saturating_sub(1))),
             Constraint::Length(1),
-            Constraint::Min(1),
         ])
         .split(area);
 
@@ -59,15 +57,6 @@ fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
     PackedLines::new(vec![header])
         .alignment(ratatui::layout::Alignment::Center)
         .render(sections[1], buf);
-
-    if sections[2].height == 0 || lines.is_empty() {
-        return;
-    }
-
-    PackedLines::new(lines)
-        .style(theme::panel_glow_style())
-        .alignment(ratatui::layout::Alignment::Center)
-        .render(sections[2], buf);
 }
 
 fn render_status_footer(frame: &mut Frame, app: &App, area: Rect) {

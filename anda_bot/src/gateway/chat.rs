@@ -17,9 +17,8 @@ use crate::util::request_meta::keys;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(2000);
 const PING_INTERVAL: Duration = Duration::from_secs(60);
-// The keepalive ping and conversation fetches run inline in the poll loop;
-// keep their timeouts short so an unresponsive daemon cannot stall the UI for
-// the HTTP client's full default timeout.
+// Poll requests run in a background task. Timeouts also bound each outstanding
+// request so a stalled daemon does not prevent subsequent refreshes.
 const PING_TIMEOUT: Duration = Duration::from_secs(30);
 const CONVERSATION_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -88,6 +87,7 @@ fn current_request_meta(conversation: u64, full_access: bool) -> RequestMeta {
 }
 
 type SendResult = Result<AgentOutput, String>;
+type PollResult = Vec<Conversation>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NewPromptCommand {
@@ -201,6 +201,9 @@ pub struct ChatSession {
     pending_send: Option<oneshot::Receiver<SendResult>>,
     pending_new_command: Option<NewPromptCommand>,
     full_access: bool,
+    pending_poll: Option<oneshot::Receiver<PollResult>>,
+    poll_requested: bool,
+    revision: u64,
 }
 
 impl ChatSession {
@@ -220,7 +223,18 @@ impl ChatSession {
             pending_send: None,
             pending_new_command: None,
             full_access: false,
+            pending_poll: None,
+            poll_requested: false,
+            revision: 0,
         }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn mark_changed(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Tags every request from this session with the `full_access` approval
@@ -281,6 +295,9 @@ impl ChatSession {
         self.pending_new_command = None;
         self.awaiting_response = false;
         self.errors.clear();
+        self.pending_poll = None;
+        self.poll_requested = false;
+        self.mark_changed();
     }
 
     /// Start sending a user message without blocking the UI loop.
@@ -332,23 +349,23 @@ impl ChatSession {
             .unwrap_or(true);
         self.pending_send = Some(rx);
         self.pending_new_command = new_command;
+        self.mark_changed();
         None
     }
 
     /// Collect the result of a pending send if it has finished.
-    pub async fn finish_pending_send(&mut self) -> Option<String> {
+    pub fn finish_pending_send(&mut self) -> Option<String> {
         let rx = self.pending_send.as_mut()?;
 
         match rx.try_recv() {
             Ok(result) => {
                 self.pending_send = None;
-                self.apply_send_result(result).await
+                self.apply_send_result(result)
             }
             Err(oneshot::error::TryRecvError::Empty) => None,
             Err(oneshot::error::TryRecvError::Closed) => {
                 self.pending_send = None;
                 self.apply_send_result(Err("request task cancelled".to_string()))
-                    .await
             }
         }
     }
@@ -358,17 +375,23 @@ impl ChatSession {
         if self.sending {
             return None;
         }
-
         self.start_send(text);
         let rx = self.pending_send.take()?;
         let result = rx
             .await
             .unwrap_or_else(|_| Err("request task cancelled".to_string()));
-        self.apply_send_result(result).await
+        let error = self.apply_send_result(result);
+        if let Some(rx) = self.pending_poll.take()
+            && let Ok(conversations) = rx.await
+        {
+            self.apply_poll_result(conversations);
+        }
+        error
     }
 
-    async fn apply_send_result(&mut self, result: SendResult) -> Option<String> {
+    fn apply_send_result(&mut self, result: SendResult) -> Option<String> {
         self.sending = false;
+        self.mark_changed();
         let pending_new_command = self.pending_new_command.take();
 
         match result {
@@ -385,7 +408,7 @@ impl ChatSession {
                     .unwrap_or(true)
                 {
                     // Poll immediately to get the new conversation data.
-                    self.poll(output.conversation).await;
+                    self.start_poll(output.conversation);
                 } else {
                     self.clear_display_for_new_command();
                     self.awaiting_response = false;
@@ -456,86 +479,130 @@ impl ChatSession {
         Ok(true)
     }
 
-    async fn ping(&mut self) {
-        if self.last_ping.elapsed() < PING_INTERVAL {
+    /// Start at most one poll, retaining an explicit refresh requested while
+    /// an earlier poll is in flight (for example after an approval response).
+    pub fn start_poll(&mut self, latest_conv_id: Option<u64>) {
+        if let Some(id) = latest_conv_id {
+            if self.conv_id != Some(id) {
+                self.pending_poll = None;
+                self.conv_id = Some(id);
+                self.mark_changed();
+            }
+            self.poll_requested = true;
+        }
+        if self.pending_poll.is_some() {
             return;
         }
-
-        self.last_ping = Instant::now();
-        let mut input = AgentInput::new(String::new(), String::new());
-        input.meta = Some(self.request_meta(self.conv_id.unwrap_or_default()));
-        let _ = self
-            .client
-            .agent_run_with_timeout(&input, PING_TIMEOUT)
-            .await;
+        let force = self.poll_requested;
+        let fetch = self.conv_id.filter(|id| {
+            (force || self.last_poll.elapsed() >= POLL_INTERVAL)
+                && (self.is_active()
+                    || self
+                        .conversation
+                        .as_ref()
+                        .is_some_and(|conv| conv._id != *id))
+        });
+        let ping = self.last_ping.elapsed() >= PING_INTERVAL;
+        if fetch.is_none() && !ping {
+            return;
+        }
+        self.poll_requested = false;
+        if fetch.is_some() {
+            self.last_poll = Instant::now();
+        }
+        if ping {
+            self.last_ping = Instant::now();
+        }
+        let client = self.client.clone();
+        let meta = self.request_meta(self.conv_id.unwrap_or_default());
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            // A slow keepalive must not delay fetching an approval card.
+            let keepalive = async {
+                if ping {
+                    let mut input = AgentInput::new(String::new(), String::new());
+                    input.meta = Some(meta);
+                    let _ = client.agent_run_with_timeout(&input, PING_TIMEOUT).await;
+                }
+            };
+            let fetches = async {
+                let mut conversations: Vec<Conversation> = Vec::new();
+                let mut next = fetch;
+                while let Some(id) = next {
+                    if conversations.len() >= MAX_CONVERSATION_CHAIN
+                        || conversations.iter().any(|conv| conv._id == id)
+                    {
+                        break;
+                    }
+                    match client
+                        .get_conversation_with_timeout(id, CONVERSATION_FETCH_TIMEOUT)
+                        .await
+                    {
+                        Ok(conv) => {
+                            next = conv.child;
+                            conversations.push(conv);
+                        }
+                        Err(err) => {
+                            log::warn!("Poll conversation {id} failed: {err}");
+                            break;
+                        }
+                    }
+                }
+                let _ = tx.send(conversations);
+            };
+            tokio::join!(keepalive, fetches);
+        });
+        self.pending_poll = Some(rx);
     }
 
-    /// Poll the conversation for updates. Returns `true` if new messages were received.
-    pub async fn poll(&mut self, latest_conv_id: Option<u64>) -> bool {
-        self.ping().await;
-
-        let mut conv_id = if let Some(id) = latest_conv_id {
-            self.conv_id = Some(id);
-            id
-        } else if let Some(id) = self.conv_id {
-            id
-        } else {
+    pub fn finish_pending_poll(&mut self) -> bool {
+        let Some(rx) = self.pending_poll.as_mut() else {
             return false;
         };
-
-        if latest_conv_id.is_none() && self.last_poll.elapsed() < POLL_INTERVAL {
-            return false;
-        }
-
-        if let Some(conv) = &self.conversation
-            && conv_id == conv._id
-            && !self.is_active()
-        {
-            return false;
-        }
-
-        let mut received = false;
-        // Same guard as fetch_conversation_chain: a malformed child chain
-        // (cycle, or absurd length) must not turn the hottest interactive
-        // path into an unbounded HTTP busy loop.
-        let mut visited: Vec<u64> = Vec::new();
-        loop {
-            self.last_poll = Instant::now();
-            match self.fetch_conversation(conv_id).await {
-                Ok(conv) => {
-                    let child = conv.child;
-                    self.apply_conversation_data(conv);
-                    received = true;
-                    visited.push(conv_id);
-
-                    if self.conv_id != child
-                        && let Some(id) = child
-                    {
-                        if visited.contains(&id) {
-                            log::warn!("Conversation child chain contains a cycle at {id}");
-                            return received;
-                        }
-                        if visited.len() >= MAX_CONVERSATION_CHAIN {
-                            log::warn!("Conversation child chain is too long starting at {id}");
-                            return received;
-                        }
-                        self.conv_id = Some(id);
-                        conv_id = id;
-                        continue;
-                    }
-
-                    return received;
-                }
-                Err(err) => {
-                    log::warn!("Poll conversation {conv_id} failed: {err}");
-                }
+        match rx.try_recv() {
+            Ok(conversations) => {
+                self.pending_poll = None;
+                self.apply_poll_result(conversations)
             }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_poll = None;
+                false
+            }
+        }
+    }
 
-            return received;
+    fn apply_poll_result(&mut self, conversations: PollResult) -> bool {
+        let mut changed = false;
+        for conv in conversations {
+            let child = conv.child;
+            self.conv_id = Some(conv._id);
+            changed |= self.apply_conversation_data(conv);
+            if let Some(child) = child {
+                self.conv_id = Some(child);
+            }
+        }
+        changed
+    }
+
+    #[cfg(test)]
+    pub async fn poll(&mut self, latest_conv_id: Option<u64>) -> bool {
+        self.start_poll(latest_conv_id);
+        let Some(rx) = self.pending_poll.take() else {
+            return false;
+        };
+        match rx.await {
+            Ok(conversations) => self.apply_poll_result(conversations),
+            Err(_) => false,
         }
     }
 
     fn apply_conversation_data(&mut self, conv: Conversation) -> bool {
+        let old_len = self.messages.len();
+        let mut changed = self
+            .conversation
+            .as_ref()
+            .is_none_or(|previous| previous._id != conv._id || previous.status != conv.status);
         if self.conv_id.is_none() {
             self.conv_id = Some(conv._id);
         }
@@ -556,7 +623,7 @@ impl ChatSession {
                     }
                 })
                 .collect();
-            merge_action_payload_updates(&mut self.messages, &parsed_all_messages);
+            changed |= merge_action_payload_updates(&mut self.messages, &parsed_all_messages);
             let parsed_messages = parsed_all_messages
                 .into_iter()
                 .skip(self.last_msg_offset)
@@ -574,7 +641,11 @@ impl ChatSession {
             // should not happen, but just in case, we update prev_conversation to keep the history.
         }
 
-        true
+        changed |= self.messages.len() != old_len;
+        if changed {
+            self.mark_changed();
+        }
+        changed
     }
 
     fn clear_display_for_new_command(&mut self) {
@@ -584,6 +655,9 @@ impl ChatSession {
         self.messages.clear();
         self.last_msg_offset = 0;
         self.errors.clear();
+        self.pending_poll = None;
+        self.poll_requested = false;
+        self.mark_changed();
     }
 
     async fn fetch_conversation(&self, conv_id: u64) -> Result<Conversation, BoxError> {
@@ -1014,8 +1088,10 @@ mod tests {
                 .any(|message| message.text().is_some_and(|t| t == "answer 101"))
         );
 
-        // Polling again while active refreshes without errors.
-        assert!(session.poll(Some(101)).await);
+        // Identical poll data does not invalidate rendering or action caches.
+        let revision = session.revision();
+        assert!(!session.poll(Some(101)).await);
+        assert_eq!(session.revision(), revision);
 
         session.reset();
         assert!(session.conv_id.is_none());
@@ -1169,5 +1245,100 @@ mod tests {
             ..Default::default()
         });
         assert!(!session.poll(Some(7)).await);
+    }
+    #[tokio::test]
+    async fn pending_poll_is_applied_without_waiting_and_discarded_on_reset() {
+        let client = spawn_chat_gateway(ChatGateway {
+            conversations: HashMap::new(),
+            agent_output: Ok(AgentOutput::default()),
+            source_state: serde_json::json!({"c":0}),
+        })
+        .await;
+        let mut session = ChatSession::new(client);
+        session.conv_id = Some(7);
+        let (tx, rx) = oneshot::channel();
+        session.pending_poll = Some(rx);
+        assert!(!session.finish_pending_poll());
+        tx.send(vec![conversation(7, ConversationStatus::Working, None)])
+            .unwrap();
+        assert!(session.finish_pending_poll());
+        assert_eq!(session.messages.len(), 2);
+        assert!(!session.finish_pending_poll());
+
+        let (tx, rx) = oneshot::channel();
+        session.pending_poll = Some(rx);
+        session.reset();
+        assert!(
+            tx.send(vec![conversation(7, ConversationStatus::Working, None)])
+                .is_err()
+        );
+        assert!(!session.finish_pending_poll());
+        assert!(session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_completion_schedules_refresh_without_waiting_for_http() {
+        let base = crate::test_support::spawn_http_mock(Router::new().route(
+            "/engine/default",
+            routing::post(|| async { std::future::pending::<String>().await }),
+        ))
+        .await;
+        let mut session = ChatSession::new(Client::new(base, String::new()));
+        let (tx, rx) = oneshot::channel();
+        session.pending_send = Some(rx);
+        session.sending = true;
+        tx.send(Ok(AgentOutput {
+            conversation: Some(7),
+            ..Default::default()
+        }))
+        .unwrap();
+        assert!(session.finish_pending_send().is_none());
+        assert!(!session.sending);
+        assert_eq!(session.conv_id, Some(7));
+        assert!(session.pending_poll.is_some());
+        assert!(!session.finish_pending_poll());
+        // An approval during that fetch requests another poll afterwards.
+        session.start_poll(Some(7));
+        assert!(session.poll_requested);
+    }
+
+    #[tokio::test]
+    async fn slow_keepalive_does_not_hold_ready_conversation_data() {
+        let conv = conversation(7, ConversationStatus::Working, None);
+        let base = crate::test_support::spawn_http_mock(Router::new().route(
+            "/engine/default",
+            routing::post(
+                move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
+                    let conv = conv.clone();
+                    async move {
+                        if request.method == "agent_run" {
+                            return std::future::pending::<axum::Json<serde_json::Value>>().await;
+                        }
+                        let output = anda_core::ToolOutput::new(ToolResponse::Ok {
+                            result: serde_json::to_value(conv).unwrap(),
+                            next_cursor: None,
+                        });
+                        let rpc: anda_core::http::RPCResponse =
+                            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+                        axum::Json(serde_json::to_value(rpc).unwrap())
+                    }
+                },
+            ),
+        ))
+        .await;
+        let mut session = ChatSession::new(Client::new(base, String::new()));
+        session.last_ping = Instant::now() - PING_INTERVAL;
+        session.start_poll(Some(7));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if session.finish_pending_poll() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("conversation fetch must not wait for keepalive");
+        assert_eq!(session.messages.len(), 2);
     }
 }

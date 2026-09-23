@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{cell::RefCell, path::PathBuf};
 
 use anda_core::BoxError;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -14,15 +14,19 @@ use crate::{
 use super::{
     action::{
         ACTION_RESPONSE_TIMEOUT, ActionApiOutput, TuiAction, TuiActionAnswer, TuiActionChoice,
-        TuiActionChoiceDraft, TuiActionResponseRequest, action_footer_line, action_response_notice,
-        active_pending_action, apply_action_response_to_message_value,
-        apply_action_response_to_messages,
+        TuiActionChoiceDraft, TuiActionResponseRequest, TuiActionState, action_footer_line,
+        action_response_notice, action_state_snapshot, active_pending_action,
+        apply_action_response_to_message_value, apply_action_response_to_messages,
     },
-    input::{InputCursorDirection, input_newline_key, move_cursor_vertically},
-    text::{compact_cjk_spacing_with_cursor, normalize_newlines},
+    input::{
+        InputCursorDirection, InputLayouts, cached_input_layout, cursor_byte_index,
+        input_newline_key, next_cursor, previous_cursor,
+    },
+    text::normalize_newlines,
 };
 
 type ActionResponseResult = Result<ActionApiOutput, String>;
+type StatusResult = Result<(Option<u32>, bool), String>;
 
 #[derive(Default)]
 pub(super) struct SetupState {
@@ -62,6 +66,12 @@ pub(super) struct App {
     pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
     pub(super) choice_input: Option<TuiActionChoiceDraft>,
     pub(super) full_access: bool,
+    pub(super) input_layouts: RefCell<InputLayouts>,
+    pending_bootstrap: Option<oneshot::Receiver<Box<App>>>,
+    pending_status: Option<oneshot::Receiver<StatusResult>>,
+    actions_key: (u64, usize),
+    action_states: Vec<TuiActionState>,
+    active_action: Option<TuiAction>,
 }
 
 impl App {
@@ -96,6 +106,12 @@ impl App {
             pending_action_response: None,
             choice_input: None,
             full_access,
+            input_layouts: RefCell::default(),
+            pending_bootstrap: None,
+            pending_status: None,
+            actions_key: (0, 0),
+            action_states: Vec::new(),
+            active_action: None,
         }
     }
 
@@ -119,54 +135,53 @@ impl App {
     }
 
     pub(super) fn chat_enabled(&self) -> bool {
-        self.setup.is_ready() && self.daemon_running
+        self.setup.is_ready() && self.daemon_running && self.pending_bootstrap.is_none()
     }
 
     pub(super) fn rebind_client(&mut self) {
         let client = self.client.rebased(self.runtime_cfg.base_url());
         self.client = client.clone();
         self.chat = gateway::ChatSession::new(client).with_full_access(self.full_access);
-        self.input_buf.clear();
-        self.input_cursor = 0;
+        self.clear_input();
         self.choice_input = None;
         self.pending_action_response = None;
-        // The new ChatSession discards the dedup state
-        // (displayed_suffix_prefix_overlap), so the refetched history would be
-        // appended to the physical scrollback a second time. Clear the screen
-        // and re-flush, same as /new.
-        self.clear_message_view();
-    }
-
-    pub(super) fn reset_message_view(&mut self) {
-        self.flushed_message_count = 0;
-        self.input_focused = true;
+        // An initial bind has no transcript to replace. In particular it must
+        // not purge the shell's scrollback before this TUI has written anything.
+        if self.flushed_message_count > 0 {
+            self.clear_message_view();
+        }
+        self.action_states.clear();
+        self.active_action = None;
+        self.actions_key = (self.chat.revision(), 0);
     }
 
     pub(super) fn clear_message_view(&mut self) {
-        self.reset_message_view();
-        self.refresh_message_view();
-    }
-
-    pub(super) fn refresh_message_view(&mut self) {
         self.flushed_message_count = 0;
         self.static_panel_flushed = false;
         self.pending_scrollback_purge = true;
+        self.input_focused = true;
+        self.action_states.clear();
+        self.active_action = None;
+        self.actions_key = (u64::MAX, usize::MAX);
+    }
+
+    pub(super) fn clear_input(&mut self) {
+        self.input_buf.clear();
+        self.input_cursor = 0;
+        self.input_preferred_col = None;
     }
 
     pub(super) fn insert_input_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-
-        let chars: Vec<char> = self.input_buf.chars().collect();
-        let mut new = String::with_capacity(self.input_buf.len() + text.len());
-        new.extend(&chars[..self.input_cursor]);
-        new.push_str(text);
-        new.extend(&chars[self.input_cursor..]);
-        let cursor = self.input_cursor + text.chars().count();
-        let (normalized, cursor) = compact_cjk_spacing_with_cursor(&new, cursor);
-        self.input_buf = normalized;
-        self.input_cursor = cursor;
+        let byte = cursor_byte_index(&self.input_buf, self.input_cursor);
+        self.input_buf.insert_str(byte, text);
+        self.input_cursor += text.chars().count();
+        // Inserting a combining mark/ZWJ can join the following grapheme.
+        if self.input_cursor > 0 {
+            self.input_cursor = next_cursor(&self.input_buf, self.input_cursor - 1);
+        }
         self.input_preferred_col = None;
     }
 
@@ -184,7 +199,8 @@ impl App {
         }
 
         if self.choice_input.is_some() {
-            return self.submit_choice_input().await;
+            self.submit_choice_input();
+            return Ok(());
         }
 
         let text = self.input_buf.trim().to_string();
@@ -199,15 +215,13 @@ impl App {
         if let Some(action) = self.active_pending_action()
             && let Some(answer) = action.answer_from_text(&text)
         {
-            self.input_buf.clear();
-            self.input_cursor = 0;
-            self.input_preferred_col = None;
+            self.clear_input();
             self.answer_action(&action, answer);
             return Ok(());
         }
 
         if text == "/reload" {
-            self.bootstrap().await;
+            self.start_bootstrap();
             return Ok(());
         }
 
@@ -240,8 +254,7 @@ impl App {
                 self.pending_memory_inbox = Some(rx);
                 self.notice = "Reading inbox / 正在读取待办".into();
             }
-            self.input_buf.clear();
-            self.input_cursor = 0;
+            self.clear_input();
             return Ok(());
         }
         if let Some(answer) = text
@@ -290,15 +303,12 @@ impl App {
                 self.pending_memory = Some(rx);
                 self.notice = "Sending answer / 正在提交回答".into();
             }
-            self.input_buf.clear();
-            self.input_cursor = 0;
+            self.clear_input();
             return Ok(());
         }
 
         if text == "/brain" || text == "/memory" || text.starts_with("/memory ") {
-            self.input_buf.clear();
-            self.input_cursor = 0;
-            self.input_preferred_col = None;
+            self.clear_input();
             if text == "/memory help" || text == "/memory guide" {
                 self.append_memory_output(crate::brain::product::MEMORY_GUIDE.into());
             } else if text == "/brain"
@@ -345,29 +355,31 @@ impl App {
         }
 
         if text.starts_with("/brain ") {
-            let output = self.brain_command(&text).await;
-            match output {
-                Ok(content) => {
-                    self.chat.messages.push(anda_core::Message {
-                        role: "system".into(),
-                        content: vec![content.into()],
-                        ..Default::default()
-                    });
-                    self.input_buf.clear();
-                    self.input_cursor = 0;
-                    self.input_preferred_col = None;
-                    self.notice.clear();
-                }
-                Err(err) => self.notice = err.to_string(),
+            if self.pending_memory.is_some() {
+                self.notice = "A memory request is already running.".into();
+                return Ok(());
             }
+            let client = self.client.clone();
+            let (tx, rx) = oneshot::channel();
+            tokio::spawn(async move {
+                let result = tokio::time::timeout(
+                    ACTION_RESPONSE_TIMEOUT,
+                    Self::brain_command(client, &text),
+                )
+                .await
+                .map_err(|_| "Brain request timed out.".to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+                let _ = tx.send(result);
+            });
+            self.pending_memory = Some(rx);
+            self.clear_input();
+            self.notice = "Reading Brain…".into();
             return Ok(());
         }
 
         let resets_display = gateway::is_new_conversation_command(&text);
 
-        self.input_buf.clear();
-        self.input_cursor = 0;
-        self.input_preferred_col = None;
+        self.clear_input();
         if let Some(err) = self.chat.start_send(text) {
             self.notice = err;
         } else {
@@ -380,8 +392,8 @@ impl App {
         Ok(())
     }
 
-    async fn brain_command(&self, text: &str) -> Result<String, BoxError> {
-        let brain = self.client.brain();
+    async fn brain_command(client: gateway::Client, text: &str) -> Result<String, BoxError> {
+        let brain = client.brain();
         let command = text.strip_prefix("/brain").unwrap_or_default().trim();
         let result = if command == "status" {
             serde_json::to_value(brain.runtime_status().await?)?
@@ -482,32 +494,133 @@ impl App {
         }
     }
 
-    async fn submit_choice_input(&mut self) -> Result<(), BoxError> {
+    fn submit_choice_input(&mut self) {
         if self.action_response_pending() {
-            return Ok(());
+            return;
         }
 
         let Some(draft) = self.choice_input.clone() else {
-            return Ok(());
+            return;
         };
 
         let text = self.input_buf.trim().to_string();
         if draft.required && text.is_empty() {
             self.notice = "Choice text is required.".to_string();
-            return Ok(());
+            return;
         }
 
-        self.input_buf.clear();
-        self.input_cursor = 0;
-        self.input_preferred_col = None;
-        self.choice_input = None;
         self.start_action_response(TuiActionResponseRequest::choice(
             draft.action_id,
             draft.choice_id,
             (!text.is_empty()).then_some(text),
         ));
+    }
 
-        Ok(())
+    pub(super) fn start_bootstrap(&mut self) {
+        if self.pending_bootstrap.is_some() {
+            return;
+        }
+        let mut connecting = Box::new(Self::new(
+            self.home.clone(),
+            self.runtime_cfg.clone(),
+            self.client.clone(),
+            self.full_access,
+        ));
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            connecting.bootstrap().await;
+            let _ = tx.send(connecting);
+        });
+        self.pending_status = None;
+        self.pending_update_check = None;
+        self.pending_memory = None;
+        self.pending_memory_inbox = None;
+        self.memory_inbox = None;
+        self.pending_action_response = None;
+        self.choice_input = None;
+        self.clear_input();
+        self.pending_bootstrap = Some(rx);
+        self.notice = "Connecting to daemon… Ctrl+C quits.".into();
+    }
+
+    pub(super) fn finish_pending_bootstrap(&mut self) -> bool {
+        let Some(rx) = self.pending_bootstrap.as_mut() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(connected) => {
+                self.pending_bootstrap = None;
+                if self.flushed_message_count > 0 {
+                    self.clear_message_view();
+                }
+                self.runtime_cfg = connected.runtime_cfg;
+                self.client = connected.client;
+                self.setup = connected.setup;
+                self.chat = connected.chat;
+                self.pid = connected.pid;
+                self.daemon_running = connected.daemon_running;
+                self.notice = connected.notice;
+                self.pending_update_check = connected.pending_update_check;
+                self.actions_key = (u64::MAX, usize::MAX);
+                true
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_bootstrap = None;
+                self.notice = "Connection task ended. Press Enter to retry.".into();
+                self.daemon_running = false;
+                true
+            }
+        }
+    }
+
+    pub(super) fn start_status_refresh(&mut self) {
+        if self.pending_status.is_some() || self.pending_bootstrap.is_some() {
+            return;
+        }
+        let daemon = self.runtime_daemon();
+        let client = self.client.clone();
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = tx.send(
+                Self::fetch_status(daemon, client)
+                    .await
+                    .map_err(|error| error.to_string()),
+            );
+        });
+        self.pending_status = Some(rx);
+    }
+
+    pub(super) fn finish_pending_status(&mut self) -> bool {
+        let Some(rx) = self.pending_status.as_mut() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                self.pending_status = None;
+                match result {
+                    Ok((pid, running)) => {
+                        let changed = self.pid != pid || self.daemon_running != running;
+                        if self.daemon_running && !running {
+                            self.notice =
+                                "Daemon connection lost. Press Enter to reconnect.".into();
+                        }
+                        self.pid = pid;
+                        self.daemon_running = running;
+                        changed
+                    }
+                    Err(error) => {
+                        self.notice = format!("Status refresh failed: {error}");
+                        true
+                    }
+                }
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_status = None;
+                false
+            }
+        }
     }
 
     pub(super) async fn bootstrap(&mut self) {
@@ -611,7 +724,8 @@ impl App {
             match self.chat.restore_source_conversation().await {
                 // clear (not reset): the restore refetches the full history,
                 // which must replace the scrollback instead of piling on top.
-                Ok(true) => self.clear_message_view(),
+                Ok(true) if self.flushed_message_count > 0 => self.clear_message_view(),
+                Ok(true) => {}
                 Ok(false) => {}
                 Err(err) => {
                     log::warn!("Failed to restore source conversation: {err}");
@@ -663,7 +777,7 @@ impl App {
         }
     }
 
-    pub(super) async fn finish_pending_action_response(&mut self) -> bool {
+    pub(super) fn finish_pending_action_response(&mut self) -> bool {
         let Some(rx) = self.pending_action_response.as_mut() else {
             return false;
         };
@@ -671,7 +785,7 @@ impl App {
         match rx.try_recv() {
             Ok(result) => {
                 self.pending_action_response = None;
-                self.apply_action_response_result(result).await;
+                self.apply_action_response_result(result);
                 true
             }
             Err(oneshot::error::TryRecvError::Empty) => false,
@@ -683,10 +797,19 @@ impl App {
         }
     }
 
-    async fn apply_action_response_result(&mut self, result: ActionResponseResult) {
+    fn apply_action_response_result(&mut self, result: ActionResponseResult) {
         match result {
             Ok(output) => {
                 apply_action_response_to_messages(&mut self.chat.messages, &output);
+                self.chat.mark_changed();
+                if self
+                    .choice_input
+                    .as_ref()
+                    .is_some_and(|draft| draft.action_id == output.action_id)
+                {
+                    self.choice_input = None;
+                    self.clear_input();
+                }
                 if let Some(conversation) = self.chat.conversation.as_mut() {
                     for message in &mut conversation.messages {
                         apply_action_response_to_message_value(message, &output);
@@ -694,7 +817,7 @@ impl App {
                 }
                 self.notice = action_response_notice(&output);
                 if output.conversation > 0 {
-                    let _ = self.chat.poll(Some(output.conversation)).await;
+                    self.chat.start_poll(Some(output.conversation));
                 }
             }
             Err(err) => {
@@ -715,26 +838,25 @@ impl App {
     }
 
     pub(super) async fn refresh_status(&mut self) -> Result<(), BoxError> {
-        let daemon = self.runtime_daemon();
-        self.pid = daemon.read_pid_file().await?;
-        if let Some(pid) = self.pid
-            && !process_exists(pid)
-        {
-            let _ = tokio::fs::remove_file(daemon.pid_file_path()).await;
-            self.pid = None;
-        }
-
-        self.daemon_running = self.client.status().await.is_ok();
+        let (pid, running) = Self::fetch_status(self.runtime_daemon(), self.client.clone()).await?;
+        self.pid = pid;
+        self.daemon_running = running;
         Ok(())
     }
 
-    // fn new_conversation(&mut self) {
-    //     self.chat.reset();
-    //     self.input_buf.clear();
-    //     self.input_cursor = 0;
-    //     self.reset_message_view();
-    //     self.notice = "New conversation.".to_string();
-    // }
+    async fn fetch_status(
+        daemon: Daemon,
+        client: gateway::Client,
+    ) -> Result<(Option<u32>, bool), BoxError> {
+        let mut pid = daemon.read_pid_file().await?;
+        if let Some(value) = pid
+            && !process_exists(value)
+        {
+            let _ = tokio::fs::remove_file(daemon.pid_file_path()).await;
+            pid = None;
+        }
+        Ok((pid, client.status().await.is_ok()))
+    }
 
     pub(super) async fn handle_key(
         &mut self,
@@ -747,10 +869,8 @@ impl App {
                     self.should_quit = true;
                     return Ok(());
                 }
-                KeyCode::Char('u') if self.chat_enabled() => {
-                    self.input_buf.clear();
-                    self.input_cursor = 0;
-                    self.input_preferred_col = None;
+                KeyCode::Char('u') if self.chat_enabled() && !self.action_response_pending() => {
+                    self.clear_input();
                     return Ok(());
                 }
                 KeyCode::Char('a') if self.chat_enabled() => {
@@ -769,12 +889,13 @@ impl App {
 
         if !self.chat_enabled() {
             if key.code == KeyCode::Enter {
-                self.bootstrap().await;
+                self.start_bootstrap();
             }
             return Ok(());
         }
 
         if self.choice_input.is_some()
+            && !self.action_response_pending()
             && key.code == KeyCode::Esc
             && !key
                 .modifiers
@@ -792,10 +913,7 @@ impl App {
             return Ok(());
         }
 
-        if self.choice_input.is_none()
-            && self.input_buf.is_empty()
-            && self.handle_action_key(key).await?
-        {
+        if self.choice_input.is_none() && self.input_buf.is_empty() && self.handle_action_key(key) {
             return Ok(());
         }
 
@@ -822,32 +940,27 @@ impl App {
                 self.submit_input().await?;
             }
             KeyCode::Backspace if self.input_cursor > 0 => {
-                let chars: Vec<char> = self.input_buf.chars().collect();
-                let pos = self.input_cursor - 1;
-                self.input_buf = chars[..pos].iter().chain(chars[pos + 1..].iter()).collect();
-                self.input_cursor -= 1;
+                let previous = previous_cursor(&self.input_buf, self.input_cursor);
+                let range = cursor_byte_index(&self.input_buf, previous)
+                    ..cursor_byte_index(&self.input_buf, self.input_cursor);
+                self.input_buf.replace_range(range, "");
+                self.input_cursor = previous;
                 self.input_preferred_col = None;
             }
             KeyCode::Delete => {
-                let chars: Vec<char> = self.input_buf.chars().collect();
-                if self.input_cursor < chars.len() {
-                    self.input_buf = chars[..self.input_cursor]
-                        .iter()
-                        .chain(chars[self.input_cursor + 1..].iter())
-                        .collect();
-                    self.input_preferred_col = None;
-                }
+                let next = next_cursor(&self.input_buf, self.input_cursor);
+                let range = cursor_byte_index(&self.input_buf, self.input_cursor)
+                    ..cursor_byte_index(&self.input_buf, next);
+                self.input_buf.replace_range(range, "");
+                self.input_preferred_col = None;
             }
-            KeyCode::Left if self.input_cursor > 0 => {
-                self.input_cursor -= 1;
+            KeyCode::Left => {
+                self.input_cursor = previous_cursor(&self.input_buf, self.input_cursor);
                 self.input_preferred_col = None;
             }
             KeyCode::Right => {
-                let len = self.input_buf.chars().count();
-                if self.input_cursor < len {
-                    self.input_cursor += 1;
-                    self.input_preferred_col = None;
-                }
+                self.input_cursor = next_cursor(&self.input_buf, self.input_cursor);
+                self.input_preferred_col = None;
             }
             KeyCode::Up => {
                 self.move_input_cursor_vertically(InputCursorDirection::Up, input_content_width);
@@ -877,26 +990,26 @@ impl App {
         Ok(())
     }
 
-    async fn handle_action_key(&mut self, key: KeyEvent) -> Result<bool, BoxError> {
+    fn handle_action_key(&mut self, key: KeyEvent) -> bool {
         if key
             .modifiers
             .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
         {
-            return Ok(false);
+            return false;
         }
 
         let Some(action) = self.active_pending_action() else {
-            return Ok(false);
+            return false;
         };
 
         match key.code {
             KeyCode::Char('y' | 'Y') if action.is_approval() => {
                 self.answer_action(&action, TuiActionAnswer::Approve(true));
-                Ok(true)
+                true
             }
             KeyCode::Char('n' | 'N') if action.is_approval() => {
                 self.answer_action(&action, TuiActionAnswer::Approve(false));
-                Ok(true)
+                true
             }
             KeyCode::Char(ch) => {
                 let Some(choice) = action.choice_for_key(ch).cloned() else {
@@ -906,12 +1019,12 @@ impl App {
                     if let Some(notice) = action.unanswered_notice() {
                         self.notice = notice;
                     }
-                    return Ok(false);
+                    return false;
                 };
                 self.answer_action(&action, TuiActionAnswer::Choice(choice));
-                Ok(true)
+                true
             }
-            _ => Ok(false),
+            _ => false,
         }
     }
 
@@ -930,9 +1043,7 @@ impl App {
     fn answer_choice(&mut self, action: &TuiAction, choice: &TuiActionChoice) {
         if choice.input.is_some() {
             self.choice_input = Some(action.choice_draft(choice));
-            self.input_buf.clear();
-            self.input_cursor = 0;
-            self.input_preferred_col = None;
+            self.clear_input();
             self.input_focused = true;
             return;
         }
@@ -967,9 +1078,7 @@ impl App {
 
     fn cancel_choice_input(&mut self) {
         self.choice_input = None;
-        self.input_buf.clear();
-        self.input_cursor = 0;
-        self.input_preferred_col = None;
+        self.clear_input();
         self.notice.clear();
     }
 
@@ -978,7 +1087,43 @@ impl App {
     }
 
     pub(super) fn active_pending_action(&self) -> Option<TuiAction> {
-        active_pending_action(&self.chat.messages)
+        if self.actions_key == (self.chat.revision(), self.chat.messages.len()) {
+            self.active_action.clone()
+        } else {
+            active_pending_action(&self.chat.messages)
+        }
+    }
+
+    /// Reconcile only after a chat mutation, never on animation or typing ticks.
+    /// Scrollback is append-only, so resolved cards get one durable receipt.
+    pub(super) fn refresh_actions(&mut self) -> bool {
+        let key = (self.chat.revision(), self.chat.messages.len());
+        if self.actions_key == key {
+            return false;
+        }
+        let states = action_state_snapshot(&self.chat.messages);
+        let receipts: Vec<_> = states
+            .iter()
+            .filter(|state| {
+                state.status != "pending"
+                    && self
+                        .action_states
+                        .iter()
+                        .any(|old| old.id == state.id && old != *state)
+            })
+            .map(|state| format!("Action {} {}.", state.id, state.status))
+            .collect();
+        self.active_action = active_pending_action(&self.chat.messages);
+        self.action_states = states;
+        for receipt in receipts {
+            self.chat.messages.push(anda_core::Message {
+                role: "system".into(),
+                content: vec![receipt.into()],
+                ..Default::default()
+            });
+        }
+        self.actions_key = (self.chat.revision(), self.chat.messages.len());
+        true
     }
 
     pub(super) fn action_footer_line(&self, width: usize) -> Option<ratatui::text::Line<'static>> {
@@ -1001,6 +1146,12 @@ impl App {
                 ),
             ]));
         }
+        if self.actions_key == (self.chat.revision(), self.chat.messages.len()) {
+            return self
+                .active_action
+                .as_ref()
+                .and_then(|action| action_footer_line(action, width, self.input_buf.is_empty()));
+        }
         let action = self.active_pending_action()?;
         action_footer_line(&action, width, self.input_buf.is_empty())
     }
@@ -1010,10 +1161,8 @@ impl App {
         direction: InputCursorDirection,
         width: u16,
     ) {
-        let (cursor, preferred_col) = move_cursor_vertically(
-            &self.input_buf,
+        let (cursor, preferred_col) = cached_input_layout(self, width.max(1)).move_cursor(
             self.input_cursor,
-            width,
             direction,
             self.input_preferred_col,
         );

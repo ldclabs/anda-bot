@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use super::{
-    text::{compact_cjk_spacing, display_width, normalize_newlines},
+    text::{display_width, normalize_newlines},
     theme,
 };
 
@@ -369,7 +369,7 @@ fn split_table_row(line: &str) -> Option<Vec<String>> {
 }
 
 fn normalize_table_cell_text(text: &str) -> String {
-    compact_cjk_spacing(text.trim().replace('\n', " ").as_ref()).into_owned()
+    text.trim().replace('\n', " ")
 }
 
 fn table_column_widths(
@@ -457,23 +457,18 @@ fn push_span(line: &mut Line<'static>, text: &str, style: Style) {
         return;
     }
 
-    let text = compact_cjk_spacing(text);
-    if text.is_empty() {
-        return;
-    }
-
     if let Some(last) = line.spans.last_mut()
         && last.style == style
     {
-        last.content.to_mut().push_str(text.as_ref());
+        last.content.to_mut().push_str(text);
         return;
     }
-    line.spans.push(Span::styled(text.into_owned(), style));
+    line.spans.push(Span::styled(text.to_string(), style));
 }
 
 fn plain_text_lines(text: &str) -> Vec<Line<'static>> {
     text.split('\n')
-        .map(|line| line_from_text(compact_cjk_spacing(line).as_ref(), Style::default()))
+        .map(|line| line_from_text(line, Style::default()))
         .collect()
 }
 

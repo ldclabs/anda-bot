@@ -6,7 +6,7 @@ use ratatui::{
     widgets::Widget,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use super::theme;
 
@@ -52,22 +52,11 @@ impl Widget for Banner {
                 theme::banner_line_style(index),
             );
         }
-
-        let text_area = Rect {
-            x: area.x,
-            y: area.y + BANNER_ART.len() as u16,
-            width: area.width,
-            height: area.height.saturating_sub(BANNER_ART.len() as u16),
-        };
-
-        PackedLines::new(vec![])
-            .alignment(Alignment::Center)
-            .render(text_area, buf);
     }
 }
 
-/// A line-oriented text widget that pre-wraps content (we already do this
-/// upstream via `wrap_visual`) and writes each grapheme to its own buffer
+/// A line-oriented text widget that pre-wraps content (wrapping is handled by the composer
+/// and transcript layout) and writes each grapheme to its own buffer
 /// cell — the same shape the standard `Paragraph` widget produces, but
 /// without the `LineComposer` machinery so we can opt out of `Wrap` and keep
 /// the rendering deterministic.
@@ -139,10 +128,7 @@ impl Widget for PackedLines<'_> {
                 }
                 let style = line_style.patch(span.style);
                 for grapheme in UnicodeSegmentation::graphemes(span.content.as_ref(), true) {
-                    let gw = grapheme
-                        .chars()
-                        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
-                        .sum::<usize>();
+                    let gw = UnicodeWidthStr::width(grapheme);
                     if gw == 0 {
                         // Zero-width modifier — drop it; ratatui's Cell does
                         // not expose `append_symbol` publicly. The few code

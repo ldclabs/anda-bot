@@ -154,6 +154,8 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
+Input preserves spaces in text and code. Cursor movement and deletion treat combined emoji as one character. Status checks, conversation polling and Brain requests run in the background, so slow responses leave the UI responsive and Ctrl+C available. Opening the UI preserves existing terminal scrollback.
+
 ### Command Approvals
 
 Risky shell commands and MCP server connections raise an approval card before they run:
@@ -161,6 +163,8 @@ Risky shell commands and MCP server connections raise an approval card before th
 - With an empty input box, press `y` to approve or `n` to deny.
 - If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
 - Approval cards expire after 10 minutes, and the tool call then fails.
+
+Approval cards show the full command, details and choices, wrapping to the terminal width. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
 
 Start the terminal UI with `anda --full-access` to skip the cards for that session; the status line shows `full-access` while it is on.
 

@@ -166,7 +166,9 @@ const CHROME_EXTENSION_DIR: &str = "chrome-extension";
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     util::http_client::install_default_crypto_provider();
-    let result = run().await;
+    // `run` has many async command branches. Keep its future off the main
+    // thread's small Windows stack (which RUST_MIN_STACK does not enlarge).
+    let result = Box::pin(run()).await;
     if let Err(err) = &result {
         log::error!("{err}");
     }

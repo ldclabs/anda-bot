@@ -1,4 +1,5 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::Ref};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -12,7 +13,7 @@ use super::{
     INPUT_DIVIDER_LABEL, INPUT_DIVIDER_PADDED_HEIGHT, INPUT_DIVIDER_PREFIX,
     INPUT_DIVIDER_TRAIL_OFFSET, INPUT_PROMPT_PREFIX, INPUT_SCROLLBAR_WIDTH, MAX_INPUT_LINES,
     THINKING_FRAMES, THINKING_LABEL,
-    text::{char_display_width, display_width, truncate_visual, wrap_visual, wrapped_line_count},
+    text::{display_width, truncate_visual},
     theme,
 };
 
@@ -30,18 +31,35 @@ pub(super) fn input_height(app: &App, area: Rect) -> u16 {
     if area.width == 0 || area.height == 0 {
         return 0;
     }
-
-    let inner_width = area.width.saturating_sub(input_prompt_prefix_width()) as usize;
-    wrapped_line_count(&input_display_text(app), inner_width)
-        .clamp(1, MAX_INPUT_LINES)
-        .saturating_add(input_separator_block_height(area.height))
-        .min(area.height)
-}
-pub(super) fn input_display_text(app: &App) -> String {
-    if app.chat_enabled() && !app.input_buf.is_empty() {
-        return app.input_buf.clone();
+    let width = area
+        .width
+        .saturating_sub(input_prompt_prefix_width())
+        .max(1);
+    // Count at most four rows without allocating the wrapped input.
+    let mut position = InputPosition::default();
+    let text = if app.chat_enabled() {
+        app.input_buf.as_str()
+    } else {
+        ""
+    };
+    for grapheme in text.graphemes(true) {
+        position.advance(grapheme, width as usize);
+        if position.cursor().1 + 1 >= MAX_INPUT_LINES as usize {
+            break;
+        }
     }
-    input_placeholder(app).to_string()
+    ((position.cursor().1 + 1).min(MAX_INPUT_LINES as usize) as u16
+        + input_separator_block_height(area.height))
+    .min(area.height)
+}
+
+#[cfg(test)]
+pub(super) fn input_display_text(app: &App) -> &str {
+    if app.chat_enabled() && !app.input_buf.is_empty() {
+        &app.input_buf
+    } else {
+        input_placeholder(app)
+    }
 }
 
 pub(super) fn input_placeholder(app: &App) -> &'static str {
@@ -58,81 +76,31 @@ pub(super) fn input_placeholder(app: &App) -> &'static str {
     }
 }
 
+fn prompt_line(text: String, first: bool, placeholder: bool) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            if first {
+                INPUT_PROMPT_PREFIX
+            } else {
+                INPUT_CONTINUATION_PREFIX
+            },
+            theme::accent_style(),
+        ),
+        Span::styled(
+            text,
+            if placeholder {
+                theme::dim_style()
+            } else {
+                theme::body_style()
+            },
+        ),
+    ])
+}
+
+#[cfg(test)]
 pub(super) fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'static>> {
-    let content_width = width
-        .saturating_sub(input_prompt_prefix_width() as usize)
-        .max(1);
-
-    if !app.chat_enabled() || app.input_buf.is_empty() {
-        if let Some(draft) = &app.choice_input
-            && app.chat_enabled()
-            && app.input_buf.is_empty()
-        {
-            return vec![Line::from(vec![
-                Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
-                Span::styled(draft.placeholder(), theme::dim_style()),
-            ])];
-        }
-        if placeholder.is_empty() {
-            return vec![Line::from(vec![Span::styled(
-                INPUT_PROMPT_PREFIX.to_string(),
-                theme::accent_style(),
-            )])];
-        }
-
-        return vec![Line::from(vec![
-            Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
-            Span::styled(placeholder.to_string(), theme::dim_style()),
-        ])];
-    }
-
-    let mut lines = Vec::new();
-    let mut first = true;
-
-    for text_line in app.input_buf.split('\n') {
-        if text_line.is_empty() {
-            let prefix = if first {
-                INPUT_PROMPT_PREFIX
-            } else {
-                INPUT_CONTINUATION_PREFIX
-            };
-            lines.push(Line::from(vec![Span::styled(
-                prefix.to_string(),
-                theme::accent_style(),
-            )]));
-            first = false;
-            continue;
-        }
-
-        for chunk in wrap_visual(text_line, content_width) {
-            let prefix = if first {
-                INPUT_PROMPT_PREFIX
-            } else {
-                INPUT_CONTINUATION_PREFIX
-            };
-            lines.push(Line::from(vec![
-                Span::styled(prefix.to_string(), theme::accent_style()),
-                Span::styled(chunk, theme::body_style()),
-            ]));
-            first = false;
-        }
-    }
-
-    if lines.is_empty() {
-        if placeholder.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
-                INPUT_PROMPT_PREFIX.to_string(),
-                theme::accent_style(),
-            )]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled(INPUT_PROMPT_PREFIX.to_string(), theme::accent_style()),
-                Span::styled(placeholder.to_string(), theme::dim_style()),
-            ]));
-        }
-    }
-
-    lines
+    let viewport = build_input_viewport(app, placeholder, width as u16, u16::MAX);
+    viewport.lines
 }
 
 pub(super) struct InputViewport {
@@ -180,29 +148,41 @@ pub(super) fn build_input_viewport(
     height: u16,
 ) -> InputViewport {
     let content_width = width.saturating_sub(input_prompt_prefix_width()).max(1);
-    let mut lines = build_prompt_lines(app, placeholder, width as usize);
+    if !app.chat_enabled() || app.input_buf.is_empty() {
+        let placeholder = app
+            .choice_input
+            .as_ref()
+            .filter(|_| app.chat_enabled())
+            .map(|draft| draft.placeholder())
+            .unwrap_or_else(|| placeholder.to_string());
+        return InputViewport {
+            lines: if height == 0 {
+                vec![]
+            } else {
+                vec![prompt_line(placeholder, true, true)]
+            },
+            total_lines: 1,
+            scroll_top: 0,
+            cursor_col: 0,
+            cursor_row: 0,
+            content_width,
+        };
+    }
+    let layout = cached_input_layout(app, content_width);
     let (cursor_col, cursor_row) = if input_cursor_visible(app) {
-        wrapped_cursor_position(&app.input_buf, app.input_cursor, content_width)
+        layout.cursor_position(app.input_cursor)
     } else {
         (0, 0)
     };
-    let cursor_row = cursor_row as usize;
-
-    if input_cursor_visible(app) {
-        while cursor_row >= lines.len() {
-            lines.push(Line::from(vec![Span::styled(
-                INPUT_CONTINUATION_PREFIX.to_string(),
-                theme::accent_style(),
-            )]));
-        }
-    }
-
-    let total_lines = lines.len().max(1);
+    let total_lines = layout.lines.len();
     let scroll_top = input_scroll_top(cursor_row, height as usize, total_lines);
-    let lines = lines
-        .into_iter()
+    let lines = layout
+        .lines
+        .iter()
+        .enumerate()
         .skip(scroll_top)
         .take(height as usize)
+        .map(|(index, text)| prompt_line(text.clone(), index == 0, false))
         .collect();
 
     InputViewport {
@@ -437,140 +417,219 @@ fn mix_channel(base: u8, peak: u8, amount: f32) -> u8 {
     let peak = peak as f32;
     (base + (peak - base) * amount).round().clamp(0.0, 255.0) as u8
 }
+/// Text and cursor positions use the same grapheme advances, including a
+/// virtual cursor row at a full end-of-input, but no extra row before `\n`.
+#[derive(Default)]
+struct InputPosition {
+    row: usize,
+    col: usize,
+    width: usize,
+}
+
+impl InputPosition {
+    fn advance(&mut self, grapheme: &str, width: usize) -> (usize, usize, usize) {
+        self.width = width.max(1);
+        if grapheme == "\n" {
+            self.row += 1;
+            self.col = 0;
+            return (self.row, 0, 0);
+        }
+        if grapheme == "\t" {
+            let cells = 4 - self.col % 4;
+            let start = (self.row, self.col, cells);
+            for _ in 0..cells {
+                self.advance(" ", width);
+            }
+            return start;
+        }
+        let cells = if grapheme.chars().any(char::is_control) {
+            0
+        } else {
+            display_width(grapheme)
+        };
+        if self.col > 0 && self.col + cells > self.width {
+            self.row += 1;
+            self.col = 0;
+        }
+        let start = (self.row, self.col, cells);
+        self.col += cells;
+        start
+    }
+
+    fn cursor(&self) -> (u16, usize) {
+        if self.width > 0 && self.col >= self.width {
+            (0, self.row + 1)
+        } else {
+            (self.col as u16, self.row)
+        }
+    }
+}
+
 struct InputCursorPoint {
     cursor: usize,
     row: usize,
     col: u16,
 }
 
+pub(super) struct InputLayout {
+    width: u16,
+    lines: Vec<String>,
+    points: Vec<InputCursorPoint>,
+}
+
+impl InputLayout {
+    fn new(text: &str, width: u16) -> Self {
+        let width = width.max(1);
+        let mut lines = vec![String::new()];
+        let mut points = vec![InputCursorPoint {
+            cursor: 0,
+            row: 0,
+            col: 0,
+        }];
+        let mut position = InputPosition::default();
+        let mut cursor = 0;
+        for grapheme in text.graphemes(true) {
+            if grapheme == "\t" {
+                for _ in 0..4 - position.col % 4 {
+                    let (row, _, _) = position.advance(" ", width as usize);
+                    while lines.len() <= row {
+                        lines.push(String::new());
+                    }
+                    lines[row].push(' ');
+                }
+            } else {
+                let (row, _, _) = position.advance(grapheme, width as usize);
+                while lines.len() <= row {
+                    lines.push(String::new());
+                }
+                if !grapheme.chars().any(char::is_control) {
+                    lines[row].push_str(grapheme);
+                }
+            }
+            cursor += grapheme.chars().count();
+            let (col, row) = position.cursor();
+            points.push(InputCursorPoint { cursor, row, col });
+        }
+        while lines.len() <= position.cursor().1 {
+            lines.push(String::new());
+        }
+        Self {
+            width,
+            lines,
+            points,
+        }
+    }
+
+    pub(super) fn cursor_position(&self, cursor: usize) -> (u16, usize) {
+        let index = self
+            .points
+            .partition_point(|point| point.cursor <= cursor)
+            .saturating_sub(1);
+        let point = &self.points[index];
+        (point.col, point.row)
+    }
+
+    pub(super) fn move_cursor(
+        &self,
+        cursor: usize,
+        direction: InputCursorDirection,
+        preferred_col: Option<u16>,
+    ) -> (usize, u16) {
+        let (col, row) = self.cursor_position(cursor);
+        let desired = preferred_col.unwrap_or(col);
+        let last_row = self.points.last().map(|p| p.row).unwrap_or_default();
+        let target_row = match direction {
+            InputCursorDirection::Up => row.saturating_sub(1),
+            InputCursorDirection::Down => (row + 1).min(last_row),
+        };
+        if target_row == row {
+            return (cursor, desired);
+        }
+        let target = self
+            .points
+            .iter()
+            .filter(|p| p.row == target_row)
+            .min_by_key(|p| {
+                (
+                    p.col.abs_diff(desired),
+                    p.col > desired,
+                    std::cmp::Reverse(p.cursor),
+                )
+            })
+            .map(|p| p.cursor)
+            .unwrap_or(cursor);
+        (target, desired)
+    }
+}
+
+/// Keep the full-width and scrollbar-width layouts. Animation and cursor
+/// movement reuse them; editing text invalidates both together.
+#[derive(Default)]
+pub(super) struct InputLayouts {
+    text: String,
+    layouts: Vec<InputLayout>,
+}
+
+pub(super) fn cached_input_layout(app: &App, width: u16) -> Ref<'_, InputLayout> {
+    {
+        let mut cache = app.input_layouts.borrow_mut();
+        if cache.text != app.input_buf {
+            cache.text.clone_from(&app.input_buf);
+            cache.layouts.clear();
+        }
+        if !cache.layouts.iter().any(|layout| layout.width == width) {
+            if cache.layouts.len() == 2 {
+                cache.layouts.remove(0);
+            }
+            cache.layouts.push(InputLayout::new(&app.input_buf, width));
+        }
+    }
+    Ref::map(app.input_layouts.borrow(), |cache| {
+        cache
+            .layouts
+            .iter()
+            .find(|layout| layout.width == width)
+            .unwrap()
+    })
+}
+
+#[cfg(test)]
 pub(super) fn move_cursor_vertically(
     text: &str,
-    cursor_chars: usize,
+    cursor: usize,
     width: u16,
     direction: InputCursorDirection,
     preferred_col: Option<u16>,
 ) -> (usize, u16) {
-    let width = width.max(1);
-    let cursor_chars = cursor_chars.min(text.chars().count());
-    let points = input_cursor_points(text, width);
-    let (_, current_row) = wrapped_cursor_position_usize(text, cursor_chars, width);
-    let current_col = input_cursor_col(text, cursor_chars, width);
-    let desired_col = preferred_col.unwrap_or(current_col);
-    let Some(last_row) = points.last().map(|point| point.row) else {
-        return (cursor_chars, desired_col);
-    };
+    InputLayout::new(text, width).move_cursor(cursor, direction, preferred_col)
+}
 
-    let target_row = match direction {
-        InputCursorDirection::Up => current_row.saturating_sub(1),
-        InputCursorDirection::Down => (current_row + 1).min(last_row),
-    };
-
-    if target_row == current_row {
-        return (cursor_chars, desired_col);
+pub(super) fn previous_cursor(text: &str, cursor: usize) -> usize {
+    let mut offset = 0;
+    for grapheme in text.graphemes(true) {
+        let next = offset + grapheme.chars().count();
+        if next >= cursor {
+            return offset;
+        }
+        offset = next;
     }
-
-    let target_cursor = input_cursor_for_visual_position(&points, target_row, desired_col);
-    (target_cursor, desired_col)
+    offset
 }
 
-fn input_cursor_points(text: &str, width: u16) -> Vec<InputCursorPoint> {
-    let width = width.max(1) as usize;
-    let mut points = vec![InputCursorPoint {
-        cursor: 0,
-        row: 0,
-        col: 0,
-    }];
-    let mut row = 0usize;
-    let mut col = 0usize;
-
-    for (idx, ch) in text.chars().enumerate() {
-        if ch == '\n' {
-            row += 1;
-            col = 0;
-            points.push(InputCursorPoint {
-                cursor: idx + 1,
-                row,
-                col: 0,
-            });
-            continue;
-        }
-
-        let ch_width = char_display_width(ch);
-        if col + ch_width > width && col != 0 {
-            row += 1;
-            col = 0;
-        }
-        col += ch_width;
-        if col >= width {
-            row += col / width;
-            col %= width;
-        }
-
-        points.push(InputCursorPoint {
-            cursor: idx + 1,
-            row,
-            col: col.min(u16::MAX as usize) as u16,
-        });
-    }
-
-    points
-}
-
-fn input_cursor_for_visual_position(
-    points: &[InputCursorPoint],
-    target_row: usize,
-    target_col: u16,
-) -> usize {
-    points
-        .iter()
-        .filter(|point| point.row == target_row)
-        .min_by_key(|point| {
-            (
-                point.col.abs_diff(target_col),
-                point.col > target_col,
-                point.cursor,
-            )
-        })
-        .map(|point| point.cursor)
-        .unwrap_or_else(|| points.last().map(|point| point.cursor).unwrap_or_default())
-}
-
-fn input_cursor_col(text: &str, cursor_chars: usize, width: u16) -> u16 {
-    wrapped_cursor_position_usize(text, cursor_chars, width).0
-}
-
-fn wrapped_cursor_position(text: &str, cursor_chars: usize, width: u16) -> (u16, u16) {
-    let (col, row) = wrapped_cursor_position_usize(text, cursor_chars, width);
-    (col, row.min(u16::MAX as usize) as u16)
-}
-
-fn wrapped_cursor_position_usize(text: &str, cursor_chars: usize, width: u16) -> (u16, usize) {
-    if width == 0 {
-        return (0, 0);
-    }
-
-    let line_width = width as usize;
-    let mut col = 0usize;
-    let mut row = 0usize;
-
-    for ch in text.chars().take(cursor_chars) {
-        if ch == '\n' {
-            row += 1;
-            col = 0;
-            continue;
-        }
-
-        let ch_width = char_display_width(ch);
-        if col + ch_width > line_width && col != 0 {
-            row += 1;
-            col = 0;
-        }
-        col += ch_width;
-        if col >= line_width {
-            row += col / line_width;
-            col %= line_width;
+pub(super) fn next_cursor(text: &str, cursor: usize) -> usize {
+    let mut offset = 0;
+    for grapheme in text.graphemes(true) {
+        offset += grapheme.chars().count();
+        if offset > cursor {
+            return offset;
         }
     }
+    offset
+}
 
-    (col.min(u16::MAX as usize) as u16, row)
+pub(super) fn cursor_byte_index(text: &str, cursor: usize) -> usize {
+    text.char_indices()
+        .nth(cursor)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
 }

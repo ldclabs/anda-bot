@@ -4,10 +4,7 @@ use anda_core::{ContentPart, Message, ToolInput};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
-use super::{
-    text::{compact_cjk_spacing, truncate_visual},
-    theme,
-};
+use super::{text::truncate_visual, theme};
 pub(super) use crate::engine::ActionApiOutput;
 use crate::engine::{ActionStatus, ActionsTool, ActionsToolArgs, update_action_payload_resolution};
 
@@ -17,7 +14,6 @@ const MAX_CHOICE_KEYS: usize = 6;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TuiAction {
     pub(super) id: String,
-    pub(super) name: String,
     pub(super) kind: Option<String>,
     pub(super) status: String,
     pub(super) tool: Option<TuiActionTool>,
@@ -361,52 +357,46 @@ pub(super) fn active_pending_action(messages: &[Message]) -> Option<TuiAction> {
     messages
         .iter()
         .rev()
-        .flat_map(actions_from_message)
-        .find(TuiAction::is_pending)
-}
-
-pub(super) fn actions_from_message(message: &Message) -> Vec<TuiAction> {
-    message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Action { name, payload, .. } => action_from_payload(name, payload),
-            _ => None,
+        .flat_map(|message| &message.content)
+        .find_map(|part| {
+            let ContentPart::Action { name, payload, .. } = part else {
+                return None;
+            };
+            let status = payload
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|status| !status.is_empty())
+                .unwrap_or("pending");
+            if status != "pending" {
+                return None;
+            }
+            action_from_payload(name, payload)
         })
-        .collect()
 }
 
 pub(super) fn action_state_snapshot(messages: &[Message]) -> Vec<TuiActionState> {
     messages
         .iter()
-        .flat_map(actions_from_message)
-        .map(|action| {
-            let response = action
-                .response
-                .as_ref()
-                .map(Value::to_string)
-                .unwrap_or_default();
-            let status = action.status_label();
-            TuiActionState {
-                id: action.id,
-                status,
-                response: compact_cjk_spacing(&response).into_owned(),
+        .flat_map(|message| &message.content)
+        .filter_map(|part| {
+            let ContentPart::Action { name, payload, .. } = part else {
+                return None;
+            };
+            let id = string_field(payload, "id").unwrap_or_else(|| name.clone());
+            if id.trim().is_empty() {
+                return None;
             }
+            Some(TuiActionState {
+                id,
+                status: string_field(payload, "status").unwrap_or_else(|| "pending".into()),
+                response: payload
+                    .get("response")
+                    .map(Value::to_string)
+                    .unwrap_or_default(),
+            })
         })
         .collect()
-}
-
-#[cfg(test)]
-pub(super) fn existing_action_state_changed(
-    before: &[TuiActionState],
-    after: &[TuiActionState],
-) -> bool {
-    before.iter().any(|before_action| {
-        after
-            .iter()
-            .find(|after_action| after_action.id == before_action.id)
-            .is_some_and(|after_action| after_action != before_action)
-    })
 }
 
 pub(super) fn action_footer_line(
@@ -418,7 +408,7 @@ pub(super) fn action_footer_line(
     Some(Line::from(vec![
         Span::styled("ACTION ", theme::accent_style()),
         Span::styled(
-            truncate_visual(&compact_cjk_spacing(&text), width.saturating_sub(7)),
+            truncate_visual(&text, width.saturating_sub(7)),
             theme::subtle_style(),
         ),
     ]))
@@ -492,7 +482,7 @@ pub(super) fn action_transcript_text(action: &TuiAction) -> String {
         }
     }
 
-    compact_cjk_spacing(&lines.join("\n")).into_owned()
+    lines.join("\n")
 }
 
 pub(super) fn action_response_notice(output: &ActionApiOutput) -> String {
@@ -565,7 +555,6 @@ pub(super) fn action_from_payload(name: &str, payload: &Value) -> Option<TuiActi
 
     Some(TuiAction {
         id,
-        name: name.to_string(),
         kind: string_field(payload, "kind"),
         status: string_field(payload, "status")
             .unwrap_or_else(|| ActionStatus::Pending.as_str().to_string()),

@@ -9,7 +9,7 @@ use super::{
     SECONDARY_PART_MAX_LINES,
     action::{action_from_payload, action_transcript_text},
     markdown,
-    text::{compact_cjk_spacing, display_width, line_is_blank, normalize_newlines},
+    text::{display_width, line_is_blank, normalize_newlines},
     theme,
 };
 
@@ -153,7 +153,7 @@ pub(super) fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec
                     theme::dim_style(),
                     theme::dim_style(),
                     content_width,
-                    action_part_max_lines(&text),
+                    usize::MAX,
                 );
             }
             ContentPart::Any(json) => {
@@ -192,10 +192,6 @@ fn part_kind(part: &ContentPart) -> PartKind {
         ContentPart::Text { .. } => PartKind::Normal,
         _ => PartKind::Limited,
     }
-}
-
-fn action_part_max_lines(text: &str) -> usize {
-    text.lines().count().clamp(SECONDARY_PART_MAX_LINES, 12)
 }
 
 fn ensure_part_spacing(
@@ -272,6 +268,13 @@ fn wrap_styled_body_line(
     for span in line.spans {
         let style = line_style.patch(span.style);
         for grapheme in UnicodeSegmentation::graphemes(span.content.as_ref(), true) {
+            let expanded;
+            let grapheme = if grapheme == "\t" {
+                expanded = " ".repeat(4 - current_width % 4);
+                expanded.as_str()
+            } else {
+                grapheme
+            };
             if grapheme.chars().any(char::is_control) {
                 continue;
             }
@@ -388,9 +391,8 @@ fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<Strin
     let mut current_width = 0;
     let mut truncated = false;
     let normalized = normalize_newlines(text);
-    let normalized = compact_cjk_spacing(&normalized);
 
-    for grapheme in UnicodeSegmentation::graphemes(normalized.as_ref(), true) {
+    for grapheme in UnicodeSegmentation::graphemes(normalized.as_str(), true) {
         if grapheme == "\n" {
             if !push_limited_line(&mut lines, &mut current, max_lines) {
                 truncated = true;
@@ -400,6 +402,13 @@ fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<Strin
             continue;
         }
 
+        let expanded;
+        let grapheme = if grapheme == "\t" {
+            expanded = " ".repeat(4 - current_width % 4);
+            expanded.as_str()
+        } else {
+            grapheme
+        };
         if grapheme.chars().any(char::is_control) {
             continue;
         }

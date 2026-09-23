@@ -18,7 +18,7 @@ use super::{
     SECONDARY_PART_MAX_LINES, THINKING_FRAMES, THINKING_LABEL,
     action::{
         action_state_snapshot, action_transcript_text, active_pending_action,
-        apply_action_response_to_messages, existing_action_state_changed,
+        apply_action_response_to_messages,
     },
     app::App,
     input::{
@@ -32,9 +32,9 @@ use super::{
         status_footer_height, status_footer_panel, status_panel_height,
     },
     render::render,
-    status::{panel_header_line, panel_lines, status_footer_lines, status_line},
+    status::{panel_header_line, status_footer_lines, status_line},
     terminal::cleanup_inline_viewport,
-    text::{display_width, normalize_newlines, truncate_visual, wrap_visual},
+    text::{display_width, normalize_newlines, truncate_visual},
     theme,
     transcript::{chat_message_lines, chat_message_lines_for_message, thinking_lines},
     widgets::PackedLines,
@@ -117,13 +117,13 @@ fn insert_input_text_respects_cursor_position() {
 }
 
 #[test]
-fn insert_input_text_compacts_cjk_spaces_but_keeps_english_spaces() {
+fn insert_input_text_preserves_cjk_and_english_spaces() {
     let mut app = ready_app();
 
     app.insert_input_text("你 好 hello world 再 见");
 
-    assert_eq!(app.input_buf, "你好 hello world 再见");
-    assert_eq!(app.input_cursor, "你好 hello world 再见".chars().count());
+    assert_eq!(app.input_buf, "你 好 hello world 再 见");
+    assert_eq!(app.input_cursor, "你 好 hello world 再 见".chars().count());
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn action_helpers_find_pending_choice_and_update_response() {
     assert_eq!(snapshot[0].id, "act_choice");
     assert_eq!(snapshot[0].status, "selected");
     assert_eq!(snapshot[0].response, "{\"choice_id\":\"ship\"}");
-    assert!(existing_action_state_changed(&before, &snapshot));
+    assert_ne!(before, snapshot);
 }
 
 #[test]
@@ -735,18 +735,22 @@ fn chat_message_lines_keep_cjk_text_contiguous() {
 }
 
 #[test]
-fn chat_message_lines_compact_ascii_spaces_between_cjk() {
+fn chat_message_lines_preserve_ascii_spaces_between_cjk() {
     let mut app = ready_app();
     push_text_message(&mut app, "assistant", "已 提 交，依 赖 版 本 升 级。");
 
     let lines = chat_message_lines(&app, 80);
 
-    assert_eq!(line_text(&lines[0]), "🐼 ❯ 已提交，依赖版本升级。");
+    assert_eq!(line_text(&lines[0]), "🐼 ❯ 已 提 交，依 赖 版 本 升 级。");
 }
 
 #[test]
 fn wrap_visual_splits_cjk_by_display_width_without_spaces() {
-    assert_eq!(wrap_visual("前面出错", 4), vec!["前面", "出错"]);
+    let mut app = ready_app();
+    app.insert_input_text("前面出错");
+    let lines = build_prompt_lines(&app, "", 6);
+    assert_eq!(line_text(&lines[0]), "❯ 前面");
+    assert_eq!(line_text(&lines[1]), "  出错");
     assert_eq!(truncate_visual("前面出错", 7), "前面...");
 }
 
@@ -960,15 +964,15 @@ fn status_footer_panel_starts_below_divider() {
 }
 
 #[test]
-fn status_footer_notice_compacts_spaced_cjk() {
+fn status_footer_notice_preserves_spaces() {
     let mut app = ready_app();
     app.notice = "连 接 失 败，请 重 试。".to_string();
 
     let lines = status_footer_lines(&app, 80);
 
     assert_eq!(
-        line_text(lines.last().expect("notice line")),
-        "! 连接失败，请重试。"
+        line_text(lines.first().expect("notice line")),
+        "! 连 接 失 败，请 重 试。"
     );
 }
 
@@ -1232,11 +1236,11 @@ fn render_draws_full_frame_without_panicking() {
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
 
     // Render again after focusing out to exercise alternate layout.
     app.input_focused = false;
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
 }
 
 #[test]
@@ -1250,7 +1254,7 @@ fn render_draws_setup_screen_when_not_ready() {
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
-    terminal.draw(|frame| render(frame, &mut app)).unwrap();
+    terminal.draw(|frame| render(frame, &app)).unwrap();
 }
 
 fn diverse_message(role: &str) -> Message {
@@ -1321,7 +1325,6 @@ fn render_helpers_cover_state_variants() {
     let _ = input_display_text(&ready);
     let _ = input_placeholder(&ready);
     let _ = build_prompt_lines(&ready, input_placeholder(&ready), 80);
-    let _ = panel_lines(&ready);
     let _ = panel_header_line(&ready);
     let _ = dynamic_layout_heights(&ready, area);
     let _ = dynamic_viewport_height(&ready, 80, 24);
@@ -1359,4 +1362,297 @@ fn centered_area_constrains_width() {
     assert!(centered.x >= area.x);
     // A max wider than the area keeps the full width.
     assert_eq!(centered_area(area, 500).width, 100);
+}
+
+#[test]
+fn input_layout_agrees_with_cursor_after_full_line_and_newline() {
+    let mut app = ready_app();
+    app.insert_input_text("abcd\nx");
+    let viewport = build_input_viewport(&app, "", input_prompt_prefix_width() + 4, 4);
+    assert_eq!((viewport.cursor_col, viewport.cursor_row), (1, 1));
+    assert_eq!(
+        viewport.lines.iter().map(line_text).collect::<Vec<_>>(),
+        ["❯ abcd", "  x"]
+    );
+    app.move_input_cursor_vertically(InputCursorDirection::Up, 4);
+    assert_eq!(app.input_cursor, 1);
+    app.move_input_cursor_vertically(InputCursorDirection::Down, 4);
+    assert_eq!(app.input_cursor, 6);
+}
+
+#[test]
+fn input_and_transcript_preserve_commands_and_code() {
+    let mut app = ready_app();
+    app.handle_paste("cp 文件 备份\r\n안녕 세상\n\tprint(\"项目 备份\")".into());
+    assert_eq!(
+        app.input_buf,
+        "cp 文件 备份\n안녕 세상\n\tprint(\"项目 备份\")"
+    );
+    let viewport = build_input_viewport(&app, "", 80, 4);
+    assert!(line_text(&viewport.lines[2]).contains("    print(\"项目 备份\")"));
+    push_text_message(
+        &mut app,
+        "assistant",
+        "```python\n\tprint(\"项目 备份\")\n```",
+    );
+    let lines = chat_message_lines(&app, 80);
+    assert_eq!(line_text(&lines[1]), "         print(\"项目 备份\")");
+}
+
+#[tokio::test]
+async fn composer_moves_and_deletes_whole_graphemes() {
+    for glyph in ["❤️", "👩‍💻", "e\u{301}", "中文"] {
+        let mut app = ready_app();
+        app.insert_input_text(glyph);
+        if glyph == "中文" {
+            app.handle_key(key(KeyCode::Backspace), 40).await.unwrap();
+            assert_eq!(app.input_buf, "中");
+            continue;
+        }
+        app.handle_key(key(KeyCode::Left), 40).await.unwrap();
+        assert_eq!(app.input_cursor, 0, "{glyph}");
+        app.handle_key(key(KeyCode::Right), 40).await.unwrap();
+        assert_eq!(app.input_cursor, glyph.chars().count());
+        app.handle_key(key(KeyCode::Backspace), 40).await.unwrap();
+        assert!(app.input_buf.is_empty());
+        app.insert_input_text(&format!("{glyph}X"));
+        app.handle_key(key(KeyCode::Home), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Delete), 40).await.unwrap();
+        assert_eq!(app.input_buf, "X");
+    }
+}
+
+#[test]
+fn packed_lines_and_input_use_grapheme_width() {
+    use ratatui::widgets::Widget;
+    for glyph in ["❤️", "👩‍💻", "⚠️", "e\u{301}"] {
+        let mut app = ready_app();
+        let text = format!("{glyph}X");
+        app.insert_input_text(&text);
+        let viewport = build_input_viewport(&app, "", 20, 4);
+        assert_eq!(viewport.cursor_col as usize, display_width(&text));
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(area);
+        PackedLines::new(vec![Line::from(text)]).render(area, &mut buf);
+        assert_eq!(
+            buf[(display_width(glyph) as u16, 0)].symbol(),
+            "X",
+            "{glyph}"
+        );
+    }
+}
+
+#[test]
+fn approval_details_and_choices_remain_complete_after_wrapping() {
+    let command = format!("cargo test {} -- --nocapture", "module_filter_".repeat(30));
+    let approval = Message {
+        role: "assistant".into(),
+        content: vec![ContentPart::Action {
+            name: "anda.tool_approval".into(),
+            payload: serde_json::json!({
+                "id": "approval", "kind": "tool_approval", "status": "pending",
+                "summary": command, "command": command,
+                "details": [{"label":"Workspace","value":"/tmp/项目 备份"},{"label":"Mode","value":"foreground"}]
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    };
+    let choice = Message {
+        role: "assistant".into(),
+        content: vec![ContentPart::Action {
+            name: "anda.user_choice".into(),
+            payload: serde_json::json!({
+                "id": "choice", "kind": "choice", "status": "pending",
+                "choices": (1..=6).map(|n| serde_json::json!({"id": n.to_string(),"label":format!("Option {n}"),"description":"A detailed explanation of this option. ".repeat(4)})).collect::<Vec<_>>()
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    };
+    for width in [60, 80, 120] {
+        let body = |message| {
+            chat_message_lines_for_message(message, width)
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .skip(1)
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<String>()
+        };
+        let text = body(&approval);
+        assert!(text.contains(&command));
+        assert!(text.contains("Workspace: /tmp/项目 备份"));
+        assert!(text.contains("Mode: foreground"));
+        assert!(text.contains("[y] Approve  [n] Deny"));
+        let text = body(&choice);
+        for n in 1..=6 {
+            assert!(text.contains(&format!("[{n}] Option {n}")));
+        }
+    }
+}
+
+#[test]
+fn action_errors_take_priority_over_help() {
+    let mut app = ready_app();
+    push_pending_shell_approval(&mut app);
+    app.notice = "Action response failed: daemon unavailable".into();
+    let lines = status_footer_lines(&app, 80);
+    assert_eq!(lines.len(), 3);
+    assert!(line_text(&lines[0]).starts_with("ACTION "));
+    assert!(line_text(&lines[1]).contains("Action response failed"));
+}
+
+#[tokio::test]
+async fn choice_draft_survives_failure_and_clears_only_on_success() {
+    let mut app = ready_app();
+    app.choice_input = Some(super::action::TuiActionChoiceDraft {
+        action_id: "choice".into(),
+        choice_id: "custom".into(),
+        label: "Custom".into(),
+        placeholder: None,
+        required: true,
+    });
+    app.insert_input_text("Detailed response with 项目 备份");
+    let original = app.input_buf.clone();
+    app.client = gateway::Client::new("http://127.0.0.1:0".into(), String::new());
+    app.submit_input().await.unwrap();
+    assert!(app.action_response_pending());
+    assert_eq!(app.input_buf, original);
+    assert!(app.choice_input.is_some());
+    let (tx, rx) = oneshot::channel();
+    app.pending_action_response = Some(rx);
+    app.handle_key(ctrl(KeyCode::Char('u')), 40).await.unwrap();
+    app.handle_key(key(KeyCode::Esc), 40).await.unwrap();
+    assert_eq!(app.input_buf, original);
+    tx.send(Err("unavailable".into())).unwrap();
+    assert!(app.finish_pending_action_response());
+    assert_eq!(app.input_buf, original);
+    assert!(app.choice_input.is_some());
+    assert!(
+        status_footer_lines(&app, 80)
+            .iter()
+            .any(|line| line_text(line).contains("Action response failed"))
+    );
+    let (tx, rx) = oneshot::channel();
+    app.pending_action_response = Some(rx);
+    tx.send(Ok(super::action::ActionApiOutput {
+        action_id: "choice".into(),
+        conversation: 0,
+        status: "selected".into(),
+        response: serde_json::json!({"choice_id":"custom"}),
+        responded_at: 1,
+    }))
+    .unwrap();
+    assert!(app.finish_pending_action_response());
+    assert!(app.input_buf.is_empty());
+    assert!(app.choice_input.is_none());
+}
+
+#[test]
+fn initial_bind_preserves_scrollback_and_reload_replaces_written_history() {
+    let mut app = ready_app();
+    app.static_panel_flushed = true;
+    app.rebind_client();
+    assert!(!app.pending_scrollback_purge);
+    assert!(app.static_panel_flushed);
+    app.flushed_message_count = 2;
+    app.rebind_client();
+    assert!(app.pending_scrollback_purge);
+    assert_eq!(app.flushed_message_count, 0);
+}
+
+#[test]
+fn action_resolution_appends_one_receipt_and_unchanged_frames_do_no_work() {
+    let mut app = ready_app();
+    push_pending_shell_approval(&mut app);
+    assert!(app.refresh_actions());
+    let count = app.chat.messages.len();
+    let (tx, rx) = oneshot::channel();
+    app.pending_action_response = Some(rx);
+    tx.send(Ok(super::action::ActionApiOutput {
+        action_id: "act_1".into(),
+        conversation: 0,
+        status: "approved".into(),
+        response: serde_json::json!({"approve":true}),
+        responded_at: 1,
+    }))
+    .unwrap();
+    assert!(app.finish_pending_action_response());
+    assert!(app.refresh_actions());
+    assert_eq!(app.chat.messages.len(), count + 1);
+    assert!(app.active_pending_action().is_none());
+    let text = chat_message_lines(&app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<String>();
+    assert!(text.contains("Action act_1 approved."));
+    assert!(!app.refresh_actions());
+    app.animation_tick += 1;
+    app.insert_input_text("typing");
+    assert!(!app.refresh_actions());
+    assert_eq!(app.chat.messages.len(), count + 1);
+}
+
+#[tokio::test]
+async fn stalled_http_requests_do_not_block_editing_or_quitting() {
+    use axum::{
+        Router,
+        routing::{get, post},
+    };
+    let base = crate::test_support::spawn_http_mock(
+        Router::new()
+            .route(
+                "/daemon/status",
+                get(|| async { std::future::pending::<String>().await }),
+            )
+            .route(
+                "/engine/default",
+                post(|| async { std::future::pending::<String>().await }),
+            )
+            .route(
+                "/v1/anda_bot/runtime/status",
+                get(|| async { std::future::pending::<String>().await }),
+            ),
+    )
+    .await;
+    let home = tempfile::tempdir().unwrap();
+    let client = gateway::Client::new(base, String::new());
+    let mut app = App::new(home.path().into(), Config::default(), client, false);
+    app.daemon_running = true;
+    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        app.start_status_refresh();
+        app.chat.start_poll(Some(7));
+        app.insert_input_text("/brain status");
+        app.submit_input().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!app.finish_pending_status());
+        assert!(!app.chat.finish_pending_poll());
+        assert!(!app.finish_pending_memory());
+        app.handle_key(key(KeyCode::Char('x')), 40).await.unwrap();
+        assert_eq!(app.input_buf, "x");
+        app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+        assert!(app.should_quit);
+    })
+    .await
+    .expect("HTTP waits must not block the TUI");
+}
+
+#[tokio::test]
+async fn reconnect_starts_in_background_and_quit_remains_available() {
+    let home = tempfile::tempdir().unwrap();
+    let mut app = App::new(home.path().into(), Config::default(), test_client(), false);
+    app.daemon_running = true;
+    app.insert_input_text("/reload");
+    app.submit_input().await.unwrap();
+    assert!(!app.chat_enabled());
+    assert!(app.notice.contains("Connecting"));
+    assert!(!app.pending_scrollback_purge);
+    app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+    assert!(app.should_quit);
 }

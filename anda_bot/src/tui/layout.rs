@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use super::{
     App, STATUS_FOOTER_MAX_LINES,
     input::{input_height, input_placeholder, input_viewport, split_input_area},
-    status::{panel_lines, status_footer_lines},
+    status::status_footer_lines,
     widgets::Banner,
 };
 
@@ -61,13 +61,12 @@ pub(super) fn dynamic_viewport_height(app: &App, term_w: u16, term_h: u16) -> u1
     (input + status).clamp(1, term_h)
 }
 
-pub(super) fn status_panel_height(app: &App, area: Rect) -> u16 {
+pub(super) fn status_panel_height(_app: &App, area: Rect) -> u16 {
     if area.width == 0 || area.height == 0 {
         return 0;
     }
 
-    let lines = panel_lines(app).len() as u16;
-    let desired = 1 + Banner::height() + lines;
+    let desired = 1 + Banner::height();
     desired.min(area.height)
 }
 
