@@ -1,9 +1,8 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
-use reqwest::multipart::{Form, Part};
 
 use super::{
-    TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, parse_whisper_response, validate_audio,
+    TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, parse_whisper_response, whisper_form,
 };
 use crate::config;
 
@@ -13,6 +12,7 @@ pub struct GroqProvider {
     model: String,
     api_key: String,
     language: Option<String>,
+    prompt: Option<String>,
     http: reqwest::Client,
 }
 
@@ -20,17 +20,19 @@ impl GroqProvider {
     /// Build from the Groq provider configuration.
     pub fn from_config(
         config: &config::GroqSttConfig,
+        initial_prompt: Option<&str>,
         http: reqwest::Client,
     ) -> Result<Self, BoxError> {
         if config.api_key.trim().is_empty() {
-            return Err("transcription.api_key must not be empty".into());
+            return Err("transcription.groq.api_key must not be empty".into());
         }
 
         Ok(Self {
             api_url: config.api_url.clone(),
             model: config.model.clone(),
-            api_key: config.api_key.clone(),
-            language: config.language.clone(),
+            api_key: config.api_key.trim().to_string(),
+            language: config::normalize_optional(&config.language),
+            prompt: initial_prompt.and_then(config::normalize_string),
             http,
         })
     }
@@ -43,20 +45,13 @@ impl TranscriptionProvider for GroqProvider {
     }
 
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let (normalized_name, mime) = validate_audio(audio_data, file_name)?;
-
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
-
-        let mut form = Form::new()
-            .part("file", file_part)
-            .text("model", self.model.clone())
-            .text("response_format", "json");
-
-        if let Some(ref lang) = self.language {
-            form = form.text("language", lang.clone());
-        }
+        let form = whisper_form(
+            audio_data,
+            file_name,
+            &self.model,
+            self.language.as_deref(),
+            self.prompt.as_deref(),
+        )?;
 
         let resp = self
             .http
@@ -66,7 +61,12 @@ impl TranscriptionProvider for GroqProvider {
             .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|_| "Failed to send transcription request to Groq")?;
+            .map_err(|err| {
+                format!(
+                    "Failed to send transcription request to Groq: {:?}",
+                    err.without_url()
+                )
+            })?;
 
         parse_whisper_response(resp).await
     }
@@ -89,7 +89,6 @@ mod tests {
             api_url,
             model: "whisper-large-v3".to_string(),
             language,
-            ..Default::default()
         }
     }
 
@@ -97,7 +96,7 @@ mod tests {
     fn from_config_rejects_empty_api_key() {
         let config = config::GroqSttConfig::default();
 
-        let err = GroqProvider::from_config(&config, new_reqwest_client())
+        let err = GroqProvider::from_config(&config, None, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("api_key must not be empty"));
@@ -110,7 +109,7 @@ mod tests {
             Some("zh".to_string()),
         );
 
-        let provider = GroqProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = GroqProvider::from_config(&config, None, new_reqwest_client()).unwrap();
         assert_eq!(provider.api_url, "https://api.groq.com/v1");
         assert_eq!(provider.model, "whisper-large-v3");
         assert_eq!(provider.language, Some("zh".to_string()));
@@ -126,6 +125,7 @@ mod tests {
         let url = spawn_mock(app).await;
         let provider = GroqProvider::from_config(
             &groq_config(url, Some("zh".to_string())),
+            None,
             new_reqwest_client(),
         )
         .unwrap();
@@ -144,7 +144,7 @@ mod tests {
         );
         let url = spawn_mock(app).await;
         let provider =
-            GroqProvider::from_config(&groq_config(url, None), new_reqwest_client()).unwrap();
+            GroqProvider::from_config(&groq_config(url, None), None, new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
         let msg = err.to_string();
@@ -160,7 +160,7 @@ mod tests {
         );
         let url = spawn_mock(app).await;
         let provider =
-            GroqProvider::from_config(&groq_config(url, None), new_reqwest_client()).unwrap();
+            GroqProvider::from_config(&groq_config(url, None), None, new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.wav").await.unwrap_err();
         assert!(err.to_string().contains("missing 'text' field"));

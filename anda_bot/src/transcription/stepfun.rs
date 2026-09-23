@@ -6,7 +6,7 @@ use reqwest::header::ACCEPT;
 use serde_json::json;
 
 use super::{MAX_AUDIO_BYTES, TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, audio_extension};
-use crate::config;
+use crate::{config, util::http_client::check_http_response};
 
 /// StepFun Stepaudio ASR provider using HTTP+SSE.
 pub struct StepFunProvider {
@@ -123,13 +123,21 @@ impl TranscriptionProvider for StepFunProvider {
             .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|_| "Failed to send transcription request to StepFun")?;
+            .map_err(|err| {
+                format!(
+                    "Failed to send transcription request to StepFun: {:?}",
+                    err.without_url()
+                )
+            })?;
 
         parse_stepfun_sse_response(resp).await
     }
 }
 
-pub(super) fn validate_audio(audio_data: &[u8], file_name: &str) -> Result<(), BoxError> {
+fn validate_audio(audio_data: &[u8], file_name: &str) -> Result<(), BoxError> {
+    if audio_data.is_empty() {
+        return Err("Audio data must not be empty".into());
+    }
     if audio_data.len() > MAX_AUDIO_BYTES {
         return Err(format!(
             "Audio file too large ({} bytes, max {MAX_AUDIO_BYTES})",
@@ -197,19 +205,19 @@ fn stepfun_audio_format(
 }
 
 async fn parse_stepfun_sse_response(resp: reqwest::Response) -> Result<String, BoxError> {
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("StepFun ASR API error ({}): {}", status, body.trim()).into());
-    }
+    let resp = check_http_response(resp, "StepFun ASR").await?;
 
     let mut stream = resp.bytes_stream();
     let mut line_buf = Vec::new();
     let mut event_data = String::new();
-    let mut delta_text = String::new();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "Failed to read StepFun ASR SSE stream")?;
+        let chunk = chunk.map_err(|err| {
+            format!(
+                "Failed to read StepFun ASR SSE stream: {:?}",
+                err.without_url()
+            )
+        })?;
         for &byte in chunk.iter() {
             if byte == b'\n' {
                 if line_buf.ends_with(b"\r") {
@@ -217,9 +225,7 @@ async fn parse_stepfun_sse_response(resp: reqwest::Response) -> Result<String, B
                 }
                 let line = std::str::from_utf8(&line_buf)
                     .map_err(|_| "StepFun ASR SSE stream contained invalid UTF-8")?;
-                if let Some(done_text) =
-                    consume_stepfun_sse_line(line, &mut event_data, &mut delta_text)?
-                {
+                if let Some(done_text) = consume_stepfun_sse_line(line, &mut event_data)? {
                     return Ok(done_text);
                 }
                 line_buf.clear();
@@ -232,35 +238,30 @@ async fn parse_stepfun_sse_response(resp: reqwest::Response) -> Result<String, B
     if !line_buf.is_empty() {
         let line = std::str::from_utf8(&line_buf)
             .map_err(|_| "StepFun ASR SSE stream contained invalid UTF-8")?;
-        if let Some(done_text) = consume_stepfun_sse_line(line, &mut event_data, &mut delta_text)? {
+        if let Some(done_text) = consume_stepfun_sse_line(line, &mut event_data)? {
             return Ok(done_text);
         }
     }
 
     if !event_data.is_empty()
-        && let Some(done_text) = parse_stepfun_sse_event(&event_data, &mut delta_text)?
+        && let Some(done_text) = parse_stepfun_sse_event(&event_data)?
     {
         return Ok(done_text);
     }
 
-    if delta_text.is_empty() {
-        Err("StepFun ASR stream ended without a transcript.text.done event".into())
-    } else {
-        Ok(delta_text)
-    }
+    Err("StepFun ASR stream ended without a transcript.text.done event".into())
 }
 
 fn consume_stepfun_sse_line(
     line: &str,
     event_data: &mut String,
-    delta_text: &mut String,
 ) -> Result<Option<String>, BoxError> {
     if line.is_empty() {
         if event_data.is_empty() {
             return Ok(None);
         }
 
-        let result = parse_stepfun_sse_event(event_data, delta_text)?;
+        let result = parse_stepfun_sse_event(event_data)?;
         event_data.clear();
         return Ok(result);
     }
@@ -268,7 +269,7 @@ fn consume_stepfun_sse_line(
     if let Some(data) = line.strip_prefix("data:") {
         let data = data.strip_prefix(' ').unwrap_or(data);
         if data == "[DONE]" {
-            return Ok((!delta_text.is_empty()).then(|| delta_text.clone()));
+            return Err("StepFun ASR stream ended without a transcript.text.done event".into());
         }
         if !event_data.is_empty() {
             event_data.push('\n');
@@ -279,20 +280,11 @@ fn consume_stepfun_sse_line(
     Ok(None)
 }
 
-fn parse_stepfun_sse_event(
-    data: &str,
-    delta_text: &mut String,
-) -> Result<Option<String>, BoxError> {
+fn parse_stepfun_sse_event(data: &str) -> Result<Option<String>, BoxError> {
     let body: serde_json::Value =
         serde_json::from_str(data).map_err(|_| "Failed to parse StepFun ASR SSE event")?;
 
     match body["type"].as_str() {
-        Some("transcript.text.delta") => {
-            if let Some(delta) = body["delta"].as_str() {
-                delta_text.push_str(delta);
-            }
-            Ok(None)
-        }
         Some("transcript.text.done") => {
             let text = body["text"]
                 .as_str()
@@ -357,10 +349,8 @@ mod tests {
 
     #[test]
     fn parse_stepfun_sse_event_returns_done_text() {
-        let mut delta_text = String::new();
         let text = parse_stepfun_sse_event(
             r#"{"type":"transcript.text.done","text":"识别的完整文字内容"}"#,
-            &mut delta_text,
         )
         .unwrap();
 
@@ -368,35 +358,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_stepfun_sse_event_accumulates_delta_text() {
-        let mut delta_text = String::new();
-
+    fn parse_stepfun_sse_event_waits_for_final_text() {
         assert!(
-            parse_stepfun_sse_event(
-                r#"{"type":"transcript.text.delta","delta":"识别的"}"#,
-                &mut delta_text,
-            )
-            .unwrap()
-            .is_none()
+            parse_stepfun_sse_event(r#"{"type":"transcript.text.delta","delta":"部分"}"#)
+                .unwrap()
+                .is_none()
         );
-        assert!(
-            parse_stepfun_sse_event(
-                r#"{"type":"transcript.text.delta","delta":"文字"}"#,
-                &mut delta_text,
-            )
-            .unwrap()
-            .is_none()
-        );
-
-        assert_eq!(delta_text, "识别的文字");
     }
 
     #[test]
     fn parse_stepfun_sse_event_reports_error_event() {
-        let mut delta_text = String::new();
-        let err =
-            parse_stepfun_sse_event(r#"{"type":"error","message":"bad audio"}"#, &mut delta_text)
-                .unwrap_err();
+        let err = parse_stepfun_sse_event(r#"{"type":"error","message":"bad audio"}"#).unwrap_err();
 
         assert!(err.to_string().contains("bad audio"));
     }
@@ -480,45 +452,32 @@ mod tests {
     #[test]
     fn consume_sse_line_handles_done_sentinel_and_comments() {
         let mut event_data = String::new();
-        let mut delta_text = String::new();
 
         // Blank line with no pending data is a no-op.
         assert!(
-            consume_stepfun_sse_line("", &mut event_data, &mut delta_text)
+            consume_stepfun_sse_line("", &mut event_data)
                 .unwrap()
                 .is_none()
         );
         // Non-data lines (event names, comments) are ignored.
         assert!(
-            consume_stepfun_sse_line("event: transcript", &mut event_data, &mut delta_text)
+            consume_stepfun_sse_line("event: transcript", &mut event_data)
                 .unwrap()
                 .is_none()
         );
-        // [DONE] without accumulated text yields nothing.
+        // A generic sentinel cannot substitute for the authoritative done text.
         assert!(
-            consume_stepfun_sse_line("data: [DONE]", &mut event_data, &mut delta_text)
-                .unwrap()
-                .is_none()
-        );
-
-        delta_text.push_str("部分文本");
-        assert_eq!(
-            consume_stepfun_sse_line("data: [DONE]", &mut event_data, &mut delta_text)
-                .unwrap()
-                .as_deref(),
-            Some("部分文本")
+            consume_stepfun_sse_line("data: [DONE]", &mut event_data)
+                .unwrap_err()
+                .to_string()
+                .contains("without a transcript.text.done")
         );
 
         // Multi-line data accumulates with newlines until the blank separator.
         let mut event_data = String::new();
-        consume_stepfun_sse_line(
-            r#"data: {"type":"transcript.text.delta","#,
-            &mut event_data,
-            &mut delta_text,
-        )
-        .unwrap();
-        consume_stepfun_sse_line(r#"data: "delta":"x"}"#, &mut event_data, &mut delta_text)
+        consume_stepfun_sse_line(r#"data: {"type":"transcript.text.delta","#, &mut event_data)
             .unwrap();
+        consume_stepfun_sse_line(r#"data: "delta":"x"}"#, &mut event_data).unwrap();
         assert!(event_data.contains('\n'));
     }
 
@@ -560,13 +519,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transcribe_falls_back_to_accumulated_deltas() {
+    async fn transcribe_rejects_incomplete_delta_only_stream() {
         let body = "data: {\"type\":\"transcript.text.delta\",\"delta\":\"你好\"}\n\n";
         let url = spawn_sse_mock(body, http::StatusCode::OK).await;
         let provider = provider_for(url).await;
 
-        let text = provider.transcribe(b"data", "voice.wav").await.unwrap();
-        assert_eq!(text, "你好");
+        let err = provider.transcribe(b"data", "voice.wav").await.unwrap_err();
+        assert!(err.to_string().contains("without a transcript.text.done"));
     }
 
     #[tokio::test]
@@ -609,5 +568,23 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("does not support '.webm'"));
+    }
+
+    #[tokio::test]
+    async fn transcribe_handles_utf8_and_crlf_split_across_chunks() {
+        let body = "data: {\"type\":\"transcript.text.delta\",\"delta\":\"旧\"}\r\n\r\ndata: {\"type\":\"transcript.text.done\",\"text\":\"完整\"}\r\n\r\n";
+        let app = Router::new().route(
+            "/asr",
+            routing::post(move || async move {
+                let chunks = body.bytes().map(|byte| Ok::<_, std::io::Error>(vec![byte]));
+                axum::body::Body::from_stream(futures::stream::iter(chunks))
+            }),
+        );
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let provider = provider_for(format!("{base}/asr")).await;
+        assert_eq!(
+            provider.transcribe(b"audio", "voice.wav").await.unwrap(),
+            "完整"
+        );
     }
 }

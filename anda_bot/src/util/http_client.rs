@@ -78,6 +78,42 @@ pub fn new_reqwest_client() -> reqwest::Client {
     builder.build().expect("failed to build reqwest client")
 }
 
+/// Check status before decoding a success payload. API errors may be JSON,
+/// plain text, or HTML (for example, a proxy's 502 response).
+pub async fn check_http_response(
+    response: reqwest::Response,
+    context: &str,
+) -> Result<reqwest::Response, BoxError> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+
+    let body = response.text().await.map_err(|err| {
+        format!(
+            "{context} API error ({status}): failed to read error body: {:?}",
+            err.without_url()
+        )
+    })?;
+    let json = serde_json::from_str::<serde_json::Value>(&body).ok();
+    let message = json
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+                .or_else(|| value.get("error").and_then(serde_json::Value::as_str))
+        })
+        .unwrap_or(body.trim());
+    let message = if message.is_empty() {
+        "unknown error"
+    } else {
+        message
+    };
+    Err(format!("{context} API error ({status}): {message}").into())
+}
+
 /// Whether an IP address is a public (globally routable) unicast address.
 /// Used to reject model-controlled URLs that point at loopback, private,
 /// link-local (cloud metadata), CGN, or otherwise internal addresses.
@@ -543,5 +579,33 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.is_connect() || err.is_request());
+    }
+
+    #[tokio::test]
+    async fn response_status_errors_preserve_json_and_text_messages() {
+        use axum::{Router, routing::get};
+        for (body, expected) in [
+            (r#"{"error":{"message":"rate limited"}}"#, "rate limited"),
+            (r#"{"message":"top level"}"#, "top level"),
+            (
+                r#"{"error":{"message":null},"message":"fallback"}"#,
+                "fallback",
+            ),
+            (r#"{"error":"string error"}"#, "string error"),
+            ("<html>upstream unavailable</html>", "upstream unavailable"),
+            ("", "unknown error"),
+        ] {
+            let app = Router::new().route(
+                "/",
+                get(move || async move { (http::StatusCode::BAD_GATEWAY, body) }),
+            );
+            let url = crate::test_support::spawn_http_mock(app).await;
+            let response = new_reqwest_client().get(url).send().await.unwrap();
+            let err = check_http_response(response, "Voice")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("502") && err.contains(expected), "{err}");
+        }
     }
 }

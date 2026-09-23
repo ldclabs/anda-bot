@@ -227,6 +227,8 @@ anda voice --record-secs 8
 
 语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。 语音模式会等本轮答复完成后再开始下一轮录音。Ctrl-C 也可停止语音合成和播放。
 
+Google 转写接受不超过 60 秒的 WAV/FLAC 录音，Chrome 扩展会将其他录音格式转换为 WAV。`transcription.initial_prompt` 为 Groq/OpenAI Whisper 提供词汇提示。Edge 合成需要 PATH 中存在 `edge-tts`；`tts.default_format` 仅控制 StepFun，Edge/OpenAI/Google 输出 MP3。详见[语音服务限制与配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#语音服务)。
+
 ## 多场景集成
 
 Anda Bot 既可以运行在终端中，也可以作为 Chrome 侧边栏插件使用，或通过配置 `~/.anda/config.yaml` 接入各大主流即时通讯频道。

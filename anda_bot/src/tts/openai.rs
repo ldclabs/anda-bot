@@ -2,7 +2,7 @@ use anda_core::BoxError;
 use serde_json::json;
 
 use super::{TTS_HTTP_TIMEOUT, TtsProvider};
-use crate::config;
+use crate::{config, util::http_client::check_http_response};
 
 /// OpenAI TTS provider (`POST /v1/audio/speech`).
 pub struct OpenAiTtsProvider {
@@ -52,24 +52,19 @@ impl TtsProvider for OpenAiTtsProvider {
             .timeout(TTS_HTTP_TIMEOUT)
             .send()
             .await
-            .map_err(|_| "Failed to send OpenAI TTS request")?;
+            .map_err(|err| format!("Failed to send OpenAI TTS request: {:?}", err.without_url()))?;
 
-        let status = resp.status();
-        if !status.is_success() {
-            let error_body: serde_json::Value = resp
-                .json()
-                .await
-                .unwrap_or_else(|_| json!({"error": "unknown"}));
-            let msg = error_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
-            return Err(format!("OpenAI TTS API error ({}): {}", status, msg).into());
+        let resp = check_http_response(resp, "OpenAI TTS").await?;
+
+        let bytes = resp.bytes().await.map_err(|err| {
+            format!(
+                "Failed to read OpenAI TTS response body: {:?}",
+                err.without_url()
+            )
+        })?;
+        if bytes.is_empty() {
+            return Err("OpenAI TTS response body was empty".into());
         }
-
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|_| "Failed to read OpenAI TTS response body")?;
         Ok(bytes.to_vec())
     }
 }

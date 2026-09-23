@@ -74,6 +74,9 @@ impl TranscriptionProvider for LocalWhisperProvider {
     }
 
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
+        if audio_data.is_empty() {
+            return Err("Audio data must not be empty".into());
+        }
         if audio_data.len() > self.max_audio_bytes {
             return Err(format!(
                 "Audio file too large ({} bytes, local_whisper max {})",
@@ -86,8 +89,7 @@ impl TranscriptionProvider for LocalWhisperProvider {
         let (normalized_name, mime) = resolve_audio_format(file_name)?;
 
         // to_vec() clones the buffer for the multipart payload; peak memory per
-        // call is ~2× max_audio_bytes. TODO: replace with streaming upload once
-        // reqwest supports body streaming in multipart parts.
+        // call is ~2× max_audio_bytes while the caller retains the input slice.
         let file_part = Part::bytes(audio_data.to_vec())
             .file_name(normalized_name)
             .mime_str(mime)?;
@@ -102,7 +104,12 @@ impl TranscriptionProvider for LocalWhisperProvider {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .send()
             .await
-            .map_err(|_| "Failed to send audio to local Whisper endpoint")?;
+            .map_err(|err| {
+                format!(
+                    "Failed to send audio to local Whisper endpoint: {:?}",
+                    err.without_url()
+                )
+            })?;
 
         parse_whisper_response(resp).await
     }
@@ -225,5 +232,20 @@ mod tests {
             LocalWhisperProvider::from_config(&whisper_config(&url), new_reqwest_client()).unwrap();
         let err = provider.transcribe(b"data", "voice.ogg").await.unwrap_err();
         assert!(err.to_string().contains("Transcription API error (401"));
+    }
+    #[tokio::test]
+    async fn connection_errors_keep_cause_without_url_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let config = whisper_config(&format!("http://{addr}/transcribe?api_key=do-not-expose"));
+        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let error = provider
+            .transcribe(b"audio", "voice.wav")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.to_lowercase().contains("connect"), "{error}");
+        assert!(!error.contains("do-not-expose"), "{error}");
     }
 }

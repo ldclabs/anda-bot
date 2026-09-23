@@ -200,6 +200,7 @@ model:
 tts:
   enabled: false
   default_provider: edge
+  # StepFun output format; Edge, OpenAI, and Google always return MP3.
   default_format: mp3
   max_text_length: 4096
   # edge:
@@ -231,9 +232,8 @@ tts:
 transcription:
   enabled: false
   default_provider: groq
+  # Optional vocabulary prompt for Groq/OpenAI Whisper.
   initial_prompt:
-  max_duration_secs: 120
-  transcribe_non_ptt_audio: false
   # groq:
   #   api_key: ""
   #   api_url: https://api.groq.com/openai/v1/audio/transcriptions

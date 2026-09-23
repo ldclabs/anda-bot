@@ -1,9 +1,8 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
-use reqwest::multipart::{Form, Part};
 
 use super::{
-    TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, parse_whisper_response, validate_audio,
+    TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, parse_whisper_response, whisper_form,
 };
 use crate::config;
 
@@ -11,12 +10,14 @@ use crate::config;
 pub struct OpenAiWhisperProvider {
     api_key: String,
     model: String,
+    prompt: Option<String>,
     http: reqwest::Client,
 }
 
 impl OpenAiWhisperProvider {
     pub fn from_config(
         config: &config::OpenAiSttConfig,
+        initial_prompt: Option<&str>,
         http: reqwest::Client,
     ) -> Result<Self, BoxError> {
         let api_key = config.api_key.trim();
@@ -27,6 +28,7 @@ impl OpenAiWhisperProvider {
         Ok(Self {
             api_key: api_key.to_string(),
             model: config.model.clone(),
+            prompt: initial_prompt.and_then(config::normalize_string),
             http,
         })
     }
@@ -39,16 +41,13 @@ impl TranscriptionProvider for OpenAiWhisperProvider {
     }
 
     async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let (normalized_name, mime) = validate_audio(audio_data, file_name)?;
-
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
-
-        let form = Form::new()
-            .part("file", file_part)
-            .text("model", self.model.clone())
-            .text("response_format", "json");
+        let form = whisper_form(
+            audio_data,
+            file_name,
+            &self.model,
+            None,
+            self.prompt.as_deref(),
+        )?;
 
         let resp = self
             .http
@@ -58,7 +57,12 @@ impl TranscriptionProvider for OpenAiWhisperProvider {
             .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(|_| "Failed to send transcription request to OpenAI")?;
+            .map_err(|err| {
+                format!(
+                    "Failed to send transcription request to OpenAI: {:?}",
+                    err.without_url()
+                )
+            })?;
 
         parse_whisper_response(resp).await
     }
@@ -76,7 +80,7 @@ mod tests {
             model: "whisper-1".to_string(),
         };
 
-        let err = OpenAiWhisperProvider::from_config(&config, new_reqwest_client())
+        let err = OpenAiWhisperProvider::from_config(&config, None, new_reqwest_client())
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("Missing OpenAI STT API key"));
@@ -89,7 +93,13 @@ mod tests {
             model: "whisper-large".to_string(),
         };
 
-        let provider = OpenAiWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = OpenAiWhisperProvider::from_config(
+            &config,
+            Some("  project names  "),
+            new_reqwest_client(),
+        )
+        .unwrap();
+        assert_eq!(provider.prompt.as_deref(), Some("project names"));
         assert_eq!(provider.api_key, "sk-test");
         assert_eq!(provider.model, "whisper-large");
         assert_eq!(provider.name(), "openai");
@@ -101,7 +111,8 @@ mod tests {
             api_key: "sk-test".to_string(),
             model: "whisper-1".to_string(),
         };
-        let provider = OpenAiWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider =
+            OpenAiWhisperProvider::from_config(&config, None, new_reqwest_client()).unwrap();
 
         let err = provider.transcribe(b"data", "voice.xyz").await.unwrap_err();
         assert!(err.to_string().contains("Unsupported audio format '.xyz'"));

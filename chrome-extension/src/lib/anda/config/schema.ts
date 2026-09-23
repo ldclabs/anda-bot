@@ -64,9 +64,9 @@ export const ttsFields: FieldSchema[] = [
   },
   {
     key: 'default_format',
-    label: 'Default format',
+    label: 'StepFun output format',
     kind: 'select',
-    options: ['mp3', 'opus', 'wav']
+    options: ['mp3', 'opus', 'wav', 'flac', 'pcm']
   },
   { key: 'max_text_length', label: 'Max text length', kind: 'number' }
 ]
@@ -114,9 +114,7 @@ export const transcriptionFields: FieldSchema[] = [
     kind: 'select',
     options: ['groq', 'openai', 'google', 'stepfun', 'local_whisper']
   },
-  { key: 'initial_prompt', label: 'Initial prompt', kind: 'text', nullable: true },
-  { key: 'max_duration_secs', label: 'Max duration seconds', kind: 'number' },
-  { key: 'transcribe_non_ptt_audio', label: 'Transcribe non-PTT audio', kind: 'boolean' }
+  { key: 'initial_prompt', label: 'Whisper initial prompt', kind: 'text', nullable: true }
 ]
 
 export const transcriptionProviderSchemas: Record<string, FieldSchema[]> = {
@@ -124,8 +122,7 @@ export const transcriptionProviderSchemas: Record<string, FieldSchema[]> = {
     { key: 'api_key', label: 'API key', kind: 'secret' },
     { key: 'api_url', label: 'API URL', kind: 'text' },
     { key: 'model', label: 'Model', kind: 'text' },
-    { key: 'language', label: 'Language', kind: 'text', nullable: true },
-    { key: 'language_code', label: 'Language code', kind: 'text' }
+    { key: 'language', label: 'Language', kind: 'text', nullable: true }
   ],
   openai: [
     { key: 'api_key', label: 'API key', kind: 'secret' },

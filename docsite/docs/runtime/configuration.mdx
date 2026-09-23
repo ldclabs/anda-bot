@@ -52,6 +52,20 @@ GLM_API_KEY
 | `tts` | Provider for voice playback. |
 | `channels` | Telegram, WeChat, Discord, Lark/Feishu, and other channel configuration. |
 
+## Speech providers
+
+Enable `transcription.enabled` for speech input and `tts.enabled` for speech output, and configure the selected `default_provider` section in each. See the [configuration example](https://github.com/ldclabs/anda-bot/blob/main/anda_bot/assets/config.yaml).
+
+- `transcription.initial_prompt` supplies vocabulary hints to Groq and OpenAI Whisper. StepFun uses its own `transcription.stepfun.prompt`.
+- Google STT accepts WAV/FLAC through its synchronous API. The Chrome extension converts unsupported recording formats to WAV. Requests must fit within 10 MB including Base64/JSON, and audio must be at most 60 seconds. Anda rejects oversized requests and known WAV/FLAC header durations above this limit; files without a known duration are still subject to Google's limit. Longer audio requires another provider or a shorter recording.
+- `local_whisper.max_audio_bytes` controls the self-hosted endpoint's upload limit independently of the cloud limit.
+- `tts.max_text_length` is a character limit (default 4096); provider limits also apply. Google TTS permits up to 5000 UTF-8 bytes and StepFun permits up to 1000 characters per call. Voice conversations already split replies into shorter segments.
+- `tts.default_format` selects StepFun output (`mp3`, `opus`, `wav`, `flac`, or `pcm`). Edge, OpenAI, and Google output MP3. Unknown formats are rejected; artifact extensions always match the produced audio.
+- Edge requires `edge-tts` on PATH. Set `tts.edge.binary_path` to `edge-tts`; the `edge-playback` wrapper is not supported. Cancelling or timing out synthesis terminates the subprocess.
+- StepFun ASR requires a final `transcript.text.done` event. A stream that ends with only partial text returns an error.
+
+The unused `transcription.max_duration_secs`, `transcription.transcribe_non_ptt_audio`, and `transcription.groq.language_code` settings have been removed from the configuration form and example. Old configuration files still load; these keys are ignored. Use `transcription.groq.language` for a Groq language hint.
+
 ## MCP Servers
 
 Anda Bot can connect to MCP servers through stdio child processes or HTTP

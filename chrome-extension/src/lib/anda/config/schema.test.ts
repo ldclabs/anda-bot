@@ -16,9 +16,7 @@ const baseDraft = {
   transcription: {
     enabled: false,
     default_provider: 'groq',
-    initial_prompt: null,
-    max_duration_secs: 120,
-    transcribe_non_ptt_audio: false
+    initial_prompt: null
   },
   channels: { telegram: [], wechat: [], discord: [], lark: [] }
 }
@@ -56,7 +54,10 @@ addr: 127.0.0.1:8042
 # error, warn, info, debug
 log_level: warn
 `
-    const rendered = renderConfigYaml(normalizeConfigDraft({ ...baseDraft, log_level: 'debug' }), source)
+    const rendered = renderConfigYaml(
+      normalizeConfigDraft({ ...baseDraft, log_level: 'debug' }),
+      source
+    )
 
     const lines = rendered.split('\n')
     expect(lines[lines.indexOf('addr: 127.0.0.1:8042') - 1]).toBe('# keep the gateway local')

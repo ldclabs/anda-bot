@@ -1,5 +1,5 @@
 use anda_core::BoxError;
-use ic_auth_types::Xid;
+use std::time::Duration;
 
 use super::{TTS_HTTP_TIMEOUT, TtsProvider};
 use crate::config;
@@ -12,7 +12,7 @@ pub struct EdgeTtsProvider {
 
 impl EdgeTtsProvider {
     /// Allowed basenames for the Edge TTS binary.
-    const ALLOWED_BINARIES: &[&str] = &["edge-tts", "edge-playback"];
+    const ALLOWED_BINARIES: &[&str] = &["edge-tts"];
 
     /// Create a new Edge TTS provider from config.
     ///
@@ -39,6 +39,35 @@ impl EdgeTtsProvider {
             voice: config.voice.clone(),
         })
     }
+
+    async fn synthesize_with_timeout(
+        &self,
+        text: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, BoxError> {
+        let output = tokio::time::timeout(
+            timeout,
+            tokio::process::Command::new(&self.binary_path)
+                .kill_on_drop(true)
+                .arg(format!("--text={text}"))
+                .arg(format!("--voice={}", self.voice))
+                .arg("--write-media")
+                .arg("-")
+                .output(),
+        )
+        .await
+        .map_err(|_| "Edge TTS subprocess timed out")?
+        .map_err(|err| format!("Failed to run edge-tts subprocess: {err}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("edge-tts failed (exit {}): {}", output.status, stderr).into());
+        }
+        if output.stdout.is_empty() {
+            return Err("edge-tts returned empty audio".into());
+        }
+        Ok(output.stdout)
+    }
 }
 
 #[async_trait::async_trait]
@@ -48,40 +77,7 @@ impl TtsProvider for EdgeTtsProvider {
     }
 
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        let temp_dir = std::env::temp_dir();
-        let output_file = temp_dir.join(format!("anda_bot_tts_{}.mp3", Xid::new()));
-        let output_path = output_file
-            .to_str()
-            .ok_or("Failed to build temp file path for Edge TTS")?;
-
-        let output = tokio::time::timeout(
-            TTS_HTTP_TIMEOUT,
-            tokio::process::Command::new(&self.binary_path)
-                .arg("--text")
-                .arg(text)
-                .arg("--voice")
-                .arg(&self.voice)
-                .arg("--write-media")
-                .arg(output_path)
-                .output(),
-        )
-        .await
-        .map_err(|_| "Edge TTS subprocess timed out")?
-        .map_err(|_| "Failed to spawn edge-tts subprocess")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let _ = tokio::fs::remove_file(&output_file).await;
-            return Err(format!("edge-tts failed (exit {}): {}", output.status, stderr).into());
-        }
-
-        let bytes = tokio::fs::read(&output_file)
-            .await
-            .map_err(|_| "Failed to read edge-tts output file")?;
-
-        let _ = tokio::fs::remove_file(&output_file).await;
-
-        Ok(bytes)
+        self.synthesize_with_timeout(text, TTS_HTTP_TIMEOUT).await
     }
 }
 
@@ -124,6 +120,101 @@ mod tests {
             assert_eq!(provider.binary_path, *path);
             assert_eq!(provider.voice, "en-US-AriaNeural");
             assert_eq!(provider.name(), "edge");
+        }
+    }
+
+    #[test]
+    fn rejects_playback_wrapper() {
+        assert!(EdgeTtsProvider::new(&edge_config("edge-playback")).is_err());
+    }
+
+    #[cfg(unix)]
+    fn fake_cli(script: &str) -> (tempfile::TempDir, EdgeTtsProvider) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge-tts");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let provider = EdgeTtsProvider {
+            binary_path: path.to_str().unwrap().into(),
+            voice: "test-voice".into(),
+        };
+        (dir, provider)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn synthesis_reads_stdout_and_reports_process_failures() {
+        let (dir, provider) = fake_cli(
+            r#"
+[ "$1" = '--text=-hello' ] && [ "$2" = '--voice=test-voice' ] && [ "$3" = '--write-media' ] && [ "$4" = '-' ] || exit 2
+printf 'MP3DATA'
+"#,
+        );
+        assert_eq!(provider.synthesize("-hello").await.unwrap(), b"MP3DATA");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let (_dir, provider) = fake_cli("printf 'service failed' >&2; exit 7");
+        let err = provider.synthesize("hi").await.unwrap_err().to_string();
+        assert!(err.contains('7') && err.contains("service failed"));
+        let (_dir, provider) = fake_cli("exit 0");
+        assert!(
+            provider
+                .synthesize("hi")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("empty audio")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_and_cancellation_terminate_child() {
+        for cancel in [false, true] {
+            let (dir, provider) = fake_cli("printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 5");
+            let task = tokio::spawn(async move {
+                provider
+                    .synthesize_with_timeout("hi", Duration::from_secs(1))
+                    .await
+            });
+            let pid_path = dir.path().join("edge-tts.pid");
+            let pid: i32 = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Ok(value) = tokio::fs::read_to_string(&pid_path).await
+                        && let Ok(pid) = value.parse()
+                    {
+                        break pid;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            if cancel {
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            } else {
+                assert!(
+                    task.await
+                        .unwrap()
+                        .unwrap_err()
+                        .to_string()
+                        .contains("timed out")
+                );
+            }
+            let exited = tokio::time::timeout(Duration::from_secs(2), async {
+                while unsafe { libc::kill(pid, 0) } == 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            if exited.is_err() {
+                // Clean up the test-owned process even when the regression fails.
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+            assert!(exited.is_ok(), "child survived cancellation/timeout: {pid}");
         }
     }
 }

@@ -3,7 +3,7 @@ use reqwest::header::ACCEPT;
 use serde_json::json;
 
 use super::{TTS_HTTP_TIMEOUT, TtsProvider, normalize_audio_format};
-use crate::config;
+use crate::{config, util::http_client::check_http_response};
 
 /// StepFun rejects TTS input longer than 1000 characters.
 const STEPFUN_MAX_INPUT_LENGTH: usize = 1000;
@@ -137,19 +137,21 @@ impl TtsProvider for StepFunTtsProvider {
             .timeout(TTS_HTTP_TIMEOUT)
             .send()
             .await
-            .map_err(|_| "Failed to send StepFun TTS request")?;
+            .map_err(|err| {
+                format!(
+                    "Failed to send StepFun TTS request: {:?}",
+                    err.without_url()
+                )
+            })?;
 
-        let status = resp.status();
-        if !status.is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
-            let msg = parse_stepfun_tts_error_message(&error_body);
-            return Err(format!("StepFun TTS API error ({}): {}", status, msg).into());
-        }
+        let resp = check_http_response(resp, "StepFun TTS").await?;
 
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|_| "Failed to read StepFun TTS response body")?;
+        let bytes = resp.bytes().await.map_err(|err| {
+            format!(
+                "Failed to read StepFun TTS response body: {:?}",
+                err.without_url()
+            )
+        })?;
         if bytes.is_empty() {
             return Err("StepFun TTS response body was empty".into());
         }
@@ -159,7 +161,7 @@ impl TtsProvider for StepFunTtsProvider {
 }
 
 fn normalize_stepfun_response_format(format: &str) -> Result<&'static str, BoxError> {
-    let format = normalize_audio_format(format);
+    let format = normalize_audio_format(format)?;
     match format {
         "mp3" | "wav" | "flac" | "opus" | "pcm" => Ok(format),
         "ogg" => {
@@ -196,25 +198,6 @@ fn build_stepfun_tts_request_body(text: &str, provider: &StepFunTtsProvider) -> 
     }
 
     serde_json::Value::Object(body)
-}
-
-fn parse_stepfun_tts_error_message(raw_body: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_body)
-        && let Some(message) = value
-            .pointer("/error/message")
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
-            .or_else(|| value.get("error").and_then(serde_json::Value::as_str))
-    {
-        return message.to_string();
-    }
-
-    let raw_body = raw_body.trim();
-    if raw_body.is_empty() {
-        "unknown error".to_string()
-    } else {
-        raw_body.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -279,12 +262,13 @@ mod tests {
 
     #[test]
     fn stepfun_tts_format_validation_matches_documented_formats() {
-        assert_eq!(normalize_audio_format("flac"), "flac");
-        assert_eq!(normalize_audio_format("pcm"), "pcm");
+        assert_eq!(normalize_audio_format("flac").unwrap(), "flac");
+        assert_eq!(normalize_audio_format("pcm").unwrap(), "pcm");
         assert_eq!(mime_for_audio_format("flac"), "audio/flac");
         assert_eq!(mime_for_audio_format("pcm"), "audio/pcm");
         assert_eq!(normalize_stepfun_response_format("opus").unwrap(), "opus");
         assert!(normalize_stepfun_response_format("ogg").is_err());
+        assert!(normalize_stepfun_response_format("typo").is_err());
     }
 
     fn tts_config_error(mutate: impl FnOnce(&mut config::StepFunTtsConfig)) -> String {
@@ -374,19 +358,5 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("StepFun TTS API error (429"), "got: {msg}");
         assert!(msg.contains("rate limited"), "got: {msg}");
-    }
-
-    #[test]
-    fn error_messages_fall_back_through_known_shapes() {
-        assert_eq!(
-            parse_stepfun_tts_error_message(r#"{"message":"top level"}"#),
-            "top level"
-        );
-        assert_eq!(
-            parse_stepfun_tts_error_message(r#"{"error":"string error"}"#),
-            "string error"
-        );
-        assert_eq!(parse_stepfun_tts_error_message("plain text"), "plain text");
-        assert_eq!(parse_stepfun_tts_error_message("  "), "unknown error");
     }
 }

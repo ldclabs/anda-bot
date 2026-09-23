@@ -239,6 +239,8 @@ anda voice --record-secs 8
 
 Voice mode requires `transcription.enabled: true`. Spoken playback also requires `tts.enabled: true`; use `--no-playback` if you only want microphone input and text output. Voice mode waits for the current answer to finish before starting the next recording. Ctrl-C also stops speech synthesis and playback.
 
+Google transcription accepts WAV/FLAC recordings up to 60 seconds (the Chrome extension converts other recording formats to WAV). `transcription.initial_prompt` supplies Groq/OpenAI Whisper vocabulary hints. Edge synthesis requires `edge-tts` on PATH; `tts.default_format` applies to StepFun, while Edge/OpenAI/Google output MP3. See [speech provider limits and configuration](docsite/docs/runtime/configuration.mdx#speech-providers).
+
 ## Integrations
 
 Anda Bot can be used directly in the terminal, opened as a Chrome extension, or connected to various external messaging channels by editing `~/.anda/config.yaml`.

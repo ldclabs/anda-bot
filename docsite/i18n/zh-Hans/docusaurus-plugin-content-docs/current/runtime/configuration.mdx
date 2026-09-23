@@ -52,6 +52,20 @@ GLM_API_KEY
 | `tts` | 语音播放 provider。 |
 | `channels` | Telegram、WeChat、Discord、Lark/飞书等频道配置。 |
 
+## 语音服务
+
+语音输入需要启用 `transcription.enabled`，语音输出需要启用 `tts.enabled`，并分别配置 `default_provider` 对应的 provider 区块。参见[配置示例](https://github.com/ldclabs/anda-bot/blob/main/anda_bot/assets/config.yaml)。
+
+- `transcription.initial_prompt` 向 Groq 和 OpenAI Whisper 提供词汇提示；StepFun 使用独立的 `transcription.stepfun.prompt`。
+- Google STT 通过同步接口接受 WAV/FLAC。Chrome 扩展会把不支持的录音格式转换为 WAV。包含 Base64/JSON 的完整请求不得超过 10 MB，音频不得超过 60 秒。Anda 会拒绝超大请求，以及能从 WAV/FLAC 文件头确定的超时长音频；无法确定时长的文件仍受 Google 限制。更长的音频应使用其他 provider 或缩短录音。
+- `local_whisper.max_audio_bytes` 独立控制自托管接口的上传大小，不受云端默认上限约束。
+- `tts.max_text_length` 按字符计数，默认 4096；同时遵守 provider 自身限制。Google TTS 每次最多 5000 个 UTF-8 字节，StepFun 每次最多 1000 个字符。语音对话已将回复分成较短的片段。
+- `tts.default_format` 选择 StepFun 的输出格式：`mp3`、`opus`、`wav`、`flac` 或 `pcm`。Edge、OpenAI 和 Google 固定输出 MP3。不支持的格式会报错，生成附件的后缀始终与实际音频一致。
+- Edge 需要 PATH 中存在 `edge-tts`。`tts.edge.binary_path` 应为 `edge-tts`，不支持 `edge-playback` 包装程序。取消或超时会终止合成子进程。
+- StepFun ASR 必须收到最终的 `transcript.text.done` 事件。流结束时如果只有部分文本，会返回错误。
+
+未生效的 `transcription.max_duration_secs`、`transcription.transcribe_non_ptt_audio` 和 `transcription.groq.language_code` 已从配置表单和示例移除。旧配置仍可加载，这些字段会被忽略。Groq 的语言提示请使用 `transcription.groq.language`。
+
 ## MCP 服务
 
 Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把可移植 MCP

@@ -31,14 +31,14 @@ pub trait TtsProvider: Send + Sync {
     /// Provider identifier (e.g. `"openai"`, `"google"`).
     fn name(&self) -> &str;
 
-    /// Audio format returned by this provider.
+    /// Canonical lowercase audio format returned by this provider.
     fn audio_format(&self) -> &str {
         "mp3"
     }
 
     /// Audio format names this provider can currently return through this manager.
     fn supported_audio_formats(&self) -> Vec<String> {
-        vec![normalize_audio_format(self.audio_format()).to_string()]
+        vec![self.audio_format().to_string()]
     }
 
     /// Synthesize `text`, returning raw audio bytes.
@@ -90,10 +90,14 @@ impl TtsManager {
             return Ok(Self {
                 providers,
                 default_provider: config.default_provider.clone(),
-                default_format: config.default_format.clone(),
+                default_format: normalize_audio_format(&config.default_format)
+                    .unwrap_or("mp3")
+                    .to_string(),
                 max_text_length,
             });
         }
+
+        let default_format = normalize_audio_format(&config.default_format)?.to_string();
 
         if let Some(ref openai_cfg) = config.openai {
             match OpenAiTtsProvider::new(openai_cfg, http.clone()) {
@@ -152,7 +156,7 @@ impl TtsManager {
         Ok(Self {
             providers,
             default_provider,
-            default_format: config.default_format.clone(),
+            default_format,
             max_text_length,
         })
     }
@@ -173,7 +177,7 @@ impl TtsManager {
         text: &str,
         provider: &str,
     ) -> Result<Vec<u8>, BoxError> {
-        if text.is_empty() {
+        if text.trim().is_empty() {
             return Err("TTS text must not be empty".into());
         }
         let char_count = text.chars().count();
@@ -193,7 +197,11 @@ impl TtsManager {
             )
         })?;
 
-        tts.synthesize(text).await
+        let audio = tts.synthesize(text).await?;
+        if audio.is_empty() {
+            return Err(format!("TTS provider '{provider}' returned empty audio").into());
+        }
+        Ok(audio)
     }
 
     /// List names of all initialized providers.
@@ -206,8 +214,8 @@ impl TtsManager {
     pub fn audio_format(&self) -> &str {
         self.providers
             .get(&self.default_provider)
-            .map(|provider| normalize_audio_format(provider.audio_format()))
-            .unwrap_or_else(|| normalize_audio_format(&self.default_format))
+            .map(|provider| provider.audio_format())
+            .unwrap_or(&self.default_format)
     }
 
     pub fn supported_audio_formats(&self) -> Vec<String> {
@@ -244,7 +252,6 @@ impl TtsManager {
 }
 
 fn audio_artifact_with_format(bytes: Vec<u8>, name: Option<String>, format: &str) -> Resource {
-    let format = normalize_audio_format(format);
     let name = normalize_artifact_name(name, format);
     let size = bytes.len() as u64;
     Resource {
@@ -287,7 +294,7 @@ impl Tool<BaseCtx> for TtsManager {
                     },
                     "artifact_name": {
                         "type": ["string", "null"],
-                        "description": "Optional output artifact file name. The configured audio extension is appended when missing."
+                        "description": "Optional output artifact file name. Its extension is replaced with the actual audio format."
                     }
                 },
                 "required": ["text", "provider", "artifact_name"],
@@ -307,12 +314,7 @@ impl Tool<BaseCtx> for TtsManager {
             .unwrap_or_else(|| self.default_provider.clone());
         let bytes = self.synthesize_with_provider(&args.text, &provider).await?;
         let artifact = self.audio_artifact_for_provider(&provider, bytes, args.artifact_name)?;
-        let format = artifact
-            .tags
-            .iter()
-            .find(|tag| tag.as_str() != "audio")
-            .cloned()
-            .unwrap_or_else(|| self.audio_format().to_string());
+        let format = self.providers[&provider].audio_format().to_string();
         let output = TtsOutput {
             provider,
             artifact: artifact.name.clone(),
@@ -326,14 +328,15 @@ impl Tool<BaseCtx> for TtsManager {
     }
 }
 
-fn normalize_audio_format(format: &str) -> &'static str {
+fn normalize_audio_format(format: &str) -> Result<&'static str, BoxError> {
     match format.trim().to_ascii_lowercase().as_str() {
-        "wav" => "wav",
-        "opus" => "opus",
-        "ogg" => "ogg",
-        "flac" => "flac",
-        "pcm" => "pcm",
-        _ => "mp3",
+        "mp3" => Ok("mp3"),
+        "wav" => Ok("wav"),
+        "opus" => Ok("opus"),
+        "ogg" => Ok("ogg"),
+        "flac" => Ok("flac"),
+        "pcm" => Ok("pcm"),
+        _ => Err(format!("Unsupported TTS audio format '{format}'").into()),
     }
 }
 
@@ -349,15 +352,12 @@ fn mime_for_audio_format(format: &str) -> &'static str {
 }
 
 fn normalize_artifact_name(name: Option<String>, format: &str) -> String {
-    let fallback = format!("anda_bot_tts_{}.{}", Xid::new(), format);
     let Some(name) = name.and_then(|value| config::normalize_string(&value)) else {
-        return fallback;
+        return format!("anda_bot_tts_{}.{}", Xid::new(), format);
     };
-    if name.rsplit_once('.').is_some() {
-        name
-    } else {
-        format!("{name}.{format}")
-    }
+    let mut path = std::path::PathBuf::from(name);
+    path.set_extension(format);
+    path.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -555,7 +555,7 @@ mod tests {
         let manager = manager_with_provider(
             StaticTtsProvider {
                 name: "edge",
-                format: "WAV",
+                format: "wav",
             },
             "mp3",
         );
@@ -574,13 +574,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_audio_format_maps_known_formats_and_defaults_to_mp3() {
-        assert_eq!(normalize_audio_format(" WAV "), "wav");
-        assert_eq!(normalize_audio_format("opus"), "opus");
-        assert_eq!(normalize_audio_format("ogg"), "ogg");
-        assert_eq!(normalize_audio_format("flac"), "flac");
-        assert_eq!(normalize_audio_format("pcm"), "pcm");
-        assert_eq!(normalize_audio_format("anything"), "mp3");
+    fn normalize_audio_format_rejects_unknown_formats() {
+        assert_eq!(normalize_audio_format(" WAV ").unwrap(), "wav");
+        assert_eq!(normalize_audio_format("opus").unwrap(), "opus");
+        assert_eq!(normalize_audio_format("ogg").unwrap(), "ogg");
+        assert_eq!(normalize_audio_format("flac").unwrap(), "flac");
+        assert_eq!(normalize_audio_format("pcm").unwrap(), "pcm");
+        assert!(normalize_audio_format("anything").is_err());
 
         assert_eq!(mime_for_audio_format("ogg"), "audio/ogg");
         assert_eq!(mime_for_audio_format("pcm"), "audio/pcm");
@@ -588,14 +588,14 @@ mod tests {
     }
 
     #[test]
-    fn normalize_artifact_name_appends_extension_when_missing() {
+    fn normalize_artifact_name_uses_actual_format() {
         assert_eq!(
             normalize_artifact_name(Some("voice".to_string()), "mp3"),
             "voice.mp3"
         );
         assert_eq!(
             normalize_artifact_name(Some("voice.ogg".to_string()), "mp3"),
-            "voice.ogg"
+            "voice.mp3"
         );
 
         let fallback = normalize_artifact_name(None, "wav");
@@ -652,5 +652,83 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("TTS provider 'missing'"));
+    }
+
+    #[tokio::test]
+    async fn tool_output_extension_matches_requested_provider() {
+        let manager = manager_with_provider(
+            StaticTtsProvider {
+                name: "edge",
+                format: "mp3",
+            },
+            "wav",
+        );
+        let result = manager
+            .call(
+                EngineBuilder::new().mock_ctx().base,
+                TtsArgs {
+                    text: "Hello".into(),
+                    artifact_name: Some("voice.wav".into()),
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.output.artifact, "voice.mp3");
+        assert_eq!(result.output.format, "mp3");
+        assert_eq!(result.output.mime_type, "audio/mpeg");
+        assert_eq!(result.artifacts[0].tags, vec!["audio", "mp3"]);
+        assert!(
+            manager
+                .synthesize(" \n\t")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_rejects_empty_provider_audio() {
+        struct EmptyProvider;
+        #[async_trait::async_trait]
+        impl TtsProvider for EmptyProvider {
+            fn name(&self) -> &str {
+                "empty"
+            }
+            async fn synthesize(&self, _: &str) -> Result<Vec<u8>, BoxError> {
+                Ok(Vec::new())
+            }
+        }
+        let mut manager = empty_manager("empty", "mp3");
+        manager
+            .providers
+            .insert("empty".into(), Box::new(EmptyProvider));
+        assert!(
+            manager
+                .synthesize("hello")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("empty audio")
+        );
+    }
+
+    #[test]
+    fn enabled_manager_rejects_unknown_output_format() {
+        let config = config::TtsConfig {
+            enabled: true,
+            default_format: "typo".into(),
+            edge: Some(config::EdgeTtsConfig::default()),
+            ..Default::default()
+        };
+        assert!(
+            TtsManager::new(&config, new_reqwest_client())
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Unsupported TTS audio format")
+        );
     }
 }

@@ -1,9 +1,12 @@
 use anda_core::BoxError;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::Deserialize;
 use serde_json::json;
 
 use super::{TTS_HTTP_TIMEOUT, TtsProvider};
-use crate::config;
+use crate::{config, util::http_client::check_http_response};
+
+const GOOGLE_MAX_TEXT_BYTES: usize = 5000;
 
 /// Google Cloud TTS provider (`POST /v1/text:synthesize`).
 pub struct GoogleTtsProvider {
@@ -35,6 +38,13 @@ impl TtsProvider for GoogleTtsProvider {
     }
 
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
+        if text.len() > GOOGLE_MAX_TEXT_BYTES {
+            return Err(format!(
+                "Google TTS text too long ({} bytes, max {GOOGLE_MAX_TEXT_BYTES})",
+                text.len()
+            )
+            .into());
+        }
         let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
         let body = json!({
             "input": { "text": text },
@@ -55,30 +65,36 @@ impl TtsProvider for GoogleTtsProvider {
             .timeout(TTS_HTTP_TIMEOUT)
             .send()
             .await
-            .map_err(|_| "Failed to send Google TTS request")?;
+            .map_err(|err| format!("Failed to send Google TTS request: {:?}", err.without_url()))?;
 
-        let status = resp.status();
-        let resp_body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|_| "Failed to parse Google TTS response")?;
-
-        if !status.is_success() {
-            let msg = resp_body["error"]["message"]
-                .as_str()
-                .unwrap_or("unknown error");
-            return Err(format!("Google TTS API error ({}): {}", status, msg).into());
-        }
-
-        let audio_b64 = resp_body["audioContent"]
-            .as_str()
-            .ok_or("Google TTS response missing 'audioContent' field")?;
-
-        let bytes = STANDARD
-            .decode(audio_b64)
-            .map_err(|_| "Failed to decode Google TTS base64 audio")?;
-        Ok(bytes)
+        parse_response(resp).await
     }
+}
+
+#[derive(Deserialize)]
+struct SynthesisResponse {
+    #[serde(rename = "audioContent")]
+    audio_content: String,
+}
+
+async fn parse_response(resp: reqwest::Response) -> Result<Vec<u8>, BoxError> {
+    let body: SynthesisResponse = check_http_response(resp, "Google TTS")
+        .await?
+        .json()
+        .await
+        .map_err(|err| {
+            format!(
+                "Failed to parse Google TTS response: {:?}",
+                err.without_url()
+            )
+        })?;
+    let bytes = STANDARD
+        .decode(body.audio_content)
+        .map_err(|err| format!("Failed to decode Google TTS base64 audio: {err}"))?;
+    if bytes.is_empty() {
+        return Err("Google TTS response body contained empty audio".into());
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -112,5 +128,65 @@ mod tests {
         assert_eq!(provider.language_code, "zh-CN");
         assert_eq!(provider.voice, "zh-CN-Standard-A");
         assert_eq!(provider.name(), "google");
+    }
+
+    #[tokio::test]
+    async fn rejects_text_by_utf8_bytes_before_network_io() {
+        let provider = GoogleTtsProvider::new(
+            &config::GoogleTtsConfig {
+                api_key: "test".into(),
+                ..Default::default()
+            },
+            new_reqwest_client(),
+        )
+        .unwrap();
+        let text = "好".repeat(1667);
+        assert!(text.chars().count() < 4096);
+        let error = provider.synthesize(&text).await.unwrap_err().to_string();
+        assert!(error.contains("5001 bytes, max 5000"));
+    }
+
+    #[tokio::test]
+    async fn response_requires_nonempty_valid_audio() {
+        use axum::{Router, routing};
+        let app = Router::new()
+            .route(
+                "/audio",
+                routing::get(|| async {
+                    axum::Json(json!({"audioContent": STANDARD.encode(b"MP3")}))
+                }),
+            )
+            .route(
+                "/empty",
+                routing::get(|| async { axum::Json(json!({"audioContent": ""})) }),
+            )
+            .route(
+                "/invalid",
+                routing::get(|| async { axum::Json(json!({"audioContent": "!"})) }),
+            )
+            .route("/missing", routing::get(|| async { axum::Json(json!({})) }))
+            .route(
+                "/proxy",
+                routing::get(|| async { (http::StatusCode::BAD_GATEWAY, "upstream unavailable") }),
+            );
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let client = new_reqwest_client();
+        let response = client.get(format!("{base}/audio")).send().await.unwrap();
+        assert_eq!(parse_response(response).await.unwrap(), b"MP3");
+        for (path, message) in [
+            ("empty", "empty audio"),
+            ("invalid", "decode"),
+            ("missing", "audioContent"),
+            ("proxy", "502"),
+        ] {
+            let response = client.get(format!("{base}/{path}")).send().await.unwrap();
+            assert!(
+                parse_response(response)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains(message)
+            );
+        }
     }
 }

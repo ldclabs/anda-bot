@@ -9,7 +9,8 @@ pub struct TtsConfig {
     /// Default TTS provider (`"openai"`, `"google"`, `"edge"`, `"stepfun"`).
     #[serde(default = "default_tts_provider")]
     pub default_provider: String,
-    /// Default audio output format (`"mp3"`, `"opus"`, `"wav"`).
+    /// StepFun audio output format (`"mp3"`, `"opus"`, `"wav"`, `"flac"`, `"pcm"`).
+    /// Edge, OpenAI, and Google always return MP3.
     #[serde(default = "default_tts_format")]
     pub default_format: String,
     /// Maximum input text length in characters (default 4096).
@@ -156,7 +157,7 @@ impl Default for GoogleTtsConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EdgeTtsConfig {
-    /// Path to the `edge-tts` binary (default `"edge-tts"`).
+    /// Command name: `"edge-tts"` (must be available on PATH).
     #[serde(default = "default_edge_tts_binary_path")]
     pub binary_path: String,
     /// Voice ID (default `"en-US-AriaNeural"`).

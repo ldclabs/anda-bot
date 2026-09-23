@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Voice transcription configuration with multi-provider support.
-///
-/// The top-level `api_url`, `model`, and `api_key` fields remain for backward
-/// compatibility with existing Groq-based configurations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptionConfig {
     /// Enable voice transcription for channels that support it.
@@ -14,12 +11,9 @@ pub struct TranscriptionConfig {
     pub default_provider: String,
     /// Optional initial prompt to bias transcription toward expected vocabulary
     /// (proper nouns, technical terms, etc.). Sent as the `prompt` field in the
-    /// Whisper API request.
+    /// Groq/OpenAI Whisper API request.
     #[serde(default)]
     pub initial_prompt: Option<String>,
-    /// Maximum voice duration in seconds (messages longer than this are skipped).
-    #[serde(default = "default_transcription_max_duration_secs")]
-    pub max_duration_secs: u64,
     /// Groq Whisper STT provider configuration.
     #[serde(default)]
     pub groq: Option<GroqSttConfig>,
@@ -35,10 +29,6 @@ pub struct TranscriptionConfig {
     /// Local/self-hosted Whisper-compatible STT provider.
     #[serde(default)]
     pub local_whisper: Option<LocalWhisperConfig>,
-    /// Also transcribe non-PTT (forwarded/regular) audio messages on WhatsApp,
-    /// not just voice notes.  Default: `false` (preserves legacy behavior).
-    #[serde(default)]
-    pub transcribe_non_ptt_audio: bool,
 }
 
 impl Default for TranscriptionConfig {
@@ -47,13 +37,11 @@ impl Default for TranscriptionConfig {
             enabled: false,
             default_provider: default_transcription_provider(),
             initial_prompt: None,
-            max_duration_secs: default_transcription_max_duration_secs(),
             groq: None,
             openai: None,
             google: None,
             stepfun: None,
             local_whisper: None,
-            transcribe_non_ptt_audio: false,
         }
     }
 }
@@ -68,9 +56,6 @@ pub struct GroqSttConfig {
     #[serde(default = "default_transcription_model")]
     pub model: String,
     pub language: Option<String>,
-    /// BCP-47 language code (default: "en-US").
-    #[serde(default = "default_google_stt_language_code")]
-    pub language_code: String,
 }
 
 /// OpenAI Whisper STT provider configuration (`[transcription.openai]`).
@@ -191,10 +176,6 @@ fn default_transcription_model() -> String {
     "whisper-large-v3-turbo".into()
 }
 
-fn default_transcription_max_duration_secs() -> u64 {
-    120
-}
-
 fn default_transcription_provider() -> String {
     "groq".into()
 }
@@ -245,19 +226,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn default_transcription_config_uses_groq_and_safe_limits() {
+    fn default_transcription_config_uses_groq() {
         let config = TranscriptionConfig::default();
 
         assert!(!config.enabled);
         assert_eq!(config.default_provider, "groq");
         assert_eq!(config.initial_prompt, None);
-        assert_eq!(config.max_duration_secs, 120);
         assert!(config.groq.is_none());
         assert!(config.openai.is_none());
         assert!(config.google.is_none());
         assert!(config.stepfun.is_none());
         assert!(config.local_whisper.is_none());
-        assert!(!config.transcribe_non_ptt_audio);
     }
 
     #[test]
@@ -271,8 +250,6 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.default_provider, "groq");
         assert_eq!(config.initial_prompt.as_deref(), Some("project names"));
-        assert_eq!(config.max_duration_secs, 120);
-        assert!(!config.transcribe_non_ptt_audio);
     }
 
     #[test]
@@ -284,7 +261,6 @@ mod tests {
         );
         assert_eq!(groq.model, "whisper-large-v3-turbo");
         assert_eq!(groq.language, None);
-        assert_eq!(groq.language_code, "en-US");
 
         let openai: OpenAiSttConfig = serde_json::from_value(json!({})).unwrap();
         assert_eq!(openai.api_key, "");
@@ -317,5 +293,20 @@ mod tests {
         assert_eq!(local.bearer_token, None);
         assert_eq!(local.max_audio_bytes, 25 * 1024 * 1024);
         assert_eq!(local.timeout_secs, 300);
+    }
+
+    #[test]
+    fn removed_settings_are_ignored_when_loading_old_config() {
+        let config: TranscriptionConfig = serde_json::from_value(json!({
+            "max_duration_secs": 120,
+            "transcribe_non_ptt_audio": true,
+            "groq": {"api_key": "test", "language_code": "en-US", "language": "en"}
+        }))
+        .unwrap();
+        let serialized = serde_json::to_value(config).unwrap();
+        assert!(serialized.get("max_duration_secs").is_none());
+        assert!(serialized.get("transcribe_non_ptt_audio").is_none());
+        assert!(serialized["groq"].get("language_code").is_none());
+        assert_eq!(serialized["groq"]["language"], "en");
     }
 }

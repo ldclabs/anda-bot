@@ -76,6 +76,40 @@ describe('normalizeVoiceRecordingAudio', () => {
     })
   })
 
+  it('converts WebM to WAV when Google advertises WAV and FLAC', async () => {
+    const close = vi.fn(async () => undefined)
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        close = close
+        async decodeAudioData() {
+          return {
+            numberOfChannels: 1,
+            sampleRate: 16000,
+            length: 2,
+            getChannelData: () => new Float32Array([0.5, -0.5])
+          }
+        }
+      }
+    )
+    const recording = await normalizeVoiceRecordingAudio(
+      {
+        audioBase64: 'Zm9v',
+        fileName: 'speech.webm',
+        mimeType: 'audio/webm;codecs=opus',
+        ttsEnabled: false
+      },
+      ['wav', 'flac']
+    )
+    expect(recording.fileName).toBe('speech.wav')
+    const bytes = Uint8Array.from(atob(recording.audioBase64), (char) => char.charCodeAt(0))
+    expect(new TextDecoder().decode(bytes.subarray(0, 4))).toBe('RIFF')
+    expect(new TextDecoder().decode(bytes.subarray(8, 12))).toBe('WAVE')
+    expect(new DataView(bytes.buffer).getUint32(24, true)).toBe(16000)
+    expect(bytes.length).toBe(48)
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('rejects missing audio data before attempting format conversion', async () => {
     vi.stubGlobal('chrome', {
       i18n: {
