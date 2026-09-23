@@ -1,8 +1,8 @@
 use anda_core::{BoxError, Principal};
 use anda_web3_client::client::{Identity, identity_from_secret};
-use cose2::{Key as CoseKey, Label, Sign1Message};
+use cose2::{CoseMap, Key as CoseKey, Label, Sign1Message, Value};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey, ed25519::SignatureEncoding};
-use ic_auth_types::ByteBufB64;
+use ic_auth_types::{ByteBufB64, BytesB64};
 use ic_ed25519::PublicKey;
 use std::{
     str::FromStr,
@@ -11,6 +11,7 @@ use std::{
 };
 
 use super::{Claims, iana};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Creates CWT claims with an explicit issuance time and bounded lifetime.
 pub fn expiring_claims(lifetime: Duration) -> Result<Claims, BoxError> {
@@ -30,12 +31,13 @@ pub struct Ed25519Key {
 }
 
 impl Ed25519Key {
-    pub fn new(secret: [u8; 32]) -> Self {
+    pub fn new(mut secret: [u8; 32]) -> Self {
         let key = SigningKey::from_bytes(&secret);
         let identity = identity_from_secret(key.to_bytes());
+        secret.zeroize();
         Self {
             id: pubkey_to_principal(&(key.verifying_key())),
-            identity: Arc::new(identity),
+            identity: Arc::from(identity),
             key,
         }
     }
@@ -64,7 +66,7 @@ impl Ed25519Key {
         if claims.expiration.is_none() {
             return Err("CWT expiration is required".into());
         }
-        claims.subject = self.identity.sender().map(|s| s.to_string()).ok();
+        claims.subject = Some(self.id.to_string());
         let tagged_payload = claims.to_vec()?;
         let payload = cose2::tag::skip_tag(cose2::tag::CWT_PREFIX, &tagged_payload).to_vec();
         let mut sign1 = Sign1Message::new(Some(payload));
@@ -125,13 +127,12 @@ impl FromStr for Ed25519PubKey {
 }
 
 pub fn pubkey_to_principal(pubkey: &VerifyingKey) -> Principal {
-    let public_key = PublicKey::deserialize_raw(pubkey.as_bytes()).unwrap();
-    let der_encoded_public_key = public_key.serialize_rfc8410_der();
+    let der_encoded_public_key = PublicKey::convert_raw32_to_der(*pubkey.as_bytes());
     Principal::self_authenticating(&der_encoded_public_key)
 }
 
 pub fn parse_ed25519_pubkey(input: &str) -> Result<[u8; 32], BoxError> {
-    let data = ByteBufB64::from_str(input)?;
+    let data = Zeroizing::new(ByteBufB64::from_str(input)?.0);
 
     if data.len() == 32 {
         let mut bytes = [0u8; 32];
@@ -139,16 +140,16 @@ pub fn parse_ed25519_pubkey(input: &str) -> Result<[u8; 32], BoxError> {
         return Ok(bytes);
     }
 
-    let cose_key = okp_cose_key(data.as_slice())?;
-    let public_key = cose_key
-        .get_bytes(iana::OKPKeyParameterX)?
-        .ok_or("missing public key")?;
-    let bytes: [u8; 32] = public_key.try_into().map_err(|_err| "invalid key length")?;
-    Ok(bytes)
+    with_ed25519_cose_key(&data, |key| {
+        let public_key = key
+            .get_bytes(iana::OKPKeyParameterX)?
+            .ok_or("missing public key")?;
+        Ok(public_key.try_into().map_err(|_| "invalid key length")?)
+    })
 }
 
 pub fn parse_ed25519_privkey(input: &str) -> Result<[u8; 32], BoxError> {
-    let data = ByteBufB64::from_str(input)?;
+    let data = Zeroizing::new(ByteBufB64::from_str(input)?.0);
 
     if data.len() == 32 {
         let mut bytes = [0u8; 32];
@@ -156,24 +157,43 @@ pub fn parse_ed25519_privkey(input: &str) -> Result<[u8; 32], BoxError> {
         return Ok(bytes);
     }
 
-    let cose_key = okp_cose_key(data.as_slice())?;
-    let secret = cose_key
-        .get_bytes(iana::OKPKeyParameterD)?
-        .ok_or("missing secret key")?;
-    let bytes: [u8; 32] = secret.try_into().map_err(|_err| "invalid key length")?;
-    Ok(bytes)
+    with_ed25519_cose_key(&data, cose_private_key)
 }
 
-fn okp_cose_key(data: &[u8]) -> Result<CoseKey, BoxError> {
-    let key = CoseKey::from_slice(data)?;
-    ensure_okp_key(&key)?;
-    Ok(key)
+fn with_ed25519_cose_key<T>(
+    data: &[u8],
+    read: impl FnOnce(&CoseKey) -> Result<T, BoxError>,
+) -> Result<T, BoxError> {
+    // Validate after decoding so the private parameter is wiped even if the
+    // key type, curve, algorithm or key material is invalid.
+    let mut key = CoseKey(CoseMap::from_slice(data)?);
+    let result = (|| {
+        key.validate()?;
+        ensure_ed25519_key(&key)?;
+        read(&key)
+    })();
+    wipe_cose_secret(&mut key);
+    result
 }
 
-fn ensure_okp_key(key: &CoseKey) -> Result<(), BoxError> {
+fn ensure_ed25519_key(key: &CoseKey) -> Result<(), BoxError> {
     match key.kty()? {
-        Some(Label::Int(iana::KeyTypeOKP)) => Ok(()),
-        _ => Err("invalid key type".into()),
+        Some(Label::Int(iana::KeyTypeOKP)) => {}
+        _ => return Err("invalid key type".into()),
+    }
+    match key.get_label(iana::OKPKeyParameterCrv)? {
+        Some(Label::Int(iana::EllipticCurveEd25519)) => {}
+        _ => return Err("invalid Ed25519 key curve".into()),
+    }
+    match key.alg()? {
+        None | Some(Label::Int(iana::AlgorithmEdDSA)) => Ok(()),
+        _ => Err("invalid Ed25519 key algorithm".into()),
+    }
+}
+
+fn wipe_cose_secret(key: &mut CoseKey) {
+    if let Some(Value::Bytes(mut secret)) = key.remove(iana::OKPKeyParameterD) {
+        secret.zeroize();
     }
 }
 
@@ -185,8 +205,10 @@ pub fn encode_ed25519_privkey(secret: &[u8; 32]) -> Result<String, BoxError> {
         .set_alg(iana::AlgorithmEdDSA);
     cose_key.insert(iana::OKPKeyParameterCrv, iana::EllipticCurveEd25519);
     cose_key.insert(iana::OKPKeyParameterD, secret.to_vec());
-    let cose_bytes = cose_key.to_vec()?;
-    Ok(ByteBufB64(cose_bytes).to_string())
+    let encoded = cose_key.to_vec();
+    wipe_cose_secret(&mut cose_key);
+    let encoded = Zeroizing::new(encoded?);
+    Ok(BytesB64::from_slice(encoded.as_slice()).to_string())
 }
 
 pub(super) fn encode_ed25519_privkey_cose_key(secret: &[u8; 32]) -> Result<Vec<u8>, BoxError> {
@@ -202,24 +224,25 @@ pub(super) fn encode_ed25519_privkey_cose_key(secret: &[u8; 32]) -> Result<Vec<u
         key.verifying_key().to_bytes().to_vec(),
     );
     cose_key.insert(iana::OKPKeyParameterD, secret.to_vec());
-    Ok(cose_key.to_vec()?)
+    let encoded = cose_key.to_vec();
+    wipe_cose_secret(&mut cose_key);
+    Ok(encoded?)
 }
 
 pub(super) fn decode_ed25519_privkey_cose_key(data: &[u8]) -> Result<[u8; 32], BoxError> {
-    let cose_key = okp_cose_key(data)?;
-    match cose_key.alg()? {
-        Some(Label::Int(iana::AlgorithmEdDSA)) => {}
-        _ => return Err("invalid Ed25519 key algorithm".into()),
-    }
-    match cose_key.get_label(iana::OKPKeyParameterCrv)? {
-        Some(Label::Int(iana::EllipticCurveEd25519)) => {}
-        _ => return Err("invalid Ed25519 key curve".into()),
-    }
+    with_ed25519_cose_key(data, |key| {
+        if key.alg()?.is_none() {
+            return Err("missing Ed25519 key algorithm".into());
+        }
+        cose_private_key(key)
+    })
+}
 
+fn cose_private_key(cose_key: &CoseKey) -> Result<[u8; 32], BoxError> {
     let secret = cose_key
         .get_bytes(iana::OKPKeyParameterD)?
         .ok_or("missing secret key")?;
-    let secret: [u8; 32] = secret.try_into().map_err(|_err| "invalid key length")?;
+    let secret = Zeroizing::new(<[u8; 32]>::try_from(secret).map_err(|_| "invalid key length")?);
 
     if let Some(public_key) = cose_key.get_bytes(iana::OKPKeyParameterX)? {
         let public_key: [u8; 32] = public_key
@@ -231,7 +254,7 @@ pub(super) fn decode_ed25519_privkey_cose_key(data: &[u8]) -> Result<[u8; 32], B
         }
     }
 
-    Ok(secret)
+    Ok(*secret)
 }
 
 pub fn encode_ed25519_pubkey(pubkey: &Ed25519PubKey) -> String {

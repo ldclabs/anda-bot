@@ -1,8 +1,8 @@
 use super::*;
 use super::{
     files::{
-        create_parent_dir_if_needed, load_or_init_ed25519_secret,
-        write_ed25519_secret_file_blocking, write_private_binary_file,
+        create_parent_dir_if_needed, read_identity_secret_file, write_ed25519_secret_file_blocking,
+        write_private_binary_file,
     },
     store::IdentityKeyStoreUnavailable,
 };
@@ -10,7 +10,43 @@ use anda_core::BoxError;
 use cbor2::Value;
 use ed25519_dalek::VerifyingKey;
 use ic_auth_types::ByteBufB64;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{path::Path, str::FromStr, sync::Arc};
+
+#[derive(Default)]
+struct CountingIdentityKeyStore {
+    inner: MemoryIdentityKeyStore,
+    reads: AtomicUsize,
+    writes: AtomicUsize,
+    unavailable: AtomicBool,
+    fail_writes: AtomicBool,
+    fail_read_at: AtomicUsize,
+}
+
+impl IdentityKeyStore for CountingIdentityKeyStore {
+    fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError> {
+        let call = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.unavailable.load(Ordering::SeqCst)
+            || call == self.fail_read_at.load(Ordering::SeqCst)
+        {
+            return Err(unavailable_identity_store_error("read identity key"));
+        }
+        self.inner.get_secret_bytes(account)
+    }
+
+    fn put_secret_bytes(
+        &self,
+        account: &str,
+        secret: &[u8],
+        overwrite: bool,
+    ) -> Result<(), BoxError> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        if self.unavailable.load(Ordering::SeqCst) || self.fail_writes.load(Ordering::SeqCst) {
+            return Err(unavailable_identity_store_error("write identity key"));
+        }
+        self.inner.put_secret_bytes(account, secret, overwrite)
+    }
+}
 
 const SECRET: [u8; 32] = [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
@@ -115,6 +151,9 @@ async fn identity_key_store_uses_existing_file_when_secure_store_unavailable() {
     write_ed25519_secret_file(key_ref.legacy_path(), &SECRET)
         .await
         .unwrap();
+    write_ed25519_secret_file(IdentityKeyRef::daemon(dir.path()).legacy_path(), &[7; 32])
+        .await
+        .unwrap();
     let store = Arc::new(UnavailableIdentityKeyStore);
 
     let secret = load_or_init_local_identity_secrets_with_store(dir.path(), store)
@@ -160,7 +199,12 @@ async fn identity_key_store_migrates_legacy_key_file() {
         .unwrap();
 
     assert_eq!(*secrets.owner, SECRET);
-    assert_eq!(store.get_for_test(key_ref.account()), Some(SECRET));
+    assert_eq!(store.get_for_test(key_ref.account()), None);
+    let bundle = store
+        .get_bytes_for_test(IdentityKeyRef::bundle(dir.path()).account())
+        .unwrap();
+    let saved: LocalIdentitySecrets = cbor2::from_slice(&bundle).unwrap();
+    assert_eq!(*saved.owner, SECRET);
     assert!(!key_ref.legacy_path().exists());
 }
 
@@ -188,7 +232,7 @@ async fn local_identity_bundle_migrates_and_reuses_existing_identities() {
     assert_eq!(*first.owner, owner_secret);
     assert_eq!(
         first.location,
-        IdentityKeyRef::bundle(dir.path()).location()
+        store.location(IdentityKeyRef::bundle(dir.path()).account())
     );
 
     assert!(
@@ -196,6 +240,70 @@ async fn local_identity_bundle_migrates_and_reuses_existing_identities() {
             .get_bytes_for_test(IdentityKeyRef::bundle(dir.path()).account())
             .is_some()
     );
+    let second = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(first, second);
+}
+
+#[tokio::test]
+async fn explicit_file_initialization_preserves_existing_half_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon_ref = IdentityKeyRef::daemon(dir.path());
+    write_ed25519_secret_file(daemon_ref.legacy_path(), &SECRET)
+        .await
+        .unwrap();
+    let store = Arc::new(UnavailableIdentityKeyStore);
+    let first = init_local_identity_files_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(*first.daemon, SECRET);
+    let second = init_local_identity_files_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(first, second);
+    let loaded = load_or_init_local_identity_secrets_with_store(dir.path(), store)
+        .await
+        .unwrap();
+    assert_eq!(first, loaded);
+}
+
+#[tokio::test]
+async fn explicit_file_initialization_refuses_existing_keyring_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryIdentityKeyStore::default());
+    let first = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    let err = init_local_identity_files_with_store(dir.path(), store.clone())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("existing identities"));
+    assert_eq!(
+        first,
+        load_or_init_local_identity_secrets_with_store(dir.path(), store)
+            .await
+            .unwrap()
+    );
+    assert!(!IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+    assert!(!IdentityKeyRef::owner(dir.path()).legacy_path().exists());
+}
+
+#[tokio::test]
+async fn explicit_file_initialization_refuses_data_and_corrupt_source_keys() {
+    for existing in ["db/data", "credentials/v1/key.cose", "keys/user.key"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(existing);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "existing data").unwrap();
+        assert!(
+            init_local_identity_files_with_store(dir.path(), Arc::new(UnavailableIdentityKeyStore))
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "existing data");
+        assert!(!IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+    }
 }
 
 #[test]
@@ -355,7 +463,7 @@ fn local_identity_bundle_round_trips_without_location() {
         owner: [10u8; 32].into(),
     };
 
-    let encoded = secrets.to_bytes().unwrap().to_string();
+    let encoded = secrets.to_encoded().unwrap();
     let decoded = LocalIdentitySecrets::from_str(&encoded).unwrap();
 
     assert_eq!(*decoded.daemon, [9u8; 32]);
@@ -433,7 +541,11 @@ fn cose_public_key_round_trips() {
 #[test]
 fn sign_cwt_produces_decodable_cose_sign1() {
     let key = Ed25519Key::new(SECRET);
-    let claims = expiring_claims(std::time::Duration::from_secs(60)).unwrap();
+    let mut claims = expiring_claims(std::time::Duration::from_secs(60)).unwrap();
+    claims.subject = Some("must be replaced by signer".into());
+    claims.audience = Some("identity-test".into());
+    let issued_at = claims.issued_at;
+    let expiration = claims.expiration;
 
     let token = key.sign_cwt(claims).unwrap();
     let bytes = ByteBufB64::from_str(&token).unwrap();
@@ -445,8 +557,19 @@ fn sign_cwt_produces_decodable_cose_sign1() {
     };
     let sig = arr[3].as_bytes().unwrap();
     assert_eq!(sig.len(), 64);
-    let payload: Value = cbor2::from_slice(arr[2].as_bytes().unwrap()).unwrap();
-    assert!(matches!(payload, Value::Map(_)));
+    let payload = arr[2].as_bytes().unwrap();
+    let tbs = cose2::Sign1Message::to_be_signed(arr[0].as_bytes().unwrap(), b"", payload).unwrap();
+    let signature = ed25519_dalek::Signature::from_slice(sig).unwrap();
+    let public: VerifyingKey = key.pubkey().into();
+    public.verify_strict(&tbs, &signature).unwrap();
+    let mut tampered = tbs;
+    *tampered.last_mut().unwrap() ^= 1;
+    assert!(public.verify_strict(&tampered, &signature).is_err());
+    let decoded = Claims::from_slice(payload).unwrap();
+    assert_eq!(decoded.subject, Some(key.id().to_string()));
+    assert_eq!(decoded.audience, Some("identity-test".into()));
+    assert_eq!(decoded.issued_at, issued_at);
+    assert_eq!(decoded.expiration, expiration);
 }
 
 #[test]
@@ -459,30 +582,257 @@ fn sign_cwt_rejects_unbounded_claims() {
 #[tokio::test]
 async fn key_file_writer_round_trips_private_key() {
     let dir = tempfile::tempdir().unwrap();
-    let key_path = dir.path().join("user.key");
+    let key_ref = IdentityKeyRef::owner(dir.path());
+    let key_path = key_ref.legacy_path();
 
-    write_ed25519_secret_file(&key_path, &SECRET).await.unwrap();
+    write_ed25519_secret_file(key_path, &SECRET).await.unwrap();
 
-    assert_eq!(
-        load_or_init_ed25519_secret(&key_path).await.unwrap(),
-        SECRET
-    );
-    assert!(write_ed25519_secret_file(&key_path, &SECRET).await.is_err());
-    assert_eq!(
-        load_or_init_ed25519_secret(&key_path).await.unwrap(),
-        SECRET
-    );
+    assert_eq!(read_identity_secret_file(&key_ref).unwrap().secret, SECRET);
+    assert!(write_ed25519_secret_file(key_path, &SECRET).await.is_err());
+    assert_eq!(read_identity_secret_file(&key_ref).unwrap().secret, SECRET);
 
-    write_ed25519_secret_file_blocking(&key_path, &[2; 32], true).unwrap();
-    assert_eq!(
-        load_or_init_ed25519_secret(&key_path).await.unwrap(),
-        [2; 32]
-    );
+    write_ed25519_secret_file_blocking(key_path, &[2; 32], true).unwrap();
+    assert_eq!(read_identity_secret_file(&key_ref).unwrap().secret, [2; 32]);
 }
 
 #[test]
 fn key_file_writer_ignores_empty_parent_for_relative_file_name() {
     create_parent_dir_if_needed(Path::new("user.key")).unwrap();
+}
+
+#[tokio::test]
+async fn identity_outage_does_not_replace_keys_and_recovers_same_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(CountingIdentityKeyStore::default());
+    let first = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(store.writes.load(Ordering::SeqCst), 1);
+    assert!(
+        store
+            .inner
+            .get_for_test(IdentityKeyRef::daemon(dir.path()).account())
+            .is_none()
+    );
+    assert!(
+        store
+            .inner
+            .get_for_test(IdentityKeyRef::owner(dir.path()).account())
+            .is_none()
+    );
+
+    store.unavailable.store(true, Ordering::SeqCst);
+    assert!(
+        load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+            .await
+            .is_err()
+    );
+    assert!(!IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+    assert!(!IdentityKeyRef::owner(dir.path()).legacy_path().exists());
+
+    store.unavailable.store(false, Ordering::SeqCst);
+    let recovered = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    let reused = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(first, recovered);
+    assert_eq!(first, reused);
+    assert_eq!(store.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn identity_outage_does_not_generate_missing_half_of_file_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = IdentityKeyRef::owner(dir.path());
+    write_ed25519_secret_file(owner.legacy_path(), &SECRET)
+        .await
+        .unwrap();
+    assert!(
+        load_or_init_local_identity_secrets_with_store(
+            dir.path(),
+            Arc::new(UnavailableIdentityKeyStore)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(read_identity_secret_file(&owner).unwrap().secret, SECRET);
+    assert!(!IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+}
+
+#[tokio::test]
+async fn bundle_write_failure_keeps_migration_files_and_retries_without_changing_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = IdentityKeyRef::daemon(dir.path());
+    let owner = IdentityKeyRef::owner(dir.path());
+    write_ed25519_secret_file(daemon.legacy_path(), &[7; 32])
+        .await
+        .unwrap();
+    write_ed25519_secret_file(owner.legacy_path(), &SECRET)
+        .await
+        .unwrap();
+    let store = Arc::new(CountingIdentityKeyStore::default());
+    store.fail_writes.store(true, Ordering::SeqCst);
+    let fallback = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(*fallback.daemon, [7; 32]);
+    assert_eq!(*fallback.owner, SECRET);
+    assert!(daemon.legacy_path().exists());
+    assert!(owner.legacy_path().exists());
+
+    store.fail_writes.store(false, Ordering::SeqCst);
+    let migrated = load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+        .await
+        .unwrap();
+    assert_eq!(*migrated.daemon, *fallback.daemon);
+    assert_eq!(*migrated.owner, *fallback.owner);
+    assert!(!daemon.legacy_path().exists());
+    assert!(!owner.legacy_path().exists());
+}
+
+#[tokio::test]
+async fn interrupted_initialization_never_returns_unpersisted_generated_keys() {
+    for fail_read_at in [0, 2, 3] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(CountingIdentityKeyStore::default());
+        store.fail_read_at.store(fail_read_at, Ordering::SeqCst);
+        store.fail_writes.store(true, Ordering::SeqCst);
+        assert!(
+            load_or_init_local_identity_secrets_with_store(dir.path(), store.clone())
+                .await
+                .is_err()
+        );
+        assert!(!IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+        assert!(!IdentityKeyRef::owner(dir.path()).legacy_path().exists());
+        assert!(
+            store
+                .inner
+                .get_bytes_for_test(IdentityKeyRef::bundle(dir.path()).account())
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn malformed_bundle_does_not_fall_back_to_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryIdentityKeyStore::default());
+    let bundle = IdentityKeyRef::bundle(dir.path());
+    store
+        .put_secret_bytes(bundle.account(), b"invalid bundle", false)
+        .unwrap();
+    for key in [
+        IdentityKeyRef::daemon(dir.path()),
+        IdentityKeyRef::owner(dir.path()),
+    ] {
+        write_ed25519_secret_file(key.legacy_path(), &SECRET)
+            .await
+            .unwrap();
+    }
+    assert!(
+        load_or_init_local_identity_secrets_with_store(dir.path(), store)
+            .await
+            .is_err()
+    );
+    assert!(IdentityKeyRef::daemon(dir.path()).legacy_path().exists());
+    assert!(IdentityKeyRef::owner(dir.path()).legacy_path().exists());
+}
+
+#[test]
+fn cose_parsers_validate_curve_algorithm_and_private_public_consistency() {
+    use super::ed25519::{decode_ed25519_privkey_cose_key, encode_ed25519_privkey_cose_key};
+    let bytes = encode_ed25519_privkey_cose_key(&SECRET).unwrap();
+    let valid = cose2::Key::from_slice(&bytes).unwrap();
+    for (label, value) in [
+        (iana::OKPKeyParameterCrv, iana::EllipticCurveX25519),
+        (iana::KeyParameterAlg, iana::AlgorithmES256),
+    ] {
+        let mut wrong = valid.clone();
+        wrong.insert(label, value);
+        let bytes = wrong.to_vec().unwrap();
+        let text = ByteBufB64(bytes.clone()).to_string();
+        assert!(parse_ed25519_privkey(&text).is_err());
+        assert!(parse_ed25519_pubkey(&text).is_err());
+        assert!(decode_ed25519_privkey_cose_key(&bytes).is_err());
+    }
+    let mut wrong_public = valid.clone();
+    wrong_public.insert(
+        iana::OKPKeyParameterX,
+        Ed25519Key::new([8; 32]).pubkey().as_bytes().to_vec(),
+    );
+    let bytes = wrong_public.to_vec().unwrap();
+    assert!(parse_ed25519_privkey(&ByteBufB64(bytes.clone()).to_string()).is_err());
+    assert!(decode_ed25519_privkey_cose_key(&bytes).is_err());
+
+    let mut missing_curve = valid.clone();
+    missing_curve.remove(iana::OKPKeyParameterCrv);
+    let text = ByteBufB64(missing_curve.to_vec().unwrap()).to_string();
+    assert!(parse_ed25519_privkey(&text).is_err());
+    assert!(parse_ed25519_pubkey(&text).is_err());
+
+    // COSE permits an omitted alg in imported keys; the locally written
+    // credential format always includes it and remains strict on decoding.
+    let mut no_alg = valid;
+    no_alg.remove(iana::KeyParameterAlg);
+    let bytes = no_alg.to_vec().unwrap();
+    let text = ByteBufB64(bytes.clone()).to_string();
+    assert_eq!(parse_ed25519_privkey(&text).unwrap(), SECRET);
+    assert_eq!(
+        parse_ed25519_pubkey(&text).unwrap(),
+        *Ed25519Key::new(SECRET).pubkey().as_bytes()
+    );
+    assert!(decode_ed25519_privkey_cose_key(&bytes).is_err());
+}
+
+#[test]
+fn failed_private_file_publication_preserves_io_error_and_cleans_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("occupied");
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::write(destination.join("keep"), "existing data").unwrap();
+    let expected = std::fs::rename(destination.join("keep"), &destination)
+        .unwrap_err()
+        .kind();
+    let err = write_ed25519_secret_file_blocking(&destination, &SECRET, true).unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<std::io::Error>().unwrap().kind(),
+        expected
+    );
+    assert_eq!(
+        std::fs::read_to_string(destination.join("keep")).unwrap(),
+        "existing data"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn private_file_noclobber_preserves_existing_bytes_and_cleans_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("existing.key");
+    std::fs::write(&path, "existing data").unwrap();
+    let err = write_ed25519_secret_file_blocking(&path, &SECRET, false).unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "existing data");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn identity_secret_debug_is_redacted() {
+    let loaded = super::secrets::LoadedIdentitySecret::new(SECRET, "location".to_string());
+    let bundle = LocalIdentitySecrets {
+        location: "location".to_string(),
+        daemon: SECRET.into(),
+        owner: SECRET.into(),
+    };
+    let debug = format!("{loaded:?} {bundle:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains(&format!("{SECRET:?}")));
+    assert!(!debug.contains(&ByteBufB64(SECRET.to_vec()).to_string()));
 }
 
 #[cfg(unix)]

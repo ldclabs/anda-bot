@@ -62,6 +62,7 @@ prost = { workspace = true }
 reqwest = { workspace = true }
 rust-i18n = { workspace = true }
 rustls = { workspace = true }
+tempfile = { workspace = true }
 tokio-util = { workspace = true }
 zeroize = { workspace = true }
 tokio-tungstenite = { workspace = true }
@@ -135,6 +136,3 @@ windows-sys = { workspace = true, features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-
-[dev-dependencies]
-tempfile = { workspace = true }

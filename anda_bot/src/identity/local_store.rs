@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use zeroize::{Zeroize, Zeroizing};
 
 use super::{
     ed25519::{decode_ed25519_privkey_cose_key, encode_ed25519_privkey_cose_key},
@@ -119,19 +120,12 @@ impl LocalEncryptedIdentityKeyStore {
         let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &*key, None)?;
         let aad = self.external_aad(account)?;
         let mut msg = Encrypt0Message::decrypt_and_decode(&encryptor, &data, Some(&aad))?;
-        let secret = {
-            let plaintext = msg
-                .payload
-                .as_deref()
-                .ok_or("local credential payload missing after decryption")?;
-            decode_ed25519_privkey_cose_key(plaintext)
-        };
-        // The decrypted COSE payload holds the raw private key; wipe it
-        // before the buffer is freed.
-        if let Some(payload) = msg.payload.as_mut() {
-            zeroize::Zeroize::zeroize(payload);
-        }
-        Ok(Some(secret?))
+        let plaintext = Zeroizing::new(
+            msg.payload
+                .take()
+                .ok_or("local credential payload missing after decryption")?,
+        );
+        Ok(Some(decode_ed25519_privkey_cose_key(&plaintext)?))
     }
 
     fn write_encrypted_secret(
@@ -151,25 +145,25 @@ impl LocalEncryptedIdentityKeyStore {
         let mut iv = [0u8; 12];
         rand::Rng::fill_bytes(&mut rng, &mut iv);
 
-        let plaintext = encode_ed25519_privkey_cose_key(secret)?;
         let key = self.derive_content_key(account)?;
         let encryptor = cose2::crypto::RingEncryptor::new(iana::AlgorithmA256GCM, &*key, None)?;
         let aad = self.external_aad(account)?;
-        let mut msg = Encrypt0Message::new(Some(plaintext));
+        let mut msg = Encrypt0Message::new(Some(encode_ed25519_privkey_cose_key(secret)?));
         msg.unprotected.set_iv(iv.to_vec());
-        let encrypted = msg.encrypt_and_encode(&encryptor, Some(&aad))?;
+        let encrypted = msg.encrypt_and_encode(&encryptor, Some(&aad));
+        // Wipe before propagating encryption/encoding errors as well.
         if let Some(payload) = msg.payload.as_mut() {
-            zeroize::Zeroize::zeroize(payload);
+            payload.zeroize();
         }
         write_private_binary_file(
             &self.credential_path(account),
-            &encrypted,
+            &encrypted?,
             overwrite,
             &self.home,
         )?;
 
-        match self.read_encrypted_secret(account)? {
-            Some(stored) if stored == *secret => Ok(()),
+        match self.read_encrypted_secret(account)?.map(Zeroizing::new) {
+            Some(stored) if *stored == *secret => Ok(()),
             Some(_) => Err(format!("local credential verification failed: {account}").into()),
             None => Err(format!("local credential write did not persist: {account}").into()),
         }
@@ -183,6 +177,7 @@ impl LocalEncryptedIdentityKeyStore {
         if let Some(store) = &self.migration_store {
             match store.get_secret(account) {
                 Ok(Some(secret)) => {
+                    let secret = Zeroizing::new(secret);
                     self.write_encrypted_secret(account, &secret, false)?;
                     log::warn!(
                         name = "daemon";
@@ -226,7 +221,7 @@ impl IdentityKeyStore for LocalEncryptedIdentityKeyStore {
 
     fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError> {
         match self.read_encrypted_secret(account)? {
-            Some(secret) => Ok(Some(secret.to_vec())),
+            Some(secret) => Ok(Some(Zeroizing::new(secret).to_vec())),
             None => self.migrate_from_legacy_sources(account),
         }
     }
@@ -244,9 +239,7 @@ impl IdentityKeyStore for LocalEncryptedIdentityKeyStore {
             )
             .into());
         }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(secret);
-        self.write_encrypted_secret(account, &key, overwrite)
+        self.write_encrypted_secret(account, secret.try_into()?, overwrite)
     }
 }
 

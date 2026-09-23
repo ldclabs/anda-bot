@@ -1,5 +1,6 @@
 use anda_core::BoxError;
 use std::{error::Error, sync::Arc};
+use zeroize::Zeroizing;
 
 pub const IDENTITY_KEYRING_SERVICE: &str = "anda.bot.identity";
 
@@ -9,6 +10,7 @@ pub trait IdentityKeyStore: Send + Sync {
     }
 
     fn get_secret_bytes(&self, account: &str) -> Result<Option<Vec<u8>>, BoxError>;
+    /// Success means the value was persisted; migrations may then remove their source.
     fn put_secret_bytes(
         &self,
         account: &str,
@@ -19,7 +21,8 @@ pub trait IdentityKeyStore: Send + Sync {
     fn get_secret(&self, account: &str) -> Result<Option<[u8; 32]>, BoxError> {
         self.get_secret_bytes(account)?
             .map(|secret| {
-                secret.try_into().map_err(|secret: Vec<u8>| {
+                let secret = Zeroizing::new(secret);
+                secret.as_slice().try_into().map_err(|_| {
                     format!(
                         "identity keyring entry {account} has invalid length {}; expected 32 bytes",
                         secret.len()
@@ -63,7 +66,12 @@ impl IdentityKeyStore for OsIdentityKeyStore {
         secret: &[u8],
         overwrite: bool,
     ) -> Result<(), BoxError> {
-        if !overwrite && self.get_secret_bytes(account)?.is_some() {
+        if !overwrite
+            && self
+                .get_secret_bytes(account)?
+                .map(Zeroizing::new)
+                .is_some()
+        {
             return Err(format!("identity key already exists in system keyring: {account}").into());
         }
 
@@ -71,10 +79,11 @@ impl IdentityKeyStore for OsIdentityKeyStore {
         entry
             .set_secret(secret)
             .map_err(|err| classify_keyring_error(err, "write identity key"))?;
-        let stored = self
-            .get_secret_bytes(account)?
-            .ok_or_else(|| format!("identity keyring write did not persist: {account}"))?;
-        if stored != secret {
+        let stored = Zeroizing::new(
+            self.get_secret_bytes(account)?
+                .ok_or_else(|| format!("identity keyring write did not persist: {account}"))?,
+        );
+        if stored.as_slice() != secret {
             return Err(format!("identity keyring verification failed: {account}").into());
         }
         Ok(())

@@ -296,7 +296,11 @@ anda user list
 
 命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/credentials/` 下的本地加密凭证库。凭证文件里是加密的 COSE Key，加密密钥从本地 daemon 身份密钥派生。如果明确需要文件 key，请使用下面的 `anda user export`。
 
-在 Linux 上，如果没有可用或已解锁的 Secret Service provider，Anda 会把 daemon/owner 身份 fallback 到 `~/.anda/keys/` 下的私钥文件，并在终端和日志中显示提醒。只要 daemon 身份密钥能被加载，可信用户私钥仍会保存在本地加密凭证库中。若要为 daemon/owner 身份使用 Secret Service，请在用户 D-Bus session 中启动并解锁 provider，例如运行 `gnome-keyring-daemon --start --components=secrets`，确认 Anda 进程能拿到 `DBUS_SESSION_BUS_ADDRESS`，然后重启 Anda；KDE 用户也可以解锁 KWallet。
+在 Linux 上，如果没有可用或已解锁的 Secret Service provider，Anda 可以读取**已有的** daemon/owner 私钥文件 `~/.anda/keys/anda_bot.key` 和 `~/.anda/keys/user.key`，并在终端和日志中显示提醒。两个文件必须完整存在：凭据库不可用时不会生成替代身份。已有安装应解锁 provider 或恢复原始密钥；可信用户私钥仍使用从原始 daemon 身份派生的密钥加密保存。
+
+对于**没有操作系统凭据库的全新安装**，请先显式运行 `anda user init-file-keys`，再运行 `anda start`。该命令创建缺失的私钥文件，不覆盖已有文件；若已有本地数据库/凭据数据，或能读取到 keyring 中的身份，则拒绝初始化。不要用它恢复已有安装。导入的 COSE 密钥必须标明 Ed25519 曲线；算法字段存在时必须为 EdDSA，私钥附带的公钥必须与其匹配。原始 32 字节 Base64 密钥继续受支持。
+
+若要使用 Secret Service，请在用户 D-Bus session 中启动并解锁 provider，例如运行 `gnome-keyring-daemon --start --components=secrets`，确认 Anda 能拿到 `DBUS_SESSION_BUS_ADDRESS`，然后重启；KDE 用户也可以解锁 KWallet。已有文件身份会一起迁移到一个 keyring bundle，只有完整保存成功后才删除源文件。
 
 如果需要把已有身份私钥导出到文件，使用 `anda user export`。身份可以是 `daemon`、`owner`、`default` 或可信用户 id：
 

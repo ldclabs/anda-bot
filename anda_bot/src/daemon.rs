@@ -220,7 +220,7 @@ impl Daemon {
     ) -> Result<BackgroundDaemon, BoxError> {
         let exe = std::env::current_exe()?;
         let identity_payload = identity_secrets
-            .map(|secrets| secrets.to_bytes().map(|bytes| bytes.to_string()))
+            .map(|secrets| secrets.to_encoded())
             .transpose()?;
         let logs_dir = self.logs_dir_path();
         std::fs::create_dir_all(&logs_dir)?;

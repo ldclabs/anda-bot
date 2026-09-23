@@ -1,9 +1,10 @@
 use anda_core::BoxError;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use zeroize::Zeroizing;
 
 use super::{
     ed25519::{encode_ed25519_privkey, parse_ed25519_privkey},
-    refs::{IdentityKeyRef, hex_bytes},
+    refs::IdentityKeyRef,
     secrets::LoadedIdentitySecret,
 };
 
@@ -11,7 +12,7 @@ pub(super) fn read_identity_secret_file(
     key_ref: &IdentityKeyRef,
 ) -> Result<LoadedIdentitySecret, std::io::Error> {
     match std::fs::read_to_string(key_ref.legacy_path()) {
-        Ok(content) => parse_ed25519_privkey(content.trim())
+        Ok(content) => parse_ed25519_privkey(Zeroizing::new(content).trim())
             .map(|secret| LoadedIdentitySecret::new(secret, key_ref.fallback_location()))
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
         Err(err) => Err(err),
@@ -36,7 +37,7 @@ pub(super) fn remove_legacy_identity_key(key_ref: &IdentityKeyRef) {
 
 pub async fn write_ed25519_secret_file(key_path: &Path, secret: &[u8; 32]) -> Result<(), BoxError> {
     let key_path = key_path.to_path_buf();
-    let secret = *secret;
+    let secret = Zeroizing::new(*secret);
     tokio::task::spawn_blocking(move || {
         write_ed25519_secret_file_blocking(&key_path, &secret, false)
     })
@@ -50,8 +51,9 @@ pub(super) fn write_ed25519_secret_file_blocking(
 ) -> Result<(), BoxError> {
     create_parent_dir_if_needed(key_path)?;
 
-    let encoded = encode_ed25519_privkey(secret)?;
-    write_private_text_file(key_path, &encoded, overwrite)
+    let mut encoded = Zeroizing::new(encode_ed25519_privkey(secret)?);
+    encoded.push('\n');
+    write_private_file(key_path, encoded.as_bytes(), overwrite)
 }
 
 pub(super) fn create_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
@@ -63,33 +65,6 @@ pub(super) fn create_parent_dir_if_needed(path: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-fn write_private_text_file(path: &Path, content: &str, overwrite: bool) -> Result<(), BoxError> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    if overwrite {
-        options.create(true).truncate(true);
-    } else {
-        options.create_new(true);
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-
-    use std::io::Write;
-    let mut file = options.open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(content.as_bytes())?;
-    file.write_all(b"\n")?;
-    Ok(())
-}
-
 pub(super) fn write_private_binary_file(
     path: &Path,
     content: &[u8],
@@ -97,70 +72,38 @@ pub(super) fn write_private_binary_file(
     private_boundary: &Path,
 ) -> Result<(), BoxError> {
     create_private_parent_dir_if_needed(path, private_boundary)?;
+    write_private_file(path, content, overwrite)
+}
 
-    let temp_path = private_temp_path(path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-
+fn write_private_file(path: &Path, content: &[u8], overwrite: bool) -> Result<(), BoxError> {
     use std::io::Write;
-    let mut file = options.open(&temp_path)?;
+
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    // NamedTempFile removes unpublished files on every error path. Keeping it
+    // beside the destination makes publication atomic on the same filesystem.
+    let mut temp = tempfile::Builder::new()
+        .prefix(".identity-")
+        .tempfile_in(parent)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        temp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
-    file.write_all(content)?;
-    file.sync_all()?;
-    drop(file);
-
-    if overwrite {
-        std::fs::rename(&temp_path, path)?;
+    temp.write_all(content)?;
+    temp.as_file().sync_all()?;
+    let result = if overwrite {
+        temp.persist(path)
     } else {
-        match std::fs::hard_link(&temp_path, path) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&temp_path);
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(
-                    format!("local credential file already exists: {}", path.display()).into(),
-                );
-            }
-        }
-    }
+        temp.persist_noclobber(path)
+    };
+    // Retain the original error kind (including AlreadyExists) and let the
+    // temporary file in PersistError drop, rather than masking all I/O errors.
+    result.map_err(|err| err.error)?;
     Ok(())
-}
-
-fn private_temp_path(path: &Path) -> Result<PathBuf, BoxError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("invalid local credential path: {}", path.display()))?
-        .to_string_lossy();
-    let mut rng = rand::rng();
-    for _ in 0..16 {
-        let mut random = [0u8; 8];
-        rand::Rng::fill_bytes(&mut rng, &mut random);
-        let candidate = parent.join(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            hex_bytes(&random)
-        ));
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err(format!(
-        "failed to allocate temporary local credential path for {}",
-        path.display()
-    )
-    .into())
 }
 
 fn create_private_parent_dir_if_needed(
@@ -215,29 +158,4 @@ fn create_private_parent_dir_if_needed(
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-pub async fn load_or_init_ed25519_secret(key_path: &Path) -> Result<[u8; 32], BoxError> {
-    use super::ed25519::random_ed25519_privkey;
-
-    match crate::util::text::read_text_file(key_path).await {
-        Ok(content) => {
-            let secret = parse_ed25519_privkey(content.trim())?;
-            Ok(secret)
-        }
-        Err(err) => {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                return Err(err.into());
-            }
-            log::warn!(
-                name = "daemon";
-                "ED25519 private key not found at {:?}, generating a new one",
-                key_path
-            );
-            let secret = random_ed25519_privkey();
-            write_ed25519_secret_file(key_path, &secret).await?;
-            Ok(secret)
-        }
-    }
 }

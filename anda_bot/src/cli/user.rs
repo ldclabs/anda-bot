@@ -8,7 +8,7 @@ use crate::{
     engine::write_daemon_config_atomically,
     identity::{
         Ed25519Key, Ed25519PubKey, IdentityKeyRef, IdentityKeyStore, encode_ed25519_pubkey,
-        load_identity_secret_with_location_with_store,
+        init_local_identity_files_with_store, load_identity_secret_with_location_with_store,
         load_or_init_local_identity_secrets_with_store, local_encrypted_identity_key_store,
         os_identity_key_store, random_ed25519_privkey, write_ed25519_secret_file,
         write_identity_secret_with_store,
@@ -24,6 +24,9 @@ pub struct UserCommand {
 
 #[derive(Subcommand)]
 enum UserSubcommand {
+    /// Explicitly initialize daemon/owner file keys for a NEW home without an OS keyring.
+    /// Existing installations must restore their original keys instead.
+    InitFileKeys,
     /// List trusted users configured for this daemon.
     List,
     /// Generate a new Ed25519 keypair and add the public key to config.yaml.
@@ -82,6 +85,14 @@ async fn run_with_store(
     identity_store: Arc<dyn IdentityKeyStore>,
 ) -> Result<(), BoxError> {
     match cmd.command.unwrap_or(UserSubcommand::List) {
+        UserSubcommand::InitFileKeys => {
+            daemon.ensure_directories().await?;
+            let secrets =
+                init_local_identity_files_with_store(&daemon.home, identity_store).await?;
+            println!("Local identity files: {}", secrets.location);
+            println!("Run `anda start` to start the daemon.");
+            Ok(())
+        }
         UserSubcommand::List => list_users(daemon, identity_store).await,
         UserSubcommand::Create(cmd) => create_user(daemon, cmd, identity_store).await,
         UserSubcommand::Import(cmd) => import_user(daemon, cmd).await,
@@ -616,6 +627,42 @@ channels: {}
         )
         .await
         .expect("list users should succeed");
+    }
+
+    #[tokio::test]
+    async fn init_file_keys_command_initializes_and_reuses_private_files() {
+        use clap::Parser;
+
+        let (_dir, daemon) = temp_daemon();
+        let parsed = crate::Cli::try_parse_from(["anda", "user", "init-file-keys"]).unwrap();
+        let Some(crate::Commands::User(command)) = parsed.command else {
+            panic!("expected user command")
+        };
+        let store = Arc::new(crate::identity::MemoryIdentityKeyStore::default());
+        run_with_store(&daemon, command, store.clone())
+            .await
+            .unwrap();
+        let daemon_path = IdentityKeyRef::daemon(&daemon.home);
+        let owner_path = IdentityKeyRef::owner(&daemon.home);
+        let daemon_bytes = std::fs::read(daemon_path.legacy_path()).unwrap();
+        let owner_bytes = std::fs::read(owner_path.legacy_path()).unwrap();
+        run_with_store(
+            &daemon,
+            UserCommand {
+                command: Some(UserSubcommand::InitFileKeys),
+            },
+            store,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read(daemon_path.legacy_path()).unwrap(),
+            daemon_bytes
+        );
+        assert_eq!(
+            std::fs::read(owner_path.legacy_path()).unwrap(),
+            owner_bytes
+        );
     }
 
     #[tokio::test]

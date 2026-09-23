@@ -13,9 +13,9 @@ pub use files::write_ed25519_secret_file;
 pub use local_store::local_encrypted_identity_key_store;
 pub use refs::IdentityKeyRef;
 pub use secrets::{
-    LocalIdentitySecrets, load_identity_secret_with_location_with_store,
-    load_or_init_local_identity_secrets_with_store, read_local_identity_secrets_from_stdin,
-    write_identity_secret_with_store,
+    LocalIdentitySecrets, init_local_identity_files_with_store,
+    load_identity_secret_with_location_with_store, load_or_init_local_identity_secrets_with_store,
+    read_local_identity_secrets_from_stdin, write_identity_secret_with_store,
 };
 pub use store::{IdentityKeyStore, os_identity_key_store};
 
