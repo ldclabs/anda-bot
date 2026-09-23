@@ -1,17 +1,10 @@
 import type { ChatAttachment, Resource } from '../client/types'
 
-export function fileSizeLabel(size: number): string {
-  if (size < 1024) {
-    return `${size} B`
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`
-  }
-  return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
+export { formatFileSize as fileSizeLabel } from '$lib/utils/format'
+import { bytesToBase64 } from '$lib/utils/base64'
 
 export async function fileToAttachment(file: File): Promise<ChatAttachment> {
-  const blob = arrayBufferToBase64(await file.arrayBuffer())
+  const blob = bytesToBase64(new Uint8Array(await file.arrayBuffer()))
   const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : ''
   const primaryType = file.type.includes('/') ? file.type.split('/')[0] : ''
   const tags = Array.from(
@@ -49,14 +42,4 @@ function isTextLike(mimeType: string, extension: string | undefined): boolean {
       extension || ''
     )
   )
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  const chunkSize = 0x8000
-  let binary = ''
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-  }
-  return btoa(binary)
 }

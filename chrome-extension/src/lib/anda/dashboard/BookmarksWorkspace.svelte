@@ -70,9 +70,7 @@
       .filter(Boolean)
       .slice(0, 5)
   )
-  const [selectedDetailHtml, selectedDetailHook] = $derived.by(() =>
-    renderMarkdown(selectedDetailMarkdown)
-  )
+  const selectedDetailHtml = $derived.by(() => renderMarkdown(selectedDetailMarkdown))
 
   $effect(() => {
     const bookmark = selectedItem
@@ -89,14 +87,9 @@
     void loadSelectedDetailMarkdown(bookmark, bookmark.message_id)
   })
 
-  $effect(() => {
-    selectedDetailMarkdown
-    void selectedDetailHook()
-  })
-
   onMount(() => {
     andaClient
-      .init()
+      .init({ conversations: false })
       .catch(() => undefined)
       .finally(() => {
         void browser.load()

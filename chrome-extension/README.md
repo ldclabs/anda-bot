@@ -13,7 +13,7 @@ cargo run -p anda_bot -- browser token --days 30
 2. Build the extension:
 
 ```bash
-pnpm --filter anda-bot-chrome-extension build
+pnpm --dir chrome-extension build
 ```
 
 3. Open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select `chrome-extension/dist`.
@@ -85,3 +85,20 @@ The agent can use the split browser tools below. Page, input, and script tools i
 `execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. By default it uses a CSP-resistant debugger bridge so it can evaluate in the page context even on sites with strict CSP.
 
 Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.
+
+## Client behavior
+
+Connection settings are shared by the Side Panel and Dashboard. Updating the
+Gateway URL or bearer token clears data from the previous connection; saving
+Brain or daemon configuration preserves the selected approval policy.
+
+The Dashboard loads workspaces on demand and does not restore chat histories in
+the background. Chat renders Markdown and math with bundled styles; raw HTML is
+shown as text. Image previews load when their messages become visible.
+
+Voice capture stays attached to the tab where it started, including when another
+tab becomes active. Choosing a memory policy for a new conversation temporarily
+disables voice input until the first text message starts that conversation.
+
+`open_download` reveals the downloaded file in its folder. Opening the file itself
+requires a user click, which Chrome does not allow a WebSocket command to supply.

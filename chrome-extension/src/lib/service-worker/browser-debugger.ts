@@ -524,7 +524,7 @@ async function waitForNetworkIdleWithAttachedDebugger(
     throw new Error('Chrome debugger event API is unavailable; cannot wait for network idle')
   }
 
-  let inFlight = 0
+  const inFlight = new Set<string>()
   let quietTimer: ReturnType<typeof setTimeout> | null = null
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null
   let cleanedUp = false
@@ -564,7 +564,7 @@ async function waitForNetworkIdleWithAttachedDebugger(
     if (quietTimer) {
       clearTimeout(quietTimer)
     }
-    if (inFlight > 0) {
+    if (inFlight.size > 0) {
       return
     }
     quietTimer = setTimeout(() => {
@@ -575,13 +575,13 @@ async function waitForNetworkIdleWithAttachedDebugger(
   const listener = (
     source: { tabId?: number },
     method: string,
-    _params?: Record<string, unknown>
+    params?: Record<string, unknown>
   ) => {
     if (source.tabId !== target.tabId) {
       return
     }
     if (method === 'Network.requestWillBeSent') {
-      inFlight += 1
+      if (typeof params?.requestId === 'string') inFlight.add(params.requestId)
       if (quietTimer) {
         clearTimeout(quietTimer)
         quietTimer = null
@@ -589,7 +589,7 @@ async function waitForNetworkIdleWithAttachedDebugger(
       return
     }
     if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
-      inFlight = Math.max(0, inFlight - 1)
+      if (typeof params?.requestId === 'string') inFlight.delete(params.requestId)
       scheduleQuietCheck()
     }
   }

@@ -1,3 +1,5 @@
+export const skillsRevisionStorageKey = 'skillsRevision'
+
 import { apiResult, apiResultList, type DaemonApi } from './daemon'
 import type {
   ManagedSkill,
@@ -19,7 +21,10 @@ import type {
 export class SkillsApi extends EventTarget {
   #daemon: DaemonApi
 
-  constructor(daemon: DaemonApi) {
+  constructor(
+    daemon: DaemonApi,
+    private onChanged?: () => void
+  ) {
     super()
     this.#daemon = daemon
   }
@@ -112,8 +117,13 @@ export class SkillsApi extends EventTarget {
     return skills
   }
 
-  #emitChanged(): void {
+  notifyChanged(): void {
     this.dispatchEvent(new Event('skills-changed'))
+  }
+
+  #emitChanged(): void {
+    this.notifyChanged()
+    this.onChanged?.()
   }
 }
 

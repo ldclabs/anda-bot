@@ -1,12 +1,14 @@
 <script lang="ts">
-  import MemoryWorkspace from '$lib/anda/memory/MemoryWorkspace.svelte'
-  import ConfigApp from './ConfigApp.svelte'
-  import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
-  import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
+  const workspaceLoaders = {
+    brain: () => import('$lib/anda/memory/MemoryWorkspace.svelte'),
+    bookmarks: () => import('$lib/anda/dashboard/BookmarksWorkspace.svelte'),
+    skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte')
+  }
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass, nativeSelectClass } from '$lib/anda/ui'
   import { getMessage } from '$lib/i18n'
+  import { connectionKey } from '$lib/service-worker/settings'
   import { cn } from '$lib/utils'
   import {
     Bookmark,
@@ -76,7 +78,7 @@
       activeWorkspace = workspaceFromHash()
     }
     window.addEventListener('hashchange', syncHash)
-    andaClient.init().catch((error) => {
+    andaClient.init({ conversations: false }).catch((error) => {
       andaClient.status = 'extension unavailable'
       console.error('Failed to initialize Anda dashboard client', error)
     })
@@ -217,7 +219,11 @@
           {getMessage('appearanceTheme')}
           <select
             class={nativeSelectClass('h-8 text-xs')}
-            bind:value={andaClient.settings.appearanceTheme}
+            value={andaClient.settings.appearanceTheme}
+            onchange={(event) =>
+              void andaClient.saveAppearanceTheme(
+                event.currentTarget.value as 'light' | 'dark' | 'system'
+              )}
           >
             <option value="system">{getMessage('appearanceSystem')}</option>
             <option value="light">{getMessage('appearanceLight')}</option>
@@ -290,15 +296,22 @@
     </header>
 
     <main class="min-h-0 min-w-0 overflow-hidden bg-background">
-      {#if activeWorkspace === 'brain'}
-        <MemoryWorkspace />
-      {:else if activeWorkspace === 'bookmarks'}
-        <BookmarksWorkspace />
-      {:else if activeWorkspace === 'skills'}
-        <SkillsWorkspace />
-      {:else}
-        <ConfigApp embedded />
-      {/if}
+      {#key connectionKey(andaClient.settings)}
+        {#if activeWorkspace === 'config'}
+          {#await import('./ConfigApp.svelte')}
+            <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
+          {:then module}<module.default embedded />
+          {:catch error}<p role="alert" class="p-4 text-destructive">{String(error)}</p>{/await}
+        {:else}
+          {#await workspaceLoaders[activeWorkspace]()}
+            <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
+          {:then module}
+            <module.default />
+          {:catch error}
+            <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
+          {/await}
+        {/if}
+      {/key}
     </main>
   </section>
 </div>

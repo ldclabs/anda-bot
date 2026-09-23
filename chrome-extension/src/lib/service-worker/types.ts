@@ -24,6 +24,7 @@ export type StorageState = Partial<SettingsState> & {
   workspaceChannelSources?: string[]
   uiLanguage?: string
   quickPrompts?: QuickPrompt[]
+  skillsRevision?: string
 }
 
 export type ChromeTabInfo = {
@@ -269,6 +270,12 @@ export interface ChromeApi {
       remove(keys: string[] | string): Promise<void>
     }
     onChanged?: {
+      removeListener?(
+        callback: (
+          changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
+          areaName: string
+        ) => void
+      ): void
       addListener?(
         callback: (
           changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
@@ -329,7 +336,7 @@ export interface ChromeApi {
       state?: string
     }): Promise<ChromeDownloadItem[]>
     cancel(downloadId: number): Promise<void>
-    open(downloadId: number): void | Promise<void>
+    show?(downloadId: number): void | Promise<void>
   }
   cookies?: {
     getAll(details: {

@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "连接信息"
   },
-  "savedConnection": {
-    "message": "已保存"
-  },
   "tokenPlaceholder": {
     "message": "粘贴 `anda browser token --days 365` 输出的 Bearer 令牌"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "同步中"
-  },
-  "noActiveTab": {
-    "message": "无激活标签页"
   },
   "attachFiles": {
     "message": "附加文件"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "对话失败，但未返回失败原因。"
-  },
-  "rpcError": {
-    "message": "工具返回了未知的 RPC 响应"
   },
   "extensionError": {
     "message": "扩展服务工作线程返回错误"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "收藏夹"
-  },
-  "bookmarksDescription": {
-    "message": "你收藏的智能体消息。点击可跳回原消息。"
   },
   "bookmarksEmpty": {
     "message": "还没有收藏"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "未能应用此变更。请丢弃当前预览并重新核对新预览。"
+  },
+  "configFieldGatewayAddress": {
+    "message": "网关地址"
+  },
+  "configFieldLogLevel": {
+    "message": "日志级别"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "HTTPS 代理"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "额外工作区"
+  },
+  "configFieldUserId": {
+    "message": "用户 ID"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "Ed25519 公钥"
+  },
+  "configFieldFamily": {
+    "message": "模型系列"
+  },
+  "configFieldModel": {
+    "message": "模型"
+  },
+  "configFieldAPIBase": {
+    "message": "API 基础地址"
+  },
+  "configFieldAPIKey": {
+    "message": "API 密钥"
+  },
+  "configFieldEffort": {
+    "message": "推理强度"
+  },
+  "configFieldContextWindow": {
+    "message": "上下文窗口"
+  },
+  "configFieldMaxOutput": {
+    "message": "最大输出"
+  },
+  "configFieldLabels": {
+    "message": "标签"
+  },
+  "configFieldStream": {
+    "message": "流式输出"
+  },
+  "configFieldDisabled": {
+    "message": "已禁用"
+  },
+  "configFieldBearerAuth": {
+    "message": "Bearer 认证"
+  },
+  "configFieldEnabled": {
+    "message": "已启用"
+  },
+  "configFieldDefaultProvider": {
+    "message": "默认服务商"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "阶跃星辰输出格式"
+  },
+  "configFieldMaxTextLength": {
+    "message": "最大文本长度"
+  },
+  "configFieldBinaryPath": {
+    "message": "可执行文件路径"
+  },
+  "configFieldVoice": {
+    "message": "音色"
+  },
+  "configFieldSpeed": {
+    "message": "语速"
+  },
+  "configFieldLanguageCode": {
+    "message": "语言代码"
+  },
+  "configFieldAPIURL": {
+    "message": "API 地址"
+  },
+  "configFieldVolume": {
+    "message": "音量"
+  },
+  "configFieldInstruction": {
+    "message": "指令"
+  },
+  "configFieldSampleRate": {
+    "message": "采样率"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "Markdown 过滤"
+  },
+  "configFieldPronunciationMap": {
+    "message": "发音映射"
+  },
+  "configFieldToneReplacements": {
+    "message": "读音替换"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "Whisper 初始提示词"
+  },
+  "configFieldLanguage": {
+    "message": "语言"
+  },
+  "configFieldHotwords": {
+    "message": "热词"
+  },
+  "configFieldPrompt": {
+    "message": "提示词"
+  },
+  "configFieldEnableITN": {
+    "message": "启用逆文本规范化"
+  },
+  "configFieldPCMCodec": {
+    "message": "PCM 编码"
+  },
+  "configFieldPCMRate": {
+    "message": "PCM 采样率"
+  },
+  "configFieldPCMBits": {
+    "message": "PCM 位深"
+  },
+  "configFieldPCMChannels": {
+    "message": "PCM 声道"
+  },
+  "configFieldURL": {
+    "message": "地址"
+  },
+  "configFieldBearerToken": {
+    "message": "Bearer 令牌"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "音频大小上限（字节）"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "超时（秒）"
+  },
+  "configFieldID": {
+    "message": "ID"
+  },
+  "configFieldUserBinding": {
+    "message": "绑定用户"
+  },
+  "configFieldBotToken": {
+    "message": "机器人令牌"
+  },
+  "configFieldUsername": {
+    "message": "用户名"
+  },
+  "configFieldAllowedUsers": {
+    "message": "允许的用户"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "允许外部用户"
+  },
+  "configFieldMentionOnly": {
+    "message": "仅响应提及"
+  },
+  "configFieldACKReactions": {
+    "message": "接收确认回应"
+  },
+  "configFieldRouteTag": {
+    "message": "路由标记"
+  },
+  "configFieldGuildID": {
+    "message": "服务器 ID"
+  },
+  "configFieldListenToBots": {
+    "message": "接收机器人消息"
+  },
+  "configFieldAppID": {
+    "message": "应用 ID"
+  },
+  "configFieldAppSecret": {
+    "message": "应用密钥"
+  },
+  "configFieldVerificationToken": {
+    "message": "验证令牌"
+  },
+  "configFieldWebhookPort": {
+    "message": "Webhook 端口"
+  },
+  "configFieldPlatform": {
+    "message": "平台"
+  },
+  "configFieldReceiveMode": {
+    "message": "接收模式"
+  },
+  "showToolOutput": {
+    "message": "显示工具输出"
+  },
+  "hideToolOutput": {
+    "message": "隐藏工具输出"
+  },
+  "showThinkingTools": {
+    "message": "显示思考和工具"
+  },
+  "hideThinkingTools": {
+    "message": "隐藏思考和工具"
+  },
+  "saveAttachment": {
+    "message": "保存 $1"
+  },
+  "noDownloadData": {
+    "message": "没有可下载的内容"
+  },
+  "copyRichText": {
+    "message": "复制富文本"
+  },
+  "voicePermissionDismissed": {
+    "message": "麦克风授权已取消。"
+  },
+  "voicePermissionPending": {
+    "message": "尚未同意麦克风授权。"
+  },
+  "voicePermissionBlocked": {
+    "message": "麦克风访问被阻止。"
+  },
+  "voiceMicrophoneMissing": {
+    "message": "未找到麦克风。"
+  },
+  "voiceOffline": {
+    "message": "浏览器语音识别无法连接网络。"
+  },
+  "voiceUnavailable": {
+    "message": "所选语音服务不可用。"
+  },
+  "voiceInputUnavailable": {
+    "message": "此浏览器不支持语音输入。"
+  },
+  "voiceNoSpeech": {
+    "message": "未识别到语音。"
+  },
+  "voiceRecognitionFailed": {
+    "message": "浏览器语音识别失败。"
+  },
+  "copyMessage": {
+    "message": "复制消息"
+  },
+  "printMessage": {
+    "message": "打印消息"
+  },
+  "configConnectionChanged": {
+    "message": "连接设置已更改，请重新加载配置后再保存。"
   }
 }

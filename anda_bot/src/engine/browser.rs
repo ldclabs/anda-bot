@@ -900,7 +900,7 @@ fn browser_tool_parameters(kind: ChromeBrowserToolKind) -> Value {
                 },
                 "download_id": {
                     "type": ["integer", "null"],
-                    "description": "Browser download id for cancel_download or open_download."
+                    "description": "Browser download id for cancel_download or open_download. open_download reveals the file in its folder; opening the file requires the user to click it."
                 },
                 "amount": {
                     "type": ["integer", "null"],

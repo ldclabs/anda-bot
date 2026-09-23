@@ -8,7 +8,6 @@ const pageElementMemoryKey = '__andaLastRightClickedElement'
 const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 const pageElementListenerKey = '__andaPageElementContentScriptContextMenuListener'
 const maxTextChars = 200_000
-const maxOuterHtmlChars = 500_000
 const maxAttributeValueChars = 2_000
 const maxAttributes = 80
 
@@ -55,15 +54,16 @@ function eventTargetElement(event: MouseEvent): Element | null {
 
 function serializeElement(element: Element) {
   const htmlElement = element as HTMLElement
-  const rect = element.getBoundingClientRect()
+  const text = trimString(htmlElement.innerText || element.textContent || '', maxTextChars)
   return {
     tagName: element.tagName,
     id: element.id || null,
     className: stringValue((element as HTMLElement).className) || null,
     role: element.getAttribute('role'),
-    innerText: trimString(htmlElement.innerText || '', maxTextChars),
-    textContent: trimString(element.textContent || '', maxTextChars),
-    outerHTML: trimString(element.outerHTML || '', maxOuterHtmlChars),
+    innerText: text,
+    textContent: '',
+    // Kept for the capture wire shape; semantic attachments never use HTML.
+    outerHTML: '',
     attributes: elementAttributes(element),
     xpath: elementXPath(element),
     cssPath: elementCssPath(element),
@@ -71,16 +71,6 @@ function serializeElement(element: Element) {
     pageTitle: document.title || '',
     frameUrl: location.href,
     selectedText: trimString(getSelection()?.toString() || '', maxTextChars),
-    rect: {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      top: rect.top,
-      right: rect.right,
-      bottom: rect.bottom,
-      left: rect.left
-    },
     capturedAt: Date.now()
   }
 }

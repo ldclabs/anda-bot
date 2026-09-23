@@ -106,8 +106,10 @@ export async function openDownload(
 ): Promise<BrowserActionResult> {
   const downloads = requireDownloads(chromeApi)
   const downloadId = requirePositiveInteger(args.download_id, 'open_download requires download_id')
-  await downloads.open(downloadId)
-  return { opened: true, download_id: downloadId }
+  // downloads.open requires a user gesture; WebSocket commands have none.
+  if (!downloads.show) throw new Error('Showing downloads is unavailable')
+  await downloads.show(downloadId)
+  return { opened: false, shown_in_folder: true, download_id: downloadId }
 }
 
 export async function getCookies(

@@ -1,3 +1,8 @@
+import {
+  base64ToBytes as base64ToUint8Array,
+  bytesToBase64 as uint8ArrayToBase64
+} from '$lib/utils/base64'
+import { splitLegacyThoughtText } from './conversations'
 import { getMessage } from '$lib/i18n'
 import { getPlainText } from '$lib/utils/markdown'
 import type { Resource, VoiceRecordingInput } from './types'
@@ -52,10 +57,7 @@ export async function normalizeVoiceRecordingAudio(
   }
   if (!accepted.includes('wav')) {
     throw new Error(
-      getMessage('audioFormatNotSupported', [
-        sourceFormat,
-        accepted.join(', ') || 'none'
-      ])
+      getMessage('audioFormatNotSupported', [sourceFormat, accepted.join(', ') || 'none'])
     )
   }
 
@@ -183,9 +185,7 @@ async function audioBlobToWavBytes(blob: Blob): Promise<Uint8Array> {
     return audioBufferToWavBytes(audioBuffer)
   } catch (error) {
     throw new Error(
-      getMessage('wavConversionFailed', [
-        error instanceof Error ? error.message : String(error)
-      ])
+      getMessage('wavConversionFailed', [error instanceof Error ? error.message : String(error)])
     )
   } finally {
     await context.close().catch(() => undefined)
@@ -244,24 +244,6 @@ function audioBufferToWavBytes(audioBuffer: AudioBuffer): Uint8Array<ArrayBuffer
   }
 
   return bytes
-}
-
-function base64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
-}
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  const chunkSize = 0x8000
-  let binary = ''
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
-  }
-  return btoa(binary)
 }
 
 function fileExtension(fileName: string): string {
@@ -349,20 +331,7 @@ export function prepareVoiceTtsText(text: string): string {
 }
 
 export function normalTextForSpeech(text: string | undefined): string {
-  return text ? splitLegacyThoughtTextForSpeech(text).text.trim() : ''
-}
-
-function splitLegacyThoughtTextForSpeech(content: string): { text: string; thinkingText: string } {
-  const thinkingParts: string[] = []
-  const text = content
-    .replace(/<think(?:ing)?\b[^>]*>([\s\S]*?)<\/think(?:ing)?>/gi, (_match, thinking) => {
-      if (typeof thinking === 'string' && thinking.trim()) {
-        thinkingParts.push(thinking.trim())
-      }
-      return ''
-    })
-    .trim()
-  return { text, thinkingText: thinkingParts.join('\n\n').trim() }
+  return text ? splitLegacyThoughtText(text).text.trim() : ''
 }
 
 function normalizeVoiceTtsCharacter(character: string): string | null {

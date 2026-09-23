@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import type { Activity } from './memory/api'
+  import { memoryActivityLabel } from './memory/labels'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import type {
     ChatAction,
@@ -75,7 +76,7 @@
     Terminal,
     Wrench
   } from '@lucide/svelte'
-  import { onDestroy, onMount, tick } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
 
   let {
     message,
@@ -90,6 +91,9 @@
   } = $props()
 
   let copied = $state(false)
+  let articleElement: HTMLElement
+  let visible = $state(false)
+  let disposed = false
   let richCopied = $state(false)
   let detailsExpanded = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
@@ -130,9 +134,13 @@
   const externalUserContextLabel = $derived(
     [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
   )
-  const detailLabel = $derived(isTool ? 'tool output' : 'thinking and tools')
-  const [html, hook] = $derived.by(() => renderMarkdown(mainText))
-  const [thinkingHtml, thinkingHook] = $derived.by(() => renderMarkdown(thinkingText))
+  const detailToggleLabel = $derived(
+    isTool
+      ? getMessage(detailsExpanded ? 'hideToolOutput' : 'showToolOutput')
+      : getMessage(detailsExpanded ? 'hideThinkingTools' : 'showThinkingTools')
+  )
+  const html = $derived(renderMarkdown(mainText))
+  const thinkingHtml = $derived(detailsExpanded ? renderMarkdown(thinkingText) : '')
   const messageActionButtonClass = buttonClass(
     'ghost',
     'icon-xs',
@@ -249,12 +257,8 @@
     })
   }
 
-  async function toggleDetails() {
+  function toggleDetails() {
     setDetailsExpanded(!detailsExpanded)
-    if (detailsExpanded) {
-      await tick()
-      thinkingHook()
-    }
   }
 
   function setDetailsExpanded(expanded: boolean) {
@@ -347,14 +351,15 @@
 
   function attachmentSaveTitle(attachment: ChatAttachment): string {
     return attachmentHasDownloadData(attachment, caches)
-      ? `Save ${attachment.name}`
-      : 'No downloadable data'
+      ? getMessage('saveAttachment', attachment.name)
+      : getMessage('noDownloadData')
   }
 
   function ensureAttachmentObjectUrl(
     attachment: ChatAttachment,
     blob = attachmentResourceBlob(attachment, caches)
   ): string {
+    if (disposed) return ''
     const existingUrl = attachmentObjectUrl(attachment, caches)
     if (existingUrl || !blob) {
       return existingUrl
@@ -412,6 +417,7 @@
 
     try {
       const resource = await andaClient.loadResource(attachment.resource)
+      if (disposed) return ''
       const blob = resource?.blob?.trim() || ''
       if (blob) {
         resourceBlobs = new Map([...resourceBlobs, [id, blob]])
@@ -490,18 +496,25 @@
   }
 
   $effect(() => {
-    loadImageAttachmentResources()
+    if (visible) loadImageAttachmentResources()
   })
 
   onMount(() => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        visible = true
+        observer.disconnect()
+      }
+    })
+    observer.observe(articleElement)
     if (expandedDetailMessageIds.has(message.id)) {
       detailsExpanded = true
     }
-    hook()
-    thinkingHook()
+    return () => observer.disconnect()
   })
 
   onDestroy(() => {
+    disposed = true
     for (const url of resourceObjectUrls.values()) {
       URL.revokeObjectURL(url)
     }
@@ -509,6 +522,7 @@
 </script>
 
 <article
+  bind:this={articleElement}
   id={message.id}
   class="grid min-w-0 w-full gap-1 {isUser
     ? 'justify-items-end'
@@ -527,7 +541,7 @@
       onclick={toggleDetails}
     >
       <Wrench class="size-3" />
-      <span class="text-xs">{detailsExpanded ? `Hide ${detailLabel}` : `Show ${detailLabel}`}</span>
+      <span class="text-xs">{detailToggleLabel}</span>
     </button>
   {/if}
 
@@ -621,7 +635,7 @@
                     disabled={!attachmentHasDownloadData(attachment, caches) ||
                       downloadingAttachmentIds.has(attachment.id) ||
                       loadingResourceIds.has(attachmentResourceId(attachment))}
-                    aria-label={`Save ${attachment.name}`}
+                    aria-label={getMessage('saveAttachment', attachment.name)}
                     title={attachmentSaveTitle(attachment)}
                     onclick={() => saveAttachment(attachment)}
                   >
@@ -900,7 +914,7 @@
               >
                 <Wrench class="size-3 shrink-0" />
                 <span class="truncate text-xs">
-                  {detailsExpanded ? 'Hide thinking and tools' : 'Show thinking and tools'}
+                  {getMessage(detailsExpanded ? 'hideThinkingTools' : 'showThinkingTools')}
                 </span>
               </button>
             {/if}
@@ -928,8 +942,8 @@
         <button
           type="button"
           class={messageActionButtonClass}
-          aria-label="Copy message"
-          title="Copy message"
+          aria-label={getMessage('copyMessage')}
+          title={getMessage('copyMessage')}
           onclick={copyMessage}
         >
           {#if copied}
@@ -963,8 +977,8 @@
           <button
             type="button"
             class={messageActionButtonClass}
-            aria-label="Copy rich text"
-            title="Copy rich text"
+            aria-label={getMessage('copyRichText')}
+            title={getMessage('copyRichText')}
             onclick={copyRichMessage}
           >
             {#if richCopied}
@@ -978,8 +992,8 @@
           <button
             type="button"
             class={messageActionButtonClass}
-            aria-label="Print message"
-            title="Print message"
+            aria-label={getMessage('printMessage')}
+            title={getMessage('printMessage')}
             onclick={printMessage}
           >
             <Printer class="size-3.5" />
@@ -1008,7 +1022,7 @@
           class="px-1 text-[11px] text-muted-foreground"
           title={getMessage('memoryEvidenceHint')}
         >
-          {getMessage(`memoryState_${memoryActivity.state}`)}{memoryActivity.stale
+          {memoryActivityLabel(memoryActivity.state)}{memoryActivity.stale
             ? ` · ${getMessage('memoryStale')}`
             : ''}
         </span>

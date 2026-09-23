@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "Détails de connexion"
   },
-  "savedConnection": {
-    "message": "Enregistré"
-  },
   "tokenPlaceholder": {
     "message": "Collez le Bearer token affiché par `anda browser token --days 365`"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "Synchronisation"
-  },
-  "noActiveTab": {
-    "message": "Aucun onglet actif"
   },
   "attachFiles": {
     "message": "Joindre des fichiers"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "La conversation a échoué, mais aucune raison d'échec n'a été renvoyée."
-  },
-  "rpcError": {
-    "message": "l'outil a renvoyé une réponse RPC inconnue"
   },
   "extensionError": {
     "message": "le service worker de l'extension a renvoyé une erreur"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "Favoris"
-  },
-  "bookmarksDescription": {
-    "message": "Vos messages d’assistant enregistrés. Cliquez pour y revenir."
   },
   "bookmarksEmpty": {
     "message": "Aucun favori pour l’instant"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "La modification n’a pas pu être appliquée. Abandonnez cet aperçu et vérifiez-en un nouveau."
+  },
+  "configFieldGatewayAddress": {
+    "message": "Adresse de la passerelle"
+  },
+  "configFieldLogLevel": {
+    "message": "Niveau de journalisation"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "Proxy HTTPS"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "Espaces de travail supplémentaires"
+  },
+  "configFieldUserId": {
+    "message": "Identifiant utilisateur"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "Clé publique Ed25519"
+  },
+  "configFieldFamily": {
+    "message": "Famille de modèles"
+  },
+  "configFieldModel": {
+    "message": "Modèle"
+  },
+  "configFieldAPIBase": {
+    "message": "Adresse de base de l’API"
+  },
+  "configFieldAPIKey": {
+    "message": "Clé API"
+  },
+  "configFieldEffort": {
+    "message": "Effort de raisonnement"
+  },
+  "configFieldContextWindow": {
+    "message": "Fenêtre de contexte"
+  },
+  "configFieldMaxOutput": {
+    "message": "Sortie maximale"
+  },
+  "configFieldLabels": {
+    "message": "Étiquettes"
+  },
+  "configFieldStream": {
+    "message": "Réponse en continu"
+  },
+  "configFieldDisabled": {
+    "message": "Désactivé"
+  },
+  "configFieldBearerAuth": {
+    "message": "Authentification Bearer"
+  },
+  "configFieldEnabled": {
+    "message": "Activé"
+  },
+  "configFieldDefaultProvider": {
+    "message": "Fournisseur par défaut"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "Format de sortie StepFun"
+  },
+  "configFieldMaxTextLength": {
+    "message": "Longueur maximale du texte"
+  },
+  "configFieldBinaryPath": {
+    "message": "Chemin de l’exécutable"
+  },
+  "configFieldVoice": {
+    "message": "Voix"
+  },
+  "configFieldSpeed": {
+    "message": "Vitesse"
+  },
+  "configFieldLanguageCode": {
+    "message": "Code de langue"
+  },
+  "configFieldAPIURL": {
+    "message": "URL de l’API"
+  },
+  "configFieldVolume": {
+    "message": "Volume"
+  },
+  "configFieldInstruction": {
+    "message": "Instruction"
+  },
+  "configFieldSampleRate": {
+    "message": "Fréquence d’échantillonnage"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "Filtre Markdown"
+  },
+  "configFieldPronunciationMap": {
+    "message": "Table de prononciation"
+  },
+  "configFieldToneReplacements": {
+    "message": "Substitutions de prononciation"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "Consigne initiale Whisper"
+  },
+  "configFieldLanguage": {
+    "message": "Langue"
+  },
+  "configFieldHotwords": {
+    "message": "Mots-clés"
+  },
+  "configFieldPrompt": {
+    "message": "Consigne"
+  },
+  "configFieldEnableITN": {
+    "message": "Activer la normalisation inverse"
+  },
+  "configFieldPCMCodec": {
+    "message": "Codec PCM"
+  },
+  "configFieldPCMRate": {
+    "message": "Fréquence PCM"
+  },
+  "configFieldPCMBits": {
+    "message": "Profondeur PCM"
+  },
+  "configFieldPCMChannels": {
+    "message": "Canaux PCM"
+  },
+  "configFieldURL": {
+    "message": "URL"
+  },
+  "configFieldBearerToken": {
+    "message": "Jeton Bearer"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "Taille audio maximale (octets)"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "Délai maximal (secondes)"
+  },
+  "configFieldID": {
+    "message": "ID"
+  },
+  "configFieldUserBinding": {
+    "message": "Utilisateur associé"
+  },
+  "configFieldBotToken": {
+    "message": "Jeton du bot"
+  },
+  "configFieldUsername": {
+    "message": "Nom d’utilisateur"
+  },
+  "configFieldAllowedUsers": {
+    "message": "Utilisateurs autorisés"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "Autoriser les utilisateurs externes"
+  },
+  "configFieldMentionOnly": {
+    "message": "Répondre aux mentions uniquement"
+  },
+  "configFieldACKReactions": {
+    "message": "Réactions de réception"
+  },
+  "configFieldRouteTag": {
+    "message": "Étiquette de routage"
+  },
+  "configFieldGuildID": {
+    "message": "ID du serveur"
+  },
+  "configFieldListenToBots": {
+    "message": "Écouter les bots"
+  },
+  "configFieldAppID": {
+    "message": "ID de l’application"
+  },
+  "configFieldAppSecret": {
+    "message": "Secret de l’application"
+  },
+  "configFieldVerificationToken": {
+    "message": "Jeton de vérification"
+  },
+  "configFieldWebhookPort": {
+    "message": "Port du webhook"
+  },
+  "configFieldPlatform": {
+    "message": "Plateforme"
+  },
+  "configFieldReceiveMode": {
+    "message": "Mode de réception"
+  },
+  "showToolOutput": {
+    "message": "Afficher la sortie de l’outil"
+  },
+  "hideToolOutput": {
+    "message": "Masquer la sortie de l’outil"
+  },
+  "showThinkingTools": {
+    "message": "Afficher le raisonnement et les outils"
+  },
+  "hideThinkingTools": {
+    "message": "Masquer le raisonnement et les outils"
+  },
+  "saveAttachment": {
+    "message": "Enregistrer $1"
+  },
+  "noDownloadData": {
+    "message": "Aucune donnée téléchargeable"
+  },
+  "copyRichText": {
+    "message": "Copier le texte enrichi"
+  },
+  "voicePermissionDismissed": {
+    "message": "L’autorisation du microphone a été ignorée."
+  },
+  "voicePermissionPending": {
+    "message": "L’autorisation du microphone n’a pas été acceptée."
+  },
+  "voicePermissionBlocked": {
+    "message": "L’accès au microphone est bloqué."
+  },
+  "voiceMicrophoneMissing": {
+    "message": "Aucun microphone détecté."
+  },
+  "voiceOffline": {
+    "message": "La reconnaissance vocale du navigateur est hors ligne."
+  },
+  "voiceUnavailable": {
+    "message": "Le service vocal sélectionné est indisponible."
+  },
+  "voiceInputUnavailable": {
+    "message": "La saisie vocale est indisponible dans ce navigateur."
+  },
+  "voiceNoSpeech": {
+    "message": "Aucune parole reconnue."
+  },
+  "voiceRecognitionFailed": {
+    "message": "La reconnaissance vocale du navigateur a échoué."
+  },
+  "copyMessage": {
+    "message": "Copier le message"
+  },
+  "printMessage": {
+    "message": "Imprimer le message"
+  },
+  "configConnectionChanged": {
+    "message": "La connexion a changé. Rechargez la configuration avant de l’enregistrer."
   }
 }

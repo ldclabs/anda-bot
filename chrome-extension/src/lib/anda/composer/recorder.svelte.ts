@@ -91,6 +91,9 @@ export interface VoiceRecorderOptions {
  * than rejecting, so a view can call these verbs without a try/catch.
  */
 export class VoiceRecorder {
+  #generation = 0
+  #starting = false
+  #permissionDenied = false
   #options: VoiceRecorderOptions
   #platform: VoicePlatform
 
@@ -139,34 +142,46 @@ export class VoiceRecorder {
   }
 
   async start(): Promise<void> {
-    this.transcript = ''
-    const { chromeSpeech, andaVoice } = this.#available()
+    if (this.stage !== 'idle' || this.#starting) return
+    this.#starting = true
+    const generation = ++this.#generation
+    try {
+      this.transcript = ''
+      const { chromeSpeech, andaVoice } = this.#available()
 
-    if (this.provider === 'chrome' && chromeSpeech) {
-      if (await this.#startSpeech()) {
+      if (this.provider === 'chrome' && chromeSpeech) {
+        if (await this.#startSpeech()) {
+          return
+        }
+        if (generation !== this.#generation) return
+        const speechError = this.error
+        if (andaVoice) {
+          this.provider = 'anda'
+          this.error = ''
+          await this.#startAndaCapture()
+          return
+        }
+        this.error = chromeSpeechErrorMessage(speechError)
         return
       }
-      const speechError = this.error
+
       if (andaVoice) {
         this.provider = 'anda'
-        this.error = ''
         await this.#startAndaCapture()
         return
       }
-      this.error = chromeSpeechErrorMessage(speechError)
-      return
+      this.error = getMessage('voiceUnavailable') || 'Selected voice service is unavailable.'
+    } finally {
+      if (generation === this.#generation) this.#starting = false
     }
-
-    if (andaVoice) {
-      this.provider = 'anda'
-      await this.#startAndaCapture()
-      return
-    }
-    this.error = 'Selected voice service is unavailable.'
   }
 
   /** Ends the recording and delivers the turn. */
   async stop(): Promise<void> {
+    if (this.#starting) {
+      await this.cancel()
+      return
+    }
     if (this.#speechMode === 'page') {
       await this.#finishPageSpeech()
       return
@@ -191,6 +206,8 @@ export class VoiceRecorder {
 
   /** Abandons the recording without sending anything. */
   async cancel(): Promise<void> {
+    this.#generation++
+    this.#starting = false
     this.#discardRecognition = true
     this.#discardRecording = true
     this.#stopRequested = false
@@ -208,6 +225,8 @@ export class VoiceRecorder {
     if (this.#speechRecognition) {
       const recognition = this.#speechRecognition
       recognition.onend = null
+      recognition.onresult = null
+      recognition.onerror = null
       try {
         recognition.abort?.()
       } catch (_error) {
@@ -249,6 +268,7 @@ export class VoiceRecorder {
   }
 
   async #startPageSpeech(page: PageCaptureBridge): Promise<boolean> {
+    const generation = this.#generation
     this.#resetSpeechState()
     this.#speechMode = 'page'
     this.stage = 'recording'
@@ -257,6 +277,7 @@ export class VoiceRecorder {
       await page.startSpeech?.(this.#platform.language())
       return true
     } catch (error) {
+      if (generation !== this.#generation) return true
       this.#speechMode = null
       this.#cleanup()
       this.stage = 'idle'
@@ -269,7 +290,8 @@ export class VoiceRecorder {
   #startLocalSpeech(): boolean {
     const recognition = this.#platform.createSpeechRecognition()
     if (!recognition) {
-      this.error = 'Browser speech recognition is unavailable.'
+      this.error =
+        getMessage('voiceInputUnavailable') || 'Browser speech recognition is unavailable.'
       return false
     }
 
@@ -297,13 +319,14 @@ export class VoiceRecorder {
   }
 
   async #startAndaCapture(): Promise<void> {
+    const generation = this.#generation
     const page = this.#options.page?.()
     if (page?.startAudio && page.stopAudio) {
       if (await this.#startPageAudio(page)) {
         return
       }
       // A denied microphone will only be denied again locally.
-      if (isPermissionError(this.error)) {
+      if (generation !== this.#generation || this.#permissionDenied) {
         return
       }
     }
@@ -311,6 +334,8 @@ export class VoiceRecorder {
   }
 
   async #startPageAudio(page: PageCaptureBridge): Promise<boolean> {
+    const generation = this.#generation
+    this.#permissionDenied = false
     this.error = ''
     this.transcript = ''
     this.#discardRecording = false
@@ -323,26 +348,36 @@ export class VoiceRecorder {
       )
       return true
     } catch (error) {
+      if (generation !== this.#generation) return true
       this.#audioMode = null
       this.#cleanup()
       this.stage = 'idle'
       this.level = 0
+      this.#permissionDenied = isPermissionError(errorText(error))
       this.error = audioCaptureErrorMessage(errorText(error))
       return false
     }
   }
 
   async #startLocalAudio(): Promise<void> {
+    const generation = this.#generation
     const pending = this.#platform.startRecording(this.#options.capabilities().transcription)
     if (!pending) {
-      this.error = 'Voice input is unavailable in this browser.'
+      this.error =
+        getMessage('voiceInputUnavailable') || 'Voice input is unavailable in this browser.'
       return
     }
     this.error = ''
     this.#discardRecording = false
     this.#audioMode = 'local'
     try {
-      this.#recording = await pending
+      const recording = await pending
+      if (generation !== this.#generation) {
+        recording.stop()
+        recording.dispose()
+        return
+      }
+      this.#recording = recording
       // A failed Chrome-speech attempt may have left the synthetic pulse running.
       this.#stopMeter?.()
       this.#stopMeter = this.#platform.meter(this.#recording, (level) => {
@@ -350,6 +385,7 @@ export class VoiceRecorder {
       })
       this.stage = 'recording'
     } catch (error) {
+      if (generation !== this.#generation) return
       this.#cleanup()
       this.stage = 'idle'
       this.error = audioCaptureErrorMessage(errorText(error))
@@ -404,6 +440,7 @@ export class VoiceRecorder {
   }
 
   async #finishPageSpeech(): Promise<void> {
+    const generation = this.#generation
     const page = this.#options.page?.()
     if (!page?.stopSpeech) {
       this.#failNotConnected()
@@ -413,14 +450,16 @@ export class VoiceRecorder {
     this.stage = 'processing'
     try {
       const transcript = (await page.stopSpeech()).trim()
+      if (generation !== this.#generation) return
       this.#finalTranscript = transcript
       this.transcript = transcript
       await this.#finishSpeech()
     } catch (error) {
+      if (generation !== this.#generation) return
       this.#speechMode = null
       this.#cleanup()
       this.level = 0
-      this.error = errorText(error)
+      this.error = chromeSpeechErrorMessage(errorText(error))
       this.stage = 'idle'
     }
   }
@@ -444,7 +483,7 @@ export class VoiceRecorder {
       return
     }
     if (!transcript) {
-      this.error = 'No speech was recognized.'
+      this.error = getMessage('voiceNoSpeech') || 'No speech was recognized.'
       this.stage = 'idle'
       return
     }
@@ -456,6 +495,7 @@ export class VoiceRecorder {
   }
 
   async #finishPageAudio(): Promise<void> {
+    const generation = this.#generation
     const page = this.#options.page?.()
     if (!page?.stopAudio) {
       this.#failNotConnected()
@@ -466,11 +506,14 @@ export class VoiceRecorder {
     try {
       result = await page.stopAudio()
     } catch (error) {
-      this.error = audioCaptureErrorMessage(errorText(error))
+      if (generation === this.#generation) this.error = audioCaptureErrorMessage(errorText(error))
     } finally {
-      this.#cleanup()
-      this.level = 0
+      if (generation === this.#generation) {
+        this.#cleanup()
+        this.level = 0
+      }
     }
+    if (generation !== this.#generation) return
 
     if (this.#discardRecording) {
       this.#discardRecording = false
@@ -497,15 +540,19 @@ export class VoiceRecorder {
   }
 
   async #finishLocalRecording(recording: LocalRecording): Promise<void> {
+    const generation = this.#generation
     let blob: Blob | null = null
     try {
       blob = await recording.blob
     } catch (error) {
-      this.error = audioCaptureErrorMessage(errorText(error))
+      if (generation === this.#generation) this.error = audioCaptureErrorMessage(errorText(error))
     } finally {
-      this.#cleanup()
-      this.level = 0
+      if (generation === this.#generation) {
+        this.#cleanup()
+        this.level = 0
+      }
     }
+    if (generation !== this.#generation) return
 
     if (this.#discardRecording) {
       this.#discardRecording = false
@@ -519,9 +566,11 @@ export class VoiceRecorder {
       this.stage = 'idle'
       return
     }
+    const audioBase64 = await this.#platform.toBase64(blob)
+    if (generation !== this.#generation) return
     await this.#deliver({
       voiceProvider: this.provider,
-      audioBase64: await this.#platform.toBase64(blob),
+      audioBase64,
       fileName: this.#audioFileName(recording.mimeType),
       mimeType: recording.mimeType,
       size: blob.size,
@@ -530,14 +579,15 @@ export class VoiceRecorder {
   }
 
   async #deliver(input: VoiceRecordingInput): Promise<void> {
+    const generation = this.#generation
     try {
       this.stage = 'processing'
       await this.#options.send(input)
-      this.error = ''
+      if (generation === this.#generation) this.error = ''
     } catch (error) {
-      this.error = errorText(error)
+      if (generation === this.#generation) this.error = errorText(error)
     } finally {
-      this.stage = 'idle'
+      if (generation === this.#generation) this.stage = 'idle'
     }
   }
 
@@ -600,32 +650,40 @@ export function browserVoicePlatform(): VoicePlatform {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
         })
-        const preferred = preferredRecordingMimeType(acceptedFormats)
-        const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined)
-        const chunks: Blob[] = []
-        recorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            chunks.push(event.data)
-          }
-        }
-        const mimeType = recorder.mimeType || preferred || 'audio/webm'
-        const blob = new Promise<Blob>((resolve) => {
-          recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }))
-        })
-        recorder.start()
-        return {
-          blob,
-          mimeType,
-          stream,
-          stop: () => {
-            if (recorder.state === 'recording') {
-              recorder.stop()
+        try {
+          const preferred = preferredRecordingMimeType(acceptedFormats)
+          const recorder = new MediaRecorder(
+            stream,
+            preferred ? { mimeType: preferred } : undefined
+          )
+          const chunks: Blob[] = []
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              chunks.push(event.data)
             }
-          },
-          dispose: () => {
-            stream.getTracks().forEach((track) => track.stop())
           }
-        } satisfies LocalRecording & { stream: MediaStream }
+          const mimeType = recorder.mimeType || preferred || 'audio/webm'
+          const blob = new Promise<Blob>((resolve) => {
+            recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }))
+          })
+          recorder.start()
+          return {
+            blob,
+            mimeType,
+            stream,
+            stop: () => {
+              if (recorder.state === 'recording') {
+                recorder.stop()
+              }
+            },
+            dispose: () => {
+              stream.getTracks().forEach((track) => track.stop())
+            }
+          } satisfies LocalRecording & { stream: MediaStream }
+        } catch (error) {
+          stream.getTracks().forEach((track) => track.stop())
+          throw error
+        }
       })()
     },
 

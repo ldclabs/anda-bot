@@ -14,6 +14,7 @@ import {
   errorToMessage,
   loadSettings,
   normalizeSettings,
+  settingsKeys,
   websocketUrl
 } from '$lib/service-worker/settings'
 import { chromeTtsAvailable, speakWithChromeTts } from '$lib/service-worker/tts'
@@ -59,13 +60,22 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null
 let nextMessageId = 1
 let status = 'starting'
+let settingsLoadEpoch = 0
+let openTimeout: ReturnType<typeof setTimeout> | null = null
+const settingsReady = loadSettings(chromeApi).then((settings) => {
+  currentSettings = settings
+})
 const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let browserActionQueue: Promise<void> = Promise.resolve()
 
 void initI18n()
 chromeApi.storage?.onChanged?.addListener?.((changes, areaName) => {
-  if (areaName === 'local' && changes[uiLanguageStorageKey]) {
+  if (areaName !== 'local') return
+  if (settingsKeys.some((key) => key in changes)) {
+    void settingsReady.then(() => loadSettingsAndConnect())
+  }
+  if (changes[uiLanguageStorageKey]) {
     void applyUiLanguage(changes[uiLanguageStorageKey].newValue)
   }
 })
@@ -147,8 +157,19 @@ chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 loadSettingsAndConnect()
 
 async function handleExtensionMessage(message: ExtensionMessage): Promise<ExtensionResponse> {
-  if (message.settings) {
-    currentSettings = normalizeSettings(message.settings)
+  await settingsReady
+  // Only persisted changes may replace the profile connection. An old page's
+  // RPC must not switch the worker back to a stale token or daemon.
+  if (message.type === 'anda_settings_changed') {
+    await loadSettingsAndConnect()
+    return { ok: true, status }
+  }
+  if (
+    (message.type === 'anda_rpc' || message.type === 'anda_register') &&
+    message.settings &&
+    connectionKey(normalizeSettings(message.settings)) !== connectionKey(currentSettings)
+  ) {
+    throw new Error('Connection settings changed; retry after refreshing settings')
   }
 
   switch (message.type) {
@@ -158,17 +179,6 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
       }
       const result = await sendRpc(message.method, message.params || [], currentSettings)
       return { ok: true, result, status }
-    }
-    case 'anda_settings_changed': {
-      await chromeApi.storage.local.set(currentSettings)
-      if (currentSettings.token) {
-        await ensureSocket(currentSettings)
-        await registerBrowserSession(currentSettings)
-      } else {
-        closeSocket('missing bearer token')
-        status = 'ready'
-      }
-      return { ok: true, status }
     }
     case 'anda_register': {
       const session = await registerBrowserSession(currentSettings)
@@ -236,8 +246,15 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
 }
 
 async function loadSettingsAndConnect(): Promise<void> {
-  currentSettings = await loadSettings(chromeApi)
+  await settingsReady
+  const epoch = ++settingsLoadEpoch
+  const settings = await loadSettings(chromeApi)
+  if (epoch !== settingsLoadEpoch) return
+  if (connectionKey(settings) !== connectionKey(currentSettings))
+    closeSocket('Connection settings changed')
+  currentSettings = settings
   if (!currentSettings.token) {
+    closeSocket('missing bearer token')
     status = 'ready'
     return
   }
@@ -631,6 +648,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
   }
 
   const key = connectionKey(normalized)
+  if (key !== connectionKey(currentSettings)) throw new Error('Connection settings changed')
   if (socket && socket.readyState === WebSocket.OPEN && socketKey === key) {
     status = 'connected'
     return
@@ -658,13 +676,13 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
     }
     openingReject = fail
 
-    const openTimeout = setTimeout(() => {
+    openTimeout = setTimeout(() => {
       fail(new Error('WebSocket connection timed out'))
       ws.close()
     }, 15_000)
 
     ws.onopen = () => {
-      clearTimeout(openTimeout)
+      if (openTimeout) clearTimeout(openTimeout)
       settled = true
       openingReject = null
       opening = null
@@ -675,7 +693,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
     }
 
     ws.onmessage = (event) => {
-      handleSocketMessage(event.data).catch((error) => {
+      handleSocketMessage(event.data, ws).catch((error) => {
         console.warn('Anda WebSocket message failed', error)
       })
     }
@@ -685,7 +703,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
     }
 
     ws.onclose = () => {
-      clearTimeout(openTimeout)
+      if (openTimeout) clearTimeout(openTimeout)
       if (socket === ws) {
         socket = null
         opening = null
@@ -702,6 +720,8 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
 }
 
 function closeSocket(reason: string): void {
+  if (openTimeout) clearTimeout(openTimeout)
+  openTimeout = null
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
@@ -725,7 +745,11 @@ function closeSocket(reason: string): void {
 }
 
 function scheduleReconnect(settings: SettingsState): void {
-  if (!settings.token || reconnectTimer) {
+  if (
+    !settings.token ||
+    reconnectTimer ||
+    connectionKey(settings) !== connectionKey(currentSettings)
+  ) {
     return
   }
   reconnectTimer = setTimeout(() => {
@@ -789,14 +813,14 @@ function rejectPending(reason: string): void {
   }
 }
 
-async function handleSocketMessage(data: unknown): Promise<void> {
-  if (typeof data !== 'string') {
+async function handleSocketMessage(data: unknown, origin: WebSocket): Promise<void> {
+  if (origin !== socket || typeof data !== 'string') {
     return
   }
 
   const message = JSON.parse(data) as RpcResponseMessage
   if (message.method === 'browser_action') {
-    await queueBrowserActionRequest(message)
+    await queueBrowserActionRequest(message, origin)
     return
   }
 
@@ -818,10 +842,10 @@ async function handleSocketMessage(data: unknown): Promise<void> {
   }
 }
 
-function queueBrowserActionRequest(message: RpcResponseMessage): Promise<void> {
+function queueBrowserActionRequest(message: RpcResponseMessage, origin: WebSocket): Promise<void> {
   const run = browserActionQueue
     .catch(() => undefined)
-    .then(() => handleBrowserActionRequest(message))
+    .then(() => (origin === socket ? handleBrowserActionRequest(message, origin) : undefined))
   browserActionQueue = run.then(
     () => undefined,
     () => undefined
@@ -829,7 +853,10 @@ function queueBrowserActionRequest(message: RpcResponseMessage): Promise<void> {
   return run
 }
 
-async function handleBrowserActionRequest(message: RpcResponseMessage): Promise<void> {
+async function handleBrowserActionRequest(
+  message: RpcResponseMessage,
+  origin: WebSocket
+): Promise<void> {
   const command = message.params as BrowserCommand
   const id = typeof message.id === 'number' ? message.id : command.request_id
   let result: Record<string, unknown>
@@ -847,8 +874,8 @@ async function handleBrowserActionRequest(message: RpcResponseMessage): Promise<
     }
   }
 
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(
+  if (origin === socket && origin.readyState === WebSocket.OPEN) {
+    origin.send(
       JSON.stringify({
         id,
         session: command.session,

@@ -195,6 +195,9 @@ function createWebNavigationWaiter(
     resolveWait = resolve
     rejectWait = reject
   })
+  // The action can still be running when a navigation fails; attach a handler
+  // now, while preserving the rejection for wait().
+  void wait.catch(() => undefined)
 
   const cleanup = () => {
     if (done) {
@@ -261,7 +264,7 @@ function createWebNavigationWaiter(
   }
 
   const record = (details: ChromeWebNavigationDetails, event: NavigationEventName) => {
-    if (!matchesNavigation(details, tabId, frameId, expectedUrl)) {
+    if (!matchesNavigation(details, tabId, frameId)) {
       return false
     }
     lastDetails = details
@@ -303,7 +306,7 @@ function createWebNavigationWaiter(
     maybeFinish(details, 'completed')
   }
   const onErrorOccurred = (details: ChromeWebNavigationDetails) => {
-    if (!matchesNavigation(details, tabId, frameId, expectedUrl)) {
+    if (!matchesNavigation(details, tabId, frameId)) {
       return
     }
     fail(
@@ -338,7 +341,11 @@ function createWebNavigationWaiter(
       if (current) {
         lastTab = current
       }
-      const currentMatches = urlMatchesExpected(current?.url || '', expectedUrl)
+      const currentMatches =
+        sawLoading ||
+        sawCommitted ||
+        args.action === 'open_tab' ||
+        urlMatchesExpected(current?.url || '', expectedUrl)
       if (
         options.allowAlreadyComplete &&
         currentMatches &&
@@ -405,6 +412,9 @@ function createTabsLoadWatcher(
     resolveWait = resolve
     rejectWait = reject
   })
+  // The action can still be running when a navigation fails; attach a handler
+  // now, while preserving the rejection for wait().
+  void wait.catch(() => undefined)
 
   const cleanup = () => {
     if (done) {

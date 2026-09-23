@@ -1,3 +1,4 @@
+import { getMessage } from '$lib/i18n'
 import { Document, isMap, isNode, isScalar, isSeq, parseDocument } from 'yaml'
 import type { Pair, YAMLMap, YAMLSeq } from 'yaml'
 import type { Json } from './api'
@@ -24,186 +25,427 @@ export interface FieldSchema {
 }
 
 export const runtimeFields: FieldSchema[] = [
-  { key: 'addr', label: 'Gateway address', kind: 'text', placeholder: '127.0.0.1:8042' },
+  {
+    key: 'addr',
+    label: getMessage('configFieldGatewayAddress') || 'Gateway address',
+    kind: 'text',
+    placeholder: '127.0.0.1:8042'
+  },
   {
     key: 'log_level',
-    label: 'Log level',
+    label: getMessage('configFieldLogLevel') || 'Log level',
     kind: 'select',
     options: ['error', 'warn', 'info', 'debug']
   },
-  { key: 'https_proxy', label: 'HTTPS proxy', kind: 'text', nullable: true },
-  { key: 'workspaces', label: 'Extra workspaces', kind: 'string-list' }
+  {
+    key: 'https_proxy',
+    label: getMessage('configFieldHTTPSProxy') || 'HTTPS proxy',
+    kind: 'text',
+    nullable: true
+  },
+  {
+    key: 'workspaces',
+    label: getMessage('configFieldExtraWorkspaces') || 'Extra workspaces',
+    kind: 'string-list'
+  }
 ]
 
 export const userFields: FieldSchema[] = [
-  { key: 'id', label: 'User id', kind: 'text', nullable: true },
-  { key: 'pubkey', label: 'Ed25519 public key', kind: 'secret' }
+  { key: 'id', label: getMessage('configFieldUserId') || 'User id', kind: 'text', nullable: true },
+  {
+    key: 'pubkey',
+    label: getMessage('configFieldEd25519PublicKey') || 'Ed25519 public key',
+    kind: 'secret'
+  }
 ]
 
 export const modelProviderFields: FieldSchema[] = [
-  { key: 'family', label: 'Family', kind: 'select', options: ['anthropic', 'openai', 'gemini'] },
-  { key: 'model', label: 'Model', kind: 'text' },
-  { key: 'api_base', label: 'API base', kind: 'text' },
-  { key: 'api_key', label: 'API key', kind: 'secret' },
-  { key: 'effort', label: 'Effort', kind: 'select', options: ['minimal', 'low', 'medium', 'high'] },
-  { key: 'context_window', label: 'Context window', kind: 'number' },
-  { key: 'max_output', label: 'Max output', kind: 'number' },
-  { key: 'labels', label: 'Labels', kind: 'string-list' },
-  { key: 'stream', label: 'Stream', kind: 'boolean' },
-  { key: 'disabled', label: 'Disabled', kind: 'boolean' },
-  { key: 'bearer_auth', label: 'Bearer auth', kind: 'boolean' }
+  {
+    key: 'family',
+    label: getMessage('configFieldFamily') || 'Family',
+    kind: 'select',
+    options: ['anthropic', 'openai', 'gemini']
+  },
+  { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
+  { key: 'api_base', label: getMessage('configFieldAPIBase') || 'API base', kind: 'text' },
+  { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+  {
+    key: 'effort',
+    label: getMessage('configFieldEffort') || 'Effort',
+    kind: 'select',
+    options: ['minimal', 'low', 'medium', 'high']
+  },
+  {
+    key: 'context_window',
+    label: getMessage('configFieldContextWindow') || 'Context window',
+    kind: 'number'
+  },
+  { key: 'max_output', label: getMessage('configFieldMaxOutput') || 'Max output', kind: 'number' },
+  { key: 'labels', label: getMessage('configFieldLabels') || 'Labels', kind: 'string-list' },
+  { key: 'stream', label: getMessage('configFieldStream') || 'Stream', kind: 'boolean' },
+  { key: 'disabled', label: getMessage('configFieldDisabled') || 'Disabled', kind: 'boolean' },
+  {
+    key: 'bearer_auth',
+    label: getMessage('configFieldBearerAuth') || 'Bearer auth',
+    kind: 'boolean'
+  }
 ]
 
 export const ttsFields: FieldSchema[] = [
-  { key: 'enabled', label: 'Enabled', kind: 'boolean' },
+  { key: 'enabled', label: getMessage('configFieldEnabled') || 'Enabled', kind: 'boolean' },
   {
     key: 'default_provider',
-    label: 'Default provider',
+    label: getMessage('configFieldDefaultProvider') || 'Default provider',
     kind: 'select',
     options: ['edge', 'openai', 'google', 'stepfun']
   },
   {
     key: 'default_format',
-    label: 'StepFun output format',
+    label: getMessage('configFieldStepFunOutputFormat') || 'StepFun output format',
     kind: 'select',
     options: ['mp3', 'opus', 'wav', 'flac', 'pcm']
   },
-  { key: 'max_text_length', label: 'Max text length', kind: 'number' }
+  {
+    key: 'max_text_length',
+    label: getMessage('configFieldMaxTextLength') || 'Max text length',
+    kind: 'number'
+  }
 ]
 
 export const ttsProviderSchemas: Record<string, FieldSchema[]> = {
   edge: [
-    { key: 'binary_path', label: 'Binary path', kind: 'text' },
-    { key: 'voice', label: 'Voice', kind: 'text' }
+    {
+      key: 'binary_path',
+      label: getMessage('configFieldBinaryPath') || 'Binary path',
+      kind: 'text'
+    },
+    { key: 'voice', label: getMessage('configFieldVoice') || 'Voice', kind: 'text' }
   ],
   openai: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'model', label: 'Model', kind: 'text' },
-    { key: 'speed', label: 'Speed', kind: 'number' },
-    { key: 'voice', label: 'Voice', kind: 'text' }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
+    { key: 'speed', label: getMessage('configFieldSpeed') || 'Speed', kind: 'number' },
+    { key: 'voice', label: getMessage('configFieldVoice') || 'Voice', kind: 'text' }
   ],
   google: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'language_code', label: 'Language code', kind: 'text' },
-    { key: 'voice', label: 'Voice', kind: 'text' }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    {
+      key: 'language_code',
+      label: getMessage('configFieldLanguageCode') || 'Language code',
+      kind: 'text'
+    },
+    { key: 'voice', label: getMessage('configFieldVoice') || 'Voice', kind: 'text' }
   ],
   stepfun: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'api_url', label: 'API URL', kind: 'text' },
-    { key: 'model', label: 'Model', kind: 'text' },
-    { key: 'voice', label: 'Voice', kind: 'text' },
-    { key: 'speed', label: 'Speed', kind: 'number' },
-    { key: 'volume', label: 'Volume', kind: 'number' },
-    { key: 'instruction', label: 'Instruction', kind: 'text', nullable: true },
-    { key: 'sample_rate', label: 'Sample rate', kind: 'number' },
-    { key: 'markdown_filter', label: 'Markdown filter', kind: 'boolean', nullable: true },
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    { key: 'api_url', label: getMessage('configFieldAPIURL') || 'API URL', kind: 'text' },
+    { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
+    { key: 'voice', label: getMessage('configFieldVoice') || 'Voice', kind: 'text' },
+    { key: 'speed', label: getMessage('configFieldSpeed') || 'Speed', kind: 'number' },
+    { key: 'volume', label: getMessage('configFieldVolume') || 'Volume', kind: 'number' },
+    {
+      key: 'instruction',
+      label: getMessage('configFieldInstruction') || 'Instruction',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'sample_rate',
+      label: getMessage('configFieldSampleRate') || 'Sample rate',
+      kind: 'number'
+    },
+    {
+      key: 'markdown_filter',
+      label: getMessage('configFieldMarkdownFilter') || 'Markdown filter',
+      kind: 'boolean',
+      nullable: true
+    },
     {
       key: 'pronunciation_map',
-      label: 'Pronunciation map',
+      label: getMessage('configFieldPronunciationMap') || 'Pronunciation map',
       kind: 'object',
-      fields: [{ key: 'tone', label: 'Tone replacements', kind: 'string-list' }]
+      fields: [
+        {
+          key: 'tone',
+          label: getMessage('configFieldToneReplacements') || 'Tone replacements',
+          kind: 'string-list'
+        }
+      ]
     }
   ]
 }
 
 export const transcriptionFields: FieldSchema[] = [
-  { key: 'enabled', label: 'Enabled', kind: 'boolean' },
+  { key: 'enabled', label: getMessage('configFieldEnabled') || 'Enabled', kind: 'boolean' },
   {
     key: 'default_provider',
-    label: 'Default provider',
+    label: getMessage('configFieldDefaultProvider') || 'Default provider',
     kind: 'select',
     options: ['groq', 'openai', 'google', 'stepfun', 'local_whisper']
   },
-  { key: 'initial_prompt', label: 'Whisper initial prompt', kind: 'text', nullable: true }
+  {
+    key: 'initial_prompt',
+    label: getMessage('configFieldWhisperInitialPrompt') || 'Whisper initial prompt',
+    kind: 'text',
+    nullable: true
+  }
 ]
 
 export const transcriptionProviderSchemas: Record<string, FieldSchema[]> = {
   groq: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'api_url', label: 'API URL', kind: 'text' },
-    { key: 'model', label: 'Model', kind: 'text' },
-    { key: 'language', label: 'Language', kind: 'text', nullable: true }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    { key: 'api_url', label: getMessage('configFieldAPIURL') || 'API URL', kind: 'text' },
+    { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
+    {
+      key: 'language',
+      label: getMessage('configFieldLanguage') || 'Language',
+      kind: 'text',
+      nullable: true
+    }
   ],
   openai: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'model', label: 'Model', kind: 'text' }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' }
   ],
   google: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'language_code', label: 'Language code', kind: 'text' }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    {
+      key: 'language_code',
+      label: getMessage('configFieldLanguageCode') || 'Language code',
+      kind: 'text'
+    }
   ],
   stepfun: [
-    { key: 'api_key', label: 'API key', kind: 'secret' },
-    { key: 'api_url', label: 'API URL', kind: 'text' },
-    { key: 'model', label: 'Model', kind: 'text' },
-    { key: 'language', label: 'Language', kind: 'text' },
-    { key: 'hotwords', label: 'Hotwords', kind: 'string-list' },
-    { key: 'prompt', label: 'Prompt', kind: 'text', nullable: true },
-    { key: 'enable_itn', label: 'Enable ITN', kind: 'boolean' },
-    { key: 'pcm_codec', label: 'PCM codec', kind: 'text' },
-    { key: 'pcm_rate', label: 'PCM rate', kind: 'number' },
-    { key: 'pcm_bits', label: 'PCM bits', kind: 'number' },
-    { key: 'pcm_channel', label: 'PCM channels', kind: 'number' }
+    { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+    { key: 'api_url', label: getMessage('configFieldAPIURL') || 'API URL', kind: 'text' },
+    { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
+    { key: 'language', label: getMessage('configFieldLanguage') || 'Language', kind: 'text' },
+    {
+      key: 'hotwords',
+      label: getMessage('configFieldHotwords') || 'Hotwords',
+      kind: 'string-list'
+    },
+    {
+      key: 'prompt',
+      label: getMessage('configFieldPrompt') || 'Prompt',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'enable_itn',
+      label: getMessage('configFieldEnableITN') || 'Enable ITN',
+      kind: 'boolean'
+    },
+    { key: 'pcm_codec', label: getMessage('configFieldPCMCodec') || 'PCM codec', kind: 'text' },
+    { key: 'pcm_rate', label: getMessage('configFieldPCMRate') || 'PCM rate', kind: 'number' },
+    { key: 'pcm_bits', label: getMessage('configFieldPCMBits') || 'PCM bits', kind: 'number' },
+    {
+      key: 'pcm_channel',
+      label: getMessage('configFieldPCMChannels') || 'PCM channels',
+      kind: 'number'
+    }
   ],
   local_whisper: [
-    { key: 'url', label: 'URL', kind: 'text' },
-    { key: 'bearer_token', label: 'Bearer token', kind: 'secret', nullable: true },
-    { key: 'max_audio_bytes', label: 'Max audio bytes', kind: 'number' },
-    { key: 'timeout_secs', label: 'Timeout seconds', kind: 'number' }
+    { key: 'url', label: getMessage('configFieldURL') || 'URL', kind: 'text' },
+    {
+      key: 'bearer_token',
+      label: getMessage('configFieldBearerToken') || 'Bearer token',
+      kind: 'secret',
+      nullable: true
+    },
+    {
+      key: 'max_audio_bytes',
+      label: getMessage('configFieldMaxAudioBytes') || 'Max audio bytes',
+      kind: 'number'
+    },
+    {
+      key: 'timeout_secs',
+      label: getMessage('configFieldTimeoutSeconds') || 'Timeout seconds',
+      kind: 'number'
+    }
   ]
 }
 
 export const channelSchemas: Record<string, FieldSchema[]> = {
   telegram: [
-    { key: 'id', label: 'ID', kind: 'text', nullable: true },
-    { key: 'user', label: 'User binding', kind: 'text', nullable: true },
-    { key: 'bot_token', label: 'Bot token', kind: 'secret' },
-    { key: 'username', label: 'Username', kind: 'text', nullable: true },
-    { key: 'allowed_users', label: 'Allowed users', kind: 'string-list' },
-    { key: 'allow_external_users', label: 'Allow external users', kind: 'boolean' },
-    { key: 'mention_only', label: 'Mention only', kind: 'boolean' },
-    { key: 'ack_reactions', label: 'ACK reactions', kind: 'boolean' }
+    { key: 'id', label: getMessage('configFieldID') || 'ID', kind: 'text', nullable: true },
+    {
+      key: 'user',
+      label: getMessage('configFieldUserBinding') || 'User binding',
+      kind: 'text',
+      nullable: true
+    },
+    { key: 'bot_token', label: getMessage('configFieldBotToken') || 'Bot token', kind: 'secret' },
+    {
+      key: 'username',
+      label: getMessage('configFieldUsername') || 'Username',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'allowed_users',
+      label: getMessage('configFieldAllowedUsers') || 'Allowed users',
+      kind: 'string-list'
+    },
+    {
+      key: 'allow_external_users',
+      label: getMessage('configFieldAllowExternalUsers') || 'Allow external users',
+      kind: 'boolean'
+    },
+    {
+      key: 'mention_only',
+      label: getMessage('configFieldMentionOnly') || 'Mention only',
+      kind: 'boolean'
+    },
+    {
+      key: 'ack_reactions',
+      label: getMessage('configFieldACKReactions') || 'ACK reactions',
+      kind: 'boolean'
+    }
   ],
   wechat: [
-    { key: 'id', label: 'ID', kind: 'text', nullable: true },
-    { key: 'user', label: 'User binding', kind: 'text', nullable: true },
-    { key: 'bot_token', label: 'Bot token', kind: 'secret' },
-    { key: 'username', label: 'Username', kind: 'text', nullable: true },
-    { key: 'allowed_users', label: 'Allowed users', kind: 'string-list' },
-    { key: 'allow_external_users', label: 'Allow external users', kind: 'boolean' },
-    { key: 'route_tag', label: 'Route tag', kind: 'number', nullable: true }
+    { key: 'id', label: getMessage('configFieldID') || 'ID', kind: 'text', nullable: true },
+    {
+      key: 'user',
+      label: getMessage('configFieldUserBinding') || 'User binding',
+      kind: 'text',
+      nullable: true
+    },
+    { key: 'bot_token', label: getMessage('configFieldBotToken') || 'Bot token', kind: 'secret' },
+    {
+      key: 'username',
+      label: getMessage('configFieldUsername') || 'Username',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'allowed_users',
+      label: getMessage('configFieldAllowedUsers') || 'Allowed users',
+      kind: 'string-list'
+    },
+    {
+      key: 'allow_external_users',
+      label: getMessage('configFieldAllowExternalUsers') || 'Allow external users',
+      kind: 'boolean'
+    },
+    {
+      key: 'route_tag',
+      label: getMessage('configFieldRouteTag') || 'Route tag',
+      kind: 'number',
+      nullable: true
+    }
   ],
   discord: [
-    { key: 'id', label: 'ID', kind: 'text', nullable: true },
-    { key: 'user', label: 'User binding', kind: 'text', nullable: true },
-    { key: 'bot_token', label: 'Bot token', kind: 'secret' },
-    { key: 'username', label: 'Username', kind: 'text', nullable: true },
-    { key: 'guild_id', label: 'Guild ID', kind: 'text', nullable: true },
-    { key: 'allowed_users', label: 'Allowed users', kind: 'string-list' },
-    { key: 'allow_external_users', label: 'Allow external users', kind: 'boolean' },
-    { key: 'listen_to_bots', label: 'Listen to bots', kind: 'boolean' },
-    { key: 'mention_only', label: 'Mention only', kind: 'boolean' },
-    { key: 'ack_reactions', label: 'ACK reactions', kind: 'boolean' }
+    { key: 'id', label: getMessage('configFieldID') || 'ID', kind: 'text', nullable: true },
+    {
+      key: 'user',
+      label: getMessage('configFieldUserBinding') || 'User binding',
+      kind: 'text',
+      nullable: true
+    },
+    { key: 'bot_token', label: getMessage('configFieldBotToken') || 'Bot token', kind: 'secret' },
+    {
+      key: 'username',
+      label: getMessage('configFieldUsername') || 'Username',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'guild_id',
+      label: getMessage('configFieldGuildID') || 'Guild ID',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'allowed_users',
+      label: getMessage('configFieldAllowedUsers') || 'Allowed users',
+      kind: 'string-list'
+    },
+    {
+      key: 'allow_external_users',
+      label: getMessage('configFieldAllowExternalUsers') || 'Allow external users',
+      kind: 'boolean'
+    },
+    {
+      key: 'listen_to_bots',
+      label: getMessage('configFieldListenToBots') || 'Listen to bots',
+      kind: 'boolean'
+    },
+    {
+      key: 'mention_only',
+      label: getMessage('configFieldMentionOnly') || 'Mention only',
+      kind: 'boolean'
+    },
+    {
+      key: 'ack_reactions',
+      label: getMessage('configFieldACKReactions') || 'ACK reactions',
+      kind: 'boolean'
+    }
   ],
   lark: [
-    { key: 'id', label: 'ID', kind: 'text', nullable: true },
-    { key: 'user', label: 'User binding', kind: 'text', nullable: true },
-    { key: 'app_id', label: 'App ID', kind: 'text' },
-    { key: 'app_secret', label: 'App secret', kind: 'secret' },
-    { key: 'username', label: 'Username', kind: 'text', nullable: true },
-    { key: 'verification_token', label: 'Verification token', kind: 'secret', nullable: true },
-    { key: 'port', label: 'Webhook port', kind: 'number', nullable: true },
-    { key: 'allowed_users', label: 'Allowed users', kind: 'string-list' },
-    { key: 'allow_external_users', label: 'Allow external users', kind: 'boolean' },
-    { key: 'mention_only', label: 'Mention only', kind: 'boolean' },
-    { key: 'platform', label: 'Platform', kind: 'select', options: ['lark', 'feishu'] },
+    { key: 'id', label: getMessage('configFieldID') || 'ID', kind: 'text', nullable: true },
+    {
+      key: 'user',
+      label: getMessage('configFieldUserBinding') || 'User binding',
+      kind: 'text',
+      nullable: true
+    },
+    { key: 'app_id', label: getMessage('configFieldAppID') || 'App ID', kind: 'text' },
+    {
+      key: 'app_secret',
+      label: getMessage('configFieldAppSecret') || 'App secret',
+      kind: 'secret'
+    },
+    {
+      key: 'username',
+      label: getMessage('configFieldUsername') || 'Username',
+      kind: 'text',
+      nullable: true
+    },
+    {
+      key: 'verification_token',
+      label: getMessage('configFieldVerificationToken') || 'Verification token',
+      kind: 'secret',
+      nullable: true
+    },
+    {
+      key: 'port',
+      label: getMessage('configFieldWebhookPort') || 'Webhook port',
+      kind: 'number',
+      nullable: true
+    },
+    {
+      key: 'allowed_users',
+      label: getMessage('configFieldAllowedUsers') || 'Allowed users',
+      kind: 'string-list'
+    },
+    {
+      key: 'allow_external_users',
+      label: getMessage('configFieldAllowExternalUsers') || 'Allow external users',
+      kind: 'boolean'
+    },
+    {
+      key: 'mention_only',
+      label: getMessage('configFieldMentionOnly') || 'Mention only',
+      kind: 'boolean'
+    },
+    {
+      key: 'platform',
+      label: getMessage('configFieldPlatform') || 'Platform',
+      kind: 'select',
+      options: ['lark', 'feishu']
+    },
     {
       key: 'receive_mode',
-      label: 'Receive mode',
+      label: getMessage('configFieldReceiveMode') || 'Receive mode',
       kind: 'select',
       options: ['websocket', 'webhook']
     },
-    { key: 'ack_reactions', label: 'ACK reactions', kind: 'boolean' }
+    {
+      key: 'ack_reactions',
+      label: getMessage('configFieldACKReactions') || 'ACK reactions',
+      kind: 'boolean'
+    }
   ]
 }
 
@@ -483,7 +725,10 @@ export function parseConfigDraft(source: string): JsonObject | null {
   return normalizeConfigDraft(doc.toJS() as Json)
 }
 
-function syncMapNode(doc: Document, map: YAMLMap, json: JsonObject): void {
+function syncMapNode(doc: Document, map: YAMLMap, json: JsonObject, keepUnknown = true): void {
+  if (!keepUnknown) {
+    map.items = map.items.filter((pair) => Object.hasOwn(json, pairKey(pair)))
+  }
   const pairs = map.items as Pair[]
   for (const [key, value] of Object.entries(json)) {
     const pair = pairs.find((item) => pairKey(item) === key)
@@ -500,12 +745,12 @@ function syncMapNode(doc: Document, map: YAMLMap, json: JsonObject): void {
       map.items.splice(map.items.indexOf(pair), 1)
       continue
     }
-    pair.value = syncNode(doc, pair.value, value)
+    pair.value = syncNode(doc, pair.value, value, keepUnknown)
   }
   // Keys absent from the draft (unknown to the form schema) are kept as-is.
 }
 
-function syncNode(doc: Document, node: unknown, value: Json): unknown {
+function syncNode(doc: Document, node: unknown, value: Json, keepUnknown = true): unknown {
   if (Array.isArray(value)) {
     if (isSeq(node)) {
       syncSeqNode(doc, node, value)
@@ -520,7 +765,7 @@ function syncNode(doc: Document, node: unknown, value: Json): unknown {
   }
   if (value !== null && typeof value === 'object') {
     if (isMap(node)) {
-      syncMapNode(doc, node, value)
+      syncMapNode(doc, node, value, keepUnknown)
       return node
     }
     if (isNullScalar(node) && isEmptyDraftValue(value)) {
@@ -541,15 +786,27 @@ function syncNode(doc: Document, node: unknown, value: Json): unknown {
 }
 
 function syncSeqNode(doc: Document, seq: YAMLSeq, values: Json[]): void {
-  if (seq.items.length > values.length) {
-    seq.items.length = values.length
-  }
-  values.forEach((value, index) => {
-    if (index < seq.items.length) {
-      seq.items[index] = syncNode(doc, seq.items[index], value)
-    } else {
-      seq.items.push(doc.createNode(value))
+  const previous = [...seq.items]
+  const used = new Set<number>()
+  // Match unchanged items first so removing/reordering a row moves its own
+  // comments with it. Edited rows may reuse their slot, but never its fields.
+  const matches = values.map((value) => {
+    const index = previous.findIndex(
+      (node, index) =>
+        !used.has(index) &&
+        JSON.stringify(isNode(node) ? node.toJSON() : node) === JSON.stringify(value)
+    )
+    if (index >= 0) used.add(index)
+    return index
+  })
+  seq.items = values.map((value, index) => {
+    const match = matches[index]
+    if (match >= 0) return previous[match]
+    if (previous.length === values.length && !used.has(index)) {
+      used.add(index)
+      return syncNode(doc, previous[index], value, false)
     }
+    return doc.createNode(value)
   })
 }
 

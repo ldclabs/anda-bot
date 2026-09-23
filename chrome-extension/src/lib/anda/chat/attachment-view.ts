@@ -74,6 +74,7 @@ export function attachmentDownloadUrl(
   if (objectUrl) {
     return objectUrl
   }
+  if (attachmentResourceBlob(attachment, caches)) return ''
   const uri = attachment.resource.uri?.trim() || ''
   return /^(https?:|file:|data:|blob:)/i.test(uri) ? uri : ''
 }
@@ -95,22 +96,7 @@ export function safeDownloadName(name: string): string {
   return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'attachment'
 }
 
-/** Accepts data URLs, URL-safe alphabets, and unpadded input. */
-export function normalizeBase64(value: string): string {
-  const payload = value.trim().replace(/^data:[^,]*,/i, '')
-  const normalized = payload.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
-  const remainder = normalized.length % 4
-  return remainder ? normalized + '='.repeat(4 - remainder) : normalized
-}
-
-export function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(normalizeBase64(value))
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
-}
+export { normalizeBase64, base64ToBytes } from '$lib/utils/base64'
 
 export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const buffer = new ArrayBuffer(bytes.byteLength)

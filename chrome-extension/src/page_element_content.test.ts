@@ -69,7 +69,8 @@ describe('page element content script', () => {
 
     expect((globalThis as Record<string, unknown>)[pageElementMemoryKey]).toMatchObject({
       tagName: 'BUTTON',
-      outerHTML: '<button id="submit">Submit</button>',
+      innerText: 'Submit',
+      outerHTML: '',
       pageUrl: 'https://example.com/form'
     })
     expect((globalThis as Record<string, unknown>)[pageElementDomMemoryKey]).toBe(element)

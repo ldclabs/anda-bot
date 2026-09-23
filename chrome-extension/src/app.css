@@ -1,3 +1,4 @@
+@import 'katex/dist/katex.min.css';
 @import '@fontsource-variable/inter';
 @import 'tailwindcss';
 @import 'tw-animate-css';

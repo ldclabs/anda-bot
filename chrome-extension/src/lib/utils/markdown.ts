@@ -15,7 +15,7 @@ ensurePrismLanguages()
 
 // 创建 MarkdownIt 实例
 const md = new MarkdownIt({
-  html: true,
+  html: false,
   linkify: true,
   typographer: true,
   breaks: true
@@ -362,7 +362,7 @@ function katexPlugin(md: MarkdownIt) {
     try {
       return katex.renderToString(token.content, { displayMode: false })
     } catch {
-      return `<span class="katex-error">${token.content}</span>`
+      return `<span class="katex-error">${md.utils.escapeHtml(token.content)}</span>`
     }
   }
 
@@ -371,14 +371,13 @@ function katexPlugin(md: MarkdownIt) {
     try {
       return `<div class="katex-block">${katex.renderToString(token.content.trim(), { displayMode: true })}</div>`
     } catch {
-      return `<div class="katex-error">${token.content.trim()}</div>`
+      return `<div class="katex-error">${md.utils.escapeHtml(token.content.trim())}</div>`
     }
   }
 }
 
 // 代码高亮插件
 function prismPlugin(md: MarkdownIt) {
-  const fence = md.renderer.rules.fence!
   const langAliases: Record<string, string> = {
     js: 'javascript',
     mjs: 'javascript',
@@ -397,10 +396,7 @@ function prismPlugin(md: MarkdownIt) {
     const token = tokens[idx]!
     const info = token.info ? token.info.trim() : ''
     let langName = info.split(/\s+/g)[0] || ''
-    if (langName === 'mermaid') {
-      // 让 mermaid 插件处理
-      return fence(tokens, idx, options, env, renderer)
-    } else if (langName === 'katex') {
+    if (langName === 'katex') {
       try {
         return `<div class="katex-block">${katex.renderToString(token.content.trim(), { displayMode: true })}</div>`
       } catch {
@@ -431,45 +427,15 @@ md.use(prismPlugin)
 /**
  * 渲染 Markdown 文本为 HTML
  * @param markdown - Markdown 文本
- * @param options - 渲染选项
  * @returns 渲染后的 HTML 字符串
  */
-export function renderMarkdown(
-  markdown: string,
-  options?: {
-    enableMermaid?: boolean
-    enableKatex?: boolean
-    enablePrism?: boolean
-  }
-): [string, () => Promise<void>] {
-  if (!markdown || typeof markdown !== 'string') {
-    return ['', () => Promise.resolve()]
-  }
-
-  const {
-    enableMermaid = true
-    // enableKatex = true,
-    // enablePrism = true
-  } = options || {}
-
+export function renderMarkdown(markdown: string): string {
+  if (!markdown || typeof markdown !== 'string') return ''
   try {
-    // 规范化换行符，确保不同平台的文本都能正确解析
-    const normalized = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    const html = md.render(normalized)
-
-    // 如果启用了 Mermaid，需要在 DOM 更新后渲染图表
-    if (enableMermaid && html.includes('class="mermaid"')) {
-      // 这里返回的 HTML 包含 mermaid div，需要在组件中调用 renderMermaidCharts
-      return [html, () => Promise.resolve()]
-    }
-
-    return [html, () => Promise.resolve()]
-  } catch (err) {
-    console.error('Markdown rendering failed:', err)
-    return [
-      `<pre style="white-space: pre-wrap; word-break: break-all;">${md.utils.escapeHtml(markdown)}</pre>`,
-      () => Promise.resolve()
-    ]
+    return md.render(markdown.replace(/\r\n?/g, '\n'))
+  } catch (error) {
+    console.error('Markdown rendering failed:', error)
+    return `<pre>${md.utils.escapeHtml(markdown)}</pre>`
   }
 }
 

@@ -1,3 +1,5 @@
+import { getMessage } from '$lib/i18n'
+
 export type BrowserSpeechRecognitionEvent = {
   resultIndex: number
   results: ArrayLike<{
@@ -28,30 +30,40 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition
 export function chromeSpeechErrorMessage(error: string): string {
   const normalized = error.toLowerCase()
   if (normalized.includes('permission dismissed')) {
-    return 'Browser speech permission was dismissed.'
+    return getMessage('voicePermissionDismissed') || 'Browser speech permission was dismissed.'
   }
   if (normalized.includes('permission was not accepted')) {
-    return 'Browser speech permission was not accepted.'
+    return getMessage('voicePermissionPending') || 'Browser speech permission was not accepted.'
   }
   if (normalized.includes('microphone access was blocked') || normalized.includes('not-allowed')) {
-    return 'Browser speech microphone access was blocked.'
+    return getMessage('voicePermissionBlocked') || 'Browser speech microphone access was blocked.'
   }
-  return error || 'Browser speech recognition did not start.'
+  if (normalized.includes('no microphone')) return getMessage('voiceMicrophoneMissing') || error
+  if (normalized.includes('offline')) return getMessage('voiceOffline') || error
+  return (
+    error || getMessage('browserSpeechStartFailed') || 'Browser speech recognition did not start.'
+  )
 }
 
 export function audioCaptureErrorMessage(error: string): string {
   const normalized = error.toLowerCase()
   if (normalized.includes('permission dismissed')) {
-    return 'Microphone permission was dismissed for the current page.'
+    return (
+      getMessage('voicePermissionDismissed') ||
+      'Microphone permission was dismissed for the current page.'
+    )
   }
   if (
     normalized.includes('microphone access was blocked') ||
     normalized.includes('notallowed') ||
     normalized.includes('not-allowed')
   ) {
-    return 'Microphone access was blocked for the current page.'
+    return (
+      getMessage('voicePermissionBlocked') || 'Microphone access was blocked for the current page.'
+    )
   }
-  return error || 'Anda voice recording did not start.'
+  if (normalized.includes('no microphone')) return getMessage('voiceMicrophoneMissing') || error
+  return error || getMessage('andaVoiceStartFailed') || 'Anda voice recording did not start.'
 }
 
 export function isPermissionError(error: string): boolean {
@@ -68,13 +80,13 @@ export function speechRecognitionErrorMessage(error: string): string {
   switch (error) {
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'Microphone access was blocked.'
+      return getMessage('voicePermissionBlocked') || 'Microphone access was blocked.'
     case 'audio-capture':
-      return 'No microphone was found.'
+      return getMessage('voiceMicrophoneMissing') || 'No microphone was found.'
     case 'network':
-      return 'Browser speech recognition is offline.'
+      return getMessage('voiceOffline') || 'Browser speech recognition is offline.'
     default:
-      return error || 'Browser speech recognition failed.'
+      return error || getMessage('voiceRecognitionFailed') || 'Browser speech recognition failed.'
   }
 }
 

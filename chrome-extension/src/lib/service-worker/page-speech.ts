@@ -38,6 +38,8 @@ export function pageSpeechRecognitionDispatcher(
     lastResult: PageSpeechResult | null
     stopResolver: ((result: PageSpeechResult) => void) | null
     stopTimer: number | null
+    startTimer: number | null
+    startResolver: ((result: PageSpeechResult) => void) | null
   }
 
   const scope = globalThis as typeof globalThis & {
@@ -65,7 +67,9 @@ export function pageSpeechRecognitionDispatcher(
       active: false,
       lastResult: null,
       stopResolver: null,
-      stopTimer: null
+      stopTimer: null,
+      startTimer: null,
+      startResolver: null
     })
 
   function transcript(): string {
@@ -100,6 +104,10 @@ export function pageSpeechRecognitionDispatcher(
     if (recognition) {
       detachRecognition(recognition)
     }
+    if (state.startTimer !== null) clearTimeout(state.startTimer)
+    const startResolver = state.startResolver
+    state.startTimer = null
+    state.startResolver = null
     const resolver = state.stopResolver
     state.recognition = null
     state.finalTranscript = ''
@@ -112,6 +120,7 @@ export function pageSpeechRecognitionDispatcher(
     state.stopTimer = null
     state.lastResult = output
     resolver?.(output)
+    startResolver?.(output)
     return output
   }
 
@@ -182,19 +191,19 @@ export function pageSpeechRecognitionDispatcher(
 
   return new Promise<PageSpeechResult>((resolve) => {
     let settled = false
-    let startTimer: number | null = null
 
     function settle(result: PageSpeechResult): void {
       if (settled) {
         return
       }
       settled = true
-      if (startTimer !== null) {
-        clearTimeout(startTimer)
-      }
+      if (state.startTimer !== null) clearTimeout(state.startTimer)
+      state.startTimer = null
+      state.startResolver = null
       resolve(result)
     }
 
+    state.startResolver = settle
     recognition.onstart = () => {
       settle({ available: true, started: true })
     }
@@ -236,7 +245,7 @@ export function pageSpeechRecognitionDispatcher(
     }
 
     try {
-      startTimer = window.setTimeout(() => {
+      state.startTimer = window.setTimeout(() => {
         state.error = 'permission-timeout'
         const result = {
           available: true,

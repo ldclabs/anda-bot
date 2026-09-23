@@ -355,17 +355,10 @@ LIMIT :limit`,
     if (concept?.metadata?.display_only === true && !/^C-\d+$/.test(id)) {
       return { concepts: 0, propositions: 0 }
     }
-    if (concept) {
-      this.nodes.set(id, {
-        ...concept,
-        _expanded: true,
-        _isExpanding: true
-      })
-    }
-
     const cached = this.#expandConceptPromises.get(id)
-    if (cached) {
-      return cached
+    if (cached) return cached
+    if (concept) {
+      this.nodes.set(id, { ...concept, _expanded: true, _isExpanding: true })
     }
 
     const promise = this.#expandConcept(id)

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
+  import { connectionKey } from '$lib/service-worker/settings'
   import ChatChannelsSidebar from '$lib/anda/ChatChannelsSidebar.svelte'
   import ChatComposer, {
     type ComposerSubmitPayload,
@@ -124,8 +125,8 @@
     const conversations = visibleMessageGroups
       .map((group) => group._id)
       .filter((conversation) => conversation > 0)
-    const nextKey = conversations.join(',')
-    if (nextKey && nextKey !== bookmarkConversationKey) {
+    const nextKey = `${connectionKey(andaClient.settings)}:${conversations.join(',')}`
+    if (conversations.length && nextKey !== bookmarkConversationKey) {
       bookmarkConversationKey = nextKey
       void andaClient.bookmarks.loadConversations(conversations)
     }
@@ -168,7 +169,7 @@
     const handleSkillsChanged = () => {
       skillsRevision += 1
     }
-    andaClient.addEventListener('skills-changed', handleSkillsChanged)
+    andaClient.skills.addEventListener('skills-changed', handleSkillsChanged)
 
     andaClient
       .init()
@@ -203,7 +204,7 @@
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChange)
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
-      andaClient.removeEventListener('skills-changed', handleSkillsChanged)
+      andaClient.skills.removeEventListener('skills-changed', handleSkillsChanged)
       andaClient.destroy()
     }
   })
@@ -469,9 +470,7 @@
   }
 
   async function sendVoiceTurn(payload: ComposerVoicePayload) {
-    if (sending) {
-      return
-    }
+    if (sending || nextMemoryMode) return
     if (!andaClient.settings.token) {
       settingsOpen = true
     }
@@ -840,7 +839,8 @@
         {sending}
         working={isBusy}
         {stoppable}
-        voiceAvailable={!nextMemoryMode && andaClient.voice.capabilities.transcription.length > 0}
+        voiceEnabled={!nextMemoryMode}
+        voiceAvailable={andaClient.voice.capabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}
         onApprovalModeChange={changeApprovalMode}

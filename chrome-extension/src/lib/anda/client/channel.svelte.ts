@@ -8,6 +8,7 @@ import {
   applyActionResponseToGroups,
   conversationToGroup,
   mergeKnownActionState,
+  type NormalizedMessageCache,
   normalizeMessages
 } from './conversations'
 import { PollConversation } from './poll-conversation'
@@ -47,6 +48,7 @@ interface PollSubscriber {
   sawWorking: boolean
   deliveredAssistant: boolean
   idleTicks: number
+  nextOffset: number
 }
 
 // Outcome of one poll tick. `next` carries the child conversation the session
@@ -67,6 +69,10 @@ export class Channel extends EventTarget {
   readonly source: string // client-side channel ID.
   // latest server-side session ID. A client-side channel will include one or more server-side sessions, and a conversation belongs to only one session.
   #session: string = $state('')
+  #sourceState: SourceState | undefined = $state()
+  #sourceStateAt = 0
+  #messageCache: NormalizedMessageCache = new WeakMap()
+  #restoreTimer: ReturnType<typeof setTimeout> | null = null
   #conversation: Conversation | null = $state(null)
   #messageGroups: MessageGroup[] = $state([])
   #sideMessages: ChatMessage[] = $state([])
@@ -115,7 +121,14 @@ export class Channel extends EventTarget {
 
     const currentGroup = this.#messageGroups.find((group) => group.current)
     const lastGroup = this.#messageGroups[this.#messageGroups.length - 1]
-    return this.#conversation?.status || currentGroup?.status || lastGroup?.status || 'ready'
+    return (
+      this.#conversation?.status ||
+      currentGroup?.status ||
+      lastGroup?.status ||
+      this.#sourceState?.s ||
+      this.#sourceState?.status ||
+      'ready'
+    )
   }
 
   get memoryMode(): string {
@@ -125,11 +138,12 @@ export class Channel extends EventTarget {
     return policy ? (policy.version === 1 ? policy.mode || 'unknown' : 'unknown') : 'standard'
   }
   get conversationId(): number {
-    return this.#conversation?._id || 0
+    return this.#conversation?._id || this.#sourceState?.c || this.#sourceState?.conv_id || 0
   }
 
   get latestActivityAt(): number {
-    let latest = this.#conversation?.updated_at || 0
+    let latest =
+      this.#conversation?.updated_at || this.#sourceState?.t || this.#sourceState?.timestamp || 0
     for (const group of this.#messageGroups) {
       latest = Math.max(latest, group.updatedAt || group.createdAt || 0)
     }
@@ -159,6 +173,11 @@ export class Channel extends EventTarget {
     this.clearConversationDisplay()
   }
 
+  setSourceState(state: SourceState | undefined): void {
+    this.#sourceState = state
+    this.#sourceStateAt = Date.now()
+  }
+
   async init(): Promise<void> {
     if (this.#syncing) {
       return
@@ -172,12 +191,15 @@ export class Channel extends EventTarget {
     this.#syncing = true
     const epoch = this.#sendEpoch
     try {
-      const {
-        output: { result: state }
-      } = await this.toolCall<RpcOutput<SourceState>>({
-        name: 'conversations_api',
-        args: { type: 'GetSourceState' }
-      })
+      const state =
+        (nowMs - this.#sourceStateAt < 60000 ? this.#sourceState : undefined) ??
+        (
+          await this.toolCall<RpcOutput<SourceState>>({
+            name: 'conversations_api',
+            args: { type: 'GetSourceState' }
+          })
+        ).output.result
+      if (epoch !== this.#sendEpoch) return
       const sourceConversationId = state.c || state.conv_id || 0
       if (!sourceConversationId) {
         return
@@ -201,9 +223,11 @@ export class Channel extends EventTarget {
       }
       this.dispatchEvent(new CustomEvent('ChannelInitialized', { detail: { source: this.source } }))
     } catch (error) {
+      if (epoch !== this.#sendEpoch) return
+      this.#syncAt = 0
       this.#api.updateStatus('restore failed', { kind: 'error', text: errorToMessage(error) })
     } finally {
-      this.#syncing = false
+      if (epoch === this.#sendEpoch) this.#syncing = false
     }
   }
 
@@ -300,6 +324,8 @@ export class Channel extends EventTarget {
 
       this.#api.updateStatus('sending', null)
 
+      const previousConversationId = this.#conversation?._id
+      const previousMessageCount = this.#conversation?.messages?.length || 0
       const isRequestStale = () => sendEpoch !== this.#sendEpoch
       const output = await this.agentRun(
         {
@@ -320,20 +346,12 @@ export class Channel extends EventTarget {
       const conversationId = bareNew ? 0 : output.conversation || 0
       const hasConversation = conversationId > 0
       if (hasConversation) {
-        const conversation = await this.fetchConversation(conversationId)
-        if (isRequestStale()) {
-          poller.finish()
-          return poller
-        }
-        this.updateLatestConversation(conversation)
-
-        // Register the returned poller for this turn's assistant output (the
-        // voice flow consumes it for TTS), then make sure a loop is running.
-        this.subscribePoll(conversationId, poller)
-        this.pollConversationLoop()
-        // If a loop was already polling this conversation, skip its remaining
-        // sleep so the just-submitted prompt's status flip shows up promptly.
-        this.wakePolling()
+        this.subscribePoll(
+          conversationId,
+          poller,
+          previousConversationId === conversationId ? previousMessageCount : 0
+        )
+        await this.restoreAcceptedConversation(conversationId, sendEpoch)
       }
 
       if (output.failed_reason) {
@@ -376,12 +394,38 @@ export class Channel extends EventTarget {
         this.removeLocalMessages(localMessageIds)
         throw error
       }
-      // Delivered but a follow-up fetch failed; the poll loop will reconcile.
+      // Hard errors after acceptance are shown without resubmitting the prompt.
       return null
     } finally {
       if (ownsSendingFlag && sendEpoch === this.#sendEpoch) {
         this.#sending = false
       }
+    }
+  }
+
+  private async restoreAcceptedConversation(id: number, epoch: number): Promise<void> {
+    try {
+      const conversation = await this.fetchConversation(id)
+      if (epoch !== this.#sendEpoch) return
+      this.updateLatestConversation(conversation)
+      this.broadcastPolledMessages(conversation)
+      void this.pollConversationLoop()
+      this.wakePolling()
+    } catch (error) {
+      if (epoch !== this.#sendEpoch) return
+      if (!isTransientWebSocketError(error)) {
+        this.finishPollSubscribers(id)
+        throw error
+      }
+      this.#api.updateStatus('reconnecting', null)
+      if (this.#restoreTimer) clearTimeout(this.#restoreTimer)
+      this.#restoreTimer = setTimeout(() => {
+        this.#restoreTimer = null
+        if (epoch === this.#sendEpoch)
+          void this.restoreAcceptedConversation(id, epoch).catch((error) => {
+            this.#api.updateStatus('restore failed', { kind: 'error', text: errorToMessage(error) })
+          })
+      }, pollingIntervalMs)
     }
   }
 
@@ -434,10 +478,15 @@ export class Channel extends EventTarget {
     this.finishPollSubscribers(conversation._id)
   }
 
-  private subscribePoll(conversationId: number, poller: PollConversation): void {
+  private subscribePoll(
+    conversationId: number,
+    poller: PollConversation,
+    nextOffset: number
+  ): void {
     this.#pollSubscribers.add({
       poller,
       conversationId,
+      nextOffset,
       sawWorking: false,
       deliveredAssistant: false,
       idleTicks: 0
@@ -450,6 +499,7 @@ export class Channel extends EventTarget {
     for (const subscriber of this.#pollSubscribers) {
       if (subscriber.conversationId === from) {
         subscriber.conversationId = to
+        subscriber.nextOffset = 0
       }
     }
   }
@@ -468,15 +518,9 @@ export class Channel extends EventTarget {
   // turn has reached its boundary: the conversation went back to idle after
   // visibly working or after delivering assistant output. Terminal statuses
   // are left to the loop exit, which runs after the final full refresh.
-  private broadcastPolledMessages(
-    conversationId: number,
-    messages: ChatMessage[],
-    status: ConversationStatus
-  ): void {
-    if (!this.#pollSubscribers.size) {
-      return
-    }
-    const assistantMessages = messages.filter((message) => message.role === 'assistant')
+  private broadcastPolledMessages(conversation: Conversation): void {
+    const conversationId = conversation._id
+    const status = conversation.status
     const terminal = isTerminalConversationStatus(status)
     for (const subscriber of [...this.#pollSubscribers]) {
       if (subscriber.conversationId !== conversationId) {
@@ -486,6 +530,18 @@ export class Channel extends EventTarget {
         this.#pollSubscribers.delete(subscriber)
         continue
       }
+      const offset = subscriber.nextOffset
+      const assistantMessages = (conversation.messages || [])
+        .slice(offset)
+        .flatMap((message, index) =>
+          normalizeMessages(message, {
+            conversation: conversationId,
+            index: offset + index,
+            fallbackTimestamp: conversation.updated_at
+          })
+        )
+        .filter((message) => message.role === 'assistant')
+      subscriber.nextOffset = Math.max(subscriber.nextOffset, conversation.messages?.length || 0)
       if (assistantMessages.length) {
         subscriber.poller.push(...assistantMessages)
         subscriber.deliveredAssistant = true
@@ -559,27 +615,26 @@ export class Channel extends EventTarget {
         return { continue: false }
       }
 
-      conversation.messages = [...(conversation.messages || []), ...result.messages]
-      conversation.artifacts = [...(conversation.artifacts || []), ...result.artifacts]
+      const changed =
+        result.messages.length > 0 ||
+        result.artifacts.length > 0 ||
+        conversation.status !== result.status ||
+        conversation.updated_at !== result.updated_at ||
+        conversation.failed_reason !== result.failed_reason ||
+        conversation.child !== result.child ||
+        JSON.stringify(conversation.usage) !== JSON.stringify(result.usage)
+      if (result.messages.length)
+        conversation.messages = [...(conversation.messages || []), ...result.messages]
+      if (result.artifacts.length)
+        conversation.artifacts = [...(conversation.artifacts || []), ...result.artifacts]
       conversation.status = result.status
       conversation.usage = result.usage
       conversation.failed_reason = result.failed_reason
       conversation.updated_at = result.updated_at
       conversation.child = result.child
 
-      this.updateLatestConversation({ ...conversation })
-      const start = conversation.messages!.length - result.messages.length || 0
-      this.broadcastPolledMessages(
-        conversation._id,
-        result.messages.flatMap((message, index) =>
-          normalizeMessages(message, {
-            conversation: conversation._id,
-            index: start + index,
-            fallbackTimestamp: conversation.updated_at
-          })
-        ),
-        conversation.status
-      )
+      if (changed) this.updateLatestConversation({ ...conversation })
+      this.broadcastPolledMessages(conversation)
 
       const terminal = isTerminalConversationStatus(conversation.status)
       if (terminal || this.hasPendingLocalAttachments(conversation._id)) {
@@ -595,6 +650,7 @@ export class Channel extends EventTarget {
         conversation.updated_at = refreshed.updated_at
         conversation.child = refreshed.child
         this.updateLatestConversation(refreshed)
+        this.broadcastPolledMessages(conversation)
       }
 
       // Compaction closes the conversation and continues the same session in a
@@ -614,6 +670,7 @@ export class Channel extends EventTarget {
         return { continue: false }
       }
     } catch (error) {
+      if (epoch !== this.#sendEpoch) return { continue: false }
       if (isTransientWebSocketError(error)) {
         this.#api.updateStatus('reconnecting', null)
         return { continue: true }
@@ -696,6 +753,7 @@ export class Channel extends EventTarget {
     }
 
     this.#loadingPrevious = true
+    const epoch = this.#sendEpoch
     try {
       const {
         output: { result }
@@ -706,13 +764,15 @@ export class Channel extends EventTarget {
           ids: this.#conversationAncestors
         }
       })
+      if (epoch !== this.#sendEpoch) return false
       this.updateConversationChain(result)
       return result.length > 0
     } catch (error) {
+      if (epoch !== this.#sendEpoch) return false
       this.#api.updateStatus('history failed', { kind: 'error', text: errorToMessage(error) })
       return false
     } finally {
-      this.#loadingPrevious = false
+      if (epoch === this.#sendEpoch) this.#loadingPrevious = false
     }
   }
 
@@ -725,7 +785,7 @@ export class Channel extends EventTarget {
     const conversation = await this.fetchConversation(conversationId)
     if (epoch !== this.#sendEpoch) return false
 
-    const group = conversationToGroup(conversation)
+    const group = conversationToGroup(conversation, this.#messageCache)
     if (!group.messages.length) return false
     group.current = this.#conversation?._id === conversationId
     const groups = this.#messageGroups.filter((existing) => existing._id !== conversationId)
@@ -770,9 +830,8 @@ export class Channel extends EventTarget {
     }
 
     this.#conversation = conversation
-    this.#conversationAncestors = conversation.ancestors || []
     this.#api.updateStatus(conversation.status, null)
-    const group = conversationToGroup(conversation)
+    const group = conversationToGroup(conversation, this.#messageCache)
     const existingGroup = this.#messageGroups.find((existing) => existing._id === conversation._id)
     const submitGroup = this.#messageGroups.find(
       (existing) => existing._id === SubmitMessageConversationId
@@ -804,6 +863,7 @@ export class Channel extends EventTarget {
       this.#messageGroups.push(submitGroup)
       this.removeSubmittedMessage((msg) => group.messages.some((m) => sameMessageContent(m, msg)))
     }
+    this.#conversationAncestors = this.#messageGroups[0]?.ancestors || []
   }
 
   private hasPendingLocalAttachments(conversationId: number): boolean {
@@ -819,7 +879,9 @@ export class Channel extends EventTarget {
     }
 
     const existing = this.#messageGroups
-    const incoming = conversations.map(conversationToGroup)
+    const incoming = conversations.map((conversation) =>
+      conversationToGroup(conversation, this.#messageCache)
+    )
     let i = 0
     let j = 0
     const merged: MessageGroup[] = []
@@ -856,6 +918,10 @@ export class Channel extends EventTarget {
 
   private clearConversationDisplay(): void {
     this.#sendEpoch += 1
+    if (this.#restoreTimer) clearTimeout(this.#restoreTimer)
+    this.#restoreTimer = null
+    this.#sourceState = undefined
+    this.#messageCache = new WeakMap()
     this.#session = ''
     this.#conversation = null
     this.#messageGroups = []

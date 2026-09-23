@@ -1,5 +1,8 @@
 import {
   browserSession,
+  connectionKey,
+  loadSettings,
+  settingsKeys,
   defaultSettings,
   errorToError,
   errorToMessage,
@@ -11,7 +14,8 @@ import { BookmarksApi } from './bookmarks.svelte'
 import { Channel, type API } from './channel.svelte'
 import type { DaemonApi } from './daemon'
 import { QuickPrompts } from './quick-prompts.svelte'
-import { SkillsApi } from './skills'
+import { SkillsApi, skillsRevisionStorageKey } from './skills'
+import { ResourceCache } from './resources'
 import { VoiceSession } from './voice-session.svelte'
 import {
   normalizeAbsoluteWorkspace,
@@ -66,7 +70,11 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   readonly voice: VoiceSession
 
   /** Skill library verbs, and the `skills-changed` event views listen on. */
-  readonly skills = new SkillsApi(this)
+  readonly skills = new SkillsApi(this, () => {
+    void this.chrome.storage.local
+      .set({ skillsRevision: crypto.randomUUID() })
+      .catch(() => undefined)
+  })
   /** Bookmark verbs plus the star state the transcript renders. */
   readonly bookmarks = new BookmarksApi(this, {
     activeSource: () => this.activeSource || '',
@@ -78,8 +86,15 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
 
   #initPromise: Promise<void> | null = null
   #uiLanguageTimer: ReturnType<typeof setInterval> | null = null
-  #resourceCache = new Map<number, Resource>()
-  #resourceRequests = new Map<number, Promise<Resource>>()
+  #resources = new ResourceCache(this)
+  #connectionEpoch = 0
+  #chatEnabled = false
+  #chatPromise: Promise<void> | null = null
+  #destroyed = false
+  #storageListener?: (changes: Record<string, { newValue?: unknown }>, area: string) => void
+  #visibilityListener = () => {
+    if (!document.hidden) for (const channel of this.channels.values()) channel.wakePolling()
+  }
   #localChannelSource = ''
   #workspaceChannelSources = new Set<string>()
   #channelSwitchEpoch = 0
@@ -97,38 +112,71 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     })
   }
 
-  async init(): Promise<void> {
+  async init(options: { conversations?: boolean } = {}): Promise<void> {
     if (!this.#initPromise) {
       this.#initPromise = this.#init()
-      ;(globalThis as any).__andaClient = this
     }
-    return this.#initPromise
+    await this.#initPromise
+    if (options.conversations !== false && !this.#destroyed) {
+      this.#chatPromise ||= this.#initChat()
+      await this.#chatPromise
+    }
   }
 
   async #init(): Promise<void> {
-    await this.loadSettings()
-    await this.quickPrompts.load()
-    await this.loadWorkspaceChannels()
-    const localChannel = await browserSession(this.chrome)
-    this.#localChannelSource = localChannel
-    const channel = this.ensureChannel(localChannel)
-    this.activeChannel = channel
-
+    this.applySettings(await loadSettings(this.chrome))
+    if (this.#destroyed) return
     this.bindChromeEvents()
-    await this.refreshActiveTab()
     this.updateStatus('ready', null)
     this.syncServiceWorker().catch(() => undefined)
-
-    if (this.settings.token) {
-      await this.refreshModelState().catch(() => undefined)
-      await this.voice.refreshCapabilities().catch(() => undefined)
-      await this.refreshChannels().catch(() => undefined)
-      await channel.init().catch(() => undefined)
-      this.syncUiLanguage().catch(() => undefined)
-    }
+    this.syncUiLanguage().catch(() => undefined)
     this.#uiLanguageTimer = setInterval(() => {
       this.syncUiLanguage().catch(() => undefined)
     }, uiLanguageSyncIntervalMs)
+  }
+
+  async #initChat(): Promise<void> {
+    this.#chatEnabled = true
+    await this.quickPrompts.load()
+    await this.loadWorkspaceChannels()
+    this.#localChannelSource = await browserSession(this.chrome)
+    if (this.#destroyed) return
+    this.activeChannel = this.ensureChannel(this.#localChannelSource)
+    await this.refreshActiveTab()
+    await this.refreshConnectionData()
+  }
+
+  private async refreshConnectionData(): Promise<void> {
+    if (!this.#chatEnabled || !this.settings.token || this.#destroyed) return
+    await Promise.allSettled([
+      this.refreshModelState(),
+      this.voice.refreshCapabilities(),
+      this.refreshChannels()
+    ])
+    await this.activeChannel?.init()
+  }
+
+  private applySettings(settings: SettingsState): boolean {
+    const next = normalizeSettings(settings)
+    const changed = connectionKey(next) !== connectionKey(this.settings)
+    this.settings = next
+    if (changed) {
+      this.#connectionEpoch++
+      this.#channelSwitchEpoch++
+      for (const channel of this.channels.values()) channel.destroy()
+      this.channels.clear()
+      this.activeChannel =
+        this.#chatEnabled && this.#localChannelSource
+          ? this.ensureChannel(this.#localChannelSource)
+          : null
+      this.bookmarks.clear()
+      this.#resources.clear()
+      this.modelState = emptyModelState()
+      this.voice.capabilities = { transcription: [], daemonTts: [], chromeTts: false }
+      this.sending = false
+      this.skills.notifyChanged()
+    }
+    return changed
   }
 
   /**
@@ -163,6 +211,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   destroy(): void {
+    this.#destroyed = true
+    this.#connectionEpoch++
+    this.#resources.clear()
+    this.bookmarks.clear()
+    if (this.#storageListener)
+      this.chrome.storage.onChanged?.removeListener?.(this.#storageListener)
+    if (typeof document !== 'undefined')
+      document.removeEventListener('visibilitychange', this.#visibilityListener)
     if (this.#uiLanguageTimer) {
       clearInterval(this.#uiLanguageTimer)
       this.#uiLanguageTimer = null
@@ -176,7 +232,6 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     for (const channel of this.channels.values()) {
       channel.destroy()
     }
-    console.warn('AndaSidePanelClient destroyed')
   }
 
   async refreshChannels(): Promise<void> {
@@ -202,12 +257,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       }
     }
 
-    const initTasks = Array.from(sources).map((source) =>
-      this.ensureChannel(source)
-        .init()
-        .catch(() => undefined)
-    )
-    await Promise.all(initTasks)
+    for (const source of sources) this.ensureChannel(source).setSourceState(states?.[source])
   }
 
   async switchChannel(source: string): Promise<void> {
@@ -318,20 +368,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   async saveSettings(settings: SettingsState, options: { quiet?: boolean } = {}): Promise<void> {
-    this.settings = normalizeSettings(settings)
+    this.applySettings(settings)
     await this.chrome.storage.local.set(this.settings)
     if (!options.quiet) {
       this.systemMessage = { kind: 'info', text: getMessage('settingsSaved') }
     }
     await this.syncServiceWorker().catch(() => undefined)
-    if (this.settings.token) {
-      this.refreshChannels().catch(() => undefined)
-      this.refreshModelState().catch(() => undefined)
-      this.syncUiLanguage().catch(() => undefined)
-    } else {
-      this.modelState = emptyModelState()
-    }
-    await this.voice.refreshCapabilities().catch(() => undefined)
+    await this.refreshConnectionData()
+    this.syncUiLanguage().catch(() => undefined)
   }
 
   async saveAppearanceTheme(appearanceTheme: AppearanceTheme): Promise<void> {
@@ -374,6 +418,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   ): Promise<void> {
     const prompt = text.trim()
     const channel = this.activeChannel
+    const epoch = this.#connectionEpoch
     const command = parsePromptCommand(prompt)
     const immediate = isImmediatePromptCommand(command)
     if ((!prompt && attachments.length === 0) || (this.sending && !immediate) || !channel) {
@@ -404,7 +449,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       // Propagate so the composer can restore the unsent draft.
       throw error
     } finally {
-      if (ownsSendingFlag) {
+      if (ownsSendingFlag && epoch === this.#connectionEpoch) {
         this.sending = false
       }
     }
@@ -454,6 +499,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
 
   async sendVoiceTurn(recording: VoiceRecordingInput): Promise<void> {
     const channel = this.activeChannel
+    const epoch = this.#connectionEpoch
     if (this.sending || !channel) {
       return
     }
@@ -507,6 +553,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     } catch (error) {
       this.updateStatus('voice failed', { kind: 'error', text: errorToMessage(error) })
     } finally {
+      if (epoch !== this.#connectionEpoch) return
       this.sending = false
       if (this.status === 'transcribing' || this.status === 'speaking') {
         this.updateStatus('idle', null)
@@ -526,37 +573,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     return this.modelState
   }
 
-  async loadResource(resource: Resource): Promise<Resource | null> {
-    const id = resource._id || 0
-    if (!id) {
-      return resource.blob ? resource : null
-    }
-    if (resource.blob) {
-      return resource
-    }
-
-    const cached = this.#resourceCache.get(id)
-    if (cached) {
-      return mergeResource(resource, cached)
-    }
-
-    let request = this.#resourceRequests.get(id)
-    if (!request) {
-      request = this.toolCall<RpcOutput<Resource>>('resources_api', {
-        type: 'GetResource',
-        _id: id
-      })
-        .then(({ output: { result } }) => {
-          this.#resourceCache.set(id, result)
-          return result
-        })
-        .finally(() => {
-          this.#resourceRequests.delete(id)
-        })
-      this.#resourceRequests.set(id, request)
-    }
-
-    return mergeResource(resource, await request)
+  loadResource(resource: Resource): Promise<Resource | null> {
+    return this.#resources.load(resource)
   }
 
   async setActiveModel(modelName: string): Promise<ModelState> {
@@ -593,7 +611,27 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   private bindChromeEvents(): void {
+    this.#storageListener = (changes, area) => {
+      if (area !== 'local') return
+      if (changes[skillsRevisionStorageKey]) this.skills.notifyChanged()
+      if (settingsKeys.some((key) => key in changes)) {
+        const next = { ...this.settings }
+        for (const key of settingsKeys) {
+          if (key in changes)
+            Object.assign(next, { [key]: changes[key].newValue ?? defaultSettings[key] })
+        }
+        if (this.applySettings(next)) {
+          void this.syncServiceWorker()
+            .then(() => this.refreshConnectionData())
+            .catch(() => undefined)
+        }
+      }
+    }
+    this.chrome.storage.onChanged?.addListener?.(this.#storageListener)
+    if (typeof document !== 'undefined')
+      document.addEventListener('visibilitychange', this.#visibilityListener)
     this.#tabActivatedListener = () => {
+      if (!this.#chatEnabled) return
       this.refreshActiveTab().catch(() => undefined)
     }
     this.#tabUpdatedListener = (tabId, changeInfo, tab) => {
@@ -636,33 +674,22 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   private channelApi(source: string): API {
+    const epoch = this.#connectionEpoch
     return {
-      activeChannel: () => this.activeSource,
+      activeChannel: () =>
+        typeof document !== 'undefined' && document.hidden ? null : this.activeSource,
       requestExtra: () => this.requestExtra(),
-      rpc: <Result>(method: string, tupleArgs: unknown[]) => this.rpc<Result>(method, tupleArgs),
+      rpc: <Result>(method: string, tupleArgs: unknown[]) => {
+        if (epoch !== this.#connectionEpoch)
+          return Promise.reject(new Error('Connection settings changed'))
+        return this.rpc<Result>(method, tupleArgs)
+      },
       updateStatus: (status, message) => {
-        if (this.activeChannel?.source === source) {
+        if (epoch === this.#connectionEpoch && this.activeChannel?.source === source) {
           this.updateStatus(status, message)
         }
       }
     }
-  }
-
-  private async loadSettings(): Promise<void> {
-    const saved = await this.chrome.storage.local.get([
-      'baseUrl',
-      'token',
-      'submitKeyMode',
-      'appearanceTheme',
-      'approvalMode'
-    ])
-    this.settings = normalizeSettings({
-      baseUrl: saved.baseUrl || defaultSettings.baseUrl,
-      token: saved.token || '',
-      submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-      appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme,
-      approvalMode: saved.approvalMode || defaultSettings.approvalMode
-    })
   }
 
   private async loadWorkspaceChannels(): Promise<void> {
@@ -738,11 +765,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     type: string,
     message: Partial<ExtensionMessage> = {}
   ): Promise<Extract<ExtensionResponse<Result>, { ok: true }>> {
+    const epoch = this.#connectionEpoch
     const response = await this.chrome.runtime.sendMessage<Result>({
       type,
       settings: this.settings,
       ...message
     })
+    if (epoch !== this.#connectionEpoch || this.#destroyed)
+      throw new Error('Connection settings changed')
     if (!response?.ok) {
       throw new Error(response?.error || getMessage('extensionError'))
     }
@@ -870,20 +900,6 @@ function normalizeModelState(state: DaemonModelState | null | undefined): ModelS
   return {
     activeModel: activeModel || null,
     modelNames
-  }
-}
-
-function mergeResource(summary: Resource, full: Resource): Resource {
-  return {
-    ...summary,
-    ...full,
-    tags: full.tags?.length ? full.tags : summary.tags,
-    metadata: {
-      ...(summary.metadata || {}),
-      ...(full.metadata || {})
-    },
-    blob: full.blob || summary.blob,
-    description: full.description || summary.description
   }
 }
 

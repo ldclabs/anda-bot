@@ -48,6 +48,7 @@ export class BookmarkBrowser {
   loadingMore = $state(false)
   creatingFolder = $state(false)
 
+  #generation = 0
   #cursor = $state<string | null>(null)
   #removingIds = $state(new Set<string>())
   #assigningIds = $state(new Set<string>())
@@ -95,34 +96,46 @@ export class BookmarkBrowser {
 
   /** Reloads folders plus the first page of the active folder. */
   async load(): Promise<void> {
+    const generation = ++this.#generation
+    const folder = this.activeFolder
+    this.#cursor = null
+    this.items = []
+    this.loadingMore = false
     this.loading = true
     this.error = ''
     try {
-      this.folders = await this.#store.listFolders()
-      const { items, nextCursor } = await this.#listActive()
+      const [folders, { items, nextCursor }] = await Promise.all([
+        this.#store.listFolders(),
+        this.#listFolder(folder)
+      ])
+      if (generation !== this.#generation) return
+      this.folders = folders
       this.items = items.flatMap(bookmarkMessageItems)
       this.#cursor = nextCursor
     } catch (error) {
-      this.error = errorToMessage(error)
+      if (generation === this.#generation) this.error = errorToMessage(error)
     } finally {
-      this.loading = false
+      if (generation === this.#generation) this.loading = false
     }
   }
 
   /** Appends the next page; a no-op when exhausted or already loading. */
   async loadMore(): Promise<void> {
-    if (!this.#cursor || this.loadingMore) {
+    if (!this.#cursor || this.loading || this.loadingMore) {
       return
     }
+    const generation = this.#generation
+    const folder = this.activeFolder
     this.loadingMore = true
     try {
-      const { items, nextCursor } = await this.#listActive(this.#cursor)
+      const { items, nextCursor } = await this.#listFolder(folder, this.#cursor)
+      if (generation !== this.#generation) return
       this.items = [...this.items, ...items.flatMap(bookmarkMessageItems)]
       this.#cursor = nextCursor
     } catch (error) {
-      this.error = errorToMessage(error)
+      if (generation === this.#generation) this.error = errorToMessage(error)
     } finally {
-      this.loadingMore = false
+      if (generation === this.#generation) this.loadingMore = false
     }
   }
 
@@ -212,11 +225,11 @@ export class BookmarkBrowser {
     }
   }
 
-  #listActive(cursor?: string): Promise<BookmarkPage> {
-    if (this.activeFolder === 'all') {
+  #listFolder(folder: ActiveFolder, cursor?: string): Promise<BookmarkPage> {
+    if (folder === 'all') {
       return this.#store.list(cursor)
     }
-    return this.#store.listInFolder(this.activeFolder === 'unfiled' ? 0 : this.activeFolder, cursor)
+    return this.#store.listInFolder(folder === 'unfiled' ? 0 : folder, cursor)
   }
 
   /**

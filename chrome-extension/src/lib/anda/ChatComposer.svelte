@@ -98,6 +98,7 @@
     working = false,
     stoppable = false,
     voiceAvailable = false,
+    voiceEnabled = true,
     voiceCapabilities = { transcription: [], daemonTts: [], chromeTts: false },
     onSend,
     onStop,
@@ -126,6 +127,7 @@
     working?: boolean
     stoppable?: boolean
     voiceAvailable?: boolean
+    voiceEnabled?: boolean
     voiceCapabilities?: VoiceCapabilities
     submitKeyMode?: SubmitKeyMode
     onSend: (payload: ComposerSubmitPayload) => Promise<void> | void
@@ -210,9 +212,11 @@
       (stopPending ? 'Stopping current task' : 'Stop current task')
   )
   const canUseBrowserSpeech = $derived(
-    Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable
+    voiceEnabled && (Boolean(onBrowserSpeechStart && onBrowserSpeechStop) || browserSpeechAvailable)
   )
-  const canUseAndaVoice = $derived(voiceAvailable || voiceCapabilities.transcription.length > 0)
+  const canUseAndaVoice = $derived(
+    voiceEnabled && (voiceAvailable || voiceCapabilities.transcription.length > 0)
+  )
   const canUseSelectedVoiceProvider = $derived(
     recorder.provider === 'chrome' ? canUseBrowserSpeech : canUseAndaVoice
   )
@@ -416,7 +420,12 @@
   }
 
   function isSubmitEvent(event: KeyboardEvent): boolean {
-    if (disabled || sending || preparingAttachments || event.isComposing) {
+    if (
+      disabled ||
+      (sending && !draftBypassesSending) ||
+      preparingAttachments ||
+      event.isComposing
+    ) {
       return false
     }
     if (event.keyCode === 229) {

@@ -1,4 +1,8 @@
-import { defaultSettings, normalizeSettings } from '$lib/service-worker/settings'
+import {
+  defaultSettings,
+  normalizeSettings,
+  loadSettingsFromStorage
+} from '$lib/service-worker/settings'
 import type { SettingsState } from '$lib/service-worker/types'
 
 export const ANDA_BOT_SPACE_ID = 'anda_bot'
@@ -306,22 +310,11 @@ export class BrainApi {
 export async function loadBrainGraphSettings(): Promise<BrainGraphSettings> {
   const chromeApi = getBrainChromeApi()
   if (chromeApi?.storage?.local) {
-    const saved = await chromeApi.storage.local.get([
-      'baseUrl',
-      'token',
-      'submitKeyMode',
-      'appearanceTheme',
-      'brainSpaceId'
+    const [settings, saved] = await Promise.all([
+      loadSettingsFromStorage(chromeApi.storage.local),
+      chromeApi.storage.local.get(['brainSpaceId'])
     ])
-    return {
-      ...normalizeSettings({
-        baseUrl: String(saved.baseUrl || defaultSettings.baseUrl),
-        token: String(saved.token || ''),
-        submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-        appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
-      }),
-      spaceId: normalizeSpaceId(saved.brainSpaceId)
-    }
+    return { ...settings, spaceId: normalizeSpaceId(saved.brainSpaceId) }
   }
 
   const saved = safeReadLocalStorage()
@@ -341,7 +334,12 @@ export async function saveBrainGraphSettings(settings: BrainGraphSettings): Prom
   }
   const chromeApi = getBrainChromeApi()
   if (chromeApi?.storage?.local) {
-    await chromeApi.storage.local.set(normalized)
+    await chromeApi.storage.local.set({
+      baseUrl: normalized.baseUrl,
+      token: normalized.token,
+      appearanceTheme: normalized.appearanceTheme,
+      brainSpaceId: normalized.brainSpaceId
+    })
     return
   }
   localStorage.setItem('andaBrainGraphSettings', JSON.stringify(normalized))

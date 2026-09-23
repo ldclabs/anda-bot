@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "Данные подключения"
   },
-  "savedConnection": {
-    "message": "Сохранено"
-  },
   "tokenPlaceholder": {
     "message": "Вставьте Bearer token, напечатанный `anda browser token --days 365`"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "Синхронизация"
-  },
-  "noActiveTab": {
-    "message": "Нет активной вкладки"
   },
   "attachFiles": {
     "message": "Прикрепить файлы"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "Сбой разговора, причина не указана."
-  },
-  "rpcError": {
-    "message": "инструмент вернул неизвестный RPC-ответ"
   },
   "extensionError": {
     "message": "extension service worker вернул ошибку"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "Закладки"
-  },
-  "bookmarksDescription": {
-    "message": "Сохранённые сообщения ассистента. Нажмите, чтобы перейти к нему."
   },
   "bookmarksEmpty": {
     "message": "Пока нет закладок"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "Не удалось применить изменение. Отмените этот предварительный просмотр и проверьте новый."
+  },
+  "configFieldGatewayAddress": {
+    "message": "Адрес шлюза"
+  },
+  "configFieldLogLevel": {
+    "message": "Уровень журналирования"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "Прокси HTTPS"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "Дополнительные рабочие каталоги"
+  },
+  "configFieldUserId": {
+    "message": "ID пользователя"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "Открытый ключ Ed25519"
+  },
+  "configFieldFamily": {
+    "message": "Семейство моделей"
+  },
+  "configFieldModel": {
+    "message": "Модель"
+  },
+  "configFieldAPIBase": {
+    "message": "Базовый адрес API"
+  },
+  "configFieldAPIKey": {
+    "message": "Ключ API"
+  },
+  "configFieldEffort": {
+    "message": "Уровень рассуждения"
+  },
+  "configFieldContextWindow": {
+    "message": "Контекстное окно"
+  },
+  "configFieldMaxOutput": {
+    "message": "Максимальный вывод"
+  },
+  "configFieldLabels": {
+    "message": "Метки"
+  },
+  "configFieldStream": {
+    "message": "Потоковый вывод"
+  },
+  "configFieldDisabled": {
+    "message": "Отключено"
+  },
+  "configFieldBearerAuth": {
+    "message": "Аутентификация Bearer"
+  },
+  "configFieldEnabled": {
+    "message": "Включено"
+  },
+  "configFieldDefaultProvider": {
+    "message": "Провайдер по умолчанию"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "Формат вывода StepFun"
+  },
+  "configFieldMaxTextLength": {
+    "message": "Максимальная длина текста"
+  },
+  "configFieldBinaryPath": {
+    "message": "Путь к исполняемому файлу"
+  },
+  "configFieldVoice": {
+    "message": "Голос"
+  },
+  "configFieldSpeed": {
+    "message": "Скорость"
+  },
+  "configFieldLanguageCode": {
+    "message": "Код языка"
+  },
+  "configFieldAPIURL": {
+    "message": "URL API"
+  },
+  "configFieldVolume": {
+    "message": "Громкость"
+  },
+  "configFieldInstruction": {
+    "message": "Инструкция"
+  },
+  "configFieldSampleRate": {
+    "message": "Частота дискретизации"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "Фильтр Markdown"
+  },
+  "configFieldPronunciationMap": {
+    "message": "Таблица произношения"
+  },
+  "configFieldToneReplacements": {
+    "message": "Замены произношения"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "Начальная инструкция Whisper"
+  },
+  "configFieldLanguage": {
+    "message": "Язык"
+  },
+  "configFieldHotwords": {
+    "message": "Ключевые слова"
+  },
+  "configFieldPrompt": {
+    "message": "Инструкция"
+  },
+  "configFieldEnableITN": {
+    "message": "Обратная нормализация текста"
+  },
+  "configFieldPCMCodec": {
+    "message": "Кодек PCM"
+  },
+  "configFieldPCMRate": {
+    "message": "Частота PCM"
+  },
+  "configFieldPCMBits": {
+    "message": "Разрядность PCM"
+  },
+  "configFieldPCMChannels": {
+    "message": "Каналы PCM"
+  },
+  "configFieldURL": {
+    "message": "URL"
+  },
+  "configFieldBearerToken": {
+    "message": "Токен Bearer"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "Максимальный размер аудио (байты)"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "Тайм-аут (секунды)"
+  },
+  "configFieldID": {
+    "message": "ID"
+  },
+  "configFieldUserBinding": {
+    "message": "Привязанный пользователь"
+  },
+  "configFieldBotToken": {
+    "message": "Токен бота"
+  },
+  "configFieldUsername": {
+    "message": "Имя пользователя"
+  },
+  "configFieldAllowedUsers": {
+    "message": "Разрешённые пользователи"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "Разрешить внешних пользователей"
+  },
+  "configFieldMentionOnly": {
+    "message": "Отвечать только на упоминания"
+  },
+  "configFieldACKReactions": {
+    "message": "Реакции подтверждения получения"
+  },
+  "configFieldRouteTag": {
+    "message": "Метка маршрута"
+  },
+  "configFieldGuildID": {
+    "message": "ID сервера"
+  },
+  "configFieldListenToBots": {
+    "message": "Принимать сообщения ботов"
+  },
+  "configFieldAppID": {
+    "message": "ID приложения"
+  },
+  "configFieldAppSecret": {
+    "message": "Секрет приложения"
+  },
+  "configFieldVerificationToken": {
+    "message": "Токен проверки"
+  },
+  "configFieldWebhookPort": {
+    "message": "Порт вебхука"
+  },
+  "configFieldPlatform": {
+    "message": "Платформа"
+  },
+  "configFieldReceiveMode": {
+    "message": "Режим приёма"
+  },
+  "showToolOutput": {
+    "message": "Показать вывод инструмента"
+  },
+  "hideToolOutput": {
+    "message": "Скрыть вывод инструмента"
+  },
+  "showThinkingTools": {
+    "message": "Показать рассуждения и инструменты"
+  },
+  "hideThinkingTools": {
+    "message": "Скрыть рассуждения и инструменты"
+  },
+  "saveAttachment": {
+    "message": "Сохранить $1"
+  },
+  "noDownloadData": {
+    "message": "Нет данных для загрузки"
+  },
+  "copyRichText": {
+    "message": "Копировать форматированный текст"
+  },
+  "voicePermissionDismissed": {
+    "message": "Запрос доступа к микрофону закрыт."
+  },
+  "voicePermissionPending": {
+    "message": "Доступ к микрофону не разрешён."
+  },
+  "voicePermissionBlocked": {
+    "message": "Доступ к микрофону заблокирован."
+  },
+  "voiceMicrophoneMissing": {
+    "message": "Микрофон не найден."
+  },
+  "voiceOffline": {
+    "message": "Распознавание речи браузером недоступно без сети."
+  },
+  "voiceUnavailable": {
+    "message": "Выбранная голосовая служба недоступна."
+  },
+  "voiceInputUnavailable": {
+    "message": "Голосовой ввод недоступен в этом браузере."
+  },
+  "voiceNoSpeech": {
+    "message": "Речь не распознана."
+  },
+  "voiceRecognitionFailed": {
+    "message": "Ошибка распознавания речи браузером."
+  },
+  "copyMessage": {
+    "message": "Копировать сообщение"
+  },
+  "printMessage": {
+    "message": "Распечатать сообщение"
+  },
+  "configConnectionChanged": {
+    "message": "Настройки подключения изменились. Перезагрузите конфигурацию перед сохранением."
   }
 }

@@ -15,15 +15,28 @@ import type {
   Resource
 } from './types'
 
-export function conversationToGroup(conversation: Conversation): MessageGroup {
+export type NormalizedMessageCache = WeakMap<
+  Message,
+  { conversation: number; index: number; messages: ChatMessage[] }
+>
+
+export function conversationToGroup(
+  conversation: Conversation,
+  cache?: NormalizedMessageCache
+): MessageGroup {
   const messages = mergeRepeatedActionMessages(
-    (conversation.messages || []).flatMap((message, index) =>
-      normalizeMessages(message, {
+    (conversation.messages || []).flatMap((message, index) => {
+      const cached = cache?.get(message)
+      if (cached?.conversation === conversation._id && cached.index === index)
+        return cached.messages
+      const messages = normalizeMessages(message, {
         conversation: conversation._id,
         index,
         fallbackTimestamp: conversation.updated_at
       })
-    )
+      cache?.set(message, { conversation: conversation._id, index, messages })
+      return messages
+    })
   )
 
   if (conversation.status === 'failed') {
@@ -236,26 +249,22 @@ function shouldPreferKnownActionState(current: ChatAction, known: ChatAction): b
     return true
   }
   return Boolean(
-    known.respondedAt &&
-      current.respondedAt &&
-      known.respondedAt > current.respondedAt
+    known.respondedAt && current.respondedAt && known.respondedAt > current.respondedAt
   )
 }
 
 function actionHasResponse(action: ChatAction): boolean {
   return (
-    action.status !== 'pending' ||
-    action.response !== undefined ||
-    action.respondedAt !== undefined
+    action.status !== 'pending' || action.response !== undefined || action.respondedAt !== undefined
   )
 }
 
 function isActionOnlyMessage(message: ChatMessage): boolean {
   return Boolean(
     !message.text.trim() &&
-      !message.thinkingText?.trim() &&
-      !message.attachments?.length &&
-      message.actions?.length
+    !message.thinkingText?.trim() &&
+    !message.attachments?.length &&
+    message.actions?.length
   )
 }
 
@@ -307,7 +316,12 @@ export function normalizeMessages(
   // expanded-details state.
   const baseId = `m-${context.conversation}-${context.index}`
   const messages: ChatMessage[] = []
-  if (content.text || content.thinkingText || attachments.length > 0 || content.actions.length > 0) {
+  if (
+    content.text ||
+    content.thinkingText ||
+    attachments.length > 0 ||
+    content.actions.length > 0
+  ) {
     messages.push({
       id: baseId,
       conversation: context.conversation,

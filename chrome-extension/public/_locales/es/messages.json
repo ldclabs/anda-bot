@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "Datos de conexión"
   },
-  "savedConnection": {
-    "message": "Guardado"
-  },
   "tokenPlaceholder": {
     "message": "Pega el Bearer token impreso por `anda browser token --days 365`"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "Sincronizando"
-  },
-  "noActiveTab": {
-    "message": "Sin pestaña activa"
   },
   "attachFiles": {
     "message": "Adjuntar archivos"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "La conversación falló, pero no se devolvió ningún motivo de fallo."
-  },
-  "rpcError": {
-    "message": "la herramienta devolvió una respuesta RPC desconocida"
   },
   "extensionError": {
     "message": "el service worker de la extensión devolvió un error"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "Marcadores"
-  },
-  "bookmarksDescription": {
-    "message": "Tus mensajes del asistente guardados. Haz clic para volver a uno."
   },
   "bookmarksEmpty": {
     "message": "Aún no hay marcadores"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "No se pudo aplicar el cambio. Descarta esta vista previa y revisa una nueva."
+  },
+  "configFieldGatewayAddress": {
+    "message": "Dirección de la puerta de enlace"
+  },
+  "configFieldLogLevel": {
+    "message": "Nivel de registro"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "Proxy HTTPS"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "Espacios de trabajo adicionales"
+  },
+  "configFieldUserId": {
+    "message": "ID de usuario"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "Clave pública Ed25519"
+  },
+  "configFieldFamily": {
+    "message": "Familia de modelos"
+  },
+  "configFieldModel": {
+    "message": "Modelo"
+  },
+  "configFieldAPIBase": {
+    "message": "Dirección base de la API"
+  },
+  "configFieldAPIKey": {
+    "message": "Clave de API"
+  },
+  "configFieldEffort": {
+    "message": "Esfuerzo de razonamiento"
+  },
+  "configFieldContextWindow": {
+    "message": "Ventana de contexto"
+  },
+  "configFieldMaxOutput": {
+    "message": "Salida máxima"
+  },
+  "configFieldLabels": {
+    "message": "Etiquetas"
+  },
+  "configFieldStream": {
+    "message": "Respuesta en streaming"
+  },
+  "configFieldDisabled": {
+    "message": "Desactivado"
+  },
+  "configFieldBearerAuth": {
+    "message": "Autenticación Bearer"
+  },
+  "configFieldEnabled": {
+    "message": "Activado"
+  },
+  "configFieldDefaultProvider": {
+    "message": "Proveedor predeterminado"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "Formato de salida de StepFun"
+  },
+  "configFieldMaxTextLength": {
+    "message": "Longitud máxima del texto"
+  },
+  "configFieldBinaryPath": {
+    "message": "Ruta del ejecutable"
+  },
+  "configFieldVoice": {
+    "message": "Voz"
+  },
+  "configFieldSpeed": {
+    "message": "Velocidad"
+  },
+  "configFieldLanguageCode": {
+    "message": "Código de idioma"
+  },
+  "configFieldAPIURL": {
+    "message": "URL de la API"
+  },
+  "configFieldVolume": {
+    "message": "Volumen"
+  },
+  "configFieldInstruction": {
+    "message": "Instrucción"
+  },
+  "configFieldSampleRate": {
+    "message": "Frecuencia de muestreo"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "Filtro Markdown"
+  },
+  "configFieldPronunciationMap": {
+    "message": "Mapa de pronunciación"
+  },
+  "configFieldToneReplacements": {
+    "message": "Sustituciones de pronunciación"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "Instrucción inicial de Whisper"
+  },
+  "configFieldLanguage": {
+    "message": "Idioma"
+  },
+  "configFieldHotwords": {
+    "message": "Palabras clave"
+  },
+  "configFieldPrompt": {
+    "message": "Instrucción"
+  },
+  "configFieldEnableITN": {
+    "message": "Activar normalización inversa"
+  },
+  "configFieldPCMCodec": {
+    "message": "Códec PCM"
+  },
+  "configFieldPCMRate": {
+    "message": "Frecuencia PCM"
+  },
+  "configFieldPCMBits": {
+    "message": "Profundidad de bits PCM"
+  },
+  "configFieldPCMChannels": {
+    "message": "Canales PCM"
+  },
+  "configFieldURL": {
+    "message": "URL"
+  },
+  "configFieldBearerToken": {
+    "message": "Token Bearer"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "Tamaño máximo del audio (bytes)"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "Tiempo de espera (segundos)"
+  },
+  "configFieldID": {
+    "message": "ID"
+  },
+  "configFieldUserBinding": {
+    "message": "Usuario vinculado"
+  },
+  "configFieldBotToken": {
+    "message": "Token del bot"
+  },
+  "configFieldUsername": {
+    "message": "Nombre de usuario"
+  },
+  "configFieldAllowedUsers": {
+    "message": "Usuarios permitidos"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "Permitir usuarios externos"
+  },
+  "configFieldMentionOnly": {
+    "message": "Responder solo a menciones"
+  },
+  "configFieldACKReactions": {
+    "message": "Reacciones de recepción"
+  },
+  "configFieldRouteTag": {
+    "message": "Etiqueta de ruta"
+  },
+  "configFieldGuildID": {
+    "message": "ID del servidor"
+  },
+  "configFieldListenToBots": {
+    "message": "Recibir mensajes de bots"
+  },
+  "configFieldAppID": {
+    "message": "ID de la aplicación"
+  },
+  "configFieldAppSecret": {
+    "message": "Secreto de la aplicación"
+  },
+  "configFieldVerificationToken": {
+    "message": "Token de verificación"
+  },
+  "configFieldWebhookPort": {
+    "message": "Puerto del webhook"
+  },
+  "configFieldPlatform": {
+    "message": "Plataforma"
+  },
+  "configFieldReceiveMode": {
+    "message": "Modo de recepción"
+  },
+  "showToolOutput": {
+    "message": "Mostrar salida de la herramienta"
+  },
+  "hideToolOutput": {
+    "message": "Ocultar salida de la herramienta"
+  },
+  "showThinkingTools": {
+    "message": "Mostrar razonamiento y herramientas"
+  },
+  "hideThinkingTools": {
+    "message": "Ocultar razonamiento y herramientas"
+  },
+  "saveAttachment": {
+    "message": "Guardar $1"
+  },
+  "noDownloadData": {
+    "message": "No hay datos para descargar"
+  },
+  "copyRichText": {
+    "message": "Copiar texto enriquecido"
+  },
+  "voicePermissionDismissed": {
+    "message": "Se descartó el permiso del micrófono."
+  },
+  "voicePermissionPending": {
+    "message": "No se aceptó el permiso del micrófono."
+  },
+  "voicePermissionBlocked": {
+    "message": "El acceso al micrófono está bloqueado."
+  },
+  "voiceMicrophoneMissing": {
+    "message": "No se encontró ningún micrófono."
+  },
+  "voiceOffline": {
+    "message": "El reconocimiento de voz del navegador está sin conexión."
+  },
+  "voiceUnavailable": {
+    "message": "El servicio de voz seleccionado no está disponible."
+  },
+  "voiceInputUnavailable": {
+    "message": "La entrada de voz no está disponible en este navegador."
+  },
+  "voiceNoSpeech": {
+    "message": "No se reconoció ninguna voz."
+  },
+  "voiceRecognitionFailed": {
+    "message": "Falló el reconocimiento de voz del navegador."
+  },
+  "copyMessage": {
+    "message": "Copiar mensaje"
+  },
+  "printMessage": {
+    "message": "Imprimir mensaje"
+  },
+  "configConnectionChanged": {
+    "message": "La conexión ha cambiado. Vuelva a cargar la configuración antes de guardarla."
   }
 }

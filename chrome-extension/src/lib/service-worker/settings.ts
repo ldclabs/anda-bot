@@ -1,4 +1,10 @@
-import type { AppearanceTheme, ApprovalMode, ChromeApi, SettingsState, SubmitKeyMode } from './types'
+import type {
+  AppearanceTheme,
+  ApprovalMode,
+  ChromeApi,
+  SettingsState,
+  SubmitKeyMode
+} from './types'
 import { getCurrentBrowser } from './chrome'
 
 export const defaultSettings: SettingsState = {
@@ -11,21 +17,25 @@ export const defaultSettings: SettingsState = {
 
 const browserSessionStorageKey = 'browserSessionId'
 
-export async function loadSettings(chromeApi: ChromeApi): Promise<SettingsState> {
-  const saved = await chromeApi.storage.local.get([
-    'baseUrl',
-    'token',
-    'submitKeyMode',
-    'appearanceTheme',
-    'approvalMode'
-  ])
-  return normalizeSettings({
-    baseUrl: saved.baseUrl || defaultSettings.baseUrl,
-    token: saved.token || '',
-    submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-    appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme,
-    approvalMode: saved.approvalMode || defaultSettings.approvalMode
-  })
+export const settingsKeys = [
+  'baseUrl',
+  'token',
+  'submitKeyMode',
+  'appearanceTheme',
+  'approvalMode'
+] as const
+
+export interface SettingsStorage {
+  get(keys: string[]): Promise<Partial<SettingsState>>
+}
+
+export async function loadSettingsFromStorage(storage: SettingsStorage): Promise<SettingsState> {
+  const saved = await storage.get([...settingsKeys])
+  return normalizeSettings({ ...defaultSettings, ...saved })
+}
+
+export function loadSettings(chromeApi: Pick<ChromeApi, 'storage'>): Promise<SettingsState> {
+  return loadSettingsFromStorage(chromeApi.storage.local)
 }
 
 export async function browserSession(chromeApi: ChromeApi): Promise<string> {

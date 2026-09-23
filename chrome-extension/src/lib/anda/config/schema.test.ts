@@ -213,3 +213,29 @@ describe('parseConfigDraft', () => {
     expect(parseConfigDraft('')).toBeNull()
   })
 })
+
+describe('config array row identity', () => {
+  it('keeps unknown fields and comments with surviving and reordered rows', () => {
+    const source = `users:
+  - id: alice
+    pubkey: aaa
+    private_hint: alice-only # Alice hint
+  - id: bob
+    pubkey: bbb
+    future_option: enabled # Bob hint
+`
+    const draft = parseConfigDraft(source)!
+    const users = draft.users as Array<Record<string, any>>
+    users.shift()
+    const rendered = renderConfigYaml(draft, source)
+    expect(rendered).toContain('future_option: enabled # Bob hint')
+    expect(rendered).not.toContain('private_hint')
+    expect(rendered).not.toContain('Alice hint')
+    const reordered = parseConfigDraft(source)!
+    ;(reordered.users as unknown[]).reverse()
+    const moved = renderConfigYaml(reordered, source)
+    expect(moved.indexOf('id: bob')).toBeLessThan(moved.indexOf('id: alice'))
+    expect(moved).toContain('future_option: enabled # Bob hint')
+    expect(moved).toContain('private_hint: alice-only # Alice hint')
+  })
+})

@@ -44,18 +44,18 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
   }
 
   function editableTextInput(element: Element): boolean {
-    if (element instanceof HTMLTextAreaElement) {
-      return !element.readOnly && !element.disabled
+    if (element.tagName === 'TEXTAREA') {
+      return !(element as HTMLInputElement).readOnly && !(element as HTMLInputElement).disabled
     }
-    if (element instanceof HTMLInputElement) {
+    if (element.tagName === 'INPUT') {
       const type = (element.getAttribute('type') || 'text').toLowerCase()
       return (
-        !element.readOnly &&
-        !element.disabled &&
+        !(element as HTMLInputElement).readOnly &&
+        !(element as HTMLInputElement).disabled &&
         ['email', 'number', 'password', 'search', 'tel', 'text', 'url'].includes(type)
       )
     }
-    return element instanceof HTMLElement && element.isContentEditable
+    return (element as HTMLElement).isContentEditable === true
   }
 
   function preferredMatch(elements: Element[]): Element | null {
@@ -84,7 +84,7 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
       return direct
     }
     for (const element of Array.from(root.querySelectorAll('*'))) {
-      const shadowRoot = element instanceof HTMLElement ? element.shadowRoot : null
+      const shadowRoot = element.shadowRoot
       if (shadowRoot) {
         const found = deepQuerySelector(shadowRoot, selector)
         if (found) {
@@ -103,11 +103,12 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
   }
 
   function childFrameDocument(element: Element): Document | null {
-    if (!(element instanceof HTMLIFrameElement)) {
+    if (element.tagName !== 'IFRAME') {
       return null
     }
     try {
-      return element.contentDocument || element.contentWindow?.document || null
+      const frame = element as HTMLIFrameElement
+      return frame.contentDocument || frame.contentWindow?.document || null
     } catch (_error) {
       return null
     }
@@ -115,16 +116,21 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
 
   function box(element: Element): Record<string, number> {
     const rect = element.getBoundingClientRect()
-    return {
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      top: rect.top,
-      right: rect.right,
-      bottom: rect.bottom,
-      left: rect.left
+    let { x, y, width, height } = rect
+    let owner = element.ownerDocument
+    let frame = owner.defaultView?.frameElement as HTMLElement | null
+    while (frame) {
+      const bounds = frame.getBoundingClientRect()
+      const scaleX = frame.offsetWidth ? bounds.width / frame.offsetWidth : 1
+      const scaleY = frame.offsetHeight ? bounds.height / frame.offsetHeight : 1
+      x = bounds.left + (frame.clientLeft + x) * scaleX
+      y = bounds.top + (frame.clientTop + y) * scaleY
+      width *= scaleX
+      height *= scaleY
+      owner = frame.ownerDocument
+      frame = owner.defaultView?.frameElement as HTMLElement | null
     }
+    return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height }
   }
 
   function label(element: Element): string {
@@ -170,7 +176,7 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
   }
 
   element.scrollIntoView({ block: 'center', inline: 'center' })
-  const rect = element.getBoundingClientRect()
+  const rect = box(element)
   const useExplicitPoint = !args.selector
   const x =
     useExplicitPoint && typeof args.x === 'number' && Number.isFinite(args.x)
@@ -283,7 +289,7 @@ export function pageActionDispatcher(
     }
 
     for (const element of Array.from(root.querySelectorAll('*'))) {
-      const shadowRoot = element instanceof HTMLElement ? element.shadowRoot : null
+      const shadowRoot = element.shadowRoot
       if (shadowRoot) {
         const found = deepQuerySelector(shadowRoot, selector)
         if (found) {
@@ -302,11 +308,12 @@ export function pageActionDispatcher(
   }
 
   function childFrameDocument(element: Element): Document | null {
-    if (!(element instanceof HTMLIFrameElement)) {
+    if (element.tagName !== 'IFRAME') {
       return null
     }
     try {
-      return element.contentDocument || element.contentWindow?.document || null
+      const frame = element as HTMLIFrameElement
+      return frame.contentDocument || frame.contentWindow?.document || null
     } catch (_error) {
       return null
     }
@@ -449,13 +456,13 @@ export function pageActionDispatcher(
 
   function selectElement(selector = args.selector): HTMLSelectElement {
     const element = queryRequired(selector)
-    if (element instanceof HTMLSelectElement) {
-      return element
+    if (element.tagName === 'SELECT') {
+      return element as HTMLSelectElement
     }
     const frameDocument = childFrameDocument(element)
     const nestedSelect = frameDocument?.querySelector('select')
-    if (nestedSelect instanceof HTMLSelectElement) {
-      return nestedSelect
+    if (nestedSelect?.tagName === 'SELECT') {
+      return nestedSelect as HTMLSelectElement
     }
     throw new Error(`selector is not a select element: ${selector}`)
   }
@@ -994,14 +1001,14 @@ export function pageActionDispatcher(
       if (element instanceof HTMLElement) {
         element.focus()
       }
-      if (element instanceof HTMLElement && element.isContentEditable) {
+      if ((element as HTMLElement).isContentEditable === true) {
         element.textContent = args.text || ''
       } else if (
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLTextAreaElement ||
-        element instanceof HTMLSelectElement
+        element.tagName === 'INPUT' ||
+        element.tagName === 'TEXTAREA' ||
+        element.tagName === 'SELECT'
       ) {
-        setElementValue(element, args.text || '')
+        setElementValue(element as HTMLInputElement, args.text || '')
       } else {
         throw new Error(
           args.selector

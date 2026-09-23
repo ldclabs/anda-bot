@@ -1,3 +1,4 @@
+import { bytesToBase64 } from '$lib/utils/base64'
 import type { ChatAttachment, Resource } from './client/types'
 
 export const pageElementContextMenuId = 'anda-send-page-element-to-chat'
@@ -108,7 +109,7 @@ export function pageElementInfoToAttachment(request: PageElementAttachmentReques
     description: pageElementDescription(request.element),
     uri: request.element.pageUrl || request.element.frameUrl || undefined,
     mime_type: 'application/json',
-    blob: utf8ToBase64(content),
+    blob: bytesToBase64(new TextEncoder().encode(content)),
     size,
     metadata: {
       source: 'chrome_extension_context_menu',
@@ -216,16 +217,6 @@ function hostnameFromUrl(value: string): string {
 
 function trimString(value: string, maxChars: number): string {
   return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value
-}
-
-function utf8ToBase64(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  const chunkSize = 0x8000
-  let binary = ''
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-  }
-  return btoa(binary)
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

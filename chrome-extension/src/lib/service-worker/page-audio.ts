@@ -52,8 +52,9 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
   }
 
   function cleanup(state: PageAudioState | undefined): void {
+    if (state) state.canceled = true
     state?.stream?.getTracks().forEach((track) => track.stop())
-    global.__andaAudioCapture = undefined
+    if (global.__andaAudioCapture === state) global.__andaAudioCapture = undefined
   }
 
   function blobToBase64(blob: Blob): Promise<string> {
@@ -67,8 +68,9 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
 
   async function finish(state: PageAudioState): Promise<PageAudioResult> {
     const blob = new Blob(state.chunks, { type: state.mimeType })
+    const canceled = state.canceled
     cleanup(state)
-    if (state.canceled) {
+    if (canceled) {
       return { available: true, canceled: true }
     }
     if (!blob.size) {
@@ -98,10 +100,14 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
     }
     state.canceled = true
     return new Promise<PageAudioResult>((resolve) => {
-      state.recorder!.onstop = () => {
-        cleanup(state)
-        resolve({ available: true, canceled: true })
-      }
+      state.recorder!.addEventListener(
+        'stop',
+        () => {
+          cleanup(state)
+          resolve({ available: true, canceled: true })
+        },
+        { once: true }
+      )
       try {
         if (state.recorder!.state === 'inactive') {
           cleanup(state)
@@ -127,14 +133,18 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
           state.chunks.push(event.data)
         }
       }
-      state.recorder!.onstop = () => {
-        void finish(state)
-          .then(resolve)
-          .catch((error) => {
-            cleanup(state)
-            resolve({ available: true, error: audioErrorMessage(error) })
-          })
-      }
+      state.recorder!.addEventListener(
+        'stop',
+        () => {
+          void finish(state)
+            .then(resolve)
+            .catch((error) => {
+              cleanup(state)
+              resolve({ available: true, error: audioErrorMessage(error) })
+            })
+        },
+        { once: true }
+      )
       try {
         state.recorder!.stop()
       } catch (error) {
@@ -150,6 +160,14 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
 
   cleanup(global.__andaAudioCapture)
   const mimeType = supportedMimeType(args.mimeType)
+  const state: PageAudioState = {
+    stream: null,
+    recorder: null,
+    chunks: [],
+    mimeType,
+    canceled: false
+  }
+  global.__andaAudioCapture = state
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -158,14 +176,14 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
         autoGainControl: true
       }
     })
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-    const state: PageAudioState = {
-      stream,
-      recorder,
-      chunks: [],
-      mimeType: recorder.mimeType || mimeType || 'audio/webm',
-      canceled: false
+    if (state.canceled || global.__andaAudioCapture !== state) {
+      stream.getTracks().forEach((track) => track.stop())
+      return { available: true, started: false, canceled: true }
     }
+    state.stream = stream
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    state.recorder = recorder
+    state.mimeType = recorder.mimeType || mimeType || 'audio/webm'
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
         state.chunks.push(event.data)
@@ -175,7 +193,7 @@ export async function pageAudioCaptureDispatcher(args: PageAudioArgs): Promise<P
     recorder.start()
     return { available: true, started: true, mimeType: state.mimeType }
   } catch (error) {
-    cleanup(global.__andaAudioCapture)
+    cleanup(state)
     return { available: true, started: false, error: audioErrorMessage(error) }
   }
 }

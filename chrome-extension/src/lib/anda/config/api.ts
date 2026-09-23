@@ -1,4 +1,11 @@
-import { defaultSettings, errorToMessage, normalizeSettings } from '$lib/service-worker/settings'
+import { getMessage } from '$lib/i18n'
+import {
+  connectionKey,
+  defaultSettings,
+  errorToMessage,
+  normalizeSettings,
+  loadSettingsFromStorage
+} from '$lib/service-worker/settings'
 import type { SettingsState } from '$lib/service-worker/types'
 
 export type Json =
@@ -40,6 +47,15 @@ export class DaemonConfigApi {
   }
 
   async save(content: string): Promise<DaemonConfigResponse> {
+    if (
+      getConfigChromeApi()?.storage?.local &&
+      connectionKey(await loadConfigSettings()) !== connectionKey(this.settings)
+    ) {
+      throw new Error(
+        getMessage('configConnectionChanged') ||
+          'Connection settings changed; reload the configuration before saving.'
+      )
+    }
     return this.request<DaemonConfigResponse>('/daemon/config', {
       method: 'PUT',
       body: JSON.stringify({ content })
@@ -80,18 +96,7 @@ export class DaemonConfigApi {
 export async function loadConfigSettings(): Promise<SettingsState> {
   const chromeApi = getConfigChromeApi()
   if (chromeApi?.storage?.local) {
-    const saved = await chromeApi.storage.local.get([
-      'baseUrl',
-      'token',
-      'submitKeyMode',
-      'appearanceTheme'
-    ])
-    return normalizeSettings({
-      baseUrl: String(saved.baseUrl || defaultSettings.baseUrl),
-      token: String(saved.token || ''),
-      submitKeyMode: saved.submitKeyMode || defaultSettings.submitKeyMode,
-      appearanceTheme: saved.appearanceTheme || defaultSettings.appearanceTheme
-    })
+    return loadSettingsFromStorage(chromeApi.storage.local)
   }
 
   return normalizeSettings({ ...defaultSettings, ...safeReadLocalStorage() })
@@ -101,7 +106,7 @@ export async function saveConfigSettings(settings: SettingsState): Promise<void>
   const normalized = normalizeSettings(settings)
   const chromeApi = getConfigChromeApi()
   if (chromeApi?.storage?.local) {
-    await chromeApi.storage.local.set(normalized)
+    await chromeApi.storage.local.set({ baseUrl: normalized.baseUrl, token: normalized.token })
     return
   }
   safeWriteLocalStorage(normalized)

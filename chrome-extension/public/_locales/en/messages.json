@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "Connection details"
   },
-  "savedConnection": {
-    "message": "Saved"
-  },
   "tokenPlaceholder": {
     "message": "Paste the Bearer token printed by `anda browser token --days 365`"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "Syncing"
-  },
-  "noActiveTab": {
-    "message": "No active tab"
   },
   "attachFiles": {
     "message": "Attach files"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "Conversation failed, but no failure reason was returned."
-  },
-  "rpcError": {
-    "message": "tool returned an unknown RPC response"
   },
   "extensionError": {
     "message": "extension service worker returned an error"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "Bookmarks"
-  },
-  "bookmarksDescription": {
-    "message": "Your saved assistant messages. Click one to jump back to it."
   },
   "bookmarksEmpty": {
     "message": "No bookmarks yet"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "The change could not be applied. Discard this preview and review a fresh one."
+  },
+  "configFieldGatewayAddress": {
+    "message": "Gateway address"
+  },
+  "configFieldLogLevel": {
+    "message": "Log level"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "HTTPS proxy"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "Extra workspaces"
+  },
+  "configFieldUserId": {
+    "message": "User id"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "Ed25519 public key"
+  },
+  "configFieldFamily": {
+    "message": "Family"
+  },
+  "configFieldModel": {
+    "message": "Model"
+  },
+  "configFieldAPIBase": {
+    "message": "API base"
+  },
+  "configFieldAPIKey": {
+    "message": "API key"
+  },
+  "configFieldEffort": {
+    "message": "Effort"
+  },
+  "configFieldContextWindow": {
+    "message": "Context window"
+  },
+  "configFieldMaxOutput": {
+    "message": "Max output"
+  },
+  "configFieldLabels": {
+    "message": "Labels"
+  },
+  "configFieldStream": {
+    "message": "Stream"
+  },
+  "configFieldDisabled": {
+    "message": "Disabled"
+  },
+  "configFieldBearerAuth": {
+    "message": "Bearer auth"
+  },
+  "configFieldEnabled": {
+    "message": "Enabled"
+  },
+  "configFieldDefaultProvider": {
+    "message": "Default provider"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "StepFun output format"
+  },
+  "configFieldMaxTextLength": {
+    "message": "Max text length"
+  },
+  "configFieldBinaryPath": {
+    "message": "Binary path"
+  },
+  "configFieldVoice": {
+    "message": "Voice"
+  },
+  "configFieldSpeed": {
+    "message": "Speed"
+  },
+  "configFieldLanguageCode": {
+    "message": "Language code"
+  },
+  "configFieldAPIURL": {
+    "message": "API URL"
+  },
+  "configFieldVolume": {
+    "message": "Volume"
+  },
+  "configFieldInstruction": {
+    "message": "Instruction"
+  },
+  "configFieldSampleRate": {
+    "message": "Sample rate"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "Markdown filter"
+  },
+  "configFieldPronunciationMap": {
+    "message": "Pronunciation map"
+  },
+  "configFieldToneReplacements": {
+    "message": "Tone replacements"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "Whisper initial prompt"
+  },
+  "configFieldLanguage": {
+    "message": "Language"
+  },
+  "configFieldHotwords": {
+    "message": "Hotwords"
+  },
+  "configFieldPrompt": {
+    "message": "Prompt"
+  },
+  "configFieldEnableITN": {
+    "message": "Enable ITN"
+  },
+  "configFieldPCMCodec": {
+    "message": "PCM codec"
+  },
+  "configFieldPCMRate": {
+    "message": "PCM rate"
+  },
+  "configFieldPCMBits": {
+    "message": "PCM bits"
+  },
+  "configFieldPCMChannels": {
+    "message": "PCM channels"
+  },
+  "configFieldURL": {
+    "message": "URL"
+  },
+  "configFieldBearerToken": {
+    "message": "Bearer token"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "Max audio bytes"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "Timeout seconds"
+  },
+  "configFieldID": {
+    "message": "ID"
+  },
+  "configFieldUserBinding": {
+    "message": "User binding"
+  },
+  "configFieldBotToken": {
+    "message": "Bot token"
+  },
+  "configFieldUsername": {
+    "message": "Username"
+  },
+  "configFieldAllowedUsers": {
+    "message": "Allowed users"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "Allow external users"
+  },
+  "configFieldMentionOnly": {
+    "message": "Mention only"
+  },
+  "configFieldACKReactions": {
+    "message": "ACK reactions"
+  },
+  "configFieldRouteTag": {
+    "message": "Route tag"
+  },
+  "configFieldGuildID": {
+    "message": "Guild ID"
+  },
+  "configFieldListenToBots": {
+    "message": "Listen to bots"
+  },
+  "configFieldAppID": {
+    "message": "App ID"
+  },
+  "configFieldAppSecret": {
+    "message": "App secret"
+  },
+  "configFieldVerificationToken": {
+    "message": "Verification token"
+  },
+  "configFieldWebhookPort": {
+    "message": "Webhook port"
+  },
+  "configFieldPlatform": {
+    "message": "Platform"
+  },
+  "configFieldReceiveMode": {
+    "message": "Receive mode"
+  },
+  "showToolOutput": {
+    "message": "Show tool output"
+  },
+  "hideToolOutput": {
+    "message": "Hide tool output"
+  },
+  "showThinkingTools": {
+    "message": "Show thinking and tools"
+  },
+  "hideThinkingTools": {
+    "message": "Hide thinking and tools"
+  },
+  "saveAttachment": {
+    "message": "Save $1"
+  },
+  "noDownloadData": {
+    "message": "No downloadable data"
+  },
+  "copyRichText": {
+    "message": "Copy rich text"
+  },
+  "voicePermissionDismissed": {
+    "message": "Microphone permission was dismissed."
+  },
+  "voicePermissionPending": {
+    "message": "Microphone permission was not accepted."
+  },
+  "voicePermissionBlocked": {
+    "message": "Microphone access was blocked."
+  },
+  "voiceMicrophoneMissing": {
+    "message": "No microphone was found."
+  },
+  "voiceOffline": {
+    "message": "Browser speech recognition is offline."
+  },
+  "voiceUnavailable": {
+    "message": "Selected voice service is unavailable."
+  },
+  "voiceInputUnavailable": {
+    "message": "Voice input is unavailable in this browser."
+  },
+  "voiceNoSpeech": {
+    "message": "No speech was recognized."
+  },
+  "voiceRecognitionFailed": {
+    "message": "Browser speech recognition failed."
+  },
+  "copyMessage": {
+    "message": "Copy message"
+  },
+  "printMessage": {
+    "message": "Print message"
+  },
+  "configConnectionChanged": {
+    "message": "Connection settings changed. Reload the configuration before saving."
   }
 }

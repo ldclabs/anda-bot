@@ -25,9 +25,7 @@ export function actionTimeoutMs(
   return Math.max(100, Math.min(120000, Math.floor(requested)))
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+export { errorToMessage as errorMessage } from './settings'
 
 export function rememberActiveTab(tabOrId: ChromeTabInfo | number | null | undefined): void {
   if (tabOrId == null) {

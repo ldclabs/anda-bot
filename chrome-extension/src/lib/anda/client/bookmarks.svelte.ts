@@ -43,12 +43,20 @@ export class BookmarksApi {
   /** Message ids currently bookmarked; drives the star in the transcript. */
   readonly bookmarkedIds = new SvelteSet<string>()
 
+  #generation = 0
   #cache = new Map<number, Bookmark | null>()
   #requests = new Map<number, Promise<Bookmark | null>>()
 
   constructor(daemon: DaemonApi, context: BookmarksContext) {
     this.#daemon = daemon
     this.#context = context
+  }
+
+  clear(): void {
+    this.#generation++
+    this.#cache.clear()
+    this.#requests.clear()
+    this.bookmarkedIds.clear()
   }
 
   isBookmarked(messageId: string): boolean {
@@ -79,6 +87,7 @@ export class BookmarksApi {
       return this.#cache.get(conversation) || null
     }
 
+    const generation = this.#generation
     let request = this.#requests.get(conversation)
     if (!request) {
       request = apiResult<Bookmark | null>(this.#daemon, 'bookmarks_api', {
@@ -87,12 +96,13 @@ export class BookmarksApi {
       })
         .then((bookmark) => bookmark || null)
         .finally(() => {
-          this.#requests.delete(conversation)
+          if (this.#requests.get(conversation) === request) this.#requests.delete(conversation)
         })
       this.#requests.set(conversation, request)
     }
 
     const bookmark = await request
+    if (generation !== this.#generation) return null
     this.#updateCache(conversation, bookmark)
     return bookmark
   }
@@ -114,6 +124,7 @@ export class BookmarksApi {
     if (!this.#daemon.authorized || !messageId || this.bookmarkedIds.has(messageId)) {
       return
     }
+    const generation = this.#generation
     this.bookmarkedIds.add(messageId)
     try {
       const bookmark = await apiResult<Bookmark>(this.#daemon, 'bookmarks_api', {
@@ -125,8 +136,10 @@ export class BookmarksApi {
         text: message.text,
         folder_ids: []
       })
+      if (generation !== this.#generation) return
       this.#updateCache(bookmark.conversation, bookmark)
     } catch (error) {
+      if (generation !== this.#generation) return
       this.bookmarkedIds.delete(messageId)
       this.#context.reportError(error)
     }
@@ -137,6 +150,7 @@ export class BookmarksApi {
     if (!this.#daemon.authorized || !messageId) {
       return false
     }
+    const generation = this.#generation
     const wasBookmarked = this.bookmarkedIds.delete(messageId)
     try {
       const result = await apiResult<{
@@ -144,12 +158,14 @@ export class BookmarksApi {
         conversation?: number
         bookmark?: Bookmark | null
       }>(this.#daemon, 'bookmarks_api', { type: 'RemoveBookmark', message_id: messageId })
+      if (generation !== this.#generation) return false
       const conversation = result.conversation || conversationFromMessageId(messageId)
       if (conversation > 0) {
         this.#updateCache(conversation, result.bookmark || null)
       }
       return true
     } catch (error) {
+      if (generation !== this.#generation) return false
       if (wasBookmarked) {
         this.bookmarkedIds.add(messageId)
       }
@@ -290,7 +306,9 @@ export class BookmarksApi {
   }
 
   async #assign(args: Record<string, unknown>): Promise<Bookmark> {
+    const generation = this.#generation
     const bookmark = await apiResult<Bookmark>(this.#daemon, 'bookmarks_api', args)
+    if (generation !== this.#generation) throw new Error('Connection settings changed')
     this.#updateCache(bookmark.conversation, bookmark)
     return bookmark
   }

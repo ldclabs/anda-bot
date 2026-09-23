@@ -77,9 +77,6 @@
   "connectionDetails": {
     "message": "تفاصيل الاتصال"
   },
-  "savedConnection": {
-    "message": "محفوظ"
-  },
   "tokenPlaceholder": {
     "message": "الصق Bearer token الذي يطبعه `anda browser token --days 365`"
   },
@@ -208,9 +205,6 @@
   },
   "syncing": {
     "message": "مزامنة"
-  },
-  "noActiveTab": {
-    "message": "لا توجد علامة تبويب نشطة"
   },
   "attachFiles": {
     "message": "إرفاق ملفات"
@@ -463,9 +457,6 @@
   },
   "conversationFailedNoReason": {
     "message": "فشلت المحادثة، ولكن لم يتم إرجاع سبب للفشل."
-  },
-  "rpcError": {
-    "message": "أداة أرجعت استجابة RPC غير معروفة"
   },
   "extensionError": {
     "message": "عامل خدمة الإضافة أرجع خطأ"
@@ -778,9 +769,6 @@
   },
   "bookmarks": {
     "message": "الإشارات المرجعية"
-  },
-  "bookmarksDescription": {
-    "message": "رسائل المساعد المحفوظة. انقر على إحداها للانتقال إليها."
   },
   "bookmarksEmpty": {
     "message": "لا توجد إشارات مرجعية بعد"
@@ -1513,5 +1501,248 @@
   },
   "memoryChangeNeedsReview": {
     "message": "تعذّر تطبيق التغيير. ألغِ هذه المعاينة وراجع معاينة جديدة."
+  },
+  "configFieldGatewayAddress": {
+    "message": "عنوان البوابة"
+  },
+  "configFieldLogLevel": {
+    "message": "مستوى السجل"
+  },
+  "configFieldHTTPSProxy": {
+    "message": "وكيل HTTPS"
+  },
+  "configFieldExtraWorkspaces": {
+    "message": "مساحات عمل إضافية"
+  },
+  "configFieldUserId": {
+    "message": "معرّف المستخدم"
+  },
+  "configFieldEd25519PublicKey": {
+    "message": "المفتاح العام Ed25519"
+  },
+  "configFieldFamily": {
+    "message": "عائلة النماذج"
+  },
+  "configFieldModel": {
+    "message": "النموذج"
+  },
+  "configFieldAPIBase": {
+    "message": "العنوان الأساسي لواجهة API"
+  },
+  "configFieldAPIKey": {
+    "message": "مفتاح API"
+  },
+  "configFieldEffort": {
+    "message": "مستوى الاستدلال"
+  },
+  "configFieldContextWindow": {
+    "message": "نافذة السياق"
+  },
+  "configFieldMaxOutput": {
+    "message": "الحد الأقصى للإخراج"
+  },
+  "configFieldLabels": {
+    "message": "الوسوم"
+  },
+  "configFieldStream": {
+    "message": "الإخراج المتدفق"
+  },
+  "configFieldDisabled": {
+    "message": "معطّل"
+  },
+  "configFieldBearerAuth": {
+    "message": "مصادقة Bearer"
+  },
+  "configFieldEnabled": {
+    "message": "مفعّل"
+  },
+  "configFieldDefaultProvider": {
+    "message": "مزوّد الخدمة الافتراضي"
+  },
+  "configFieldStepFunOutputFormat": {
+    "message": "تنسيق إخراج StepFun"
+  },
+  "configFieldMaxTextLength": {
+    "message": "الحد الأقصى لطول النص"
+  },
+  "configFieldBinaryPath": {
+    "message": "مسار الملف التنفيذي"
+  },
+  "configFieldVoice": {
+    "message": "الصوت"
+  },
+  "configFieldSpeed": {
+    "message": "السرعة"
+  },
+  "configFieldLanguageCode": {
+    "message": "رمز اللغة"
+  },
+  "configFieldAPIURL": {
+    "message": "عنوان API"
+  },
+  "configFieldVolume": {
+    "message": "مستوى الصوت"
+  },
+  "configFieldInstruction": {
+    "message": "التعليمات"
+  },
+  "configFieldSampleRate": {
+    "message": "معدل أخذ العينات"
+  },
+  "configFieldMarkdownFilter": {
+    "message": "تصفية Markdown"
+  },
+  "configFieldPronunciationMap": {
+    "message": "خريطة النطق"
+  },
+  "configFieldToneReplacements": {
+    "message": "بدائل النطق"
+  },
+  "configFieldWhisperInitialPrompt": {
+    "message": "التوجيه الأولي لـ Whisper"
+  },
+  "configFieldLanguage": {
+    "message": "اللغة"
+  },
+  "configFieldHotwords": {
+    "message": "الكلمات المفتاحية"
+  },
+  "configFieldPrompt": {
+    "message": "التوجيه"
+  },
+  "configFieldEnableITN": {
+    "message": "تفعيل التطبيع العكسي للنص"
+  },
+  "configFieldPCMCodec": {
+    "message": "ترميز PCM"
+  },
+  "configFieldPCMRate": {
+    "message": "معدل PCM"
+  },
+  "configFieldPCMBits": {
+    "message": "عمق بتات PCM"
+  },
+  "configFieldPCMChannels": {
+    "message": "قنوات PCM"
+  },
+  "configFieldURL": {
+    "message": "العنوان"
+  },
+  "configFieldBearerToken": {
+    "message": "رمز Bearer"
+  },
+  "configFieldMaxAudioBytes": {
+    "message": "الحد الأقصى لحجم الصوت (بايت)"
+  },
+  "configFieldTimeoutSeconds": {
+    "message": "المهلة (ثوانٍ)"
+  },
+  "configFieldID": {
+    "message": "المعرّف"
+  },
+  "configFieldUserBinding": {
+    "message": "المستخدم المرتبط"
+  },
+  "configFieldBotToken": {
+    "message": "رمز البوت"
+  },
+  "configFieldUsername": {
+    "message": "اسم المستخدم"
+  },
+  "configFieldAllowedUsers": {
+    "message": "المستخدمون المسموح لهم"
+  },
+  "configFieldAllowExternalUsers": {
+    "message": "السماح للمستخدمين الخارجيين"
+  },
+  "configFieldMentionOnly": {
+    "message": "الرد على الإشارات فقط"
+  },
+  "configFieldACKReactions": {
+    "message": "تفاعلات تأكيد الاستلام"
+  },
+  "configFieldRouteTag": {
+    "message": "وسم التوجيه"
+  },
+  "configFieldGuildID": {
+    "message": "معرّف الخادم"
+  },
+  "configFieldListenToBots": {
+    "message": "استقبال رسائل البوتات"
+  },
+  "configFieldAppID": {
+    "message": "معرّف التطبيق"
+  },
+  "configFieldAppSecret": {
+    "message": "سرّ التطبيق"
+  },
+  "configFieldVerificationToken": {
+    "message": "رمز التحقق"
+  },
+  "configFieldWebhookPort": {
+    "message": "منفذ Webhook"
+  },
+  "configFieldPlatform": {
+    "message": "المنصة"
+  },
+  "configFieldReceiveMode": {
+    "message": "وضع الاستقبال"
+  },
+  "showToolOutput": {
+    "message": "عرض مخرجات الأداة"
+  },
+  "hideToolOutput": {
+    "message": "إخفاء مخرجات الأداة"
+  },
+  "showThinkingTools": {
+    "message": "عرض الاستدلال والأدوات"
+  },
+  "hideThinkingTools": {
+    "message": "إخفاء الاستدلال والأدوات"
+  },
+  "saveAttachment": {
+    "message": "حفظ $1"
+  },
+  "noDownloadData": {
+    "message": "لا توجد بيانات قابلة للتنزيل"
+  },
+  "copyRichText": {
+    "message": "نسخ النص المنسّق"
+  },
+  "voicePermissionDismissed": {
+    "message": "تم إغلاق طلب إذن الميكروفون."
+  },
+  "voicePermissionPending": {
+    "message": "لم تتم الموافقة على إذن الميكروفون."
+  },
+  "voicePermissionBlocked": {
+    "message": "تم حظر الوصول إلى الميكروفون."
+  },
+  "voiceMicrophoneMissing": {
+    "message": "لم يتم العثور على ميكروفون."
+  },
+  "voiceOffline": {
+    "message": "التعرف على الكلام في المتصفح غير متصل."
+  },
+  "voiceUnavailable": {
+    "message": "خدمة الصوت المختارة غير متاحة."
+  },
+  "voiceInputUnavailable": {
+    "message": "الإدخال الصوتي غير متاح في هذا المتصفح."
+  },
+  "voiceNoSpeech": {
+    "message": "لم يتم التعرف على أي كلام."
+  },
+  "voiceRecognitionFailed": {
+    "message": "فشل التعرف على الكلام في المتصفح."
+  },
+  "copyMessage": {
+    "message": "نسخ الرسالة"
+  },
+  "printMessage": {
+    "message": "طباعة الرسالة"
+  },
+  "configConnectionChanged": {
+    "message": "تغيّرت إعدادات الاتصال. أعد تحميل الإعدادات قبل حفظها."
   }
 }

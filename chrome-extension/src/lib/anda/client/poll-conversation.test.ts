@@ -1235,7 +1235,7 @@ describe('Channel.sendPrompt', () => {
             return args._id === 1
               ? toolResult(
                   conversationDelta(1, {
-                    messages: [rawMessage('assistant', 'reply 1', 11)],
+                    messages: args.messages_offset === 0 ? compacted.messages || [] : [],
                     status: 'completed',
                     updated_at: 11,
                     child: 2

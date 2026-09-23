@@ -1,5 +1,5 @@
 <script lang="ts">
-  import BrainApp from '../../../BrainApp.svelte'
+  const loadBrainApp = () => import('../../../BrainApp.svelte')
   import { createBookmarkJumpRequest, bookmarkJumpRequestStorageKey } from '../bookmark-jump'
   import { openAndaSidePanel } from '../dashboard/side-panel'
   import Inbox from '../brain/Inbox.svelte'
@@ -249,7 +249,12 @@
       >
     </div>
     <div class="min-h-0 flex-1">
-      {#if mode === 'graph'}<BrainApp embedded />{:else if settings}<Inbox {settings} />{/if}
+      {#if mode === 'graph'}
+        {#await loadBrainApp()}
+          <p class="p-4">{getMessage('loading')}</p>
+        {:then module}<module.default embedded />
+        {:catch error}<p role="alert" class="p-4 text-destructive">{String(error)}</p>{/await}
+      {:else if settings}<Inbox {settings} />{/if}
     </div>
   </div>
 {:else}

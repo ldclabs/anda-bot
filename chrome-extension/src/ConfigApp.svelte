@@ -99,6 +99,7 @@
   let loading = $state(true)
   let saving = $state(false)
   let dirty = $state(false)
+  let editVersion = 0
   let statusMessage = $state('')
   let errorMessage = $state('')
   let formPanel = $state<HTMLElement | null>(null)
@@ -109,7 +110,7 @@
   const channels = $derived(getObject(draft, 'channels'))
 
   $effect(() => {
-    applyAppearanceTheme(settings.appearanceTheme)
+    return applyAppearanceTheme(settings.appearanceTheme)
   })
 
   onMount(() => {
@@ -125,7 +126,7 @@
     statusMessage = ''
     settings = await loadConfigSettings()
     const response = await new DaemonConfigApi(settings).load()
-    draft = normalizeConfigDraft(response.config)
+    draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
     source = response.content
     configPath = response.path
     dirty = false
@@ -146,6 +147,7 @@
   }
 
   function markFormDirty() {
+    editVersion++
     source = renderConfigYaml(draft, source)
     dirty = true
     statusMessage = ''
@@ -153,6 +155,7 @@
   }
 
   function markSourceDirty(event: Event) {
+    editVersion++
     source = (event.currentTarget as HTMLTextAreaElement).value
     // Keep the form in sync with hand-edited YAML so a later form edit does
     // not overwrite manual changes with stale draft values.
@@ -236,6 +239,7 @@
   }
 
   function formatFromForm() {
+    editVersion++
     source = renderConfigYaml(draft, source)
     dirty = true
     statusMessage = getMessage('configFormatted')
@@ -254,16 +258,20 @@
   }
 
   async function saveConfig() {
+    if (saving) return
+    const version = editVersion
+    const content = source
     saving = true
     errorMessage = ''
     statusMessage = ''
     try {
-      await saveConfigSettings(settings)
-      const response = await new DaemonConfigApi(settings).save(source)
-      draft = normalizeConfigDraft(response.config)
-      source = response.content
+      const response = await new DaemonConfigApi(settings).save(content)
       configPath = response.path
-      dirty = false
+      if (version === editVersion) {
+        draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
+        source = response.content
+        dirty = false
+      }
       statusMessage = getMessage('configSaved')
     } catch (error) {
       errorMessage = errorToMessage(error)

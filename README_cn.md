@@ -238,6 +238,8 @@ Anda Bot 既可以运行在终端中，也可以作为 Chrome 侧边栏插件使
 
 仓库里提供了一个可直接加载的 Chrome 扩展：[chrome-extension](chrome-extension)。它会将 Anda Bot 嵌入 Chrome 的原生侧边栏（Side Panel）中，允许智能体利用专用的浏览器工具读取页面内容并管理标签页，在切换标签页时保持同一个对话会话。
 
+侧边栏与 Dashboard 同步连接设置；切换 daemon 时会清理旧会话和资源缓存。Dashboard 按需加载各工作区。语音录制始终绑定开始录音的标签页。`open_download` 会在文件夹中显示下载文件，由用户点击打开文件。
+
 侧边栏也可以收藏 assistant 消息。收藏会保存在本机 daemon 中，可以放进文件夹，并能从侧边栏或 dashboard 跳回原始对话。
 
 为扩展生成本地 bearer token：

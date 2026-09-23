@@ -250,6 +250,8 @@ Anda Bot can be used directly in the terminal, opened as a Chrome extension, or 
 
 The repository includes an unpacked Chrome extension in [chrome-extension](chrome-extension). It opens Anda in Chrome's native Side Panel and lets the agent inspect pages and manage browser tabs through split browser tools while keeping one stable browser session as you switch tabs.
 
+Connection settings synchronize across the Side Panel and Dashboard, and changing the daemon clears cached conversation/resource data. The Dashboard loads its workspaces on demand. Voice recording remains attached to the tab where it started. `open_download` reveals a file in its folder; the user opens the file by clicking it.
+
 The side panel can also bookmark assistant messages. Bookmarks are saved in the local daemon, can be organized into folders, and can jump back to the original conversation from the side panel or dashboard.
 
 Generate a local bearer token for the extension:

@@ -628,7 +628,7 @@ describe('executeBrowserAction waited browser actions', () => {
         }
       ]),
       cancel: vi.fn(),
-      open: vi.fn()
+      show: vi.fn()
     }
 
     const pending = executeBrowserAction(

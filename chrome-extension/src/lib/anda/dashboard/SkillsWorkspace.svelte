@@ -126,7 +126,7 @@
 
   onMount(() => {
     andaClient
-      .init()
+      .init({ conversations: false })
       .catch(() => undefined)
       .finally(() => {
         void loadLibrary()

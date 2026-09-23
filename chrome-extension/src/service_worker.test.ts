@@ -273,6 +273,36 @@ describe('service worker page element context menu', () => {
 })
 
 describe('service worker development logging', () => {
+  it('rejects stale RPC credentials instead of replacing persisted settings', async () => {
+    const chromeApi = createChromeApi()
+    await importServiceWorker(chromeApi)
+    const sendResponse = vi.fn()
+    chromeApi.__onMessageListeners[0](
+      {
+        type: 'anda_rpc',
+        method: 'information',
+        params: [],
+        settings: {
+          baseUrl: 'http://old-daemon',
+          token: 'old-token',
+          submitKeyMode: 'enter',
+          appearanceTheme: 'system'
+        }
+      },
+      {},
+      sendResponse
+    )
+    await vi.waitFor(() =>
+      expect(sendResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ok: false,
+          error: expect.stringContaining('Connection settings changed')
+        })
+      )
+    )
+    expect(chromeApi.storage.local.set).not.toHaveBeenCalled()
+  })
+
   it('redacts settings and omits payload bodies from development logs', async () => {
     const chromeApi = createChromeApi({ development: true })
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
