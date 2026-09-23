@@ -4,9 +4,11 @@ pub mod telegram;
 pub mod wechat;
 
 mod attachments;
+mod delivery;
 mod runtime;
 mod tools;
 mod types;
+mod websocket;
 
 use anda_core::BoxError;
 use reqwest::Client;
@@ -38,7 +40,7 @@ pub fn build_channels(
         &cfg.telegram,
         client.clone(),
     )?)?;
-    register(wechat::build_wechat_channels(&cfg.wechat)?)?;
+    register(wechat::build_wechat_channels(&cfg.wechat, client.clone())?)?;
     register(discord::build_discord_channels(
         &cfg.discord,
         client.clone(),

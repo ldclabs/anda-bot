@@ -36,3 +36,7 @@ __pycache__/
 *.pyc
 .DS_Store
 chrome-extension/video/
+
+# The vendored WeChat SDK contains source modules named media.
+!vendor/weixin-agent/src/media/
+!vendor/weixin-agent/src/media/**

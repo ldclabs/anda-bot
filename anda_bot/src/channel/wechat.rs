@@ -1,13 +1,16 @@
+mod state;
+use super::delivery::send_step;
 use anda_core::{BoxError, Resource};
 use anda_db::unix_ms;
 use async_trait::async_trait;
+use state::ContextTokens;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use weixin_agent::{
     LoginStatus, MediaInfo, MediaType, MessageContext, MessageHandler, Result as WeixinResult,
@@ -32,11 +35,10 @@ const WECHAT_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 const WECHAT_QR_POLL_DELAY: Duration = Duration::from_secs(2);
 const WECHAT_MAX_QR_REFRESH_COUNT: u32 = 3;
 const WECHAT_CONTEXT_TOKEN_MAX_AGE_MS: u64 = 2 * 60 * 60 * 1000;
-const WECHAT_CONTEXT_TOKENS_FILE: &str = "context_tokens.json";
-const WECHAT_CONTEXT_TOKEN_META_FILE: &str = "context_tokens_meta.json";
 
 pub fn build_wechat_channels(
     cfg: &[config::WechatChannelSettings],
+    http_client: reqwest::Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -52,7 +54,10 @@ pub fn build_wechat_channels(
             );
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(wechat_cfg));
+        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::with_http_client(
+            wechat_cfg,
+            http_client.clone(),
+        ));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate WeChat channel id '{channel_id}'").into());
@@ -72,11 +77,23 @@ pub struct WechatChannel {
     cdn_base_url: String,
     route_tag: Option<u32>,
     workspace: Arc<ChannelWorkspace>,
+    context_tokens: Arc<ContextTokens>,
+    http_client: reqwest::Client,
+    send_client: Mutex<Option<(String, Arc<WeixinClient>)>>,
     dedup: Arc<RecentEventDedup>,
 }
 
 impl WechatChannel {
+    #[cfg(test)]
     pub fn new(cfg: &config::WechatChannelSettings) -> Self {
+        Self::with_http_client(cfg, crate::util::http_client::new_reqwest_client())
+    }
+
+    pub fn with_http_client(
+        cfg: &config::WechatChannelSettings,
+        http_client: reqwest::Client,
+    ) -> Self {
+        let workspace = Arc::new(ChannelWorkspace::default());
         Self {
             id: cfg.channel_id(),
             bot_token: normalize_string(&cfg.bot_token),
@@ -90,13 +107,18 @@ impl WechatChannel {
             base_url: config::DEFAULT_WECHAT_API_BASE.to_string(),
             cdn_base_url: config::DEFAULT_WECHAT_CDN_BASE.to_string(),
             route_tag: cfg.route_tag,
-            workspace: Arc::new(ChannelWorkspace::default()),
+            context_tokens: Arc::new(ContextTokens::new(workspace.clone())),
+            workspace,
+            http_client,
+            send_client: Mutex::new(None),
             dedup: Arc::new(RecentEventDedup::new(EVENT_DEDUP_WINDOW)),
         }
     }
 
     fn build_weixin_config(&self, token: &str) -> Result<WeixinConfig, BoxError> {
-        let mut builder = WeixinConfig::builder().token(token);
+        let mut builder = WeixinConfig::builder()
+            .token(token)
+            .http_client(self.http_client.clone());
         builder = builder.base_url(&self.base_url);
         builder = builder.cdn_base_url(&self.cdn_base_url);
         if let Some(route_tag) = self.route_tag {
@@ -197,27 +219,33 @@ impl WechatChannel {
         load_sync_buf_from_workspace(&self.workspace).await
     }
 
-    async fn load_context_tokens(&self) -> HashMap<String, String> {
-        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
-        load_context_tokens_from_workspace(&self.workspace).await
-    }
-
-    async fn save_context_tokens(&self, tokens: &HashMap<String, String>) {
-        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
-        save_context_tokens_to_workspace(&self.workspace, tokens).await;
-    }
-
-    async fn send_text_chunks(
-        &self,
-        client: &WeixinClient,
-        recipient: &str,
-        text: &str,
-        context_token: Option<&str>,
-    ) -> Result<(), BoxError> {
-        for chunk in apply_continuation_markers(&split_message_for_wechat(text)) {
-            client.send_text(recipient, &chunk, context_token).await?;
+    async fn sending_client(&self) -> Result<Arc<WeixinClient>, BoxError> {
+        let token = self.resolve_token().await?;
+        let mut cached = self.send_client.lock().await;
+        if let Some((_, client)) = cached.as_ref().filter(|(current, _)| current == &token) {
+            return Ok(client.clone());
         }
-        Ok(())
+        let client =
+            Arc::new(self.build_client(&token, NoopMessageHandler, CancellationToken::new())?);
+        *cached = Some((token, client.clone()));
+        Ok(client)
+    }
+
+    async fn with_context_token<F, Fut>(&self, recipient: &str, mut send: F) -> Result<(), BoxError>
+    where
+        F: FnMut(Option<String>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), BoxError>>,
+    {
+        let token = self.context_tokens.get(recipient).await;
+        match send(token.clone()).await {
+            Err(err) if token.is_some() && is_wechat_context_token_error(&err.to_string()) => {
+                self.context_tokens
+                    .remove(recipient, token.as_deref().unwrap())
+                    .await;
+                send(None).await
+            }
+            result => result,
+        }
     }
 
     async fn send_resource(
@@ -247,7 +275,9 @@ impl WechatChannel {
 
         if let Some(blob) = &resource.blob {
             let path = self.write_outgoing_blob(resource, &blob.0).await?;
-            client.send_media(recipient, &path, context_token).await?;
+            let result = client.send_media(recipient, &path, context_token).await;
+            let _ = tokio::fs::remove_file(&path).await;
+            result?;
             return Ok(());
         }
 
@@ -259,23 +289,36 @@ impl WechatChannel {
         client: &WeixinClient,
         recipient: &str,
         message: &SendMessage,
-        context_token: Option<&str>,
     ) -> Result<(), BoxError> {
-        if !message.content.trim().is_empty() {
-            self.send_text_chunks(client, recipient, &message.content, context_token)
+        let mut delivered = 0;
+        let text = if message.content.trim().is_empty() && message.attachments.is_empty() {
+            "…"
+        } else {
+            &message.content
+        };
+        if !text.trim().is_empty() {
+            for chunk in apply_continuation_markers(&split_message_for_wechat(text)) {
+                send_step(&mut delivered, || {
+                    self.with_context_token(recipient, |token| {
+                        let chunk = &chunk;
+                        async move {
+                            client.send_text(recipient, chunk, token.as_deref()).await?;
+                            Ok(())
+                        }
+                    })
+                })
                 .await?;
+            }
         }
-
         for resource in &message.attachments {
-            self.send_resource(client, recipient, resource, context_token)
-                .await?;
+            send_step(&mut delivered, || {
+                self.with_context_token(recipient, |token| async move {
+                    self.send_resource(client, recipient, resource, token.as_deref())
+                        .await
+                })
+            })
+            .await?;
         }
-
-        if message.content.trim().is_empty() && message.attachments.is_empty() {
-            self.send_text_chunks(client, recipient, " ", context_token)
-                .await?;
-        }
-
         Ok(())
     }
 
@@ -291,7 +334,7 @@ impl WechatChannel {
         let file_name = file_name_for_resource(resource).to_string();
         let path = dir.join(format!(
             "{}-{}",
-            unix_ms(),
+            rand::random::<u64>(),
             sanitize_path_component(&file_name, "attachment.bin")
         ));
         tokio::fs::write(&path, bytes).await?;
@@ -353,32 +396,8 @@ impl Channel for WechatChannel {
             return Err("WeChat recipient is empty".into());
         }
 
-        let token = self.resolve_token().await?;
-        let client = self.build_client(&token, NoopMessageHandler, CancellationToken::new())?;
-        let context_token = load_context_token_for_send(&self.workspace, recipient).await;
-        let result = self
-            .send_message_parts(&client, recipient, message, context_token.as_deref())
-            .await;
-
-        match result {
-            Ok(()) => Ok(()),
-            Err(err)
-                if context_token.is_some() && is_wechat_context_token_error(&err.to_string()) =>
-            {
-                log::warn!(
-                    "WeChat send to {recipient} failed with a cached context token; clearing it and retrying without context token: {err}"
-                );
-                remove_context_token_from_workspace(
-                    &self.workspace,
-                    recipient,
-                    context_token.as_deref(),
-                )
-                .await;
-                self.send_message_parts(&client, recipient, message, None)
-                    .await
-            }
-            Err(err) => Err(err),
-        }
+        let client = self.sending_client().await?;
+        self.send_message_parts(&client, recipient, message).await
     }
 
     fn should_retry_send(&self, error: &str) -> bool {
@@ -398,22 +417,13 @@ impl Channel for WechatChannel {
             allow_external_users: self.allow_external_users,
             tx,
             workspace: self.workspace.clone(),
+            context_tokens: self.context_tokens.clone(),
             cancel_token: cancel_token.clone(),
         };
         let client = self.build_client(&token, handler, cancel_token)?;
-        client
-            .context_tokens()
-            .import(self.load_context_tokens().await);
-
         log::info!("WeChat channel {} listening for messages", self.id());
         let result = client.start(self.load_sync_buf().await).await;
-        self.save_context_tokens(&client.context_tokens().export_all())
-            .await;
         Ok(result?)
-    }
-
-    async fn health_check(&self) -> bool {
-        self.bot_token.is_some() || self.saved_token().await.is_some()
     }
 }
 
@@ -433,6 +443,7 @@ struct WechatMessageHandler {
     allow_external_users: bool,
     tx: mpsc::Sender<ChannelMessage>,
     workspace: Arc<ChannelWorkspace>,
+    context_tokens: Arc<ContextTokens>,
     cancel_token: CancellationToken,
 }
 
@@ -469,7 +480,8 @@ impl MessageHandler for WechatMessageHandler {
             .insert("trusted_user".to_string(), trusted_user.into());
 
         if let Some(context_token) = ctx.context_token.as_deref() {
-            save_context_token_to_workspace(&self.workspace, &message.reply_target, context_token)
+            self.context_tokens
+                .put(&message.reply_target, context_token)
                 .await;
         }
 
@@ -725,226 +737,8 @@ async fn save_sync_buf_to_workspace(workspace: &Arc<ChannelWorkspace>, sync_buf:
     }
 }
 
-async fn load_context_tokens_from_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-) -> HashMap<String, String> {
-    let Some(path) = workspace.path() else {
-        return HashMap::new();
-    };
-    let Ok(data) = read_text_file(path.join(WECHAT_CONTEXT_TOKENS_FILE)).await else {
-        return HashMap::new();
-    };
-    serde_json::from_str(&data).unwrap_or_default()
-}
-
-async fn load_context_token_meta_from_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-) -> HashMap<String, u64> {
-    let Some(path) = workspace.path() else {
-        return HashMap::new();
-    };
-    let Ok(data) = read_text_file(path.join(WECHAT_CONTEXT_TOKEN_META_FILE)).await else {
-        return HashMap::new();
-    };
-    serde_json::from_str(&data).unwrap_or_default()
-}
-
-async fn save_context_tokens_to_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-    tokens: &HashMap<String, String>,
-) {
-    let Some(path) = workspace.path() else {
-        return;
-    };
-    if let Err(err) = tokio::fs::create_dir_all(&path).await {
-        log::warn!("failed to create WeChat workspace for context tokens: {err}");
-        return;
-    }
-    let data = match serde_json::to_string(tokens) {
-        Ok(data) => data,
-        Err(err) => {
-            log::warn!("failed to serialize WeChat context tokens: {err}");
-            return;
-        }
-    };
-    if let Err(err) = tokio::fs::write(path.join(WECHAT_CONTEXT_TOKENS_FILE), data).await {
-        log::warn!("failed to save WeChat context tokens: {err}");
-        return;
-    }
-
-    ensure_context_token_meta_to_workspace(workspace, tokens).await;
-}
-
-async fn save_context_token_meta_to_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-    meta: &HashMap<String, u64>,
-) {
-    let Some(path) = workspace.path() else {
-        return;
-    };
-    if let Err(err) = tokio::fs::create_dir_all(&path).await {
-        log::warn!("failed to create WeChat workspace for context token metadata: {err}");
-        return;
-    }
-    let data = match serde_json::to_string(meta) {
-        Ok(data) => data,
-        Err(err) => {
-            log::warn!("failed to serialize WeChat context token metadata: {err}");
-            return;
-        }
-    };
-    if let Err(err) = tokio::fs::write(path.join(WECHAT_CONTEXT_TOKEN_META_FILE), data).await {
-        log::warn!("failed to save WeChat context token metadata: {err}");
-    }
-}
-
-async fn ensure_context_token_meta_to_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-    tokens: &HashMap<String, String>,
-) {
-    let mut meta = load_context_token_meta_from_workspace(workspace).await;
-    let mut changed = false;
-
-    meta.retain(|user_id, _| {
-        let keep = tokens.contains_key(user_id);
-        changed |= !keep;
-        keep
-    });
-
-    let now = unix_ms();
-    for user_id in tokens.keys() {
-        if !meta.contains_key(user_id) {
-            meta.insert(user_id.clone(), now);
-            changed = true;
-        }
-    }
-
-    if changed {
-        save_context_token_meta_to_workspace(workspace, &meta).await;
-    }
-}
-
-async fn touch_context_token_meta_to_workspace(workspace: &Arc<ChannelWorkspace>, user_id: &str) {
-    let user_id = user_id.trim();
-    if user_id.is_empty() {
-        return;
-    }
-
-    let mut meta = load_context_token_meta_from_workspace(workspace).await;
-    meta.insert(user_id.to_string(), unix_ms());
-    save_context_token_meta_to_workspace(workspace, &meta).await;
-}
-
-async fn context_tokens_file_modified_ms(workspace: &Arc<ChannelWorkspace>) -> Option<u64> {
-    let path = workspace.path()?.join(WECHAT_CONTEXT_TOKENS_FILE);
-    let modified = tokio::fs::metadata(path).await.ok()?.modified().ok()?;
-    let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
-    u64::try_from(millis).ok()
-}
-
 fn context_token_is_stale(updated_at: Option<u64>) -> bool {
-    let Some(updated_at) = updated_at else {
-        return false;
-    };
-    unix_ms().saturating_sub(updated_at) > WECHAT_CONTEXT_TOKEN_MAX_AGE_MS
-}
-
-async fn load_context_token_for_send(
-    workspace: &Arc<ChannelWorkspace>,
-    user_id: &str,
-) -> Option<String> {
-    let user_id = user_id.trim();
-    if user_id.is_empty() {
-        return None;
-    }
-
-    // Read under the same lock the writers take: the files are rewritten with
-    // a truncating `fs::write`, so an unsynchronized read can observe an empty
-    // or partial file and silently lose every cached token. The guard is
-    // released before `remove_context_token_from_workspace`, which takes it
-    // itself (the mutex is not reentrant).
-    let (tokens, meta) = {
-        let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
-        (
-            load_context_tokens_from_workspace(workspace).await,
-            load_context_token_meta_from_workspace(workspace).await,
-        )
-    };
-    let token = tokens.get(user_id)?.trim().to_string();
-    if token.is_empty() {
-        return None;
-    }
-
-    let updated_at = match meta.get(user_id).copied() {
-        Some(updated_at) => Some(updated_at),
-        None => context_tokens_file_modified_ms(workspace).await,
-    };
-    if context_token_is_stale(updated_at) {
-        log::warn!(
-            "WeChat cached context token for {user_id} is stale; retrying future sends without it"
-        );
-        remove_context_token_from_workspace(workspace, user_id, Some(&token)).await;
-        return None;
-    }
-
-    Some(token)
-}
-
-// Serializes read-modify-write cycles on the context token files, so
-// concurrent updates cannot overwrite each other's entries.
-static CONTEXT_TOKENS_FILE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-async fn remove_context_token_from_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-    user_id: &str,
-    expected_token: Option<&str>,
-) {
-    let user_id = user_id.trim();
-    if user_id.is_empty() {
-        return;
-    }
-
-    let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
-    let mut tokens = load_context_tokens_from_workspace(workspace).await;
-    let should_remove = expected_token.is_none_or(|expected| {
-        tokens
-            .get(user_id)
-            .is_some_and(|current| current == expected)
-    });
-    if !should_remove {
-        return;
-    }
-
-    if tokens.remove(user_id).is_some() {
-        save_context_tokens_to_workspace(workspace, &tokens).await;
-        return;
-    }
-
-    let mut meta = load_context_token_meta_from_workspace(workspace).await;
-    if meta.remove(user_id).is_some() {
-        save_context_token_meta_to_workspace(workspace, &meta).await;
-    }
-}
-
-async fn save_context_token_to_workspace(
-    workspace: &Arc<ChannelWorkspace>,
-    user_id: &str,
-    token: &str,
-) {
-    let user_id = user_id.trim();
-    let token = token.trim();
-    if user_id.is_empty() || token.is_empty() {
-        return;
-    }
-
-    let _guard = CONTEXT_TOKENS_FILE_LOCK.lock().await;
-    let mut tokens = load_context_tokens_from_workspace(workspace).await;
-    if tokens.get(user_id).is_none_or(|current| current != token) {
-        tokens.insert(user_id.to_string(), token.to_string());
-        save_context_tokens_to_workspace(workspace, &tokens).await;
-    }
-
-    touch_context_token_meta_to_workspace(workspace, user_id).await;
+    updated_at.is_some_and(|at| unix_ms().saturating_sub(at) > WECHAT_CONTEXT_TOKEN_MAX_AGE_MS)
 }
 
 fn is_wechat_context_token_error(error: &str) -> bool {
@@ -1102,77 +896,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn save_context_token_merges_existing_tokens() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = Arc::new(ChannelWorkspace::default());
-        workspace.set_path(dir.path().to_path_buf());
-        let mut existing = HashMap::new();
-        existing.insert("alice".to_string(), "old-token".to_string());
-        existing.insert("bob".to_string(), "bob-token".to_string());
-        save_context_tokens_to_workspace(&workspace, &existing).await;
-
-        save_context_token_to_workspace(&workspace, "alice", "new-token").await;
-
-        let tokens = load_context_tokens_from_workspace(&workspace).await;
-        assert_eq!(tokens.get("alice").map(String::as_str), Some("new-token"));
-        assert_eq!(tokens.get("bob").map(String::as_str), Some("bob-token"));
-    }
-
-    #[tokio::test]
-    async fn load_context_token_for_send_returns_fresh_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = Arc::new(ChannelWorkspace::default());
-        workspace.set_path(dir.path().to_path_buf());
-        save_context_token_to_workspace(&workspace, "alice", "fresh-token").await;
-
-        let token = load_context_token_for_send(&workspace, "alice").await;
-
-        assert_eq!(token.as_deref(), Some("fresh-token"));
-    }
-
-    #[tokio::test]
-    async fn load_context_token_for_send_removes_stale_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = Arc::new(ChannelWorkspace::default());
-        workspace.set_path(dir.path().to_path_buf());
-        save_context_token_to_workspace(&workspace, "alice", "stale-token").await;
-        let mut meta = HashMap::new();
-        meta.insert(
-            "alice".to_string(),
-            unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1,
-        );
-        save_context_token_meta_to_workspace(&workspace, &meta).await;
-
-        let token = load_context_token_for_send(&workspace, "alice").await;
-
-        assert_eq!(token, None);
-        let tokens = load_context_tokens_from_workspace(&workspace).await;
-        assert!(!tokens.contains_key("alice"));
-        let meta = load_context_token_meta_from_workspace(&workspace).await;
-        assert!(!meta.contains_key("alice"));
-    }
-
-    #[tokio::test]
-    async fn save_context_token_refreshes_meta_when_token_is_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = Arc::new(ChannelWorkspace::default());
-        workspace.set_path(dir.path().to_path_buf());
-        save_context_token_to_workspace(&workspace, "alice", "same-token").await;
-        let old_updated_at = unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1;
-        let mut meta = HashMap::new();
-        meta.insert("alice".to_string(), old_updated_at);
-        save_context_token_meta_to_workspace(&workspace, &meta).await;
-
-        save_context_token_to_workspace(&workspace, "alice", "same-token").await;
-
-        let meta = load_context_token_meta_from_workspace(&workspace).await;
-        assert!(
-            meta.get("alice")
-                .is_some_and(|updated| *updated > old_updated_at)
-        );
-    }
-
     fn workspace_at(dir: &tempfile::TempDir) -> Arc<ChannelWorkspace> {
         let workspace = Arc::new(ChannelWorkspace::default());
         workspace.set_path(dir.path().to_path_buf());
@@ -1195,69 +918,6 @@ mod tests {
         let detached = Arc::new(ChannelWorkspace::default());
         save_sync_buf_to_workspace(&detached, "ignored").await;
         assert!(load_sync_buf_from_workspace(&detached).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn context_tokens_load_for_send_until_stale() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = workspace_at(&dir);
-
-        assert!(
-            load_context_token_for_send(&workspace, "alice")
-                .await
-                .is_none()
-        );
-        assert!(load_context_token_for_send(&workspace, " ").await.is_none());
-
-        save_context_token_to_workspace(&workspace, "alice", "tok-1").await;
-        assert_eq!(
-            load_context_token_for_send(&workspace, "alice")
-                .await
-                .as_deref(),
-            Some("tok-1")
-        );
-
-        // A stale token is dropped on read.
-        let mut meta = HashMap::new();
-        meta.insert(
-            "alice".to_string(),
-            unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1,
-        );
-        save_context_token_meta_to_workspace(&workspace, &meta).await;
-        assert!(
-            load_context_token_for_send(&workspace, "alice")
-                .await
-                .is_none()
-        );
-        assert!(
-            load_context_tokens_from_workspace(&workspace)
-                .await
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
-    async fn remove_context_token_respects_expected_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let workspace = workspace_at(&dir);
-
-        save_context_token_to_workspace(&workspace, "alice", "tok-1").await;
-
-        // Mismatched expectation keeps the newer token.
-        remove_context_token_from_workspace(&workspace, "alice", Some("other")).await;
-        assert_eq!(
-            load_context_token_for_send(&workspace, "alice")
-                .await
-                .as_deref(),
-            Some("tok-1")
-        );
-
-        remove_context_token_from_workspace(&workspace, "alice", Some("tok-1")).await;
-        assert!(
-            load_context_token_for_send(&workspace, "alice")
-                .await
-                .is_none()
-        );
     }
 
     #[test]
@@ -1468,5 +1128,148 @@ mod tests {
         assert!(!context_token_is_stale(None));
         assert!(!context_token_is_stale(Some(unix_ms())));
         assert!(context_token_is_stale(Some(1)));
+    }
+    #[tokio::test]
+    async fn shared_transport_and_context_fallback_do_not_replay_prefix() {
+        use axum::{Router, routing};
+        use serde_json::Value;
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let state = requests.clone();
+        let app = Router::new().route(
+            "/ilink/bot/sendmessage",
+            routing::post(
+                move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
+                    let requests = state.clone();
+                    async move {
+                        assert_eq!(headers["x-anda-transport"], "shared");
+                        let mut requests = requests.lock().unwrap();
+                        requests.push(body);
+                        if requests.len() == 2 {
+                            axum::Json(
+                                serde_json::json!({"ret":-2,"errmsg":"context token expired"}),
+                            )
+                        } else {
+                            axum::Json(serde_json::json!({"ret":0}))
+                        }
+                    }
+                },
+            ),
+        );
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-anda-transport", "shared".parse().unwrap());
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .default_headers(headers)
+            .build()
+            .unwrap();
+        let mut channel = WechatChannel::with_http_client(&test_config(), client);
+        channel.base_url = crate::test_support::spawn_http_mock(app).await;
+        let dir = tempfile::tempdir().unwrap();
+        channel.set_workspace(dir.path().to_owned());
+        channel.context_tokens.put("alice", "cached").await;
+        assert!(Arc::ptr_eq(
+            &channel.sending_client().await.unwrap(),
+            &channel.sending_client().await.unwrap()
+        ));
+        channel
+            .send(&SendMessage::new("x".repeat(4200), "alice"))
+            .await
+            .unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0]["msg"]["context_token"], "cached");
+        assert_eq!(requests[1]["msg"]["context_token"], "cached");
+        assert!(requests[2]["msg"]["context_token"].is_null());
+        assert_ne!(
+            requests[0]["msg"]["item_list"],
+            requests[1]["msg"]["item_list"]
+        );
+        assert_eq!(
+            requests[1]["msg"]["item_list"],
+            requests[2]["msg"]["item_list"]
+        );
+    }
+    #[tokio::test]
+    async fn media_upload_uses_shared_transport_and_cleans_temporary_files() {
+        use axum::{Router, response::IntoResponse, routing};
+        use serde_json::Value;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let cdn_url = format!("{base}/cdn");
+        let sends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = sends.clone();
+        let app = Router::new()
+            .route(
+                "/ilink/bot/getuploadurl",
+                routing::post(move |headers: axum::http::HeaderMap| {
+                    let url = cdn_url.clone();
+                    async move {
+                        assert_eq!(headers["x-anda-transport"], "shared");
+                        axum::Json(serde_json::json!({"ret":0,"upload_full_url":url}))
+                    }
+                }),
+            )
+            .route(
+                "/cdn",
+                routing::post(
+                    |headers: axum::http::HeaderMap, body: axum::body::Bytes| async move {
+                        assert_eq!(headers["x-anda-transport"], "shared");
+                        assert!(!body.is_empty());
+                        ([("x-encrypted-param", "download-key")], "ok")
+                    },
+                ),
+            )
+            .route(
+                "/ilink/bot/sendmessage",
+                routing::post(
+                    move |headers: axum::http::HeaderMap, axum::Json(_body): axum::Json<Value>| {
+                        let call = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        async move {
+                            assert_eq!(headers["x-anda-transport"], "shared");
+                            if call == 0 {
+                                axum::Json(serde_json::json!({"ret":0})).into_response()
+                            } else {
+                                (
+                                    http::StatusCode::FORBIDDEN,
+                                    axum::Json(serde_json::json!({"ret":403})),
+                                )
+                                    .into_response()
+                            }
+                        }
+                    },
+                ),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-anda-transport", "shared".parse().unwrap());
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .default_headers(headers)
+            .build()
+            .unwrap();
+        let mut channel = WechatChannel::with_http_client(&test_config(), client);
+        channel.base_url = base;
+        let dir = tempfile::tempdir().unwrap();
+        channel.set_workspace(dir.path().to_owned());
+        let message = SendMessage::new("", "alice").with_attachments(vec![Resource {
+            name: "report.txt".into(),
+            blob: Some(anda_core::ByteBufB64(b"report".to_vec())),
+            ..Default::default()
+        }]);
+        channel.send(&message).await.unwrap();
+        assert!(channel.send(&message).await.is_err());
+        assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(
+            tokio::fs::read_dir(dir.path().join("outgoing"))
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
+        );
+        server.abort();
     }
 }

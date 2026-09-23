@@ -10,11 +10,11 @@ use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time:
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use super::delivery::{http_send_error, send_step, transport_send_error};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    StreamingChannel, apply_continuation_markers, file_name_for_resource, is_http_url,
-    is_transient_send_error, random_from_pool, resource_from_bytes,
-    split_message_on_word_boundaries,
+    apply_continuation_markers, file_name_for_resource, is_http_url, is_transient_send_error,
+    random_from_pool, resource_from_bytes, split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -87,8 +87,6 @@ pub struct TelegramChannel {
     workspace: Arc<ChannelWorkspace>,
     dedup: RecentEventDedup,
     bot_username: Mutex<Option<String>>,
-    #[allow(dead_code)]
-    typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl TelegramChannel {
@@ -113,7 +111,6 @@ impl TelegramChannel {
             workspace: Arc::new(ChannelWorkspace::default()),
             dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
             bot_username: Mutex::new(None),
-            typing_handle: Mutex::new(None),
         }
     }
 
@@ -133,10 +130,12 @@ impl TelegramChannel {
     }
 
     async fn send_request(&self, request: RequestBuilder) -> Result<Response, BoxError> {
-        request
-            .send()
-            .await
-            .map_err(|err| -> BoxError { self.scrub(&err.to_string()).into() })
+        request.send().await.map_err(|err| -> BoxError {
+            {
+                let text = self.scrub(&err.to_string());
+                transport_send_error(err, text)
+            }
+        })
     }
 
     fn parse_reply_target(reply_target: &str) -> (String, Option<String>) {
@@ -217,7 +216,7 @@ impl TelegramChannel {
     fn normalize_incoming_content(text: &str, bot_username: &str) -> Option<String> {
         let spans = Self::find_bot_mention_spans(text, bot_username);
         if spans.is_empty() {
-            let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let normalized = text.trim().to_string();
             return (!normalized.is_empty()).then_some(normalized);
         }
 
@@ -229,7 +228,7 @@ impl TelegramChannel {
         }
         normalized.push_str(&text[cursor..]);
 
-        let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+        let normalized = normalized.trim().to_string();
         (!normalized.is_empty()).then_some(normalized)
     }
 
@@ -748,6 +747,7 @@ impl TelegramChannel {
         message: &str,
         chat_id: &str,
         thread_id: Option<&str>,
+        delivered: &mut usize,
     ) -> Result<(), BoxError> {
         let chunks = apply_continuation_markers(&split_message_for_telegram(message));
 
@@ -761,25 +761,24 @@ impl TelegramChannel {
                 html_body["message_thread_id"] = Value::String(thread_id.to_string());
             }
 
-            match self.post_json_checked("sendMessage", &html_body).await {
-                Ok(()) => {}
-                Err(markdown_err) => {
-                    let mut plain_body = serde_json::json!({
-                        "chat_id": chat_id,
-                        "text": text,
-                    });
-                    if let Some(thread_id) = thread_id {
-                        plain_body["message_thread_id"] = Value::String(thread_id.to_string());
+            send_step(delivered, || async {
+                match self.post_json_checked("sendMessage", &html_body).await {
+                    Ok(()) => {}
+                    Err(markdown_err) if is_telegram_format_error(&markdown_err.to_string()) => {
+                        let mut plain_body = serde_json::json!({
+                            "chat_id": chat_id,
+                            "text": text,
+                        });
+                        if let Some(thread_id) = thread_id {
+                            plain_body["message_thread_id"] = Value::String(thread_id.to_string());
+                        }
+                        self.post_json_checked("sendMessage", &plain_body).await?;
                     }
-                    self.post_json_checked("sendMessage", &plain_body)
-                        .await
-                        .map_err(|plain_err| {
-                            format!(
-                                "Telegram sendMessage failed (HTML: {markdown_err}; plain: {plain_err})"
-                            )
-                        })?;
+                    Err(err) => return Err(err),
                 }
-            }
+                Ok(())
+            })
+            .await?;
 
             if index < chunks.len() - 1 {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -794,23 +793,12 @@ impl TelegramChannel {
             .send_request(self.client.post(self.api_url(method)).json(body))
             .await?;
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!("{status}: {}", self.scrub(&text)).into());
-        }
-
-        if let Ok(data) = serde_json::from_str::<Value>(&text)
-            && !data.get("ok").and_then(Value::as_bool).unwrap_or(true)
-        {
-            let description = data
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or("Telegram API returned ok=false")
-                .to_string();
-            return Err(self.scrub(&description).into());
-        }
-
-        Ok(())
+        let headers = response.headers().clone();
+        let text = self.scrub(&response.text().await.map_err(|err| {
+            let text = self.scrub(&err.to_string());
+            transport_send_error(err, text)
+        })?);
+        ensure_telegram_send_success(status, &headers, &text)
     }
 
     async fn send_resource(
@@ -884,24 +872,28 @@ impl TelegramChannel {
             .send_request(self.client.post(self.api_url(method)).multipart(form))
             .await?;
         let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(
-                format!("Telegram {method} failed ({status}): {}", self.scrub(&body)).into(),
-            );
-        }
-
-        Ok(())
+        let headers = response.headers().clone();
+        let body = self.scrub(&response.text().await.map_err(|err| {
+            let text = self.scrub(&err.to_string());
+            transport_send_error(err, text)
+        })?);
+        ensure_telegram_send_success(status, &headers, &body)
     }
 
     fn markdown_to_telegram_html(text: &str) -> String {
         let lines: Vec<&str> = text.split('\n').collect();
         let mut result_lines: Vec<String> = Vec::new();
+        let mut code_fence = false;
 
         for line in &lines {
             let trimmed_line = line.trim_start();
             if trimmed_line.starts_with("```") {
+                code_fence = !code_fence;
                 result_lines.push(trimmed_line.to_string());
+                continue;
+            }
+            if code_fence {
+                result_lines.push(Self::escape_html(line));
                 continue;
             }
 
@@ -1061,20 +1053,29 @@ impl Channel for TelegramChannel {
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
-        let (chat_id, thread_id) = Self::parse_reply_target(&message.recipient);
-        let thread_id = thread_id.as_deref();
+        let (chat_id, legacy_thread) = Self::parse_reply_target(&message.recipient);
+        let thread_id = message
+            .thread
+            .as_deref()
+            .filter(|t| !t.is_empty())
+            .or(legacy_thread.as_deref());
+        let mut delivered = 0;
 
         if !message.content.trim().is_empty() {
-            self.send_text_chunks(&message.content, &chat_id, thread_id)
+            self.send_text_chunks(&message.content, &chat_id, thread_id, &mut delivered)
                 .await?;
         }
 
         for resource in &message.attachments {
-            self.send_resource(&chat_id, thread_id, resource).await?;
+            send_step(&mut delivered, || {
+                self.send_resource(&chat_id, thread_id, resource)
+            })
+            .await?;
         }
 
         if message.content.trim().is_empty() && message.attachments.is_empty() {
-            self.send_text_chunks(" ", &chat_id, thread_id).await?;
+            self.send_text_chunks("…", &chat_id, thread_id, &mut delivered)
+                .await?;
         }
 
         Ok(())
@@ -1210,54 +1211,35 @@ impl Channel for TelegramChannel {
             }
         }
     }
-
-    async fn health_check(&self) -> bool {
-        matches!(
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                self.send_request(self.client.get(self.api_url("getMe")))
-            )
-            .await,
-            Ok(Ok(response)) if response.status().is_success()
-        )
-    }
 }
 
-#[async_trait]
-impl StreamingChannel for TelegramChannel {
-    async fn start_typing(&self, recipient: &str) -> Result<(), BoxError> {
-        self.stop_typing(recipient).await?;
-
-        let client = self.client.clone();
-        let url = self.api_url("sendChatAction");
-        let (chat_id, thread_id) = Self::parse_reply_target(recipient);
-        let handle = tokio::spawn(async move {
-            loop {
-                let mut body = serde_json::json!({
-                    "chat_id": chat_id,
-                    "action": "typing",
-                });
-                if let Some(thread_id) = &thread_id {
-                    body["message_thread_id"] = Value::String(thread_id.clone());
-                }
-                let _ = client.post(&url).json(&body).send().await;
-                tokio::time::sleep(Duration::from_secs(4)).await;
-            }
-        });
-
-        let mut guard = self.typing_handle.lock().await;
-        *guard = Some(handle);
-
-        Ok(())
+fn ensure_telegram_send_success(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    body: &str,
+) -> Result<(), BoxError> {
+    // Gate on HTTP status before decoding: proxies often return HTML for 5xx errors.
+    if !status.is_success() {
+        return Err(http_send_error(status, headers, body));
     }
-
-    async fn stop_typing(&self, _recipient: &str) -> Result<(), BoxError> {
-        let mut guard = self.typing_handle.lock().await;
-        if let Some(handle) = guard.take() {
-            handle.abort();
-        }
-        Ok(())
+    let data: Value = serde_json::from_str(body)?;
+    if data.get("ok").and_then(Value::as_bool) != Some(true) {
+        let status = data
+            .get("error_code")
+            .and_then(Value::as_u64)
+            .and_then(|n| u16::try_from(n).ok())
+            .and_then(|n| reqwest::StatusCode::from_u16(n).ok())
+            .unwrap_or(reqwest::StatusCode::BAD_REQUEST);
+        return Err(http_send_error(status, headers, body));
     }
+    Ok(())
+}
+
+fn is_telegram_format_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("can't parse entities")
+        || error.contains("unsupported start tag")
+        || error.contains("can't find end tag")
 }
 
 /// Replaces every occurrence of the bot token with a placeholder so it never reaches logs.
@@ -1394,7 +1376,7 @@ mod tests {
     fn normalize_incoming_content_removes_bot_mentions() {
         assert_eq!(
             TelegramChannel::normalize_incoming_content("@anda_bot  hello   world", "anda_bot"),
-            Some("hello world".to_string())
+            Some("hello   world".to_string())
         );
     }
 
@@ -1416,21 +1398,6 @@ mod tests {
             rendered,
             "<b>bold</b> <a href=\"https://example.com?q=&quot;1&quot;&amp;v=&#39;2&#39;\">x</a>"
         );
-    }
-
-    #[tokio::test]
-    async fn stop_typing_clears_handle() {
-        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
-        {
-            let mut guard = channel.typing_handle.lock().await;
-            *guard = Some(tokio::spawn(async {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }));
-        }
-
-        channel.stop_typing("123").await.unwrap();
-
-        assert!(channel.typing_handle.lock().await.is_none());
     }
 
     use anda_core::ByteBufB64;
@@ -1689,17 +1656,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_check_reflects_api_reachability() {
-        let state = Arc::new(MockApi::default());
-        let channel = mock_channel(|_| {}, state).await;
-        assert!(channel.health_check().await);
-
-        let mut dead = TelegramChannel::new(&test_config(), new_reqwest_client());
-        dead.api_base = "http://127.0.0.1:1".to_string();
-        assert!(!dead.health_check().await);
-    }
-
-    #[tokio::test]
     async fn attachment_updates_download_files_into_resources() {
         let state = Arc::new(MockApi::default());
         let channel = mock_channel(
@@ -1810,20 +1766,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn start_typing_spawns_keepalive_loop() {
-        let state = Arc::new(MockApi::default());
-        let channel = mock_channel(|_| {}, state.clone()).await;
-
-        channel.start_typing("555:777").await.unwrap();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        channel.stop_typing("555:777").await.unwrap();
-
-        let actions = state.recorded("sendChatAction");
-        assert!(!actions.is_empty());
-        assert_eq!(actions[0]["message_thread_id"], "777");
-    }
-
     #[test]
     fn format_forward_attribution_covers_channel_user_and_hidden() {
         use serde_json::json;
@@ -1909,5 +1851,112 @@ mod tests {
         );
         assert!(html.contains("<b>") || html.contains("bold"));
         assert!(!html.is_empty());
+    }
+
+    #[test]
+    fn incoming_code_whitespace_and_outgoing_code_literals_are_preserved() {
+        let input = "@anda_bot\n```python\nif ok:\n    run()\n```";
+        assert_eq!(
+            TelegramChannel::normalize_incoming_content(input, "anda_bot").unwrap(),
+            "```python\nif ok:\n    run()\n```"
+        );
+        let output = TelegramChannel::markdown_to_telegram_html(
+            "```python\n# comment\npattern = \"**x**\"\n```",
+        );
+        assert_eq!(
+            output,
+            "<pre><code># comment\npattern = &quot;**x**&quot;</code></pre>"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_honors_explicit_thread_and_does_not_replay_prefix() {
+        use axum::response::IntoResponse;
+        let requests = Arc::new(StdMutex::new(Vec::<Value>::new()));
+        let state = requests.clone();
+        let app = Router::new().route(
+            "/bot123:ABC/sendMessage",
+            routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let requests = state.clone();
+                async move {
+                    let mut requests = requests.lock().unwrap();
+                    requests.push(body);
+                    if requests.len() == 2 {
+                        (
+                            http::StatusCode::TOO_MANY_REQUESTS,
+                            axum::Json(
+                                serde_json::json!({"ok":false,"parameters":{"retry_after":0}}),
+                            ),
+                        )
+                            .into_response()
+                    } else {
+                        axum::Json(serde_json::json!({"ok":true})).into_response()
+                    }
+                }
+            }),
+        );
+        let mut channel = TelegramChannel::new(&test_config(), new_reqwest_client());
+        channel.api_base = crate::test_support::spawn_http_mock(app).await;
+        channel
+            .send(&SendMessage::new("x".repeat(4200), "555:legacy").in_thread(Some("777".into())))
+            .await
+            .unwrap();
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(|r| r["message_thread_id"] == "777"));
+        assert_ne!(sent[0]["text"], sent[1]["text"]);
+        assert_eq!(sent[1]["text"], sent[2]["text"]);
+        assert!(sent.iter().all(|r| r["parse_mode"] == "HTML"));
+    }
+
+    #[tokio::test]
+    async fn permanent_send_error_does_not_fall_back_to_plain_text() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = calls.clone();
+        let app = Router::new().route(
+            "/bot123:ABC/sendMessage",
+            routing::post(move || {
+                state.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async {
+                    (
+                        http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"ok":false,"description":"chat not found"})),
+                    )
+                }
+            }),
+        );
+        let mut channel = TelegramChannel::new(&test_config(), new_reqwest_client());
+        channel.api_base = crate::test_support::spawn_http_mock(app).await;
+        assert!(
+            channel
+                .send(&SendMessage::new("hello", "555"))
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn html_gateway_errors_and_bot_api_rate_limits_preserve_retry_classification() {
+        let error = ensure_telegram_send_success(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            &Default::default(),
+            "<html>unavailable</html>",
+        )
+        .unwrap_err();
+        assert!(super::super::delivery::retryable_send_error(error.as_ref()));
+        let error = ensure_telegram_send_success(
+            reqwest::StatusCode::OK,
+            &Default::default(),
+            r#"{"ok":false,"error_code":429,"parameters":{"retry_after":2}}"#,
+        )
+        .unwrap_err();
+        assert!(super::super::delivery::retryable_send_error(error.as_ref()));
+        assert_eq!(
+            error
+                .downcast_ref::<super::super::delivery::SendFailure>()
+                .unwrap()
+                .retry_after,
+            Some(Duration::from_secs(2))
+        );
     }
 }

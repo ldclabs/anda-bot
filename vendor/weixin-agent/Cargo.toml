@@ -1,0 +1,50 @@
+[package]
+name = "weixin-agent"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85.0"
+description = "Pure protocol SDK for Weixin iLink Bot API — iLink AI Bot protocol, not coupled with OpenClaw"
+license = "MIT"
+repository = "https://github.com/spensercai/weixin-agent-sdk-rs"
+homepage = "https://github.com/spensercai/weixin-agent-sdk-rs"
+documentation = "https://docs.rs/weixin-agent"
+readme = "README.md"
+keywords = ["weixin", "wechat", "bot", "ilink", "agent"]
+categories = ["api-bindings", "asynchronous"]
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "fs", "time", "rt"] }
+reqwest = { version = "0.13", features = ["rustls", "json", "gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_repr = "0.1"
+thiserror = "2"
+tracing = "0.1"
+async-trait = "0.1"
+base64 = "0.22"
+aes = "0.8"
+ecb = "0.1"
+cipher = { version = "0.4", features = ["block-padding"] }
+md-5 = "0.10"
+rand = "0.9"
+dashmap = "6"
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+urlencoding = "2"
+
+[dev-dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+qr2term = "0.3"
+tokio = { version = "1", features = ["full", "test-util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
+
+[[example]]
+name = "echo_bot"
+path = "examples/echo_bot.rs"
+
+[[example]]
+name = "e2e_test"
+path = "examples/e2e_test.rs"

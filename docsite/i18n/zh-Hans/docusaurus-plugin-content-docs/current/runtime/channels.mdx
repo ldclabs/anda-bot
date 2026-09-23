@@ -143,6 +143,18 @@ channels:
 - Lark / 飞书需要 `app_id` 和 `app_secret`；飞书端点使用 `platform: feishu`。
 - 频道路由会被持久化，方便后续回复回到原线程、房间或联系人。
 
+## 消息投递
+
+`https_proxy` 同时用于频道 API 请求、媒体传输以及 Discord/Lark WebSocket 连接。Discord 会恢复可恢复的会话并检查心跳确认，附件下载独立进行。
+
+使用 `list_im_channels` 查找最近的收件人和线程。它扫描最新 300 条已存储消息，并区分不同线程。`send_im_message` 的 `thread` 分别使用 Telegram topic ID、Discord 线程频道 ID，或 Lark/飞书根消息 ID（`om_...`）。Telegram 仍兼容 `chat_id:topic_id` 收件人格式；显式 `thread` 优先。
+
+文本分段和附件分别重试。后续部分失败时不会重发已成功投递的部分，历史记录写入失败也不会触发重发。部分投递后的失败会被报告，不会整条回放。对于无法确定是否已投递的传输超时，不会自动重复提交。
+
+只有附件的回复也会投递。Lark/飞书目前发送附件的 HTTP(S) 链接；本地文件和二进制附件会明确返回不支持。接收端支持用户图片，以及直接结构或带语言包装的富文本消息。
+
+频道历史引用已存入频道工作区的附件；备份数据库时请同时保留其 `attachments` 目录。微信复用 HTTP 客户端，并将旧 context-token 文件迁移为 `context_tokens_v2.json`，在同一条记录中保存 token 和更新时间。
+
 ## 语音输入和播放
 
 语音输入需要配置 `transcription.enabled: true`。启动一次语音会话：

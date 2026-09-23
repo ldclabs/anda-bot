@@ -240,7 +240,7 @@ fn build_configured_channel(
                 .cloned()
                 .collect::<Vec<_>>();
             single_built_channel(
-                channel_runtime::wechat::build_wechat_channels(&settings)?,
+                channel_runtime::wechat::build_wechat_channels(&settings, http_client)?,
                 id,
             )
         }

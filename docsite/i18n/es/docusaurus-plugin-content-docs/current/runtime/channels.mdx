@@ -143,6 +143,18 @@ channels:
 - Lark / Feishu requiere `app_id` y `app_secret`; los endpoints de Feishu utilizan `platform: feishu`.
 - Las rutas del canal se persisten de modo que las respuestas posteriores puedan volver al hilo, sala o contacto original.
 
+## Entrega de mensajes
+
+`https_proxy` se aplica a las API de los canales, las transferencias de archivos y las conexiones WebSocket de Discord/Lark. Discord reanuda las sesiones recuperables y verifica los acuses de los latidos mientras los archivos se descargan por separado.
+
+`list_im_channels` consulta los últimos 300 mensajes almacenados y distingue los hilos. En `send_im_message`, `thread` es el ID de tema de Telegram, el ID de canal de hilo de Discord o el ID del mensaje raíz de Lark/Feishu (`om_...`). Telegram mantiene el formato `chat_id:topic_id`; el campo `thread` explícito tiene prioridad.
+
+Cada fragmento y archivo se reintenta por separado. Un fallo posterior o al guardar el historial no vuelve a enviar las partes entregadas. Los fallos tras una entrega parcial se notifican, sin repetir la respuesta completa. Los tiempos de espera con resultado de entrega desconocido no se reintentan automáticamente.
+
+También se entregan respuestas que solo contienen archivos. Lark/Feishu envía enlaces HTTP(S); los archivos locales y adjuntos binarios devuelven un error explícito de función no compatible. Se admiten imágenes entrantes de usuarios y texto enriquecido directo o localizado.
+
+El historial referencia los archivos guardados en el directorio `attachments` del espacio de trabajo del canal; inclúyalo en las copias de seguridad. WeChat reutiliza su cliente HTTP y migra los archivos antiguos de tokens a `context_tokens_v2.json`, guardando cada token y su fecha de actualización juntos.
+
 ## Entrada de voz y reproducción
 
 La entrada de voz requiere que `transcription.enabled: true` esté configurado. Inicie una sesión de voz con:

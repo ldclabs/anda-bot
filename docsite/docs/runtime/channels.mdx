@@ -143,6 +143,18 @@ channels:
 - Lark / Feishu needs `app_id` and `app_secret`; Feishu endpoints use `platform: feishu`.
 - Channel routes are persisted so later replies can return to the original thread, room, or contact.
 
+## Message delivery
+
+`https_proxy` applies to channel API requests, media transfers, and Discord/Lark WebSocket connections. Discord resumes recoverable sessions and checks heartbeat acknowledgements while attachments download separately.
+
+Use `list_im_channels` to discover recent recipients and threads. It scans the latest 300 stored messages and keeps threads distinct. For `send_im_message`, `thread` is a Telegram topic ID, a Discord thread channel ID, or a Lark/Feishu root message ID (`om_...`). Telegram also accepts the older `chat_id:topic_id` recipient format; an explicit `thread` takes precedence.
+
+Text chunks and attachments retry independently. Successfully delivered parts are not replayed when a later part fails, and a history-write failure does not resend a delivered message. A failure after partial delivery is reported rather than replaying the whole reply. Transport timeouts with an unknown delivery outcome are not automatically repeated.
+
+Replies containing only artifacts are delivered too. Lark/Feishu currently sends attachment HTTP(S) links; local files and binary attachments return an explicit unsupported error. Incoming user images and direct or localized rich-text messages are supported.
+
+Channel history references attachments already stored in the channel workspace; keep its `attachments` directory with database backups. WeChat reuses its HTTP client and migrates the legacy context-token files to `context_tokens_v2.json`, which stores each token and its update time together.
+
 ## Voice Input and Playback
 
 Voice input requires `transcription.enabled: true`. Start a voice session with:

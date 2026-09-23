@@ -4,7 +4,7 @@ use anda_db::{
     database::AndaDB,
     error::DBError,
     index::jieba_tokenizer,
-    query::{Filter, Query, RangeQuery},
+    query::{Filter, RangeQuery},
     schema::Fv,
     unix_ms,
 };
@@ -23,6 +23,8 @@ use std::{
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::attachments::history_resources;
+use super::delivery::{SendFailure, retryable_send_error};
 use super::types::*;
 use crate::engine::{
     CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt_with_space,
@@ -484,7 +486,9 @@ impl ChannelRuntimeInner {
     async fn process_incoming_message(&self, mut message: ChannelMessage) {
         log::debug!(
             channel = message.channel,
-            message:serde = message;
+            sender = message.sender,
+            attachment_count = message.attachments.len(),
+            content_bytes = message.content.len();
             "received message from channel {}",
             message.channel
         );
@@ -527,6 +531,8 @@ impl ChannelRuntimeInner {
             message.external_user.into(),
         );
         let prompt = agent_prompt_from_message(&message);
+        let mut resources = std::mem::take(&mut message.attachments);
+        message.attachments = history_resources(&mut resources);
         let channel_user = self.user_for_channel(&message.channel);
         extra.insert("channel_user".to_string(), channel_user.to_text().into());
         match engine
@@ -535,7 +541,7 @@ impl ChannelRuntimeInner {
                 AgentInput {
                     name: String::new(),
                     prompt,
-                    resources: message.attachments.clone(),
+                    resources,
                     meta: Some(RequestMeta {
                         user: Some(message.sender.clone()),
                         extra,
@@ -611,6 +617,14 @@ impl ChannelRuntimeInner {
                         return;
                     }
                     Err(err) => {
+                        if !inner
+                            .channels
+                            .get(&channel)
+                            .is_some_and(|chan| can_retry_delivery(chan, err.as_ref()))
+                        {
+                            log::error!(name = "channel"; "deferred reply stopped after permanent or partial delivery failure: {err}");
+                            return;
+                        }
                         log::warn!(
                             name = "channel";
                             "deferred reply retry {} to channel {} failed: {err}",
@@ -698,7 +712,7 @@ impl ChannelRuntimeInner {
     async fn try_send(
         &self,
         channel: String,
-        message: SendMessage,
+        mut message: SendMessage,
         conversation: Option<u64>,
     ) -> Result<(), BoxError> {
         if let Some(chan) = self.channels.get(&channel) {
@@ -706,7 +720,8 @@ impl ChannelRuntimeInner {
                 .await?;
 
             let timestamp = unix_ms();
-            self.messages
+            let recorded = self
+                .messages
                 .add_from(&ChannelMessage {
                     sender: chan.username().to_string(),
                     reply_target: message.recipient,
@@ -714,12 +729,16 @@ impl ChannelRuntimeInner {
                     channel,
                     timestamp,
                     thread: message.thread,
-                    attachments: message.attachments,
+                    attachments: history_resources(&mut message.attachments),
                     conversation,
                     ..Default::default()
                 })
-                .await?;
-            self.messages.flush(timestamp).await?;
+                .await;
+            if let Err(err) = recorded {
+                log::error!(name = "channel"; "message delivered but history write failed: {err}");
+            } else if let Err(err) = self.messages.flush(timestamp).await {
+                log::error!(name = "channel"; "message delivered but history flush failed: {err}");
+            }
 
             Ok(())
         } else {
@@ -793,25 +812,25 @@ impl ChannelSender {
             ]),
             None => id_filter,
         };
-        let messages: Vec<ChannelMessage> = self
+        let ids = self
             .inner
             .messages
-            .search_as(Query {
-                search: None,
-                filter: Some(filter),
-                limit: Some(RECENT_RECIPIENTS_SCAN_LIMIT),
-            })
+            .query_last_ids(filter, Some(RECENT_RECIPIENTS_SCAN_LIMIT))
             .await?;
-
         let mut recipients: Vec<RecentRecipient> = Vec::new();
-        // Results are ascending by _id; walk in reverse for newest first.
-        for message in messages.iter().rev() {
+        let mut seen = std::collections::HashSet::new();
+        // Read newest first and stop as soon as enough distinct routes are found.
+        for id in ids.into_iter().rev() {
+            let message: ChannelMessage = self.inner.messages.get_as(id).await?;
             if message.reply_target.is_empty() {
                 continue;
             }
-            if recipients
-                .iter()
-                .any(|r| r.channel == message.channel && r.recipient == message.reply_target)
+            if !self.inner.channels.contains_key(&message.channel)
+                || !seen.insert((
+                    message.channel.clone(),
+                    message.reply_target.clone(),
+                    message.thread.clone(),
+                ))
             {
                 continue;
             }
@@ -836,7 +855,7 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         let Some(conv_id) = output.conversation else {
             return;
         };
-        if output.content.is_empty() {
+        if output.content.is_empty() && output.artifacts.is_empty() {
             return;
         }
         let meta = completion_meta(ctx);
@@ -871,8 +890,14 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
             .try_send(channel.clone(), msg.clone(), Some(conv_id))
             .await
         {
-            log::error!(name = "channel"; "failed to send message to channel {}: {err}; scheduling deferred retries", channel);
-            self.spawn_reply_retry(channel, msg, Some(conv_id));
+            log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
+            if self
+                .channels
+                .get(&channel)
+                .is_some_and(|chan| can_retry_delivery(chan, err.as_ref()))
+            {
+                self.spawn_reply_retry(channel, msg, Some(conv_id));
+            }
         }
     }
 }
@@ -1003,7 +1028,10 @@ async fn serve_channel_with_reconnect(
         }
 
         let started_at = Instant::now();
-        let result = channel.listen(cancel_token.clone(), tx.clone()).await;
+        let result = tokio::select! {
+            _ = cancel_token.cancelled() => return,
+            result = channel.listen(cancel_token.clone(), tx.clone()) => result,
+        };
 
         if cancel_token.is_cancelled() {
             log::warn!(name = "channel"; "channel {} listener stopped", channel.name());
@@ -1040,6 +1068,20 @@ async fn serve_channel_with_reconnect(
     }
 }
 
+fn can_retry_delivery(
+    channel: &Arc<dyn Channel>,
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+) -> bool {
+    if error.is::<SendFailure>()
+        || error.is::<reqwest::Error>()
+        || error.is::<weixin_agent::Error>()
+    {
+        retryable_send_error(error)
+    } else {
+        channel.should_retry_send(&error.to_string())
+    }
+}
+
 async fn send_message_with_retry(
     channel_key: &str,
     channel: &Arc<dyn Channel>,
@@ -1055,8 +1097,10 @@ async fn send_message_with_retry(
             Ok(()) => return Ok(()),
             Err(err) => {
                 let error_text = err.to_string();
-                let retryable =
-                    channel.should_retry_send(&error_text) || !channel.health_check().await;
+                let retryable = can_retry_delivery(channel, err.as_ref())
+                    && !err
+                        .downcast_ref::<SendFailure>()
+                        .is_some_and(|err| err.exhausted);
 
                 if !retryable || attempt >= policy.max_attempts {
                     return Err(err);
@@ -1860,5 +1904,68 @@ mod tests {
         assert!(message.content.contains("Previous conversation #9"));
         assert!(message.content.contains("Cron Job (shell): nightly"));
         assert!(message.content.contains("done"));
+    }
+
+    #[tokio::test]
+    async fn recent_recipients_reads_newest_page_and_distinct_threads() {
+        let channel = Arc::new(TestChannel::new("test:recent", false));
+        let runtime = test_runtime(channel.clone()).await;
+        for index in 0..305 {
+            runtime
+                .inner
+                .messages
+                .add_from(&ChannelMessage {
+                    channel: channel.id(),
+                    reply_target: if index < 300 { "old" } else { "new" }.into(),
+                    thread: (index >= 300).then(|| format!("topic-{index}")),
+                    timestamp: index,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        let recipients = runtime
+            .sender()
+            .recent_recipients(Some(&channel.id()), 3)
+            .await
+            .unwrap();
+        assert_eq!(recipients.len(), 3);
+        assert!(recipients.iter().all(|r| r.recipient == "new"));
+        assert_eq!(recipients[0].thread.as_deref(), Some("topic-304"));
+        assert_eq!(recipients[2].thread.as_deref(), Some("topic-302"));
+    }
+
+    #[tokio::test]
+    async fn completion_delivers_artifacts_without_text() {
+        let channel = Arc::new(TestChannel::new("test:artifact", false));
+        let runtime = test_runtime(channel.clone()).await;
+        runtime.inner.bind_conversation(
+            ChannelRoute {
+                channel: channel.id(),
+                reply_target: "alice".into(),
+                thread: Some("topic".into()),
+            },
+            42,
+        );
+        runtime
+            .inner
+            .clone()
+            .on_completion(
+                &Engine::builder().mock_ctx(),
+                &AgentOutput {
+                    conversation: Some(42),
+                    artifacts: vec![anda_core::Resource {
+                        name: "report.txt".into(),
+                        blob: Some(anda_core::ByteBufB64(b"report".to_vec())),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await;
+        let sent = channel.sent_messages().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].attachments.len(), 1);
+        assert_eq!(sent[0].thread.as_deref(), Some("topic"));
     }
 }

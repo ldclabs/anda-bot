@@ -11,14 +11,15 @@ use std::{
     sync::{Arc, RwLock as StdRwLock},
     time::{Duration, Instant},
 };
-use tokio::sync::{RwLock, mpsc};
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio_tungstenite::tungstenite::Message as WsMsg;
 use tokio_util::sync::CancellationToken;
 
+use super::delivery::{http_send_error, send_step};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    StreamingChannel, file_name_for_resource, is_http_url, is_transient_send_error,
-    random_from_pool, resource_from_bytes,
+    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    resource_from_bytes,
 };
 use crate::config::{self, normalize_identity};
 
@@ -30,46 +31,7 @@ const LARK_DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(7200);
 const LARK_INVALID_ACCESS_TOKEN_CODE: i64 = 99_991_663;
 const LARK_WS_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300);
 
-const LARK_ACK_REACTIONS_ZH_CN: &[&str] = &[
-    "OK", "JIAYI", "APPLAUSE", "THUMBSUP", "MUSCLE", "SMILE", "DONE",
-];
-const LARK_ACK_REACTIONS_ZH_TW: &[&str] = &[
-    "OK",
-    "JIAYI",
-    "APPLAUSE",
-    "THUMBSUP",
-    "FINGERHEART",
-    "SMILE",
-    "DONE",
-];
-const LARK_ACK_REACTIONS_EN: &[&str] = &[
-    "OK",
-    "THUMBSUP",
-    "THANKS",
-    "MUSCLE",
-    "FINGERHEART",
-    "APPLAUSE",
-    "SMILE",
-    "DONE",
-];
-const LARK_ACK_REACTIONS_JA: &[&str] = &[
-    "OK",
-    "THUMBSUP",
-    "THANKS",
-    "MUSCLE",
-    "FINGERHEART",
-    "APPLAUSE",
-    "SMILE",
-    "DONE",
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LarkAckLocale {
-    ZhCn,
-    ZhTw,
-    En,
-    Ja,
-}
+const LARK_ACK_REACTIONS: &[&str] = &["OK", "THUMBSUP", "APPLAUSE", "SMILE", "DONE"];
 
 #[derive(Clone, PartialEq, prost::Message)]
 struct PbHeader {
@@ -160,6 +122,10 @@ struct LarkSenderId {
 #[derive(Debug, serde::Deserialize)]
 struct LarkMessage {
     message_id: String,
+    #[serde(default)]
+    root_id: Option<String>,
+    #[serde(default)]
+    thread_id: Option<String>,
     chat_id: String,
     chat_type: String,
     message_type: String,
@@ -249,6 +215,7 @@ pub struct LarkChannel {
     client: Client,
     workspace: Arc<ChannelWorkspace>,
     bot_open_id: Arc<StdRwLock<Option<String>>>,
+    bot_identity_retry: Arc<Mutex<Option<Instant>>>,
     tenant_token: Arc<RwLock<Option<CachedTenantToken>>>,
     dedup: Arc<RecentEventDedup>,
 }
@@ -281,6 +248,7 @@ impl LarkChannel {
             client,
             workspace: Arc::new(ChannelWorkspace::default()),
             bot_open_id: Arc::new(StdRwLock::new(None)),
+            bot_identity_retry: Arc::new(Mutex::new(None)),
             tenant_token: Arc::new(RwLock::new(None)),
             dedup: Arc::new(RecentEventDedup::new(EVENT_DEDUP_WINDOW)),
         }
@@ -306,8 +274,11 @@ impl LarkChannel {
         format!("{}/im/v1/messages/{message_id}/reactions", self.api_base)
     }
 
-    fn image_download_url(&self, image_key: &str) -> String {
-        format!("{}/im/v1/images/{image_key}", self.api_base)
+    fn image_download_url(&self, message_id: &str, image_key: &str) -> String {
+        format!(
+            "{}/im/v1/messages/{message_id}/resources/{image_key}?type=image",
+            self.api_base
+        )
     }
 
     fn file_download_url(&self, message_id: &str, file_key: &str) -> String {
@@ -346,6 +317,10 @@ impl LarkChannel {
             }
         }
 
+        let mut cached = self.tenant_token.write().await;
+        if let Some(token) = cached.as_ref().filter(|t| Instant::now() < t.refresh_after) {
+            return Ok(token.value.clone());
+        }
         let response = self
             .client
             .post(self.tenant_access_token_url())
@@ -379,7 +354,6 @@ impl LarkChannel {
         let ttl_seconds = extract_lark_token_ttl_seconds(&data);
         let refresh_after = next_token_refresh_deadline(Instant::now(), ttl_seconds);
 
-        let mut cached = self.tenant_token.write().await;
         *cached = Some(CachedTenantToken {
             value: token.clone(),
             refresh_after,
@@ -452,6 +426,11 @@ impl LarkChannel {
             return;
         }
 
+        let mut retry = self.bot_identity_retry.lock().await;
+        if self.resolved_bot_open_id().is_some() || retry.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        *retry = Some(Instant::now() + Duration::from_secs(30));
         match self.refresh_bot_open_id().await {
             Ok(Some(open_id)) => log::info!("Lark resolved bot open_id: {open_id}"),
             Ok(None) => {
@@ -478,19 +457,27 @@ impl LarkChannel {
             .send()
             .await?;
         let status = response.status();
-        let raw = response.text().await.unwrap_or_default();
+        let headers = response.headers().clone();
+        let raw = response.text().await?;
+        if !status.is_success() && status != reqwest::StatusCode::UNAUTHORIZED {
+            return Err(http_send_error(status, &headers, &raw));
+        }
         let data = serde_json::from_str::<Value>(&raw)
             .unwrap_or_else(|_| serde_json::json!({ "raw": raw }));
         Ok((status, data))
     }
 
-    async fn send_text_once(
-        &self,
-        url: &str,
-        token: &str,
-        body: &Value,
-    ) -> Result<(reqwest::StatusCode, Value), BoxError> {
-        self.post_json_with_token(url, token, body).await
+    async fn send_card(&self, url: &str, body: &Value) -> Result<(), BoxError> {
+        let token = self.get_tenant_access_token().await?;
+        let (status, response) = self.post_json_with_token(url, &token, body).await?;
+        if should_refresh_lark_tenant_token(status, &response) {
+            self.invalidate_token().await;
+            let token = self.get_tenant_access_token().await?;
+            let (status, response) = self.post_json_with_token(url, &token, body).await?;
+            ensure_lark_send_success(status, &response, "after token refresh")
+        } else {
+            ensure_lark_send_success(status, &response, "without token refresh")
+        }
     }
 
     async fn post_message_reaction_with_token(
@@ -590,14 +577,43 @@ impl LarkChannel {
         cancel_token: CancellationToken,
         tx: mpsc::Sender<ChannelMessage>,
     ) -> Result<(), BoxError> {
+        let (events, mut incoming) = mpsc::channel::<Value>(64);
+        let receive = self.receive_ws(cancel_token.clone(), events);
+        let process = async {
+            while let Some(event) = incoming.recv().await {
+                if let Some(message) = self.parse_event_object(&event).await {
+                    if self.ack_reactions
+                        && let Some(id) =
+                            event.pointer("/message/message_id").and_then(Value::as_str)
+                    {
+                        self.spawn_ack_reaction(id.to_string());
+                    }
+                    if tx.send(message).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        };
+        let process = async {
+            tokio::select! { _ = cancel_token.cancelled() => {}, _ = process => {} }
+        };
+        let (result, ()) = tokio::join!(receive, process);
+        result
+    }
+
+    async fn receive_ws(
+        &self,
+        cancel_token: CancellationToken,
+        events: mpsc::Sender<Value>,
+    ) -> Result<(), BoxError> {
         self.ensure_bot_open_id().await;
         let (wss_url, client_config) = self.get_ws_endpoint().await?;
         let service_id = service_id_from_ws_url(&wss_url);
 
         log::info!("Lark channel {} connecting to websocket", self.id());
-        let (ws_stream, _) = tokio::select! {
+        let ws_stream = tokio::select! {
             _ = cancel_token.cancelled() => return Ok(()),
-            result = connect_async(&wss_url) => result?,
+            result = super::websocket::connect(&self.client, &wss_url) => result?,
         };
         let (mut write, mut read) = ws_stream.split();
 
@@ -617,6 +633,7 @@ impl LarkChannel {
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => return Ok(()),
+                _ = events.closed() => return Ok(()),
                 _ = heartbeat.tick() => {
                     if send_lark_ws_ping(&mut write, &mut seq, service_id).await.is_err() {
                         return Ok(());
@@ -682,11 +699,12 @@ impl LarkChannel {
                         key: "biz_rt".to_string(),
                         value: "0".to_string(),
                     });
-                    let _ = write.send(WsMsg::Binary(ack.encode_to_vec().into())).await;
-
                     let payload = match reassemble_lark_ws_payload(frame, &mut frag_cache) {
                         Some(payload) => payload,
-                        None => continue,
+                        None => {
+                            write.send(WsMsg::Binary(ack.encode_to_vec().into())).await?;
+                            continue;
+                        }
                     };
 
                     let event: LarkEventEnvelope = match serde_json::from_slice(&payload) {
@@ -696,23 +714,10 @@ impl LarkChannel {
                             continue;
                         }
                     };
-                    if event.header.event_type != "im.message.receive_v1" {
-                        continue;
+                    if event.header.event_type == "im.message.receive_v1" {
+                        events.try_send(event.event).map_err(|_| "Lark inbound event queue unavailable")?;
                     }
-
-                    let Some(message) = self.parse_event_object(&event.event).await else {
-                        continue;
-                    };
-
-                    if self.ack_reactions
-                        && let Some(message_id) = event.event.pointer("/message/message_id").and_then(Value::as_str)
-                    {
-                        self.spawn_ack_reaction(message_id.to_string(), Some(event.event.clone()), message.content.clone());
-                    }
-
-                    if tx.send(message).await.is_err() {
-                        return Ok(());
-                    }
+                    write.send(WsMsg::Binary(ack.encode_to_vec().into())).await?;
                 }
             }
         }
@@ -762,14 +767,7 @@ impl LarkChannel {
                     .pointer("/event/message/message_id")
                     .and_then(Value::as_str)
             {
-                let ack_text = messages
-                    .first()
-                    .map_or("", |message| message.content.as_str());
-                state.channel.spawn_ack_reaction(
-                    message_id.to_string(),
-                    payload.get("event").cloned(),
-                    ack_text.to_string(),
-                );
+                state.channel.spawn_ack_reaction(message_id.to_string());
             }
 
             for message in messages {
@@ -844,28 +842,31 @@ impl LarkChannel {
             return None;
         }
 
-        let parsed = match self
+        if lark_message.chat_type == "group" && self.mention_only {
+            self.ensure_bot_open_id().await;
+            let post_mentions = if lark_message.message_type == "post" {
+                parse_post_content_details(&lark_message.content)
+                    .map(|p| p.mentioned_open_ids)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            if !should_respond_in_group(
+                true,
+                self.resolved_bot_open_id().as_deref(),
+                &lark_message.mentions,
+                &post_mentions,
+            ) {
+                return None;
+            }
+        }
+        let parsed = self
             .parse_message_content(
                 &lark_message.message_type,
                 &lark_message.content,
                 &lark_message.message_id,
             )
-            .await
-        {
-            Some(parsed) => parsed,
-            None => return None,
-        };
-
-        if lark_message.chat_type == "group"
-            && !should_respond_in_group(
-                self.mention_only,
-                self.resolved_bot_open_id().as_deref(),
-                &lark_message.mentions,
-                &parsed.post_mentioned_open_ids,
-            )
-        {
-            return None;
-        }
+            .await?;
 
         let content = strip_at_placeholders(&parsed.content).trim().to_string();
         if content.is_empty() && parsed.attachments.is_empty() {
@@ -879,6 +880,22 @@ impl LarkChannel {
             .unwrap_or_else(unix_ms);
 
         let mut extra = std::collections::BTreeMap::new();
+        let thread = lark_message
+            .root_id
+            .filter(|id| !id.is_empty())
+            .or_else(|| {
+                lark_message
+                    .thread_id
+                    .as_ref()
+                    .filter(|id| !id.is_empty())
+                    .map(|_| lark_message.message_id.clone())
+            });
+        if let Some(id) = lark_message.thread_id {
+            extra.insert("thread_id".to_string(), id.into());
+        }
+        if let Some(id) = &thread {
+            extra.insert("root_id".to_string(), id.clone().into());
+        }
         extra.insert("message_id".to_string(), lark_message.message_id.into());
         extra.insert("chat_id".to_string(), lark_message.chat_id.clone().into());
         extra.insert("open_id".to_string(), sender_open_id.to_string().into());
@@ -891,7 +908,7 @@ impl LarkChannel {
             content,
             channel: self.id(),
             timestamp,
-            thread: None,
+            thread,
             attachments: parsed.attachments,
             extra,
             ..Default::default()
@@ -921,7 +938,6 @@ impl LarkChannel {
             "post" => parse_post_content_details(content).map(|details| ParsedMessageContent {
                 content: details.text,
                 attachments: Vec::new(),
-                post_mentioned_open_ids: details.mentioned_open_ids,
             }),
             "list" => parse_list_content(content).map(ParsedMessageContent::text),
             "image" => self.parse_image_message(message_id, content).await,
@@ -1006,7 +1022,7 @@ impl LarkChannel {
     async fn download_image_resource(&self, message_id: &str, image_key: &str) -> Option<Resource> {
         let bytes = match self
             .get_authorized_bytes(
-                &self.image_download_url(image_key),
+                &self.image_download_url(message_id, image_key),
                 LARK_MAX_FILE_DOWNLOAD_BYTES,
                 "Lark image download",
             )
@@ -1113,16 +1129,12 @@ impl LarkChannel {
         }
     }
 
-    fn spawn_ack_reaction(
-        &self,
-        message_id: String,
-        payload: Option<Value>,
-        fallback_text: String,
-    ) {
+    fn spawn_ack_reaction(&self, message_id: String) {
         let channel = self.clone();
         tokio::spawn(async move {
-            let emoji = random_lark_ack_reaction(payload.as_ref(), &fallback_text).to_string();
-            channel.try_add_ack_reaction(&message_id, &emoji).await;
+            channel
+                .try_add_ack_reaction(&message_id, random_from_pool(LARK_ACK_REACTIONS))
+                .await;
         });
     }
 }
@@ -1146,31 +1158,32 @@ impl Channel for LarkChannel {
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
+        if message
+            .attachments
+            .iter()
+            .any(|r| !r.uri.as_deref().is_some_and(is_http_url))
+        {
+            return Err("Lark currently sends attachment HTTP links only; local files and blobs are not supported".into());
+        }
         let content = outgoing_markdown_with_resources(&message.content, &message.attachments);
         let content = if content.trim().is_empty() {
-            " ".to_string()
+            "…".to_string()
         } else {
             content
         };
-        let chunks = split_markdown_chunks(&content, LARK_CARD_MARKDOWN_MAX_BYTES);
-        let url = self.send_message_url();
-        let mut token = self.get_tenant_access_token().await?;
-
-        for chunk in chunks {
-            let body = build_interactive_card_body(&message.recipient, chunk);
-            let (status, response) = self.send_text_once(&url, &token, &body).await?;
-
-            if should_refresh_lark_tenant_token(status, &response) {
-                self.invalidate_token().await;
-                token = self.get_tenant_access_token().await?;
-                let (retry_status, retry_response) =
-                    self.send_text_once(&url, &token, &body).await?;
-                ensure_lark_send_success(retry_status, &retry_response, "after token refresh")?;
-            } else {
-                ensure_lark_send_success(status, &response, "without token refresh")?;
+        let url = match message.thread.as_deref().filter(|t| !t.is_empty()) {
+            Some(root) => format!("{}/im/v1/messages/{root}/reply", self.api_base),
+            None => self.send_message_url(),
+        };
+        let mut delivered = 0;
+        for chunk in split_markdown_chunks(&content, LARK_CARD_MARKDOWN_MAX_BYTES) {
+            let mut body = build_interactive_card_body(&message.recipient, chunk);
+            if message.thread.as_ref().is_some_and(|t| !t.is_empty()) {
+                body.as_object_mut().unwrap().remove("receive_id");
+                body["reply_in_thread"] = Value::Bool(true);
             }
+            send_step(&mut delivered, || self.send_card(&url, &body)).await?;
         }
-
         Ok(())
     }
 
@@ -1188,39 +1201,11 @@ impl Channel for LarkChannel {
             config::LarkReceiveMode::Webhook => self.listen_http(cancel_token, tx).await,
         }
     }
-
-    async fn health_check(&self) -> bool {
-        matches!(
-            tokio::time::timeout(Duration::from_secs(5), self.get_tenant_access_token()).await,
-            Ok(Ok(_))
-        )
-    }
-}
-
-#[async_trait]
-impl StreamingChannel for LarkChannel {
-    async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    async fn add_reaction(
-        &self,
-        _channel_id: &str,
-        message_id: &str,
-        emoji: &str,
-    ) -> Result<(), BoxError> {
-        let token = self.get_tenant_access_token().await?;
-        let (status, body) = self
-            .post_message_reaction_with_token(message_id, &token, emoji)
-            .await?;
-        ensure_lark_send_success(status, &body, "add reaction")
-    }
 }
 
 struct ParsedMessageContent {
     content: String,
     attachments: Vec<Resource>,
-    post_mentioned_open_ids: Vec<String>,
 }
 
 impl ParsedMessageContent {
@@ -1228,7 +1213,6 @@ impl ParsedMessageContent {
         Self {
             content,
             attachments: Vec::new(),
-            post_mentioned_open_ids: Vec::new(),
         }
     }
 
@@ -1236,7 +1220,6 @@ impl ParsedMessageContent {
         Self {
             content,
             attachments: vec![resource],
-            post_mentioned_open_ids: Vec::new(),
         }
     }
 }
@@ -1437,7 +1420,7 @@ fn ensure_lark_send_success(
         return Err(format!("Lark send failed {context}: status={status}, body={body}").into());
     }
 
-    let code = extract_lark_response_code(body).unwrap_or(0);
+    let code = extract_lark_response_code(body).unwrap_or(-1);
     if code != 0 {
         return Err(format!("Lark send failed {context}: code={code}, body={body}").into());
     }
@@ -1466,162 +1449,18 @@ fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> St
     lines.join("\n")
 }
 
-fn lark_ack_pool(locale: LarkAckLocale) -> &'static [&'static str] {
-    match locale {
-        LarkAckLocale::ZhCn => LARK_ACK_REACTIONS_ZH_CN,
-        LarkAckLocale::ZhTw => LARK_ACK_REACTIONS_ZH_TW,
-        LarkAckLocale::En => LARK_ACK_REACTIONS_EN,
-        LarkAckLocale::Ja => LARK_ACK_REACTIONS_JA,
-    }
-}
-
-fn map_locale_tag(tag: &str) -> Option<LarkAckLocale> {
-    let normalized = tag.trim().to_ascii_lowercase().replace('-', "_");
-    if normalized.starts_with("ja") {
-        return Some(LarkAckLocale::Ja);
-    }
-    if normalized.starts_with("en") {
-        return Some(LarkAckLocale::En);
-    }
-    if normalized.contains("hant")
-        || normalized.starts_with("zh_tw")
-        || normalized.starts_with("zh_hk")
-        || normalized.starts_with("zh_mo")
-    {
-        return Some(LarkAckLocale::ZhTw);
-    }
-    if normalized.starts_with("zh") {
-        return Some(LarkAckLocale::ZhCn);
-    }
-    None
-}
-
-fn find_locale_hint(value: &Value) -> Option<String> {
-    match value {
-        Value::Object(map) => {
-            for key in [
-                "locale",
-                "language",
-                "lang",
-                "i18n_locale",
-                "user_locale",
-                "locale_id",
-            ] {
-                if let Some(locale) = map.get(key).and_then(Value::as_str) {
-                    return Some(locale.to_string());
-                }
-            }
-
-            map.values().find_map(find_locale_hint)
-        }
-        Value::Array(items) => items.iter().find_map(find_locale_hint),
-        _ => None,
-    }
-}
-
-fn detect_locale_from_post_content(content: &str) -> Option<LarkAckLocale> {
-    let parsed = serde_json::from_str::<Value>(content).ok()?;
-    let object = parsed.as_object()?;
-    object.keys().find_map(|key| map_locale_tag(key))
-}
-
-fn is_japanese_kana(ch: char) -> bool {
-    matches!(ch as u32, 0x3040..=0x309F | 0x30A0..=0x30FF | 0x31F0..=0x31FF)
-}
-
-fn is_cjk_han(ch: char) -> bool {
-    matches!(ch as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF)
-}
-
-fn is_traditional_only_han(ch: char) -> bool {
-    matches!(
-        ch,
-        '奮' | '鬥'
-            | '強'
-            | '體'
-            | '國'
-            | '臺'
-            | '萬'
-            | '與'
-            | '為'
-            | '這'
-            | '學'
-            | '機'
-            | '開'
-            | '裡'
-    )
-}
-
-fn is_simplified_only_han(ch: char) -> bool {
-    matches!(
-        ch,
-        '奋' | '斗'
-            | '强'
-            | '体'
-            | '国'
-            | '台'
-            | '万'
-            | '与'
-            | '为'
-            | '这'
-            | '学'
-            | '机'
-            | '开'
-            | '里'
-    )
-}
-
-fn detect_locale_from_text(text: &str) -> Option<LarkAckLocale> {
-    if text.chars().any(is_japanese_kana) {
-        return Some(LarkAckLocale::Ja);
-    }
-    if text.chars().any(is_traditional_only_han) {
-        return Some(LarkAckLocale::ZhTw);
-    }
-    if text.chars().any(is_simplified_only_han) || text.chars().any(is_cjk_han) {
-        return Some(LarkAckLocale::ZhCn);
-    }
-    None
-}
-
-fn detect_lark_ack_locale(payload: Option<&Value>, fallback_text: &str) -> LarkAckLocale {
-    if let Some(payload) = payload {
-        if let Some(locale) = find_locale_hint(payload).and_then(|hint| map_locale_tag(&hint)) {
-            return locale;
-        }
-        let message_content = payload
-            .pointer("/message/content")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                payload
-                    .pointer("/event/message/content")
-                    .and_then(Value::as_str)
-            });
-        if let Some(locale) = message_content.and_then(detect_locale_from_post_content) {
-            return locale;
-        }
-    }
-
-    detect_locale_from_text(fallback_text).unwrap_or(LarkAckLocale::En)
-}
-
-fn random_lark_ack_reaction(payload: Option<&Value>, fallback_text: &str) -> &'static str {
-    random_from_pool(lark_ack_pool(detect_lark_ack_locale(
-        payload,
-        fallback_text,
-    )))
-}
-
 fn parse_post_content_details(content: &str) -> Option<ParsedPostContent> {
     let parsed = serde_json::from_str::<Value>(content).ok()?;
-    let locale = parsed
-        .get("zh_cn")
-        .or_else(|| parsed.get("en_us"))
-        .or_else(|| {
-            parsed
-                .as_object()
-                .and_then(|object| object.values().find(|value| value.is_object()))
-        })?;
+    let locale = parsed.get("content").map(|_| &parsed).or_else(|| {
+        parsed
+            .get("zh_cn")
+            .or_else(|| parsed.get("en_us"))
+            .or_else(|| {
+                parsed
+                    .as_object()
+                    .and_then(|object| object.values().find(|value| value.is_object()))
+            })
+    })?;
 
     let mut text = String::new();
     let mut mentioned_open_ids = Vec::new();
@@ -1771,9 +1610,9 @@ fn extract_inline_text(element: &Value, out: &mut String) {
 fn strip_at_placeholders(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.char_indices().peekable();
-    while let Some((_, ch)) = chars.next() {
+    while let Some((index, ch)) = chars.next() {
         if ch == '@' {
-            let rest: String = chars.clone().map(|(_, candidate)| candidate).collect();
+            let rest = &text[index + ch.len_utf8()..];
             if let Some(after) = rest.strip_prefix("_user_") {
                 let skip = "_user_".len()
                     + after
@@ -2115,8 +1954,19 @@ mod tests {
         method: http::Method,
         State(state): State<Arc<MockApi>>,
         AxumPath(path): AxumPath<String>,
+        uri: axum::extract::OriginalUri,
         body: axum::body::Bytes,
-    ) -> axum::Json<Value> {
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        if path.starts_with("im/v1/images/")
+            || (path.contains("/resources/img_") && uri.0.query() != Some("type=image"))
+        {
+            return (
+                http::StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({"code":234008})),
+            )
+                .into_response();
+        }
         let parsed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
         state
             .requests
@@ -2139,7 +1989,7 @@ mod tests {
         } else {
             serde_json::json!({"code": 0, "data": {}})
         };
-        axum::Json(response)
+        axum::Json(response).into_response()
     }
 
     async fn spawn_lark_mock(state: Arc<MockApi>) -> String {
@@ -2172,8 +2022,6 @@ mod tests {
         channel.invalidate_token().await;
         assert_eq!(channel.get_tenant_access_token().await.unwrap(), "tat-1");
         assert_eq!(state.recorded("tenant_access_token").len(), 2);
-
-        assert!(channel.health_check().await);
     }
 
     #[tokio::test]
@@ -2227,14 +2075,6 @@ mod tests {
         let state = Arc::new(MockApi::default());
         let channel = mock_channel(|_| {}, state.clone()).await;
 
-        channel
-            .add_reaction("ignored", "om_1", "THUMBSUP")
-            .await
-            .unwrap();
-        let reactions = state.recorded("im/v1/messages/om_1/reactions");
-        assert_eq!(reactions.len(), 1);
-        assert_eq!(reactions[0]["reaction_type"]["emoji_type"], "THUMBSUP");
-
         channel.try_add_ack_reaction("om_2", "OK").await;
         assert_eq!(state.recorded("im/v1/messages/om_2/reactions").len(), 1);
         // Blank message ids are ignored.
@@ -2254,6 +2094,12 @@ mod tests {
             .expect("image content");
         assert_eq!(image.attachments.len(), 1);
         assert!(image.content.starts_with("[Image:"));
+        assert_eq!(
+            state
+                .recorded("im/v1/messages/om_10/resources/img_k1")
+                .len(),
+            1
+        );
 
         let file = channel
             .parse_message_content(
@@ -2614,41 +2460,6 @@ mod tests {
     }
 
     #[test]
-    fn ack_locale_detection_prefers_hints_then_text() {
-        assert_eq!(map_locale_tag("ja-JP"), Some(LarkAckLocale::Ja));
-        assert_eq!(map_locale_tag("en_US"), Some(LarkAckLocale::En));
-        assert_eq!(map_locale_tag("zh-Hant-TW"), Some(LarkAckLocale::ZhTw));
-        assert_eq!(map_locale_tag("zh-CN"), Some(LarkAckLocale::ZhCn));
-        assert_eq!(map_locale_tag("fr"), None);
-
-        assert_eq!(
-            detect_locale_from_text("ありがとうございます"),
-            Some(LarkAckLocale::Ja)
-        );
-        assert_eq!(
-            detect_locale_from_text("简体测试"),
-            Some(LarkAckLocale::ZhCn)
-        );
-        assert_eq!(
-            detect_locale_from_text("繁體測試"),
-            Some(LarkAckLocale::ZhTw)
-        );
-        // Plain Latin text has no script signal; the caller defaults to En.
-        assert_eq!(detect_locale_from_text("plain english"), None);
-        assert_eq!(
-            detect_lark_ack_locale(None, "plain english"),
-            LarkAckLocale::En
-        );
-
-        let payload = serde_json::json!({"message": {"locale": "ja_jp"}});
-        let emoji = random_lark_ack_reaction(Some(&payload), "");
-        assert!(LARK_ACK_REACTIONS_JA.contains(&emoji));
-
-        let emoji = random_lark_ack_reaction(None, "简体中文消息");
-        assert!(LARK_ACK_REACTIONS_ZH_CN.contains(&emoji));
-    }
-
-    #[test]
     fn post_and_list_content_extract_text_and_mentions() {
         let post = r#"{
             "zh_cn": {
@@ -2675,9 +2486,10 @@ mod tests {
                 ]}
             ]
         }"#;
-        if let Some(rendered) = parse_list_content(list) {
-            assert!(rendered.contains("first"));
-        }
+        assert!(
+            parse_list_content(list).is_none(),
+            "unsupported list layout must be explicit"
+        );
 
         assert!(mention_matches_bot_open_id(
             &serde_json::json!({"id": {"open_id": "ou_bot"}}),
@@ -2687,5 +2499,140 @@ mod tests {
             &serde_json::json!({"id": {"open_id": "ou_x"}}),
             "ou_bot"
         ));
+    }
+
+    #[tokio::test]
+    async fn direct_post_and_topic_routes_survive_parsing_and_sending() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|c| c.mention_only = false, state.clone()).await;
+        let content =
+            serde_json::json!({"title":"Title","content":[[{"tag":"text","text":"hello"}]]});
+        for root in ["om_root1", "om_root2"] {
+            let message = channel.parse_event_object(&serde_json::json!({
+                "sender":{"sender_id":{"open_id":"ou_testuser123"}},
+                "message":{"message_id":format!("reply_{root}"),"root_id":root,"thread_id":format!("omt_{root}"),"chat_id":"oc_same","chat_type":"group","message_type":"post","content":content.to_string()}
+            })).await.unwrap();
+            assert_eq!(message.thread.as_deref(), Some(root));
+            assert_eq!(message.extra["thread_id"], format!("omt_{root}"));
+            assert_eq!(message.content, "Title\n\nhello");
+            channel
+                .send(&SendMessage::new("reply", message.reply_target).in_thread(message.thread))
+                .await
+                .unwrap();
+            let sent = state.recorded(&format!("messages/{root}/reply"));
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0]["reply_in_thread"], true);
+            assert!(sent[0].get("receive_id").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn unmentioned_media_is_not_downloaded_and_local_send_is_explicit() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+        channel.set_resolved_bot_open_id(Some("ou_bot".into()));
+        let event = serde_json::json!({"sender":{"sender_id":{"open_id":"ou_testuser123"}},"message":{"message_id":"om_no_mention","chat_id":"oc_same","chat_type":"group","message_type":"image","content":"{\"image_key\":\"img_x\"}"}});
+        assert!(channel.parse_event_object(&event).await.is_none());
+        assert!(state.requests.lock().unwrap().is_empty());
+        let error = channel
+            .send(
+                &SendMessage::new("report", "oc_same").with_attachments(vec![Resource {
+                    name: "report.txt".into(),
+                    blob: Some(anda_core::ByteBufB64(b"report".to_vec())),
+                    ..Default::default()
+                }]),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not supported"));
+        assert!(state.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_bot_identity_retries_after_backoff() {
+        let mut channel = test_channel();
+        channel.set_resolved_bot_open_id(None);
+        channel.api_base = "http://127.0.0.1:1".into();
+        channel.ensure_bot_open_id().await;
+        assert!(channel.resolved_bot_open_id().is_none());
+        let state = Arc::new(MockApi::default());
+        channel.api_base = spawn_lark_mock(state.clone()).await;
+        // Expire the retry deadline without making the test wait 30 seconds.
+        *channel.bot_identity_retry.lock().await = Some(Instant::now());
+        channel.ensure_bot_open_id().await;
+        assert_eq!(channel.resolved_bot_open_id().as_deref(), Some("ou_bot"));
+    }
+    #[tokio::test]
+    async fn websocket_remains_responsive_while_image_download_is_pending() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = format!("ws://{}?service_id=1", listener.local_addr().unwrap());
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = Router::new()
+            .route("/callback/ws/endpoint", routing::post(move || { let gateway = gateway.clone(); async move {
+                axum::Json(serde_json::json!({"code":0,"data":{"URL":gateway}}))
+            }}))
+            .route("/auth/v3/tenant_access_token/internal", routing::post(|| async {
+                axum::Json(serde_json::json!({"code":0,"tenant_access_token":"test-token","expire":7200}))
+            }))
+            .route("/im/v1/messages/om_slow/resources/img_slow", routing::get({
+                let started = started.clone(); let release = release.clone();
+                move || { let started = started.clone(); let release = release.clone(); async move {
+                    started.notify_one(); release.notified().await; "PNGDATA"
+                }}
+            }));
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let mut cfg = test_config();
+        cfg.mention_only = false;
+        cfg.ack_reactions = false;
+        let mut channel = LarkChannel::new(&cfg, new_reqwest_client());
+        channel.api_base = base.clone();
+        channel.ws_base = base;
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            let event = serde_json::json!({"header":{"event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_testuser123"}},"message":{"message_id":"om_slow","chat_id":"oc_1","chat_type":"p2p","message_type":"image","content":"{\"image_key\":\"img_slow\"}"}}});
+            let frame = PbFrame {
+                method: 1,
+                service: 1,
+                headers: vec![PbHeader {
+                    key: "type".into(),
+                    value: "event".into(),
+                }],
+                payload: Some(event.to_string().into_bytes()),
+                ..Default::default()
+            };
+            ws.send(WsMsg::Binary(frame.encode_to_vec().into()))
+                .await
+                .unwrap();
+            started.notified().await;
+            ws.send(WsMsg::Ping(b"during-download".to_vec().into()))
+                .await
+                .unwrap();
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                if let WsMsg::Pong(bytes) = message {
+                    assert_eq!(bytes.as_ref(), b"during-download");
+                    break;
+                }
+            }
+            release.notify_one();
+            ws.send(WsMsg::Close(None)).await.unwrap();
+        });
+        let (tx, mut rx) = mpsc::channel(2);
+        let run = tokio::spawn(async move {
+            channel.listen(CancellationToken::new(), tx).await.unwrap();
+        });
+        let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.attachments.len(), 1);
+        run.await.unwrap();
+        server.await.unwrap();
     }
 }

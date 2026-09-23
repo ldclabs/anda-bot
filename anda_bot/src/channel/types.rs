@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// Message to send through a channel
@@ -19,7 +19,7 @@ pub struct SendMessage {
     /// Platform thread identifier for threaded replies (e.g. Slack `thread`).
     pub thread: Option<String>,
     /// File attachments to send with the message.
-    /// Channels that don't support attachments ignore this field.
+    /// Unsupported attachments must produce an explicit error.
     pub attachments: Vec<Resource>,
 }
 
@@ -129,14 +129,14 @@ pub(crate) const EVENT_DEDUP_WINDOW: Duration = Duration::from_secs(30 * 60);
 /// windows this protects.
 pub(crate) struct RecentEventDedup {
     window: Duration,
-    seen: RwLock<HashMap<String, Instant>>,
+    seen: Mutex<(HashMap<String, Instant>, Instant)>,
 }
 
 impl RecentEventDedup {
     pub(crate) fn new(window: Duration) -> Self {
         Self {
             window,
-            seen: RwLock::new(HashMap::new()),
+            seen: Mutex::new((HashMap::new(), Instant::now())),
         }
     }
 
@@ -148,9 +148,16 @@ impl RecentEventDedup {
         }
 
         let now = Instant::now();
-        let mut seen = self.seen.write().await;
-        seen.retain(|_, instant| now.duration_since(*instant) < self.window);
-        if seen.contains_key(event_id) {
+        let mut state = self.seen.lock().await;
+        let (seen, last_cleanup) = &mut *state;
+        if now.duration_since(*last_cleanup) >= self.window.min(Duration::from_secs(60)) {
+            seen.retain(|_, instant| now.duration_since(*instant) < self.window);
+            *last_cleanup = now;
+        }
+        if seen
+            .get(event_id)
+            .is_some_and(|instant| now.duration_since(*instant) < self.window)
+        {
             return true;
         }
         seen.insert(event_id.to_string(), now);
@@ -229,11 +236,6 @@ pub(crate) fn split_message_on_word_boundaries(
     while !remaining.is_empty() {
         // Once we are splitting, cap every chunk at `split_limit` (not `max_len`)
         // so the tail chunk still leaves room for continuation markers.
-        if remaining.chars().count() <= split_limit {
-            chunks.push(remaining.to_string());
-            break;
-        }
-
         let hard_split = remaining
             .char_indices()
             .nth(split_limit)
@@ -420,160 +422,11 @@ pub trait Channel: Send + Sync {
         tx: tokio::sync::mpsc::Sender<ChannelMessage>,
     ) -> Result<(), BoxError>;
 
-    /// Check if channel is healthy
-    async fn health_check(&self) -> bool {
-        true
-    }
-
     /// Whether a send error is transient and worth retrying in the runtime.
     /// Implementations can use this to surface reconnect windows or platform-
     /// specific transport failures without forcing protocol logic into runtime.
     fn should_retry_send(&self, _error: &str) -> bool {
         false
-    }
-}
-
-/// Progressive-delivery and message-management operations a channel may
-/// support on top of plain [`Channel::send`].
-///
-/// **Staged, not wired.** Every method here is implemented and unit-tested
-/// for the channels that can do it (Discord covers all of them, Telegram and
-/// Lark a subset), but nothing in `ChannelRuntime` calls them yet — replies
-/// still go out through `Channel::send` as one finished message. The trait is
-/// kept separate so that [`Channel`] states only the contract the runtime
-/// actually depends on, and so that adding a channel means implementing nine
-/// methods rather than twenty-four.
-///
-/// Every method defaults to a tolerant no-op, so a channel implements only
-/// what its platform supports; a caller must therefore ask
-/// [`supports_draft_updates`](StreamingChannel::supports_draft_updates) or
-/// [`supports_multi_message_streaming`](StreamingChannel::supports_multi_message_streaming)
-/// before assuming an edit or a reaction had any effect. Message ids are
-/// platform-scoped and only meaningful to the channel that issued them.
-///
-/// When streaming delivery does land, wire it here and drop the
-/// `allow(dead_code)` below — that marker is the one place recording that
-/// this whole trait has no caller yet.
-#[allow(dead_code)]
-#[async_trait]
-pub trait StreamingChannel: Channel {
-    /// Signal that the bot is processing a response (e.g. "typing" indicator).
-    /// Implementations should repeat the indicator as needed for their platform.
-    async fn start_typing(&self, _recipient: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Stop any active typing indicator.
-    async fn stop_typing(&self, _recipient: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Whether this channel supports progressive message updates via draft edits.
-    fn supports_draft_updates(&self) -> bool {
-        false
-    }
-
-    /// Whether this channel supports multi-message streaming delivery, where
-    /// the response is sent as multiple separate messages at paragraph
-    /// boundaries as tokens arrive from the provider.
-    fn supports_multi_message_streaming(&self) -> bool {
-        false
-    }
-
-    /// Minimum delay (ms) between sending each paragraph in multi-message mode.
-    /// Channels should override this to avoid platform rate limits.
-    fn multi_message_delay_ms(&self) -> u64 {
-        800
-    }
-
-    /// Send an initial draft message. Returns a platform-specific message ID for later edits.
-    async fn send_draft(&self, _message: &SendMessage) -> Result<Option<String>, BoxError> {
-        Ok(None)
-    }
-
-    /// Update a previously sent draft message with new accumulated content.
-    async fn update_draft(
-        &self,
-        _recipient: &str,
-        _message_id: &str,
-        _text: &str,
-    ) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Show a progress/status update (e.g. tool execution status).
-    /// Channels can display this in a status bar rather than in the message body.
-    /// Default: no-op (progress is ignored).
-    async fn update_draft_progress(
-        &self,
-        _recipient: &str,
-        _message_id: &str,
-        _text: &str,
-    ) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Finalize a draft with the complete response (e.g. apply Markdown formatting).
-    async fn finalize_draft(
-        &self,
-        _recipient: &str,
-        _message_id: &str,
-        _text: &str,
-    ) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Cancel and remove a previously sent draft message if the channel supports it.
-    async fn cancel_draft(&self, _recipient: &str, _message_id: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Add a reaction (emoji) to a message.
-    ///
-    /// `channel_id` is the platform channel/conversation identifier (e.g. Discord channel ID).
-    /// `message_id` is the platform-scoped message identifier (e.g. `discord_<snowflake>`).
-    /// `emoji` is the Unicode emoji to react with (e.g. "👀", "✅").
-    async fn add_reaction(
-        &self,
-        _channel_id: &str,
-        _message_id: &str,
-        _emoji: &str,
-    ) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Remove a reaction (emoji) from a message previously added by this bot.
-    async fn remove_reaction(
-        &self,
-        _channel_id: &str,
-        _message_id: &str,
-        _emoji: &str,
-    ) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Pin a message in the channel.
-    async fn pin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Unpin a previously pinned message.
-    async fn unpin_message(&self, _channel_id: &str, _message_id: &str) -> Result<(), BoxError> {
-        Ok(())
-    }
-
-    /// Redact (delete) a message from the channel.
-    ///
-    /// `channel_id` is the platform channel/conversation identifier.
-    /// `message_id` is the platform-scoped message identifier.
-    /// `reason` is an optional reason for the redaction (may be visible in audit logs).
-    async fn redact_message(
-        &self,
-        _channel_id: &str,
-        _message_id: &str,
-        _reason: Option<String>,
-    ) -> Result<(), BoxError> {
-        Ok(())
     }
 }
 
@@ -714,11 +567,6 @@ mod tests {
         }
     }
 
-    // Every streaming operation is left at its default, which is what makes
-    // this the right fixture for asserting they are all tolerant no-ops.
-    #[async_trait]
-    impl StreamingChannel for MinimalChannel {}
-
     #[test]
     fn shared_split_prefers_newlines_then_spaces_then_hard_breaks() {
         // Short input stays whole.
@@ -770,38 +618,6 @@ mod tests {
         assert!(!result.changed);
         assert!(result.message.contains("minimal:test"));
 
-        assert!(channel.health_check().await);
         assert!(!channel.should_retry_send("timeout"));
-    }
-
-    #[tokio::test]
-    async fn streaming_channel_defaults_are_tolerant_no_ops() {
-        let channel = MinimalChannel;
-
-        assert!(!channel.supports_draft_updates());
-        assert!(!channel.supports_multi_message_streaming());
-        assert_eq!(channel.multi_message_delay_ms(), 800);
-
-        channel.start_typing("alice").await.unwrap();
-        channel.stop_typing("alice").await.unwrap();
-        assert_eq!(
-            channel
-                .send_draft(&SendMessage::new("hi", "alice"))
-                .await
-                .unwrap(),
-            None
-        );
-        channel.update_draft("alice", "m1", "text").await.unwrap();
-        channel
-            .update_draft_progress("alice", "m1", "running")
-            .await
-            .unwrap();
-        channel.finalize_draft("alice", "m1", "done").await.unwrap();
-        channel.cancel_draft("alice", "m1").await.unwrap();
-        channel.add_reaction("c1", "m1", "👀").await.unwrap();
-        channel.remove_reaction("c1", "m1", "👀").await.unwrap();
-        channel.pin_message("c1", "m1").await.unwrap();
-        channel.unpin_message("c1", "m1").await.unwrap();
-        channel.redact_message("c1", "m1", None).await.unwrap();
     }
 }

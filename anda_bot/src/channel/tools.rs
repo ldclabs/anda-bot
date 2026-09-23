@@ -243,7 +243,7 @@ fn send_im_message_parameters() -> Value {
             },
             "thread": {
                 "type": ["string", "null"],
-                "description": "Optional platform thread identifier for threaded replies, or null to send without a thread."
+                "description": "Optional Telegram topic ID, Discord thread channel ID, or Lark/Feishu root message ID (om_...) from list_im_channels; null to send without a thread."
             }
         },
         "required": ["channel", "recipient", "content", "thread"],

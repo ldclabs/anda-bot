@@ -13,13 +13,14 @@ use reqwest::{
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, mpsc};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
+use super::delivery::{http_send_error, send_step};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    StreamingChannel, file_name_for_resource, is_http_url, is_transient_send_error,
-    random_from_pool, resource_from_bytes, split_message_on_word_boundaries,
+    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    resource_from_bytes, split_message_on_word_boundaries,
 };
 use crate::{
     config::{self, normalize_identity},
@@ -29,8 +30,6 @@ use crate::{
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
 const DISCORD_MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const DISCORD_MAX_FILES_PER_MESSAGE: usize = 10;
-#[allow(dead_code)]
-const DISCORD_TYPING_INTERVAL: Duration = Duration::from_secs(8);
 const DISCORD_SEND_CHUNK_DELAY: Duration = Duration::from_millis(500);
 const DISCORD_GATEWAY_VERSION: u8 = 10;
 const DISCORD_INTENTS: u64 = 37_377;
@@ -96,6 +95,13 @@ pub fn build_discord_channels(
     Ok(channels)
 }
 
+#[derive(Clone, Default)]
+struct GatewaySession {
+    id: Option<String>,
+    resume_url: Option<String>,
+    sequence: Option<i64>,
+}
+
 pub struct DiscordChannel {
     id: String,
     bot_token: String,
@@ -111,8 +117,7 @@ pub struct DiscordChannel {
     workspace: Arc<ChannelWorkspace>,
     dedup: RecentEventDedup,
     bot_user_id: Mutex<Option<String>>,
-    #[allow(dead_code)]
-    typing_handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    gateway_session: Mutex<GatewaySession>,
 }
 
 impl DiscordChannel {
@@ -139,7 +144,7 @@ impl DiscordChannel {
             workspace: Arc::new(ChannelWorkspace::default()),
             dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
             bot_user_id: Mutex::new(None),
-            typing_handles: Mutex::new(HashMap::new()),
+            gateway_session: Mutex::new(GatewaySession::default()),
         }
     }
 
@@ -500,56 +505,6 @@ impl DiscordChannel {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn send_message_json_with_id(
-        &self,
-        channel_id: &str,
-        content: &str,
-    ) -> Result<String, BoxError> {
-        let response = self
-            .post_json_checked(
-                &format!("channels/{channel_id}/messages"),
-                &serde_json::json!({ "content": content }),
-            )
-            .await?;
-        response
-            .get("id")
-            .and_then(Value::as_str)
-            .map(String::from)
-            .ok_or_else(|| "Discord send response missing id".into())
-    }
-
-    #[allow(dead_code)]
-    async fn edit_message(
-        &self,
-        channel_id: &str,
-        message_id: &str,
-        content: &str,
-    ) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.patch(self.api_url(&format!(
-                "channels/{channel_id}/messages/{}",
-                raw_discord_message_id(message_id)
-            ))))
-            .json(&serde_json::json!({ "content": content }))
-            .send()
-            .await?;
-        response_json_checked(response, "Discord edit message").await?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    async fn delete_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.delete(self.api_url(&format!(
-                "channels/{channel_id}/messages/{}",
-                raw_discord_message_id(message_id)
-            ))))
-            .send()
-            .await?;
-        response_unit_checked(response, "Discord delete message").await
-    }
-
     async fn send_message_with_uploads(
         &self,
         channel_id: &str,
@@ -640,6 +595,7 @@ impl DiscordChannel {
         content: &str,
         uploads: &[DiscordUpload],
     ) -> Result<(), BoxError> {
+        let mut delivered = 0;
         let chunks = if content.trim().is_empty() {
             Vec::new()
         } else {
@@ -648,10 +604,10 @@ impl DiscordChannel {
 
         if uploads.is_empty() {
             if chunks.is_empty() {
-                self.send_message_json(channel_id, " ").await?;
+                send_step(&mut delivered, || self.send_message_json(channel_id, "…")).await?;
             } else {
                 for (index, chunk) in chunks.iter().enumerate() {
-                    self.send_message_json(channel_id, chunk).await?;
+                    send_step(&mut delivered, || self.send_message_json(channel_id, chunk)).await?;
                     if index < chunks.len() - 1 {
                         tokio::time::sleep(DISCORD_SEND_CHUNK_DELAY).await;
                     }
@@ -663,22 +619,178 @@ impl DiscordChannel {
         let first_content = chunks.first().map_or("", String::as_str);
         let mut upload_batches = uploads.chunks(DISCORD_MAX_FILES_PER_MESSAGE);
         if let Some(first_batch) = upload_batches.next() {
-            self.send_message_with_uploads(channel_id, first_content, first_batch)
-                .await?;
+            send_step(&mut delivered, || {
+                self.send_message_with_uploads(channel_id, first_content, first_batch)
+            })
+            .await?;
         }
 
         for batch in upload_batches {
             tokio::time::sleep(DISCORD_SEND_CHUNK_DELAY).await;
-            self.send_message_with_uploads(channel_id, "", batch)
-                .await?;
+            send_step(&mut delivered, || {
+                self.send_message_with_uploads(channel_id, "", batch)
+            })
+            .await?;
         }
 
         for chunk in chunks.iter().skip(1) {
             tokio::time::sleep(DISCORD_SEND_CHUNK_DELAY).await;
-            self.send_message_json(channel_id, chunk).await?;
+            send_step(&mut delivered, || self.send_message_json(channel_id, chunk)).await?;
         }
 
         Ok(())
+    }
+    async fn receive_gateway(
+        &self,
+        cancel_token: CancellationToken,
+        events: mpsc::Sender<Value>,
+    ) -> Result<(), BoxError> {
+        let session = self.gateway_session.lock().await.clone();
+        let gateway_url = match session.resume_url.as_ref() {
+            Some(url) => url.clone(),
+            None => self.fetch_gateway_url().await?,
+        };
+        let websocket_url = format!("{gateway_url}/?v={DISCORD_GATEWAY_VERSION}&encoding=json");
+        log::info!("Discord channel {} connecting to gateway", self.id());
+
+        let ws_stream = tokio::select! {
+            _ = cancel_token.cancelled() => return Ok(()),
+            result = super::websocket::connect(&self.client, &websocket_url) => result?,
+        };
+        let (mut write, mut read) = ws_stream.split();
+
+        let hello = tokio::select! {
+            _ = cancel_token.cancelled() => return Ok(()),
+            message = read.next() => message.ok_or("Discord gateway closed before hello")??,
+        };
+        let heartbeat_interval = match hello {
+            Message::Text(text) => {
+                let data: Value = serde_json::from_str(text.as_ref())?;
+                data.get("d")
+                    .and_then(|data| data.get("heartbeat_interval"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(41_250)
+            }
+            _ => return Err("Discord gateway did not send hello text frame".into()),
+        };
+
+        let identify = if let Some(id) = session.id {
+            serde_json::json!({"op": 6, "d": {"token": self.bot_token, "session_id": id, "seq": session.sequence}})
+        } else {
+            serde_json::json!({
+                "op": 2,
+                "d": {
+                    "token": self.bot_token,
+                    "intents": DISCORD_INTENTS,
+                    "properties": {
+                        "os": std::env::consts::OS,
+                        "browser": "anda_bot",
+                        "device": "anda_bot"
+                    }
+                }
+            })
+        };
+        tokio::select! {
+            _ = cancel_token.cancelled() => return Ok(()),
+            result = write.send(Message::Text(identify.to_string().into())) => result?,
+        }
+
+        log::info!("Discord channel {} listening for messages", self.id());
+
+        let mut sequence = session.sequence;
+        let heartbeat_interval = heartbeat_interval.max(1);
+        let first_tick = tokio::time::Instant::now()
+            + Duration::from_millis(rand::random_range(0..heartbeat_interval));
+        let mut heartbeat =
+            tokio::time::interval_at(first_tick, Duration::from_millis(heartbeat_interval));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut awaiting_ack = false;
+
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => return Ok(()),
+                _ = events.closed() => return Ok(()),
+                _ = heartbeat.tick() => {
+                    if awaiting_ack { return Err("Discord heartbeat ACK missing; reconnecting".into()); }
+                    awaiting_ack = true;
+                    let heartbeat_payload = serde_json::json!({"op": 1, "d": sequence});
+                    if write.send(Message::Text(heartbeat_payload.to_string().into())).await.is_err() {
+                        return Ok(());
+                    }
+                }
+                message = read.next() => {
+                    let message = match message {
+                        Some(Ok(message)) => message,
+                        Some(Err(err)) => {
+                            log::warn!("Discord gateway read error: {err}");
+                            return Ok(());
+                        }
+                        None => return Ok(()),
+                    };
+
+                    let text = match message {
+                        Message::Text(text) => text,
+                        Message::Ping(payload) => {
+                            if write.send(Message::Pong(payload)).await.is_err() {
+                                return Ok(());
+                            }
+                            continue;
+                        }
+                        Message::Close(frame) => {
+                            if frame.is_some_and(|frame| matches!(u16::from(frame.code), 4007 | 4009)) {
+                                *self.gateway_session.lock().await = GatewaySession::default();
+                            }
+                            return Ok(());
+                        }
+                        _ => continue,
+                    };
+
+                    let event: Value = match serde_json::from_str(text.as_ref()) {
+                        Ok(event) => event,
+                        Err(err) => {
+                            log::debug!("Discord gateway JSON parse error: {err}");
+                            continue;
+                        }
+                    };
+
+                    match event.get("op").and_then(Value::as_u64) {
+                        Some(11) => { awaiting_ack = false; }
+                        Some(1) => {
+                            awaiting_ack = true;
+                            write.send(Message::Text(serde_json::json!({"op": 1, "d": sequence}).to_string().into())).await?;
+                        }
+                        Some(7) => return Ok(()),
+                        Some(9) => {
+                            if event.get("d").and_then(Value::as_bool) != Some(true) {
+                                *self.gateway_session.lock().await = GatewaySession::default();
+                            }
+                            return Ok(());
+                        }
+                        Some(0) => {
+                            if let Some(data) = event.get("d") {
+                                match event.get("t").and_then(Value::as_str) {
+                                    Some("READY") => {
+                                        let mut session = self.gateway_session.lock().await;
+                                        session.id = data.get("session_id").and_then(Value::as_str).map(str::to_owned);
+                                        session.resume_url = data.get("resume_gateway_url").and_then(Value::as_str).map(str::to_owned);
+                                    }
+                                    Some("MESSAGE_CREATE") => {
+                                        // Do not advance the resumable sequence if the queue rejects the event.
+                                        events.try_send(data.clone()).map_err(|_| "Discord inbound event queue unavailable")?;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if let Some(next) = event.get("s").and_then(Value::as_i64) {
+                                sequence = Some(next);
+                                self.gateway_session.lock().await.sequence = sequence;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -720,338 +832,49 @@ impl Channel for DiscordChannel {
         tx: mpsc::Sender<ChannelMessage>,
     ) -> Result<(), BoxError> {
         let bot_user_id = self.get_bot_user_id().await.unwrap_or_default();
-        if self.mention_only && bot_user_id.is_empty() {
-            log::warn!("Discord mention_only is enabled but bot user id is unavailable");
-        }
-
-        let gateway_url = self.fetch_gateway_url().await?;
-        let websocket_url = format!("{gateway_url}/?v={DISCORD_GATEWAY_VERSION}&encoding=json");
-        log::info!("Discord channel {} connecting to gateway", self.id());
-
-        let (ws_stream, _) = tokio::select! {
-            _ = cancel_token.cancelled() => return Ok(()),
-            result = connect_async(&websocket_url) => result?,
-        };
-        let (mut write, mut read) = ws_stream.split();
-
-        let hello = tokio::select! {
-            _ = cancel_token.cancelled() => return Ok(()),
-            message = read.next() => message.ok_or("Discord gateway closed before hello")??,
-        };
-        let heartbeat_interval = match hello {
-            Message::Text(text) => {
-                let data: Value = serde_json::from_str(text.as_ref())?;
-                data.get("d")
-                    .and_then(|data| data.get("heartbeat_interval"))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(41_250)
-            }
-            _ => return Err("Discord gateway did not send hello text frame".into()),
-        };
-
-        let identify = serde_json::json!({
-            "op": 2,
-            "d": {
-                "token": self.bot_token,
-                "intents": DISCORD_INTENTS,
-                "properties": {
-                    "os": std::env::consts::OS,
-                    "browser": "anda_bot",
-                    "device": "anda_bot"
+        let (events, mut incoming) = mpsc::channel::<Value>(64);
+        let receive = self.receive_gateway(cancel_token.clone(), events);
+        let process = async {
+            while let Some(data) = incoming.recv().await {
+                if let Some(id) = data.get("id").and_then(Value::as_str)
+                    && self.dedup.is_duplicate(id).await
+                {
+                    continue;
+                }
+                let Some(message) = self.parse_gateway_message(&data, &bot_user_id).await else {
+                    continue;
+                };
+                if self.ack_reactions
+                    && let Some(id) = data.get("id").and_then(Value::as_str)
+                {
+                    self.try_add_ack_reaction_nonblocking(
+                        message.reply_target.clone(),
+                        id.to_string(),
+                    );
+                }
+                let _ = self.send_typing_once(&message.reply_target).await;
+                if tx.send(message).await.is_err() {
+                    break;
                 }
             }
-        });
-        tokio::select! {
-            _ = cancel_token.cancelled() => return Ok(()),
-            result = write.send(Message::Text(identify.to_string().into())) => result?,
-        }
-
-        log::info!("Discord channel {} listening for messages", self.id());
-
-        let mut sequence: Option<i64> = None;
-        let mut heartbeat = tokio::time::interval(Duration::from_millis(heartbeat_interval));
-        heartbeat.tick().await;
-
-        loop {
-            tokio::select! {
-                _ = cancel_token.cancelled() => return Ok(()),
-                _ = heartbeat.tick() => {
-                    let heartbeat_payload = serde_json::json!({"op": 1, "d": sequence});
-                    if write.send(Message::Text(heartbeat_payload.to_string().into())).await.is_err() {
-                        return Ok(());
-                    }
-                }
-                message = read.next() => {
-                    let message = match message {
-                        Some(Ok(message)) => message,
-                        Some(Err(err)) => {
-                            log::warn!("Discord gateway read error: {err}");
-                            return Ok(());
-                        }
-                        None => return Ok(()),
-                    };
-
-                    let text = match message {
-                        Message::Text(text) => text,
-                        Message::Ping(payload) => {
-                            if write.send(Message::Pong(payload)).await.is_err() {
-                                return Ok(());
-                            }
-                            continue;
-                        }
-                        Message::Close(_) => return Ok(()),
-                        _ => continue,
-                    };
-
-                    let event: Value = match serde_json::from_str(text.as_ref()) {
-                        Ok(event) => event,
-                        Err(err) => {
-                            log::debug!("Discord gateway JSON parse error: {err}");
-                            continue;
-                        }
-                    };
-
-                    if let Some(next_sequence) = event.get("s").and_then(Value::as_i64) {
-                        sequence = Some(next_sequence);
-                    }
-
-                    match event.get("op").and_then(Value::as_u64).unwrap_or_default() {
-                        1 => {
-                            let heartbeat_payload = serde_json::json!({"op": 1, "d": sequence});
-                            if write.send(Message::Text(heartbeat_payload.to_string().into())).await.is_err() {
-                                return Ok(());
-                            }
-                            continue;
-                        }
-                        7 | 9 => return Ok(()),
-                        _ => {}
-                    }
-
-                    if event.get("t").and_then(Value::as_str) != Some("MESSAGE_CREATE") {
-                        continue;
-                    }
-
-                    let Some(data) = event.get("d") else {
-                        continue;
-                    };
-
-                    // Gateway resumes can replay MESSAGE_CREATE events the
-                    // previous connection already delivered.
-                    if let Some(message_id) = data.get("id").and_then(Value::as_str)
-                        && self.dedup.is_duplicate(message_id).await
-                    {
-                        continue;
-                    }
-
-                    let Some(channel_message) = self.parse_gateway_message(data, &bot_user_id).await else {
-                        continue;
-                    };
-
-                    if self.ack_reactions
-                        && let Some(message_id) = data.get("id").and_then(Value::as_str)
-                    {
-                        self.try_add_ack_reaction_nonblocking(
-                            channel_message.reply_target.clone(),
-                            message_id.to_string(),
-                        );
-                    }
-
-                    let _ = self.send_typing_once(&channel_message.reply_target).await;
-
-                    if tx.send(channel_message).await.is_err() {
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    }
-
-    async fn health_check(&self) -> bool {
-        matches!(
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                self.authorized(self.client.get(self.api_url("users/@me")))
-                    .send(),
-            )
-            .await,
-            Ok(Ok(response)) if response.status().is_success()
-        )
-    }
-}
-
-#[async_trait]
-impl StreamingChannel for DiscordChannel {
-    async fn start_typing(&self, recipient: &str) -> Result<(), BoxError> {
-        self.stop_typing(recipient).await?;
-
-        let client = self.client.clone();
-        let url = self.api_url(&format!("channels/{recipient}/typing"));
-        let bot_token = self.bot_token.clone();
-        let handle = tokio::spawn(async move {
-            loop {
-                let _ = client
-                    .post(&url)
-                    .header("Authorization", format!("Bot {bot_token}"))
-                    .header("User-Agent", DISCORD_USER_AGENT)
-                    .send()
-                    .await;
-                tokio::time::sleep(DISCORD_TYPING_INTERVAL).await;
-            }
-        });
-
-        let mut guard = self.typing_handles.lock().await;
-        guard.insert(recipient.to_string(), handle);
-
-        Ok(())
-    }
-
-    async fn stop_typing(&self, recipient: &str) -> Result<(), BoxError> {
-        let mut guard = self.typing_handles.lock().await;
-        if let Some(handle) = guard.remove(recipient) {
-            handle.abort();
-        }
-        Ok(())
-    }
-
-    fn supports_draft_updates(&self) -> bool {
-        true
-    }
-
-    async fn send_draft(&self, message: &SendMessage) -> Result<Option<String>, BoxError> {
-        let channel_id = Self::message_channel_id(message);
-        let content = if message.content.trim().is_empty() {
-            "..."
-        } else {
-            message.content.as_str()
         };
-        self.send_message_json_with_id(channel_id, content)
-            .await
-            .map(Some)
-    }
-
-    async fn update_draft(
-        &self,
-        recipient: &str,
-        message_id: &str,
-        text: &str,
-    ) -> Result<(), BoxError> {
-        let text = truncate_for_discord(text);
-        self.edit_message(recipient, message_id, text).await
-    }
-
-    async fn update_draft_progress(
-        &self,
-        recipient: &str,
-        message_id: &str,
-        text: &str,
-    ) -> Result<(), BoxError> {
-        self.update_draft(recipient, message_id, text).await
-    }
-
-    async fn finalize_draft(
-        &self,
-        recipient: &str,
-        message_id: &str,
-        text: &str,
-    ) -> Result<(), BoxError> {
-        if text.chars().count() <= DISCORD_MAX_MESSAGE_LENGTH {
-            return self.edit_message(recipient, message_id, text).await;
-        }
-
-        let _ = self.delete_message(recipient, message_id).await;
-        let chunks = split_message_for_discord(text);
-        for (index, chunk) in chunks.iter().enumerate() {
-            self.send_message_json(recipient, chunk).await?;
-            if index < chunks.len() - 1 {
-                tokio::time::sleep(DISCORD_SEND_CHUNK_DELAY).await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn cancel_draft(&self, recipient: &str, message_id: &str) -> Result<(), BoxError> {
-        let _ = self.stop_typing(recipient).await;
-        self.delete_message(recipient, message_id).await
-    }
-
-    async fn add_reaction(
-        &self,
-        channel_id: &str,
-        message_id: &str,
-        emoji: &str,
-    ) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.put(discord_reaction_url(
-                &self.api_base,
-                channel_id,
-                message_id,
-                emoji,
-            )))
-            .header("Content-Length", "0")
-            .send()
-            .await?;
-        response_unit_checked(response, "Discord add reaction").await
-    }
-
-    async fn remove_reaction(
-        &self,
-        channel_id: &str,
-        message_id: &str,
-        emoji: &str,
-    ) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.delete(discord_reaction_url(
-                &self.api_base,
-                channel_id,
-                message_id,
-                emoji,
-            )))
-            .send()
-            .await?;
-        response_unit_checked(response, "Discord remove reaction").await
-    }
-
-    async fn pin_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.put(self.api_url(&format!(
-                "channels/{channel_id}/pins/{}",
-                raw_discord_message_id(message_id)
-            ))))
-            .header("Content-Length", "0")
-            .send()
-            .await?;
-        response_unit_checked(response, "Discord pin message").await
-    }
-
-    async fn unpin_message(&self, channel_id: &str, message_id: &str) -> Result<(), BoxError> {
-        let response = self
-            .authorized(self.client.delete(self.api_url(&format!(
-                "channels/{channel_id}/pins/{}",
-                raw_discord_message_id(message_id)
-            ))))
-            .send()
-            .await?;
-        response_unit_checked(response, "Discord unpin message").await
-    }
-
-    async fn redact_message(
-        &self,
-        channel_id: &str,
-        message_id: &str,
-        _reason: Option<String>,
-    ) -> Result<(), BoxError> {
-        self.delete_message(channel_id, message_id).await
+        let process = async {
+            tokio::select! { _ = cancel_token.cancelled() => {}, _ = process => {} }
+        };
+        let (result, ()) = tokio::join!(receive, process);
+        result
     }
 }
 
 async fn response_json_checked(
     response: reqwest::Response,
-    context: &str,
+    _context: &str,
 ) -> Result<Value, BoxError> {
     let status = response.status();
-    let text = response.text().await.unwrap_or_default();
+    let headers = response.headers().clone();
+    let text = response.text().await?;
     if !status.is_success() {
-        return Err(format!("{context} failed ({status}): {text}").into());
+        return Err(http_send_error(status, &headers, &text));
     }
     if text.trim().is_empty() {
         return Ok(Value::Null);
@@ -1059,11 +882,15 @@ async fn response_json_checked(
     Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
 }
 
-async fn response_unit_checked(response: reqwest::Response, context: &str) -> Result<(), BoxError> {
+async fn response_unit_checked(
+    response: reqwest::Response,
+    _context: &str,
+) -> Result<(), BoxError> {
     let status = response.status();
     if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        return Err(format!("{context} failed ({status}): {text}").into());
+        let headers = response.headers().clone();
+        let text = response.text().await?;
+        return Err(http_send_error(status, &headers, &text));
     }
     Ok(())
 }
@@ -1150,19 +977,6 @@ fn split_message_for_discord(message: &str) -> Vec<String> {
         DISCORD_MAX_MESSAGE_LENGTH,
         DISCORD_MAX_MESSAGE_LENGTH,
     )
-}
-
-#[allow(dead_code)]
-fn truncate_for_discord(text: &str) -> &str {
-    if text.chars().count() <= DISCORD_MAX_MESSAGE_LENGTH {
-        return text;
-    }
-
-    let end = text
-        .char_indices()
-        .nth(DISCORD_MAX_MESSAGE_LENGTH)
-        .map_or(text.len(), |(index, _)| index);
-    &text[..end]
 }
 
 fn encode_emoji_for_discord(emoji: &str) -> String {
@@ -1292,24 +1106,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn stop_typing_clears_handle() {
-        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
-        {
-            let mut guard = channel.typing_handles.lock().await;
-            guard.insert(
-                "123".to_string(),
-                tokio::spawn(async {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                }),
-            );
-        }
-
-        channel.stop_typing("123").await.unwrap();
-
-        assert!(channel.typing_handles.lock().await.is_empty());
-    }
-
     use anda_core::ByteBufB64;
     use axum::{
         Router,
@@ -1322,6 +1118,7 @@ mod tests {
     struct MockApi {
         requests: StdMutex<Vec<(String, String, Value)>>,
         user_agents: StdMutex<Vec<(String, Option<String>)>>,
+        gateway_url: StdMutex<Option<String>>,
     }
 
     impl MockApi {
@@ -1364,7 +1161,7 @@ mod tests {
         let response = if path == "users/@me" {
             serde_json::json!({"id": "999", "username": "anda"})
         } else if path == "gateway/bot" {
-            serde_json::json!({"url": "wss://gateway.example"})
+            serde_json::json!({"url": state.gateway_url.lock().unwrap().as_deref().unwrap_or("wss://gateway.example")})
         } else if path.ends_with("/messages") {
             serde_json::json!({"id": "msg_100"})
         } else {
@@ -1492,7 +1289,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             state.recorded("POST", "channels/chan_3/messages")[0]["content"],
-            " "
+            "…"
         );
     }
 
@@ -1506,104 +1303,6 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("has no uri or blob"));
-    }
-
-    #[tokio::test]
-    async fn draft_lifecycle_uses_message_edits() {
-        let state = Arc::new(MockApi::default());
-        let channel = mock_channel(|_| {}, state.clone()).await;
-
-        let draft_id = channel
-            .send_draft(&SendMessage {
-                recipient: "chan_1".to_string(),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .expect("draft id");
-        assert_eq!(draft_id, "msg_100");
-
-        channel
-            .update_draft("chan_1", "discord_msg_100", "thinking…")
-            .await
-            .unwrap();
-        assert_eq!(
-            state
-                .recorded("PATCH", "channels/chan_1/messages/msg_100")
-                .len(),
-            1
-        );
-
-        channel
-            .update_draft_progress("chan_1", "msg_100", "still thinking…")
-            .await
-            .unwrap();
-
-        channel
-            .finalize_draft("chan_1", "msg_100", "final answer")
-            .await
-            .unwrap();
-
-        // A long finalize deletes the draft and re-sends in chunks.
-        let long_text = "b".repeat(DISCORD_MAX_MESSAGE_LENGTH + 10);
-        channel
-            .finalize_draft("chan_1", "msg_100", &long_text)
-            .await
-            .unwrap();
-        assert_eq!(
-            state
-                .recorded("DELETE", "channels/chan_1/messages/msg_100")
-                .len(),
-            1
-        );
-
-        channel.cancel_draft("chan_1", "msg_100").await.unwrap();
-        assert_eq!(
-            state
-                .recorded("DELETE", "channels/chan_1/messages/msg_100")
-                .len(),
-            2
-        );
-    }
-
-    #[tokio::test]
-    async fn reactions_pins_and_redactions_hit_expected_routes() {
-        let state = Arc::new(MockApi::default());
-        let channel = mock_channel(|_| {}, state.clone()).await;
-
-        // The axum wildcard captures the URL-decoded path, so the percent-
-        // encoded emoji arrives decoded.
-        channel
-            .add_reaction("chan_1", "msg_100", "\u{1F440}")
-            .await
-            .unwrap();
-        assert_eq!(state.recorded("PUT", "reactions/\u{1F440}/@me").len(), 1);
-
-        channel
-            .remove_reaction("chan_1", "msg_100", "\u{1F440}")
-            .await
-            .unwrap();
-        assert_eq!(state.recorded("DELETE", "reactions/\u{1F440}/@me").len(), 1);
-
-        channel.pin_message("chan_1", "msg_100").await.unwrap();
-        assert_eq!(state.recorded("PUT", "pins/msg_100").len(), 1);
-        channel.unpin_message("chan_1", "msg_100").await.unwrap();
-        assert_eq!(state.recorded("DELETE", "pins/msg_100").len(), 1);
-
-        channel
-            .redact_message("chan_1", "msg_100", None)
-            .await
-            .unwrap();
-        // Exactly one DELETE hit the bare message route (the reaction DELETE
-        // shares the prefix but has the /reactions suffix).
-        let deletes = state
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(m, p, _)| m == "DELETE" && p.ends_with("messages/msg_100"))
-            .count();
-        assert_eq!(deletes, 1);
     }
 
     #[tokio::test]
@@ -1643,17 +1342,6 @@ mod tests {
             state.user_agent("channels/chan_1/messages").as_deref(),
             Some(DISCORD_USER_AGENT)
         );
-    }
-
-    #[tokio::test]
-    async fn health_check_reflects_api_reachability() {
-        let state = Arc::new(MockApi::default());
-        let channel = mock_channel(|_| {}, state).await;
-        assert!(channel.health_check().await);
-
-        let mut dead = DiscordChannel::new(&test_config(), new_reqwest_client());
-        dead.api_base = "http://127.0.0.1:1".to_string();
-        assert!(!dead.health_check().await);
     }
 
     #[tokio::test]
@@ -1795,14 +1483,144 @@ mod tests {
         assert_eq!(raw_discord_message_id("discord_5"), "5");
         assert_eq!(raw_discord_message_id("5"), "5");
 
-        let long = "x".repeat(DISCORD_MAX_MESSAGE_LENGTH + 5);
-        assert_eq!(
-            truncate_for_discord(&long).chars().count(),
-            DISCORD_MAX_MESSAGE_LENGTH
-        );
-        assert_eq!(truncate_for_discord("short"), "short");
-
         assert!(DISCORD_ACK_REACTIONS.contains(&random_from_pool(DISCORD_ACK_REACTIONS)));
         assert_eq!(encode_emoji_for_discord("custom:123"), "custom:123");
+    }
+    #[tokio::test]
+    async fn gateway_keeps_heartbeats_during_download_and_resumes_after_reconnect() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let media = Router::new().route(
+            "/image.png",
+            routing::get({
+                let started = started.clone();
+                let release = release.clone();
+                move || {
+                    let started = started.clone();
+                    let release = release.clone();
+                    async move {
+                        started.notify_one();
+                        release.notified().await;
+                        "PNGDATA"
+                    }
+                }
+            }),
+        );
+        let media_url = format!(
+            "{}/image.png",
+            crate::test_support::spawn_http_mock(media).await
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = format!("ws://{}", listener.local_addr().unwrap());
+        let state = Arc::new(MockApi::default());
+        *state.gateway_url.lock().unwrap() = Some(gateway.clone());
+        let channel = Arc::new(mock_channel(|c| c.mention_only = false, state).await);
+        let server = tokio::spawn(async move {
+            for connection in 0..2 {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                ws.send(Message::Text(
+                    serde_json::json!({"op":10,"d":{"heartbeat_interval":100}})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+                let handshake: Value =
+                    serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                assert_eq!(handshake["op"], if connection == 0 { 2 } else { 6 });
+                if connection == 0 {
+                    ws.send(Message::Text(serde_json::json!({"op":0,"t":"READY","s":1,"d":{"session_id":"session-1","resume_gateway_url":gateway}}).to_string().into())).await.unwrap();
+                    ws.send(Message::Text(serde_json::json!({"op":0,"t":"MESSAGE_CREATE","s":2,"d":{"id":"media-message","channel_id":"c1","author":{"id":"111"},"attachments":[{"url":media_url,"filename":"image.png"}]}}).to_string().into())).await.unwrap();
+                    started.notified().await;
+                    ws.send(Message::Ping(b"probe".to_vec().into()))
+                        .await
+                        .unwrap();
+                    let mut pong = false;
+                    let mut heartbeats = 0;
+                    while !pong || heartbeats < 2 {
+                        let frame = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                            .await
+                            .unwrap()
+                            .unwrap()
+                            .unwrap();
+                        match frame {
+                            Message::Pong(bytes) => {
+                                assert_eq!(bytes.as_ref(), b"probe");
+                                pong = true;
+                            }
+                            Message::Text(text) => {
+                                let event: Value = serde_json::from_str(&text).unwrap();
+                                if event["op"] == 1 {
+                                    heartbeats += 1;
+                                    ws.send(Message::Text("{\"op\":11}".into())).await.unwrap();
+                                }
+                            }
+                            other => panic!("unexpected frame: {other:?}"),
+                        }
+                    }
+                    ws.send(Message::Text("{\"op\":7}".into())).await.unwrap();
+                    release.notify_one();
+                } else {
+                    assert_eq!(handshake["d"]["session_id"], "session-1");
+                    assert_eq!(handshake["d"]["seq"], 2);
+                    ws.send(Message::Text(serde_json::json!({"op":0,"t":"MESSAGE_CREATE","s":3,"d":{"id":"missed-message","channel_id":"c1","author":{"id":"111"},"content":"missed during disconnect","attachments":[]}}).to_string().into())).await.unwrap();
+                    ws.send(Message::Text("{\"op\":7}".into())).await.unwrap();
+                }
+            }
+        });
+        let (tx, mut rx) = mpsc::channel(4);
+        let run_channel = channel.clone();
+        let run = tokio::spawn(async move {
+            run_channel
+                .listen(CancellationToken::new(), tx.clone())
+                .await
+                .unwrap();
+            run_channel
+                .listen(CancellationToken::new(), tx)
+                .await
+                .unwrap();
+        });
+        let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.attachments.len(), 1);
+        let second = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.content, "missed during disconnect");
+        run.await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_missing_ack_forces_reconnect() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+            ws.send(Message::Text(
+                "{\"op\":10,\"d\":{\"heartbeat_interval\":20}}".into(),
+            ))
+            .await
+            .unwrap();
+            while let Some(Ok(_)) = ws.next().await {}
+        });
+        let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
+        channel.gateway_session.lock().await.resume_url = Some(gateway);
+        let (events, _rx) = mpsc::channel(4);
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            channel.receive_gateway(CancellationToken::new(), events),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.to_string().contains("ACK missing"));
+        server.await.unwrap();
     }
 }

@@ -345,6 +345,8 @@ channels:
 
 `allowed_users` 仍然用于校验平台发送者，例如 Telegram 账号、微信 `wxid`、Discord 用户 id 或 Lark open id。`user` 决定这条 channel 消息以哪个可信 Anda caller 身份创建会话、资源和记忆上下文。
 
+频道投递保留 Telegram topic、Discord 线程和 Lark/飞书回复线程。文本分段与附件分别重试，不重发已成功投递的部分。`https_proxy` 同时覆盖 WebSocket 和微信流量。Lark/飞书目前发送附件 HTTP(S) 链接，对本地或二进制附件明确返回不支持。备份数据库时请同时保留频道工作区中的附件文件。
+
 设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
 
 MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。

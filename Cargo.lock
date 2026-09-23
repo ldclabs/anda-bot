@@ -8731,7 +8731,6 @@ checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 [[package]]
 name = "weixin-agent"
 version = "0.2.0"
-source = "git+https://github.com/ldclabs/weixin-agent-sdk-rs.git?rev=12096bac4d5401884573fb3e7991825f67ccc6f5#12096bac4d5401884573fb3e7991825f67ccc6f5"
 dependencies = [
  "aes 0.8.4",
  "async-trait",

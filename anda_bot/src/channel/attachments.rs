@@ -80,6 +80,29 @@ impl ChannelWorkspace {
     }
 }
 
+/// Channel history references already stored files/resources instead of copying media bytes.
+/// Keep the blob when no durable location exists (e.g. workspace writes failed).
+pub(crate) fn history_resources(resources: &mut [Resource]) -> Vec<Resource> {
+    resources
+        .iter_mut()
+        .map(|resource| {
+            if resource._id > 0
+                || resource
+                    .uri
+                    .as_deref()
+                    .is_some_and(|uri| uri.starts_with("file://"))
+            {
+                let blob = resource.blob.take();
+                let reference = resource.clone();
+                resource.blob = blob;
+                reference
+            } else {
+                resource.clone()
+            }
+        })
+        .collect()
+}
+
 pub fn infer_from(file_name: &str, mime_type: Option<&str>) -> Option<InferType> {
     mime_type
         .and_then(infer2::get_from_mime)
@@ -338,5 +361,28 @@ mod tests {
             .store_resources_lossy(std::slice::from_mut(&mut lossy), None, "test attachment")
             .await;
         assert!(lossy.uri.is_some());
+    }
+
+    #[tokio::test]
+    async fn history_uses_file_reference_without_consuming_engine_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = ChannelWorkspace::default();
+        workspace.set_path(dir.path().to_owned());
+        let mut resource = resource_from_bytes("note.txt".into(), b"hello".to_vec(), "test");
+        workspace
+            .store_resource(&mut resource, Some("1"))
+            .await
+            .unwrap();
+        let history = history_resources(std::slice::from_mut(&mut resource));
+        assert!(history[0].blob.is_none());
+        assert_eq!(resource.blob.as_ref().unwrap().as_slice(), b"hello");
+        let path = path_from_file_uri(history[0].uri.as_deref().unwrap()).unwrap();
+        assert_eq!(tokio::fs::read(path).await.unwrap(), b"hello");
+        resource.uri = None;
+        assert!(
+            history_resources(std::slice::from_mut(&mut resource))[0]
+                .blob
+                .is_some()
+        );
     }
 }
