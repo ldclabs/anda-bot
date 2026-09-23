@@ -39,6 +39,20 @@ impl CliWorkspaceGrants {
         self.owner
     }
 
+    /// Only an owner's live, out-of-band grants may expand media roots.
+    pub(super) fn paths_for(&self, caller: &Principal) -> Vec<PathBuf> {
+        if *caller != self.owner {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        self.paths
+            .read()
+            .iter()
+            .filter(|(_, expiry)| **expiry > now)
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
     pub(super) async fn register(&self, workspace: &Path) -> Result<PathBuf, BoxError> {
         let workspace = canonical_directory(workspace).await?;
         let now = Instant::now();

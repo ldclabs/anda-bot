@@ -13,12 +13,13 @@ use anda_engine::{
 use serde_json::json;
 use std::{
     collections::HashMap,
+    future::Future,
     sync::{Arc, atomic::Ordering},
 };
 
 use super::{
     AndaBot,
-    session::{ConversationInput, Session},
+    session::{ConversationInput, Session, SessionControl},
 };
 #[cfg(test)]
 use crate::engine::SkillLibrary;
@@ -57,22 +58,50 @@ impl AndaBot {
         resources: Vec<Resource>,
         reserve_chat_history: Vec<Message>,
         session: Arc<Session>,
-        conversation: Conversation,
+        mut conversation: Conversation,
         mut rx: tokio::sync::mpsc::Receiver<ConversationInput>,
-        action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
+        mut action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
         extra_user_context: Option<Message>,
     ) {
         let assistant = self.clone();
         tokio::spawn(async move {
-            let (resources, media_usage) =
-                multimodal::understand_media_resources(&ctx, resources).await;
-            let resources_without_blob = assistant
-                .persist_resources_for_message(ctx.caller(), resources)
-                .await
-                .unwrap_or_default();
-
+            let preparation = async {
+                let (resources, usage) =
+                    multimodal::understand_media_resources(&ctx, resources).await;
+                let resources = assistant
+                    .persist_resources_for_message(ctx.caller(), resources)
+                    .await?;
+                Ok::<_, BoxError>((resources, usage))
+            };
+            let prepared = drive_session_operation(
+                &assistant,
+                &mut conversation,
+                &mut action_rx,
+                &session.control,
+                preparation,
+            )
+            .await;
+            let (resources, media_usage, initial_events) = match prepared {
+                Ok((Some(Ok((resources, usage))), events)) => (resources, usage, events),
+                Ok((None, events)) => (Vec::new(), Usage::default(), events),
+                Ok((Some(Err(err)), _)) | Err(err) => {
+                    session.stop_background_tasks();
+                    for event in session.actions.cancel_pending().await {
+                        apply_action_event_to_conversation(&mut conversation, event);
+                    }
+                    conversation.status = ConversationStatus::Failed;
+                    conversation.failed_reason =
+                        Some(format!("Attachment preparation failed: {err}"));
+                    conversation.updated_at = unix_ms();
+                    if let Err(error) = assistant.persist_conversation_state(&conversation).await {
+                        log::error!("Failed to save attachment failure: {error}");
+                    }
+                    assistant.detach_session(&session.id);
+                    return;
+                }
+            };
             req.content.extend(
-                resources_without_blob
+                resources
                     .into_iter()
                     .map(|res| ContentPart::any_from("Resource", res)),
             );
@@ -91,23 +120,39 @@ impl AndaBot {
                 conversation,
                 action_rx,
                 runner,
-                first_round: true,
                 extra_user_context: extra_user_context.clone(),
                 last_extra_user_context: extra_user_context,
                 wait_for_input: false,
             };
+            for event in initial_events {
+                sess_runner.apply_action_event_to_runner(event);
+            }
             let mut pending_inputs = Vec::new();
 
             loop {
+                session.control.reset();
                 let mut inputs = std::mem::take(&mut pending_inputs);
 
                 while let Ok(input) = rx.try_recv() {
                     inputs.push(input);
                 }
 
+                // A stop discards earlier work, but messages sent after it belong
+                // to the next task and must survive the batch boundary.
+                if let Some(index) = inputs.iter().position(|input| {
+                    matches!(
+                        input.command,
+                        PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+                    )
+                }) {
+                    pending_inputs = inputs.split_off(index + 1);
+                }
                 match sess_runner.run(inputs, &mut tools_usage_snapshot).await {
                     Ok(continue_active) => {
-                        if continue_active && sess_runner.wait_for_input {
+                        if continue_active
+                            && sess_runner.wait_for_input
+                            && pending_inputs.is_empty()
+                        {
                             // Idle tick: block on the next input so a queued
                             // message is picked up immediately, waking at
                             // least once per second for the idle bookkeeping
@@ -163,7 +208,7 @@ impl AndaBot {
                         // conversation reached a terminal state, persist it as
                         // Failed so it does not stay `Working` in the DB after
                         // the session is dropped from the in-memory table.
-                        if sess_runner.conversation.status == ConversationStatus::Working {
+                        if sess_runner.conversation.status != ConversationStatus::Cancelled {
                             sess_runner
                                 .mark_conversation_failed(format!("Session runner failed: {err}"))
                                 .await;
@@ -185,7 +230,6 @@ struct SessionRunner {
     conversation: Conversation,
     action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
     runner: CompletionRunner,
-    first_round: bool,
     extra_user_context: Option<Message>,
     last_extra_user_context: Option<Message>,
     // Set by run() on an idle tick: the outer loop should wait for new input
@@ -194,48 +238,62 @@ struct SessionRunner {
 }
 
 impl SessionRunner {
-    async fn persist_conversation_state(&self) {
+    async fn persist_conversation_state(&self) -> Result<(), BoxError> {
         self.assistant
             .persist_conversation_state(&self.conversation)
-            .await;
+            .await
     }
 
-    async fn drain_action_events(&mut self) {
+    async fn drain_action_events(&mut self) -> Result<(), BoxError> {
         let mut changed = false;
         while let Ok(event) = self.action_rx.try_recv() {
             changed |= self.apply_action_event(event);
         }
         if changed {
-            self.persist_conversation_state().await;
+            self.persist_conversation_state().await?;
         }
+        Ok(())
     }
 
     async fn next_with_action_events(
         &mut self,
-    ) -> (
-        Result<Option<anda_core::AgentOutput>, BoxError>,
-        Vec<ActionEvent>,
-    ) {
-        let assistant = self.assistant.clone();
-        let conversation = &mut self.conversation;
-        let action_rx = &mut self.action_rx;
-        let next = self.runner.next();
-        tokio::pin!(next);
-        let mut runner_events = Vec::new();
+    ) -> Result<
+        (
+            Option<Result<Option<anda_core::AgentOutput>, BoxError>>,
+            Vec<ActionEvent>,
+        ),
+        BoxError,
+    > {
+        drive_session_operation(
+            &self.assistant,
+            &mut self.conversation,
+            &mut self.action_rx,
+            &self.session.control,
+            self.runner.next(),
+        )
+        .await
+    }
 
-        loop {
-            tokio::select! {
-                result = &mut next => return (result, runner_events),
-                maybe_event = action_rx.recv() => {
-                    if let Some(event) = maybe_event {
-                        if apply_action_event_to_conversation(conversation, event.clone()) {
-                            assistant.persist_conversation_state(conversation).await;
-                        }
-                        runner_events.push(event);
-                    }
+    fn collect_artifacts(&mut self) -> Vec<Resource> {
+        let mut added = Vec::new();
+        if let Some(artifacts) = self
+            .ctx
+            .base
+            .get_state::<crate::engine::resources::SessionArtifacts>()
+        {
+            for artifact in artifacts.take() {
+                if !self
+                    .conversation
+                    .artifacts
+                    .iter()
+                    .any(|saved| saved._id == artifact._id)
+                {
+                    self.conversation.artifacts.push(artifact.clone());
+                    added.push(artifact);
                 }
             }
         }
+        added
     }
 
     fn apply_action_event(&mut self, event: ActionEvent) -> bool {
@@ -244,44 +302,7 @@ impl SessionRunner {
     }
 
     fn apply_action_event_to_runner(&mut self, event: ActionEvent) -> bool {
-        match event {
-            ActionEvent::Add(message) => {
-                let new_action_id = action_id_from_message(&message);
-                if let Some(action_id) = new_action_id.as_deref()
-                    && self
-                        .runner
-                        .chat_history()
-                        .iter()
-                        .filter(|message| is_action_message(message))
-                        .filter_map(action_id_from_message)
-                        .any(|existing| existing == action_id)
-                {
-                    return false;
-                }
-                self.runner.append_chat_history(vec![message]);
-                true
-            }
-            ActionEvent::Resolve {
-                action_id,
-                status,
-                response,
-                responded_at,
-            } => self
-                .runner
-                .chat_history_mut()
-                .iter_mut()
-                .rev()
-                .any(|message| {
-                    action_id_from_message(message).as_deref() == Some(&action_id)
-                        && apply_action_resolution_to_chat_message(
-                            message,
-                            &action_id,
-                            status,
-                            &response,
-                            responded_at,
-                        )
-                }),
-        }
+        apply_action_event_to_history(&mut self.runner, event)
     }
 
     fn replace_conversation_messages_from_chat_history(&mut self, chat_history: Vec<Message>) {
@@ -293,10 +314,18 @@ impl SessionRunner {
         &self,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) {
-        let current_tools_usage = self.runner.tools_usage().clone();
+        self.persist_tools_usage(self.runner.tools_usage(), tools_usage_snapshot)
+            .await;
+    }
+
+    async fn persist_tools_usage(
+        &self,
+        current: &HashMap<String, Usage>,
+        tools_usage_snapshot: &mut HashMap<String, Usage>,
+    ) {
+        let current_tools_usage = current.clone();
         let tools_usage_delta =
             compute_tools_usage_delta(&current_tools_usage, tools_usage_snapshot);
-        *tools_usage_snapshot = current_tools_usage;
         if let Err(err) = self
             .assistant
             .inner
@@ -305,6 +334,8 @@ impl SessionRunner {
             .await
         {
             log::error!("Failed to accumulate_tool_usage: {:?}", err);
+        } else {
+            *tools_usage_snapshot = current_tools_usage;
         }
     }
 
@@ -313,14 +344,21 @@ impl SessionRunner {
         reason: String,
         now_ms: u64,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
-    ) {
+    ) -> Result<(), BoxError> {
+        *self.session.goal.write() = None;
+        self.session
+            .goal_check_backoff_until
+            .store(0, Ordering::SeqCst);
+        self.session.stop_background_tasks();
+        self.drain_action_events().await?;
+        for event in self.session.actions.cancel_pending().await {
+            self.apply_action_event(event);
+        }
+        self.collect_artifacts();
         self.persist_tools_usage_snapshot(tools_usage_snapshot)
-            .await;
-        self.submit_pending_formation(self.runner.chat_history(), now_ms)
             .await;
 
         let content = task_stopped_message(&reason);
-        self.session.stop_background_tasks();
         self.runner.append_chat_history(vec![system_user_message(
             system_runtime_prompt("task stopped", &content),
             now_ms,
@@ -339,17 +377,27 @@ impl SessionRunner {
         self.conversation.status = ConversationStatus::Idle;
         self.conversation.usage = output.usage;
         self.conversation.updated_at = now_ms;
-        self.persist_conversation_state().await;
+        self.persist_conversation_state().await
     }
 
     /// Marks the current conversation `Failed` with a reason and persists it,
     /// so the session never stays `Working` in the DB after its runner exits.
     async fn mark_conversation_failed(&mut self, reason: String) {
+        *self.session.goal.write() = None;
         self.session.stop_background_tasks();
+        while let Ok(event) = self.action_rx.try_recv() {
+            self.apply_action_event(event);
+        }
+        for event in self.session.actions.cancel_pending().await {
+            self.apply_action_event(event);
+        }
+        self.collect_artifacts();
         self.conversation.failed_reason = Some(reason);
         self.conversation.status = ConversationStatus::Failed;
         self.conversation.updated_at = unix_ms();
-        self.persist_conversation_state().await;
+        if let Err(error) = self.persist_conversation_state().await {
+            log::error!("Failed to save conversation failure: {error}");
+        }
     }
 
     async fn compact(
@@ -360,18 +408,36 @@ impl SessionRunner {
         self.persist_tools_usage_snapshot(tools_usage_snapshot)
             .await;
 
-        let (mut runner, output) = match self
-            .runner
-            .handoff(Some(COMPACTION_PROMPT.to_string()))
-            .await
-        {
-            Ok((runner, output)) => (runner, output),
+        let tools = self.runner.req().tools.clone();
+        let (handoff, events) = drive_session_operation(
+            &self.assistant,
+            &mut self.conversation,
+            &mut self.action_rx,
+            &self.session.control,
+            self.runner.handoff(Some(COMPACTION_PROMPT.to_string())),
+        )
+        .await?;
+        let Some(handoff) = handoff else {
+            // handoff temporarily removes schemas and switches to bounded mode.
+            // A user stop owns the interrupt; restore a reusable runner first.
+            self.runner.set_tools(tools);
+            self.runner.set_unbound(true);
+            for event in events {
+                self.apply_action_event(event);
+            }
+            return Ok(true);
+        };
+        let (mut runner, mut output) = match handoff {
+            Ok(result) => result,
             Err(err) => {
                 self.mark_conversation_failed(format!("Compaction failed: {err}"))
                     .await;
                 return Ok(false);
             }
         };
+        for event in events {
+            apply_action_event_to_messages(&mut output.chat_history, event);
+        }
 
         // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
         // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
@@ -387,7 +453,8 @@ impl SessionRunner {
             created_at: now_ms,
             updated_at: now_ms,
             extra: Some({
-                let mut extra = self.ctx.meta().extra.clone();
+                let mut extra = self.session.request_meta.get().extra;
+                extra.remove(crate::util::request_meta::keys::CONVERSATION);
                 self.session.memory_policy.persist(&mut extra);
                 extra.insert(
                     "memory_source_parents".into(),
@@ -444,13 +511,22 @@ impl SessionRunner {
         self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.status = ConversationStatus::Completed;
         self.conversation.usage = output.usage;
-        self.conversation.artifacts = artifacts;
+        self.collect_artifacts();
+        for artifact in artifacts {
+            if !self
+                .conversation
+                .artifacts
+                .iter()
+                .any(|saved| saved._id == artifact._id)
+            {
+                self.conversation.artifacts.push(artifact);
+            }
+        }
         self.conversation.updated_at = now_ms;
         // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
         self.conversation.child = Some(child_id);
-        self.persist_conversation_state().await;
+        self.persist_conversation_state().await?;
 
-        self.first_round = true;
         self.session.submit_formation_at.store(0, Ordering::SeqCst);
         self.conversation = child_conversation;
         self.session
@@ -473,6 +549,30 @@ impl SessionRunner {
         {
             log::error!("Failed to update_source_state: {:?}", err);
         }
+        let current_meta = self.session.request_meta.get();
+        self.session
+            .request_meta
+            .set(super::meta::request_meta_for_conversation(
+                &current_meta,
+                child_id,
+            ));
+        let session_id = self.session.id.to_string();
+        let mut source = crate::brain::product::source_identity(
+            &self.session.caller,
+            child_id,
+            Some(&session_id),
+        );
+        source.parents.extend(
+            self.ctx
+                .base
+                .get_state::<super::memory_policy::InheritedMemorySources>()
+                .unwrap_or_default()
+                .0,
+        );
+        source.parents.sort();
+        source.parents.dedup();
+        self.ctx.base.set_state(source.clone());
+        runner.ctx().base.set_state(source);
         // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
         self.assistant
             .inner
@@ -522,20 +622,30 @@ impl SessionRunner {
             return;
         }
 
+        if self.session.submit_formation_at.load(Ordering::SeqCst) as usize >= chat_history.len() {
+            return;
+        }
+
         // Persist the exact original message indices before filtering/pruning
         // the Formation input. Update messages only: inbound queues are owned
         // by the conversation API and must not be overwritten by this snapshot.
-        let mut snapshot = self.conversation.clone();
-        snapshot.messages.clear();
-        snapshot.append_messages(chat_history.to_vec());
+        let messages = chat_history
+            .iter()
+            .map(|message| json!(message))
+            .collect::<Vec<_>>();
         let persisted = async {
-            let mut changes = snapshot.to_changes()?;
-            changes.retain(|key, _| key == "messages");
+            let changes = std::collections::BTreeMap::from([(
+                "messages".to_string(),
+                anda_db::schema::Fv::array_from(
+                    cbor2::cbor!(&messages)?,
+                    &[anda_db::schema::Ft::Json],
+                )?,
+            )]);
             self.assistant
                 .inner
                 .conversations
                 .conversations
-                .update_conversation(snapshot._id, changes)
+                .update_conversation(self.conversation._id, changes)
                 .await?;
             Ok::<_, BoxError>(())
         }
@@ -547,7 +657,7 @@ impl SessionRunner {
             );
             log::error!(
                 "Cannot persist Formation source conversation {}: {error}",
-                snapshot._id
+                self.conversation._id
             );
             return;
         }
@@ -565,7 +675,7 @@ impl SessionRunner {
                     None
                 } else {
                     source_messages.push(crate::brain::SourceMessageRef {
-                        conversation: snapshot._id.to_string(),
+                        conversation: self.conversation._id.to_string(),
                         index: index.to_string(),
                         role: msg.role.clone(),
                         content_digest: digest,
@@ -663,10 +773,35 @@ impl SessionRunner {
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<bool, BoxError> {
         self.wait_for_input = false;
-        let mut stop_requested: Option<String> = None;
-        let mut cancellation_requested: Option<String> = None;
         if !inputs.is_empty() {
             self.session.active_at.store(unix_ms(), Ordering::SeqCst);
+        }
+
+        if let Some(index) = inputs.iter().position(|input| {
+            matches!(
+                input.command,
+                PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+            )
+        }) {
+            for input in &inputs[..=index] {
+                self.runner.accumulate(&input.usage);
+            }
+            let (reason, cancelled) = match &inputs[index].command {
+                PromptCommand::Stop { prompt } => (control_command_reason(prompt, "stop"), false),
+                PromptCommand::Cancel { prompt } => (cancel_reason(prompt), true),
+                _ => unreachable!(),
+            };
+            let now_ms = unix_ms();
+            self.stop_current_task(reason.clone(), now_ms, tools_usage_snapshot)
+                .await?;
+            if cancelled {
+                self.conversation.failed_reason = Some(reason);
+                self.conversation.status = ConversationStatus::Cancelled;
+                self.persist_conversation_state().await?;
+                self.submit_pending_formation(self.runner.chat_history(), now_ms)
+                    .await;
+            }
+            return Ok(!cancelled);
         }
 
         // Accumulate all follow-up content for this batch instead of queueing
@@ -701,14 +836,31 @@ impl SessionRunner {
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&usage);
 
-            let (resources, media_usage) =
-                multimodal::understand_media_resources(&self.ctx, resources).await;
+            let prepare = async {
+                let (resources, usage) =
+                    multimodal::understand_media_resources(&self.ctx, resources).await;
+                let resources = self
+                    .assistant
+                    .persist_resources_for_message(self.ctx.caller(), resources)
+                    .await?;
+                Ok::<_, BoxError>((resources, usage))
+            };
+            let (prepared, events) = drive_session_operation(
+                &self.assistant,
+                &mut self.conversation,
+                &mut self.action_rx,
+                &self.session.control,
+                prepare,
+            )
+            .await?;
+            for event in events {
+                self.apply_action_event_to_runner(event);
+            }
+            let Some(prepared) = prepared else {
+                return Ok(true);
+            };
+            let (resources_without_blob, media_usage) = prepared?;
             self.runner.accumulate(&media_usage);
-            let resources_without_blob = self
-                .assistant
-                .persist_resources_for_message(self.ctx.caller(), resources)
-                .await
-                .unwrap_or_default();
             let mut content = resources_without_blob
                 .into_iter()
                 .map(|res| ContentPart::any_from("Resource", res))
@@ -730,14 +882,7 @@ impl SessionRunner {
                         self.conversation._id
                     );
                 }
-                PromptCommand::Stop { prompt } => {
-                    stop_requested = Some(control_command_reason(&prompt, "stop"));
-                    break;
-                }
-                PromptCommand::Cancel { prompt } => {
-                    cancellation_requested = Some(cancel_reason(&prompt));
-                    break;
-                }
+                PromptCommand::Stop { .. } | PromptCommand::Cancel { .. } => unreachable!(),
                 PromptCommand::New { .. } => {
                     log::warn!(
                         "Received unexpected /new command in session {}, conversation {}. The /new command should be handled in the agent run() method and should not reach the session runner. Ignoring.",
@@ -779,39 +924,13 @@ impl SessionRunner {
         }
 
         let now_ms = unix_ms();
-        if let Some(reason) = stop_requested {
-            self.stop_current_task(reason, now_ms, tools_usage_snapshot)
-                .await;
-            return Ok(true);
-        }
-
-        if let Some(failed_reason) = cancellation_requested {
-            self.persist_tools_usage_snapshot(tools_usage_snapshot)
-                .await;
-            self.submit_pending_formation(self.runner.chat_history(), now_ms)
-                .await;
-
-            self.conversation.failed_reason = Some(failed_reason.clone());
-            self.conversation.messages.push(json!(Message {
-                role: "user".into(),
-                content: vec![failed_reason.into()],
-                timestamp: Some(now_ms),
-                ..Default::default()
-            }));
-            self.conversation.status = ConversationStatus::Cancelled;
-
-            self.conversation.updated_at = now_ms;
-            self.persist_conversation_state().await;
-            return Ok(false);
-        }
-
         if self.conversation.status != ConversationStatus::Working
             && (!follow_up_batch.is_empty() || !steer_batch.is_empty() || !self.runner.is_idle())
         {
             self.conversation.status = ConversationStatus::Working;
             self.conversation.failed_reason = None;
             self.conversation.updated_at = now_ms;
-            self.persist_conversation_state().await;
+            self.persist_conversation_state().await?;
         }
 
         if let Some(mut extra_user_context) = self.extra_user_context.take() {
@@ -837,6 +956,9 @@ impl SessionRunner {
             }
         }
 
+        if self.session.control.is_pending() {
+            return Ok(true);
+        }
         if !follow_up_batch.is_empty() {
             self.runner.follow_up_content(follow_up_batch);
         }
@@ -852,12 +974,29 @@ impl SessionRunner {
             .runner_idle
             .store(self.runner.is_idle(), Ordering::SeqCst);
 
-        let (mut next_result, runner_events) = self.next_with_action_events().await;
-        for event in runner_events {
-            self.apply_action_event_to_runner(event);
+        let (next_result, mut events) = self.next_with_action_events().await?;
+        while let Ok(event) = self.action_rx.try_recv() {
+            events.push(event);
         }
-        self.drain_action_events().await;
+        let Some(mut next_result) = next_result else {
+            for event in events {
+                self.apply_action_event(event);
+            }
+            return Ok(true);
+        };
         if let Ok(Some(res)) = &mut next_result {
+            if self.runner.is_done() {
+                // Finalization moved history into the output. Apply action events to
+                // that authoritative history instead of replacing it with an empty runner.
+                for event in &events {
+                    apply_action_event_to_messages(&mut res.chat_history, event.clone());
+                }
+            } else {
+                for event in &events {
+                    self.apply_action_event_to_runner(event.clone());
+                }
+                res.chat_history = self.runner.chat_history().clone();
+            }
             if let Some(trace) = self
                 .runner
                 .ctx()
@@ -866,7 +1005,25 @@ impl SessionRunner {
             {
                 trace.prepare(self.conversation._id, &res.tool_calls);
             }
-            res.chat_history = self.runner.chat_history().clone();
+        } else {
+            for event in &events {
+                self.apply_action_event_to_runner(event.clone());
+            }
+        }
+        for event in events {
+            apply_action_event_to_conversation(&mut self.conversation, event);
+        }
+        let artifacts = self.collect_artifacts();
+        if let Ok(Some(output)) = &mut next_result {
+            for artifact in artifacts {
+                if !output
+                    .artifacts
+                    .iter()
+                    .any(|existing| existing._id == artifact._id)
+                {
+                    output.artifacts.push(artifact);
+                }
+            }
         }
         self.assistant
             .inner
@@ -902,7 +1059,11 @@ impl SessionRunner {
                     };
                 let mut goal_continue_prompt: Option<String> = None;
                 if let Some(mut goal) = maybe_goal {
-                    match goal.check_progress(&self.runner, &self.ctx).await {
+                    let check = tokio::select! {
+                        _ = self.session.control.interrupted() => { return Ok(true); }
+                        result = goal.check_progress(&self.runner, &self.ctx) => result,
+                    };
+                    match check {
                         Ok(check) => {
                             self.session
                                 .goal_check_backoff_until
@@ -962,7 +1123,7 @@ impl SessionRunner {
                     {
                         self.conversation.status = ConversationStatus::Completed;
                         self.conversation.updated_at = now_ms;
-                        self.persist_conversation_state().await;
+                        self.persist_conversation_state().await?;
                         return Ok(false);
                     }
 
@@ -971,7 +1132,7 @@ impl SessionRunner {
                     {
                         self.conversation.status = ConversationStatus::Completed;
                         self.conversation.updated_at = now_ms;
-                        self.persist_conversation_state().await;
+                        self.persist_conversation_state().await?;
                         return Ok(false);
                     }
                 }
@@ -987,7 +1148,7 @@ impl SessionRunner {
                     }
                     self.conversation.status = next_status;
                     self.conversation.updated_at = now_ms;
-                    self.persist_conversation_state().await;
+                    self.persist_conversation_state().await?;
                 }
 
                 // The outer loop performs the idle wait (input-aware, up to
@@ -1003,10 +1164,25 @@ impl SessionRunner {
                 let is_done = self.runner.is_done();
                 res.conversation = Some(self.conversation._id);
                 mark_special_user_messages(&mut res.chat_history);
+                if let Some(artifacts) = self
+                    .ctx
+                    .base
+                    .get_state::<crate::engine::resources::SessionArtifacts>()
+                {
+                    artifacts
+                        .record(self.ctx.caller(), &mut res.artifacts)
+                        .await?;
+                    self.collect_artifacts();
+                }
 
                 self.session.on_completion(&self.ctx, &res).await;
 
-                self.first_round = false;
+                let mut terminal_history =
+                    (is_done || res.failed_reason.is_some()).then(|| res.chat_history.clone());
+                if terminal_history.is_some() {
+                    self.persist_tools_usage(&res.tools_usage, tools_usage_snapshot)
+                        .await;
+                }
                 self.replace_conversation_messages_from_chat_history(res.chat_history);
 
                 self.conversation.status = if res.failed_reason.is_some() {
@@ -1019,15 +1195,20 @@ impl SessionRunner {
                 self.conversation.usage = res.usage;
                 self.conversation.updated_at = now_ms;
                 self.conversation.failed_reason = res.failed_reason.take();
-                self.persist_conversation_state().await;
+                if self.conversation.status == ConversationStatus::Failed {
+                    self.session.stop_background_tasks();
+                    *self.session.goal.write() = None;
+                    for event in self.session.actions.cancel_pending().await {
+                        apply_action_event_to_conversation(&mut self.conversation, event.clone());
+                        if let Some(history) = terminal_history.as_mut() {
+                            apply_action_event_to_messages(history, event);
+                        }
+                    }
+                }
+                self.persist_conversation_state().await?;
 
-                if self.conversation.status == ConversationStatus::Completed
-                    || self.conversation.status == ConversationStatus::Failed
-                {
-                    self.persist_tools_usage_snapshot(tools_usage_snapshot)
-                        .await;
-                    self.submit_pending_formation(self.runner.chat_history(), now_ms)
-                        .await;
+                if let Some(history) = terminal_history.as_ref() {
+                    self.submit_pending_formation(history, now_ms).await;
                 }
 
                 if self.conversation.status == ConversationStatus::Cancelled
@@ -1077,13 +1258,107 @@ impl SessionRunner {
                 self.conversation.failed_reason = Some(failed_reason.clone());
                 self.conversation.status = ConversationStatus::Failed;
                 self.conversation.updated_at = unix_ms();
-                self.persist_conversation_state().await;
+                self.persist_conversation_state().await?;
 
                 return Ok(false);
             }
         }
 
         Ok(true)
+    }
+}
+
+/// Keep approvals visible while an operation is in flight, and drop the
+/// operation at a user control boundary. Database transitions themselves are
+/// awaited to completion by the caller rather than cancelled halfway through.
+async fn drive_session_operation<F: Future>(
+    assistant: &AndaBot,
+    conversation: &mut Conversation,
+    action_rx: &mut tokio::sync::mpsc::Receiver<ActionEvent>,
+    control: &SessionControl,
+    operation: F,
+) -> Result<(Option<F::Output>, Vec<ActionEvent>), BoxError> {
+    tokio::pin!(operation);
+    let mut events = Vec::new();
+    let mut actions_open = true;
+    loop {
+        tokio::select! {
+            biased;
+            _ = control.interrupted() => return Ok((None, events)),
+            result = &mut operation => return Ok((Some(result), events)),
+            event = action_rx.recv(), if actions_open => {
+                match event {
+                    Some(event) => {
+                        if apply_action_event_to_conversation(conversation, event.clone()) {
+                            assistant.persist_conversation_state(conversation).await?;
+                        }
+                        events.push(event);
+                    }
+                    None => actions_open = false,
+                }
+            }
+        }
+    }
+}
+
+fn apply_action_event_to_history(runner: &mut CompletionRunner, event: ActionEvent) -> bool {
+    match event {
+        ActionEvent::Add(message) => {
+            let id = action_id_from_message(&message);
+            if id.is_some()
+                && runner
+                    .chat_history()
+                    .iter()
+                    .any(|m| action_id_from_message(m) == id)
+            {
+                return false;
+            }
+            runner.append_chat_history(vec![message]);
+            true
+        }
+        ActionEvent::Resolve {
+            action_id,
+            status,
+            response,
+            responded_at,
+        } => runner.chat_history_mut().iter_mut().rev().any(|message| {
+            apply_action_resolution_to_chat_message(
+                message,
+                &action_id,
+                status,
+                &response,
+                responded_at,
+            )
+        }),
+    }
+}
+
+fn apply_action_event_to_messages(messages: &mut Vec<Message>, event: ActionEvent) {
+    match event {
+        ActionEvent::Add(message) => {
+            let id = action_id_from_message(&message);
+            if id.is_none() || !messages.iter().any(|m| action_id_from_message(m) == id) {
+                messages.push(message);
+            }
+        }
+        ActionEvent::Resolve {
+            action_id,
+            status,
+            response,
+            responded_at,
+        } => {
+            for message in messages.iter_mut().rev() {
+                if apply_action_resolution_to_chat_message(
+                    message,
+                    &action_id,
+                    status,
+                    &response,
+                    responded_at,
+                ) {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1401,7 +1676,7 @@ mod tests {
             .route(
                 "/v1/anda_bot/formation",
                 routing::post(|| async {
-                    axum::Json(serde_json::json!({"result": {"content": ""}}))
+                    axum::Json(serde_json::json!({"result": AgentOutput::default()}))
                 }),
             )
             .route(
@@ -1521,6 +1796,8 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Arc::new(Session {
+            control: Default::default(),
+            background_controls: Default::default(),
             memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),
@@ -1591,9 +1868,13 @@ mod tests {
         tokio::sync::mpsc::Receiver<ConversationInput>,
     ) {
         let (session, rx, action_rx) = build_session();
+        ctx.base
+            .set_state(crate::engine::resources::SessionArtifacts::new(
+                bot.inner.resource_store.clone(),
+            ));
         let req = CompletionRequest::default();
         let runner = ctx.clone().completion_iter(req.clone(), vec![]).unbound();
-        let sess_runner = SessionRunner {
+        let mut sess_runner = SessionRunner {
             ctx,
             assistant: bot.clone(),
             session,
@@ -1603,11 +1884,11 @@ mod tests {
             },
             action_rx,
             runner,
-            first_round: true,
             extra_user_context: None,
             last_extra_user_context: None,
             wait_for_input: false,
         };
+        persist_runner_conversation(&mut sess_runner).await;
         (sess_runner, rx)
     }
 
@@ -2152,6 +2433,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         let mut snapshot = HashMap::new();
@@ -2267,6 +2549,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         let mut snapshot = HashMap::new();
@@ -2305,6 +2588,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         let mut snapshot = HashMap::new();
@@ -2343,6 +2627,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         let mut snapshot = HashMap::new();
@@ -2415,6 +2700,12 @@ mod tests {
             ..Default::default()
         };
 
+        bot.inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&Conversation::default()))
+            .await
+            .unwrap();
         bot.spawn_session_runner(
             ctx,
             req,
@@ -2465,7 +2756,7 @@ mod tests {
         let bot = build_runner_bot().await;
         let (sess_runner, _rx) = build_session_runner(&bot).await;
         // The persistence helpers operate on the in-memory conversation store.
-        sess_runner.persist_conversation_state().await;
+        sess_runner.persist_conversation_state().await.unwrap();
         let mut snapshot = HashMap::new();
         sess_runner
             .persist_tools_usage_snapshot(&mut snapshot)
@@ -2628,5 +2919,568 @@ mod tests {
         assert!(text.contains("Goal completed."));
         assert!(text.contains("Supervisor evaluation:"));
         assert!(text.contains("All deliverables verified"));
+    }
+
+    #[tokio::test]
+    async fn stop_clears_active_goal() {
+        let bot = build_runner_bot().await;
+        let (mut r, _rx) = build_session_runner(&bot).await;
+        *r.session.goal.write() = Some(crate::engine::goal::GoalState::new(
+            "unfinished goal".into(),
+        ));
+        r.run(
+            vec![input(PromptCommand::Stop {
+                prompt: "/stop".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(r.session.goal.read().is_none(), "STOP left the goal active");
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_background_handle() {
+        use anda_engine::hook::{AgentHook, BackgroundHandle};
+        let (session, _rx, _actions) = build_session();
+        let ctx = mock_runner_ctx();
+        let token = tokio_util::sync::CancellationToken::new();
+        session
+            .on_background_start(
+                &ctx,
+                BackgroundHandle::new("bg-review", token.clone()),
+                &CompletionRequest::default(),
+            )
+            .await;
+        session.stop_background_tasks();
+        assert!(
+            token.is_cancelled(),
+            "background task was hidden but not cancelled"
+        );
+    }
+
+    #[derive(Clone, Debug)]
+    struct FailedOutputCompleter;
+    impl CompletionFeaturesDyn for FailedOutputCompleter {
+        fn model_name(&self) -> String {
+            "review-failed-output".into()
+        }
+        fn completion(&self, _req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(futures::future::ready(Ok(AgentOutput {
+                failed_reason: Some("provider failure".into()),
+                chat_history: vec![Message {
+                    role: "assistant".into(),
+                    content: vec!["failure details".to_string().into()],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })))
+        }
+    }
+    #[tokio::test]
+    async fn failed_output_keeps_history() {
+        let bot = build_runner_bot().await;
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(FailedOutputCompleter)))
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        persist_runner_conversation(&mut r).await;
+        r.runner.append_chat_history(vec![Message {
+            role: "user".into(),
+            content: vec!["previous request".to_string().into()],
+            ..Default::default()
+        }]);
+        let keep = r
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "continue".into(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+        assert!(!keep);
+        assert!(
+            !r.conversation.messages.is_empty(),
+            "terminal output erased existing conversation history"
+        );
+    }
+    #[tokio::test]
+    async fn compaction_updates_source_identity() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests, 10);
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        persist_runner_conversation(&mut r).await;
+        let sid = r.session.id.to_string();
+        r.ctx.base.set_state(crate::brain::product::source_identity(
+            &r.session.caller,
+            r.conversation._id,
+            Some(&sid),
+        ));
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "work".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            r.compact(Some("continue".into()), &mut HashMap::new())
+                .await
+                .unwrap()
+        );
+        let actual = r
+            .ctx
+            .base
+            .get_state::<anda_brain::product::SourceIdentity>()
+            .unwrap();
+        let expected = crate::brain::product::source_identity(
+            &r.session.caller,
+            r.conversation._id,
+            Some(&sid),
+        );
+        assert_eq!(
+            actual.key, expected.key,
+            "compacted child still uses parent memory source"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_usage_counts_deltas() {
+        use anda_engine::hook::{AgentHook, BackgroundHandle};
+        let (session, mut rx, _actions) = build_session();
+        let ctx = mock_runner_ctx();
+        session
+            .on_background_start(
+                &ctx,
+                BackgroundHandle::new("usage-review", tokio_util::sync::CancellationToken::new()),
+                &CompletionRequest::default(),
+            )
+            .await;
+        for (n, text) in [(100, "first progress"), (250, "second progress")] {
+            session
+                .on_background_progress(
+                    &ctx,
+                    "usage-review".into(),
+                    AgentOutput {
+                        content: text.into(),
+                        usage: Usage {
+                            input_tokens: n,
+                            requests: 1,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .await;
+        }
+        session
+            .on_background_end(
+                &ctx,
+                "usage-review".into(),
+                AgentOutput {
+                    content: "final output".into(),
+                    usage: Usage {
+                        input_tokens: 250,
+                        requests: 2,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await;
+        let mut sum = 0;
+        while let Ok(input) = rx.try_recv() {
+            sum += input.usage.input_tokens;
+        }
+        assert_eq!(sum, 250, "cumulative background usage was added repeatedly");
+    }
+
+    struct ArtifactToolFixture;
+    impl anda_core::Tool<anda_engine::context::BaseCtx> for ArtifactToolFixture {
+        type Args = serde_json::Value;
+        type Output = String;
+        fn name(&self) -> String {
+            "review_artifact".into()
+        }
+        fn description(&self) -> String {
+            "fixture".into()
+        }
+        fn definition(&self) -> anda_core::FunctionDefinition {
+            anda_core::FunctionDefinition {
+                name: self.name(),
+                description: self.description(),
+                parameters: json!({"type":"object"}),
+                strict: None,
+            }
+        }
+        async fn call(
+            &self,
+            _ctx: anda_engine::context::BaseCtx,
+            _args: Self::Args,
+            _resources: Vec<Resource>,
+        ) -> Result<anda_core::ToolOutput<String>, BoxError> {
+            Ok(anda_core::ToolOutput {
+                output: "created".into(),
+                artifacts: vec![Resource {
+                    name: "review-output.txt".into(),
+                    blob: Some(ByteBufB64(b"output".to_vec())),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+        }
+    }
+    #[derive(Clone, Debug)]
+    struct ArtifactCompleter;
+    impl CompletionFeaturesDyn for ArtifactCompleter {
+        fn model_name(&self) -> String {
+            "review-artifact-model".into()
+        }
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let is_tool_result = req.role.as_deref() == Some("tool");
+            let tools = if is_tool_result {
+                vec![]
+            } else {
+                vec![anda_core::ToolCall {
+                    name: "review_artifact".into(),
+                    args: json!({}),
+                    call_id: Some("review-call".into()),
+                    result: None,
+                    remote_id: None,
+                }]
+            };
+            Box::pin(futures::future::ready(Ok(AgentOutput {
+                content: "done".into(),
+                tool_calls: tools,
+                chat_history: pending_request_messages(&req, 42),
+                ..Default::default()
+            })))
+        }
+    }
+    #[tokio::test]
+    async fn one_shot_persists_tool_artifact() {
+        let bot = build_runner_bot().await;
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(ArtifactCompleter)))
+            .register_tool(crate::engine::resources::record_artifacts(Arc::new(
+                ArtifactToolFixture,
+            )))
+            .unwrap()
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let id = persist_runner_conversation(&mut r).await;
+        r.session.finish_when_idle.store(true, Ordering::SeqCst);
+        let mut snapshot = HashMap::new();
+        assert!(
+            r.run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "create a file".into()
+                })],
+                &mut snapshot
+            )
+            .await
+            .unwrap()
+        );
+        assert!(r.run(vec![], &mut snapshot).await.unwrap());
+        assert!(
+            r.runner.tools_usage().contains_key("review_artifact"),
+            "fixture must execute artifact tool"
+        );
+        assert!(!r.run(vec![], &mut snapshot).await.unwrap());
+        let stored = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(id)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored.artifacts.len(),
+            1,
+            "normal completion discarded tool artifacts"
+        );
+    }
+
+    #[derive(Clone, Debug)]
+    struct InterruptibleCompleter {
+        entered: Arc<tokio::sync::Notify>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl CompletionFeaturesDyn for InterruptibleCompleter {
+        fn model_name(&self) -> String {
+            "interruptible".into()
+        }
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let first = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
+            let entered = self.entered.clone();
+            Box::pin(async move {
+                if first {
+                    entered.notify_one();
+                    futures::future::pending::<()>().await;
+                }
+                Ok(AgentOutput {
+                    content: "resumed".into(),
+                    chat_history: pending_request_messages(&req, 42),
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn control_interrupts_in_flight_completion_and_keeps_runner_reusable() {
+        let bot = build_runner_bot().await;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(InterruptibleCompleter {
+                entered: entered.clone(),
+                calls: Arc::default(),
+            })))
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        r.runner.follow_up("start".to_string());
+        let control = r.session.control.clone();
+        let stopper = tokio::spawn(async move {
+            entered.notified().await;
+            control.request();
+        });
+        let (result, _) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            r.next_with_action_events(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        stopper.await.unwrap();
+        assert!(result.is_none());
+        r.session.control.reset();
+        r.run(
+            vec![input(PromptCommand::Stop {
+                prompt: "/stop".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.conversation.status, ConversationStatus::Idle);
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "next task".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            r.runner
+                .chat_history()
+                .iter()
+                .filter_map(Message::text)
+                .any(|text| text.contains("next task"))
+        );
+    }
+
+    #[tokio::test]
+    async fn formation_without_new_messages_does_not_rewrite_saved_history() {
+        let bot = build_runner_bot().await;
+        let (r, _rx) = build_session_runner(&bot).await;
+        let history = vec![Message {
+            role: "user".into(),
+            content: vec!["already submitted".to_string().into()],
+            ..Default::default()
+        }];
+        r.session.submit_formation_at.store(1, Ordering::SeqCst);
+        let mut saved = r.conversation.clone();
+        saved.append_messages(vec![Message {
+            role: "assistant".into(),
+            content: vec!["newer persisted state".to_string().into()],
+            ..Default::default()
+        }]);
+        bot.persist_conversation_state(&saved).await.unwrap();
+        r.submit_pending_formation(&history, unix_ms()).await;
+        let reloaded = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(saved._id)
+            .await
+            .unwrap();
+        assert_eq!(reloaded.messages, saved.messages);
+        assert_eq!(r.session.formation_backoff_until.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn conversation_write_errors_reach_the_caller() {
+        let bot = build_runner_bot().await;
+        let missing = Conversation {
+            _id: u64::MAX,
+            ..Default::default()
+        };
+        assert!(bot.persist_conversation_state(&missing).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn stop_interrupts_approval_wait_and_resolves_the_card() {
+        let bot = build_runner_bot().await;
+        let (mut r, _rx) = build_session_runner(&bot).await;
+        let mut meta = RequestMeta::default();
+        meta.extra
+            .insert("approval_mode".into(), json!("request_approval"));
+        r.session.request_meta.set(meta);
+        r.ctx.base.set_state(r.session.request_meta.clone());
+        let actions = r.session.actions.clone();
+        let ctx = r.ctx.base.clone();
+        let control = r.session.control.clone();
+        let observer = bot.clone();
+        let id = r.conversation._id;
+        let stopper = tokio::spawn(async move {
+            loop {
+                let saved = observer
+                    .inner
+                    .conversations
+                    .conversations
+                    .get_conversation(id)
+                    .await
+                    .unwrap();
+                if saved.messages.iter().any(is_action_message_value) {
+                    control.request();
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        });
+        let approval = actions.request_shell_approval(
+            &ctx,
+            anda_engine::extension::shell::ExecArgs {
+                command: "echo approval".into(),
+                ..Default::default()
+            },
+        );
+        let (result, events) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            drive_session_operation(
+                &bot,
+                &mut r.conversation,
+                &mut r.action_rx,
+                &r.session.control,
+                approval,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        stopper.await.unwrap();
+        assert!(result.is_none());
+        for event in events {
+            r.apply_action_event_to_runner(event);
+        }
+        // Intentionally keep the interrupt set: a queued control must be handled
+        // before the run() path starts preparing resources.
+        r.run(
+            vec![input(PromptCommand::Stop {
+                prompt: "/stop".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.conversation.status, ConversationStatus::Idle);
+        assert!(
+            r.conversation
+                .messages
+                .iter()
+                .any(|message| message["content"][0]["payload"]["status"] == "denied")
+        );
+        assert!(r.session.actions.cancel_pending().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_message_after_stop_survives_the_batch() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (session, rx, action_rx) = build_session();
+        let mut conversation = Conversation::default();
+        conversation._id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+        bot.spawn_session_runner(
+            ctx,
+            CompletionRequest::default(),
+            vec![],
+            vec![],
+            session.clone(),
+            conversation,
+            rx,
+            action_rx,
+            None,
+        );
+        session
+            .sender
+            .try_send(input(PromptCommand::Stop {
+                prompt: "/stop".into(),
+            }))
+            .unwrap();
+        session
+            .sender
+            .try_send(input(PromptCommand::Plain {
+                prompt: "new task after stop".into(),
+            }))
+            .unwrap();
+        session.control.request();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if requests
+                    .lock()
+                    .iter()
+                    .any(|req| request_text(req).contains("new task after stop"))
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .unwrap();
+        session
+            .sender
+            .send(input(PromptCommand::Cancel {
+                prompt: "/cancel".into(),
+            }))
+            .await
+            .unwrap();
+        session.control.request();
+        tokio::time::timeout(std::time::Duration::from_secs(2), session.sender.closed())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn formation_persists_json_messages_and_advances_the_watermark() {
+        let bot = build_runner_bot_with_brain(spawn_runner_brain_mock().await).await;
+        let (r, _rx) = build_session_runner(&bot).await;
+        let history = vec![Message {
+            role: "user".into(),
+            content: vec!["remember this source".to_string().into()],
+            ..Default::default()
+        }];
+        r.submit_pending_formation(&history, unix_ms()).await;
+        assert_eq!(r.session.submit_formation_at.load(Ordering::SeqCst), 1);
+        assert_eq!(r.session.formation_backoff_until.load(Ordering::SeqCst), 0);
+        let saved = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(r.conversation._id)
+            .await
+            .unwrap();
+        assert_eq!(saved.messages, vec![json!(history[0])]);
     }
 }

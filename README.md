@@ -149,8 +149,8 @@ When the terminal UI is running:
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
 - Use `anda models reload`, or the launcher/browser refresh models button, after editing model providers in `config.yaml`.
 - Use `/reload` after changing daemon settings that still require a restart.
-- Use `/stop` to stop the current task and leave the conversation idle.
-- Use `/cancel` to exit the active conversation task.
+- Use `/stop` to interrupt the current task, cancel its background work and pending approvals, clear the active goal, and leave the conversation idle for your next message.
+- Use `/cancel` to stop the same work and close the active conversation session.
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
@@ -354,7 +354,7 @@ See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.ya
 
 ## Files, Skills, And Automations
 
-The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension likewise registers a directory-backed channel when you enter it, so its shell commands start in that directory. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces.
+The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension likewise registers a directory-backed channel when you enter it, so its shell commands start in that directory. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces. Attachment understanding can also read the owner's registered directories while their grants remain valid; request metadata alone cannot authorize a new directory.
 
 Custom runtime skills can be added under `~/.anda/skills`. Release-managed skills are installed in `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into the personal library via the Dashboard. Integrated cron capabilities enable scheduling shell commands or automated agent prompts, with execution histories stored locally.
 

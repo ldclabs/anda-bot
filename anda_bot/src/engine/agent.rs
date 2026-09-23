@@ -322,6 +322,8 @@ impl AndaBot {
         memory_source.parents.dedup();
         ctx.base.set_state(memory_source);
         let session = Arc::new(Session {
+            control: Default::default(),
+            background_controls: Default::default(),
             memory_policy: memory_policy::MemoryPolicy::current(&ctx.base),
             id: spec.sess_id,
             caller: spec.caller.clone(),
@@ -360,6 +362,9 @@ impl AndaBot {
         });
 
         ctx.base.set_state(brain::RecallTurn::default());
+        ctx.base.set_state(super::resources::SessionArtifacts::new(
+            self.inner.resource_store.clone(),
+        ));
         ctx.base.set_state(GoalToolState::new(
             session.goal.clone(),
             session.active_at.clone(),
@@ -460,24 +465,16 @@ impl AndaBot {
             .map(|session| session.state(now_ms))
     }
 
-    async fn persist_conversation_state(&self, conversation: &Conversation) {
-        match conversation.to_changes() {
-            Ok(changes) => {
-                let _ = self
-                    .inner
-                    .conversations
-                    .conversations
-                    .update_conversation(conversation._id, changes)
-                    .await;
-            }
-            Err(err) => {
-                log::error!(
-                    "Failed to serialize conversation {} changes: {:?}",
-                    conversation._id,
-                    err
-                );
-            }
-        }
+    async fn persist_conversation_state(
+        &self,
+        conversation: &Conversation,
+    ) -> Result<(), BoxError> {
+        self.inner
+            .conversations
+            .conversations
+            .update_conversation(conversation._id, conversation.to_changes()?)
+            .await?;
+        Ok(())
     }
 
     async fn persist_resources_for_message(
@@ -495,14 +492,14 @@ impl AndaBot {
         &self,
         conversation: &mut Conversation,
         now_ms: u64,
-    ) {
+    ) -> Result<(), BoxError> {
         if is_terminal_conversation_status(&conversation.status) {
-            return;
+            return Ok(());
         }
 
         conversation.status = ConversationStatus::Completed;
         conversation.updated_at = now_ms;
-        self.persist_conversation_state(conversation).await;
+        self.persist_conversation_state(conversation).await
     }
 
     async fn submit_formation(
@@ -796,13 +793,14 @@ impl Agent<AgentCtx> for AndaBot {
             inherited_sources.clone(),
         ));
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
-        let available_tools = available_tool_names(&ctx).await;
+        let mut available_tools = Vec::new();
 
         ctx.base.set_state(AgentInfo {
             name: Self::NAME.to_string(),
         });
 
         if let PromptCommand::Side { prompt } = &command {
+            let available_tools = available_tool_names(&ctx).await;
             let RequestState {
                 workspace,
                 conversation: maybe_conv_id,
@@ -938,8 +936,15 @@ impl Agent<AgentCtx> for AndaBot {
                     let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                     let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
                     session.request_meta.set(meta);
+                    let control = matches!(
+                        input.command,
+                        PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+                    );
                     match session.sender.send(input).await {
                         Ok(_) => {
+                            if control {
+                                session.control.request();
+                            }
                             return Ok(AgentOutput {
                                 conversation: (response_conversation_id > 0)
                                     .then_some(response_conversation_id),
@@ -962,6 +967,7 @@ impl Agent<AgentCtx> for AndaBot {
 
             if instructions.is_none() {
                 drop(guard);
+                available_tools = available_tool_names(&ctx).await;
                 instructions = Some(
                     self.build_system_instructions(
                         &ctx,
@@ -1028,7 +1034,7 @@ impl Agent<AgentCtx> for AndaBot {
                     && let Some(conversation) = current_conversation.as_mut()
                 {
                     self.complete_conversation_if_unfinished(conversation, now_ms)
-                        .await;
+                        .await?;
                 }
 
                 let Some(prompt) = prompt else {
@@ -1162,7 +1168,7 @@ impl Agent<AgentCtx> for AndaBot {
                 if conversation.status == ConversationStatus::Failed {
                     conversation.status = ConversationStatus::Completed;
                 }
-                self.persist_conversation_state(&conversation).await;
+                self.persist_conversation_state(&conversation).await?;
             }
 
             conv._id = conv_id;
@@ -1551,7 +1557,7 @@ mod tests {
             )
             .route(
                 "/v1/anda_bot/formation",
-                routing::post(|| async { axum::Json(json!({"result": {"content": ""}})) }),
+                routing::post(|| async { axum::Json(json!({"result": AgentOutput::default()})) }),
             )
             .route(
                 "/v1/anda_bot/formation_status",

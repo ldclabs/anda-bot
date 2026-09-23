@@ -9,7 +9,7 @@ use anda_core::{
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
     extension::shell::{ExecArgs, ExecOutput, ShellTool},
-    hook::{AgentHook, BackgroundHandle, ToolHook},
+    hook::{AgentHook, BackgroundHandle, BackgroundTaskControls, ToolHook},
 };
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -76,6 +76,8 @@ pub struct SessionState {
 }
 
 pub(super) struct Session {
+    pub(super) control: SessionControl,
+    pub(super) background_controls: BackgroundTaskControls,
     pub(super) memory_policy: super::memory_policy::MemoryPolicy,
     pub(super) id: Xid,
     pub(super) caller: String,
@@ -101,6 +103,37 @@ pub(super) struct Session {
     // is owned by the session task, so the idle monitor reads this flag.
     pub(super) runner_idle: AtomicBool,
     pub(super) formation_context: Option<InputContext>,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct SessionControl {
+    pending: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl SessionControl {
+    pub(super) fn request(&self) {
+        self.pending.store(true, Ordering::SeqCst);
+        self.notify.notify_one();
+    }
+
+    pub(super) fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn reset(&self) {
+        self.pending.store(false, Ordering::SeqCst);
+    }
+
+    pub(super) async fn interrupted(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.pending.load(Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -181,6 +214,17 @@ fn background_shell_end_prompt(
 }
 
 impl Session {
+    async fn record_agent_artifacts(ctx: &AgentCtx, output: &mut AgentOutput) {
+        if let Some(artifacts) = ctx
+            .base
+            .get_state::<crate::engine::resources::SessionArtifacts>()
+            && let Err(error) = artifacts.record(ctx.caller(), &mut output.artifacts).await
+        {
+            output
+                .content
+                .push_str(&format!("\nFailed to save background artifacts: {error}"));
+        }
+    }
     // A live session is idle when its completion runner has no pending work
     // and no background tasks are running.
     pub(super) fn is_idle(&self) -> bool {
@@ -216,6 +260,32 @@ impl Session {
             progress_outputs.remove(&subagent_background_output_key(task_id));
             progress_outputs.remove(&shell_background_output_key(task_id));
         }
+        for handle in self.background_controls.handles() {
+            handle.stop();
+        }
+    }
+
+    fn background_agent_usage(&self, task_id: &str, current: &Usage, ended: bool) -> Option<Usage> {
+        let mut tasks = self.background_tasks.write();
+        let task = tasks.get_mut(task_id)?;
+        if task.stopped {
+            if ended {
+                tasks.remove(task_id);
+            }
+            return None;
+        }
+        let previous = &mut task.reported_usage;
+        let delta = Usage {
+            input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
+            output_tokens: current.output_tokens.saturating_sub(previous.output_tokens),
+            cached_tokens: current.cached_tokens.saturating_sub(previous.cached_tokens),
+            requests: current.requests.saturating_sub(previous.requests),
+        };
+        previous.accumulate(&delta);
+        if ended {
+            tasks.remove(task_id);
+        }
+        Some(delta)
     }
 
     pub(super) fn summary(&self, now_ms: u64) -> SessionSummary {
@@ -262,6 +332,21 @@ impl CompletionHook for Session {
 
 #[async_trait]
 impl AgentHook for Session {
+    async fn after_agent_run(
+        &self,
+        ctx: &AgentCtx,
+        mut output: AgentOutput,
+    ) -> Result<AgentOutput, BoxError> {
+        if let Some(artifacts) = ctx
+            .base
+            .get_state::<crate::engine::resources::SessionArtifacts>()
+        {
+            artifacts
+                .record(ctx.caller(), &mut output.artifacts)
+                .await?;
+        }
+        Ok(output)
+    }
     async fn before_agent_run(
         &self,
         _ctx: &AgentCtx,
@@ -287,23 +372,25 @@ impl AgentHook for Session {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         self.background_progress_outputs
             .write()
             .remove(&subagent_background_output_key(session_id));
+        self.background_controls.register(handle);
     }
 
     async fn on_background_progress(
         &self,
         ctx: &AgentCtx,
         session_id: String,
-        output: AgentOutput,
+        mut output: AgentOutput,
     ) {
         if self.is_background_task_stopped(&session_id) {
             return;
         }
-
+        Self::record_agent_artifacts(ctx, &mut output).await;
         let prompt = if !output.content.is_empty() {
             self.background_progress_outputs.write().insert(
                 subagent_background_output_key(&session_id),
@@ -327,30 +414,31 @@ impl AgentHook for Session {
         } else {
             return;
         };
+        let Some(usage) = self.background_agent_usage(&session_id, &output.usage, false) else {
+            return;
+        };
         self.sender
             .send(ConversationInput {
                 command: PromptCommand::Plain { prompt },
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
-                usage: output.usage,
+                usage,
             })
             .await
             .ok();
     }
 
-    async fn on_background_end(&self, ctx: &AgentCtx, session_id: String, output: AgentOutput) {
-        let stopped = self
-            .background_tasks
-            .write()
-            .remove(&session_id)
-            .is_some_and(|task| task.stopped);
+    async fn on_background_end(&self, ctx: &AgentCtx, session_id: String, mut output: AgentOutput) {
+        self.background_controls.finish(&session_id);
+        let usage = self.background_agent_usage(&session_id, &output.usage, true);
         let last_progress_content = self
             .background_progress_outputs
             .write()
             .remove(&subagent_background_output_key(&session_id));
-        if stopped {
+        let Some(usage) = usage else {
             return;
-        }
+        };
+        Self::record_agent_artifacts(ctx, &mut output).await;
 
         let prompt =
             subagent_final_output_prompt(&session_id, &output, last_progress_content.as_deref());
@@ -359,7 +447,7 @@ impl AgentHook for Session {
                 command: PromptCommand::Plain { prompt },
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
-                usage: output.usage,
+                usage,
             })
             .await
             .ok();
@@ -381,11 +469,13 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 tool_name: Some(ShellTool::NAME.to_string()),
                 progress_message: None,
                 stopped: false,
+                reported_usage: Usage::default(),
             },
         );
         self.background_progress_outputs
             .write()
             .remove(&shell_background_output_key(task_id));
+        self.background_controls.register(handle);
     }
 
     async fn on_background_progress(
@@ -427,6 +517,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         task_id: String,
         output: ToolOutput<ExecOutput>,
     ) {
+        self.background_controls.finish(&task_id);
         let stopped = self
             .background_tasks
             .write()
@@ -462,6 +553,8 @@ pub struct BackgroundTaskInfo {
     pub progress_message: Option<String>,
     #[serde(default)]
     pub stopped: bool,
+    #[serde(default)]
+    pub reported_usage: Usage,
 }
 
 #[derive(Default, Clone)]
@@ -500,6 +593,8 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(1));
         let session = Session {
+            control: Default::default(),
+            background_controls: Default::default(),
             memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),
@@ -603,6 +698,8 @@ mod tests {
         let session_id = Xid::new();
         let conversation_id = Arc::new(AtomicU64::new(3));
         let session = Session {
+            control: Default::default(),
+            background_controls: Default::default(),
             memory_policy: Default::default(),
             id: session_id.clone(),
             caller: "caller".to_string(),

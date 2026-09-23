@@ -125,6 +125,37 @@ impl ActionRuntime {
         self.pending.lock().await.remove(action_id)
     }
 
+    async fn cancel_session(&self, session: &str) -> Vec<ActionEvent> {
+        let pending = {
+            let mut actions = self.pending.lock().await;
+            let ids = actions
+                .iter()
+                .filter(|(_, action)| action.session == session)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            ids.into_iter()
+                .filter_map(|id| actions.remove(&id))
+                .collect::<Vec<_>>()
+        };
+        pending
+            .into_iter()
+            .map(|action| {
+                let response = ActionResponse {
+                    status: ActionStatus::Denied,
+                    payload: json!({"reason": "task stopped"}),
+                };
+                let event = ActionEvent::Resolve {
+                    action_id: action.action_id,
+                    status: response.status,
+                    response: response.payload.clone(),
+                    responded_at: unix_ms(),
+                };
+                let _ = action.tx.send(response);
+                event
+            })
+            .collect()
+    }
+
     pub(crate) async fn respond(
         &self,
         caller: &str,
@@ -200,6 +231,10 @@ impl ActionSession {
             models,
             home_dir,
         }
+    }
+
+    pub(crate) async fn cancel_pending(&self) -> Vec<ActionEvent> {
+        self.runtime.cancel_session(&self.session_id).await
     }
 
     pub(crate) async fn request_shell_approval(
@@ -363,14 +398,40 @@ impl ActionSession {
         payload: Value,
         what: &str,
     ) -> Result<(), BoxError> {
-        let message = action_message(TOOL_APPROVAL_ACTION, payload);
+        let response = self
+            .publish_and_wait(
+                action_id,
+                conversation,
+                PendingActionKind::Approval { approved_payload },
+                action_message(TOOL_APPROVAL_ACTION, payload),
+                what,
+                "approval",
+            )
+            .await?;
+        if response.status == ActionStatus::Approved {
+            Ok(())
+        } else {
+            Err(action_denied_error(&response.payload))
+        }
+    }
+
+    async fn publish_and_wait(
+        &self,
+        action_id: String,
+        conversation: u64,
+        kind: PendingActionKind,
+        message: Message,
+        what: &str,
+        timeout_kind: &str,
+    ) -> Result<ActionResponse, BoxError> {
         let rx = self
             .runtime
             .register(PendingAction {
+                session: self.session_id.clone(),
                 action_id: action_id.clone(),
                 caller: self.caller.clone(),
                 conversation,
-                kind: PendingActionKind::Approval { approved_payload },
+                kind,
                 event_sender: self.event_sender.clone(),
                 tx: oneshot::channel().0,
             })
@@ -382,27 +443,24 @@ impl ActionSession {
             .is_err()
         {
             self.runtime.expire(&action_id).await;
-            return Err(format!("failed to publish {what} approval request").into());
+            return Err(format!("failed to publish {what} request").into());
         }
-
         match tokio::time::timeout(ACTION_RESPONSE_TIMEOUT, rx).await {
-            Ok(Ok(response)) if response.status == ActionStatus::Approved => Ok(()),
-            Ok(Ok(response)) => Err(action_denied_error(&response.payload)),
-            Ok(Err(_)) => Err(format!("{what} approval was cancelled").into()),
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(format!("{what} was cancelled").into()),
             Err(_) => {
                 if let Some(pending) = self.runtime.expire(&action_id).await {
-                    let response = json!({"reason": "approval timed out"});
                     let _ = pending
                         .event_sender
                         .send(ActionEvent::Resolve {
                             action_id,
                             status: ActionStatus::Expired,
-                            response,
+                            response: json!({"reason": format!("{timeout_kind} timed out")}),
                             responded_at: unix_ms(),
                         })
                         .await;
                 }
-                Err(format!("{what} approval timed out").into())
+                Err(format!("{what} timed out").into())
             }
         }
     }
@@ -431,51 +489,26 @@ impl ActionSession {
             ..Default::default()
         };
         let message = action_message(USER_CHOICE_ACTION, payload.into_value());
-        let rx = self
-            .runtime
-            .register(PendingAction {
-                action_id: action_id.clone(),
-                caller: self.caller.clone(),
+        let response = self
+            .publish_and_wait(
+                action_id,
                 conversation,
-                kind: PendingActionKind::Choice { choices },
-                event_sender: self.event_sender.clone(),
-                tx: oneshot::channel().0,
-            })
-            .await;
-        if self
-            .event_sender
-            .send(ActionEvent::Add(message))
-            .await
-            .is_err()
-        {
-            self.runtime.expire(&action_id).await;
-            return Err("failed to publish user choice request".into());
-        }
-
-        match tokio::time::timeout(ACTION_RESPONSE_TIMEOUT, rx).await {
-            Ok(Ok(response)) if response.status == ActionStatus::Selected => Ok(response.payload),
-            Ok(Ok(response)) => Err(action_denied_error(&response.payload)),
-            Ok(Err(_)) => Err("user choice was cancelled".into()),
-            Err(_) => {
-                if let Some(pending) = self.runtime.expire(&action_id).await {
-                    let response = json!({"reason": "choice timed out"});
-                    let _ = pending
-                        .event_sender
-                        .send(ActionEvent::Resolve {
-                            action_id,
-                            status: ActionStatus::Expired,
-                            response,
-                            responded_at: unix_ms(),
-                        })
-                        .await;
-                }
-                Err("user choice timed out".into())
-            }
+                PendingActionKind::Choice { choices },
+                message,
+                "user choice",
+                "choice",
+            )
+            .await?;
+        if response.status == ActionStatus::Selected {
+            Ok(response.payload)
+        } else {
+            Err(action_denied_error(&response.payload))
         }
     }
 }
 
 struct PendingAction {
+    session: String,
     action_id: String,
     caller: String,
     conversation: u64,
@@ -1303,6 +1336,7 @@ mod tests {
         let action_id = "act_retry".to_string();
         let rx = runtime
             .register(PendingAction {
+                session: "test".to_string(),
                 action_id: action_id.clone(),
                 caller: "caller".to_string(),
                 conversation: 42,
@@ -1367,5 +1401,43 @@ mod tests {
         };
         assert_eq!(action_id, "act_retry");
         assert_eq!(status, ActionStatus::Selected);
+    }
+
+    #[tokio::test]
+    async fn cancelling_session_resolves_pending_approval_and_rejects_late_response() {
+        let runtime = ActionRuntime::new();
+        let (event_sender, _event_rx) = mpsc::channel(4);
+        let rx = runtime
+            .register(PendingAction {
+                session: "cancelled-session".into(),
+                action_id: "cancelled-action".into(),
+                caller: "caller".into(),
+                conversation: 1,
+                kind: PendingActionKind::Approval {
+                    approved_payload: json!({}),
+                },
+                event_sender,
+                tx: oneshot::channel().0,
+            })
+            .await;
+        let events = runtime.cancel_session("cancelled-session").await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(rx.await.unwrap().status, ActionStatus::Denied);
+        assert!(
+            runtime
+                .respond(
+                    "caller",
+                    1,
+                    ActionResponseArgs {
+                        action_id: "cancelled-action".into(),
+                        approve: Some(true),
+                        choice_id: None,
+                        choice_text: None,
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert!(runtime.pending.lock().await.is_empty());
     }
 }

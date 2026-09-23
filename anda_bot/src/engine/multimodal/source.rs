@@ -215,7 +215,13 @@ pub(super) async fn resolve_media_path(
     }
 
     let workspaces = workspaces_from_meta(meta, defaults);
-    if workspaces.is_empty() {
+    let mut allowed_roots = Vec::new();
+    for root in defaults {
+        if let Ok(root) = tokio::fs::canonicalize(root).await {
+            allowed_roots.push(root);
+        }
+    }
+    if allowed_roots.is_empty() {
         return Err("no workspace is configured for media file access".into());
     }
 
@@ -228,6 +234,13 @@ pub(super) async fn resolve_media_path(
                 continue;
             }
         };
+        if !allowed_roots.iter().any(|root| workspace.starts_with(root)) {
+            errors.push(format!(
+                "{} is not an authorized workspace",
+                workspace.display()
+            ));
+            continue;
+        }
         let candidate = if requested.is_absolute() {
             requested.clone()
         } else {
@@ -752,6 +765,25 @@ mod tests {
         assert_eq!(
             mime_type_for_data_or_path(&png, Path::new("x.bin"), "fallback"),
             "image/png"
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_cannot_expand_allowed_roots() {
+        let temp = tempdir().unwrap();
+        let allowed = temp.path().join("allowed");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&allowed).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let file = outside.join("image.png");
+        fs::write(&file, PNG_SIGNATURE).unwrap();
+        let mut meta = RequestMeta::default();
+        meta.extra
+            .insert("workspace".into(), serde_json::json!(outside));
+        let result = resolve_media_path(&meta, &[allowed], file.to_str().unwrap()).await;
+        assert!(
+            result.is_err(),
+            "request metadata authorized a directory outside configured roots"
         );
     }
 }

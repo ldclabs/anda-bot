@@ -62,6 +62,7 @@ use crate::{
     util::http_client::{NO_PROXY, build_http_client},
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
+use resources::record_artifacts;
 
 pub(crate) use action::{
     ActionApiOutput, ActionDetail, ActionEvent, ActionRuntime, ActionSession, ActionStatus,
@@ -575,14 +576,22 @@ impl Engines {
             )
             .with_memory_access(memory_access.clone()),
         );
-        let image_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::image(cfg.workspaces.clone()));
-        let audio_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::audio(cfg.workspaces.clone()));
-        let video_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::video(cfg.workspaces.clone()));
-        let other_understanding_agent =
-            Arc::new(MediaUnderstandingAgent::other(cfg.workspaces.clone()));
+        let image_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::image(cfg.workspaces.clone())
+                .with_cli_workspaces(cli_workspaces.clone()),
+        );
+        let audio_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::audio(cfg.workspaces.clone())
+                .with_cli_workspaces(cli_workspaces.clone()),
+        );
+        let video_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::video(cfg.workspaces.clone())
+                .with_cli_workspaces(cli_workspaces.clone()),
+        );
+        let other_understanding_agent = Arc::new(
+            MediaUnderstandingAgent::other(cfg.workspaces.clone())
+                .with_cli_workspaces(cli_workspaces.clone()),
+        );
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager
                 .as_ref()
@@ -636,77 +645,87 @@ impl Engines {
             .with_management(management)
             .with_models(cfg.models.clone())
             .with_subagent_conversations(subagent_conversations)
-            .register_tool(Arc::new(brain_client.clone()))?
-            .register_tool(Arc::new(shell_tool))?
-            .register_tool(Arc::new(ActionsTool::new(bot.action_runtime())))?
-            .register_tool(Arc::new(AskUserChoiceTool))?
-            .register_tool(Arc::new(
+            .register_tool(record_artifacts(Arc::new(brain_client.clone())))?
+            .register_tool(record_artifacts(Arc::new(shell_tool)))?
+            .register_tool(record_artifacts(Arc::new(ActionsTool::new(
+                bot.action_runtime(),
+            ))))?
+            .register_tool(record_artifacts(Arc::new(AskUserChoiceTool)))?
+            .register_tool(record_artifacts(Arc::new(
                 MemoryPolicyTool::new(Arc::new(note::NoteTool::new()))
                     .with_access(memory_access.clone()),
-            ))?
-            .register_tool(Arc::new(GoalTool::new()))?
-            .register_tool(Arc::new(todo::TodoTool::new()))?
-            .register_tool(Arc::new(fs::ReadFileTool::with_workspaces(
-                cfg.workspaces.clone(),
             )))?
-            .register_tool(Arc::new(fs::SearchFileTool::with_workspaces(
-                cfg.workspaces.clone(),
+            .register_tool(record_artifacts(Arc::new(GoalTool::new())))?
+            .register_tool(record_artifacts(Arc::new(todo::TodoTool::new())))?
+            .register_tool(record_artifacts(Arc::new(
+                fs::ReadFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?
-            .register_tool(Arc::new(fs::EditFileTool::with_workspaces(
-                cfg.workspaces.clone(),
+            .register_tool(record_artifacts(Arc::new(
+                fs::SearchFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?
-            .register_tool(Arc::new(fs::WriteFileTool::with_workspaces(
-                cfg.workspaces.clone(),
+            .register_tool(record_artifacts(Arc::new(
+                fs::EditFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?
-            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+            .register_tool(record_artifacts(Arc::new(
+                fs::WriteFileTool::with_workspaces(cfg.workspaces.clone()),
+            )))?
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
                 cron::CreateCronTool::new(cron_runtime.clone()),
+            )))))?
+            .register_tool(record_artifacts(Arc::new(cron::ListCronJobsTool::new(
+                cron_runtime.clone(),
             ))))?
-            .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))?
-            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
                 cron::UpdateCronJobTool::new(cron_runtime.clone()),
-            ))))?
-            .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
+            )))))?
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
                 cron::ManageCronJobTool::new(cron_runtime.clone()),
+            )))))?
+            .register_tool(record_artifacts(Arc::new(cron::ListCronRunsTool::new(
+                cron_runtime,
             ))))?
-            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime)))?
-            .register_tool(browser_tabs_tool)?
-            .register_tool(browser_page_tool)?
-            .register_tool(browser_input_tool)?
-            .register_tool(browser_script_tool)?
-            .register_tool(skills_tool.clone())?
-            .register_tool(skill_library.clone())?
-            .register_tool(add_mcp_server_tool)?
-            .register_tool(connect_mcp_server_tool)?
-            .register_tool(resource_store.clone())?
-            .register_tool(conversations_tool.clone())?
-            .register_tool(Arc::new(MemoryPolicyTool::new(bookmarks_tool.clone())))?
-            .register_tool(bot.clone())?;
+            .register_tool(record_artifacts(browser_tabs_tool))?
+            .register_tool(record_artifacts(browser_page_tool))?
+            .register_tool(record_artifacts(browser_input_tool))?
+            .register_tool(record_artifacts(browser_script_tool))?
+            .register_tool(record_artifacts(skills_tool.clone()))?
+            .register_tool(record_artifacts(skill_library.clone()))?
+            .register_tool(record_artifacts(add_mcp_server_tool))?
+            .register_tool(record_artifacts(connect_mcp_server_tool))?
+            .register_tool(record_artifacts(resource_store.clone()))?
+            .register_tool(record_artifacts(conversations_tool.clone()))?
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(
+                bookmarks_tool.clone(),
+            ))))?
+            .register_tool(record_artifacts(bot.clone()))?;
 
         for operation in [
             brain::RuntimeOperation::Attention,
             brain::RuntimeOperation::Respond,
             brain::RuntimeOperation::Status,
         ] {
-            engine_builder = engine_builder.register_tool(Arc::new(brain::RuntimeTool::new(
-                brain_host.clone(),
-                operation,
+            engine_builder = engine_builder.register_tool(record_artifacts(Arc::new(
+                brain::RuntimeTool::new(brain_host.clone(), operation),
             )))?;
         }
 
         if let Some(manager) = tts_manager {
-            engine_builder = engine_builder.register_tool(manager)?;
+            engine_builder = engine_builder.register_tool(record_artifacts(manager))?;
         }
         if let Some(manager) = transcription_manager {
-            engine_builder = engine_builder.register_tool(manager)?;
+            engine_builder = engine_builder.register_tool(record_artifacts(manager))?;
         }
         if !channel_sender.is_empty() {
             engine_builder = engine_builder
-                .register_tool(Arc::new(channel::SendImMessageTool::new(
+                .register_tool(record_artifacts(Arc::new(channel::SendImMessageTool::new(
                     channel_sender.clone(),
-                )))?
-                .register_tool(Arc::new(channel::ListImChannelsTool::new(channel_sender)))?;
+                ))))?
+                .register_tool(record_artifacts(Arc::new(
+                    channel::ListImChannelsTool::new(channel_sender),
+                )))?;
         }
-        engine_builder = engine_builder.register_tool_provider(mcp_provider)?;
+        engine_builder = engine_builder
+            .register_tool_provider(Arc::new(resources::ArtifactProvider(mcp_provider)))?;
 
         let engine = engine_builder
             .register_agent(

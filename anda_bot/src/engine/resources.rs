@@ -1,6 +1,6 @@
 use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
-    BoxError, FunctionDefinition, Principal, Resource, ResourceRef, StateFeatures, Tool,
+    BoxError, FunctionDefinition, Json, Principal, Resource, ResourceRef, StateFeatures, Tool,
     ToolOutput, update_resources,
 };
 use anda_db::{
@@ -14,7 +14,147 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anda_core::{BoxFut, ToolGroup, ToolGroupInfo, ToolInput, ToolProvider};
 use anda_engine::{context::BaseCtx, unix_ms};
+use parking_lot::RwLock;
+use std::collections::BTreeMap;
+
+/// Capture tool/agent artifacts at the execution boundary. Unbound runners only
+/// expose their accumulated artifacts when finalized, which is too late for an
+/// interactive conversation. Children inherit this collector and returned
+/// artifacts keep their blobs while gaining stable resource IDs.
+#[derive(Clone)]
+pub(crate) struct SessionArtifacts {
+    store: Arc<ResourceStore>,
+    pending: Arc<RwLock<BTreeMap<u64, Resource>>>,
+}
+
+impl SessionArtifacts {
+    pub(crate) fn new(store: Arc<ResourceStore>) -> Self {
+        Self {
+            store,
+            pending: Arc::default(),
+        }
+    }
+
+    pub(crate) async fn record(
+        &self,
+        caller: &Principal,
+        artifacts: &mut [Resource],
+    ) -> Result<(), BoxError> {
+        if artifacts.is_empty() {
+            return Ok(());
+        }
+        let saved = self
+            .store
+            .persist_resources(caller, artifacts.to_vec())
+            .await?;
+        let mut pending = self.pending.write();
+        for (artifact, saved) in artifacts.iter_mut().zip(saved) {
+            let blob = artifact.blob.take();
+            *artifact = saved.clone();
+            artifact.blob = blob;
+            pending.insert(saved._id, saved);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take(&self) -> Vec<Resource> {
+        std::mem::take(&mut *self.pending.write())
+            .into_values()
+            .collect()
+    }
+}
+
+/// Engine-level hooks do not wrap model-internal dispatch in anda_engine 0.16.
+/// Register artifact capture on the callable itself so both paths behave alike.
+pub(crate) fn record_artifacts<T>(tool: Arc<T>) -> Arc<ArtifactTool<T>> {
+    Arc::new(ArtifactTool(tool))
+}
+
+pub(crate) struct ArtifactTool<T>(Arc<T>);
+impl<T: Tool<BaseCtx>> Tool<BaseCtx> for ArtifactTool<T>
+where
+    T::Output: Send,
+{
+    type Args = T::Args;
+    type Output = T::Output;
+    fn name(&self) -> String {
+        self.0.name()
+    }
+    fn description(&self) -> String {
+        self.0.description()
+    }
+    fn definition(&self) -> FunctionDefinition {
+        self.0.definition()
+    }
+    fn group(&self) -> Option<ToolGroupInfo> {
+        self.0.group()
+    }
+    fn supported_resource_tags(&self) -> Vec<String> {
+        self.0.supported_resource_tags()
+    }
+    async fn init(&self, ctx: BaseCtx) -> Result<(), BoxError> {
+        self.0.init(ctx).await
+    }
+    async fn call(
+        &self,
+        ctx: BaseCtx,
+        args: Self::Args,
+        resources: Vec<Resource>,
+    ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let mut output = self.0.call(ctx.clone(), args, resources).await?;
+        if let Some(artifacts) = ctx.get_state::<SessionArtifacts>() {
+            artifacts
+                .record(ctx.caller(), &mut output.artifacts)
+                .await?;
+        }
+        Ok(output)
+    }
+}
+
+pub(crate) struct ArtifactProvider<T>(pub Arc<T>);
+impl<T: ToolProvider<BaseCtx>> ToolProvider<BaseCtx> for ArtifactProvider<T> {
+    fn name(&self) -> String {
+        self.0.name()
+    }
+    fn definitions(&self, names: Option<&[String]>) -> Vec<FunctionDefinition> {
+        self.0.definitions(names)
+    }
+    fn groups(&self) -> Vec<ToolGroup> {
+        self.0.groups()
+    }
+    fn contains_lowercase(&self, name: &str) -> bool {
+        self.0.contains_lowercase(name)
+    }
+    fn supported_resource_tags(&self, name: &str) -> Vec<String> {
+        self.0.supported_resource_tags(name)
+    }
+    fn select_resources(&self, name: &str, resources: &mut Vec<Resource>) -> Vec<Resource> {
+        self.0.select_resources(name, resources)
+    }
+    fn init(&self, ctx: BaseCtx) -> BoxFut<'_, Result<(), BoxError>> {
+        self.0.init(ctx)
+    }
+    fn refresh(&self) -> BoxFut<'_, Result<(), BoxError>> {
+        self.0.refresh()
+    }
+    fn call(
+        &self,
+        ctx: BaseCtx,
+        input: ToolInput<Json>,
+    ) -> BoxFut<'_, Result<ToolOutput<Json>, BoxError>> {
+        Box::pin(async move {
+            let mut output = self.0.call(ctx.clone(), input).await?;
+            if let Some(artifacts) = ctx.get_state::<SessionArtifacts>() {
+                artifacts
+                    .record(ctx.caller(), &mut output.artifacts)
+                    .await?;
+            }
+            Ok(output)
+        })
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -588,5 +728,32 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("permission denied"));
+    }
+
+    #[tokio::test]
+    async fn session_artifacts_preserve_blobs_and_deduplicate_repeated_outputs() {
+        let db = crate::test_support::memory_db("artifact_capture").await;
+        let store = Arc::new(ResourceStore::connect(db).await.unwrap());
+        let collector = SessionArtifacts::new(store.clone());
+        let owner = Principal::from_slice(&[8]);
+        let mut artifacts = vec![Resource {
+            name: "result.txt".into(),
+            blob: Some(anda_core::ByteBufB64(b"result".to_vec())),
+            ..Default::default()
+        }];
+        collector.record(&owner, &mut artifacts).await.unwrap();
+        let id = artifacts[0]._id;
+        collector.record(&owner, &mut artifacts).await.unwrap();
+        assert_ne!(id, 0);
+        assert_eq!(artifacts[0]._id, id);
+        assert!(artifacts[0].blob.is_some());
+        let pending = collector.take();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].blob.is_none());
+        assert!(collector.take().is_empty());
+        assert_eq!(
+            store.get_resource(id).await.unwrap().blob,
+            artifacts[0].blob
+        );
     }
 }

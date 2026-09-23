@@ -101,7 +101,17 @@ impl<T: anda_core::Agent<AgentCtx>> anda_core::Agent<AgentCtx> for MemoryPolicyA
         if !MemoryPolicy::current(&ctx.base).may_write() {
             return Err("Nested agents are unavailable in restricted memory mode.".into());
         }
-        self.0.run(ctx, prompt, resources).await
+        let mut output = self.0.run(ctx.clone(), prompt, resources).await?;
+        if let Some(artifacts) = ctx
+            .base
+            .get_state::<crate::engine::resources::SessionArtifacts>()
+        {
+            use anda_core::StateFeatures;
+            artifacts
+                .record(ctx.caller(), &mut output.artifacts)
+                .await?;
+        }
+        Ok(output)
     }
 }
 

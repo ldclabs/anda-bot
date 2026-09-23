@@ -440,22 +440,28 @@ impl SkillLibrary {
             .collect()
     }
 
-    pub fn get_skill_detail(&self, id: &str) -> Result<ManagedSkillDetail, BoxError> {
+    pub async fn get_skill_detail(&self, id: &str) -> Result<ManagedSkillDetail, BoxError> {
         let tools_usage = (self.tools_usage_reader)();
-        self.record_by_id(id)
-            .map(|record| ManagedSkillDetail {
-                files: list_skill_files(&record.base_dir).unwrap_or_default(),
-                content: record.content,
-                skill: attach_usage(record.managed, &tools_usage),
-            })
-            .ok_or_else(|| format!("skill not found: {id}").into())
-    }
-
-    pub fn get_skill_file(&self, id: &str, path: &str) -> Result<SkillFileContent, BoxError> {
         let record = self
             .record_by_id(id)
             .ok_or_else(|| format!("skill not found: {id}"))?;
-        read_skill_file(id, &record.base_dir, path)
+        tokio::task::spawn_blocking(move || {
+            Ok(ManagedSkillDetail {
+                files: list_skill_files(&record.base_dir)?,
+                content: record.content,
+                skill: attach_usage(record.managed, &tools_usage),
+            })
+        })
+        .await?
+    }
+
+    pub async fn get_skill_file(&self, id: &str, path: &str) -> Result<SkillFileContent, BoxError> {
+        let record = self
+            .record_by_id(id)
+            .ok_or_else(|| format!("skill not found: {id}"))?;
+        let id = id.to_string();
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || read_skill_file(&id, &record.base_dir, &path)).await?
     }
 
     pub async fn reload(&self) -> Result<Vec<ManagedSkill>, BoxError> {
@@ -489,7 +495,7 @@ impl SkillLibrary {
         atomic_write_text(&target_dir.join("SKILL.md"), &content).await?;
         let manifest = self.load_manifest().await?;
         self.reload_locked(manifest).await?;
-        self.get_skill_detail(&personal_skill_id(&name))
+        self.get_skill_detail(&personal_skill_id(&name)).await
     }
 
     pub async fn update_skill(
@@ -506,7 +512,8 @@ impl SkillLibrary {
             return Err("only Personal skills can be updated from the Dashboard".into());
         }
         if let Some(expected_version) = expected_version
-            && expected_version != record.managed.version
+            && expected_version
+                != content_version_bytes(&tokio::fs::read(record.base_dir.join("SKILL.md")).await?)
         {
             return Err("skill changed on disk; reload before saving again".into());
         }
@@ -527,7 +534,7 @@ impl SkillLibrary {
         atomic_write_text(&record.base_dir.join("SKILL.md"), &content).await?;
         let manifest = self.load_manifest().await?;
         self.reload_locked(manifest).await?;
-        self.get_skill_detail(&id)
+        self.get_skill_detail(&id).await
     }
 
     pub async fn clone_skill(
@@ -544,12 +551,19 @@ impl SkillLibrary {
         };
         let new_name = match new_name {
             Some(name) => normalize_skill_name(name)?,
-            None => self.available_clone_name(&record.managed.name),
+            None => {
+                let this = self.clone();
+                let name = record.managed.name.clone();
+                tokio::task::spawn_blocking(move || this.available_clone_name(&name)).await?
+            }
         };
         let target_dir = self.personal_dir.join(&new_name);
         self.ensure_new_personal_skill_dir(&target_dir).await?;
 
-        copy_dir_regular_files(&record.base_dir, &target_dir)?;
+        let source = record.base_dir.clone();
+        let destination = target_dir.clone();
+        tokio::task::spawn_blocking(move || copy_dir_regular_files(&source, &destination))
+            .await??;
         parsed.frontmatter.name = new_name.clone();
         parsed.frontmatter.metadata.insert(
             "anda".to_string(),
@@ -564,7 +578,7 @@ impl SkillLibrary {
 
         let manifest = self.load_manifest().await?;
         self.reload_locked(manifest).await?;
-        self.get_skill_detail(&personal_skill_id(&new_name))
+        self.get_skill_detail(&personal_skill_id(&new_name)).await
     }
 
     pub async fn set_skill_enabled(
@@ -653,17 +667,17 @@ impl SkillLibrary {
 
         // Hand the registry the one decision it cannot make for itself, then let it
         // reload. `SkillManager` already resolves duplicate names by directory
-        // priority and drops what it cannot parse; only the manifest's disabled set
-        // lives up here. Rejecting a disabled copy also promotes the next directory's
+        // priority and drops what it cannot parse; host diagnostics and the manifest's disabled set
+        // live up here. Rejecting a disabled copy also promotes the next directory's
         // copy of that name, which is what the Dashboard switch is expected to do.
-        let disabled_dirs: BTreeSet<PathBuf> = records
+        let rejected_dirs: BTreeSet<PathBuf> = records
             .iter()
-            .filter(|record| record.managed.disabled)
+            .filter(|record| record.managed.disabled || record.managed.has_error())
             .map(|record| record.base_dir.clone())
             .collect();
         self.skill_manager
             .set_skill_filter(Some(Arc::new(move |skill: &Skill| {
-                !disabled_dirs.contains(&skill.base_dir)
+                !rejected_dirs.contains(&skill.base_dir)
             })));
 
         *self.state.write() = SkillLibraryState { records };
@@ -804,7 +818,7 @@ impl SkillLibrary {
                             "SKILL.md must be readable as UTF-8 or the platform text encoding",
                         )),
                     }
-                    return build_record(RecordBuildInput {
+                    let input = RecordBuildInput {
                         source,
                         path,
                         base_dir,
@@ -815,7 +829,8 @@ impl SkillLibrary {
                         size,
                         updated_at,
                         version,
-                    });
+                    };
+                    return build_record_async(input).await;
                 }
                 Err(err) => diagnostics.push(SkillDiagnostic::error(
                     "read_failed",
@@ -824,7 +839,7 @@ impl SkillLibrary {
             }
         }
 
-        build_record(RecordBuildInput {
+        build_record_async(RecordBuildInput {
             source,
             path,
             base_dir,
@@ -836,6 +851,7 @@ impl SkillLibrary {
             updated_at,
             version: content_version(&content),
         })
+        .await
     }
 
     async fn load_manifest(&self) -> Result<SkillManifest, BoxError> {
@@ -897,7 +913,10 @@ impl SkillLibrary {
         if let Some(parent) = backup.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        copy_dir_regular_files(dir, &backup)?;
+        let source = dir.to_path_buf();
+        let destination = backup.clone();
+        tokio::task::spawn_blocking(move || copy_dir_regular_files(&source, &destination))
+            .await??;
         Ok(backup)
     }
 
@@ -955,8 +974,10 @@ impl Tool<BaseCtx> for SkillLibrary {
             SkillsApiArgs::ListSkills { include_inactive } => {
                 json!(self.list_managed_skills(include_inactive))
             }
-            SkillsApiArgs::GetSkill { id } => json!(self.get_skill_detail(&id)?),
-            SkillsApiArgs::GetSkillFile { id, path } => json!(self.get_skill_file(&id, &path)?),
+            SkillsApiArgs::GetSkill { id } => json!(self.get_skill_detail(&id).await?),
+            SkillsApiArgs::GetSkillFile { id, path } => {
+                json!(self.get_skill_file(&id, &path).await?)
+            }
             SkillsApiArgs::CreateSkill {
                 name,
                 description,
@@ -1072,7 +1093,15 @@ struct RecordBuildInput<'a> {
     version: String,
 }
 
-fn build_record(input: RecordBuildInput<'_>) -> SkillRecord {
+async fn build_record_async(input: RecordBuildInput<'_>) -> SkillRecord {
+    let base_dir = input.base_dir.clone();
+    let file_count = tokio::task::spawn_blocking(move || count_skill_files(&base_dir))
+        .await
+        .unwrap_or_default();
+    build_record(input, file_count)
+}
+
+fn build_record(input: RecordBuildInput<'_>, file_count: usize) -> SkillRecord {
     let RecordBuildInput {
         source,
         path,
@@ -1135,7 +1164,7 @@ fn build_record(input: RecordBuildInput<'_>) -> SkillRecord {
             diagnostics,
             updated_at,
             size,
-            file_count: count_skill_files(&base_dir),
+            file_count,
             usage: None,
             version,
         },
@@ -1414,14 +1443,17 @@ fn copy_dir_regular_files(src: &Path, dst: &Path) -> Result<(), BoxError> {
 }
 
 fn count_skill_files(base_dir: &Path) -> usize {
-    list_skill_files(base_dir)
-        .map(|files| {
-            files
-                .iter()
-                .filter(|file| file.kind == SkillFileKind::File)
-                .count()
+    let Ok(entries) = std::fs::read_dir(base_dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_file() => 1,
+            Ok(kind) if kind.is_dir() => count_skill_files(&entry.path()),
+            _ => 0,
         })
-        .unwrap_or(0)
+        .sum()
 }
 
 fn list_skill_files(base_dir: &Path) -> Result<Vec<SkillFileEntry>, BoxError> {
@@ -1705,7 +1737,7 @@ mod tests {
         assert_eq!(summary.cached_tokens, 3);
         assert_eq!(summary.total_tokens, 23);
 
-        let detail = lib.get_skill_detail("personal:learn").unwrap();
+        let detail = lib.get_skill_detail("personal:learn").await.unwrap();
         assert_eq!(detail.skill.usage.unwrap().requests, 3);
         assert_eq!(detail.skill.file_count, 1);
         assert!(
@@ -2054,7 +2086,7 @@ mod tests {
         fs::write(references.join("guide.md"), "# Guide\n").unwrap();
         lib.reload().await.unwrap();
 
-        let detail = lib.get_skill_detail("personal:learn").unwrap();
+        let detail = lib.get_skill_detail("personal:learn").await.unwrap();
         assert_eq!(detail.skill.directory, skill_dir.display().to_string());
         assert_eq!(detail.skill.file_count, 2);
         assert!(
@@ -2072,11 +2104,13 @@ mod tests {
 
         let file = lib
             .get_skill_file("personal:learn", "references/guide.md")
+            .await
             .unwrap();
         assert_eq!(file.path, "references/guide.md");
         assert_eq!(file.content, "# Guide\n");
         assert!(
             lib.get_skill_file("personal:learn", "../outside.md")
+                .await
                 .is_err()
         );
     }
@@ -2159,5 +2193,53 @@ mod tests {
         // The dashboard types the mode as `'inline' | 'subagent'`, so it has to
         // reach the wire as that lowercase word.
         assert_eq!(value["result"][0]["execution"], json!("inline"));
+    }
+
+    #[tokio::test]
+    async fn update_rejects_external_edit() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_skill(&temp.path().join("skills"), "review", "original");
+        lib.reload().await.unwrap();
+        let original = lib.get_skill_detail("personal:review").await.unwrap();
+        fs::write(
+            temp.path().join("skills/review/SKILL.md"),
+            skill_md("review", "external editor changed this"),
+        )
+        .unwrap();
+        let result = lib
+            .update_skill(
+                "personal:review".into(),
+                skill_md("review", "stale dashboard overwrite"),
+                Some(original.skill.version),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "stale dashboard version overwrote an external edit"
+        );
+    }
+    #[tokio::test]
+    async fn invalid_skill_not_callable() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let dir = temp.path().join("skills/wrong-dir");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: actual-name\ndescription: mismatch\nexecution: subagent\n---\nbody\n",
+        )
+        .unwrap();
+        lib.reload().await.unwrap();
+        let skill = lib
+            .list_managed_skills(true)
+            .into_iter()
+            .find(|s| s.name == "actual-name")
+            .unwrap();
+        assert!(!skill.active);
+        assert!(
+            !lib.subagent_set().contains_lowercase("skill_actual_name"),
+            "dashboard-invalid skill is still executable"
+        );
     }
 }

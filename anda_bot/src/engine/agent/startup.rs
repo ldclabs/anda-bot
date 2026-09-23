@@ -218,7 +218,7 @@ impl AndaBot {
         conversation.thread = Some(sess_id.clone());
         conversation.status = ConversationStatus::Working;
         conversation.updated_at = now_ms;
-        self.persist_conversation_state(&conversation).await;
+        self.persist_conversation_state(&conversation).await?;
 
         let (session, rx, action_rx) = self.create_session(
             &ctx,

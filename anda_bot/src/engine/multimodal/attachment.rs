@@ -207,8 +207,9 @@ impl AttachmentUnderstanding {
                     attachment = loaded;
                 }
                 Err(err) => {
-                    attachment.read_error = Some(err.to_string());
-                    return self.fallback(ctx, attachment, question).await;
+                    // A denied location must not be handed to shell as a parser
+                    // fallback, which would undo the workspace/URL boundary.
+                    return Err(err);
                 }
             }
         }
@@ -355,6 +356,16 @@ impl AttachmentUnderstanding {
         attachment: OtherAttachment,
         question: &str,
     ) -> Result<AgentOutput, BoxError> {
+        let mut attachment = attachment;
+        if let Some(uri) = attachment.uri.as_deref()
+            && (is_file_uri(uri) || reqwest::Url::parse(uri).is_err())
+            && resolve_media_path(ctx.meta(), &self.workspaces, uri)
+                .await
+                .is_err()
+        {
+            // An attached blob is usable, but an accompanying path is not a grant.
+            attachment.uri = None;
+        }
         let fallback_file = fallback_other_attachment_file(&attachment).await;
         let prompt = fallback_other_attachment_prompt(question, &attachment, &fallback_file);
         let mut resource = attachment.to_resource();

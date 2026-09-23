@@ -75,6 +75,7 @@ pub struct MediaUnderstandingAgent {
     kind: MediaKind,
     workspaces: Vec<PathBuf>,
     public_url_policy: PublicUrlPolicy,
+    cli_workspaces: Option<super::shell_runtime::CliWorkspaceGrants>,
 }
 
 impl MediaUnderstandingAgent {
@@ -83,6 +84,7 @@ impl MediaUnderstandingAgent {
             kind: MediaKind::Image,
             workspaces,
             public_url_policy: PublicUrlPolicy::PublicOnly,
+            cli_workspaces: None,
         }
     }
 
@@ -91,6 +93,7 @@ impl MediaUnderstandingAgent {
             kind: MediaKind::Audio,
             workspaces,
             public_url_policy: PublicUrlPolicy::PublicOnly,
+            cli_workspaces: None,
         }
     }
 
@@ -99,6 +102,7 @@ impl MediaUnderstandingAgent {
             kind: MediaKind::Video,
             workspaces,
             public_url_policy: PublicUrlPolicy::PublicOnly,
+            cli_workspaces: None,
         }
     }
 
@@ -107,7 +111,24 @@ impl MediaUnderstandingAgent {
             kind: MediaKind::Other,
             workspaces,
             public_url_policy: PublicUrlPolicy::PublicOnly,
+            cli_workspaces: None,
         }
+    }
+
+    pub(super) fn with_cli_workspaces(
+        mut self,
+        grants: super::shell_runtime::CliWorkspaceGrants,
+    ) -> Self {
+        self.cli_workspaces = Some(grants);
+        self
+    }
+
+    fn for_context(&self, ctx: &AgentCtx) -> Self {
+        let mut agent = self.clone();
+        if let Some(grants) = &agent.cli_workspaces {
+            agent.workspaces.extend(grants.paths_for(ctx.caller()));
+        }
+        agent
     }
 
     #[cfg(test)]
@@ -323,8 +344,9 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
         prompt: String,
         resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
+        let agent = self.for_context(&ctx);
         if self.kind == MediaKind::Other {
-            return self.run_other(ctx, prompt, resources).await;
+            return agent.run_other(ctx, prompt, resources).await;
         }
 
         let args = MediaUnderstandingArgs::from_prompt(&prompt);
@@ -342,7 +364,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             .map(str::trim)
             .filter(|url| !url.is_empty())
         {
-            content.push(self.content_from_location(ctx.meta(), url).await?);
+            content.push(agent.content_from_location(ctx.meta(), url).await?);
             locations_len += 1;
         }
 
@@ -352,7 +374,7 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
             .map(str::trim)
             .filter(|path| !path.is_empty())
         {
-            content.push(self.content_from_location(ctx.meta(), path).await?);
+            content.push(agent.content_from_location(ctx.meta(), path).await?);
             locations_len += 1;
         }
 
@@ -937,5 +959,42 @@ mod tests {
         let (resources, _usage) = understand_media_resources(&ctx, vec![image]).await;
         assert_eq!(resources.len(), 1);
         assert!(resources[0].description.is_some());
+    }
+
+    #[tokio::test]
+    async fn media_access_honors_owner_registered_workspaces_only() {
+        use anda_core::{Principal, StateFeatures};
+        let temp = tempfile::tempdir().unwrap();
+        let configured = temp.path().join("configured");
+        let registered = temp.path().join("registered");
+        tokio::fs::create_dir_all(&configured).await.unwrap();
+        tokio::fs::create_dir_all(&registered).await.unwrap();
+        tokio::fs::write(registered.join("note.txt"), b"registered data")
+            .await
+            .unwrap();
+        let owner = Principal::from_slice(&[1]);
+        let grants = crate::engine::shell_runtime::CliWorkspaceGrants::new(owner);
+        grants.register(&registered).await.unwrap();
+        let agent = MediaUnderstandingAgent::other(vec![configured]).with_cli_workspaces(grants);
+        let ctx = anda_engine::engine::EngineBuilder::new()
+            .mock_ctx()
+            .with_caller(owner);
+        let local = agent.for_context(&ctx);
+        assert!(
+            local
+                .attachment_understanding()
+                .attachment_from_path(ctx.meta(), registered.join("note.txt").to_str().unwrap())
+                .await
+                .is_ok()
+        );
+        let other = ctx.with_caller(Principal::from_slice(&[2]));
+        assert!(
+            agent
+                .for_context(&other)
+                .attachment_understanding()
+                .attachment_from_path(other.meta(), registered.join("note.txt").to_str().unwrap())
+                .await
+                .is_err()
+        );
     }
 }

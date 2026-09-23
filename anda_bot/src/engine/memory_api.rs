@@ -52,42 +52,43 @@ impl MemoryApiState {
         method: &str,
         params: Value,
     ) -> Value {
-        if let Err((_, error)) = self.authenticate(headers) {
-            return json!(error);
-        }
+        let (caller, token) = match self.authenticate(headers) {
+            Ok(identity) => identity,
+            Err((_, error)) => return json!(error),
+        };
         if serde_json::to_vec(&params).map_or(true, |bytes| bytes.len() > 64 * 1024) {
             return json!(error(
                 "payload_too_large",
                 "Memory requests are limited to 64 KiB."
             ));
         }
+        if method != "memory_activity"
+            && let Err((_, error)) = self.authorize_caller(caller)
+        {
+            return json!(error);
+        }
         match method {
-            "memory_overview" => self.websocket(headers, params).await,
-            "memory_activity" => self.websocket_activity(headers, params).await,
-            "memory_records" => self.websocket_records(headers, params).await,
-            "memory_record" => self.websocket_record(headers, params).await,
-            "memory_search" => self.websocket_search(headers, params).await,
-            "memory_watches" => self.websocket_watches(headers, params).await,
-            "memory_watch" | "memory_watch_cancel" => {
-                self.websocket_watch(headers, method, params).await
-            }
+            "memory_overview" => self.websocket(token, params).await,
+            "memory_activity" => self.websocket_activity(caller, params).await,
+            "memory_records" => self.websocket_records(params).await,
+            "memory_record" => self.websocket_record(params).await,
+            "memory_search" => self.websocket_search(token, params).await,
+            "memory_watches" => self.websocket_watches(params).await,
+            "memory_watch" | "memory_watch_cancel" => self.websocket_watch(method, params).await,
             "memory_inbox_setup_prepare" | "memory_inbox_setup_commit" => {
-                self.websocket_setup(headers, method, params).await
+                self.websocket_setup(method, params).await
             }
             "memory_change_prepare"
             | "memory_change_commit"
             | "memory_change_status"
-            | "memory_change_discard" => self.websocket_change(headers, method, params).await,
+            | "memory_change_discard" => self.websocket_change(method, params).await,
             _ => json!(error(
                 "unsupported_capability",
                 "This memory method is unavailable."
             )),
         }
     }
-    pub async fn websocket_watches(&self, headers: &HeaderMap, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_watches(&self, params: Value) -> Value {
         if params != json!([]) {
             return json!(error("invalid_request", "Expected no parameters."));
         }
@@ -106,15 +107,7 @@ impl MemoryApiState {
         }
     }
 
-    async fn search(
-        &self,
-        headers: &HeaderMap,
-        request: SearchRequest,
-    ) -> (StatusCode, ToolResponse) {
-        let token = match self.authorize(headers) {
-            Ok(token) => token,
-            Err(error) => return error,
-        };
+    async fn search(&self, token: String, request: SearchRequest) -> (StatusCode, ToolResponse) {
         match self.service.search(self.owner, token, request).await {
             Ok(result) => (
                 StatusCode::OK,
@@ -126,21 +119,15 @@ impl MemoryApiState {
             Err(error) => service_error(error),
         }
     }
-    pub async fn websocket_search(&self, headers: &HeaderMap, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_search(&self, token: String, params: Value) -> Value {
         let (request,) = match serde_json::from_value::<(SearchRequest,)>(params) {
             Ok(request) => request,
             Err(_) => return json!(error("invalid_request", "Expected one search request.")),
         };
-        json!(self.search(headers, request).await.1)
+        json!(self.search(token, request).await.1)
     }
 
-    pub async fn websocket_watch(&self, headers: &HeaderMap, method: &str, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_watch(&self, method: &str, params: Value) -> Value {
         let result = if method == "memory_watch" {
             match serde_json::from_value::<(WatchRequest,)>(params) {
                 Ok((request,)) => self.service.watch(self.owner, request).await,
@@ -167,10 +154,7 @@ impl MemoryApiState {
             Err(error) => service_error(error).1,
         })
     }
-    pub async fn websocket_setup(&self, headers: &HeaderMap, method: &str, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_setup(&self, method: &str, params: Value) -> Value {
         let result = if method == "memory_inbox_setup_prepare" {
             if params != json!([]) {
                 return json!(error(
@@ -201,15 +185,7 @@ impl MemoryApiState {
             Err(error) => service_error(error).1,
         })
     }
-    pub async fn websocket_change(
-        &self,
-        headers: &HeaderMap,
-        method: &str,
-        params: Value,
-    ) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_change(&self, method: &str, params: Value) -> Value {
         if method == "memory_change_discard" {
             let (id,) = match serde_json::from_value::<(String,)>(params) {
                 Ok(id) => id,
@@ -253,10 +229,7 @@ impl MemoryApiState {
             Err(err) => service_error(err).1,
         })
     }
-    async fn records(&self, headers: &HeaderMap, query: RecordQuery) -> (StatusCode, ToolResponse) {
-        if let Err(error) = self.authorize(headers) {
-            return error;
-        }
+    async fn records(&self, query: RecordQuery) -> (StatusCode, ToolResponse) {
         match self.service.records(self.owner, query).await {
             Ok((page, next_cursor)) => (
                 StatusCode::OK,
@@ -269,10 +242,7 @@ impl MemoryApiState {
         }
     }
 
-    async fn record(&self, headers: &HeaderMap, id: &str) -> (StatusCode, ToolResponse) {
-        if let Err(error) = self.authorize(headers) {
-            return error;
-        }
+    async fn record(&self, id: &str) -> (StatusCode, ToolResponse) {
         match self.service.record(self.owner, id).await {
             Ok(record) => (
                 StatusCode::OK,
@@ -285,10 +255,7 @@ impl MemoryApiState {
         }
     }
 
-    pub async fn websocket_records(&self, headers: &HeaderMap, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_records(&self, params: Value) -> Value {
         let (query,) = match serde_json::from_value::<(RecordQuery,)>(params) {
             Ok(query) => query,
             Err(_) => {
@@ -298,13 +265,10 @@ impl MemoryApiState {
                 ));
             }
         };
-        json!(self.records(headers, query).await.1)
+        json!(self.records(query).await.1)
     }
 
-    pub async fn websocket_record(&self, headers: &HeaderMap, params: Value) -> Value {
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket_record(&self, params: Value) -> Value {
         let (id,) = match serde_json::from_value::<(String,)>(params) {
             Ok(id) => id,
             Err(_) => {
@@ -314,7 +278,7 @@ impl MemoryApiState {
                 ));
             }
         };
-        json!(self.record(headers, &id).await.1)
+        json!(self.record(&id).await.1)
     }
     #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
     fn authenticate(
@@ -349,27 +313,29 @@ impl MemoryApiState {
     #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
     fn authorize(&self, headers: &HeaderMap) -> Result<String, (StatusCode, ToolResponse)> {
         let (caller, token) = self.authenticate(headers)?;
+        self.authorize_caller(caller)?;
+        Ok(token)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn authorize_caller(&self, caller: Principal) -> Result<(), (StatusCode, ToolResponse)> {
         if caller != self.owner {
             return Err((
                 StatusCode::FORBIDDEN,
                 error(
                     "forbidden",
-                    "Only the local owner can access the memory overview.",
+                    "Only the local owner can access this memory operation.",
                 ),
             ));
         }
-        Ok(token)
+        Ok(())
     }
 
     async fn activity(
         &self,
-        headers: &HeaderMap,
+        caller: Principal,
         query: ActivityQuery,
     ) -> (StatusCode, ToolResponse) {
-        let (caller, _) = match self.authenticate(headers) {
-            Ok(caller) => caller,
-            Err(e) => return e,
-        };
         if query.conversation.is_none() && caller != self.owner {
             return (
                 StatusCode::FORBIDDEN,
@@ -426,10 +392,7 @@ impl MemoryApiState {
         }
     }
 
-    pub async fn websocket_activity(&self, headers: &HeaderMap, params: Value) -> Value {
-        if let Err((_, err)) = self.authenticate(headers) {
-            return json!(err);
-        }
+    async fn websocket_activity(&self, caller: Principal, params: Value) -> Value {
         let (query,) = match serde_json::from_value::<(ActivityQuery,)>(params) {
             Ok(query) => query,
             Err(_) => {
@@ -439,14 +402,10 @@ impl MemoryApiState {
                 ));
             }
         };
-        json!(self.activity(headers, query).await.1)
+        json!(self.activity(caller, query).await.1)
     }
 
-    pub async fn overview(&self, headers: &HeaderMap) -> (StatusCode, ToolResponse) {
-        let token = match self.authorize(headers) {
-            Ok(token) => token,
-            Err(error) => return error,
-        };
+    async fn overview(&self, token: String) -> (StatusCode, ToolResponse) {
         let mut overview = self.service.overview(token).await;
         overview.caller = Some(self.owner.to_string());
         (
@@ -458,18 +417,14 @@ impl MemoryApiState {
         )
     }
 
-    pub async fn websocket(&self, headers: &HeaderMap, params: Value) -> Value {
-        // Reauthenticate on every invocation, not just at WebSocket upgrade.
-        if let Err((_, error)) = self.authorize(headers) {
-            return json!(error);
-        }
+    async fn websocket(&self, token: String, params: Value) -> Value {
         if params != json!([]) {
             return json!(error(
                 "invalid_request",
                 "memory_overview requires an empty parameter array."
             ));
         }
-        json!(self.overview(headers).await.1)
+        json!(self.overview(token).await.1)
     }
 
     pub fn into_router(self) -> Router {
@@ -623,14 +578,15 @@ async fn search(
     headers: HeaderMap,
     request: Result<Json<SearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
+    let token = match state.authorize(&headers) {
+        Ok(token) => token,
+        Err((status, error)) => return (status, Json(error)).into_response(),
+    };
     let request = match request {
         Ok(Json(request)) => request,
         Err(rejection) => return json_rejection(rejection),
     };
-    let (status, result) = state.search(&headers, request).await;
+    let (status, result) = state.search(token, request).await;
     (status, Json(result)).into_response()
 }
 fn json_rejection(rejection: axum::extract::rejection::JsonRejection) -> Response {
@@ -778,7 +734,7 @@ async fn records(
                 .into_response();
         }
     };
-    let (status, result) = state.records(&headers, query).await;
+    let (status, result) = state.records(query).await;
     (status, Json(result)).into_response()
 }
 
@@ -787,7 +743,10 @@ async fn record(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    let (status, result) = state.record(&headers, &id).await;
+    if let Err((status, error)) = state.authorize(&headers) {
+        return (status, Json(error)).into_response();
+    }
+    let (status, result) = state.record(&id).await;
     (status, Json(result)).into_response()
 }
 
@@ -796,9 +755,10 @@ async fn activity(
     headers: HeaderMap,
     query: Result<Query<ActivityQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authenticate(&headers) {
-        return (status, Json(error)).into_response();
-    }
+    let (caller, _) = match state.authenticate(&headers) {
+        Ok(identity) => identity,
+        Err((status, error)) => return (status, Json(error)).into_response(),
+    };
     let query = match query {
         Ok(Query(query)) => query,
         Err(_) => {
@@ -809,7 +769,7 @@ async fn activity(
                 .into_response();
         }
     };
-    let (status, result) = state.activity(&headers, query).await;
+    let (status, result) = state.activity(caller, query).await;
     (status, Json(result)).into_response()
 }
 
@@ -818,9 +778,10 @@ async fn overview(
     headers: HeaderMap,
     query: Result<Query<OverviewQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
+    let token = match state.authorize(&headers) {
+        Ok(token) => token,
+        Err((status, error)) => return (status, Json(error)).into_response(),
+    };
     if query.is_err() {
         return (
             StatusCode::BAD_REQUEST,
@@ -831,7 +792,7 @@ async fn overview(
         )
             .into_response();
     }
-    let (status, result) = state.overview(&headers).await;
+    let (status, result) = state.overview(token).await;
     (status, Json(result)).into_response()
 }
 
@@ -970,12 +931,18 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            state.websocket(&headers(&owner, true), json!([])).await["error"]["code"],
+            state
+                .websocket_dispatch(&headers(&owner, true), "memory_overview", json!([]))
+                .await["error"]["code"],
             "unauthorized"
         );
         assert_eq!(
             state
-                .websocket(&headers(&owner, false), json!([{"caller":"forged"}]))
+                .websocket_dispatch(
+                    &headers(&owner, false),
+                    "memory_overview",
+                    json!([{"caller":"forged"}])
+                )
                 .await["error"]["code"],
             "invalid_request"
         );

@@ -982,6 +982,9 @@ impl BookmarksTool {
 
     async fn bookmark_text(&self, source_text: &str) -> String {
         let fallback = fallback_bookmark_text(source_text);
+        if source_text.len() <= BOOKMARK_PREVIEW_MAX_BYTES {
+            return fallback;
+        }
         let Some(model) = self.models.as_ref().and_then(|models| {
             models
                 .get("lite")
@@ -1160,7 +1163,18 @@ impl Tool<BaseCtx> for BookmarksTool {
                     &self.store.folders(&user)?,
                     folder_ids.unwrap_or_default(),
                 )?;
-                let preview_text = self.bookmark_text(&text).await;
+                // Reuse a saved preview on retries; add() still merges folder membership
+                // and serializes the final write, without holding a lock during model work.
+                let existing = self.store.find(&user, conversation).await?;
+                let preview_text = match existing.as_ref().and_then(|bookmark| {
+                    bookmark
+                        .messages
+                        .iter()
+                        .find(|message| message.index == message_ref.index)
+                }) {
+                    Some(message) => message.text.clone(),
+                    None => self.bookmark_text(&text).await,
+                };
 
                 let bookmark = self
                     .store
@@ -1970,5 +1984,34 @@ mod tests {
             }
             other => panic!("expected ok response, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn short_and_repeated_bookmarks_do_not_repeat_model_work() {
+        let store = test_store().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let models = Arc::new(Models::default());
+        models.set(
+            "flash".into(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: requests.clone(),
+                response: "preview".into(),
+            })),
+        );
+        let tool = BookmarksTool::with_models(store, models);
+        assert_eq!(tool.bookmark_text("short message").await, "short message");
+        assert!(requests.lock().unwrap().is_empty());
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let args = BookmarksToolArgs::AddBookmark {
+            message_id: "m-1-0".into(),
+            conversation: 1,
+            source: "cli:test".into(),
+            role: "assistant".into(),
+            text: "long content ".repeat(100),
+            folder_ids: None,
+        };
+        tool.call(ctx.clone(), args.clone(), vec![]).await.unwrap();
+        tool.call(ctx, args, vec![]).await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1);
     }
 }
