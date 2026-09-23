@@ -37,6 +37,8 @@ pub mod keys {
     /// Id of the cron job that fired this request. Marks the run as
     /// unattended. Transient: dropped on conversation recovery.
     pub const CRON_JOB_ID: &str = "cron_job_id";
+    /// The particular scheduled execution. Transient.
+    pub const CRON_RUN_ID: &str = "cron_run_id";
     /// Human-readable name of the firing cron job. Transient.
     pub const CRON_JOB_NAME: &str = "cron_job_name";
     /// Job kind (`"agent"`, `"shell"`, ...) of the firing cron job. Transient.

@@ -5,17 +5,45 @@ use anda_core::{
 use anda_engine::context::BaseCtx;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(test)]
 use std::sync::Arc;
 
 use super::{
-    runtime::CronRuntime,
+    store::CronStore,
     types::{
         CreateCronJobArgs, CronJobOrigin, UpdateCronJobArgs,
         deserialize_optional_u64_from_number_or_string,
         deserialize_optional_usize_from_number_or_string, deserialize_u64_from_number_or_string,
     },
 };
-use crate::engine::SessionRequestMeta;
+use crate::engine::{CliWorkspaceGrants, SessionRequestMeta};
+use crate::util::request_meta::{keys, request_meta_extra_as};
+
+fn trusted_meta(ctx: &BaseCtx) -> Result<anda_core::RequestMeta, BoxError> {
+    let meta = ctx
+        .get_state::<SessionRequestMeta>()
+        .map(|state| state.get())
+        .unwrap_or_else(|| ctx.meta().clone());
+    if request_meta_extra_as::<bool>(&meta, keys::EXTERNAL_USER).unwrap_or(false) {
+        return Err("Cron tools are unavailable to external IM users".into());
+    }
+    Ok(meta)
+}
+
+async fn job_origin(
+    ctx: &BaseCtx,
+    meta: &anda_core::RequestMeta,
+    grants: Option<&CliWorkspaceGrants>,
+) -> Result<Option<CronJobOrigin>, BoxError> {
+    let mut origin = CronJobOrigin::from_meta_with_caller(meta, ctx.caller());
+    if let Some(grants) = grants
+        && let Some(path) = grants.authorize_cron_workspace(ctx.caller(), meta).await?
+        && let Some(origin) = &mut origin
+    {
+        origin.workspace_grant = Some(path.to_string_lossy().into_owned());
+    }
+    Ok(origin)
+}
 
 /// Stable id of the cron scheduler capability group.
 pub const CRON_TOOL_GROUP_ID: &str = "cron_scheduler";
@@ -39,14 +67,22 @@ pub fn cron_tool_group_info() -> ToolGroupInfo {
 
 #[derive(Clone)]
 pub struct CreateCronTool {
-    cron: Arc<CronRuntime>,
+    store: CronStore,
+    workspace_grants: Option<CliWorkspaceGrants>,
 }
 
 impl CreateCronTool {
     pub const NAME: &'static str = "create_cron_job";
 
-    pub fn new(cron: Arc<CronRuntime>) -> Self {
-        Self { cron }
+    pub fn new(store: CronStore) -> Self {
+        Self {
+            store,
+            workspace_grants: None,
+        }
+    }
+    pub(crate) fn with_workspace_grants(mut self, grants: CliWorkspaceGrants) -> Self {
+        self.workspace_grants = Some(grants);
+        self
     }
 }
 
@@ -87,12 +123,9 @@ impl Tool<BaseCtx> for CreateCronTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let meta = ctx
-            .get_state::<SessionRequestMeta>()
-            .map(|state| state.get())
-            .unwrap_or_else(|| ctx.meta().clone());
-        let origin = CronJobOrigin::from_meta_with_caller(&meta, ctx.caller());
-        let job = self.cron.store.insert_job(args, origin).await?;
+        let meta = trusted_meta(&ctx)?;
+        let origin = job_origin(&ctx, &meta, self.workspace_grants.as_ref()).await?;
+        let job = self.store.insert_job(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: job.to_view(),
             next_cursor: None,
@@ -102,14 +135,22 @@ impl Tool<BaseCtx> for CreateCronTool {
 
 #[derive(Clone)]
 pub struct UpdateCronJobTool {
-    cron: Arc<CronRuntime>,
+    store: CronStore,
+    workspace_grants: Option<CliWorkspaceGrants>,
 }
 
 impl UpdateCronJobTool {
     pub const NAME: &'static str = "update_cron_job";
 
-    pub fn new(cron: Arc<CronRuntime>) -> Self {
-        Self { cron }
+    pub fn new(store: CronStore) -> Self {
+        Self {
+            store,
+            workspace_grants: None,
+        }
+    }
+    pub(crate) fn with_workspace_grants(mut self, grants: CliWorkspaceGrants) -> Self {
+        self.workspace_grants = Some(grants);
+        self
     }
 }
 
@@ -126,7 +167,7 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
             "Updates an existing cron job without changing its run history. ",
             "Pass null for fields that should stay unchanged. ",
             "Pass origin=true to replace the job origin with the current caller and request context. ",
-            "When schedule_kind, schedule, or tz is updated, next_run is recalculated from the new schedule. ",
+            "Schedule edits preserve paused state; use manage_cron_job resume to reactivate. ",
             "Use an empty string for name or tz to clear that field."
         )
         .to_string()
@@ -151,16 +192,13 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        let meta = trusted_meta(&ctx)?;
         let origin = if args.origin.unwrap_or(false) {
-            let meta = ctx
-                .get_state::<SessionRequestMeta>()
-                .map(|state| state.get())
-                .unwrap_or_else(|| ctx.meta().clone());
-            CronJobOrigin::from_meta_with_caller(&meta, ctx.caller())
+            job_origin(&ctx, &meta, self.workspace_grants.as_ref()).await?
         } else {
             None
         };
-        let job = self.cron.store.update_job_with_origin(args, origin).await?;
+        let job = self.store.update_job_with_origin(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
             result: job.to_view(),
             next_cursor: None,
@@ -350,14 +388,14 @@ where
 
 #[derive(Clone)]
 pub struct ManageCronJobTool {
-    cron: Arc<CronRuntime>,
+    store: CronStore,
 }
 
 impl ManageCronJobTool {
     pub const NAME: &'static str = "manage_cron_job";
 
-    pub fn new(cron: Arc<CronRuntime>) -> Self {
-        Self { cron }
+    pub fn new(store: CronStore) -> Self {
+        Self { store }
     }
 }
 
@@ -392,25 +430,26 @@ impl Tool<BaseCtx> for ManageCronJobTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        trusted_meta(&ctx)?;
         let result = match args.action {
             CronJobAction::Get => json!({
                 "action": "get",
-                "job": self.cron.store.get_job(args.id).await?.to_view(),
+                "job": self.store.get_job(args.id).await?.to_view(),
             }),
             CronJobAction::Pause => json!({
                 "action": "pause",
-                "job": self.cron.store.pause_job(args.id).await?.to_view(),
+                "job": self.store.pause_job(args.id).await?.to_view(),
             }),
             CronJobAction::Resume => json!({
                 "action": "resume",
-                "job": self.cron.store.resume_job(args.id).await?.to_view(),
+                "job": self.store.resume_job(args.id).await?.to_view(),
             }),
             CronJobAction::Remove => {
-                self.cron.store.remove_job(args.id).await?;
+                self.store.remove_job(args.id).await?;
                 json!({
                     "action": "remove",
                     "id": args.id,
@@ -427,14 +466,14 @@ impl Tool<BaseCtx> for ManageCronJobTool {
 
 #[derive(Clone)]
 pub struct ListCronJobsTool {
-    cron: Arc<CronRuntime>,
+    store: CronStore,
 }
 
 impl ListCronJobsTool {
     pub const NAME: &'static str = "list_cron_jobs";
 
-    pub fn new(cron: Arc<CronRuntime>) -> Self {
-        Self { cron }
+    pub fn new(store: CronStore) -> Self {
+        Self { store }
     }
 }
 
@@ -449,7 +488,7 @@ impl Tool<BaseCtx> for ListCronJobsTool {
     fn description(&self) -> String {
         concat!(
             "Lists scheduled cron jobs with optional cursor pagination. Returns up to 100 jobs per call. ",
-            "Paused jobs report paused=true and omit next_run."
+            "Paused jobs report paused=true and omit next_run. Lists omit last_result and truncate job/last_error to 512 characters; use manage_cron_job get for full details."
         )
         .to_string()
     }
@@ -469,26 +508,30 @@ impl Tool<BaseCtx> for ListCronJobsTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let (jobs, next_cursor) = self.cron.store.list_jobs(args.cursor, args.limit).await?;
-        let jobs: Vec<serde_json::Value> = jobs.iter().map(|job| job.to_view()).collect();
-        Ok(paginated_response(jobs, next_cursor))
+        trusted_meta(&ctx)?;
+        let (jobs, next_cursor) = self.store.list_jobs(args.cursor, args.limit).await?;
+        let jobs: Vec<serde_json::Value> = jobs.iter().map(|job| job.to_summary()).collect();
+        Ok(ToolOutput::new(Response::Ok {
+            result: Value::Array(jobs),
+            next_cursor,
+        }))
     }
 }
 
 #[derive(Clone)]
 pub struct ListCronRunsTool {
-    cron: Arc<CronRuntime>,
+    store: CronStore,
 }
 
 impl ListCronRunsTool {
     pub const NAME: &'static str = "list_cron_runs";
 
-    pub fn new(cron: Arc<CronRuntime>) -> Self {
-        Self { cron }
+    pub fn new(store: CronStore) -> Self {
+        Self { store }
     }
 }
 
@@ -523,12 +566,12 @@ impl Tool<BaseCtx> for ListCronRunsTool {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        trusted_meta(&ctx)?;
         let (runs, next_cursor) = self
-            .cron
             .store
             .list_runs(args.cursor, args.limit, args.job_id)
             .await?;
@@ -539,6 +582,7 @@ impl Tool<BaseCtx> for ListCronRunsTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cron::CronRuntime;
     use crate::util::json_schema::assert_openai_strict_parameters;
     use serde_json::json;
 
@@ -626,7 +670,7 @@ mod tests {
 
         // Create a job; the origin is derived from the calling context.
         let created = result_of(
-            CreateCronTool::new(cron.clone())
+            CreateCronTool::new(cron.store.clone())
                 .call(ctx.clone(), create_args("daily"), Vec::new())
                 .await
                 .unwrap(),
@@ -644,7 +688,7 @@ mod tests {
         }))
         .unwrap();
         let updated = result_of(
-            UpdateCronJobTool::new(cron.clone())
+            UpdateCronJobTool::new(cron.store.clone())
                 .call(ctx.clone(), update_args, Vec::new())
                 .await
                 .unwrap(),
@@ -658,14 +702,14 @@ mod tests {
         }))
         .unwrap();
         let updated = result_of(
-            UpdateCronJobTool::new(cron.clone())
+            UpdateCronJobTool::new(cron.store.clone())
                 .call(ctx.clone(), update_args, Vec::new())
                 .await
                 .unwrap(),
         );
         assert_eq!(updated["name"], "renamed");
 
-        let manage = ManageCronJobTool::new(cron.clone());
+        let manage = ManageCronJobTool::new(cron.store.clone());
         let got = result_of(
             manage
                 .call(
@@ -755,13 +799,13 @@ mod tests {
         let ctx = EngineBuilder::new().mock_ctx().base;
 
         for name in ["a", "b", "c"] {
-            CreateCronTool::new(cron.clone())
+            CreateCronTool::new(cron.store.clone())
                 .call(ctx.clone(), create_args(name), Vec::new())
                 .await
                 .unwrap();
         }
 
-        let listed = ListCronJobsTool::new(cron.clone())
+        let listed = ListCronJobsTool::new(cron.store.clone())
             .call(
                 ctx.clone(),
                 ListCronArgs {
@@ -784,7 +828,7 @@ mod tests {
             other => panic!("expected ok response, got {other:?}"),
         }
 
-        let runs = ListCronRunsTool::new(cron)
+        let runs = ListCronRunsTool::new(cron.store.clone())
             .call(ctx, ListCronArgs::default(), Vec::new())
             .await
             .unwrap();
@@ -799,24 +843,33 @@ mod tests {
     #[tokio::test]
     async fn cron_tool_metadata_exposes_names_and_strict_schemas() {
         let cron = test_cron_runtime().await;
-        assert_eq!(CreateCronTool::new(cron.clone()).name(), "create_cron_job");
         assert_eq!(
-            UpdateCronJobTool::new(cron.clone()).name(),
+            CreateCronTool::new(cron.store.clone()).name(),
+            "create_cron_job"
+        );
+        assert_eq!(
+            UpdateCronJobTool::new(cron.store.clone()).name(),
             "update_cron_job"
         );
         assert_eq!(
-            ManageCronJobTool::new(cron.clone()).name(),
+            ManageCronJobTool::new(cron.store.clone()).name(),
             "manage_cron_job"
         );
-        assert_eq!(ListCronJobsTool::new(cron.clone()).name(), "list_cron_jobs");
-        assert_eq!(ListCronRunsTool::new(cron.clone()).name(), "list_cron_runs");
+        assert_eq!(
+            ListCronJobsTool::new(cron.store.clone()).name(),
+            "list_cron_jobs"
+        );
+        assert_eq!(
+            ListCronRunsTool::new(cron.store.clone()).name(),
+            "list_cron_runs"
+        );
 
         for definition in [
-            CreateCronTool::new(cron.clone()).definition(),
-            UpdateCronJobTool::new(cron.clone()).definition(),
-            ManageCronJobTool::new(cron.clone()).definition(),
-            ListCronJobsTool::new(cron.clone()).definition(),
-            ListCronRunsTool::new(cron).definition(),
+            CreateCronTool::new(cron.store.clone()).definition(),
+            UpdateCronJobTool::new(cron.store.clone()).definition(),
+            ManageCronJobTool::new(cron.store.clone()).definition(),
+            ListCronJobsTool::new(cron.store.clone()).definition(),
+            ListCronRunsTool::new(cron.store.clone()).definition(),
         ] {
             assert_eq!(definition.strict, Some(true));
             assert!(!definition.description.is_empty());
@@ -830,18 +883,20 @@ mod tests {
         let cron = test_cron_runtime().await;
         let mut tools = ToolSet::<BaseCtx>::new();
         tools
-            .add(Arc::new(CreateCronTool::new(cron.clone())))
+            .add(Arc::new(CreateCronTool::new(cron.store.clone())))
             .unwrap();
         tools
-            .add(Arc::new(UpdateCronJobTool::new(cron.clone())))
+            .add(Arc::new(UpdateCronJobTool::new(cron.store.clone())))
             .unwrap();
         tools
-            .add(Arc::new(ManageCronJobTool::new(cron.clone())))
+            .add(Arc::new(ManageCronJobTool::new(cron.store.clone())))
             .unwrap();
         tools
-            .add(Arc::new(ListCronJobsTool::new(cron.clone())))
+            .add(Arc::new(ListCronJobsTool::new(cron.store.clone())))
             .unwrap();
-        tools.add(Arc::new(ListCronRunsTool::new(cron))).unwrap();
+        tools
+            .add(Arc::new(ListCronRunsTool::new(cron.store.clone())))
+            .unwrap();
 
         let groups = tools.groups();
         assert_eq!(groups.len(), 1);
@@ -858,5 +913,140 @@ mod tests {
             ]
         );
         assert!(groups[0].instructions.is_some());
+    }
+
+    #[tokio::test]
+    async fn external_live_context_cannot_access_any_cron_tool() {
+        let cron = test_cron_runtime().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let job = cron
+            .store
+            .insert_job(create_args("owner"), None)
+            .await
+            .unwrap();
+        let mut meta = ctx.meta().clone();
+        meta.extra.insert(keys::EXTERNAL_USER.into(), true.into());
+        ctx.set_state(SessionRequestMeta::new(meta));
+        assert!(
+            CreateCronTool::new(cron.store.clone())
+                .call(ctx.clone(), create_args("external"), vec![])
+                .await
+                .is_err()
+        );
+        let update = serde_json::from_value(json!({"id":job._id,"job":"replace"})).unwrap();
+        assert!(
+            UpdateCronJobTool::new(cron.store.clone())
+                .call(ctx.clone(), update, vec![])
+                .await
+                .is_err()
+        );
+        for action in [
+            CronJobAction::Get,
+            CronJobAction::Pause,
+            CronJobAction::Resume,
+            CronJobAction::Remove,
+        ] {
+            assert!(
+                ManageCronJobTool::new(cron.store.clone())
+                    .call(
+                        ctx.clone(),
+                        ManageCronJobArgs {
+                            action,
+                            id: job._id
+                        },
+                        vec![]
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            ListCronJobsTool::new(cron.store.clone())
+                .call(ctx.clone(), ListCronArgs::default(), vec![])
+                .await
+                .is_err()
+        );
+        assert!(
+            ListCronRunsTool::new(cron.store.clone())
+                .call(ctx.clone(), ListCronArgs::default(), vec![])
+                .await
+                .is_err()
+        );
+        assert_eq!(cron.store.get_job(job._id).await.unwrap().job, job.job);
+        // The same authenticated channel Principal can still serve a trusted request.
+        ctx.set_state(SessionRequestMeta::new(ctx.meta().clone()));
+        assert!(
+            ListCronJobsTool::new(cron.store.clone())
+                .call(ctx, ListCronArgs::default(), vec![])
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_previews_keep_full_details_available() {
+        let cron = test_cron_runtime().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let mut args = create_args("large");
+        args.job = "测".repeat(1000);
+        let job = cron.store.insert_job(args, None).await.unwrap();
+        let list = result_of(
+            ListCronJobsTool::new(cron.store.clone())
+                .call(ctx.clone(), ListCronArgs::default(), vec![])
+                .await
+                .unwrap(),
+        );
+        assert_eq!(list[0]["job"].as_str().unwrap().chars().count(), 513);
+        assert!(list[0].get("last_result").is_none());
+        let detail = result_of(
+            ManageCronJobTool::new(cron.store.clone())
+                .call(
+                    ctx,
+                    ManageCronJobArgs {
+                        action: CronJobAction::Get,
+                        id: job._id,
+                    },
+                    vec![],
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(detail["job"]["job"].as_str().unwrap().chars().count(), 1000);
+    }
+
+    #[tokio::test]
+    async fn creation_persists_only_an_authorized_cli_workspace() {
+        let cron = test_cron_runtime().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap();
+        let grants = CliWorkspaceGrants::new(*ctx.caller());
+        let mut meta = ctx.meta().clone();
+        meta.extra.insert(
+            keys::SOURCE.into(),
+            format!("cli:{}", path.display()).into(),
+        );
+        meta.extra.insert(
+            keys::WORKSPACE.into(),
+            path.to_string_lossy().to_string().into(),
+        );
+        ctx.set_state(SessionRequestMeta::new(meta));
+        let tool = CreateCronTool::new(cron.store.clone()).with_workspace_grants(grants.clone());
+        assert!(
+            tool.call(ctx.clone(), create_args("cli"), vec![])
+                .await
+                .is_err()
+        );
+        grants.register(&path).await.unwrap();
+        let created = result_of(tool.call(ctx, create_args("cli"), vec![]).await.unwrap());
+        let job = cron
+            .store
+            .get_job(created["_id"].as_u64().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            job.origin.unwrap().workspace_grant.as_deref(),
+            path.to_str()
+        );
     }
 }

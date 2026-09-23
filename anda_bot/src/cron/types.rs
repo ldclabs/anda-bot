@@ -19,25 +19,20 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    pub fn validate(&self, now_ms: u64) -> Result<(), BoxError> {
+    pub fn initial_next_run(&self, now_ms: u64) -> Result<u64, BoxError> {
         match self {
-            Schedule::Cron { expr, tz } => {
-                let _ = schedule_next(expr, now_ms, tz)?;
-                Ok(())
+            Self::Cron { expr, tz } => Ok(schedule_next(expr, now_ms, tz)? / 1000),
+            Self::At { at } if *at <= now_ms => {
+                Err("scheduled 'at' time must be in the future".into())
             }
-            Schedule::At { at } => {
-                if *at <= now_ms {
-                    return Err("scheduled 'at' time must be in the future".into());
-                }
-                Ok(())
-            }
-            Schedule::Every { every } => {
-                if *every == 0 {
-                    return Err("every must be greater than 0".into());
-                }
-                Ok(())
-            }
+            Self::Every { every: 0 } => Err("every must be greater than 0".into()),
+            _ => Ok(self.next_run(now_ms)),
         }
+    }
+
+    #[cfg(test)]
+    pub fn validate(&self, now_ms: u64) -> Result<(), BoxError> {
+        self.initial_next_run(now_ms).map(|_| ())
     }
 
     /// Calculates the next run time based on the schedule, returning a unix timestamp in seconds.
@@ -48,7 +43,7 @@ impl Schedule {
                 .unwrap_or(DISABLED_JOB_NEXT_RUN),
             Schedule::At { at } => {
                 if at > &from_ms {
-                    *at / 1000
+                    at.div_ceil(1000)
                 } else {
                     DISABLED_JOB_NEXT_RUN
                 }
@@ -104,6 +99,9 @@ pub struct CronJobOrigin {
     pub reply_target: Option<String>,
     pub thread: Option<String>,
     pub workspace: Option<String>,
+    /// Canonical CLI directory authorized when this origin was saved.
+    #[serde(default)]
+    pub workspace_grant: Option<String>,
     pub conversation_id: Option<u64>,
     pub external_user: Option<bool>,
 }
@@ -129,6 +127,7 @@ impl CronJobOrigin {
             workspace: request_meta_extra_as::<String>(meta, keys::WORKSPACE)
                 .as_deref()
                 .and_then(normalize_optional_name),
+            workspace_grant: None,
             conversation_id: request_meta_extra_as::<u64>(meta, keys::CONVERSATION)
                 .filter(|conversation_id| *conversation_id > 0),
             external_user: request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER),
@@ -181,6 +180,7 @@ impl CronJobOrigin {
             && self.reply_target.is_none()
             && self.thread.is_none()
             && self.workspace.is_none()
+            && self.workspace_grant.is_none()
             && self.conversation_id.is_none()
             && self.external_user.is_none()
     }
@@ -214,7 +214,12 @@ pub struct CronJob {
 
 impl CronJob {
     pub fn schedule(&self) -> Result<Schedule, BoxError> {
-        build_schedule(&self.schedule_kind, &self.schedule, self.tz.as_ref())
+        build_schedule_at(
+            &self.schedule_kind,
+            &self.schedule,
+            self.tz.as_ref(),
+            self.created_at,
+        )
     }
 
     /// Whether the job is paused. Storage encodes "paused" as the
@@ -233,6 +238,29 @@ impl CronJob {
             if self.is_paused() {
                 object.remove("next_run");
             }
+        }
+        view
+    }
+
+    pub fn to_summary(&self) -> serde_json::Value {
+        fn preview(text: &str) -> std::borrow::Cow<'_, str> {
+            match text.char_indices().nth(512) {
+                Some((end, _)) => (text[..end].to_owned() + "…").into(),
+                None => text.into(),
+            }
+        }
+        // Project before serialization: full shell results can be hundreds of KB.
+        let mut view = serde_json::json!({
+            "_id": self._id, "origin": self.origin, "job_kind": self.job_kind,
+            "job": preview(&self.job), "schedule_kind": self.schedule_kind,
+            "schedule": self.schedule, "tz": self.tz, "name": self.name,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+            "paused": self.is_paused(), "last_finished_at": self.last_finished_at,
+            "last_error": self.last_error.as_deref().map(preview),
+            "last_conversation_id": self.last_conversation_id,
+        });
+        if !self.is_paused() {
+            view["next_run"] = self.next_run.into();
         }
         view
     }
@@ -295,9 +323,16 @@ impl CreateCronJobArgs {
         now_ms: u64,
         origin: Option<CronJobOrigin>,
     ) -> Result<CronJob, BoxError> {
-        let schedule = build_schedule(&self.schedule_kind, &self.schedule, self.tz.as_ref())?;
-        schedule.validate(now_ms)?;
-        let next_run = schedule.next_run(now_ms);
+        if self.job.trim().is_empty() {
+            return Err("job must not be empty".into());
+        }
+        let schedule = build_schedule_at(
+            &self.schedule_kind,
+            &self.schedule,
+            self.tz.as_ref(),
+            now_ms,
+        )?;
+        let next_run = schedule.initial_next_run(now_ms)?;
         let (schedule_kind, schedule_str) =
             persisted_schedule(&self.schedule_kind, &self.schedule, &schedule)?;
         Ok(CronJob {
@@ -396,6 +431,9 @@ impl CronJobUpdate {
             job.job_kind = job_kind;
         }
         if let Some(job_text) = job_text {
+            if job_text.trim().is_empty() {
+                return Err("job must not be empty".into());
+            }
             job.job = job_text;
         }
         if let Some(name) = name {
@@ -403,6 +441,7 @@ impl CronJobUpdate {
         }
         if let Some(origin) = origin {
             job.origin = Some(origin);
+            job.last_conversation_id = None;
         }
 
         if schedule_changed {
@@ -413,16 +452,22 @@ impl CronJobUpdate {
                 None if matches!(next_schedule_kind, ScheduleKind::Cron) => job.tz.clone(),
                 None => None,
             };
-            let schedule =
-                build_schedule(&next_schedule_kind, &next_schedule_value, next_tz.as_ref())?;
-            schedule.validate(now_ms)?;
+            let schedule = build_schedule_at(
+                &next_schedule_kind,
+                &next_schedule_value,
+                next_tz.as_ref(),
+                now_ms,
+            )?;
+            let next_run = schedule.initial_next_run(now_ms)?;
             let (persisted_kind, persisted_schedule) =
                 persisted_schedule(&next_schedule_kind, &next_schedule_value, &schedule)?;
 
             job.schedule_kind = persisted_kind;
             job.schedule = persisted_schedule;
             job.tz = next_tz;
-            job.next_run = schedule.next_run(now_ms);
+            if !job.is_paused() {
+                job.next_run = next_run;
+            }
         }
 
         job.updated_at = now_ms;
@@ -542,6 +587,14 @@ where
     T: Serialize,
 {
     fn from(output: ToolOutput<T>) -> Self {
+        if output.is_error == Some(true) {
+            return Self {
+                error: Some(
+                    serde_json::to_string(&output.output).unwrap_or_else(|err| err.to_string()),
+                ),
+                ..Default::default()
+            };
+        }
         match serde_json::to_string(&output.output) {
             Ok(result_str) => CronJobResult {
                 conversation_id: None,
@@ -601,10 +654,20 @@ fn schedule_next(expr: &str, from_ms: u64, tz: &Option<String>) -> Result<u64, B
     }
 }
 
+#[cfg(test)]
 fn build_schedule(
     kind: &ScheduleKind,
     value: &str,
     tz: Option<&String>,
+) -> Result<Schedule, BoxError> {
+    build_schedule_at(kind, value, tz, anda_db::unix_ms())
+}
+
+fn build_schedule_at(
+    kind: &ScheduleKind,
+    value: &str,
+    tz: Option<&String>,
+    now_ms: u64,
 ) -> Result<Schedule, BoxError> {
     match kind {
         ScheduleKind::Cron => Ok(Schedule::Cron {
@@ -639,11 +702,11 @@ fn build_schedule(
                 return Err("tz can only be used with cron schedules".into());
             }
 
-            let at =
-                Utc::now() + parse_delay(normalize_required_text("schedule", value)?.as_str())?;
-            Ok(Schedule::At {
-                at: datetime_to_unix_ms(at)?,
-            })
+            let delay = parse_delay(normalize_required_text("schedule", value)?.as_str())?;
+            let at = now_ms
+                .checked_add(u64::try_from(delay.as_millis())?)
+                .ok_or("scheduled time is out of range")?;
+            Ok(Schedule::At { at })
         }
     }
 }
@@ -725,48 +788,40 @@ fn normalize_weekday_field(field: &str) -> Result<String, BoxError> {
     if field == "*" || field == "?" {
         return Ok(field.to_string());
     }
-
-    if field.chars().any(|c| c.is_ascii_alphabetic()) {
-        return Ok(field.to_string());
-    }
-
-    let mut result_parts = Vec::new();
+    let mut translated = Vec::new();
     for part in field.split(',') {
-        let (range_part, step) = if let Some((range, step)) = part.split_once('/') {
-            (range, Some(step))
-        } else {
-            (part, None)
+        if part.chars().any(|c| c.is_ascii_alphabetic()) {
+            translated.push(part.to_string());
+            continue;
+        }
+        let (range, step) = match part.split_once('/') {
+            Some((range, step)) => (range, step.parse::<usize>()?),
+            None => (part, 1),
         };
-
-        let translated = if let Some((start_s, end_s)) = range_part.split_once('-') {
-            let start: u8 = start_s
-                .parse()
-                .map_err(|err| format!("invalid weekday '{start_s}': {err}"))?;
-            let end: u8 = end_s
-                .parse()
-                .map_err(|err| format!("invalid weekday '{end_s}': {err}"))?;
-            format!(
-                "{}-{}",
-                translate_weekday_value(start)?,
-                translate_weekday_value(end)?
-            )
-        } else if range_part == "*" {
-            "*".to_string()
+        if step == 0 {
+            return Err("weekday step must be greater than zero".into());
+        }
+        let (start, end) = if range == "*" {
+            (0, 6)
+        } else if let Some((start, end)) = range.split_once('-') {
+            (start.parse::<u8>()?, end.parse::<u8>()?)
         } else {
-            let value: u8 = range_part
-                .parse()
-                .map_err(|err| format!("invalid weekday '{range_part}': {err}"))?;
-            translate_weekday_value(value)?.to_string()
+            let start = range.parse::<u8>()?;
+            (start, if part.contains('/') { 7 } else { start })
         };
-
-        if let Some(step) = step {
-            result_parts.push(format!("{translated}/{step}"));
-        } else {
-            result_parts.push(translated);
+        translate_weekday_value(start)?;
+        translate_weekday_value(end)?;
+        if start > end {
+            return Err("weekday range must be ascending".into());
+        }
+        for day in (start..=end).step_by(step) {
+            let day = translate_weekday_value(day)?.to_string();
+            if !translated.contains(&day) {
+                translated.push(day);
+            }
         }
     }
-
-    Ok(result_parts.join(","))
+    Ok(translated.join(","))
 }
 
 fn translate_weekday_value(val: u8) -> Result<u8, BoxError> {
@@ -981,7 +1036,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(job.next_run, stored_at / 1000);
+        assert_eq!(job.next_run, stored_at.div_ceil(1000));
     }
 
     #[test]
@@ -1254,7 +1309,7 @@ mod tests {
         assert_eq!(normalize_expression("30 9 * * 0").unwrap(), "0 30 9 * * 1");
         assert_eq!(
             normalize_expression("30 9 * * 1-5").unwrap(),
-            "0 30 9 * * 2-6"
+            "0 30 9 * * 2,3,4,5,6"
         );
         assert_eq!(
             normalize_expression("30 9 * * 1,3,7").unwrap(),
@@ -1262,7 +1317,7 @@ mod tests {
         );
         assert_eq!(
             normalize_expression("30 9 * * */2").unwrap(),
-            "0 30 9 * * */2"
+            "0 30 9 * * 1,3,5,7"
         );
         assert_eq!(
             normalize_expression("30 9 * * MON").unwrap(),
@@ -1290,5 +1345,54 @@ mod tests {
         assert_eq!(translate_weekday_value(7).unwrap(), 1);
         assert_eq!(translate_weekday_value(3).unwrap(), 4);
         assert!(translate_weekday_value(8).is_err());
+    }
+    #[test]
+    fn one_shot_rounds_up_and_once_uses_supplied_clock() {
+        let now = 1_750_000_000_123;
+        assert_eq!(Schedule::At { at: now + 1000 }.next_run(now), 1_750_000_002);
+        let job = CreateCronJobArgs {
+            job_kind: JobKind::Agent,
+            job: "remind me".into(),
+            schedule_kind: ScheduleKind::Once,
+            schedule: "30s".into(),
+            name: None,
+            tz: None,
+        }
+        .into_cron_job(now)
+        .unwrap();
+        assert_eq!(job.schedule().unwrap(), Schedule::At { at: now + 30_000 });
+        assert_eq!(job.next_run, (now + 30_000).div_ceil(1000));
+    }
+
+    #[test]
+    fn sunday_ranges_preserve_actual_days() {
+        let from = DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
+            .unwrap()
+            .timestamp_millis() as u64;
+        for expression in ["0 9 * * 0-7", "0 9 * * 1-7"] {
+            assert_eq!(
+                schedule_next(expression, from, &Some("UTC".into())).unwrap(),
+                schedule_next("0 9 * * *", from, &Some("UTC".into())).unwrap()
+            );
+        }
+        let friday = DateTime::parse_from_rfc3339("2026-09-25T09:00:00Z")
+            .unwrap()
+            .timestamp_millis() as u64;
+        assert_eq!(
+            schedule_next("0 9 * * 5-7", from, &Some("UTC".into())).unwrap(),
+            friday
+        );
+        assert_eq!(normalize_weekday_field("MON,0").unwrap(), "MON,1");
+        assert!(normalize_weekday_field("*/0").is_err());
+    }
+
+    #[test]
+    fn tool_errors_are_not_successful_results() {
+        let result = CronJobResult::from(ToolOutput {
+            is_error: Some(true),
+            ..ToolOutput::new(json!({"stderr":"failed"}))
+        });
+        assert!(result.error.unwrap().contains("failed"));
+        assert!(result.result.is_none());
     }
 }

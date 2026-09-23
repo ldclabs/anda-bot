@@ -62,9 +62,12 @@ impl AndaBot {
         mut rx: tokio::sync::mpsc::Receiver<ConversationInput>,
         mut action_rx: tokio::sync::mpsc::Receiver<ActionEvent>,
         extra_user_context: Option<Message>,
+        cron_receipt: Option<crate::cron::AgentReceipt>,
     ) {
         let assistant = self.clone();
         tokio::spawn(async move {
+            let mut cron_receipts = crate::cron::AgentReceipts::default();
+            cron_receipts.push(cron_receipt);
             let preparation = async {
                 let (resources, usage) =
                     multimodal::understand_media_resources(&ctx, resources).await;
@@ -92,6 +95,7 @@ impl AndaBot {
                     conversation.status = ConversationStatus::Failed;
                     conversation.failed_reason =
                         Some(format!("Attachment preparation failed: {err}"));
+                    cron_receipts.fail(conversation.failed_reason.as_deref().unwrap());
                     conversation.updated_at = unix_ms();
                     if let Err(error) = assistant.persist_conversation_state(&conversation).await {
                         log::error!("Failed to save attachment failure: {error}");
@@ -114,6 +118,7 @@ impl AndaBot {
 
             let mut tools_usage_snapshot: HashMap<String, Usage> = HashMap::new();
             let mut sess_runner = SessionRunner {
+                cron_receipts,
                 ctx,
                 assistant: assistant.clone(),
                 session: session.clone(),
@@ -204,6 +209,7 @@ impl AndaBot {
                     }
                     Err(err) => {
                         log::error!("Error processing session {}: {:?}", session.id, err);
+                        sess_runner.cron_receipts.fail(&err.to_string());
                         // Best-effort fallback: if the error escaped before the
                         // conversation reached a terminal state, persist it as
                         // Failed so it does not stay `Working` in the DB after
@@ -224,6 +230,7 @@ impl AndaBot {
 }
 
 struct SessionRunner {
+    cron_receipts: crate::cron::AgentReceipts,
     ctx: AgentCtx,
     assistant: AndaBot,
     session: Arc<Session>,
@@ -792,6 +799,7 @@ impl SessionRunner {
                 _ => unreachable!(),
             };
             let now_ms = unix_ms();
+            self.cron_receipts.fail(&reason);
             self.stop_current_task(reason.clone(), now_ms, tools_usage_snapshot)
                 .await?;
             if cancelled {
@@ -822,11 +830,13 @@ impl SessionRunner {
 
         for input in inputs {
             let ConversationInput {
+                cron_receipt,
                 command,
                 resources,
                 mut extra,
                 usage,
             } = input;
+            self.cron_receipts.push(cron_receipt);
             // Session lifecycle control is not user context for the model.
             extra.remove(crate::util::request_meta::keys::FINISH_WHEN_IDLE);
             extra.remove(super::memory_policy::MODE_KEY);
@@ -1118,6 +1128,12 @@ impl SessionRunner {
                 let has_background_tasks = self.session.has_running_background_tasks();
                 let is_idle = self.runner.is_idle();
                 if is_idle {
+                    if !has_background_tasks
+                        && !self.session.has_pending_inputs()
+                        && self.session.goal.read().is_none()
+                    {
+                        self.cron_receipts.finish();
+                    }
                     let idle = now_ms.saturating_sub(self.session.active_at.load(Ordering::SeqCst));
                     if !has_background_tasks && self.session.finish_when_idle.load(Ordering::SeqCst)
                     {
@@ -1176,6 +1192,13 @@ impl SessionRunner {
                 }
 
                 self.session.on_completion(&self.ctx, &res).await;
+                self.cron_receipts.record(&res);
+                let cron_finished = res.failed_reason.is_some()
+                    || (is_done
+                        && self.runner.is_idle()
+                        && !self.session.has_running_background_tasks()
+                        && !self.session.has_pending_inputs()
+                        && self.session.goal.read().is_none());
 
                 let mut terminal_history =
                     (is_done || res.failed_reason.is_some()).then(|| res.chat_history.clone());
@@ -1206,6 +1229,9 @@ impl SessionRunner {
                     }
                 }
                 self.persist_conversation_state().await?;
+                if cron_finished {
+                    self.cron_receipts.finish();
+                }
 
                 if let Some(history) = terminal_history.as_ref() {
                     self.submit_pending_formation(history, now_ms).await;
@@ -1221,6 +1247,7 @@ impl SessionRunner {
 
             Err(err) => {
                 let failed_reason = err.to_string();
+                self.cron_receipts.fail(&failed_reason);
                 log::error!(
                     "Session {} in CompletionRunner error: {:?}",
                     self.session.id,
@@ -1846,6 +1873,7 @@ mod tests {
 
     fn input(command: PromptCommand) -> ConversationInput {
         ConversationInput {
+            cron_receipt: None,
             command,
             resources: vec![],
             extra: serde_json::Map::new(),
@@ -1878,6 +1906,7 @@ mod tests {
         let req = CompletionRequest::default();
         let runner = ctx.clone().completion_iter(req.clone(), vec![]).unbound();
         let mut sess_runner = SessionRunner {
+            cron_receipts: Default::default(),
             ctx,
             assistant: bot.clone(),
             session,
@@ -2723,6 +2752,7 @@ mod tests {
             rx,
             action_rx,
             None,
+            None,
         );
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -3425,6 +3455,7 @@ mod tests {
             rx,
             action_rx,
             None,
+            None,
         );
         session
             .sender
@@ -3495,5 +3526,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(saved.messages, vec![json!(history[0])]);
+    }
+
+    #[tokio::test]
+    async fn cron_receipt_waits_for_queued_background_result_and_reports_model_failure() {
+        let bot = build_runner_bot().await;
+        let ctx = recording_usage_ctx_with_input_tokens(Arc::default(), 10);
+        let (mut runner, mut rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let (submission, mut completion) = crate::cron::AgentSubmission::new();
+        let mut request = input(PromptCommand::Plain {
+            prompt: "scheduled".into(),
+        });
+        request.cron_receipt = submission.take();
+        runner
+            .session
+            .background_tasks
+            .write()
+            .insert("shell:test".into(), Default::default());
+        runner
+            .run(vec![request], &mut HashMap::new())
+            .await
+            .unwrap();
+        assert!(matches!(
+            completion.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        // The process has ended, but its final output is still queued for the model.
+        runner
+            .session
+            .sender
+            .send(input(PromptCommand::Plain {
+                prompt: "final background output".into(),
+            }))
+            .await
+            .unwrap();
+        runner.session.background_tasks.write().remove("shell:test");
+        runner.run(vec![], &mut HashMap::new()).await.unwrap();
+        assert!(matches!(
+            completion.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let final_input = rx.recv().await.unwrap();
+        runner
+            .run(vec![final_input], &mut HashMap::new())
+            .await
+            .unwrap();
+        runner.run(vec![], &mut HashMap::new()).await.unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), completion)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.result.as_deref(), Some("normal output"));
+
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(FailedOutputCompleter)))
+            .mock_ctx();
+        let (mut runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let (submission, completion) = crate::cron::AgentSubmission::new();
+        let mut request = input(PromptCommand::Plain {
+            prompt: "scheduled failure".into(),
+        });
+        request.cron_receipt = submission.take();
+        runner
+            .run(vec![request], &mut HashMap::new())
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), completion)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.error.as_deref(), Some("provider failure"));
+    }
+
+    #[tokio::test]
+    async fn cron_cancellation_stops_work_in_an_existing_session() {
+        let (session, mut rx, _actions) = build_session();
+        let (submission, completion) = crate::cron::AgentSubmission::new();
+        let mut receipt = submission.take().unwrap();
+        session.bind_cron_receipt(&mut receipt);
+        submission.cancellation_token().cancel();
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(input.command, PromptCommand::Cancel { .. }));
+        assert!(session.control.is_pending());
+        drop(receipt);
+        assert!(completion.await.unwrap().error.is_some());
     }
 }

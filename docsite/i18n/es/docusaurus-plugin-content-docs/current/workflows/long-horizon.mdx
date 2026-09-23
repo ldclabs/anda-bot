@@ -32,6 +32,14 @@ Si no especifica un intervalo, Anda permite que el modelo determine su propio ri
 /loop Continuar verificando la migración hasta que se demuestre que cada paso de validación se ha completado con éxito.
 ```
 
+## Tareas programadas
+
+Cron admite expresiones cron, intervalos `every` y tareas únicas `at`/`once`. El planificador comprueba las tareas cada cinco segundos y ejecuta como máximo ocho a la vez. Las tareas de agente esperan a que termine el trabajo enviado, incluidas las herramientas en segundo plano; las de shell esperan a que finalice el proceso. Los intervalos `every` se cuentan desde la finalización y las ejecuciones periódicas omitidas no se reproducen una por una. Las marcas de tiempo únicas se redondean hacia arriba al siguiente segundo, para no ejecutarse antes de lo solicitado.
+
+Editar una tarea pausada mantiene la pausa; usa `manage_cron_job` con `resume` para reactivarla. `origin=true` en `update_cron_job` traslada las futuras ejecuciones al llamante y a la conversación actuales. Una ejecución ya iniciada conserva su ruta original. Las listas omiten los resultados completos y muestran vistas previas limitadas; usa `manage_cron_job` con `get` o `list_cron_runs` para ver los detalles. Eliminar una tarea conserva su historial y no cancela una ejecución en curso.
+
+Las herramientas cron están restringidas a usuarios de confianza. Las tareas creadas desde la CLI del propietario validan y guardan el directorio de trabajo registrado; la autorización sobrevive a reinicios y a la caducidad del registro temporal de la CLI. Para tareas antiguas sin autorización guardada, vuelve a conectar la CLI en el directorio deseado y actualiza la tarea una vez con `origin=true`. Los metadatos de la solicitud por sí solos no autorizan un directorio nuevo.
+
 ## Usar /side
 
 Los comandos `/side` o `/btw` colocan una solicitud en una tarea secundaria independiente. Resulta muy útil para:

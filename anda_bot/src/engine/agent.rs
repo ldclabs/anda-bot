@@ -321,6 +321,8 @@ impl AndaBot {
         memory_source.parents.sort();
         memory_source.parents.dedup();
         ctx.base.set_state(memory_source);
+        spec.request_meta
+            .set_cron_workspace(ctx.base.get_state::<cron::CronWorkspaceGrant>());
         let session = Arc::new(Session {
             control: Default::default(),
             background_controls: Default::default(),
@@ -855,6 +857,10 @@ impl Agent<AgentCtx> for AndaBot {
         }
 
         let mut input = ConversationInput {
+            cron_receipt: ctx
+                .base
+                .get_state::<cron::AgentSubmission>()
+                .and_then(|submission| submission.take()),
             command,
             resources,
             extra: ctx.meta().extra.clone(),
@@ -936,10 +942,16 @@ impl Agent<AgentCtx> for AndaBot {
                     let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                     let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
                     session.request_meta.set(meta);
+                    session
+                        .request_meta
+                        .set_cron_workspace(ctx.base.get_state::<cron::CronWorkspaceGrant>());
                     let control = matches!(
                         input.command,
                         PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
                     );
+                    if let Some(receipt) = &mut input.cron_receipt {
+                        session.bind_cron_receipt(receipt);
+                    }
                     match session.sender.send(input).await {
                         Ok(_) => {
                             if control {
@@ -986,6 +998,7 @@ impl Agent<AgentCtx> for AndaBot {
 
         // If the conversation session is not active, start a new session and process the prompt
         let ConversationInput {
+            mut cron_receipt,
             command,
             resources,
             mut extra,
@@ -1218,6 +1231,9 @@ impl Agent<AgentCtx> for AndaBot {
             },
         );
 
+        if let Some(receipt) = &mut cron_receipt {
+            session.bind_cron_receipt(receipt);
+        }
         let assistant = self.clone();
         if !new_chat_history_message.content.is_empty() {
             chat_history.push(new_chat_history_message);
@@ -1256,6 +1272,7 @@ impl Agent<AgentCtx> for AndaBot {
             rx,
             action_rx,
             system_extra_user_context(&extra),
+            cron_receipt,
         );
         Ok(res)
     }
@@ -1589,6 +1606,14 @@ mod tests {
         home: PathBuf,
         brain_url: String,
     ) -> (Arc<Engine>, Arc<AndaBot>) {
+        build_bot_engine_with_model(home, brain_url, Model::mock_implemented()).await
+    }
+
+    async fn build_bot_engine_with_model(
+        home: PathBuf,
+        brain_url: String,
+        model: Model,
+    ) -> (Arc<Engine>, Arc<AndaBot>) {
         let db = build_test_db().await;
         let brain_client = brain::Client::new(brain_url, Some("token".to_string()))
             .with_http_client(new_reqwest_client());
@@ -1653,7 +1678,7 @@ mod tests {
                 managers: BTreeSet::new(),
                 visibility: Visibility::Public,
             }))
-            .with_model(Model::mock_implemented())
+            .with_model(model)
             .register_tool(Arc::new(brain_client.clone()))
             .unwrap()
             .register_tool(Arc::new(FakeShellTool))
@@ -1678,15 +1703,25 @@ mod tests {
             .unwrap()
             .register_tool(Arc::new(WriteFileTool::with_workspaces(vec![])))
             .unwrap()
-            .register_tool(Arc::new(cron::CreateCronTool::new(cron_runtime.clone())))
+            .register_tool(Arc::new(cron::CreateCronTool::new(
+                cron_runtime.store.clone(),
+            )))
             .unwrap()
-            .register_tool(Arc::new(cron::ListCronJobsTool::new(cron_runtime.clone())))
+            .register_tool(Arc::new(cron::ListCronJobsTool::new(
+                cron_runtime.store.clone(),
+            )))
             .unwrap()
-            .register_tool(Arc::new(cron::UpdateCronJobTool::new(cron_runtime.clone())))
+            .register_tool(Arc::new(cron::UpdateCronJobTool::new(
+                cron_runtime.store.clone(),
+            )))
             .unwrap()
-            .register_tool(Arc::new(cron::ManageCronJobTool::new(cron_runtime.clone())))
+            .register_tool(Arc::new(cron::ManageCronJobTool::new(
+                cron_runtime.store.clone(),
+            )))
             .unwrap()
-            .register_tool(Arc::new(cron::ListCronRunsTool::new(cron_runtime.clone())))
+            .register_tool(Arc::new(cron::ListCronRunsTool::new(
+                cron_runtime.store.clone(),
+            )))
             .unwrap()
             .register_tool(Arc::new(ChromeBrowserTool::tabs(bridge.clone())))
             .unwrap()
@@ -2291,5 +2326,74 @@ mod tests {
         assert!(cancelled.is_ok());
 
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+
+    struct CronTestCompleter;
+    impl anda_engine::model::CompletionFeaturesDyn for CronTestCompleter {
+        fn model_name(&self) -> String {
+            "cron-output".into()
+        }
+        fn completion(
+            &self,
+            _: CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async {
+                Ok(AgentOutput {
+                    content: "scheduled work finished".into(),
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cron_receipt_reports_actual_output_for_new_and_joined_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine_with_model(
+            dir.path().into(),
+            spawn_brain_mock().await,
+            Model::new(Arc::new(CronTestCompleter)),
+        )
+        .await;
+        let mut conversation = None;
+        for prompt in ["scheduled first turn", "scheduled second turn"] {
+            let mut meta = RequestMeta::default();
+            meta.extra
+                .insert(keys::SOURCE.into(), "cron-receipt-test".into());
+            meta.extra.insert(keys::CRON_JOB_ID.into(), 1.into());
+            if let Some(id) = conversation {
+                meta.extra.insert(keys::CONVERSATION.into(), json!(id));
+            }
+            let ctx = engine
+                .ctx_with(test_caller(), AndaBot::NAME, "", meta)
+                .unwrap();
+            let (submission, receiver) = crate::cron::AgentSubmission::new();
+            ctx.base.set_state(submission.clone());
+            let (ack, _) = ctx
+                .agent_run(AgentInput::new(AndaBot::NAME.into(), prompt.into()))
+                .await
+                .unwrap();
+            assert!(submission.was_claimed());
+            assert!(ack.content.is_empty());
+            let result = tokio::time::timeout(std::time::Duration::from_secs(3), receiver)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(result.error.is_none(), "{:?}", result.error);
+            assert!(
+                result
+                    .result
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty())
+            );
+            assert_eq!(result.conversation_id, ack.conversation);
+            conversation = result.conversation_id;
+            assert_conversation_reaches_status(
+                &bot,
+                conversation.unwrap(),
+                ConversationStatus::Idle,
+            )
+            .await;
+        }
     }
 }

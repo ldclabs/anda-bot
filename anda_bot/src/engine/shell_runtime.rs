@@ -22,13 +22,13 @@ const CLI_WORKSPACE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 /// Directories explicitly registered by the local owner through the daemon API.
 /// Request metadata alone cannot add a directory to this set.
 #[derive(Clone)]
-pub(super) struct CliWorkspaceGrants {
+pub(crate) struct CliWorkspaceGrants {
     owner: Principal,
     paths: Arc<RwLock<HashMap<PathBuf, Instant>>>,
 }
 
 impl CliWorkspaceGrants {
-    pub(super) fn new(owner: Principal) -> Self {
+    pub(crate) fn new(owner: Principal) -> Self {
         Self {
             owner,
             paths: Arc::new(RwLock::new(HashMap::new())),
@@ -53,7 +53,7 @@ impl CliWorkspaceGrants {
             .collect()
     }
 
-    pub(super) async fn register(&self, workspace: &Path) -> Result<PathBuf, BoxError> {
+    pub(crate) async fn register(&self, workspace: &Path) -> Result<PathBuf, BoxError> {
         let workspace = canonical_directory(workspace).await?;
         let now = Instant::now();
         let mut paths = self.paths.write();
@@ -82,6 +82,45 @@ impl CliWorkspaceGrants {
             .into());
         }
         Ok(workspace)
+    }
+}
+
+fn cli_workspace_request(meta: &RequestMeta) -> Result<Option<(PathBuf, PathBuf)>, BoxError> {
+    let Some(source) = meta.get_extra_as::<String>(keys::SOURCE) else {
+        return Ok(None);
+    };
+    let source_workspace = match source.strip_prefix("cli:") {
+        Some(path) if Path::new(path).is_absolute() => path,
+        Some(path) => match path.strip_prefix("voice:") {
+            Some(path) if Path::new(path).is_absolute() => path,
+            _ => return Ok(None),
+        },
+        None if Path::new(&source).is_absolute() => &source,
+        None => return Ok(None),
+    };
+    let workspace = meta
+        .get_extra_as::<PathBuf>(keys::WORKSPACE)
+        .ok_or("CLI request is missing its workspace")?;
+    Ok(Some((source_workspace.into(), workspace)))
+}
+
+impl CliWorkspaceGrants {
+    pub(crate) async fn authorize_cron_workspace(
+        &self,
+        caller: &Principal,
+        meta: &RequestMeta,
+    ) -> Result<Option<PathBuf>, BoxError> {
+        let Some((source, workspace)) = cli_workspace_request(meta)? else {
+            return Ok(None);
+        };
+        if *caller != self.owner {
+            return Err("only the local owner may use a registered CLI workspace".into());
+        }
+        let resolved = self.resolve(&workspace).await?;
+        if canonical_directory(&source).await? != resolved {
+            return Err("CLI source and workspace do not match".into());
+        }
+        Ok(Some(resolved))
     }
 }
 
@@ -132,32 +171,32 @@ impl NativeShellRuntime {
             .get_state::<SessionRequestMeta>()
             .map(|state| state.get())
             .unwrap_or_else(|| ctx.meta().clone());
-        let Some(source) = meta.get_extra_as::<String>(keys::SOURCE) else {
+        let Some((source_workspace, workspace)) = cli_workspace_request(&meta)? else {
             return Ok(None);
         };
-        let source_workspace = match source.strip_prefix("cli:") {
-            Some(path) if Path::new(path).is_absolute() => path,
-            Some(path) => match path.strip_prefix("voice:") {
-                Some(path) if Path::new(path).is_absolute() => path,
-                _ => return Ok(None),
-            },
-            None if Path::new(&source).is_absolute() => &source,
-            None => return Ok(None),
+        let saved_grant = match ctx.get_state::<SessionRequestMeta>() {
+            Some(session) => session.cron_workspace(),
+            None => ctx.get_state::<crate::cron::CronWorkspaceGrant>(),
         };
-        let workspace = meta
-            .get_extra_as::<PathBuf>(keys::WORKSPACE)
-            .ok_or("CLI request is missing its workspace")?;
-        let grants = self
-            .cli_workspaces
-            .as_ref()
-            .ok_or("CLI workspace registration is unavailable")?;
-        if *ctx.caller() != grants.owner() {
-            return Err("only the local owner may use a registered CLI workspace".into());
-        }
-        let resolved = grants.resolve(&workspace).await?;
-        if canonical_directory(Path::new(source_workspace)).await? != resolved {
-            return Err("CLI source and workspace do not match".into());
-        }
+        let resolved = if let Some(grant) = saved_grant {
+            let resolved = canonical_directory(&workspace).await?;
+            if grant.caller != *ctx.caller()
+                || grant.path != resolved
+                || canonical_directory(&source_workspace).await? != resolved
+            {
+                return Err("Scheduled workspace does not match its saved authorization".into());
+            }
+            resolved
+        } else {
+            let grants = self
+                .cli_workspaces
+                .as_ref()
+                .ok_or("CLI workspace registration is unavailable")?;
+            grants
+                .authorize_cron_workspace(ctx.caller(), &meta)
+                .await?
+                .ok_or("CLI request is missing its workspace")?
+        };
 
         // NativeRuntime also reads the context's original metadata. A resumed
         // session may have been created in a nested directory, which would
@@ -565,5 +604,45 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn cron_workspace_grant_survives_restart_but_cannot_be_forged_or_reused_by_another_caller()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = Principal::management_canister();
+        let grants = CliWorkspaceGrants::new(owner);
+        let path = grants.register(temp.path()).await.unwrap();
+        let meta = cli_meta(&path);
+        let authorized = grants
+            .authorize_cron_workspace(&owner, &meta)
+            .await
+            .unwrap()
+            .unwrap();
+        let runtime = NativeShellRuntime::new(path.clone())
+            .with_cli_workspaces(CliWorkspaceGrants::new(owner));
+        let ctx = anda_engine::engine::EngineBuilder::new()
+            .mock_ctx()
+            .base
+            .with_caller(owner);
+        let session = SessionRequestMeta::new(meta);
+        ctx.set_state(session.clone());
+        assert!(runtime.cli_workspace(&ctx).await.is_err());
+        let grant = crate::cron::CronWorkspaceGrant {
+            caller: owner,
+            path: authorized.clone(),
+        };
+        session.set_cron_workspace(Some(grant.clone()));
+        assert_eq!(runtime.cli_workspace(&ctx).await.unwrap(), Some(authorized));
+        assert!(
+            runtime
+                .cli_workspace(&ctx.with_caller(Principal::anonymous()))
+                .await
+                .is_err()
+        );
+        // A normal follow-up must not recover the original frozen cron grant.
+        ctx.set_state(grant);
+        session.set_cron_workspace(None);
+        assert!(runtime.cli_workspace(&ctx).await.is_err());
     }
 }

@@ -32,6 +32,14 @@ Si vous ne décrivez pas d'intervalle, Anda laisse le modèle cadencer lui-même
 /loop Continuer à vérifier la migration jusqu'à ce que chaque étape de validation soit confirmée comme terminée.
 ```
 
+## Tâches planifiées
+
+Cron prend en charge les expressions cron, les intervalles `every` et les tâches uniques `at`/`once`. Le planificateur vérifie les tâches toutes les cinq secondes et en exécute au maximum huit simultanément. Les tâches d’agent attendent la fin du travail soumis, y compris les outils en arrière-plan ; les tâches shell attendent la fin du processus. Les intervalles `every` partent de la fin de l’exécution, et les occurrences périodiques manquées ne sont pas rejouées individuellement. Les horaires uniques sont arrondis à la seconde supérieure afin de ne jamais démarrer avant l’heure demandée.
+
+Modifier une tâche en pause conserve son état ; utilisez `manage_cron_job` avec `resume` pour la réactiver. `origin=true` dans `update_cron_job` déplace les exécutions futures vers l’appelant et la conversation actuels. Une exécution déjà démarrée conserve sa route d’origine. Les listes omettent les résultats complets et limitent les aperçus textuels ; utilisez `manage_cron_job` avec `get` ou `list_cron_runs` pour les détails. Supprimer une tâche conserve son historique et n’annule pas une exécution en cours.
+
+Les outils cron sont réservés aux utilisateurs de confiance. Les tâches créées depuis la CLI du propriétaire valident et enregistrent le répertoire de travail autorisé ; cette autorisation reste valable après un redémarrage ou l’expiration de l’enregistrement temporaire de la CLI. Pour les anciennes tâches sans autorisation enregistrée, reconnectez la CLI dans le répertoire voulu puis mettez la tâche à jour une fois avec `origin=true`. Les métadonnées d’une requête ne peuvent pas, à elles seules, autoriser un nouveau répertoire.
+
 ## Utiliser /side
 
 Les commandes `/side` ou `/btw` placent une requête dans une tâche secondaire indépendante. C'est utile pour :

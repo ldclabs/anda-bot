@@ -51,8 +51,9 @@ pub(super) fn scoped_external_user_name_from_meta(meta: &RequestMeta) -> String 
 /// `approval_mode` would pin it to the approval policy of a client that is no
 /// longer connected. `finish_when_idle` belongs only to a one-shot request and
 /// must not make a recovered interactive session close itself.
-const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 5] = [
+const TRANSIENT_REQUEST_EXTRA_KEYS: [&str; 6] = [
     keys::CRON_JOB_ID,
+    keys::CRON_RUN_ID,
     keys::CRON_JOB_NAME,
     keys::CRON_JOB_KIND,
     keys::APPROVAL_MODE,

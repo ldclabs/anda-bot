@@ -19,6 +19,7 @@ use super::types::*;
 pub struct CronStore {
     jobs: Arc<Collection>,
     runs: Arc<Collection>,
+    mutations: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CronStore {
@@ -34,7 +35,7 @@ impl CronStore {
                 },
                 async |collection| {
                     collection.create_btree_index_nx(&["next_run"]).await?;
-                    collection.create_btree_index_nx(&["created_at"]).await?;
+                    collection.remove_btree_index(&["created_at"]).await?;
                     Ok::<(), DBError>(())
                 },
             )
@@ -49,13 +50,17 @@ impl CronStore {
                 },
                 async |collection| {
                     collection.create_btree_index_nx(&["job_id"]).await?;
-                    collection.create_btree_index_nx(&["started_at"]).await?;
+                    collection.remove_btree_index(&["started_at"]).await?;
                     Ok::<(), DBError>(())
                 },
             )
             .await?;
 
-        Ok(Self { jobs, runs })
+        Ok(Self {
+            jobs,
+            runs,
+            mutations: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
     pub async fn insert_job(
@@ -82,10 +87,16 @@ impl CronStore {
         args: UpdateCronJobArgs,
         origin: Option<CronJobOrigin>,
     ) -> Result<CronJob, BoxError> {
+        let _guard = self.mutations.lock().await;
         let now_ms = unix_ms();
         let job: CronJob = self.jobs.get_as(args.id).await?;
+        let before = cron_job_update_patch(&job)?;
         let updated = args.into_update_with_origin(origin).apply_to(job, now_ms)?;
-        let patch = cron_job_update_patch(&updated)?;
+        let mut patch = cron_job_update_patch(&updated)?;
+        patch.retain(|key, value| before.get(key) != Some(value));
+        if patch.is_empty() {
+            return Ok(updated);
+        }
         let job = self.jobs.update(updated._id, patch).await?;
         self.jobs.flush(now_ms).await?;
         Ok(job.try_into()?)
@@ -131,6 +142,7 @@ impl CronStore {
     }
 
     pub async fn pause_job(&self, id: u64) -> Result<CronJob, BoxError> {
+        let _guard = self.mutations.lock().await;
         let now_ms = unix_ms();
         let job = self
             .jobs
@@ -147,6 +159,7 @@ impl CronStore {
     }
 
     pub async fn resume_job(&self, id: u64) -> Result<CronJob, BoxError> {
+        let _guard = self.mutations.lock().await;
         let job: CronJob = self.jobs.get_as(id).await?;
         let now_ms = unix_ms();
         let schedule = job.schedule()?;
@@ -167,8 +180,9 @@ impl CronStore {
     }
 
     pub async fn remove_job(&self, id: u64) -> Result<(), BoxError> {
+        let _guard = self.mutations.lock().await;
         let now_ms = unix_ms();
-        if !matches!(self.jobs.remove(id).await, Ok(Some(_))) {
+        if self.jobs.remove(id).await?.is_none() {
             return Ok(());
         }
 
@@ -252,7 +266,8 @@ impl CronStore {
         let mut jobs = Vec::with_capacity(ids.len());
         for id in ids {
             match self.jobs.get_as::<CronJob>(id).await {
-                Ok(job) => jobs.push(job),
+                Ok(job) if job.next_run <= now_ms / 1000 => jobs.push(job),
+                Ok(_) => continue,
                 // A job removed between the index walk and this read must not
                 // fail the whole scheduler tick.
                 Err(DBError::NotFound { .. }) => continue,
@@ -261,6 +276,25 @@ impl CronStore {
         }
         jobs.sort_by_key(|job| (job.next_run, job._id));
         Ok(jobs)
+    }
+
+    /// Recheck the definition under the same lock used by management and completion.
+    pub async fn claim_job(
+        &self,
+        id: u64,
+        now_ms: u64,
+    ) -> Result<Option<(CronJob, CronRun)>, BoxError> {
+        let _guard = self.mutations.lock().await;
+        let job: CronJob = match self.jobs.get_as(id).await {
+            Ok(job) => job,
+            Err(DBError::NotFound { .. }) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        if job.is_paused() || job.next_run > now_ms / 1000 {
+            return Ok(None);
+        }
+        let run = self.job_start(id, now_ms).await?;
+        Ok(Some((job, run)))
     }
 
     pub async fn job_start(&self, job_id: u64, started_at: u64) -> Result<CronRun, BoxError> {
@@ -274,39 +308,14 @@ impl CronStore {
         Ok(run)
     }
 
-    #[allow(unused)]
-    pub async fn job_abort(
-        &self,
-        run: CronRun,
-        finished_at: u64,
-        error: String,
-    ) -> Result<(), BoxError> {
-        let run_patch: BTreeMap<String, Fv> = BTreeMap::from([
-            ("finished_at".to_string(), Fv::U64(finished_at)),
-            ("error".to_string(), Fv::Text(error.clone())),
-        ]);
-        let job_patch: BTreeMap<String, Fv> = BTreeMap::from([
-            ("last_finished_at".to_string(), Fv::U64(finished_at)),
-            ("updated_at".to_string(), Fv::U64(finished_at)),
-            ("last_error".to_string(), Fv::Text(error)),
-            ("last_result".to_string(), Fv::Null),
-        ]);
-
-        self.runs.update(run._id, run_patch).await?;
-        let Ok(job) = self.jobs.get_as::<CronJob>(run.job_id).await else {
-            return Ok(());
-        };
-
-        self.jobs.update(job._id, job_patch).await?;
-        Ok(())
-    }
-
     pub async fn job_finish(
         &self,
+        started_job: &CronJob,
         run: CronRun,
         finished_at: u64,
         result: CronJobResult,
     ) -> Result<(), BoxError> {
+        let _guard = self.mutations.lock().await;
         let mut run_patch: BTreeMap<String, Fv> =
             BTreeMap::from([("finished_at".to_string(), Fv::U64(finished_at))]);
         let mut job_patch: BTreeMap<String, Fv> = BTreeMap::from([
@@ -316,26 +325,37 @@ impl CronStore {
 
         if let Some(conversation_id) = result.conversation_id {
             run_patch.insert("conversation_id".to_string(), Fv::U64(conversation_id));
-            job_patch.insert("last_conversation_id".to_string(), Fv::U64(conversation_id));
         }
 
-        if let Some(error) = result.error {
-            run_patch.insert("error".to_string(), Fv::Text(error.clone()));
-            job_patch.insert("last_error".to_string(), Fv::Text(error));
-            job_patch.insert("last_result".to_string(), Fv::Null);
-        } else if let Some(result) = result.result {
-            run_patch.insert("result".to_string(), Fv::Text(result.clone()));
-            job_patch.insert("last_result".to_string(), Fv::Text(result));
-            job_patch.insert("last_error".to_string(), Fv::Null);
+        for (run_field, job_field, value) in [
+            ("error", "last_error", &result.error),
+            ("result", "last_result", &result.result),
+        ] {
+            job_patch.insert(job_field.into(), optional_text(value));
+            if let Some(value) = value {
+                run_patch.insert(run_field.into(), Fv::Text(value.clone()));
+            }
         }
 
         self.runs.update(run._id, run_patch).await?;
-        let Ok(job) = self.jobs.get_as::<CronJob>(run.job_id).await else {
-            return Ok(());
+        let job = match self.jobs.get_as::<CronJob>(run.job_id).await {
+            Ok(job) => job,
+            Err(DBError::NotFound { .. }) => return Ok(()),
+            Err(err) => return Err(err.into()),
         };
+        if job.origin == started_job.origin
+            && let Some(conversation_id) = result.conversation_id
+        {
+            job_patch.insert("last_conversation_id".to_string(), Fv::U64(conversation_id));
+        }
 
         // only update next_run if the job is not already paused
-        if !job.is_paused() {
+        if !job.is_paused()
+            && job.next_run == started_job.next_run
+            && job.schedule_kind == started_job.schedule_kind
+            && job.schedule == started_job.schedule
+            && job.tz == started_job.tz
+        {
             let schedule = job.schedule()?;
             let next_run = schedule.next_run(finished_at);
             job_patch.insert("next_run".to_string(), Fv::U64(next_run));
@@ -366,6 +386,10 @@ fn cron_job_update_patch(job: &CronJob) -> Result<BTreeMap<String, Fv>, BoxError
         ("name".to_string(), optional_text(&job.name)),
         ("updated_at".to_string(), Fv::U64(job.updated_at)),
         ("next_run".to_string(), Fv::U64(job.next_run)),
+        (
+            "last_conversation_id".to_string(),
+            job.last_conversation_id.map(Fv::U64).unwrap_or(Fv::Null),
+        ),
     ]))
 }
 
@@ -604,6 +628,7 @@ mod tests {
         let run = store.job_start(job._id, unix_ms()).await.unwrap();
         store
             .job_finish(
+                &job,
                 run,
                 unix_ms(),
                 CronJobResult {
@@ -720,5 +745,161 @@ mod tests {
 
         assert_eq!(updated.job, "updated prompt");
         assert_eq!(updated.next_run, job.next_run);
+    }
+    #[tokio::test]
+    async fn one_shot_is_never_due_early_or_again_after_completion() {
+        let store = test_store().await;
+        let at = (unix_ms() / 1000 + 60) * 1000 + 900;
+        let job = insert_at_job(&store, "once", at).await;
+        assert!(
+            store
+                .due_jobs(at - 700, 8, &HashSet::new())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let (snapshot, run) = store.claim_job(job._id, at + 100).await.unwrap().unwrap();
+        store
+            .job_finish(&snapshot, run, at + 101, CronJobResult::default())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .due_jobs(at + 5100, 8, &HashSet::new())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn origin_replacement_clears_old_conversation_and_ignores_old_completion() {
+        let store = test_store().await;
+        let job = insert_test_job(&store, "origin").await;
+        let first = store.job_start(job._id, unix_ms()).await.unwrap();
+        store
+            .job_finish(
+                &job,
+                first,
+                unix_ms(),
+                CronJobResult {
+                    conversation_id: Some(7),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let old = store.get_job(job._id).await.unwrap();
+        let running = store.job_start(job._id, unix_ms()).await.unwrap();
+        let args = serde_json::from_value(serde_json::json!({"id":job._id,"origin":true})).unwrap();
+        let updated = store
+            .update_job_with_origin(
+                args,
+                Some(CronJobOrigin {
+                    conversation_id: Some(42),
+                    reply_target: Some("new".into()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.last_conversation_id, None);
+        assert_eq!(
+            updated
+                .request_meta()
+                .unwrap()
+                .get_extra_as::<u64>("conversation"),
+            Some(42)
+        );
+        store
+            .job_finish(
+                &old,
+                running,
+                unix_ms(),
+                CronJobResult {
+                    conversation_id: Some(7),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_job(job._id)
+                .await
+                .unwrap()
+                .request_meta()
+                .unwrap()
+                .get_extra_as::<u64>("conversation"),
+            Some(42)
+        );
+    }
+
+    #[tokio::test]
+    async fn management_and_completion_preserve_explicit_schedule_changes() {
+        let store = test_store().await;
+        let job = insert_test_job(&store, "managed").await;
+        let run = store.job_start(job._id, unix_ms()).await.unwrap();
+        let rename =
+            serde_json::from_value(serde_json::json!({"id":job._id,"name":"renamed"})).unwrap();
+        let (paused, renamed) = tokio::join!(store.pause_job(job._id), store.update_job(rename));
+        paused.unwrap();
+        renamed.unwrap();
+        let args =
+            serde_json::from_value(serde_json::json!({"id":job._id,"schedule":"120"})).unwrap();
+        assert!(store.update_job(args).await.unwrap().is_paused());
+        assert!(
+            store
+                .claim_job(job._id, unix_ms() + 3600000)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .job_finish(&job, run, unix_ms(), CronJobResult::default())
+            .await
+            .unwrap();
+        assert!(store.get_job(job._id).await.unwrap().is_paused());
+        let resumed = store.resume_job(job._id).await.unwrap();
+        assert!(!resumed.is_paused());
+        let run = store.job_start(job._id, unix_ms()).await.unwrap();
+        let args =
+            serde_json::from_value(serde_json::json!({"id":job._id,"schedule":"600"})).unwrap();
+        let changed = store.update_job(args).await.unwrap();
+        store
+            .job_finish(&resumed, run, unix_ms() + 10000, CronJobResult::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_job(job._id).await.unwrap().next_run,
+            changed.next_run
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_surfaces_storage_error_and_retains_history() {
+        let store = test_store().await;
+        let job = insert_test_job(&store, "remove").await;
+        let run = store.job_start(job._id, unix_ms()).await.unwrap();
+        store.jobs.set_read_only(true);
+        assert!(store.remove_job(job._id).await.is_err());
+        assert!(store.get_job(job._id).await.is_ok());
+        store.jobs.set_read_only(false);
+        store.remove_job(job._id).await.unwrap();
+        store.remove_job(job._id).await.unwrap();
+        store
+            .job_finish(
+                &job,
+                run,
+                unix_ms(),
+                CronJobResult {
+                    result: Some("done".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let (runs, _) = store.list_runs(None, None, Some(job._id)).await.unwrap();
+        assert_eq!(runs[0].result.as_deref(), Some("done"));
     }
 }

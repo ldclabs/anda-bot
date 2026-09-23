@@ -49,6 +49,7 @@ mod multimodal;
 mod prompt;
 mod resources;
 mod shell_runtime;
+pub(crate) use shell_runtime::CliWorkspaceGrants;
 mod side;
 mod skill_library;
 mod system;
@@ -668,19 +669,21 @@ impl Engines {
                 fs::WriteFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
-                cron::CreateCronTool::new(cron_runtime.clone()),
+                cron::CreateCronTool::new(cron_runtime.store.clone())
+                    .with_workspace_grants(cli_workspaces.clone()),
             )))))?
             .register_tool(record_artifacts(Arc::new(cron::ListCronJobsTool::new(
-                cron_runtime.clone(),
+                cron_runtime.store.clone(),
             ))))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
-                cron::UpdateCronJobTool::new(cron_runtime.clone()),
+                cron::UpdateCronJobTool::new(cron_runtime.store.clone())
+                    .with_workspace_grants(cli_workspaces.clone()),
             )))))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
-                cron::ManageCronJobTool::new(cron_runtime.clone()),
+                cron::ManageCronJobTool::new(cron_runtime.store.clone()),
             )))))?
             .register_tool(record_artifacts(Arc::new(cron::ListCronRunsTool::new(
-                cron_runtime,
+                cron_runtime.store.clone(),
             ))))?
             .register_tool(record_artifacts(browser_tabs_tool))?
             .register_tool(record_artifacts(browser_page_tool))?

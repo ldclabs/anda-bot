@@ -32,6 +32,14 @@ If you do not describe an interval, Anda lets the model self-pace the loop and c
 /loop Keep checking the migration until every validation step is proven complete.
 ```
 
+## Scheduled jobs
+
+Cron supports recurring cron expressions, `every` intervals, and one-off `at`/`once` jobs. The scheduler polls every five seconds and runs at most eight jobs at once. Agent runs wait for the submitted work to complete, including background tools; shell runs wait for the process to exit. `every` intervals start from completion, and missed recurring occurrences are not replayed individually. One-off timestamps are rounded up to the next second, so they never run before the requested time.
+
+Editing a paused job keeps it paused; use `manage_cron_job` with `resume` to reactivate it. Setting `origin=true` in `update_cron_job` moves future runs to the current caller and conversation. An already running execution retains its original route. Job lists omit full results and show bounded text previews; use `manage_cron_job` with `get`, or `list_cron_runs`, for full details. Removing a job retains its run history and does not cancel an execution already started.
+
+Cron tools are restricted to trusted users. Jobs created from the owner's CLI validate and save the registered working directory, so that authorization survives restarts and temporary CLI registration expiry. For older CLI jobs without saved authorization, reconnect the CLI in the intended directory and update the job with `origin=true` once. Request metadata alone cannot authorize a new directory.
+
 ## Use /side
 
 `/side` or `/btw` puts a request into an independent side task. It is useful for:

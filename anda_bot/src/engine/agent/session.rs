@@ -139,17 +139,27 @@ impl SessionControl {
 #[derive(Clone)]
 pub struct SessionRequestMeta {
     meta: Arc<RwLock<RequestMeta>>,
+    cron_workspace: Arc<RwLock<Option<crate::cron::CronWorkspaceGrant>>>,
 }
 
 impl SessionRequestMeta {
     pub fn new(meta: RequestMeta) -> Self {
         Self {
             meta: Arc::new(RwLock::new(meta)),
+            cron_workspace: Default::default(),
         }
     }
 
     pub fn get(&self) -> RequestMeta {
         self.meta.read().clone()
+    }
+
+    pub(crate) fn cron_workspace(&self) -> Option<crate::cron::CronWorkspaceGrant> {
+        self.cron_workspace.read().clone()
+    }
+
+    pub(crate) fn set_cron_workspace(&self, grant: Option<crate::cron::CronWorkspaceGrant>) {
+        *self.cron_workspace.write() = grant;
     }
 
     pub(super) fn set(&self, meta: RequestMeta) {
@@ -214,6 +224,22 @@ fn background_shell_end_prompt(
 }
 
 impl Session {
+    pub(super) fn bind_cron_receipt(&self, receipt: &mut crate::cron::AgentReceipt) {
+        let sender = self.sender.clone();
+        let control = self.control.clone();
+        receipt.on_cancel(async move {
+            control.request();
+            let _ = sender
+                .send(ConversationInput {
+                    command: PromptCommand::Cancel {
+                        prompt: "Cron scheduler stopped".into(),
+                    },
+                    ..Default::default()
+                })
+                .await;
+        });
+    }
+
     async fn record_agent_artifacts(ctx: &AgentCtx, output: &mut AgentOutput) {
         if let Some(artifacts) = ctx
             .base
@@ -236,6 +262,11 @@ impl Session {
             .read()
             .values()
             .any(|task| !task.stopped)
+    }
+
+    // Final background output must be consumed before scheduled work is complete.
+    pub(super) fn has_pending_inputs(&self) -> bool {
+        self.sender.capacity() != self.sender.max_capacity()
     }
 
     fn running_background_task_count(&self) -> usize {
@@ -282,9 +313,6 @@ impl Session {
             requests: current.requests.saturating_sub(previous.requests),
         };
         previous.accumulate(&delta);
-        if ended {
-            tasks.remove(task_id);
-        }
         Some(delta)
     }
 
@@ -419,6 +447,7 @@ impl AgentHook for Session {
         };
         self.sender
             .send(ConversationInput {
+                cron_receipt: None,
                 command: PromptCommand::Plain { prompt },
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
@@ -444,6 +473,7 @@ impl AgentHook for Session {
             subagent_final_output_prompt(&session_id, &output, last_progress_content.as_deref());
         self.sender
             .send(ConversationInput {
+                cron_receipt: None,
                 command: PromptCommand::Plain { prompt },
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
@@ -451,6 +481,7 @@ impl AgentHook for Session {
             })
             .await
             .ok();
+        self.background_tasks.write().remove(&session_id);
     }
 }
 
@@ -494,6 +525,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             .insert(shell_background_output_key(&task_id), output_json.clone());
         self.sender
             .send(ConversationInput {
+                cron_receipt: None,
                 command: PromptCommand::Plain {
                     prompt: system_runtime_prompt(
                         "background shell",
@@ -520,8 +552,8 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
         self.background_controls.finish(&task_id);
         let stopped = self
             .background_tasks
-            .write()
-            .remove(&task_id)
+            .read()
+            .get(&task_id)
             .is_some_and(|task| task.stopped);
         let output_json = background_shell_output_json(&output.output);
         let last_progress_output = self
@@ -529,6 +561,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             .write()
             .remove(&shell_background_output_key(&task_id));
         if stopped {
+            self.background_tasks.write().remove(&task_id);
             return;
         }
 
@@ -536,6 +569,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             background_shell_end_prompt(&task_id, &output_json, last_progress_output.as_deref());
         self.sender
             .send(ConversationInput {
+                cron_receipt: None,
                 command: PromptCommand::Plain { prompt },
                 usage: output.usage,
                 extra: ctx.meta().extra.clone(),
@@ -543,6 +577,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
             })
             .await
             .ok();
+        self.background_tasks.write().remove(&task_id);
     }
 }
 
@@ -557,8 +592,9 @@ pub struct BackgroundTaskInfo {
     pub reported_usage: Usage,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(super) struct ConversationInput {
+    pub(super) cron_receipt: Option<crate::cron::AgentReceipt>,
     pub(super) command: PromptCommand,
     pub(super) resources: Vec<Resource>,
     pub(super) extra: Map<String, Value>,
