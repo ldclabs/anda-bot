@@ -17,13 +17,32 @@ The repository also contains:
 - `skills/`: runtime skill packages distributed with the project.
 - `scripts/`: release/install helper scripts.
 
+## Agent Workflow
+
+- Work independently as the current agent. Do not spawn or delegate work to
+  subagents.
+- Before editing, run `git status --short`, confirm the current branch, and
+  inspect existing diffs in the files you intend to change. Preserve the user's
+  existing work; do not overwrite or revert unrelated files or changes.
+- Use `rg` for search and focused reads before editing. Do not assume module
+  boundaries from filenames alone.
+- Before committing, review the final diff and stage only the files or hunks
+  belonging to the requested task.
+- At completion, briefly summarize the changes, the checks actually run and
+  their results, and any checks not run or blocked. Never report an unrun check
+  as passing. When committing, include the branch and commit ID in the summary.
+
 ## Development Rules
 
 - Keep changes scoped to the subsystem requested. Avoid broad refactors unless
   they are necessary to make the requested behavior correct.
+- Fix the root cause and keep the implementation direct and clear. Do not add
+  complexity for extreme or speculative scenarios beyond the task's needs.
 - Prefer existing project patterns over new abstractions. This codebase already
   has clear boundaries for config, daemon startup, engine tools, channels,
   transcription, TTS, cron, and the TUI.
+- When refactoring, remove obsolete branches and abstractions in the affected
+  code, and update the corresponding callers, comments, and tests.
 - Do not commit secrets, tokens, generated local state, or user data. Runtime
   state normally belongs under `~/.anda`; repository examples must use
   placeholders.
@@ -31,8 +50,6 @@ The repository also contains:
   top-level `README.md` and `README_cn.md` are paired and should stay in sync.
 - If user-facing docs under `docsite/docs/` change, keep localized counterparts
   aligned where they already exist, especially `docsite/i18n/zh-Hans/...`.
-- Use `rg` for search and focused reads before editing. Do not assume module
-  boundaries from filenames alone.
 
 ## Rust Workspace
 
@@ -45,8 +62,9 @@ The repository also contains:
   Keep a single DB/core type identity and verify Cargo metadata before changing
   patches.
 - Brain HTTP accepts Engine `KipArgs` (no `kip`, top-level `dry_run`) and returns
-  KIP 2.0 responses; native Rust execution uses `anda_kip::Request`. Application tools use
-  `util::tool_response::ToolResponse` and preserve their existing wire format.
+  KIP 2.0 responses; native Rust execution uses `anda_kip::Request`. Application
+  tools use `util::tool_response::ToolResponse` and preserve their existing wire
+  format.
 - Install optional `brain.runtime_config` before the first Space load. Preserve
   authenticated caller mappings for inbox access; do not proxy a user through
   the global Bot identity or expose independent outcomes as a model tool.
@@ -101,17 +119,17 @@ Rust:
 
 ```bash
 cargo fmt
-cargo test -p anda_bot -- --nocapture
+RUST_MIN_STACK=16777216 cargo test -p anda_bot -- --nocapture
 cargo clippy --all-targets --all-features
-make test
+RUST_MIN_STACK=16777216 make test
 make lint
 ```
 
 Targeted Rust tests:
 
 ```bash
-cargo test -p anda_bot external_user -- --nocapture
-cargo test -p anda_bot wechat_thread -- --nocapture
+RUST_MIN_STACK=16777216 cargo test -p anda_bot external_user -- --nocapture
+RUST_MIN_STACK=16777216 cargo test -p anda_bot wechat_thread -- --nocapture
 ```
 
 Chrome extension:
@@ -140,7 +158,9 @@ pnpm --dir docsite build
 ```
 
 Run only the checks that match the files touched, then broaden verification when
-the change crosses runtime boundaries or public contracts.
+the change crosses runtime boundaries or public contracts. For instruction-only
+changes, review the content and run `git diff --check`; builds and runtime tests
+are unnecessary unless the change also affects executable behavior.
 
 ## Known Environment Notes
 
@@ -149,5 +169,3 @@ the change crosses runtime boundaries or public contracts.
   setup can be environmental; preserve the exact failure text in reports.
 - Some commands require network access or preinstalled dependencies. If
   dependency installation is needed, ask before changing the environment.
-- The repository may have unrelated working-tree changes. Do not revert changes
-  you did not make unless explicitly asked.
