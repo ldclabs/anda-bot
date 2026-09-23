@@ -1292,10 +1292,30 @@ pub fn run_anda(ctx: &LauncherContext, args: &[&str]) -> LauncherResult<CommandR
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command.args(args);
-    let output = command
-        .output()
+    #[cfg(unix)]
+    let output = output_with_busy_retry(&mut command);
+    #[cfg(not(unix))]
+    let output = command.output();
+    let output = output
         .map_err(|err| text().run_anda_failed(&ctx.anda_exe.to_string_lossy(), &err.to_string()))?;
     Ok(command_result(output))
+}
+
+#[cfg(unix)]
+fn output_with_busy_retry(command: &mut Command) -> io::Result<Output> {
+    // On Unix, an executable can briefly have a writable descriptor held by
+    // another process (including a concurrent fork). exec then fails before
+    // the command starts. Retry only that spawn error, never a command's exit.
+    let mut retries = 0;
+    loop {
+        let result = command.output();
+        let busy = matches!(&result, Err(err) if err.raw_os_error() == Some(libc::ETXTBSY));
+        if !busy || retries == 10 {
+            return result;
+        }
+        retries += 1;
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn run_update_check(ctx: &LauncherContext, force: bool) -> LauncherResult<LauncherAutoUpdateState> {
@@ -2968,6 +2988,40 @@ exit 1
 
         // run_update_check returns Err for non-success commands.
         assert!(check_update_now(&ctx).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn run_anda_retries_executable_busy_until_writer_closes() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), true);
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .open(&ctx.anda_exe)
+            .unwrap();
+        let err = Command::new(&ctx.anda_exe).output().unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::ETXTBSY));
+
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            drop(writer);
+        });
+        let result = start_daemon(&ctx);
+        release.join().unwrap();
+        assert!(result.unwrap().success);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn run_anda_returns_error_when_executable_stays_busy() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = context_with_fake_anda(home.path(), true);
+        let _writer = fs::OpenOptions::new()
+            .write(true)
+            .open(&ctx.anda_exe)
+            .unwrap();
+        let err = start_daemon(&ctx).unwrap_err();
+        assert!(err.to_string().contains("Text file busy"));
     }
 
     #[test]
