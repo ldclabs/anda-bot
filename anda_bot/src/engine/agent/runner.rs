@@ -1750,17 +1750,20 @@ mod tests {
 
     async fn build_runner_bot() -> AndaBot {
         let db = crate::test_support::memory_db("runner").await;
-        // Dead-proxy brain client: formation submission fails fast (the stop
-        // path tolerates the error) without needing a live brain.
-        let http = reqwest::Client::builder()
-            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
-            .build()
-            .unwrap();
-        let brain_client = brain::Client::new(
-            "http://127.0.0.1:1/v1/anda_bot".to_string(),
-            Some("t".to_string()),
-        )
-        .with_http_client(http);
+        // Keep Brain failures deterministic. A refused TCP connection can take
+        // seconds on Windows and outlive the cancellation tests' deadlines.
+        let brain_url =
+            crate::test_support::spawn_http_mock(axum::Router::new().fallback(|| async {
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "test Brain unavailable",
+                )
+            }))
+            .await;
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let brain_client =
+            brain::Client::new(format!("{brain_url}/v1/anda_bot"), Some("t".to_string()))
+                .with_http_client(http);
         let conversations_tool = Arc::new(
             ConversationsTool::connect(db.clone(), "bot".to_string(), "/tmp".to_string())
                 .await
@@ -3411,6 +3414,7 @@ mod tests {
             .add_conversation(ConversationRef::from(&conversation))
             .await
             .unwrap();
+        let conversation_id = conversation._id;
         bot.spawn_session_runner(
             ctx,
             CompletionRequest::default(),
@@ -3448,7 +3452,7 @@ mod tests {
             }
         })
         .await
-        .unwrap();
+        .expect("the message queued after stop must reach the model");
         session
             .sender
             .send(input(PromptCommand::Cancel {
@@ -3459,7 +3463,16 @@ mod tests {
         session.control.request();
         tokio::time::timeout(std::time::Duration::from_secs(2), session.sender.closed())
             .await
+            .expect("cancel must close the session even when Brain rejects formation");
+        let saved = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(conversation_id)
+            .await
             .unwrap();
+        assert_eq!(saved.status, ConversationStatus::Cancelled);
+        assert!(session.formation_backoff_until.load(Ordering::SeqCst) > 0);
     }
 
     #[tokio::test]
