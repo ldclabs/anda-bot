@@ -30,6 +30,8 @@ Anda Bot 专为需要连续性的复杂目标而设计，而非简单的单轮�
 
 先运行 `anda memory guide` 阅读离线指南，再在普通聊天中告诉 Anda 一条偏好。等后台整理后，用 `/new` 开新对话询问。`anda memory` 和 TUI `/memory` 无需调用模型即可查看连接与处理状态；浏览器“记忆”工作区提供记录、可核对的来源、更正及移除预览。助手的口头确认不等于事实已保存。
 
+整理记录按提交时间排序；记忆记录和生效中的订阅支持连续分页，已取消的订阅不占用活动列表配额。Recall 请求收到 HTTP 错误后不会自动重发。
+
 使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off` 新建受 Brain/Notes 策略约束的会话；聊天历史、文件和服务商处理仍保留。持久确认问题按需启用：`anda memory inbox setup` 先预览配置，再明确应用并重启。详见[使用步骤与范围](docs/brain-integration_cn.md#先使用日常记忆)。
 
 
@@ -92,7 +94,7 @@ launcher 会将该目录传给 daemon 命令，并保留在登录自启和重启
 
 也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
 
-当前开发代码为记忆产品合同临时将 Brain patch 到同级 `../anda-brain/anda_brain`；原生合同发布后，应切回 registry 再发布独立源码版本。Nexus 0.13.4、DB/KIP 和 Core/Engine 仍使用 registry 发布版本，保持单一类型身份并包含旧数据迁移修复。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+源码构建使用锁定的 Brain（0.12.1）、Nexus（0.13.4）、DB/KIP 和 Core/Engine registry 发布版本，保持单一 DB/core 类型身份。已注释的同级 Brain patch 仅供显式选择的本地联调使用。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
 
 开发和测试构建对依赖包启用基础优化，将 macOS 展开表控制在链接器的 16 MiB 限制以内。`anda_bot` 自身仍不启用优化，并保留调试信息和 panic 展开。首次编译依赖会稍慢，后续构建会复用这些产物。
 

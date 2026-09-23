@@ -5,14 +5,66 @@ use anda_core::{AgentOutput, BoxError, Usage};
 use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, path::Path};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, Weak},
+    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
 pub struct Journal {
     store: Arc<dyn ObjectStore>,
     formation_locks: Arc<parking_lot::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
+    changed: Arc<parking_lot::Mutex<BTreeSet<String>>>,
+    #[cfg(test)]
+    reads: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// An in-process read optimization, not an execution queue. The durable journal
+/// is rescanned on startup and periodically to repair missed notifications.
+#[derive(Default)]
+pub(super) struct JournalPoll {
+    next_scan: Option<Instant>,
+    pending: BTreeSet<String>,
+}
+
+impl JournalPoll {
+    pub async fn keys(
+        &mut self,
+        journal: &Journal,
+        prefixes: &[&str],
+    ) -> Result<Vec<String>, BoxError> {
+        {
+            let mut changed = journal.changed.lock();
+            changed.retain(|key| {
+                if prefixes.iter().any(|prefix| key.starts_with(prefix)) {
+                    self.pending.insert(key.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if self.next_scan.is_none_or(|next| Instant::now() >= next) {
+            use futures::TryStreamExt;
+            for prefix in prefixes {
+                let path = Path::from(format!("bot-brain/v1/{prefix}"));
+                let mut entries = journal.store.list(Some(&path));
+                while let Some(entry) = entries.try_next().await? {
+                    if let Some(key) = entry.location.as_ref().strip_prefix("bot-brain/v1/") {
+                        self.pending.insert(key.into());
+                    }
+                }
+            }
+            self.next_scan = Some(Instant::now() + Duration::from_secs(300));
+        }
+        Ok(self.pending.iter().cloned().collect())
+    }
+
+    pub fn finish(&mut self, key: &str, refresh: bool) {
+        if !refresh {
+            self.pending.remove(key);
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecallDelivery {
@@ -101,6 +153,9 @@ impl Journal {
         Self {
             store,
             formation_locks: Default::default(),
+            changed: Default::default(),
+            #[cfg(test)]
+            reads: Default::default(),
         }
     }
 
@@ -126,6 +181,9 @@ impl Journal {
             .is_some_and(|lock| lock.strong_count() > 0)
     }
     pub async fn read<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, BoxError> {
+        #[cfg(test)]
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match self
             .store
             .get(&Path::from(format!("bot-brain/v1/{key}")))
@@ -136,6 +194,10 @@ impl Journal {
             Err(err) => Err(err.into()),
         }
     }
+    #[cfg(test)]
+    pub(super) fn read_count(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
     pub async fn write<T: Serialize>(&self, key: &str, value: &T) -> Result<(), BoxError> {
         self.store
             .put(
@@ -143,6 +205,7 @@ impl Journal {
                 serde_json::to_vec(value)?.into(),
             )
             .await?;
+        self.mark_changed(key);
         Ok(())
     }
     pub async fn create<T: Serialize>(&self, key: &str, value: &T) -> Result<bool, BoxError> {
@@ -158,12 +221,23 @@ impl Journal {
             )
             .await
         {
-            Ok(_) => Ok(true),
+            Ok(_) => {
+                self.mark_changed(key);
+                Ok(true)
+            }
             Err(
                 object_store::Error::AlreadyExists { .. }
                 | object_store::Error::Precondition { .. },
             ) => Ok(false),
             Err(err) => Err(err.into()),
+        }
+    }
+    fn mark_changed(&self, key: &str) {
+        if ["formation/", "recall/", "changes/"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+        {
+            self.changed.lock().insert(key.into());
         }
     }
     pub async fn record_recall(&self, delivery: &RecallDelivery) -> Result<(), BoxError> {

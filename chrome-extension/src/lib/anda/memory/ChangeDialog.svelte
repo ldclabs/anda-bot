@@ -251,6 +251,12 @@
       </p>
     {/if}
     {#if error}<p role="alert" class="mt-4 break-words text-sm text-destructive">{error}</p>{/if}
+    {#if view?.state === 'prepared' && view.error}<p
+        role="alert"
+        class="mt-3 text-sm text-destructive"
+      >
+        {getMessage('memoryChangeNeedsReview')}
+      </p>{/if}
     {#if unknown}<p class="mt-3 text-xs text-muted-foreground">
         {getMessage('memoryUnknownHint')}
       </p>{/if}

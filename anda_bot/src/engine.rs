@@ -466,10 +466,8 @@ impl Engines {
         claims.audience = Some("*".into());
         claims.extra.insert(iana::CWTClaimScope, "*");
         let brain_token = cfg.id_key.sign_cwt(claims)?;
-        let brain_http_client = build_http_client(None, |client| client.no_proxy())?;
         let brain_journal = brain::Journal::new(object_store.clone());
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
-            .with_http_client(brain_http_client)
             .with_host(brain_host.clone(), brain_journal.clone());
 
         let default_workspace = cfg

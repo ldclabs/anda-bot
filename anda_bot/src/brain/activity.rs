@@ -11,9 +11,9 @@ use anda_db::{
     query::{Filter, Query, RangeQuery},
     schema::{AndaDBSchema, FieldTyped, Fv},
 };
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -31,6 +31,8 @@ struct ActivityIndex {
     submitted_at: u64,
     #[serde(default)]
     native_id: String,
+    #[serde(default)]
+    order: Option<String>,
 }
 
 #[derive(Clone)]
@@ -39,7 +41,7 @@ pub struct ActivityStore {
     journal: Journal,
     conversations: Arc<ConversationsTool>,
     client: Client,
-    write_lock: Arc<tokio::sync::Mutex<()>>,
+    reconciliation: Arc<tokio::sync::Mutex<super::journal::JournalPoll>>,
     initialized: Arc<AtomicBool>,
 }
 
@@ -138,22 +140,63 @@ struct ActivityCursor {
     user: String,
     conversation: Option<String>,
     upper: u64,
-    before: u64,
+    before: Option<String>,
+    version: u32,
+}
+
+/// A caller-bound cache that lives for one list or mutation request. Nothing
+/// survives into another request, where ownership and message digests may differ.
+pub(crate) struct SourceResolver<'a> {
+    activity: &'a ActivityStore,
+    caller: Principal,
+    formations: HashMap<u64, Option<FormationSubmission>>,
+    conversations: HashMap<u64, Option<anda_engine::memory::Conversation>>,
+    messages: HashMap<(u64, usize), (String, Option<String>, bool)>,
+    resolved: HashMap<String, Option<MemorySource>>,
 }
 
 impl ActivityStore {
-    pub async fn resolve_source(
-        &self,
-        caller: Principal,
+    pub(crate) fn source_resolver(&self, caller: Principal) -> SourceResolver<'_> {
+        SourceResolver {
+            activity: self,
+            caller,
+            formations: HashMap::new(),
+            conversations: HashMap::new(),
+            messages: HashMap::new(),
+            resolved: HashMap::new(),
+        }
+    }
+}
+
+impl SourceResolver<'_> {
+    pub fn caller(&self) -> Principal {
+        self.caller
+    }
+    pub async fn resolve(
+        &mut self,
+        source: &anda_brain::product::RecordSource,
+    ) -> Result<Option<MemorySource>, BoxError> {
+        // Include every native source coordinate, not just the evidence ID.
+        let key = anda_cognitive_nexus::content_digest(&serde_json::to_value(source)?)?;
+        if let Some(value) = self.resolved.get(&key) {
+            return Ok(value.clone());
+        }
+        let value = self.resolve_uncached(source).await?;
+        self.resolved.insert(key, value.clone());
+        Ok(value)
+    }
+
+    async fn resolve_uncached(
+        &mut self,
         source: &anda_brain::product::RecordSource,
     ) -> Result<Option<MemorySource>, BoxError> {
         if source.product_operation.is_some() {
-            if let Some(host) = self.client.embedded_host()
+            if let Some(host) = self.activity.client.embedded_host()
                 && let Some(text) = host
                     .state
                     .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
                     .await?
-                    .product_correction_source(caller, source)
+                    .product_correction_source(self.caller, source)
                     .await?
             {
                 return Ok(Some(MemorySource {
@@ -175,34 +218,39 @@ impl ActivityStore {
         ) else {
             return Ok(None);
         };
-        let rows: Vec<ActivityIndex> = self
-            .index
-            .search_as(Query {
-                search: None,
-                filter: Some(Filter::And(vec![
-                    Box::new(eq("native_id", Fv::Text(native.to_string()))),
-                    Box::new(eq("user", Fv::Text(caller.to_string()))),
-                ])),
-                limit: Some(2),
-            })
-            .await?;
-        if rows.len() != 1 {
-            return Ok(None);
+        if !self.formations.contains_key(&native) {
+            let rows: Vec<ActivityIndex> = self
+                .activity
+                .index
+                .search_as(Query {
+                    search: None,
+                    filter: Some(Filter::And(vec![
+                        Box::new(eq("native_id", Fv::Text(native.to_string()))),
+                        Box::new(eq("user", Fv::Text(self.caller.to_string()))),
+                    ])),
+                    limit: Some(2),
+                })
+                .await?;
+            let row = if rows.len() == 1 {
+                self.activity
+                    .journal
+                    .read::<FormationSubmission>(&rows[0].journal_key)
+                    .await?
+            } else {
+                None
+            };
+            self.formations.insert(native, row);
         }
-        let Some(submission) = self
-            .journal
-            .read::<FormationSubmission>(&rows[0].journal_key)
-            .await?
-        else {
+        let Some(submission) = self.formations.get(&native).and_then(Option::as_ref) else {
             return Ok(None);
         };
         if submission.brain_conversation != Some(native) {
             return Ok(None);
         }
-        let Some(provenance) = submission.provenance else {
+        let Some(provenance) = &submission.provenance else {
             return Ok(None);
         };
-        if provenance.caller != caller.to_string() {
+        if provenance.caller != self.caller.to_string() {
             return Ok(None);
         }
         let Some(reference) = provenance.source_messages.get(index) else {
@@ -211,50 +259,74 @@ impl ActivityStore {
         if reference.submitted_digest.as_ref() != Some(digest) {
             return Ok(None);
         }
-        let conversation = self
-            .conversations
-            .conversations
-            .get_conversation(submission.bot_conversation)
-            .await?;
-        if conversation.user != caller {
-            return Ok(None);
+        let id = submission.bot_conversation;
+        if !self.conversations.contains_key(&id) {
+            let conversation = match self
+                .activity
+                .conversations
+                .conversations
+                .get_conversation(id)
+                .await
+            {
+                Ok(value) if value.user == self.caller => Some(value),
+                Ok(_) | Err(DBError::NotFound { .. }) => None,
+                Err(error) => return Err(error.into()),
+            };
+            self.conversations.insert(id, conversation);
         }
-        let original = reference
-            .index
-            .parse::<usize>()
-            .ok()
-            .and_then(|i| conversation.messages.get(i));
-        let Some(original) = original else {
+        let Some(conversation) = self.conversations.get(&id).and_then(Option::as_ref) else {
             return Ok(None);
         };
-        if anda_cognitive_nexus::content_digest(original)? != reference.content_digest {
+        let Ok(original_index) = reference.index.parse::<usize>() else {
+            return Ok(None);
+        };
+        let Some(original) = conversation.messages.get(original_index) else {
+            return Ok(None);
+        };
+        let (original_digest, text, truncated) = match self.messages.entry((id, original_index)) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let digest = anda_cognitive_nexus::content_digest(original)?;
+                let text = serde_json::from_value::<anda_core::Message>(original.clone())
+                    .ok()
+                    .and_then(|message| message.text());
+                let truncated = text
+                    .as_ref()
+                    .is_some_and(|text| text.chars().nth(4096).is_some());
+                entry.insert((
+                    digest,
+                    text.map(|text| text.chars().take(4096).collect()),
+                    truncated,
+                ))
+            }
+        };
+        if *original_digest != reference.content_digest {
             return Ok(None);
         }
-        let text = serde_json::from_value::<anda_core::Message>(original.clone())
-            .ok()
-            .and_then(|m| m.text());
-        let text_truncated = text.as_ref().is_some_and(|s| s.chars().count() > 4096);
-        let text = text.map(|s| s.chars().take(4096).collect());
         Ok(Some(MemorySource {
             kind: "conversation".into(),
-            conversation: Some(conversation._id.to_string()),
+            conversation: Some(id.to_string()),
             index: Some(reference.index.clone()),
             role: reference.role.clone(),
-            text_truncated,
-            text,
-            source: provenance.source,
+            text: text.clone(),
+            text_truncated: *truncated,
+            source: provenance.source.clone(),
         }))
     }
+}
 
+impl ActivityStore {
     pub async fn connect(
         db: Arc<AndaDB>,
         conversations: Arc<ConversationsTool>,
         journal: Journal,
         client: Client,
     ) -> Result<Self, BoxError> {
+        let mut schema = ActivityIndex::schema()?;
+        schema.with_version(1);
         let index = db
             .open_or_create_collection(
-                ActivityIndex::schema()?,
+                schema,
                 CollectionConfig {
                     name: "bot_memory_activity_v1".into(),
                     description: "Rebuildable memory processing index".into(),
@@ -264,6 +336,7 @@ impl ActivityStore {
                     collection.create_btree_index_nx(&["conversation"]).await?;
                     collection.create_btree_index_nx(&["journal_key"]).await?;
                     collection.create_btree_index_nx(&["native_id"]).await?;
+                    collection.create_btree_index_nx(&["order"]).await?;
                     Ok::<(), DBError>(())
                 },
             )
@@ -273,7 +346,7 @@ impl ActivityStore {
             conversations,
             journal,
             client,
-            write_lock: Default::default(),
+            reconciliation: Default::default(),
             initialized: Default::default(),
         })
     }
@@ -292,7 +365,6 @@ impl ActivityStore {
             return Err("Formation ownership mismatch".into());
         }
         self.index_activity(ActivityIndex {
-            _id: 0,
             user: conversation.user.to_string(),
             conversation: row.bot_conversation,
             journal_key: key.into(),
@@ -301,12 +373,14 @@ impl ActivityStore {
                 .brain_conversation
                 .map(|id| id.to_string())
                 .unwrap_or_default(),
+            ..Default::default()
         })
         .await
     }
 
-    async fn index_activity(&self, row: ActivityIndex) -> Result<(), BoxError> {
-        let _guard = self.write_lock.lock().await;
+    async fn index_activity(&self, mut row: ActivityIndex) -> Result<(), BoxError> {
+        let order = format!("{}/{:020}/{}", row.user, row.submitted_at, row.journal_key);
+        row.order = Some(order.clone());
         let existing: Vec<ActivityIndex> = self
             .index
             .search_as(Query {
@@ -315,121 +389,135 @@ impl ActivityStore {
                 limit: Some(1),
             })
             .await?;
-        if existing.is_empty() {
+        if let Some(old) = existing.first() {
+            if old.native_id != row.native_id || old.order != row.order || old.user != row.user {
+                self.index
+                    .update(
+                        old._id,
+                        BTreeMap::from([
+                            ("native_id".into(), Fv::Text(row.native_id)),
+                            ("submitted_at".into(), Fv::U64(row.submitted_at)),
+                            ("user".into(), Fv::Text(row.user)),
+                            ("conversation".into(), Fv::U64(row.conversation)),
+                            ("order".into(), Fv::Text(order)),
+                        ]),
+                    )
+                    .await?;
+            }
+        } else {
             self.index.add_from(&row).await?;
-            self.index.flush(anda_engine::unix_ms()).await?;
-        } else if !row.native_id.is_empty() && row.native_id != existing[0].native_id {
-            self.index
-                .update(
-                    existing[0]._id,
-                    std::collections::BTreeMap::from([(
-                        "native_id".into(),
-                        Fv::Text(row.native_id),
-                    )]),
-                )
-                .await?;
-            self.index.flush(anda_engine::unix_ms()).await?;
         }
         Ok(())
     }
 
-    /// Scan incrementally in bounded memory. Listing order is not guaranteed by
-    /// ObjectStore: a restart deliberately rescans, never skips by guessed key.
     pub async fn run(&self, cancel: CancellationToken) {
         loop {
             let result = tokio::select! { _ = cancel.cancelled() => break, result = self.reconcile() => result };
-            if let Err(error) = result {
+            let delay = if let Err(error) = result {
                 log::warn!("Memory activity reconciliation incomplete: {error}");
-            }
-            tokio::select! { _ = cancel.cancelled() => break, _ = tokio::time::sleep(Duration::from_secs(5)) => {} }
+                60
+            } else {
+                5
+            };
+            tokio::select! { _ = cancel.cancelled() => break, _ = tokio::time::sleep(Duration::from_secs(delay)) => {} }
         }
         if let Err(error) = self.index.flush(anda_engine::unix_ms()).await {
             log::warn!("Memory activity flush failed: {error}");
         }
     }
 
+    /// Refresh new/changed and nonterminal submissions. A startup/low-frequency
+    /// scan repairs the rebuildable index without rereading history every tick.
     pub(super) async fn reconcile(&self) -> Result<(), BoxError> {
-        let store = self.journal.object_store();
-        let prefix = object_store::path::Path::from("bot-brain/v1/formation/");
-        let mut objects = store.list(Some(&prefix));
-        let mut processed = 0usize;
-        let mut complete = true;
-        while let Some(object) = objects.try_next().await? {
-            let Some(key) = object.location.as_ref().strip_prefix("bot-brain/v1/") else {
-                continue;
-            };
-            let Some(mut row) = self.journal.read::<FormationSubmission>(key).await? else {
-                continue;
-            };
-            if row.brain_conversation.is_some()
-                && !matches!(
-                    row.state,
-                    FormationState::Completed | FormationState::Failed | FormationState::Suppressed
-                )
-            {
-                // GET only. The native id, never a global high-water mark, is
-                // the proof. Unknown submissions without an id are not retried.
-                if !matches!(
-                    tokio::time::timeout(
-                        Duration::from_secs(10),
-                        self.journal.refresh_formation(&self.client, &mut row)
-                    )
-                    .await,
-                    Ok(Ok(()))
-                ) {
-                    complete = false;
+        let mut poll = self.reconciliation.lock().await;
+        let keys = match poll.keys(&self.journal, &["formation/", "recall/"]).await {
+            Ok(keys) => keys,
+            Err(error) => {
+                self.initialized.store(false, Ordering::SeqCst);
+                return Err(error);
+            }
+        };
+        if !keys.is_empty() {
+            self.initialized.store(false, Ordering::SeqCst);
+        }
+        let mut first_error = None;
+        for (index, key) in keys.iter().enumerate() {
+            match self.reconcile_one(key).await {
+                Ok(refresh) => poll.finish(key, refresh),
+                Err(error) => {
+                    first_error.get_or_insert_with(|| format!("{key}: {error}"));
                 }
             }
-            if let Err(error) = self.index_submission(key, &row).await {
-                complete = false;
-                log::debug!("Memory activity projection skipped: {error}");
-            }
-            processed += 1;
-            if processed.is_multiple_of(20) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        }
-        let recall_prefix = object_store::path::Path::from("bot-brain/v1/recall/");
-        let mut recalls = store.list(Some(&recall_prefix));
-        while let Some(object) = recalls.try_next().await? {
-            let Some(key) = object.location.as_ref().strip_prefix("bot-brain/v1/") else {
-                continue;
-            };
-            let Some(row) = self.journal.read::<super::RecallDelivery>(key).await? else {
-                continue;
-            };
-            let Some(id) = row.bot_conversation else {
-                continue;
-            };
-            let Ok(conv) = self.conversations.conversations.get_conversation(id).await else {
-                complete = false;
-                continue;
-            };
-            if conv.user.to_string() != row.caller {
-                continue;
-            }
-            if self
-                .index_activity(ActivityIndex {
-                    _id: 0,
-                    user: row.caller,
-                    conversation: id,
-                    journal_key: key.into(),
-                    submitted_at: row.delivered_at,
-                    native_id: String::new(),
-                })
-                .await
-                .is_err()
-            {
-                complete = false
-            }
-            processed += 1;
-            if processed.is_multiple_of(20) {
+            if (index + 1).is_multiple_of(20) {
+                self.index.flush(anda_engine::unix_ms()).await?;
                 tokio::task::yield_now().await;
             }
         }
-        self.journal.write("activity-checkpoint/v1", &serde_json::json!({"version":1,"completed_at":anda_engine::unix_ms(),"complete":complete})).await?;
-        self.initialized.store(complete, Ordering::SeqCst);
-        Ok(())
+        if !keys.len().is_multiple_of(20) {
+            self.index.flush(anda_engine::unix_ms()).await?;
+        }
+        self.initialized
+            .store(first_error.is_none(), Ordering::SeqCst);
+        match first_error {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
+        }
+    }
+
+    async fn reconcile_one(&self, key: &str) -> Result<bool, BoxError> {
+        if key.starts_with("formation/") {
+            let Some(mut row) = self.journal.read::<FormationSubmission>(key).await? else {
+                return Ok(false);
+            };
+            let needs_refresh = |row: &FormationSubmission| {
+                row.brain_conversation.is_some()
+                    && !matches!(
+                        row.state,
+                        FormationState::Completed
+                            | FormationState::Failed
+                            | FormationState::Suppressed
+                    )
+            };
+            let refreshed = if needs_refresh(&row) {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    self.journal.refresh_formation(&self.client, &mut row),
+                )
+                .await
+                .map_err(|error| -> BoxError { error.into() })
+                .and_then(|result| result)
+            } else {
+                Ok(())
+            };
+            // A status outage must not hide an already accepted source mapping.
+            self.index_submission(key, &row).await?;
+            refreshed?;
+            Ok(needs_refresh(&row))
+        } else {
+            let Some(row) = self.journal.read::<super::RecallDelivery>(key).await? else {
+                return Ok(false);
+            };
+            let Some(id) = row.bot_conversation else {
+                return Ok(false);
+            };
+            let conversation = self
+                .conversations
+                .conversations
+                .get_conversation(id)
+                .await?;
+            if conversation.user.to_string() != row.caller {
+                return Ok(false);
+            }
+            self.index_activity(ActivityIndex {
+                user: row.caller,
+                conversation: id,
+                journal_key: key.into(),
+                submitted_at: row.delivered_at,
+                ..Default::default()
+            })
+            .await?;
+            Ok(false)
+        }
     }
 
     pub async fn page(
@@ -465,7 +553,11 @@ impl ActivityStore {
                     serde_json::from_str(text).map_err(|_| "invalid_cursor")?;
                 if cursor.user != user
                     || cursor.conversation != query.conversation
-                    || cursor.before > cursor.upper.saturating_add(1)
+                    || cursor.version != 2
+                    || cursor
+                        .before
+                        .as_ref()
+                        .is_some_and(|before| !before.starts_with(&format!("{user}/")))
                 {
                     return Err("invalid_cursor".into());
                 }
@@ -478,34 +570,57 @@ impl ActivityStore {
                     user: user.clone(),
                     conversation: query.conversation.clone(),
                     upper,
-                    before: upper.saturating_add(1),
+                    before: None,
+                    version: 2,
                 }
             }
         };
-        let mut filters = vec![
-            Box::new(eq("user", Fv::Text(user))),
-            Box::new(Filter::Field((
-                "_id".into(),
-                RangeQuery::Lt(Fv::U64(cursor.before)),
-            ))),
-        ];
-        if let Some(id) = conversation {
-            filters.push(Box::new(eq("conversation", Fv::U64(id))));
-        }
-        let mut ids = self
-            .index
-            .query_last_ids(Filter::And(filters), Some(limit))
-            .await?;
-        ids.sort_unstable_by(|a, b| b.cmp(a));
+        let prefix = format!("{user}/");
+        let allowed: Option<HashSet<_>> = if let Some(id) = conversation {
+            Some(
+                self.index
+                    .query_all_ids(eq("conversation", Fv::U64(id)))
+                    .await?
+                    .into_iter()
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let mut ids = Vec::new();
+        self.index
+            .get_btree_index(&["order"])?
+            .try_range_query_ids(
+                RangeQuery::And(vec![
+                    Box::new(RangeQuery::Ge(Fv::Text(prefix.clone()))),
+                    Box::new(RangeQuery::Lt(Fv::Text(
+                        cursor
+                            .before
+                            .clone()
+                            .unwrap_or_else(|| format!("{prefix}~")),
+                    ))),
+                ]),
+                true,
+                |matches| {
+                    for id in matches.iter().rev() {
+                        if *id <= cursor.upper
+                            && allowed.as_ref().is_none_or(|ids| ids.contains(id))
+                        {
+                            ids.push(*id);
+                            if ids.len() == limit {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                },
+            )?;
         let next_cursor = if ids.len() == limit {
-            ids.last()
-                .map(|id| {
-                    serde_json::to_string(&ActivityCursor {
-                        before: *id,
-                        ..cursor
-                    })
-                })
-                .transpose()?
+            let last: ActivityIndex = self.index.get_as(*ids.last().unwrap()).await?;
+            Some(serde_json::to_string(&ActivityCursor {
+                before: last.order,
+                ..cursor
+            })?)
         } else {
             None
         };
@@ -844,5 +959,241 @@ mod tests {
         assert_eq!(page.items[0].state, "unknown");
         assert!(page.items[0].source_messages.is_empty());
         assert!(!page.items[0].provenance_complete);
+    }
+
+    #[tokio::test]
+    async fn activity_orders_rebuilt_and_retried_rows_by_time_with_stable_pages() {
+        let (store, _, owner, id) = fixture().await;
+        for (start, at) in [(0, 100), (2, 200), (10, 300)] {
+            let mut row = submission(id);
+            row.window_start = start;
+            row.window_end = start + 2;
+            row.submitted_at = at;
+            row.state = FormationState::Completed;
+            store
+                .journal
+                .write(&format!("formation/{id}/{start}"), &row)
+                .await
+                .unwrap();
+        }
+        store.reconcile().await.unwrap();
+        let page = store.page(owner, ActivityQuery::default()).await.unwrap();
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|row| row.submitted_at)
+                .collect::<Vec<_>>(),
+            vec![300, 200, 100]
+        );
+        let mut cursor = None;
+        let mut times = Vec::new();
+        loop {
+            let page = store
+                .page(
+                    owner,
+                    ActivityQuery {
+                        limit: Some(1),
+                        cursor,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            times.extend(page.items.into_iter().map(|row| row.submitted_at));
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(times, vec![300, 200, 100]);
+        let key = format!("formation/{id}/0");
+        let mut retried: FormationSubmission = store.journal.read(&key).await.unwrap().unwrap();
+        retried.submitted_at = 400;
+        store.journal.write(&key, &retried).await.unwrap();
+        store.reconcile().await.unwrap();
+        assert_eq!(
+            store
+                .page(owner, ActivityQuery::default())
+                .await
+                .unwrap()
+                .items[0]
+                .submitted_at,
+            400
+        );
+        let reads = store.journal.read_count();
+        let searches = store.index.stats().search_count;
+        store.reconcile().await.unwrap();
+        assert_eq!(
+            store.journal.read_count(),
+            reads,
+            "idle tick must not reread completed history"
+        );
+        assert_eq!(store.index.stats().search_count, searches);
+    }
+
+    #[tokio::test]
+    async fn source_resolution_reuses_reads_but_revalidates_each_request_and_digest() {
+        let (store, _, owner, id) = fixture().await;
+        let conversation = store
+            .conversations
+            .conversations
+            .get_conversation(id)
+            .await
+            .unwrap();
+        let digest = anda_cognitive_nexus::content_digest(&conversation.messages[0]).unwrap();
+        let mut row = submission(id);
+        row.brain_conversation = Some(77);
+        row.state = FormationState::Completed;
+        row.provenance = Some(FormationProvenance {
+            policy_revision: None,
+            version: 1,
+            caller: owner.to_string(),
+            session: None,
+            source_identity: None,
+            source: "cli".into(),
+            reply_target: None,
+            thread: None,
+            external_user: false,
+            counterparty: Some(owner.to_string()),
+            input_digest: Some("input".into()),
+            source_messages: vec![SourceMessageRef {
+                conversation: id.to_string(),
+                index: "0".into(),
+                role: "user".into(),
+                content_digest: digest.clone(),
+                submitted_digest: Some(digest.clone()),
+            }],
+        });
+        store
+            .journal
+            .write(&format!("formation/{id}/0"), &row)
+            .await
+            .unwrap();
+        store.reconcile().await.unwrap();
+        let mut source = anda_brain::product::RecordSource {
+            evidence_id: "E-1".into(),
+            payload_digest: Some(digest),
+            formation_conversation: Some(77),
+            product_operation: None,
+            message_index: Some(0),
+            observed_at: None,
+        };
+        let reads = store.journal.read_count();
+        let searches = store.index.stats().search_count;
+        let mut resolver = store.source_resolver(owner);
+        for index in 1..=20 {
+            source.evidence_id = format!("E-{index}");
+            assert!(resolver.resolve(&source).await.unwrap().is_some());
+        }
+        assert_eq!(store.journal.read_count() - reads, 1);
+        assert_eq!(store.index.stats().search_count - searches, 1);
+        assert_eq!(resolver.conversations.len(), 1);
+        assert_eq!(resolver.messages.len(), 1);
+        let mut tampered = source.clone();
+        tampered.payload_digest = Some("wrong".into());
+        assert!(resolver.resolve(&tampered).await.unwrap().is_none());
+        let other = crate::identity::Ed25519Key::new([76; 32]).id();
+        assert!(
+            store
+                .source_resolver(other)
+                .resolve(&source)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store
+            .conversations
+            .conversations
+            .delete_conversation(id)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .source_resolver(owner)
+                .resolve(&source)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn activity_upgrades_existing_index_and_backfills_chronological_keys() {
+        #[derive(Serialize, FieldTyped, AndaDBSchema)]
+        struct LegacyIndex {
+            _id: u64,
+            user: String,
+            conversation: u64,
+            journal_key: String,
+            submitted_at: u64,
+            native_id: String,
+        }
+        let object_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let db =
+            crate::test_support::db_on_object_store(object_store.clone(), "activity_upgrade").await;
+        let conversations = Arc::new(
+            ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+                .await
+                .unwrap(),
+        );
+        let owner = crate::identity::Ed25519Key::new([75; 32]).id();
+        let conv = Conversation {
+            user: owner,
+            ..Default::default()
+        };
+        let id = conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+        let legacy = db
+            .open_or_create_collection(
+                LegacyIndex::schema().unwrap(),
+                CollectionConfig {
+                    name: "bot_memory_activity_v1".into(),
+                    description: "old activity index".into(),
+                },
+                async |_| Ok::<(), DBError>(()),
+            )
+            .await
+            .unwrap();
+        let key = format!("formation/{id}/0");
+        legacy
+            .add_from(&LegacyIndex {
+                _id: 0,
+                user: owner.to_string(),
+                conversation: id,
+                journal_key: key.clone(),
+                submitted_at: 1,
+                native_id: String::new(),
+            })
+            .await
+            .unwrap();
+        let journal = Journal::new(db.object_store());
+        let mut row = submission(id);
+        row.state = FormationState::Completed;
+        journal.write(&key, &row).await.unwrap();
+        db.close().await.unwrap();
+        let db = crate::test_support::db_on_object_store(object_store, "activity_upgrade").await;
+        let conversations = Arc::new(
+            ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+                .await
+                .unwrap(),
+        );
+        let store = ActivityStore::connect(
+            db.clone(),
+            conversations,
+            Journal::new(db.object_store()),
+            Client::new("http://127.0.0.1:0".into(), None),
+        )
+        .await
+        .unwrap();
+        store.reconcile().await.unwrap();
+        let page = store.page(owner, ActivityQuery::default()).await.unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, key);
+        assert_eq!(store.index.schema().version(), 1);
+        db.close().await.unwrap();
     }
 }

@@ -140,6 +140,12 @@ export interface RecordWatch {
   target_id: string
   state: string
 }
+export interface WatchPage {
+  schema_version: number
+  items: RecordWatch[]
+  complete: boolean
+  partial_reason?: string | null
+}
 interface Envelope<T> {
   result?: T
   error?: { code: string; message: string }
@@ -195,14 +201,37 @@ export class MemoryApi {
       await this.read<SearchResult>('memory_search', [{ query }], '/search', undefined, { query })
     )
   }
-  async watches(): Promise<{ schema_version: number; items: RecordWatch[]; complete: boolean }> {
-    return unwrap(
-      await this.read<{ schema_version: number; items: RecordWatch[]; complete: boolean }>(
+  async watches(signal?: AbortSignal): Promise<WatchPage> {
+    const items = new Map<string, RecordWatch>()
+    const cursors = new Set<string>()
+    let cursor: string | null = null
+    let partial: string | null = null
+    while (true) {
+      signal?.throwIfAborted()
+      const query = { cursor, limit: 50 }
+      const path = cursor ? `/watches?${new URLSearchParams({ cursor, limit: '50' })}` : '/watches'
+      const envelope: Envelope<WatchPage> = await this.read<WatchPage>(
         'memory_watches',
-        [],
-        '/watches'
+        cursor ? [query] : [],
+        path,
+        signal
       )
-    )
+      const page = unwrap(envelope)
+      partial ||= page.partial_reason || null
+      for (const watch of page.items) {
+        if (watch.state !== 'cancelled') items.set(watch.operation_id, watch)
+      }
+      cursor = envelope.next_cursor ?? null
+      if (!cursor)
+        return {
+          schema_version: 1,
+          items: [...items.values()],
+          complete: page.complete && !partial,
+          partial_reason: partial
+        }
+      if (cursors.has(cursor)) throw new Error('invalid_cursor')
+      cursors.add(cursor)
+    }
   }
   async watch(operation_id: string, record_id: string): Promise<RecordWatch> {
     return unwrap(

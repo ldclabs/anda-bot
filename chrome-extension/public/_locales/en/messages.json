@@ -1507,5 +1507,11 @@
   },
   "memorySearchFee": {
     "message": "Search may call a model and incur a charge. It never retries automatically."
+  },
+  "memoryPageSizeLimit": {
+    "message": "More records are available on the next page."
+  },
+  "memoryChangeNeedsReview": {
+    "message": "The change could not be applied. Discard this preview and review a fresh one."
   }
 }

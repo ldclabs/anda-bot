@@ -1507,5 +1507,11 @@
   },
   "memorySearchFee": {
     "message": "La búsqueda puede llamar a un modelo y generar un cargo. No se repite automáticamente."
+  },
+  "memoryPageSizeLimit": {
+    "message": "Hay más registros disponibles en la página siguiente."
+  },
+  "memoryChangeNeedsReview": {
+    "message": "No se pudo aplicar el cambio. Descarta esta vista previa y revisa una nueva."
   }
 }

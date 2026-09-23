@@ -693,19 +693,27 @@ async fn real_structured_recall_and_tool_keep_off_graph_delivery_association() {
     space.close().await.unwrap();
 }
 
-#[tokio::test]
-async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_notes() {
+struct MemoryProductFixture {
+    service: crate::brain::MemoryService,
+    space: Arc<anda_brain::space::Space>,
+    owner: anda_core::Principal,
+    other: anda_core::Principal,
+    id: String,
+    journal: crate::brain::Journal,
+    engine: Arc<anda_engine::engine::Engine>,
+    mutations: Arc<crate::brain::mutation::MutationService>,
+}
+
+async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
     use crate::brain::{
         FormationProvenance, FormationState, FormationSubmission, Journal, MemoryAccess,
-        MemoryService, SourceMessageRef,
-        activity::ActivityStore,
-        mutation::{ChangeRequest, CommitRequest, MutationService},
+        MemoryService, SourceMessageRef, activity::ActivityStore, mutation::MutationService,
     };
-    use anda_core::{Agent, AgentOutput, Message, RequestMeta};
+    use anda_core::{Agent, AgentOutput, Message};
     use anda_engine::{
         context::AgentCtx,
         engine::{EngineBuilder, EngineRef},
-        extension::note::{NoteArgs, NoteTool, load_notes},
+        extension::note::NoteTool,
         memory::{Conversation, ConversationRef},
     };
     struct Stub;
@@ -743,7 +751,7 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
     let owner = keys[0].id();
     let message = Message {
         role: "user".into(),
-        content: vec!["Keep release notes short".to_string().into()],
+        content: vec![text.to_string().into()],
         ..Default::default()
     };
     let mut conv = Conversation {
@@ -848,13 +856,40 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
     let service = MemoryService::new(client)
         .with_activity(activity)
         .with_mutations(mutations.clone());
+    MemoryProductFixture {
+        service,
+        space,
+        owner,
+        other: keys[1].id(),
+        id: id.to_string(),
+        journal,
+        engine,
+        mutations,
+    }
+}
+
+#[tokio::test]
+async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_notes() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    use anda_engine::extension::note::{NoteArgs, NoteTool, load_notes};
+    let MemoryProductFixture {
+        service,
+        space,
+        owner,
+        other,
+        id,
+        journal,
+        engine,
+        ..
+    } = memory_product_fixture("Keep release notes short").await;
+    let id = id.as_str();
     let before = service.record(owner, id).await.unwrap();
     assert!(before.sources_complete);
     assert_eq!(
         before.sources[0].text.as_deref(),
         Some("Keep release notes short")
     );
-    assert!(service.record(keys[1].id(), id).await.is_err());
+    assert!(service.record(other, id).await.is_err());
     let input = ChangeRequest {
         operation_id: "host-correction".into(),
         record_id: id.into(),
@@ -899,12 +934,7 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
             .state,
         "confirmed"
     );
-    assert!(
-        service
-            .change(keys[1].id(), &input.operation_id)
-            .await
-            .is_err()
-    );
+    assert!(service.change(other, &input.operation_id).await.is_err());
     let mut conflict = input.clone();
     conflict.new_value = Some("Different text".into());
     assert!(service.prepare_change(owner, conflict).await.is_err());
@@ -978,5 +1008,212 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         service.prepare_change(owner, remove).await.unwrap().state,
         "confirmed"
     );
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_record_pages_resume_before_unreturned_large_source_quotes() {
+    let fixture = memory_product_fixture(&"中".repeat(4096)).await;
+    let native = fixture.space.product_record(&fixture.id).await.unwrap();
+    let mut expected = std::collections::BTreeSet::from([fixture.id.clone()]);
+    for index in 0..24 {
+        let created = command(&fixture.space, r#"MUTATE {
+            CREATE CONCEPT ?value {TYPE "Preference" NAME :name}
+            ASSERT ?claim (:owner,"prefers",?value) {by: :owner,mode:"stated",evidence: :input}
+        }"#, json!({"owner":native.actor_id,"input":native.sources[0].evidence_id,"name":format!("Preference {index}")})).await;
+        expected.insert(created["handles"]["claim"].as_str().unwrap().to_string());
+    }
+    let mut cursor = None;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut pages = 0;
+    loop {
+        let (page, next) = fixture
+            .service
+            .records(
+                fixture.owner,
+                crate::brain::catalog::RecordQuery {
+                    cursor,
+                    limit: Some(50),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            serde_json::to_vec(&json!({"result":page,"next_cursor":next}))
+                .unwrap()
+                .len()
+                <= 262_144
+        );
+        if pages == 0 {
+            assert_eq!(page.partial_reason.as_deref(), Some("response_size_limit"));
+            assert!(next.is_some());
+        }
+        for record in page.items {
+            assert!(seen.insert(record.id), "duplicate record across pages");
+        }
+        pages += 1;
+        cursor = next;
+        if cursor.is_none() {
+            break;
+        }
+        assert!(pages <= 3);
+    }
+    assert_eq!(seen, expected);
+    assert!(pages > 1);
+    fixture.space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_change_reports_revision_conflict_and_stops_rereading_terminal_history() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    let fixture = memory_product_fixture("Release notes preference").await;
+    let before = fixture
+        .service
+        .record(fixture.owner, &fixture.id)
+        .await
+        .unwrap();
+    let preview = fixture
+        .service
+        .prepare_change(
+            fixture.owner,
+            ChangeRequest {
+                operation_id: "stale-preview".into(),
+                record_id: fixture.id.clone(),
+                expected_revision: before.revision,
+                kind: anda_brain::product::ChangeKind::Correct,
+                new_value: Some("Risks first".into()),
+            },
+        )
+        .await
+        .unwrap();
+    command(
+        &fixture.space,
+        "TRANSITION :id TO \"retracted\"",
+        json!({"id":fixture.id}),
+    )
+    .await;
+    let error = fixture
+        .service
+        .commit_change(
+            fixture.owner,
+            "stale-preview".into(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "revision_conflict");
+    let view = fixture
+        .service
+        .change(fixture.owner, "stale-preview")
+        .await
+        .unwrap();
+    assert_eq!(view.state, "prepared");
+    assert_eq!(view.error.as_deref(), Some("revision_conflict"));
+    fixture
+        .service
+        .discard_change(fixture.owner, "stale-preview")
+        .await
+        .unwrap();
+    fixture.mutations.recover().await.unwrap();
+    let reads = fixture.journal.read_count();
+    fixture.mutations.recover().await.unwrap();
+    assert_eq!(
+        fixture.journal.read_count(),
+        reads,
+        "terminal changes need no reads on idle ticks"
+    );
+    fixture.space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_watch_pages_ignore_cancelled_history_and_bind_cursors_to_callers() {
+    use crate::brain::{Journal, MemoryService, product::WatchQuery};
+    let keys = [
+        Ed25519Key::new([87; 32]),
+        Ed25519Key::new([88; 32]),
+        Ed25519Key::new([89; 32]),
+    ];
+    let config = runtime_config(&keys, None);
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let brain = create(store.clone(), &keys, Some(config.clone())).await;
+    let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let created = command(&space, r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "Preference" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#, json!({})).await;
+    let target = created["handles"]["a"].as_str().unwrap().to_string();
+    let journal = Journal::new(store);
+    for index in 0..54 {
+        let operation = format!("watch-{index}");
+        host.watch_record(
+            keys[0].id(),
+            operation.clone(),
+            target.clone(),
+            "Memory changed".into(),
+        )
+        .await
+        .unwrap();
+        if index < 50 {
+            host.cancel_record_watch(keys[0].id(), operation.clone())
+                .await
+                .unwrap();
+        }
+        journal.write(&format!("record-watch/{index:04}"), &json!({"operation_id":operation,"caller":keys[0].id().to_string(),"record_id":target,"summary":"Memory changed"})).await.unwrap();
+    }
+    let service =
+        MemoryService::new(Client::new("http://127.0.0.1:0".into(), None).with_host(host, journal));
+    let first = service
+        .watches(
+            keys[0].id(),
+            WatchQuery {
+                limit: Some(2),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|watch| watch.operation_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["watch-50", "watch-51"]
+    );
+    assert!(!first.complete);
+    assert!(first.partial_reason.is_none());
+    assert_eq!(
+        service
+            .watches(
+                keys[1].id(),
+                WatchQuery {
+                    cursor: first.next_cursor.clone(),
+                    limit: Some(2)
+                }
+            )
+            .await
+            .unwrap_err()
+            .to_string(),
+        "invalid_cursor"
+    );
+    let last = service
+        .watches(
+            keys[0].id(),
+            WatchQuery {
+                cursor: first.next_cursor,
+                limit: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        last.items
+            .iter()
+            .map(|watch| watch.operation_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["watch-52", "watch-53"]
+    );
+    assert!(last.complete);
+    assert!(last.next_cursor.is_none());
     space.close().await.unwrap();
 }

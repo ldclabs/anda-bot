@@ -25,7 +25,13 @@ These modes constrain host-managed Brain/Notes, including implicit profile initi
 
 `/daemon/memory/v1` is an owner control plane using Bot `ToolResponse`, separate from native KIP and model tools. HTTP and WebSocket requests revalidate the original credential. Overview, records, search, change prepare/commit/status/discard, inbox setup and record subscriptions share the same service. Conversation activity additionally supports an authenticated caller's own specified conversation. Other records and counts are not exposed to that caller. Identifiers in product responses are strings.
 
-This checkout temporarily patches `anda_brain` to sibling `../anda-brain/anda_brain` for the new native product contracts, as explicitly authorized for development. The sibling package currently declares version 0.12.1; registry availability and contract parity have not been verified for this change. After the native release, update the registry constraint/lockfile, remove only the Brain patch, and re-run the contract matrix in [implementation status](memory-implementation-status.md). DB/KIP/Core/Engine remain one registry type identity. Do not restore a pre-change database as a software rollback without preserving current source exclusions.
+Activity pages use submission time and a stable journal key, including after rebuilding an older index. Refresh from the first page if a saved cursor is rejected after upgrading. Startup and periodic reconciliation repair the index; routine polling reads changed and unfinished records. Source verification is cached only within one caller's request.
+
+Record pages stop before exceeding their response budget and return a cursor for the first unreturned record. `response_size_limit` means more records are available, not that their source provenance is missing. Large source quotes are shortened with `text_truncated`, preserving record identity and the original claim labels. Watch listing accepts optional `cursor` and `limit` (1–50), returns active subscriptions with a caller-bound cursor, and omits cancelled history. The browser follows all pages before enabling new subscriptions.
+
+Both ordinary and structured Recall share a reusable HTTP transport with automatic retries disabled. A failed response may follow accepted model work, so a new search is an explicit action. Change confirmation preserves revision/expiry errors; unresolved admissions are still checked against the native receipt before reporting success.
+
+Source builds use Brain 0.12.1 and Nexus 0.13.4 from the registry, with the exact dependency graph in `Cargo.lock`. The commented sibling Brain override is optional for local development; DB/KIP/Core/Engine retain one registry type identity. Do not restore a pre-change database as a software rollback without preserving current source exclusions.
 
 ## Set up questions only when needed
 

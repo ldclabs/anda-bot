@@ -17,7 +17,7 @@ use crate::{
         activity::ActivityQuery,
         catalog::RecordQuery,
         mutation::{ChangeRequest, CommitRequest},
-        product::{SearchRequest, WatchRequest},
+        product::{SearchRequest, WatchQuery, WatchRequest},
     },
     util::tool_response::{ToolError, ToolResponse},
 };
@@ -89,20 +89,28 @@ impl MemoryApiState {
         }
     }
     async fn websocket_watches(&self, params: Value) -> Value {
-        if params != json!([]) {
-            return json!(error("invalid_request", "Expected no parameters."));
-        }
-        json!(self.watch_list().await.1)
+        let query = if params == json!([]) {
+            WatchQuery::default()
+        } else {
+            match serde_json::from_value::<(WatchQuery,)>(params) {
+                Ok((query,)) => query,
+                Err(_) => return json!(error("invalid_request", "Expected one watch query.")),
+            }
+        };
+        json!(self.watch_list(query).await.1)
     }
-    async fn watch_list(&self) -> (StatusCode, ToolResponse) {
-        match self.service.watches(self.owner).await {
-            Ok(result) => (
-                StatusCode::OK,
-                ToolResponse::Ok {
-                    result,
-                    next_cursor: None,
-                },
-            ),
+    async fn watch_list(&self, query: WatchQuery) -> (StatusCode, ToolResponse) {
+        match self.service.watches(self.owner, query).await {
+            Ok(mut result) => {
+                let next_cursor = result.next_cursor.take();
+                (
+                    StatusCode::OK,
+                    ToolResponse::Ok {
+                        result: json!(result),
+                        next_cursor,
+                    },
+                )
+            }
             Err(error) => service_error(error),
         }
     }
@@ -842,11 +850,25 @@ fn watch_response(
     (status, Json(response)).into_response()
 }
 
-async fn list_watches(State(state): State<MemoryApiState>, headers: HeaderMap) -> Response {
+async fn list_watches(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    query: Result<Query<WatchQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
     if let Err((status, error)) = state.authorize(&headers) {
         return (status, Json(error)).into_response();
     }
-    let (status, result) = state.watch_list().await;
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(error("invalid_request", "Invalid watch query.")),
+            )
+                .into_response();
+        }
+    };
+    let (status, result) = state.watch_list(query).await;
     (status, Json(result)).into_response()
 }
 

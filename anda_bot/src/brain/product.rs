@@ -87,6 +87,29 @@ pub struct WatchRequest {
     pub record_id: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WatchQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WatchPage {
+    pub schema_version: u32,
+    pub items: Vec<anda_brain::runtime_api::RecordWatch>,
+    pub complete: bool,
+    pub partial_reason: Option<String>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WatchCursor {
+    pub caller: String,
+    pub after: String,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct WatchIntent {
     #[serde(default)]

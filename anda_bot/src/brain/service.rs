@@ -1,6 +1,5 @@
 use super::{Client, HttpError, product::*};
 use anda_core::BoxError;
-use object_store::ObjectStoreExt;
 use std::{future::Future, time::Duration};
 
 #[derive(Clone)]
@@ -42,15 +41,9 @@ impl MemoryService {
         }
         request.budget.validate().map_err(|_| "invalid_request")?;
         let _permit = self.searches.try_acquire().map_err(|_| "capacity")?;
-        // A received 503/504 can follow accepted model work. The shared daemon
-        // client retries some statuses, so use a no-replay transport here.
-        let http = crate::util::http_client::build_http_client(None, |builder| {
-            builder.no_proxy().retry(reqwest::retry::never())
-        })?;
         let result = self
             .client
             .with_auth_token(bearer)
-            .with_http_client(http)
             .recall_structured(&anda_brain::types::RecallInput {
                 query: request.query,
                 context: Some(anda_brain::types::InputContext {
@@ -176,8 +169,27 @@ impl MemoryService {
     pub async fn watches(
         &self,
         caller: anda_core::Principal,
-    ) -> Result<serde_json::Value, BoxError> {
+        query: WatchQuery,
+    ) -> Result<WatchPage, BoxError> {
         use futures::TryStreamExt;
+        use std::collections::BTreeSet;
+        let limit = query.limit.unwrap_or(50);
+        if !(1..=50).contains(&limit) {
+            return Err("invalid_request".into());
+        }
+        let caller_text = caller.to_string();
+        let after = match query.cursor {
+            Some(text) if text.len() <= 2048 => {
+                let cursor: WatchCursor =
+                    serde_json::from_str(&text).map_err(|_| "invalid_cursor")?;
+                if cursor.caller != caller_text || !cursor.after.starts_with("record-watch/") {
+                    return Err("invalid_cursor".into());
+                }
+                cursor.after
+            }
+            Some(_) => return Err("invalid_cursor".into()),
+            None => String::new(),
+        };
         let journal = self.client.journal().ok_or("unsupported_capability")?;
         let host = self
             .client
@@ -186,26 +198,55 @@ impl MemoryService {
         let store = journal.object_store();
         let prefix = object_store::path::Path::from("bot-brain/v1/record-watch/");
         let mut stream = store.list(Some(&prefix));
-        let mut items = Vec::new();
-        let mut complete = true;
-        let mut scanned = 0;
+        // ObjectStore listing order is unspecified. Keep only the next bounded
+        // set of keys, with a lookahead, so every skipped history row is resumable.
+        let mut keys = BTreeSet::new();
         while let Some(meta) = stream.try_next().await? {
-            scanned += 1;
-            if scanned > 1000 || items.len() >= 50 {
-                complete = false;
+            if let Some(key) = meta.location.as_ref().strip_prefix("bot-brain/v1/")
+                && key > after.as_str()
+            {
+                keys.insert(key.to_string());
+                if keys.len() > 1001 {
+                    keys.pop_last();
+                }
+            }
+        }
+        let mut more = keys.len() > 1000;
+        let mut last = after;
+        let mut items = Vec::new();
+        let mut incomplete = false;
+        for key in keys.into_iter().take(1000) {
+            if items.len() == limit {
+                more = true;
                 break;
             }
-            let bytes = store.get(&meta.location).await?.bytes().await?;
-            let intent: WatchIntent = serde_json::from_slice(&bytes)?;
-            if intent.caller != caller.to_string() || intent.operation_id.is_empty() {
+            last = key.clone();
+            let Some(intent) = journal.read::<WatchIntent>(&key).await? else {
+                continue;
+            };
+            if intent.caller != caller_text || intent.operation_id.is_empty() {
                 continue;
             }
             match host.record_watch(caller, &intent.operation_id).await {
-                Ok(watch) => items.push(watch),
-                Err(_) => complete = false,
+                Ok(watch) if watch.state != "cancelled" => items.push(watch),
+                Ok(_) => {}
+                Err(_) => incomplete = true,
             }
         }
-        Ok(serde_json::json!({"schema_version":1,"items":items,"complete":complete}))
+        Ok(WatchPage {
+            schema_version: 1,
+            items,
+            complete: !more && !incomplete,
+            partial_reason: incomplete.then(|| "watch_status_unavailable".into()),
+            next_cursor: if more {
+                Some(serde_json::to_string(&WatchCursor {
+                    caller: caller_text,
+                    after: last,
+                })?)
+            } else {
+                None
+            },
+        })
     }
 
     pub fn with_mutations(
@@ -226,11 +267,7 @@ impl MemoryService {
             return Ok(existing);
         }
         let before = self.record(caller, &input.record_id).await?;
-        self.mutations
-            .as_ref()
-            .ok_or("unsupported_capability")?
-            .prepare(caller, input, before)
-            .await
+        mutations.prepare(caller, input, before).await
     }
     pub async fn commit_change(
         &self,
@@ -544,9 +581,7 @@ mod tests {
             ),
         );
         let url = crate::test_support::spawn_http_mock(app).await;
-        let client = Client::new(url, None).with_http_client(
-            crate::util::http_client::build_http_client(None, |client| client.no_proxy()).unwrap(),
-        );
+        let client = Client::new(url, None);
         let service = MemoryService::new(client);
         let caller = anda_core::Principal::management_canister();
         let query = SearchRequest {

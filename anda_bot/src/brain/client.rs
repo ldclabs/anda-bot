@@ -4,7 +4,7 @@ use anda_kip::{Request as KipRequest, Response as KipResponse};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-use crate::util::http_client::new_reqwest_client;
+use crate::util::http_client::build_http_client;
 
 pub use anda_brain::runtime_api::{
     AttentionItem, AttentionPage, AttentionQuery, AttentionResponse, ResponseReceipt, RuntimeStatus,
@@ -96,7 +96,10 @@ impl Client {
     pub const NAME: &'static str = "recall_memory";
     pub fn new(base_url: String, auth_token: Option<String>) -> Self {
         Self {
-            http: new_reqwest_client(),
+            // Recall and formation can accept billable work before an error
+            // response arrives. Keep one connection pool and never replay it.
+            http: build_http_client(None, |builder| builder.retry(reqwest::retry::never()))
+                .expect("failed to build Brain HTTP client"),
             base_url,
             auth_token,
             host: None,
@@ -104,6 +107,7 @@ impl Client {
         }
     }
 
+    #[cfg(test)]
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
         self
@@ -317,16 +321,7 @@ impl Client {
         let rt: RpcResponse<Json> = self
             .post("/get_or_init_user", &GetOrInitUserInput { user, name })
             .await?;
-        if rt.error.is_none()
-            && let Some(result) = rt.result.as_ref()
-        {
-            return Ok(result.clone());
-        }
-        Err(format!(
-            "[BrainClient] user_info failed: {}",
-            serde_json::to_string(&rt).unwrap_or_default()
-        )
-        .into())
+        rpc_result(rt)
     }
 
     /// Existing profile only: restricted conversations never initialize a Person.
@@ -352,15 +347,7 @@ impl Client {
     /// and returns the maintenance conversation id immediately.
     pub async fn maintenance(&self, input: &MaintenanceInput) -> Result<AgentOutput, BoxError> {
         let rt: RpcResponse<AgentOutput> = self.post("/maintenance", input).await?;
-        if let Some(result) = rt.result {
-            Ok(result)
-        } else {
-            Err(serde_json::to_string(&rt)
-                .unwrap_or_else(|_| {
-                    "[BrainClient] maintenance failed with unknown error".to_string()
-                })
-                .into())
-        }
+        rpc_result(rt)
     }
 
     async fn post<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>
@@ -611,6 +598,7 @@ impl Tool<BaseCtx> for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::new_reqwest_client;
     use crate::util::json_schema::assert_openai_strict_parameters;
 
     #[test]
@@ -1003,5 +991,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.output, "memory found");
+    }
+
+    #[tokio::test]
+    async fn recall_and_maintenance_do_not_replay_received_errors() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        for status in [
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            http::StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let seen = calls.clone();
+            let app = Router::new().fallback(move || {
+                seen.fetch_add(1, Ordering::SeqCst);
+                async move { (status, "result unavailable") }
+            });
+            let client = Client::new(spawn_brain_mock(app).await, None);
+            assert!(
+                client
+                    .recall(RecallInputRef {
+                        query: "earlier preference",
+                        context: &None,
+                        budget: &None
+                    })
+                    .await
+                    .is_err()
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert!(
+                client
+                    .maintenance(&MaintenanceInput::default())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_rejects_rpc_error_with_partial_result() {
+        let app = Router::new().route("/v1/anda_bot/maintenance", routing::post(|| async {
+            axum::Json(json!({"result": AgentOutput::default(), "error":{"message":"maintenance rejected"}}))
+        }));
+        let client = Client::new(spawn_brain_mock(app).await, None);
+        let error = client
+            .maintenance(&MaintenanceInput::default())
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<RpcFailure>().is_some());
+        assert!(error.to_string().contains("maintenance rejected"));
     }
 }

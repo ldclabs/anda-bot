@@ -106,3 +106,82 @@ describe('memory product API', () => {
     })
   })
 })
+
+it('loads every watch page, including empty history pages, without clearing partial errors', async () => {
+  const pages = [
+    {
+      result: {
+        schema_version: 1,
+        items: [],
+        complete: false,
+        partial_reason: 'watch_status_unavailable'
+      },
+      next_cursor: 'history'
+    },
+    {
+      result: {
+        schema_version: 1,
+        items: [{ operation_id: 'a', state: 'armed' }],
+        complete: false
+      },
+      next_cursor: 'active'
+    },
+    {
+      result: {
+        schema_version: 1,
+        items: [
+          { operation_id: 'b', state: 'armed' },
+          { operation_id: 'old', state: 'cancelled' }
+        ],
+        complete: true
+      }
+    }
+  ]
+  const sendMessage = vi.fn(async () => ({ ok: true, result: pages.shift() }))
+  vi.stubGlobal('chrome', { runtime: { sendMessage } })
+  const result = await new MemoryApi(settings).watches()
+  expect(result.items.map((watch) => watch.operation_id)).toEqual(['a', 'b'])
+  expect(result.complete).toBe(false)
+  expect(sendMessage).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      method: 'memory_watches',
+      params: [{ cursor: 'history', limit: 50 }]
+    })
+  )
+})
+
+it('completes a paginated watch list and stops if pagination is cancelled', async () => {
+  vi.stubGlobal('chrome', undefined)
+  const controller = new AbortController()
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          result: { schema_version: 1, items: [], complete: false },
+          next_cursor: 'next'
+        })
+      )
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          result: {
+            schema_version: 1,
+            items: [{ operation_id: 'last', state: 'armed' }],
+            complete: true
+          }
+        })
+      )
+    )
+  vi.stubGlobal('fetch', fetch)
+  const result = await new MemoryApi(settings).watches(controller.signal)
+  expect(result.complete).toBe(true)
+  expect(result.items[0]?.operation_id).toBe('last')
+  expect(fetch.mock.calls[1]?.[0]).toContain('/watches?cursor=next&limit=50')
+  const stopped = new AbortController()
+  stopped.abort()
+  await expect(new MemoryApi(settings).watches(stopped.signal)).rejects.toThrow()
+  expect(fetch).toHaveBeenCalledTimes(2)
+})

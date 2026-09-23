@@ -76,7 +76,6 @@ impl Client {
             format!("{}/v1/anda_bot", self.base_url),
             Some(self.auth_token.clone()),
         )
-        .with_http_client(self.http.clone())
     }
 
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {

@@ -1,7 +1,6 @@
 //! Owner-confirmed changes. Native writes and Bot Notes cleanup outlive HTTP waiters.
 use super::{Journal, MemoryAccess, catalog::MemoryRecordView};
 use anda_core::{BoxError, Principal};
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
@@ -72,6 +71,7 @@ pub struct MutationService {
     tasks: TaskTracker,
     admitted: Arc<parking_lot::Mutex<BTreeSet<String>>>,
     closing: std::sync::atomic::AtomicBool,
+    recovery: tokio::sync::Mutex<super::journal::JournalPoll>,
 }
 
 impl MutationService {
@@ -87,6 +87,7 @@ impl MutationService {
             tasks: TaskTracker::new(),
             admitted: Default::default(),
             closing: Default::default(),
+            recovery: Default::default(),
         })
     }
 
@@ -112,16 +113,10 @@ impl MutationService {
         Ok(Some(record.view))
     }
     async fn validate_sources(
-        &self,
-        caller: Principal,
+        space: &anda_brain::space::Space,
         receipt: &anda_brain::product::ChangeReceipt,
+        resolver: &mut super::activity::SourceResolver<'_>,
     ) -> Result<(), BoxError> {
-        let space = self
-            .access
-            .host
-            .state
-            .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-            .await?;
         let mut sources = receipt.preview.record.sources.clone();
         for target in &receipt.preview.targets {
             if target.kind == "evidence" {
@@ -129,12 +124,7 @@ impl MutationService {
             }
         }
         for source in sources {
-            if self
-                .sources
-                .resolve_source(caller, &source)
-                .await?
-                .is_none()
-            {
+            if resolver.resolve(&source).await?.is_none() {
                 return Err("unsupported_scope".into());
             }
         }
@@ -176,20 +166,16 @@ impl MutationService {
             kind: input.kind.clone(),
             new_value: input.new_value.clone(),
         };
-        let native = self
+        let space = self
             .access
             .host
             .state
             .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-            .await?
-            .product_prepare(caller, native_input)
             .await?;
-        if let Err(error) = self.validate_sources(caller, &native).await {
-            self.access
-                .host
-                .state
-                .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-                .await?
+        let native = space.product_prepare(caller, native_input).await?;
+        let mut resolver = self.sources.source_resolver(caller);
+        if let Err(error) = Self::validate_sources(&space, &native, &mut resolver).await {
+            space
                 .product_discard(caller, input.operation_id.clone())
                 .await?;
             return Err(error);
@@ -198,7 +184,7 @@ impl MutationService {
         for target in &native.preview.targets {
             if target.kind == "assertion" {
                 let record =
-                    super::catalog::get(&self.access.host, &self.sources, caller, &target.id)
+                    super::catalog::get_with_resolver(&self.access.host, &mut resolver, &target.id)
                         .await?;
                 affected_records.push(ChangeRecordSummary {
                     id: record.id,
@@ -255,13 +241,13 @@ impl MutationService {
     pub async fn discard(&self, caller: Principal, id: &str) -> Result<(), BoxError> {
         let key = key(caller, id)?;
         let _guard = self.access.gate.lock().await;
-        self.access
+        let space = self
+            .access
             .host
             .state
             .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-            .await?
-            .product_discard(caller, id.into())
             .await?;
+        space.product_discard(caller, id.into()).await?;
         if let Some(mut record) = self
             .journal
             .read::<StoredChange>(&format!("changes/{key}"))
@@ -272,14 +258,7 @@ impl MutationService {
             record.view.affected_records.clear();
             record.view.new_value = None;
             record.input.new_value = None;
-            record.native = self
-                .access
-                .host
-                .state
-                .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-                .await?
-                .product_change(caller, id)
-                .await?;
+            record.native = space.product_change(caller, id).await?;
             self.journal
                 .write(&format!("changes/{key}"), &record)
                 .await?;
@@ -362,24 +341,19 @@ impl MutationService {
         // Recheck live sources only before native admission. They may already
         // be erased when reconciling a lost acknowledgement.
         if current.state == "prepared" && space.product_available() {
-            self.validate_sources(caller, &current).await?;
+            Self::validate_sources(&space, &current, &mut self.sources.source_resolver(caller))
+                .await?;
         }
         record.view.state = "committing".into();
         self.journal
             .write(&format!("changes/{key}"), &record)
             .await?;
-        let space = self
-            .access
-            .host
-            .state
-            .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-            .await?;
-        let (native, admission_uncertain) = match space
+        let (native, admission_error) = match space
             .product_commit(caller, id.into(), record.native.preview_digest.clone())
             .await
         {
-            Ok(native) => (native, false),
-            Err(_) => (space.product_change(caller, id).await?, true),
+            Ok(native) => (native, None),
+            Err(error) => (space.product_change(caller, id).await?, Some(error)),
         };
         record.view.state = native.state.clone();
         record.view.replacement_record = native.replacement_record.clone();
@@ -388,7 +362,8 @@ impl MutationService {
             // A native commit may persist its receipt and then fail while
             // returning it. Confirmation is only complete after Bot Notes are
             // coherent and a deleted preview has been cleared.
-            if self.access.synchronize_locked().await.is_err() {
+            if let Err(error) = self.access.synchronize_locked().await {
+                log::debug!("Memory change {id}: Notes cleanup pending: {error}");
                 record.view.state = "cleanup_pending".into();
                 record.view.error = Some("notes_reset_pending".into());
             } else {
@@ -398,28 +373,44 @@ impl MutationService {
                     record.view.affected_records.clear();
                 }
             }
-        } else if admission_uncertain {
-            record.view.error = Some(
-                if record.view.state == "prepared" {
-                    "preview_needs_review"
-                } else {
-                    "acceptance_unknown"
+        } else if let Some(error) = &admission_error {
+            record.view.error = Some(if record.view.state == "prepared" {
+                match error.to_string().as_str() {
+                    "preview_expired"
+                    | "revision_conflict"
+                    | "idempotency_conflict"
+                    | "memory_change_pending"
+                    | "unsupported_scope"
+                    | "unsupported_correction" => error.to_string(),
+                    _ => "preview_needs_review".into(),
                 }
-                .into(),
-            );
+            } else {
+                "acceptance_unknown".into()
+            });
         } else {
             record.view.error = None;
         }
         self.journal
             .write(&format!("changes/{key}"), &record)
             .await?;
+        if record.view.state == "prepared"
+            && let Some(error) = admission_error
+        {
+            return Err(error);
+        }
         Ok(record.view)
     }
 
     pub async fn run(self: &Arc<Self>, cancel: CancellationToken) {
         loop {
-            tokio::select! {_=cancel.cancelled()=>break,_=self.recover()=>{}}
-            tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(5))=>{}}
+            let result = tokio::select! {_=cancel.cancelled()=>break,result=self.recover()=>result};
+            let delay = if let Err(error) = result {
+                log::warn!("Memory change recovery incomplete: {error}");
+                60
+            } else {
+                5
+            };
+            tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(delay))=>{}}
         }
         {
             let _guard = self.admitted.lock();
@@ -430,43 +421,63 @@ impl MutationService {
         self.tasks.wait().await;
     }
 
-    async fn recover(self: &Arc<Self>) {
-        let store = self.journal.object_store();
-        let prefix = object_store::path::Path::from("bot-brain/v1/changes/");
-        let mut entries = store.list(Some(&prefix));
-        let mut count = 0usize;
-        while let Ok(Some(entry)) = entries.try_next().await {
-            let Some(key) = entry.location.as_ref().strip_prefix("bot-brain/v1/") else {
-                continue;
-            };
-            let Ok(Some(record)) = self.journal.read::<StoredChange>(key).await else {
-                continue;
-            };
-            if matches!(
-                record.view.state.as_str(),
-                "committing" | "reconciling" | "cleanup_pending"
-            ) || (record.view.state == "confirmed" && !confirmed_and_clean(&record))
-            {
-                if let Ok(caller) = record.caller.parse() {
-                    let _ = self
-                        .commit(
-                            caller,
-                            record.input.operation_id,
-                            record.view.preview_digest,
-                        )
-                        .await;
+    pub(super) async fn recover(self: &Arc<Self>) -> Result<(), BoxError> {
+        let mut poll = self.recovery.lock().await;
+        let mut first_error = None;
+        for (index, key) in poll
+            .keys(&self.journal, &["changes/"])
+            .await?
+            .iter()
+            .enumerate()
+        {
+            match self.recover_one(key).await {
+                Ok(refresh) => poll.finish(key, refresh),
+                Err(error) => {
+                    first_error.get_or_insert_with(|| format!("{key}: {error}"));
                 }
-            } else if record.view.state == "prepared"
-                && anda_engine::unix_ms() > record.view.expires_at
-                && let Ok(caller) = record.caller.parse()
-            {
-                let _ = self.discard(caller, &record.input.operation_id).await;
             }
-            count += 1;
-            if count.is_multiple_of(20) {
+            if (index + 1).is_multiple_of(20) {
                 tokio::task::yield_now().await;
             }
         }
+        match first_error {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
+        }
+    }
+
+    async fn recover_one(self: &Arc<Self>, key: &str) -> Result<bool, BoxError> {
+        let Some(record) = self.journal.read::<StoredChange>(key).await? else {
+            return Ok(false);
+        };
+        let pending = matches!(
+            record.view.state.as_str(),
+            "committing" | "reconciling" | "cleanup_pending"
+        ) || (record.view.state == "confirmed" && !confirmed_and_clean(&record));
+        if pending {
+            let caller = record.caller.parse()?;
+            let id = record.input.operation_id;
+            let view = self
+                .commit(caller, id.clone(), record.view.preview_digest)
+                .await
+                .map_err(|error| format!("operation {id}, reconcile: {error}"))?;
+            if view.state == "cleanup_pending" {
+                return Err(format!("operation {id}, Notes cleanup: notes_reset_pending").into());
+            }
+            return Ok(matches!(view.state.as_str(), "committing" | "reconciling"));
+        }
+        if record.view.state == "prepared" {
+            if anda_engine::unix_ms() > record.view.expires_at {
+                let caller = record.caller.parse()?;
+                let id = record.input.operation_id;
+                self.discard(caller, &id)
+                    .await
+                    .map_err(|error| format!("operation {id}, expire preview: {error}"))?;
+            } else {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

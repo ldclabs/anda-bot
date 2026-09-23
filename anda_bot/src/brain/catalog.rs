@@ -1,7 +1,7 @@
 //! Native claims mapped to verified Bot source records; never inferred from text.
 use super::{
     Host,
-    activity::{ActivityStore, MemorySource},
+    activity::{ActivityStore, MemorySource, SourceResolver},
 };
 use anda_core::{BoxError, Principal};
 use serde::{Deserialize, Serialize};
@@ -70,17 +70,24 @@ pub async fn list(
         .await?;
     let mut items = Vec::new();
     let mut source_gap = false;
-    let mut response_bytes = 0;
+    let mut response_bytes = 1024; // Envelope, separators, reason and cursor.
+    let mut next_cursor = native.next_cursor.map(|v| v.to_string());
+    let mut size_limited = false;
+    let mut resolver = activity.source_resolver(caller);
     for record in native.records {
-        match project(record, activity, caller).await? {
-            Some(record) => {
+        match project(record, &mut resolver).await? {
+            Some(mut record) => {
                 source_gap |= !record.sources_complete;
-                let size = serde_json::to_vec(&record)?.len();
-                if size > 131_072 || response_bytes + size > 262_144 {
-                    source_gap = true;
-                    continue;
+                let size = compact_display(&mut record)?;
+                if response_bytes + size + 1 > 262_144 {
+                    // Native cursors are exclusive Assertion sequence bounds.
+                    // Resume at the first unreturned row, not after the batch.
+                    let id = record.id.parse::<anda_cognitive_nexus::ElementId>()?;
+                    next_cursor = Some(id.seq.saturating_add(1).to_string());
+                    size_limited = true;
+                    break;
                 }
-                response_bytes += size;
+                response_bytes += size + 1;
                 items.push(record)
             }
             None => source_gap = true,
@@ -90,10 +97,14 @@ pub async fn list(
         RecordPage {
             schema_version: 1,
             items,
-            complete: native.complete && !source_gap,
-            partial_reason: source_gap.then(|| "source_provenance_incomplete".into()),
+            complete: native.complete && !source_gap && !size_limited,
+            partial_reason: if size_limited {
+                Some("response_size_limit".into())
+            } else {
+                source_gap.then(|| "source_provenance_incomplete".into())
+            },
         },
-        native.next_cursor.map(|v| v.to_string()),
+        next_cursor,
     ))
 }
 
@@ -101,6 +112,14 @@ pub async fn get(
     host: &Host,
     activity: &ActivityStore,
     caller: Principal,
+    id: &str,
+) -> Result<MemoryRecordView, BoxError> {
+    get_with_resolver(host, &mut activity.source_resolver(caller), id).await
+}
+
+pub(crate) async fn get_with_resolver(
+    host: &Host,
+    resolver: &mut SourceResolver<'_>,
     id: &str,
 ) -> Result<MemoryRecordView, BoxError> {
     let id = id
@@ -113,23 +132,19 @@ pub async fn get(
         .product_record(&id.to_string())
         .await
         .map_err(|_| "not_found")?;
-    let record = project(record, activity, caller)
-        .await?
-        .ok_or("not_found")?;
-    if serde_json::to_vec(&record)?.len() > 131_072 {
-        return Err("unsupported_scope".into());
-    }
+    let mut record = project(record, resolver).await?.ok_or("not_found")?;
+    compact_display(&mut record)?;
     Ok(record)
 }
 
 async fn project(
     record: anda_brain::product::MemoryRecord,
-    activity: &ActivityStore,
-    caller: Principal,
+    resolver: &mut SourceResolver<'_>,
 ) -> Result<Option<MemoryRecordView>, BoxError> {
+    let caller = resolver.caller().to_string();
     let mut sources = Vec::new();
     for source in record.sources.iter().take(32) {
-        if let Some(source) = activity.resolve_source(caller, source).await? {
+        if let Some(source) = resolver.resolve(source).await? {
             sources.push(source)
         }
     }
@@ -137,12 +152,10 @@ async fn project(
     // Legacy claims can only appear when their semantic actor is this owner.
     // A partial mixture of attributed sources must never expose a compound
     // conclusion just because one source belongs to the requesting caller.
-    if !complete
-        && (record.actor_key.as_deref() != Some(&caller.to_string()) || !sources.is_empty())
-    {
+    if !complete && (record.actor_key.as_deref() != Some(&caller) || !sources.is_empty()) {
         return Ok(None);
     }
-    let about_owner = record.actor_key.as_deref() == Some(&caller.to_string())
+    let about_owner = record.actor_key.as_deref() == Some(&caller)
         && record.subject.get("id").and_then(serde_json::Value::as_str)
             == record.actor_id.as_deref();
     let predicate_label = record
@@ -157,7 +170,7 @@ async fn project(
         if record.storage_state == "active" {
             allowed_actions.push("suppress".into());
         }
-        if record.actor_key.as_deref() == Some(&caller.to_string())
+        if record.actor_key.as_deref() == Some(&caller)
             && record.stance == "support"
             && record.status == "active"
             && record.storage_state == "active"
@@ -193,4 +206,70 @@ async fn project(
         sources_complete: complete,
         allowed_actions,
     }))
+}
+
+/// Preserve record identity and provenance when a large source quote would
+/// otherwise make its record disappear from every page.
+fn compact_display(record: &mut MemoryRecordView) -> Result<usize, BoxError> {
+    let mut size = serde_json::to_vec(record)?.len();
+    if size <= 131_072 {
+        return Ok(size);
+    }
+    for source in &mut record.sources {
+        if let Some(text) = &mut source.text
+            && let Some((offset, _)) = text.char_indices().nth(256)
+        {
+            text.truncate(offset);
+            source.text_truncated = true;
+        }
+    }
+    size = serde_json::to_vec(record)?.len();
+    if size > 131_072 {
+        return Err("unsupported_scope".into());
+    }
+    Ok(size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_record_keeps_identity_and_labels_with_shortened_source_quotes() {
+        let mut record = MemoryRecordView {
+            id: "A-1".into(),
+            revision: "1".into(),
+            text: "Owner prefers short releases".into(),
+            kind: "preference".into(),
+            scope: serde_json::json!({}),
+            effective_at: None,
+            subject_label: "Owner".into(),
+            predicate_label: "prefers".into(),
+            object_label: "short releases".into(),
+            about_owner: true,
+            stance: "support".into(),
+            state: "active".into(),
+            updated_at: None,
+            sources: (0..32)
+                .map(|index| MemorySource {
+                    kind: "conversation".into(),
+                    conversation: Some("1".into()),
+                    index: Some(index.to_string()),
+                    role: "user".into(),
+                    text: Some("中".repeat(4096)),
+                    text_truncated: false,
+                    source: "cli".into(),
+                })
+                .collect(),
+            sources_complete: true,
+            allowed_actions: vec!["delete".into()],
+        };
+        assert!(serde_json::to_vec(&record).unwrap().len() > 131_072);
+        compact_display(&mut record).unwrap();
+        assert!(serde_json::to_vec(&record).unwrap().len() <= 131_072);
+        assert_eq!(record.sources.len(), 32);
+        assert!(record.sources.iter().all(|source| source.text_truncated));
+        assert_eq!(record.object_label, "short releases");
+        assert!(record.sources_complete);
+    }
 }

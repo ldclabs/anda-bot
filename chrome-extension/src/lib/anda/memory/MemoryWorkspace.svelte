@@ -113,7 +113,7 @@
           ? api.records(recordCursor, signal)
           : Promise.resolve(null),
         next.capabilities.record_watches?.state === 'available'
-          ? api.watches()
+          ? api.watches(signal)
           : Promise.resolve(null)
       ])
       if (disposed || current !== generation) return
@@ -449,7 +449,11 @@
               {getMessage('memoryNoRecords')}
             </p>{/if}
           {#if records?.partial_reason}<p class="mt-3 text-xs text-muted-foreground">
-              {getMessage('memorySourceUnavailable')}
+              {#if records.partial_reason === 'response_size_limit'}
+                {getMessage('memoryPageSizeLimit')}
+              {:else}
+                {getMessage('memorySourceUnavailable')}
+              {/if}
             </p>{/if}
           {#if records?.next_cursor}<button
               class={buttonClass('outline', 'sm', 'mt-4')}

@@ -1507,5 +1507,11 @@
   },
   "memorySearchFee": {
     "message": "搜索可能调用模型并产生费用，不会自动重试。"
+  },
+  "memoryPageSizeLimit": {
+    "message": "本页已达到大小上限，请翻页查看其余记录。"
+  },
+  "memoryChangeNeedsReview": {
+    "message": "未能应用此变更。请丢弃当前预览并重新核对新预览。"
   }
 }

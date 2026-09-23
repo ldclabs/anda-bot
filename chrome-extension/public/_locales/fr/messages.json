@@ -1507,5 +1507,11 @@
   },
   "memorySearchFee": {
     "message": "La recherche peut appeler un modèle et être facturée. Aucune relance automatique."
+  },
+  "memoryPageSizeLimit": {
+    "message": "D’autres entrées sont disponibles sur la page suivante."
+  },
+  "memoryChangeNeedsReview": {
+    "message": "La modification n’a pas pu être appliquée. Abandonnez cet aperçu et vérifiez-en un nouveau."
   }
 }
