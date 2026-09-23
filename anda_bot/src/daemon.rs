@@ -381,7 +381,7 @@ impl Daemon {
             mcp,
             https_proxy: self.cfg.https_proxy.clone(),
             auto_updater,
-            gateway_port: self.cfg.socket_addr()?.port(),
+            gateway_addr: self.cfg.socket_addr()?,
         };
 
         let cron_runtime =

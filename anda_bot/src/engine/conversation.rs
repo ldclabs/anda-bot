@@ -12,7 +12,10 @@ use anda_engine::{
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::util::request_meta::{keys, request_meta_extra_as};
 
@@ -284,8 +287,17 @@ impl ConversationsTool {
         Ok(())
     }
 
-    pub async fn delete_source_state(&self, source: &str) -> Result<Option<SourceState>, BoxError> {
+    pub async fn delete_source_state(
+        &self,
+        source: &str,
+        caller: &anda_core::Principal,
+    ) -> Result<Option<SourceState>, BoxError> {
         let _guard = self.extension_save_lock.lock().await;
+        if let Some(state) = self.get_source_state(source)
+            && !self.owns_source_state(caller, &state).await?
+        {
+            return Err("permission denied".into());
+        }
         let (removed, fv) = {
             let mut map = self.source_conversation.write();
             let removed = map.remove(source);
@@ -298,6 +310,45 @@ impl ConversationsTool {
             .save_extension("source_conversation".to_string(), fv)
             .await?;
         Ok(removed)
+    }
+
+    async fn owns_source_state(
+        &self,
+        caller: &anda_core::Principal,
+        state: &SourceState,
+    ) -> Result<bool, BoxError> {
+        Ok(!self
+            .conversations
+            .batch_get_conversations(caller, vec![state.conv_id])
+            .await?
+            .is_empty())
+    }
+
+    async fn caller_source_states(
+        &self,
+        caller: &anda_core::Principal,
+    ) -> Result<HashMap<String, SourceState>, BoxError> {
+        let mut states = self.source_conversations();
+        let ids = states
+            .values()
+            .map(|state| state.conv_id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut owned = HashSet::new();
+        // Conversations caps a batch at 1000 IDs. Preserve all caller-owned
+        // bindings when this daemon has accumulated more sources than that.
+        for ids in ids.chunks(1000) {
+            owned.extend(
+                self.conversations
+                    .batch_get_conversations(caller, ids.to_vec())
+                    .await?
+                    .into_iter()
+                    .map(|conversation| conversation._id),
+            );
+        }
+        states.retain(|_, state| owned.contains(&state.conv_id));
+        Ok(states)
     }
 
     #[allow(unused)]
@@ -450,7 +501,14 @@ impl Tool<BaseCtx> for ConversationsTool {
         let is_agent = ctx.get_state::<AgentInfo>().is_some();
         match args {
             ConversationsToolArgs::GetSourceState {} => {
-                let state = self.state_from_meta(ctx.meta());
+                let mut state = self.state_from_meta(ctx.meta());
+                if state.source_state.conv_id != 0
+                    && !self
+                        .owns_source_state(ctx.caller(), &state.source_state)
+                        .await?
+                {
+                    state.source_state = SourceState::default();
+                }
                 let result = if is_agent {
                     json!(SourceStateDisplay::from(state.source_state))
                 } else {
@@ -463,7 +521,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                 }))
             }
             ConversationsToolArgs::ListSourceState {} => {
-                let states = self.source_conversations();
+                let states = self.caller_source_states(ctx.caller()).await?;
                 let result = if is_agent {
                     json!(
                         states
@@ -486,7 +544,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                     return Err("source is required".into());
                 }
 
-                let removed = self.delete_source_state(source).await?;
+                let removed = self.delete_source_state(source, ctx.caller()).await?;
                 let deleted = removed.is_some();
                 let result = if is_agent {
                     json!({
@@ -819,11 +877,20 @@ mod tests {
     async fn source_state_round_trips_through_extension_storage() {
         let tool = test_tool().await;
         let ctx = EngineBuilder::new().mock_ctx().base;
+        let conversation = Conversation {
+            user: *ctx.caller(),
+            ..Default::default()
+        };
+        let id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
 
         tool.update_source_state(
             "telegram".to_string(),
             SourceState {
-                conv_id: 11,
+                conv_id: id,
                 status: ConversationStatus::Working,
                 timestamp: 1_750_000_000_000,
             },
@@ -831,18 +898,21 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, 11);
+        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, id);
         assert_eq!(tool.source_conversations().len(), 1);
 
         // init() reloads the persisted map after the in-memory copy is lost.
         tool.source_conversation.write().clear();
-        tool.init(ctx).await.unwrap();
-        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, 11);
+        tool.init(ctx.clone()).await.unwrap();
+        assert_eq!(tool.get_source_state("telegram").unwrap().conv_id, id);
 
-        let removed = tool.delete_source_state("telegram").await.unwrap();
-        assert_eq!(removed.map(|state| state.conv_id), Some(11));
+        let removed = tool
+            .delete_source_state("telegram", ctx.caller())
+            .await
+            .unwrap();
+        assert_eq!(removed.map(|state| state.conv_id), Some(id));
         assert!(
-            tool.delete_source_state("telegram")
+            tool.delete_source_state("telegram", ctx.caller())
                 .await
                 .unwrap()
                 .is_none()
@@ -899,6 +969,15 @@ mod tests {
     async fn tool_call_reads_source_states_and_conversations() {
         let tool = test_tool().await;
         let ctx = EngineBuilder::new().mock_ctx().base;
+        let conversation = Conversation {
+            user: *ctx.caller(),
+            ..Default::default()
+        };
+        let id = tool
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
 
         // GetSourceState falls back to an empty default state.
         let result = ok_result(
@@ -915,7 +994,7 @@ mod tests {
         tool.update_source_state(
             "telegram".to_string(),
             SourceState {
-                conv_id: 11,
+                conv_id: id,
                 status: ConversationStatus::Idle,
                 timestamp: 1_750_000_000_000,
             },
@@ -932,7 +1011,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        assert_eq!(result["telegram"]["c"], 11);
+        assert_eq!(result["telegram"]["c"], id);
 
         // The agent-facing variant renders display-friendly fields.
         let agent_ctx = ctx.clone();
@@ -948,7 +1027,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        assert_eq!(result["telegram"]["conv_id"], 11);
+        assert_eq!(result["telegram"]["conv_id"], id);
         assert!(result["telegram"]["timestamp"].is_string());
 
         let err = tool
@@ -1226,6 +1305,81 @@ mod tests {
             )
             .await
             .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn source_state_api_isolates_callers_and_preserves_other_bindings() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        for (source, user) in [
+            ("mine", *ctx.caller()),
+            ("cli:/tmp/default-ws", Principal::management_canister()),
+        ] {
+            let conversation = Conversation {
+                user,
+                ..Default::default()
+            };
+            let id = tool
+                .conversations
+                .add_conversation(ConversationRef::from(&conversation))
+                .await
+                .unwrap();
+            tool.update_source_state(
+                source.into(),
+                SourceState {
+                    conv_id: id,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tool.init(ctx.clone()).await.unwrap();
+        let listed = ok_result(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::ListSourceState {},
+                vec![],
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(listed.get("mine").is_some());
+        assert!(listed.get("cli:/tmp/default-ws").is_none());
+        let foreign_ctx = ctx.clone();
+        let state = ok_result(
+            tool.call(
+                foreign_ctx,
+                ConversationsToolArgs::GetSourceState {},
+                vec![],
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(state["c"], 0);
+        assert!(
+            tool.call(
+                ctx.clone(),
+                ConversationsToolArgs::DeleteSourceState {
+                    source: "cli:/tmp/default-ws".into()
+                },
+                vec![]
+            )
+            .await
+            .is_err()
+        );
+        assert!(tool.get_source_state("cli:/tmp/default-ws").is_some());
+        assert!(
+            tool.call(
+                ctx,
+                ConversationsToolArgs::DeleteSourceState {
+                    source: "mine".into()
+                },
+                vec![]
+            )
+            .await
+            .is_ok()
         );
     }
 }

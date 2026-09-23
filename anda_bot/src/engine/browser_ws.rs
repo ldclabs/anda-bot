@@ -114,14 +114,9 @@ pub async fn browser_websocket(
     };
 
     let auth_headers = websocket_auth_headers(request.headers(), request.uri());
-    let caller = match state
-        .app
-        .verify_user(&auth_headers, unix_ms(), Some(engine_id), None)
-    {
-        Ok(caller) if caller != Principal::anonymous() => caller,
-        _ => {
-            return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
-        }
+    let caller = match super::verify_trusted_user(&state.app, &auth_headers, unix_ms()) {
+        Ok(caller) => caller,
+        Err(error) => return error.into_response(),
     };
 
     let Some(sec_key) = websocket_key(request.headers()) else {
@@ -187,6 +182,8 @@ async fn handle_browser_websocket(
         sender: action_sender,
     };
     let (write_sender, mut write_receiver) = mpsc::channel::<String>(64);
+    let request_tasks = CancellationToken::new();
+    let writer_cancel = request_tasks.clone();
 
     let writer = tokio::spawn(async move {
         while let Some(payload) = write_receiver.recv().await {
@@ -198,11 +195,18 @@ async fn handle_browser_websocket(
                 break;
             }
         }
+        writer_cancel.cancel();
     });
 
     let action_write_sender = write_sender.clone();
+    let action_cancel = request_tasks.clone();
+    let action_app = state.app.clone();
+    let action_auth = state.auth_headers.clone();
     let action_forwarder = tokio::spawn(async move {
         while let Some(command) = action_receiver.recv().await {
+            if super::verify_trusted_user(&action_app, &action_auth, unix_ms()).is_err() {
+                break;
+            }
             let payload = match serde_json::to_string(&BrowserWsRequest {
                 id: command.request_id,
                 method: "browser_action",
@@ -219,14 +223,21 @@ async fn handle_browser_websocket(
                 break;
             }
         }
+        action_cancel.cancel();
     });
 
     // Cancels in-flight request tasks (agent runs, tool calls, ...) when the
     // connection goes away, so orphans do not keep running side effects that a
     // reconnecting client will retry.
-    let request_tasks = CancellationToken::new();
-
-    while let Some(message) = socket_reader.next().await {
+    while let Some(message) = tokio::select! {
+        _ = request_tasks.cancelled() => None,
+        message = socket_reader.next() => message,
+    } {
+        // A live socket does not extend the credential's lifetime. This also
+        // revokes its browser registration and outstanding actions on expiry.
+        if super::verify_trusted_user(&state.app, &state.auth_headers, unix_ms()).is_err() {
+            break;
+        }
         let message = match message {
             Ok(message) => message,
             Err(err) => {
@@ -331,6 +342,18 @@ async fn handle_browser_ws_request(
     write_sender: &mpsc::Sender<String>,
 ) {
     let id = incoming.id;
+    // Requests run in separate tasks and may start after the frame was read.
+    if super::verify_trusted_user(&state.app, &state.auth_headers, unix_ms()) != Ok(caller) {
+        if let Some(id) = id {
+            send_ws_result(
+                write_sender,
+                id,
+                Err("invalid or expired credential".into()),
+            )
+            .await;
+        }
+        return;
+    }
     let result = match incoming.method.as_deref().unwrap_or_default() {
         "ping" => Ok(json!({ "ok": true })),
         "browser_register" => handle_browser_register(incoming.params, state, connection),
@@ -1314,7 +1337,17 @@ mod tests {
                 owner: auth_key.id(),
                 service: brain::MemoryService::new(brain.clone()),
             },
-            auth_headers: HeaderMap::new(),
+            auth_headers: {
+                let mut headers = HeaderMap::new();
+                let token = auth_key
+                    .sign_cwt(
+                        crate::identity::expiring_claims(std::time::Duration::from_secs(60))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+                headers
+            },
             app,
             brain,
             bridge: Arc::new(BrowserBridge::new()),
@@ -1330,8 +1363,8 @@ mod tests {
     #[tokio::test]
     async fn browser_ws_request_dispatches_all_methods() {
         let dir = tempfile::tempdir().unwrap();
-        let (state, engine_id, _key) = build_ws_state(dir.path().to_path_buf()).await;
-        let caller = Principal::management_canister();
+        let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let caller = key.id();
 
         let (cmd_tx, _cmd_rx) = mpsc::channel::<BrowserCommand>(8);
         let connection = BrowserWsConnection {
@@ -1462,7 +1495,7 @@ mod tests {
             denied["error"]
                 .as_str()
                 .unwrap()
-                .contains("only the local owner")
+                .contains("invalid or expired credential")
         );
 
         handle_browser_ws_request(
@@ -1639,5 +1672,39 @@ mod tests {
         // No Authorization header -> the upgrade is rejected (401), so the
         // handshake fails.
         assert!(tokio_tungstenite::connect_async(request).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn browser_requests_reject_expired_credentials_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, engine_id, key) = build_ws_state(dir.path().into()).await;
+        let expired = key
+            .sign_cwt(crate::identity::Claims {
+                expiration: Some(1.into()),
+                ..Default::default()
+            })
+            .unwrap();
+        state
+            .auth_headers
+            .insert(AUTHORIZATION, format!("Bearer {expired}").parse().unwrap());
+        let (id, sender, _rx) = state.bridge.open_ws_connection();
+        let connection = BrowserWsConnection { id, sender };
+        let (tx, mut rx) = mpsc::channel(1);
+        for method in [
+            "browser_register",
+            "agent_run",
+            "tool_call",
+            "reload_models",
+            "auto_update_install_and_restart",
+        ] {
+            let request = serde_json::from_value(
+                json!({"id":1,"method":method,"params":[{"session":"expired"}]}),
+            )
+            .unwrap();
+            handle_browser_ws_request(request, &state, key.id(), engine_id, &connection, &tx).await;
+            let response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+            assert_eq!(response["error"], "invalid or expired credential");
+        }
+        assert!(state.bridge.connected_session(None).is_none());
     }
 }

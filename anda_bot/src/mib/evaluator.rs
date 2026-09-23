@@ -595,11 +595,6 @@ async fn execute_case(
         if recall["body"]["truncated"] == true {
             return Err("Recall packet omitted".into());
         }
-        let model = host.models.get_model().ok_or("Model unavailable")?;
-        let started = Instant::now();
-        let output=tokio::time::timeout(Duration::from_secs(plan.operation_seconds),model.completion(CompletionRequest {
-            instructions:TRACK_A_PROMPT.into(),prompt:json!({"question":case.question,"options":case.options,"memory":recall["body"]["items"]}).to_string(),max_output_tokens:Some(plan.max_output_tokens),temperature:Some(0.0),..Default::default()
-        })).await;
         let run = host
             .runs
             .lock()
@@ -607,25 +602,16 @@ async fn execute_case(
             .get(&(MEMORY.into(), entry.run_id.clone()))
             .cloned()
             .ok_or("Run unavailable")?;
-        let usage = output
-            .as_ref()
-            .ok()
-            .and_then(|r| r.as_ref().ok())
-            .map(|o| &o.usage);
-        run.business_costs.lock().unwrap().push(StageCost {
-            stage: CostStage::BusinessModel,
-            conversation: None,
-            failed: !matches!(&output,Ok(Ok(o)) if o.failed_reason.is_none()),
-            requests: Some(1),
-            input_tokens: usage
-                .filter(|u| u.requests > 0 || u.input_tokens > 0)
-                .map(|u| u.input_tokens),
-            output_tokens: usage
-                .filter(|u| u.requests > 0 || u.output_tokens > 0)
-                .map(|u| u.output_tokens),
-            elapsed_ms: Some(started.elapsed().as_millis() as u64),
-            accounting_complete: false,
-        });
+        let request = CompletionRequest {
+            instructions: TRACK_A_PROMPT.into(),
+            prompt: json!({"question":case.question,"options":case.options,"memory":recall["body"]["items"]}).to_string(),
+            max_output_tokens: Some(plan.max_output_tokens), temperature: Some(0.0), ..Default::default()
+        };
+        let output = tokio::time::timeout(
+            Duration::from_secs(plan.operation_seconds),
+            host.complete_business(&run, request),
+        )
+        .await;
         let output = output.map_err(|_| "Business model timed out; result unknown")??;
         if output.failed_reason.is_some() || !output.tool_calls.is_empty() {
             return Err("Business model failed or requested tools".into());
@@ -833,54 +819,73 @@ mod tests {
         }
         fn completion(
             &self,
-            _request: anda_core::CompletionRequest,
+            request: anda_core::CompletionRequest,
         ) -> anda_core::BoxPinFut<Result<anda_core::AgentOutput, BoxError>> {
-            Box::pin(async {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                Ok(anda_core::AgentOutput::default())
-            })
+            if request.instructions == TRACK_A_PROMPT
+                || request
+                    .instructions
+                    .contains("The task runner supplies complete schemas")
+            {
+                Box::pin(std::future::pending())
+            } else {
+                anda_engine::model::CompletionFeaturesDyn::completion(&Abstain, request)
+            }
         }
     }
 
     #[tokio::test]
     async fn memory_evaluation_deadline_closes_hosts_and_keeps_inflight_costs_unknown() {
-        let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("deadline");
-        let hosts = [
-            super::super::tests::host(Mode::Persistent).0,
-            super::super::tests::host(Mode::NoMemory).0,
-        ];
-        for host in &hosts {
-            host.models
-                .set_model(anda_engine::model::Model::with_completer(Arc::new(
-                    SlowCompletion,
-                )));
-        }
-        let mut frozen = plan(EvaluationTrack::Agent);
-        frozen.plan.evaluation_seconds = 1;
-        frozen.plan.operation_seconds = 1;
-        frozen.digest = digest(&frozen.plan);
-        assert!(
-            evaluate(&frozen, &output, &hosts, "mechanism_fixture", false)
-                .await
-                .is_err()
-        );
-        let report: Value =
-            serde_json::from_slice(&tokio::fs::read(output.join("report.json")).await.unwrap())
+        for track in [EvaluationTrack::Memory, EvaluationTrack::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let output = directory.path().join("deadline");
+            let hosts = [
+                super::super::tests::host(Mode::Persistent).0,
+                super::super::tests::host(Mode::NoMemory).0,
+            ];
+            for host in &hosts {
+                host.models
+                    .set_model(anda_engine::model::Model::with_completer(Arc::new(
+                        SlowCompletion,
+                    )));
+            }
+            let mut frozen = plan(track);
+            frozen.plan.evaluation_seconds = 1;
+            frozen.plan.operation_seconds = 5;
+            frozen.digest = digest(&frozen.plan);
+            assert!(
+                evaluate(&frozen, &output, &hosts, "mechanism_fixture", false)
+                    .await
+                    .is_err()
+            );
+            let report: Value =
+                serde_json::from_slice(&tokio::fs::read(output.join("report.json")).await.unwrap())
+                    .unwrap();
+            assert_eq!(report["termination"], "deadline");
+            assert_eq!(report["counts"]["unknown"], 1);
+            assert_eq!(report["counts"]["not_started"], 7);
+            assert_eq!(report["valid_pairs"], 0);
+            assert_eq!(report["currency_total"], Value::Null);
+            assert_eq!(report["cases"][0]["cleanup"]["status"], "confirmed");
+            let receipts = report["cases"][0]["last_costs"]["receipts"]
+                .as_array()
                 .unwrap();
-        assert_eq!(report["termination"], "deadline");
-        assert_eq!(report["counts"]["unknown"], 1);
-        assert_eq!(report["counts"]["not_started"], 7);
-        assert_eq!(report["valid_pairs"], 0);
-        assert_eq!(report["currency_total"], Value::Null);
-        assert_eq!(report["cases"][0]["cleanup"]["status"], "confirmed");
-        assert!(hosts.iter().all(|host| host.shutdown.is_cancelled()));
-        let before = tokio::fs::read(output.join("events.jsonl")).await.unwrap();
-        write_report(&output).await.unwrap();
-        assert_eq!(
-            tokio::fs::read(output.join("events.jsonl")).await.unwrap(),
-            before
-        );
+            let business = receipts
+                .iter()
+                .filter(|row| row["stage"] == "business_model")
+                .collect::<Vec<_>>();
+            assert_eq!(business.len(), 1, "{report}");
+            assert_eq!(business[0]["requests"], 1);
+            assert_eq!(business[0]["failed"], true);
+            assert!(business[0]["input_tokens"].is_null());
+
+            assert!(hosts.iter().all(|host| host.shutdown.is_cancelled()));
+            let before = tokio::fs::read(output.join("events.jsonl")).await.unwrap();
+            write_report(&output).await.unwrap();
+            assert_eq!(
+                tokio::fs::read(output.join("events.jsonl")).await.unwrap(),
+                before
+            );
+        }
     }
 
     fn plan(track: EvaluationTrack) -> FrozenPlan {

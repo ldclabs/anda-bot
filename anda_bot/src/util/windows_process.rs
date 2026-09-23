@@ -19,6 +19,38 @@ pub(crate) fn suppress_tokio_console_window(command: &mut tokio::process::Comman
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn quote_windows_arg(value: &str) -> String {
+    if value.is_empty() {
+        return "\"\"".to_string();
+    }
+
+    if !value.chars().any(|ch| ch.is_whitespace() || ch == '"') {
+        return value.to_string();
+    }
+
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0;
+    for ch in value.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.extend(std::iter::repeat_n('\\', backslashes));
+                backslashes = 0;
+                quoted.push(ch);
+            }
+        }
+    }
+    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
+    quoted.push('"');
+    quoted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

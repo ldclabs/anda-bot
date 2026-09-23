@@ -30,6 +30,10 @@ use super::{
     mcp_oauth::McpOAuthFlows, require_mcp_approval, write_daemon_config_atomically,
 };
 
+// The provider does not expose its configurations. Retain the admitted
+// snapshots so reauthorization can preserve settings, including ephemeral adds.
+pub(super) type McpServerConfigs = Arc<parking_lot::RwLock<BTreeMap<String, McpServerConfig>>>;
+
 const APPROVAL_REDACTED: &str = "[redacted]";
 
 fn approval_arg_name_is_sensitive(name: &str) -> bool {
@@ -179,6 +183,7 @@ fn add_mcp_server_approval_card(
 
 #[derive(Clone)]
 pub struct McpServerTool {
+    configs: McpServerConfigs,
     provider: Arc<McpToolProvider>,
     home_dir: PathBuf,
     default_cwd: Option<PathBuf>,
@@ -228,8 +233,10 @@ impl McpServerTool {
         default_cwd: Option<PathBuf>,
         config_path: PathBuf,
         config_write_lock: Arc<Mutex<()>>,
+        configs: McpServerConfigs,
     ) -> Self {
         Self {
+            configs,
             provider,
             home_dir,
             default_cwd,
@@ -366,7 +373,10 @@ impl Tool<BaseCtx> for McpServerTool {
                 .into_iter()
                 .next()
                 .ok_or("MCP server configuration was unexpectedly empty")?;
-            self.provider.add_server(server_config).await?;
+            self.provider.add_server(server_config.clone()).await?;
+            self.configs
+                .write()
+                .insert(server_id.clone(), server_config);
         }
 
         let mut persisted = false;
@@ -648,6 +658,12 @@ fn mcp_server_json(server: &McpServerSettings) -> Value {
         object.insert("exclude".to_string(), json!(server.exclude));
     }
 
+    if let Some(lifecycle) = server.lifecycle {
+        object.insert("lifecycle".into(), json!(lifecycle));
+    }
+    if let Some(tasks) = &server.tasks {
+        object.insert("tasks".into(), json!(tasks));
+    }
     Value::Object(object)
 }
 
@@ -685,6 +701,7 @@ const OAUTH_REDIRECT_TIMEOUT: Duration = Duration::from_secs(300);
 /// fresh browser authorization instead of failing with "already exists".
 #[derive(Clone)]
 pub struct McpConnectTool {
+    configs: McpServerConfigs,
     provider: Arc<McpToolProvider>,
     flows: McpOAuthFlows,
 }
@@ -713,8 +730,16 @@ pub struct ConnectMcpServerArgs {
 impl McpConnectTool {
     pub const NAME: &'static str = "connect_mcp_server";
 
-    pub fn new(provider: Arc<McpToolProvider>, flows: McpOAuthFlows) -> Self {
-        Self { provider, flows }
+    pub fn new(
+        provider: Arc<McpToolProvider>,
+        flows: McpOAuthFlows,
+        configs: McpServerConfigs,
+    ) -> Self {
+        Self {
+            provider,
+            flows,
+            configs,
+        }
     }
 
     async fn connect(&self, args: ConnectMcpServerArgs) -> Result<Value, BoxError> {
@@ -733,6 +758,21 @@ impl McpConnectTool {
             Some(id) => id,
             None => default_server_id_from_url(&url)?,
         };
+        let config = self
+            .configs
+            .read()
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| McpServerConfig::streamable_http(id.clone(), url.clone()));
+        match &config.transport {
+            McpTransportConfig::StreamableHttp(http) if http.url == url => {}
+            _ => {
+                return Err(format!(
+                    "MCP server {id} has a different transport or endpoint; use a different id"
+                )
+                .into());
+            }
+        }
         if self.provider.contains_server(&id) {
             if args.reauthorize {
                 // Sign out before re-consenting. `clear_credentials` discards the
@@ -762,15 +802,11 @@ impl McpConnectTool {
         // authorization metadata, others (static bearer / none) do not.
         match McpToolProvider::discover_http_oauth(&url).await? {
             None => {
-                self.provider
-                    .add_server(McpServerConfig::streamable_http(id.clone(), url))
-                    .await?;
+                self.provider.add_server(config.clone()).await?;
+                self.configs.write().insert(id.clone(), config);
                 Ok(self.connected_summary(&id, false))
             }
-            Some(meta) => {
-                self.authorize_and_connect(&id, url, args.scopes, meta)
-                    .await
-            }
+            Some(meta) => self.authorize_and_connect(config, args.scopes, meta).await,
         }
     }
 
@@ -782,29 +818,20 @@ impl McpConnectTool {
     /// on its own. Blocking here would only turn that into a timeout.
     async fn authorize_and_connect(
         &self,
-        id: &str,
-        url: String,
+        mut config: McpServerConfig,
         scopes: Vec<String>,
         meta: McpOAuthMetadata,
     ) -> Result<Value, BoxError> {
-        let scopes = if scopes.is_empty() {
-            meta.scopes_supported
-        } else {
-            scopes
-        };
-
-        let mut config = McpServerConfig::streamable_http(id.to_string(), url.clone());
-        if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
-            http.auth = Some(McpOAuthConfig::AuthorizationCode(
-                OAuthAuthorizationCodeConfig {
-                    redirect_uri: self.flows.redirect_uri().to_string(),
-                    scopes: scopes.clone(),
-                    client_name: Some("Anda Bot".to_string()),
-                    client_id: None,
-                },
-            ));
-        }
-        self.provider.register_server(config)?;
+        configure_authorization(
+            &mut config,
+            self.flows.redirect_uri(),
+            scopes,
+            meta.scopes_supported,
+        )?;
+        let id = config.id.clone();
+        self.provider.register_server(config.clone())?;
+        self.configs.write().insert(id.clone(), config.clone());
+        let id = id.as_str();
 
         let auth_url = match self.provider.begin_authorization(id).await {
             Ok(auth_url) => auth_url,
@@ -814,11 +841,7 @@ impl McpConnectTool {
                 return Err(err);
             }
         };
-        let waiter = match self
-            .flows
-            .begin(id.to_string(), url, scopes, &auth_url)
-            .await
-        {
+        let waiter = match self.flows.begin(config, &auth_url).await {
             Ok(waiter) => waiter,
             Err(err) => {
                 self.provider.cancel_authorization(id);
@@ -827,7 +850,7 @@ impl McpConnectTool {
             }
         };
 
-        if open_in_browser(&auth_url).is_err() {
+        if open_in_browser(&auth_url).await.is_err() {
             // Headless, or no desktop session: hand the URL back so the agent
             // can give it to the user, and let the gateway finish the flow
             // whenever they get to it.
@@ -886,6 +909,37 @@ impl McpConnectTool {
     }
 }
 
+/// Only authentication changes during re-consent; filters and transport tuning
+/// are the operator's configuration and must survive token replacement.
+fn configure_authorization(
+    config: &mut McpServerConfig,
+    redirect_uri: &str,
+    scopes: Vec<String>,
+    advertised_scopes: Vec<String>,
+) -> Result<(), BoxError> {
+    let McpTransportConfig::StreamableHttp(http) = &mut config.transport else {
+        return Err("OAuth requires an HTTP MCP server".into());
+    };
+    let mut auth = match http.auth.take() {
+        Some(McpOAuthConfig::AuthorizationCode(auth)) => auth,
+        _ => OAuthAuthorizationCodeConfig {
+            redirect_uri: redirect_uri.into(),
+            scopes: vec![],
+            client_name: Some("Anda Bot".into()),
+            client_id: None,
+        },
+    };
+    auth.redirect_uri = redirect_uri.into();
+    if !scopes.is_empty() {
+        auth.scopes = scopes;
+    } else if auth.scopes.is_empty() {
+        auth.scopes = advertised_scopes;
+    }
+    http.bearer_token = None;
+    http.auth = Some(McpOAuthConfig::AuthorizationCode(auth.clone()));
+    Ok(())
+}
+
 /// Persists an OAuth server to mcp.json so it reconnects after a restart.
 /// Returns whether a new entry was written (re-authorizations find the
 /// entry already present). Tokens never touch mcp.json — they live in the
@@ -893,30 +947,42 @@ impl McpConnectTool {
 pub(super) async fn persist_oauth_server(
     config_path: &Path,
     config_write_lock: &Mutex<()>,
-    id: &str,
-    url: String,
-    scopes: Vec<String>,
+    config: &McpServerConfig,
 ) -> Result<bool, BoxError> {
     let _guard = config_write_lock.lock().await;
+    let id = &config.id;
+    let McpTransportConfig::StreamableHttp(http) = &config.transport else {
+        return Err("OAuth requires HTTP transport".into());
+    };
+    let Some(McpOAuthConfig::AuthorizationCode(auth)) = &http.auth else {
+        return Err("missing OAuth configuration".into());
+    };
+    let oauth = McpOAuthSettings {
+        client_id: auth.client_id.clone(),
+        scopes: auth.scopes.clone(),
+    };
     if mcp_config_contains_server(config_path, id).await? {
+        let content = read_text_file(config_path).await?;
+        let updated = update_persisted_oauth(&content, id, &oauth)?;
+        if daemon_config_needs_backup(config_path, updated.as_bytes()).await? {
+            backup_daemon_config(config_path).await?;
+            write_daemon_config_atomically(config_path, updated.as_bytes()).await?;
+        }
         return Ok(false);
     }
     let server = McpServerSettings {
         id: id.to_string(),
         disabled: false,
         transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-            url,
+            url: http.url.clone(),
             bearer_token: None,
-            headers: BTreeMap::new(),
-            oauth: Some(McpOAuthSettings {
-                client_id: None,
-                scopes,
-            }),
+            headers: http.headers.clone(),
+            oauth: Some(oauth),
         }),
-        include: BTreeSet::new(),
-        exclude: BTreeSet::new(),
-        lifecycle: None,
-        tasks: None,
+        include: config.include.clone(),
+        exclude: config.exclude.clone(),
+        lifecycle: Some(config.lifecycle),
+        tasks: config.tasks.clone(),
     };
     persist_mcp_server_config(config_path, server)
         .await
@@ -927,6 +993,43 @@ pub(super) async fn persist_oauth_server(
             )
         })?;
     Ok(true)
+}
+
+fn update_persisted_oauth(
+    content: &str,
+    id: &str,
+    oauth: &McpOAuthSettings,
+) -> Result<String, BoxError> {
+    let mut root: Value = serde_json::from_str(content)?;
+    for key in ["mcpServers", "servers"] {
+        let Some(servers) = root.get_mut(key) else {
+            continue;
+        };
+        let entry = if let Some(map) = servers.as_object_mut() {
+            map.iter_mut()
+                .find(|(key, _)| key.trim() == id)
+                .map(|(_, value)| value)
+        } else if let Some(list) = servers.as_array_mut() {
+            list.iter_mut()
+                .find(|value| value["id"].as_str().is_some_and(|key| key.trim() == id))
+        } else {
+            None
+        };
+        if let Some(entry) = entry {
+            let transport = if entry.get("transport").is_some() {
+                &mut entry["transport"]
+            } else {
+                entry
+            };
+            let object = transport.as_object_mut().ok_or("invalid MCP HTTP config")?;
+            object.insert("oauth".into(), serde_json::to_value(oauth)?);
+            object.remove("bearer_token");
+            let mut result = serde_json::to_string_pretty(&root)?;
+            result.push('\n');
+            return Ok(result);
+        }
+    }
+    Err(format!("MCP server {id} was not found in mcp.json").into())
 }
 
 /// Returns whether mcp.json already carries a server with this id. A missing
@@ -1074,7 +1177,7 @@ fn default_server_id_from_url(url: &str) -> Result<String, BoxError> {
 /// Only http/https URLs are opened: the authorization URL is built from the
 /// remote server's discovery metadata, so treat it as untrusted input to the
 /// local system.
-fn open_in_browser(url: &str) -> std::io::Result<()> {
+async fn open_in_browser(url: &str) -> std::io::Result<()> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1083,26 +1186,41 @@ fn open_in_browser(url: &str) -> std::io::Result<()> {
     }
 
     #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
+    let mut command = tokio::process::Command::new("open");
     // Not `cmd /C start`: cmd.exe would reparse the URL, splitting on `&`
     // (executing the rest as commands) and expanding `%..%` sequences.
     // rundll32 receives the URL as a plain argument.
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("rundll32");
+        let mut command = tokio::process::Command::new("rundll32");
         command.arg("url.dll,FileProtocolHandler");
         command
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let mut command = std::process::Command::new("xdg-open");
+    let mut command = tokio::process::Command::new("xdg-open");
 
-    command
-        .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
+    command.arg(url);
+    run_browser_opener(&mut command).await
+}
+
+async fn run_browser_opener(command: &mut tokio::process::Command) -> std::io::Result<()> {
+    let status = tokio::time::timeout(
+        Duration::from_secs(10),
+        command
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "browser opener timed out"))??;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "browser opener exited with {status}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1162,6 +1280,7 @@ mod tests {
             Some(home.join("workspace")),
             McpSettings::file_path(&home),
             Arc::new(Mutex::new(())),
+            Default::default(),
         )
     }
 
@@ -1501,6 +1620,7 @@ mod tests {
             None,
             McpSettings::file_path(dir.path()),
             Arc::new(Mutex::new(())),
+            Default::default(),
         );
 
         let output = Tool::call(
@@ -1555,6 +1675,7 @@ mod tests {
             None,
             McpSettings::file_path(dir.path()),
             Arc::new(Mutex::new(())),
+            Default::default(),
         );
 
         let err = Tool::call(
@@ -1587,15 +1708,21 @@ mod tests {
         let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
         let flows = McpOAuthFlows::new(
             provider.clone(),
-            8042,
+            "127.0.0.1:8042".parse().unwrap(),
             config_path,
             Arc::new(Mutex::new(())),
         );
-        McpConnectTool::new(provider, flows)
+        McpConnectTool::new(provider, flows, Default::default())
+    }
+
+    fn oauth_config(scopes: Vec<String>) -> McpServerConfig {
+        let mut config = McpServerConfig::streamable_http("alink", "https://api.al.ink/mcp");
+        configure_authorization(&mut config, "http://127.0.0.1/callback", scopes, vec![]).unwrap();
+        config
     }
 
     #[tokio::test]
-    async fn persist_oauth_server_writes_marker_and_skips_existing_entries() {
+    async fn persist_oauth_server_writes_marker_and_updates_existing_entries() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = McpSettings::file_path(dir.path());
         let write_lock = Mutex::new(());
@@ -1603,9 +1730,7 @@ mod tests {
         let newly = persist_oauth_server(
             &config_path,
             &write_lock,
-            "alink",
-            "https://api.al.ink/mcp".to_string(),
-            vec!["events:read".to_string()],
+            &oauth_config(vec!["events:read".to_string()]),
         )
         .await
         .unwrap();
@@ -1627,15 +1752,9 @@ mod tests {
         assert!(!content.contains("token"), "no tokens in mcp.json");
 
         // Re-authorization finds the entry already present and does not fail.
-        let newly = persist_oauth_server(
-            &config_path,
-            &write_lock,
-            "alink",
-            "https://api.al.ink/mcp".to_string(),
-            Vec::new(),
-        )
-        .await
-        .unwrap();
+        let newly = persist_oauth_server(&config_path, &write_lock, &oauth_config(Vec::new()))
+            .await
+            .unwrap();
         assert!(!newly);
     }
 
@@ -1671,10 +1790,10 @@ mod tests {
         assert!(default_server_id_from_url("https:///mcp").is_err());
     }
 
-    #[test]
-    fn open_in_browser_rejects_non_http_urls() {
-        assert!(open_in_browser("javascript:alert(1)").is_err());
-        assert!(open_in_browser("file:///etc/passwd").is_err());
+    #[tokio::test]
+    async fn open_in_browser_rejects_non_http_urls() {
+        assert!(open_in_browser("javascript:alert(1)").await.is_err());
+        assert!(open_in_browser("file:///etc/passwd").await.is_err());
     }
 
     #[tokio::test]
@@ -1691,10 +1810,11 @@ mod tests {
             provider.clone(),
             McpOAuthFlows::new(
                 provider.clone(),
-                8042,
+                "127.0.0.1:8042".parse().unwrap(),
                 McpSettings::file_path(dir.path()),
                 Arc::new(Mutex::new(())),
             ),
+            Default::default(),
         );
         let args = |reauthorize: bool| ConnectMcpServerArgs {
             url: "http://127.0.0.1:9/mcp".to_string(),
@@ -1732,5 +1852,103 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("http:// or https://"));
+    }
+
+    #[tokio::test]
+    async fn reauthorization_preserves_runtime_and_persisted_operator_settings() {
+        use anda_engine::extension::mcp::{McpLifecycle, McpTasksConfig};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let mut config = oauth_config(vec!["old".into()]);
+        config.include.insert("read".into());
+        config.exclude.insert("delete".into());
+        config.lifecycle = McpLifecycle::Initialize;
+        config.tasks = Some(McpTasksConfig::default());
+        if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
+            http.headers.insert("X-Tenant".into(), "tenant".into());
+            if let Some(McpOAuthConfig::AuthorizationCode(auth)) = &mut http.auth {
+                auth.client_id = Some("registered-client".into());
+            }
+        }
+        let before = serde_json::to_value(&config).unwrap();
+        configure_authorization(
+            &mut config,
+            "http://127.0.0.1:8042/callback",
+            vec!["new".into()],
+            vec!["advertised".into()],
+        )
+        .unwrap();
+        let after = serde_json::to_value(&config).unwrap();
+        for key in ["include", "exclude", "lifecycle", "tasks"] {
+            assert_eq!(after[key], before[key]);
+        }
+        let lock = Mutex::new(());
+        assert!(persist_oauth_server(&path, &lock, &config).await.unwrap());
+        let saved = McpSettings::from_file(dir.path())
+            .await
+            .unwrap()
+            .server_configs(dir.path(), None)
+            .unwrap()
+            .remove(0);
+        assert_eq!(saved.include, config.include);
+        assert_eq!(saved.exclude, config.exclude);
+        assert_eq!(
+            serde_json::to_value(&saved.tasks).unwrap(),
+            serde_json::to_value(&config.tasks).unwrap()
+        );
+        configure_authorization(
+            &mut config,
+            "http://127.0.0.1/callback",
+            vec!["newer".into()],
+            vec![],
+        )
+        .unwrap();
+        assert!(!persist_oauth_server(&path, &lock, &config).await.unwrap());
+        let saved = McpSettings::from_file(dir.path()).await.unwrap();
+        let McpTransportSettings::StreamableHttp(http) = &saved.servers[0].transport else {
+            panic!()
+        };
+        assert_eq!(http.headers["X-Tenant"], "tenant");
+        let oauth = http.oauth.as_ref().unwrap();
+        assert_eq!(oauth.client_id.as_deref(), Some("registered-client"));
+        assert_eq!(oauth.scopes, vec!["newer"]);
+        assert_eq!(saved.servers[0].include, config.include);
+    }
+
+    #[test]
+    fn oauth_updates_preserve_raw_environment_references_and_legacy_lists() {
+        for content in [
+            r#"{"mcpServers":{"srv":{"type":"http","url":"$ENDPOINT","headers":{"X-Tenant":"$TENANT"},"include":["read"],"oauth":{}}}}"#,
+            r#"{"servers":[{"id":"srv","transport":{"type":"http","url":"$ENDPOINT","headers":{"X-Tenant":"$TENANT"},"oauth":{}},"include":["read"]}]}"#,
+        ] {
+            let updated = update_persisted_oauth(
+                content,
+                "srv",
+                &McpOAuthSettings {
+                    client_id: Some("public-client".into()),
+                    scopes: vec!["read".into()],
+                },
+            )
+            .unwrap();
+            assert!(
+                updated.contains("$ENDPOINT")
+                    && updated.contains("$TENANT")
+                    && updated.contains("public-client")
+            );
+            McpSettings::from_json_contents(&updated).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_opener_reports_process_failure_and_reaps_success() {
+        assert!(
+            run_browser_opener(tokio::process::Command::new("sh").args(["-c", "exit 7"]))
+                .await
+                .is_err()
+        );
+        run_browser_opener(tokio::process::Command::new("sh").args(["-c", "exit 0"]))
+            .await
+            .unwrap();
     }
 }

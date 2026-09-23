@@ -34,7 +34,6 @@ Anda Bot 专为需要连续性的复杂目标而设计，而非简单的单轮�
 
 使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off` 新建受 Brain/Notes 策略约束的会话；聊天历史、文件和服务商处理仍保留。持久确认问题按需启用：`anda memory inbox setup` 先预览配置，再明确应用并重启。详见[使用步骤与范围](docs/brain-integration_cn.md#先使用日常记忆)。
 
-
 Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积数据。其核心循环包含三个阶段：
 
 - **Formation（生成记忆）**：对话内容被编码为结构化知识，如实体、关系、事件、偏好和行为模式。
@@ -127,7 +126,7 @@ model:
       disabled: false
 ```
 
-支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。
+支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。已识别的 API 地址会优先选择其服务商密钥，再考虑模型名称：OpenRouter、Groq 和 SiliconFlow 分别使用 `OPENROUTER_API_KEY`、`GROQ_API_KEY` 和 `SILICONFLOW_API_KEY`，即使托管的是其他厂商的模型。
 
 `brain` 标签表示该模型配置将优先用于记忆大脑的生成与处理。若无 provider 携带该标签，则默认使用当前激活的模型。
 
@@ -209,6 +208,8 @@ anda models reload
 anda autostart status
 ```
 
+自启动注册会保存绝对 home 路径，包括通过相对 `--home` 指定的目录；注册失败会返回错误。指定具体 `addr` 时，CLI 和 Brain 内部连接也使用该地址，只有通配监听地址（`0.0.0.0` 或 `::`）会替换为回环地址。
+
 不打开终端 UI，直接发起一次请求并等待完整结果：
 
 ```bash
@@ -247,6 +248,8 @@ anda browser token --days 30
 
 然后在 `chrome://extensions` 开启开发者模式，加载 [chrome-extension](chrome-extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
 
+daemon 管理接口要求已配置的可信身份，未登记密钥的有效签名不授予访问权限。浏览器连接会对后续请求重新检查凭据有效期，过期后请生成新 token 并更新扩展设置。会话来源列表和绑定删除仅限调用者自己的会话。
+
 ### MCP 服务
 
 Anda Bot 可以连接 MCP 服务，并把远端工具暴露给 agent。把可移植 MCP 配置放到
@@ -281,6 +284,8 @@ workspace 中启动。
 重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、
 `command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和
 `exclude`，另外再加 tool 专用的 `id` 和 `persist`。
+
+OAuth 服务可通过 `connect_mcp_server` 完成授权并保存连接。重新授权会保留工具允许/排除列表、自定义 headers、client ID 和传输设置，并保存更新后的 scopes。浏览器启动器失败时，工具会返回授权 URL，供手动打开。回调使用网关端口及相同 IP 地址族的回环地址；远程或绑定特定网卡的部署，需要将浏览器侧的该回环地址隧道转发到实际监听地址。
 
 当前支持：
 

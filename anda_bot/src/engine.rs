@@ -128,8 +128,8 @@ pub struct EngineConfig {
     pub mcp: config::McpSettings,
     pub https_proxy: Option<String>,
     pub auto_updater: Arc<AutoUpdater>,
-    /// Port the gateway listens on, used to build the MCP OAuth redirect URI.
-    pub gateway_port: u16,
+    /// Listener address; OAuth loopback redirects use the same IP family and port.
+    pub gateway_addr: std::net::SocketAddr,
 }
 
 #[derive(Clone)]
@@ -601,10 +601,17 @@ impl Engines {
                 .map(|manager| manager.supported_audio_formats())
                 .unwrap_or_default(),
         };
+        let servers = cfg
+            .mcp
+            .server_configs(&cfg.home_dir, Some(default_workspace.as_path()))?;
+        let mcp_configs: mcp_server::McpServerConfigs = Arc::new(parking_lot::RwLock::new(
+            servers
+                .iter()
+                .cloned()
+                .map(|server| (server.id.clone(), server))
+                .collect(),
+        ));
         let mcp_provider = {
-            let servers = cfg
-                .mcp
-                .server_configs(&cfg.home_dir, Some(default_workspace.as_path()))?;
             // OAuth refresh tokens persist here, so servers marked `oauth` in
             // mcp.json reconnect across restarts without a new browser flow.
             let credential_store = Arc::new(mcp_credentials::FileMcpCredentialStore::new(
@@ -623,16 +630,18 @@ impl Engines {
             Some(default_workspace.clone()),
             mcp_config_path.clone(),
             config_write_lock.clone(),
+            mcp_configs.clone(),
         ));
         let mcp_oauth_flows = McpOAuthFlows::new(
             mcp_provider.clone(),
-            cfg.gateway_port,
+            cfg.gateway_addr,
             mcp_config_path,
             config_write_lock.clone(),
         );
         let connect_mcp_server_tool = Arc::new(McpConnectTool::new(
             mcp_provider.clone(),
             mcp_oauth_flows.clone(),
+            mcp_configs,
         ));
         use agent::memory_policy::{MemoryPolicyAgent, MemoryPolicyTool};
         let mut hooks = anda_engine::hook::Hooks::new();
@@ -1208,12 +1217,31 @@ fn verify_authenticated_request(
     app: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), Box<axum::response::Response>> {
-    match app.verify_user(headers, unix_ms(), None, None) {
-        Ok(caller) if caller != Principal::anonymous() => Ok(()),
-        _ => Err(Box::new(
-            (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response(),
-        )),
+    verify_trusted_user(app, headers, unix_ms())
+        .map(|_| ())
+        .map_err(|error| Box::new(error.into_response()))
+}
+
+/// Signature verification identifies a caller; signed envelopes may be created
+/// by anyone. Daemon controls additionally require a configured trusted user.
+fn verify_trusted_user(
+    app: &AppState,
+    headers: &HeaderMap,
+    now_ms: u64,
+) -> Result<Principal, (StatusCode, &'static str)> {
+    let caller = app
+        .verify_user(headers, now_ms, None, None)
+        .ok()
+        .filter(|caller| *caller != Principal::anonymous())
+        .ok_or((StatusCode::UNAUTHORIZED, "invalid or expired credential"))?;
+    if !app
+        .ed25519_pubkeys
+        .iter()
+        .any(|key| crate::identity::pubkey_to_principal(key) == caller)
+    {
+        return Err((StatusCode::FORBIDDEN, "caller is not a trusted user"));
     }
+    Ok(caller)
 }
 
 pub async fn get_version() -> impl IntoResponse {
@@ -1480,6 +1508,48 @@ model:
         let app = minimal_app(vec![]);
         let err = verify_authenticated_request(&app, &HeaderMap::new());
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn daemon_auth_requires_a_trusted_identity_for_bearers_and_signed_headers() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        use ed25519_dalek::Signer;
+        let owner = Ed25519Key::new([61; 32]);
+        let outsider = Ed25519Key::new([62; 32]);
+        let app = minimal_app(vec![owner.pubkey().into()]);
+        for key in [&owner, &outsider] {
+            let signing = ed25519_dalek::SigningKey::from_bytes(key.as_bytes());
+            let digest = [7u8; 32];
+            let mut headers = HeaderMap::new();
+            for (name, value) in [
+                (
+                    "ic-auth-pubkey",
+                    ic_ed25519::PublicKey::convert_raw32_to_der(*key.pubkey().as_bytes()),
+                ),
+                ("ic-auth-content-digest", digest.to_vec()),
+                (
+                    "ic-auth-signature",
+                    signing.sign(&digest).to_bytes().to_vec(),
+                ),
+            ] {
+                headers.insert(name, URL_SAFE_NO_PAD.encode(value).parse().unwrap());
+            }
+            // Both signatures are valid, but only the configured key is authorized.
+            assert_eq!(
+                app.verify_user(&headers, unix_ms(), None, None).unwrap(),
+                key.id()
+            );
+            assert_eq!(
+                verify_authenticated_request(&app, &headers).is_ok(),
+                key.id() == owner.id()
+            );
+            assert_eq!(
+                verify_authenticated_request(&app, &authed_headers(key)).is_ok(),
+                key.id() == owner.id()
+            );
+        }
+        let headers = authed_headers(&owner);
+        assert!(verify_trusted_user(&app, &headers, unix_ms() + 3_600_000).is_err());
     }
 
     #[tokio::test]

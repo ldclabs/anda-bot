@@ -473,26 +473,7 @@ impl Host {
                 out = tokio::time::timeout(self.timeout,self.operate(&run,&mut state,&req)) => match out {Ok(v)=>v,Err(_)=>Err("request timed out; outcome unknown; run invalid".into())}
             }
         };
-        if !state.closed
-            && let Ok(costs) = run.brain.cost_summary().await
-        {
-            state.brain_costs = json!(costs);
-        }
-        state.costs = state.brain_costs.clone();
-        if state.costs.is_null() {
-            state.costs = json!({"receipts":[],"unreported_stages":["formation","maintenance","recall","business_model","tools","observer"],"accounting_complete":false});
-        }
-        let business = run.business_costs.lock().unwrap().clone();
-        if !business.is_empty() {
-            state.costs["receipts"]
-                .as_array_mut()
-                .unwrap()
-                .extend(business.into_iter().map(|c| json!(c)));
-            state.costs["unreported_stages"]
-                .as_array_mut()
-                .unwrap()
-                .retain(|v| v != "business_model");
-        }
+        Self::capture_costs(&run, &mut state).await;
         let response = match result {
             Ok(mut body) => {
                 body["costs"] = state.costs.clone();
@@ -519,6 +500,27 @@ impl Host {
         );
         run.touched.store(unix_ms(), Ordering::SeqCst);
         response
+    }
+
+    async fn capture_costs(run: &Run, state: &mut RunState) {
+        if let Ok(costs) = run.brain.cost_summary().await {
+            state.brain_costs = json!(costs);
+        }
+        state.costs = state.brain_costs.clone();
+        if state.costs.is_null() {
+            state.costs = json!({"receipts":[],"unreported_stages":["formation","maintenance","recall","business_model","tools","observer"],"accounting_complete":false});
+        }
+        let business = run.business_costs.lock().unwrap().clone();
+        if !business.is_empty() {
+            state.costs["receipts"]
+                .as_array_mut()
+                .unwrap()
+                .extend(business.into_iter().map(|c| json!(c)));
+            state.costs["unreported_stages"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|v| v != "business_model");
+        }
     }
 
     async fn operate(
@@ -878,10 +880,6 @@ impl Host {
         transient: &[Value],
         tools: Vec<FunctionDefinition>,
     ) -> Result<AgentOutput, BoxError> {
-        let model = self
-            .models
-            .get_model()
-            .ok_or("business model unavailable")?;
         let now = time_string(now_ms)?;
         let mut input = input.clone();
         // Run/request/interaction/task identifiers are host correlation, never a
@@ -898,6 +896,18 @@ impl Host {
             &now,
             self.max_output,
         );
+        self.complete_business(run, request).await
+    }
+
+    async fn complete_business(
+        &self,
+        run: &Run,
+        request: anda_core::CompletionRequest,
+    ) -> Result<AgentOutput, BoxError> {
+        let model = self
+            .models
+            .get_model()
+            .ok_or("business model unavailable")?;
         let mut receipt = BusinessReceipt {
             costs: &run.business_costs,
             start: Instant::now(),
@@ -939,6 +949,10 @@ impl Host {
             if let Err(e) = Self::close_brain(&run).await {
                 eprintln!("MIB cleanup failed: {e}");
             }
+            // A cancelled evaluator may have dropped dispatch before it could
+            // publish its receipt into state.costs. Rebuild the final snapshot.
+            let mut state = run.state.lock().await;
+            Self::capture_costs(&run, &mut state).await;
         }
         self.tasks.close();
         self.tasks.wait().await;

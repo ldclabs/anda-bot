@@ -114,6 +114,16 @@ fn displayed_suffix_prefix_overlap(displayed: &[Message], incoming: &[Message]) 
     0
 }
 
+fn changed_message_values<'a>(
+    previous: &'a [serde_json::Value],
+    incoming: &'a [serde_json::Value],
+) -> impl Iterator<Item = (usize, &'a serde_json::Value)> {
+    incoming
+        .iter()
+        .enumerate()
+        .filter(|(index, value)| previous.get(*index) != Some(*value))
+}
+
 fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message]) -> bool {
     let incoming_actions = incoming
         .iter()
@@ -612,22 +622,30 @@ impl ChatSession {
                 self.prev_conversation = self.conversation.take();
                 self.last_msg_offset = 0;
             }
-            let parsed_all_messages: Vec<Message> = conv
-                .messages
-                .iter()
-                .filter_map(|m| match serde_json::from_value::<Message>(m.clone()) {
-                    Ok(msg) => Some(msg),
-                    Err(err) => {
-                        log::warn!("Failed to parse message for conv_id {}: {err}", conv._id);
-                        None
+            // Snapshots include edits to old approval cards. Only deserialize
+            // new or changed entries; unchanged history needs no cloned Message.
+            let previous = self
+                .conversation
+                .as_ref()
+                .map(|conversation| conversation.messages.as_slice())
+                .unwrap_or_default();
+            let mut parsed_messages = Vec::new();
+            for (index, value) in changed_message_values(previous, &conv.messages) {
+                match serde_json::from_value::<Message>(value.clone()) {
+                    Ok(message) => {
+                        changed |= merge_action_payload_updates(
+                            &mut self.messages,
+                            std::slice::from_ref(&message),
+                        );
+                        if index >= self.last_msg_offset {
+                            parsed_messages.push(message);
+                        }
                     }
-                })
-                .collect();
-            changed |= merge_action_payload_updates(&mut self.messages, &parsed_all_messages);
-            let parsed_messages = parsed_all_messages
-                .into_iter()
-                .skip(self.last_msg_offset)
-                .collect::<Vec<_>>();
+                    Err(err) => {
+                        log::warn!("Failed to parse message for conv_id {}: {err}", conv._id)
+                    }
+                }
+            }
             let has_assistant_message = parsed_messages.iter().any(|msg| msg.role == "assistant");
             let overlap = displayed_suffix_prefix_overlap(&self.messages, &parsed_messages);
             self.messages
@@ -1340,5 +1358,51 @@ mod tests {
         .await
         .expect("conversation fetch must not wait for keepalive");
         assert_eq!(session.messages.len(), 2);
+    }
+
+    #[test]
+    fn unchanged_history_is_not_deserialized_again() {
+        let previous = (0..1000)
+            .map(|index| {
+                serde_json::to_value(assistant_message(format!("message {index}"))).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(changed_message_values(&previous, &previous).count(), 0);
+        let mut incoming = previous.clone();
+        incoming[400] = serde_json::to_value(assistant_message("updated")).unwrap();
+        incoming.push(serde_json::to_value(assistant_message("new")).unwrap());
+        assert_eq!(
+            changed_message_values(&previous, &incoming)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+            vec![400, 1000]
+        );
+    }
+
+    #[test]
+    fn malformed_history_entry_does_not_shift_new_message_offsets() {
+        let mut session = ChatSession::new(test_client());
+        let messages = vec![
+            serde_json::json!({"invalid":true}),
+            serde_json::to_value(assistant_message("first")).unwrap(),
+        ];
+        session.apply_conversation_data(Conversation {
+            _id: 1,
+            messages: messages.clone(),
+            ..Default::default()
+        });
+        let mut next = messages;
+        next.push(serde_json::to_value(assistant_message("second")).unwrap());
+        session.apply_conversation_data(Conversation {
+            _id: 1,
+            messages: next,
+            ..Default::default()
+        });
+        assert!(
+            session
+                .messages
+                .iter()
+                .any(|message| message.text().as_deref() == Some("second"))
+        );
     }
 }

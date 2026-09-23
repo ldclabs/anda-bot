@@ -34,7 +34,6 @@ Memory activity is listed by submission time. Record lists and active subscripti
 
 Use `anda agent run --memory-mode no-store --prompt '…'` or `--memory-mode off` to start a fresh conversation with enforced Brain/Notes restrictions. Chat history, files and provider processing remain. Persistent questions are optional: `anda memory inbox setup` previews the configuration before an explicit apply and restart. See [the memory guide and scope](docs/brain-integration.md#start-with-ordinary-memory).
 
-
 Anda Brain is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
 
 - **Formation:** Conversations are encoded into structured memory fragments (entities, relationships, events, preferences, and patterns).
@@ -139,7 +138,7 @@ model:
       disabled: false
 ```
 
-Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment.
+Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `BIGMODEL_API_KEY`, and `GLM_API_KEY`. A value in `config.yaml` takes precedence over the environment. Known API endpoints select their own provider key before considering the model name: OpenRouter, Groq and SiliconFlow use `OPENROUTER_API_KEY`, `GROQ_API_KEY` and `SILICONFLOW_API_KEY`, including when hosting another vendor's model.
 
 The `brain` label designates the preferred provider for memory processing. If no provider has this label, the active model is used.
 
@@ -221,6 +220,8 @@ anda models reload
 anda autostart status
 ```
 
+Autostart registration stores an absolute home directory, including when `--home` is relative. Registration failures are reported. A specific `addr` is also used for local CLI/Brain connections; only wildcard listener addresses (`0.0.0.0` or `::`) are replaced with loopback addresses.
+
 Send a one-time prompt and wait for the complete result without opening the terminal UI:
 
 ```bash
@@ -259,6 +260,8 @@ anda browser token --days 30
 
 Then load [chrome-extension](chrome-extension) from `chrome://extensions` with Developer mode enabled, paste the printed Gateway URL and token into the side panel settings, and start chatting from any webpage.
 
+Daemon management requires a configured trusted identity; a valid signature from an unregistered key grants no access. Browser connections recheck credential expiry for subsequent requests. Generate a new token and update the extension when its token expires. Conversation source listings and binding deletion are limited to the caller's own conversations.
+
 ### MCP Servers
 
 Anda Bot can connect to MCP servers and expose their tools to the agent. Put a
@@ -295,6 +298,8 @@ The agent can also connect a new MCP server during a conversation by calling
 Its server fields mirror one `mcp.json` entry: `type`, `command`, `args`,
 `env`, `cwd`, `url`, `headers`, `enabled`, `include`, and `exclude`, plus the
 tool-only `id` and `persist` fields.
+
+For OAuth servers, `connect_mcp_server` runs authorization and persists the connection. Reauthorization preserves tool allowlists/denylists, custom headers, client ID and transport settings, and saves updated scopes. If the browser opener fails, the tool returns the authorization URL for manual opening. The callback uses the gateway's port and loopback IP family; remote or specific-interface deployments need a tunnel from that browser-side loopback address to the actual listener.
 
 Supported channel families:
 

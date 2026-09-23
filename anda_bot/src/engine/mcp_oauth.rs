@@ -23,7 +23,10 @@
 //! router rather than a trust boundary.
 
 use anda_core::BoxError;
-use anda_engine::{extension::mcp::McpToolProvider, unix_ms};
+use anda_engine::{
+    extension::mcp::{McpServerConfig, McpToolProvider},
+    unix_ms,
+};
 use axum::{
     extract::{RawQuery, State},
     http::StatusCode,
@@ -45,10 +48,7 @@ const FLOW_TTL: Duration = Duration::from_secs(600);
 
 /// An authorization that has been started and is waiting for its redirect.
 struct PendingFlow {
-    server_id: String,
-    /// Endpoint URL, kept so the entry can be written to mcp.json on success.
-    url: String,
-    scopes: Vec<String>,
+    server: McpServerConfig,
     expires_at: u64,
     /// Present while a caller is blocked on this flow; absent once the caller
     /// handed the authorization URL to the user and returned.
@@ -81,7 +81,7 @@ struct Inner {
 impl McpOAuthFlows {
     pub fn new(
         provider: Arc<McpToolProvider>,
-        gateway_port: u16,
+        gateway_addr: std::net::SocketAddr,
         config_path: PathBuf,
         config_write_lock: Arc<Mutex<()>>,
     ) -> Self {
@@ -91,7 +91,7 @@ impl McpOAuthFlows {
                 // Always loopback, whatever the gateway binds: this is the
                 // address the *browser* resolves, reaching the daemon directly
                 // on the desktop and through the user's tunnel over SSH.
-                redirect_uri: format!("http://127.0.0.1:{gateway_port}{CALLBACK_PATH}"),
+                redirect_uri: oauth_redirect_uri(gateway_addr),
                 config_path,
                 config_write_lock,
                 pending: Mutex::new(HashMap::new()),
@@ -111,22 +111,21 @@ impl McpOAuthFlows {
     /// the background, which is what the headless path does.
     pub async fn begin(
         &self,
-        server_id: String,
-        url: String,
-        scopes: Vec<String>,
+        server: McpServerConfig,
         auth_url: &str,
     ) -> Result<oneshot::Receiver<Result<(), String>>, BoxError> {
         let state = state_from_url(auth_url)
             .ok_or("authorization URL carries no state parameter to match its redirect against")?;
         let (tx, rx) = oneshot::channel();
         let mut pending = self.inner.pending.lock().await;
+        // A fresh authorization replaces any older attempt for this server.
+        // Its later timeout must not remove the replacement registration.
+        pending.retain(|_, flow| flow.server.id != server.id);
         self.expire_locked(&mut pending);
         pending.insert(
             state,
             PendingFlow {
-                server_id,
-                url,
-                scopes,
+                server,
                 expires_at: unix_ms() + FLOW_TTL.as_millis() as u64,
                 waiter: Some(tx),
             },
@@ -164,7 +163,7 @@ impl McpOAuthFlows {
             // The pending PKCE state is consumed either way, so leaving the
             // registration behind would only produce a server that can never
             // connect.
-            self.inner.provider.remove_server(&flow.server_id);
+            self.inner.provider.remove_server(&flow.server.id);
         }
         result
     }
@@ -176,8 +175,8 @@ impl McpOAuthFlows {
         };
         let flow = self.inner.pending.lock().await.remove(&state);
         if let Some(flow) = flow {
-            self.inner.provider.cancel_authorization(&flow.server_id);
-            self.inner.provider.remove_server(&flow.server_id);
+            self.inner.provider.cancel_authorization(&flow.server.id);
+            self.inner.provider.remove_server(&flow.server.id);
         }
     }
 
@@ -188,19 +187,17 @@ impl McpOAuthFlows {
     ) -> Result<CompletedFlow, BoxError> {
         self.inner
             .provider
-            .complete_authorization(&flow.server_id, redirect_url)
+            .complete_authorization(&flow.server.id, redirect_url)
             .await?;
-        self.inner.provider.refresh_server(&flow.server_id).await?;
+        self.inner.provider.refresh_server(&flow.server.id).await?;
         let persisted = persist_oauth_server(
             &self.inner.config_path,
             &self.inner.config_write_lock,
-            &flow.server_id,
-            flow.url.clone(),
-            flow.scopes.clone(),
+            &flow.server,
         )
         .await?;
         Ok(CompletedFlow {
-            server_id: flow.server_id.clone(),
+            server_id: flow.server.id.clone(),
             persisted,
         })
     }
@@ -213,11 +210,16 @@ impl McpOAuthFlows {
             if flow.expires_at > now {
                 return true;
             }
-            self.inner.provider.cancel_authorization(&flow.server_id);
-            self.inner.provider.remove_server(&flow.server_id);
+            self.inner.provider.cancel_authorization(&flow.server.id);
+            self.inner.provider.remove_server(&flow.server.id);
             false
         });
     }
+}
+
+fn oauth_redirect_uri(addr: std::net::SocketAddr) -> String {
+    let loopback = if addr.is_ipv6() { "[::1]" } else { "127.0.0.1" };
+    format!("http://{loopback}:{}{CALLBACK_PATH}", addr.port())
 }
 
 /// Reads the `state` query parameter out of an authorization or redirect URL.
@@ -285,7 +287,7 @@ mod tests {
     fn flows() -> McpOAuthFlows {
         McpOAuthFlows::new(
             Arc::new(McpToolProvider::new(Vec::new()).unwrap()),
-            8042,
+            "127.0.0.1:8042".parse().unwrap(),
             PathBuf::from("/tmp/anda-mcp-oauth-test/mcp.json"),
             Arc::new(Mutex::new(())),
         )
@@ -340,9 +342,7 @@ mod tests {
         let auth_url = "https://as.example.com/authorize?client_id=x&state=s-1";
         let _waiter = flows
             .begin(
-                "srv".to_string(),
-                "https://mcp.example.com/mcp".to_string(),
-                vec![],
+                McpServerConfig::streamable_http("srv", "https://mcp.example.com/mcp"),
                 auth_url,
             )
             .await
@@ -373,9 +373,7 @@ mod tests {
         let auth_url = "https://as.example.com/authorize?client_id=x&state=s-2";
         let _waiter = flows
             .begin(
-                "srv".to_string(),
-                "https://mcp.example.com/mcp".to_string(),
-                vec![],
+                McpServerConfig::streamable_http("srv", "https://mcp.example.com/mcp"),
                 auth_url,
             )
             .await
@@ -423,5 +421,17 @@ mod tests {
         );
         // The page must not hand the authorization code back to whoever asked.
         assert!(!body.contains("abc"), "{body}");
+    }
+
+    #[test]
+    fn oauth_callback_uses_the_gateway_address_family() {
+        assert_eq!(
+            oauth_redirect_uri("[::1]:8042".parse().unwrap()),
+            "http://[::1]:8042/mcp/oauth/callback"
+        );
+        assert_eq!(
+            oauth_redirect_uri("[::]:8042".parse().unwrap()),
+            "http://[::1]:8042/mcp/oauth/callback"
+        );
     }
 }

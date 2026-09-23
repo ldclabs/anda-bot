@@ -1638,6 +1638,7 @@ mod tests {
             Some(home.join("workspace")),
             crate::config::McpSettings::file_path(&home),
             Arc::new(tokio::sync::Mutex::new(())),
+            Default::default(),
         ));
         let cron_runtime = Arc::new(
             crate::cron::CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())

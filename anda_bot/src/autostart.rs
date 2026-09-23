@@ -1,3 +1,5 @@
+#[cfg(any(windows, test))]
+use crate::util::windows_process::quote_windows_arg;
 use anda_core::BoxError;
 use clap::Subcommand;
 use std::{
@@ -33,6 +35,9 @@ pub enum AutostartStatus {
 }
 
 pub fn install(home: &Path) -> Result<(), BoxError> {
+    // Login services have a different working directory than this CLI.
+    let home = absolute_home(home)?;
+    let home = home.as_path();
     #[cfg(windows)]
     {
         install_windows(home)
@@ -53,6 +58,10 @@ pub fn install(home: &Path) -> Result<(), BoxError> {
         let _ = home;
         Err("anda autostart is not supported on this platform".into())
     }
+}
+
+fn absolute_home(home: &Path) -> Result<PathBuf, BoxError> {
+    Ok(std::fs::canonicalize(home)?)
 }
 
 pub fn uninstall() -> Result<AutostartStatus, BoxError> {
@@ -186,38 +195,6 @@ where
         .join(" ")
 }
 
-#[cfg(any(windows, test))]
-fn quote_windows_arg(value: &str) -> String {
-    if value.is_empty() {
-        return "\"\"".to_string();
-    }
-
-    if !value.chars().any(|ch| ch.is_whitespace() || ch == '"') {
-        return value.to_string();
-    }
-
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0;
-    for ch in value.chars() {
-        match ch {
-            '\\' => backslashes += 1,
-            '"' => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
-                quoted.push('"');
-                backslashes = 0;
-            }
-            _ => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes));
-                backslashes = 0;
-                quoted.push(ch);
-            }
-        }
-    }
-    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
-    quoted.push('"');
-    quoted
-}
-
 #[cfg(target_os = "macos")]
 fn install_macos(home: &Path) -> Result<(), BoxError> {
     let plist_path = macos_launch_agent_path()?;
@@ -227,8 +204,7 @@ fn install_macos(home: &Path) -> Result<(), BoxError> {
     std::fs::create_dir_all(plist_dir)?;
     std::fs::write(&plist_path, macos_launch_agent_plist(&current_exe()?, home))?;
     let _ = macos_launchctl_bootout(&plist_path);
-    let _ = macos_launchctl_bootstrap(&plist_path);
-    Ok(())
+    macos_launchctl_bootstrap(&plist_path)
 }
 
 #[cfg(target_os = "macos")]
@@ -615,5 +591,27 @@ mod linux_tests {
             desktop
                 .contains("Exec=\"/home/me/bin/anda bot\" --home \"/home/me/.anda prod\" daemon")
         );
+    }
+    #[test]
+    fn relative_autostart_home_is_resolved_before_rendering() {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix(".anda-autostart-test-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let relative = dir.path().strip_prefix(&cwd).unwrap();
+        let home = absolute_home(relative).unwrap();
+        assert_eq!(home, dir.path().canonicalize().unwrap());
+        assert!(home.is_absolute());
+        assert!(
+            linux_systemd_service(Path::new("/bin/anda"), &home)
+                .contains(&home.to_string_lossy().to_string())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_startup_registration_command_is_reported() {
+        assert!(run_command_status(Command::new("sh").args(["-c", "exit 7"])).is_err());
     }
 }

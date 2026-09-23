@@ -187,8 +187,16 @@ impl Config {
 
     pub fn base_url(&self) -> String {
         match self.socket_addr() {
-            Ok(addr) if addr.is_ipv6() => format!("http://[::1]:{}", addr.port()),
-            Ok(addr) => format!("http://127.0.0.1:{}", addr.port()),
+            Ok(mut addr) => {
+                if addr.ip().is_unspecified() {
+                    addr.set_ip(if addr.is_ipv6() {
+                        std::net::Ipv6Addr::LOCALHOST.into()
+                    } else {
+                        std::net::Ipv4Addr::LOCALHOST.into()
+                    });
+                }
+                format!("http://{addr}")
+            }
             Err(_) => format!("http://{}", self.addr.trim()),
         }
     }
@@ -782,5 +790,24 @@ channels:
 
         let created_again = Config::ensure_file_exists(home.path()).await.unwrap();
         assert!(!created_again);
+    }
+
+    #[test]
+    fn gateway_urls_preserve_specific_bind_addresses() {
+        for (addr, expected) in [
+            ("0.0.0.0:9000", "http://127.0.0.1:9000"),
+            ("[::]:9000", "http://[::1]:9000"),
+            ("192.168.1.23:9000", "http://192.168.1.23:9000"),
+            ("[fd00::1]:9000", "http://[fd00::1]:9000"),
+        ] {
+            assert_eq!(
+                Config {
+                    addr: addr.into(),
+                    ..Default::default()
+                }
+                .base_url(),
+                expected
+            );
+        }
     }
 }

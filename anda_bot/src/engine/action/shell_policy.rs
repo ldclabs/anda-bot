@@ -682,9 +682,30 @@ fn is_network_or_write_program(program: &str) -> bool {
 }
 
 fn git_approval_decision(command: &str) -> ApprovalDecision {
-    let subcommand = shell_tokens(command).get(1).cloned().unwrap_or_default();
+    let tokens = shell_tokens(command);
+    let subcommand = tokens.get(1).map(String::as_str).unwrap_or_default();
+    if subcommand == "branch"
+        && !tokens.iter().skip(2).all(|arg| {
+            matches!(
+                arg.as_str(),
+                "--list"
+                    | "--show-current"
+                    | "-a"
+                    | "--all"
+                    | "-r"
+                    | "--remotes"
+                    | "-v"
+                    | "-vv"
+                    | "--verbose"
+            )
+        })
+    {
+        return ApprovalDecision::Ask(
+            "git command may change state or access the network".to_string(),
+        );
+    }
     if matches!(
-        subcommand.as_str(),
+        subcommand,
         "status" | "diff" | "log" | "show" | "branch" | "rev-parse" | "ls-files"
     ) {
         ApprovalDecision::Allow
@@ -1337,5 +1358,28 @@ mod tests {
             shell_approval_decision(&args, ApprovalMode::FullAccess, "/tmp/workspace"),
             ApprovalDecision::Allow
         );
+    }
+
+    #[test]
+    fn destructive_git_branch_commands_require_risk_evaluation() {
+        for command in [
+            "git branch -D topic",
+            "git branch --delete topic",
+            "git branch -f topic HEAD",
+            "git branch -M replacement",
+        ] {
+            assert!(matches!(
+                git_approval_decision(command),
+                ApprovalDecision::Ask(_)
+            ));
+        }
+        for command in [
+            "git branch",
+            "git branch --list",
+            "git branch -a",
+            "git branch --show-current",
+        ] {
+            assert_eq!(git_approval_decision(command), ApprovalDecision::Allow);
+        }
     }
 }

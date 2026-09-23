@@ -5,7 +5,7 @@ use anda_core::{
 use anda_engine::{context::BaseCtx, unix_ms};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ic_auth_types::Xid;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -19,12 +19,10 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{Mutex, Notify, mpsc, oneshot},
+    sync::{Notify, mpsc, oneshot},
     time::Instant,
 };
 
-#[cfg(target_os = "windows")]
-use crate::util::windows_process::suppress_console_window;
 use crate::util::{
     file_uri::{
         file_uri_for_path as file_url_for_path, is_file_uri,
@@ -44,7 +42,6 @@ const LOCAL_FILE_ACCESS_WARNING: &str = "Opened the local file via the browser a
 pub struct BrowserBridge {
     next_request_id: AtomicU64,
     next_connection_id: AtomicU64,
-    sessions: RwLock<HashMap<String, BrowserSession>>,
     connections: RwLock<HashMap<String, BrowserConnection>>,
     pending: Mutex<HashMap<u64, PendingBrowserRequest>>,
     notify: Notify,
@@ -66,11 +63,13 @@ pub struct BrowserSession {
 #[derive(Debug)]
 struct PendingBrowserRequest {
     session: String,
-    response: Option<oneshot::Sender<BrowserActionResult>>,
+    connection_id: u64,
+    response: oneshot::Sender<BrowserActionResult>,
 }
 
 #[derive(Debug, Clone)]
 struct BrowserConnection {
+    session: BrowserSession,
     connection_id: u64,
     sender: mpsc::Sender<BrowserCommand>,
 }
@@ -321,15 +320,23 @@ enum ChromeBrowserToolKind {
     Script,
 }
 
+/// Removing the sender also releases a waiter when the connection disappears.
+struct PendingBrowserGuard<'a> {
+    pending: &'a Mutex<HashMap<u64, PendingBrowserRequest>>,
+    request_id: u64,
+}
+impl Drop for PendingBrowserGuard<'_> {
+    fn drop(&mut self) {
+        self.pending.lock().remove(&self.request_id);
+    }
+}
+
 impl BrowserBridge {
     pub fn new() -> Self {
         Self {
             next_request_id: AtomicU64::new(1),
             next_connection_id: AtomicU64::new(1),
-            sessions: RwLock::new(HashMap::new()),
-            connections: RwLock::new(HashMap::new()),
-            pending: Mutex::new(HashMap::new()),
-            notify: Notify::new(),
+            ..Default::default()
         }
     }
 
@@ -340,7 +347,7 @@ impl BrowserBridge {
         mpsc::Sender<BrowserCommand>,
         mpsc::Receiver<BrowserCommand>,
     ) {
-        let connection_id = self.next_connection_id.fetch_add(1, Ordering::SeqCst);
+        let connection_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::channel(32);
         (connection_id, sender, receiver)
     }
@@ -354,76 +361,69 @@ impl BrowserBridge {
         url: Option<String>,
         title: Option<String>,
     ) -> Result<BrowserSession, BoxError> {
-        let session = self.register(session, tab_id, url, title)?;
+        let session = normalize_session(session)?;
+        let now = unix_ms();
         let mut connections = self.connections.write();
-        connections.retain(|_, connection| connection.connection_id != connection_id);
+        let connected_at = connections
+            .get(&session)
+            .filter(|connection| connection.connection_id == connection_id)
+            .map_or(now, |connection| connection.session.connected_at);
+        connections
+            .retain(|key, connection| connection.connection_id != connection_id || key == &session);
+        let info = BrowserSession {
+            session: session.clone(),
+            connected_at,
+            last_seen_at: now,
+            tab_id,
+            url: normalize_optional_string(url),
+            title: normalize_optional_string(title),
+        };
         connections.insert(
-            session.session.clone(),
+            session,
             BrowserConnection {
+                session: info.clone(),
                 connection_id,
                 sender,
             },
         );
+        self.pending.lock().retain(|_, request| {
+            connections
+                .get(&request.session)
+                .is_some_and(|connection| connection.connection_id == request.connection_id)
+        });
+        drop(connections);
         self.notify.notify_waiters();
-        Ok(session)
+        Ok(info)
     }
 
     pub(crate) fn disconnect_ws_connection(&self, connection_id: u64) {
         self.connections
             .write()
             .retain(|_, connection| connection.connection_id != connection_id);
-    }
-
-    pub fn register(
-        &self,
-        session: String,
-        tab_id: Option<i64>,
-        url: Option<String>,
-        title: Option<String>,
-    ) -> Result<BrowserSession, BoxError> {
-        let session = normalize_session(session)?;
-        let now_ms = unix_ms();
-        let mut sessions = self.sessions.write();
-        let entry = sessions
-            .entry(session.clone())
-            .or_insert_with(|| BrowserSession {
-                session: session.clone(),
-                connected_at: now_ms,
-                last_seen_at: now_ms,
-                tab_id: None,
-                url: None,
-                title: None,
-            });
-        entry.last_seen_at = now_ms;
-        entry.tab_id = tab_id;
-        entry.url = normalize_optional_string(url);
-        entry.title = normalize_optional_string(title);
-        let session = entry.clone();
-        drop(sessions); // release lock before notifying to avoid waking up waiters only to block on the lock
-        self.notify.notify_waiters();
-        Ok(session)
+        self.pending
+            .lock()
+            .retain(|_, request| request.connection_id != connection_id);
     }
 
     pub fn connected_session(&self, preferred: Option<&str>) -> Option<String> {
-        let preferred = preferred.and_then(|session| normalize_session(session.to_string()).ok());
         let connections = self.connections.read();
-
-        if let Some(preferred) = preferred {
-            return connections.contains_key(&preferred).then_some(preferred);
+        if let Some(preferred) = preferred.map(str::trim).filter(|value| !value.is_empty()) {
+            return connections
+                .get(preferred)
+                .filter(|connection| !connection.sender.is_closed())
+                .map(|_| preferred.to_string());
         }
-
-        let connected = connections.keys().cloned().collect::<Vec<_>>();
-        drop(connections);
-
-        let sessions = self.sessions();
-        sessions
-            .into_iter()
-            .find_map(|session| {
-                connected
-                    .contains(&session.session)
-                    .then_some(session.session)
+        connections
+            .values()
+            .filter(|connection| !connection.sender.is_closed())
+            .min_by(|left, right| {
+                right
+                    .session
+                    .last_seen_at
+                    .cmp(&left.session.last_seen_at)
+                    .then_with(|| left.session.session.cmp(&right.session.session))
             })
-            .or_else(|| connected.into_iter().next())
+            .map(|connection| connection.session.session.clone())
     }
 
     pub async fn wait_for_connected_session(
@@ -431,24 +431,13 @@ impl BrowserBridge {
         preferred: Option<String>,
         timeout_ms: u64,
     ) -> Option<String> {
-        let preferred = preferred.and_then(|session| normalize_session(session).ok());
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         loop {
             let notified = self.notify.notified();
-
             if let Some(session) = self.connected_session(preferred.as_deref()) {
                 return Some(session);
             }
-
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-
-            if tokio::time::timeout(deadline - now, notified)
-                .await
-                .is_err()
-            {
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return None;
             }
         }
@@ -460,80 +449,63 @@ impl BrowserBridge {
         args: ChromeBrowserToolArgs,
     ) -> Result<BrowserActionResult, BoxError> {
         let session = normalize_session(session)?;
-        if self.session(&session).is_none() {
-            return Err(format!(
-                "Chrome extension session {session:?} is not connected. Open the Anda browser extension or launch the browser and try again."
-            )
-            .into());
-        }
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-        let action_sender = self
-            .connections
-            .read()
-            .get(&session)
-            .map(|connection| connection.sender.clone());
-        let action_sender = match action_sender {
-            Some(sender) => sender,
-            None => {
-                // The extension reconnects after service-worker restarts; wait
-                // for the session to come back instead of parking a command
-                // that no connection would deliver.
-                if self
-                    .wait_for_connected_session(Some(session.clone()), timeout_ms)
-                    .await
-                    .is_none()
-                {
-                    return Err(format!(
-                        "Chrome extension session {session:?} has no active connection. Open the Anda browser extension or launch the browser and try again."
-                    )
-                    .into());
-                }
-                self.connections
-                    .read()
-                    .get(&session)
-                    .map(|connection| connection.sender.clone())
-                    .ok_or("Chrome browser WebSocket connection is closed")?
-            }
-        };
-
-        let request_id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let created_at = unix_ms();
-        let command = BrowserCommand {
-            request_id,
-            session: session.clone(),
-            created_at,
-            args,
-        };
-        let (sender, receiver) = oneshot::channel();
-
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(
+        // Reconnection, queue capacity and the response share one deadline.
+        let action = async {
+            self.wait_for_connected_session(Some(session.clone()), timeout_ms)
+                .await
+                .ok_or("Chrome browser WebSocket connection is closed")?;
+            let (connection_id, sender) = self
+                .connections
+                .read()
+                .get(&session)
+                .map(|connection| (connection.connection_id, connection.sender.clone()))
+                .ok_or("Chrome browser WebSocket connection is closed")?;
+            let permit = sender
+                .reserve_owned()
+                .await
+                .map_err(|_| "Chrome browser WebSocket connection is closed")?;
+            let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+            let (sender, receiver) = oneshot::channel();
+            let guard = PendingBrowserGuard {
+                pending: &self.pending,
                 request_id,
-                PendingBrowserRequest {
+            };
+            {
+                let connections = self.connections.read();
+                if !connections
+                    .get(&session)
+                    .is_some_and(|connection| connection.connection_id == connection_id)
+                {
+                    return Err("Chrome browser WebSocket connection changed".into());
+                }
+                self.pending.lock().insert(
+                    request_id,
+                    PendingBrowserRequest {
+                        session: session.clone(),
+                        connection_id,
+                        response: sender,
+                    },
+                );
+                permit.send(BrowserCommand {
+                    request_id,
                     session,
-                    response: Some(sender),
-                },
-            );
-        }
-        if action_sender.send(command).await.is_err() {
-            self.pending.lock().await.remove(&request_id);
-            return Err("Chrome browser WebSocket connection is closed".into());
-        }
-
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match tokio::time::timeout(remaining, receiver).await {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(_)) => Err("Chrome browser action response channel closed".into()),
-            Err(_) => {
-                self.pending.lock().await.remove(&request_id);
-                Err(
-                    format!("Chrome browser action {request_id} timed out after {timeout_ms}ms")
-                        .into(),
-                )
+                    created_at: unix_ms(),
+                    args,
+                });
             }
-        }
+            let result = receiver
+                .await
+                .map_err(|_| "Chrome browser action connection closed".into());
+            drop(guard);
+            result
+        };
+        tokio::time::timeout_at(deadline, action)
+            .await
+            .map_err(|_| -> BoxError {
+                format!("Chrome browser action timed out after {timeout_ms}ms").into()
+            })?
     }
 
     pub async fn complete(
@@ -543,44 +515,23 @@ impl BrowserBridge {
         result: BrowserActionResult,
     ) -> Result<(), BoxError> {
         let session = normalize_session(session)?;
-        self.touch_session(&session);
-        let mut pending = self.pending.lock().await;
-        let Some(mut request) = pending.remove(&request_id) else {
-            return Err(format!("browser request {request_id} was not found").into());
-        };
-
+        let mut connections = self.connections.write();
+        let mut pending = self.pending.lock();
+        let request = pending
+            .get(&request_id)
+            .ok_or_else(|| format!("browser request {request_id} was not found"))?;
         if request.session != session {
-            pending.insert(request_id, request);
             return Err(
                 format!("browser request {request_id} belongs to a different session").into(),
             );
         }
-
-        if let Some(sender) = request.response.take() {
-            let _ = sender.send(result);
+        if let Some(connection) = connections.get_mut(&session) {
+            connection.session.last_seen_at = unix_ms();
+        }
+        if let Some(request) = pending.remove(&request_id) {
+            let _ = request.response.send(result);
         }
         Ok(())
-    }
-
-    pub fn session(&self, session: &str) -> Option<BrowserSession> {
-        self.sessions.read().get(session).cloned()
-    }
-
-    pub fn sessions(&self) -> Vec<BrowserSession> {
-        let mut sessions = self.sessions.read().values().cloned().collect::<Vec<_>>();
-        sessions.sort_by(|left, right| {
-            right
-                .last_seen_at
-                .cmp(&left.last_seen_at)
-                .then_with(|| left.session.cmp(&right.session))
-        });
-        sessions
-    }
-
-    fn touch_session(&self, session: &str) {
-        if let Some(active_session) = self.sessions.write().get_mut(session) {
-            active_session.last_seen_at = unix_ms();
-        }
     }
 }
 
@@ -620,7 +571,7 @@ impl ChromeBrowserTool {
     }
 
     pub fn is_active(&self) -> bool {
-        !self.bridge.sessions.read().is_empty()
+        self.bridge.connected_session(None).is_some()
     }
 
     pub fn dependency_tool_names() -> [&'static str; 4] {
@@ -1578,14 +1529,12 @@ async fn materialize_screenshot_data_url(
         return Ok(());
     };
 
-    let Some(data_url) = value
-        .get("data_url")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-    else {
+    let Some(Value::String(data_url)) = value.remove("data_url") else {
         return Ok(());
     };
+    if data_url.trim().is_empty() {
+        return Ok(());
+    }
 
     let (mime_type, encoded) = parse_screenshot_data_url(&data_url)?;
     let encoded = encoded.trim();
@@ -1619,7 +1568,6 @@ async fn materialize_screenshot_data_url(
 
     let file_uri = file_url_for_path(&path)?;
     let path = path.to_string_lossy().to_string();
-    value.remove("data_url");
     value.insert("path".to_string(), json!(path));
     value.insert("file_path".to_string(), json!(path));
     value.insert("file_uri".to_string(), json!(file_uri));
@@ -1683,6 +1631,9 @@ fn launch_browser_with_preferred_scope(
     preferred_scope: Option<&str>,
 ) -> Result<Value, BoxError> {
     let url = url.map(str::trim).filter(|url| !url.is_empty());
+    if let Some(url) = url {
+        validate_launch_url(url)?;
+    }
 
     #[cfg(target_os = "macos")]
     {
@@ -1717,19 +1668,30 @@ fn launch_browser_with_preferred_scope(
     #[cfg(target_os = "windows")]
     {
         let browser = match preferred_scope {
-            Some("edge") => "msedge",
-            Some("chromium") => "chromium",
-            _ => "chrome",
+            Some("edge") => "msedge.exe",
+            Some("chromium") => "chromium.exe",
+            _ => "chrome.exe",
         };
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", browser]);
-        if let Some(url) = url {
-            command.arg(url);
+        // ShellExecute resolves registered App Paths without invoking cmd.exe.
+        // Its parameters are a single Windows argv string, not shell source.
+        let executable: Vec<u16> = browser.encode_utf16().chain(Some(0)).collect();
+        let parameters = url
+            .map(crate::util::windows_process::quote_windows_arg)
+            .unwrap_or_default();
+        let parameters: Vec<u16> = parameters.encode_utf16().chain(Some(0)).collect();
+        let result = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                executable.as_ptr(),
+                parameters.as_ptr(),
+                std::ptr::null(),
+                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            )
+        } as isize;
+        if result <= 32 {
+            return Err(format!("failed to launch {browser}: ShellExecute error {result}").into());
         }
-        suppress_console_window(&mut command);
-        command
-            .status()
-            .map_err(|err| format!("failed to launch {browser}: {err}"))?;
         return Ok(json!({ "browser": browser, "url": url }));
     }
 
@@ -1758,6 +1720,19 @@ fn launch_browser_with_preferred_scope(
     {
         Err("launch_browser is not supported on this operating system".into())
     }
+}
+
+fn validate_launch_url(url: &str) -> Result<(), BoxError> {
+    let parsed = reqwest::Url::parse(url)?;
+    if url.contains('\0')
+        || !matches!(
+            parsed.scheme(),
+            "http" | "https" | "file" | "about" | "chrome" | "edge"
+        )
+    {
+        return Err("unsupported browser launch URL".into());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -2578,5 +2553,104 @@ mod tests {
         )
         .unwrap();
         assert!(!other.ok);
+    }
+
+    #[tokio::test]
+    async fn browser_cancellation_and_disconnect_release_pending_actions() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let (id, tx, mut rx) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(id, tx, "session".into(), None, None, None)
+            .unwrap();
+        for cancel in [true, false] {
+            let worker_bridge = bridge.clone();
+            let task = tokio::spawn(async move {
+                worker_bridge
+                    .run_action("session".into(), snapshot_args())
+                    .await
+            });
+            let _ = rx.recv().await.unwrap();
+            assert_eq!(bridge.pending.lock().len(), 1);
+            if cancel {
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            } else {
+                bridge.disconnect_ws_connection(id);
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(1), task)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .is_err()
+                );
+            }
+            assert!(bridge.pending.lock().is_empty());
+        }
+        assert!(!ChromeBrowserTool::page(bridge).is_active());
+    }
+
+    #[tokio::test]
+    async fn browser_queue_wait_obeys_action_timeout() {
+        let bridge = BrowserBridge::new();
+        let (id, tx, _rx) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(id, tx.clone(), "session".into(), None, None, None)
+            .unwrap();
+        for request_id in 0..32 {
+            tx.try_send(BrowserCommand {
+                request_id,
+                session: "session".into(),
+                created_at: 0,
+                args: snapshot_args(),
+            })
+            .unwrap();
+        }
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            bridge.run_action("session".into(), snapshot_args()),
+        )
+        .await
+        .unwrap();
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+        assert!(bridge.pending.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_replacement_releases_old_requests_without_removing_new_connection() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let (old, tx, mut rx) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(old, tx, "session".into(), None, None, None)
+            .unwrap();
+        let worker = bridge.clone();
+        let task =
+            tokio::spawn(async move { worker.run_action("session".into(), snapshot_args()).await });
+        rx.recv().await.unwrap();
+        let (new, tx, _rx) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(new, tx, "session".into(), None, None, None)
+            .unwrap();
+        assert!(task.await.unwrap().is_err());
+        bridge.disconnect_ws_connection(old);
+        assert_eq!(bridge.connected_session(None).as_deref(), Some("session"));
+        assert!(bridge.pending.lock().is_empty());
+    }
+
+    #[test]
+    fn browser_launch_urls_are_data_and_cannot_be_command_flags() {
+        for url in [
+            "https://example.test/?a=1&b=2",
+            "file:///C:/my%20files/report.html",
+            "about:blank",
+        ] {
+            validate_launch_url(url).unwrap();
+        }
+        for url in [
+            "--user-data-dir=other",
+            "javascript:alert(1)",
+            "https://example.test/\0truncated",
+        ] {
+            assert!(validate_launch_url(url).is_err());
+        }
     }
 }
