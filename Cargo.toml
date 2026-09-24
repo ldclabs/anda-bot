@@ -27,13 +27,13 @@ anda_core = { version = "0.16" }
 anda_engine = { version = "0.16" }
 anda_engine_server = { version = "0.16" }
 anda_web3_client = { version = "0.16", features = ["client"] }
-anda_object_store = "0.13"
-anda_db = { version = "0.13", features = ["full"] }
-anda_db_tfs = { version = "0.13", features = ["full"] }
-anda_db_utils = { version = "0.13" }
-anda_brain = { version = "0.12" }
-anda_kip = "0.13"
-anda_cognitive_nexus = "0.13.4"
+anda_object_store = "0.14"
+anda_db = { version = "0.14", features = ["full"] }
+anda_db_tfs = { version = "0.14", features = ["full"] }
+anda_db_utils = { version = "0.14" }
+anda_brain = { version = "0.12.1" }
+anda_kip = "=0.14.0"
+anda_cognitive_nexus = "0.14.0"
 anydoc = "0.1"
 base64 = "0.23"
 cpal = { version = "0.18" }
@@ -110,11 +110,23 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Shared DB/KIP and Core/Engine remain registry releases with one type identity,
-# including Nexus 0.13.4 migration corrections.
-# Temporary, explicitly authorized memory-product integration. Switch back to
-# the published release after its native product contracts are released.
-# anda_brain = { path = "../anda-brain/anda_brain" }
+# Brain 0.12.1 with the Memory Interface runs on the unpublished DB/KIP 0.14
+# stack and a matching Core/Engine. Until those releases reach crates.io the
+# whole shared stack is patched together from the sibling checkouts, so there
+# is one DB/KIP/Core type identity (verify with `cargo metadata`). Remove these
+# patches once the releases are published.
+anda_brain = { path = "../anda-brain/anda_brain" }
+anda_core = { path = "../anda/anda_core" }
+anda_engine = { path = "../anda/anda_engine" }
+anda_engine_server = { path = "../anda/anda_engine_server" }
+anda_web3_client = { path = "../anda/anda_web3_client" }
+anda_cognitive_nexus = { path = "../anda-db/rs/anda_cognitive_nexus" }
+anda_db = { path = "../anda-db/rs/anda_db" }
+anda_db_schema = { path = "../anda-db/rs/anda_db_schema" }
+anda_db_tfs = { path = "../anda-db/rs/anda_db_tfs" }
+anda_db_utils = { path = "../anda-db/rs/anda_db_utils" }
+anda_object_store = { path = "../anda-db/rs/anda_object_store" }
+anda_kip = { path = "../anda-db/rs/anda_kip" }
 ratatui = { git = "https://github.com/ratatui/ratatui.git", rev = "3603d21f6b318007bbab0a0f1baefe337ebeae39" }
 # Pinned source plus HTTP client injection; see vendor/weixin-agent/ANDA_PATCH.md.
 weixin-agent = { path = "vendor/weixin-agent" }

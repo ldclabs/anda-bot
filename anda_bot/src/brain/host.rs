@@ -15,7 +15,7 @@ use std::{collections::BTreeMap, sync::Arc};
 pub struct Host {
     pub state: AppState,
     subjects: Arc<BTreeMap<Principal, String>>,
-    journal: Option<super::Journal>,
+    pub(super) journal: Option<super::Journal>,
 }
 impl Host {
     pub fn new(state: AppState, config: Option<&RuntimeConfig>) -> Result<Self, BoxError> {
@@ -75,6 +75,16 @@ impl Host {
         auth.auth_method = "bot:authenticated-engine-caller".into();
         let caller = runtime.authenticated_caller(auth)?;
         Ok((runtime, caller))
+    }
+
+    /// Whether the optional runtime bindings (the durable inbox) are installed.
+    pub async fn runtime_installed(&self) -> Result<bool, BoxError> {
+        Ok(self
+            .state
+            .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
+            .await?
+            .memory_runtime()
+            .is_some())
     }
 
     pub async fn attention(

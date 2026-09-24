@@ -458,6 +458,17 @@ impl MemoryService {
                 },
             );
         }
+        if self.client.embedded_host().is_some() {
+            // Formation windows, recall barriers, session briefings and
+            // memory attention go through the embedded Memory Interface.
+            capabilities.insert(
+                "memory_interface".into(),
+                Capability {
+                    state: CapabilityState::Available,
+                    reason: None,
+                },
+            );
+        }
         if self.client.embedded_host().is_some() && inbox.state == ReadState::Available {
             capabilities.insert(
                 "record_watches".into(),

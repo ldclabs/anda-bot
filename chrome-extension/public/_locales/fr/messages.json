@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "Confirmer la correction"
   },
+  "memoryReviseKind": {
+    "message": "De quel type de modification s'agit-il ?"
+  },
+  "memoryKind_correct": {
+    "message": "Je me suis trompé"
+  },
+  "memoryKindHint_correct": {
+    "message": "Ma déclaration précédente était fausse. La nouvelle valeur la remplace pour la même période."
+  },
+  "memoryKind_world_change": {
+    "message": "La situation a changé"
+  },
+  "memoryKindHint_world_change": {
+    "message": "C'était vrai à l'époque. À partir de maintenant, c'est différent."
+  },
+  "memoryKind_misrecorded": {
+    "message": "Tu l'as mal enregistré"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "Je n'ai jamais dit cela. Brain relit le message d'origine et répare l'enregistrement."
+  },
+  "memoryMisrecordedValue": {
+    "message": "Ce que vous avez réellement dit (facultatif)"
+  },
+  "memoryChangeFailed": {
+    "message": "La modification n'a pas pu aboutir. Vérifiez l'enregistrement et réessayez."
+  },
+  "memoryErasure_completed": {
+    "message": "Effacement vérifié sur toutes les surfaces couvertes."
+  },
+  "memoryErasure_partial": {
+    "message": "Effacement terminé, mais certaines surfaces n'ont pas pu être vérifiées."
+  },
+  "memoryErasure_blocked": {
+    "message": "L'effacement est bloqué par une conservation légale."
+  },
+  "memoryErasure_pending": {
+    "message": "L'effacement est toujours en cours."
+  },
   "memoryReviewChange": {
     "message": "Vérifier la modification"
   },

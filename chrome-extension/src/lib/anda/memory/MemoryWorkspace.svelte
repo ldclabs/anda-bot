@@ -9,7 +9,14 @@
   import { learningLabel } from './labels'
   import WatchControl from './WatchControl.svelte'
   import { loadBrainGraphSettings, type BrainGraphSettings } from '../brain/api'
-  import { MemoryApi, type ActivityPage, type Overview, type RecordPage } from './api'
+  import {
+    MemoryApi,
+    REVISION_KINDS,
+    type ActivityPage,
+    type ChangeKind,
+    type Overview,
+    type RecordPage
+  } from './api'
   import type { MemoryRecord, RecordWatch } from './api'
   import { buttonClass, badgeClass } from '../ui'
   import { getMessage } from '$lib/i18n'
@@ -39,7 +46,7 @@
   let watchesComplete = $state(true)
   let change = $state<{
     record: MemoryRecord | null
-    kind: 'correct' | 'suppress' | 'delete'
+    kind: ChangeKind
     restored: boolean
   } | null>(null)
   let changeStorageKey = $state('')
@@ -319,7 +326,7 @@
       {#if hasPendingChange && changeStorageKey}<button
           class={buttonClass('outline', 'sm', 'mb-4')}
           onclick={() => {
-            let kind: 'correct' | 'suppress' | 'delete' = 'correct'
+            let kind: ChangeKind = 'correct'
             try {
               kind =
                 JSON.parse(localStorage.getItem(changeStorageKey) || '{}').input?.kind || 'correct'
@@ -408,11 +415,17 @@
               {/if}
               {#if changeStorageKey && overview?.capabilities.changes?.state === 'available'}
                 <div class="mt-3 flex gap-2">
-                  {#if record.allowed_actions.includes('correct')}<button
+                  {#if REVISION_KINDS.some((kind) => record.allowed_actions.includes(kind))}<button
                       class={buttonClass('ghost', 'xs')}
                       disabled={hasPendingChange}
-                      onclick={() => (change = { record, kind: 'correct', restored: false })}
-                      >{getMessage('memoryCorrect')}</button
+                      onclick={() =>
+                        (change = {
+                          record,
+                          kind:
+                            REVISION_KINDS.find((kind) => record.allowed_actions.includes(kind)) ||
+                            'correct',
+                          restored: false
+                        })}>{getMessage('memoryCorrect')}</button
                     >{/if}
                   {#if record.allowed_actions.includes('suppress')}<button
                       class={buttonClass('ghost', 'xs')}

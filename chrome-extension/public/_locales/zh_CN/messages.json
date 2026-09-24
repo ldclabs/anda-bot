@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "确认更正"
   },
+  "memoryReviseKind": {
+    "message": "这是哪种修改？"
+  },
+  "memoryKind_correct": {
+    "message": "是我说错了"
+  },
+  "memoryKindHint_correct": {
+    "message": "我之前的说法不对，新值在同一时段内取代它。"
+  },
+  "memoryKind_world_change": {
+    "message": "情况变了"
+  },
+  "memoryKindHint_world_change": {
+    "message": "当时是对的，从现在起不一样了。"
+  },
+  "memoryKind_misrecorded": {
+    "message": "你记错了"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "我从没这么说过。Brain 会重读原始消息并修复这条记录。"
+  },
+  "memoryMisrecordedValue": {
+    "message": "我实际说的是（可选）"
+  },
+  "memoryChangeFailed": {
+    "message": "修改未能完成。请检查这条记录后重试。"
+  },
+  "memoryErasure_completed": {
+    "message": "所有涉及的存储面都已验证擦除。"
+  },
+  "memoryErasure_partial": {
+    "message": "擦除已完成，但有部分存储面无法验证。"
+  },
+  "memoryErasure_blocked": {
+    "message": "擦除被法律保留阻止。"
+  },
+  "memoryErasure_pending": {
+    "message": "擦除仍在进行中。"
+  },
   "memoryReviewChange": {
     "message": "查看变更预览"
   },

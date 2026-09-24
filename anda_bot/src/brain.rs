@@ -6,6 +6,7 @@ mod client;
 mod host;
 mod journal;
 mod kip;
+pub mod memory;
 pub mod mutation;
 pub mod outbox;
 pub mod product;

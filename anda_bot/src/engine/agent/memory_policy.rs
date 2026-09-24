@@ -193,6 +193,7 @@ impl MemoryPolicy {
                 | "brain_respond"
                 | "brain_attention"
                 | "brain_runtime_status"
+                | "brain_feedback"
                 | "create_cron_job"
                 | "update_cron_job"
                 | "manage_cron_job"

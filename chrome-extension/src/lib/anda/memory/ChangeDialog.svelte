@@ -3,8 +3,10 @@
   import {
     MemoryApi,
     MemoryApiError,
+    REVISION_KINDS,
     type MemoryRecord,
     type ChangeInput,
+    type ChangeKind,
     type ChangeView
   } from './api'
   import { buttonClass, textareaClass } from '../ui'
@@ -21,13 +23,45 @@
   }: {
     api: MemoryApi
     record: MemoryRecord | null
-    kind: 'correct' | 'suppress' | 'delete'
+    kind: ChangeKind
     storageKey: string
     restored?: boolean
     onclose: () => void
     onchanged: () => void
   } = $props()
-  const isCorrection = $derived(kind === 'correct')
+  // A revision is one of three different changes: the owner's claim was
+  // wrong, the world moved on, or Brain recorded what was never said.
+  const isCorrection = $derived((REVISION_KINDS as readonly string[]).includes(kind))
+  const needsValue = $derived(kind === 'correct' || kind === 'world_change')
+  const revisionKinds = $derived(
+    REVISION_KINDS.filter((option) => !record || record.allowed_actions.includes(option))
+  )
+  function kindLabel(option: ChangeKind) {
+    return option === 'world_change'
+      ? getMessage('memoryKind_world_change')
+      : option === 'misrecorded'
+        ? getMessage('memoryKind_misrecorded')
+        : getMessage('memoryKind_correct')
+  }
+  function kindHint(option: ChangeKind) {
+    return option === 'world_change'
+      ? getMessage('memoryKindHint_world_change')
+      : option === 'misrecorded'
+        ? getMessage('memoryKindHint_misrecorded')
+        : getMessage('memoryKindHint_correct')
+  }
+  function erasureLabel(status: string) {
+    switch (status) {
+      case 'completed':
+        return getMessage('memoryErasure_completed')
+      case 'partial':
+        return getMessage('memoryErasure_partial')
+      case 'blocked':
+        return getMessage('memoryErasure_blocked')
+      default:
+        return getMessage('memoryErasure_pending')
+    }
+  }
   const isSuppression = $derived(kind === 'suppress')
   let dialog: HTMLDialogElement
   let text = $state('')
@@ -56,7 +90,7 @@
           record_id: record.id,
           expected_revision: record.revision,
           kind,
-          new_value: kind === 'correct' ? text : null
+          new_value: needsValue ? text : kind === 'misrecorded' ? text.trim() || null : null
         }
       }
       save()
@@ -91,7 +125,9 @@
   function receive(result: ChangeView) {
     view = result
     unknown = false
-    if (result.state === 'confirmed' || result.state === 'discarded') {
+    // A failed repair or a blocked erasure is final too; the dialog keeps
+    // showing it, and the draft no longer holds other changes back.
+    if (['confirmed', 'discarded', 'failed', 'blocked'].includes(result.state)) {
       localStorage.removeItem(storageKey)
       onchanged()
     } else {
@@ -203,6 +239,10 @@
     </h2>
     {#if view?.state === 'confirmed'}
       <p role="status" class="mt-4 text-sm">{getMessage('memoryChangeConfirmed')}</p>
+      {#if view.memory?.erasure}<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+          {erasureLabel(view.memory.erasure.status)}
+          <span class="mt-1 block break-words">{view.memory.erasure.summary}</span>
+        </p>{/if}
       {#if view.kind === 'correct' && view.replacement_record && view.before}<button
           class={buttonClass('outline', 'sm', 'mt-4')}
           disabled={busy}
@@ -233,19 +273,46 @@
       <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
         {getMessage(isSuppression ? 'memorySuppressScope' : 'memoryChangeScope')}
       </p>
-      {#if view.state !== 'prepared'}<p role="status" class="mt-4 text-sm">
+      {#if view.state === 'failed' || view.state === 'blocked'}<p
+          role="alert"
+          class="mt-4 text-sm text-destructive"
+        >
+          {view.state === 'blocked' ? erasureLabel('blocked') : getMessage('memoryChangeFailed')}
+        </p>
+      {:else if view.state !== 'prepared'}<p role="status" class="mt-4 text-sm">
           {getMessage('memoryChangePending')}
         </p>{/if}
     {:else if !restored}
       <p class="mt-4 whitespace-pre-wrap break-words text-sm">
         {record?.object_label || input?.record_id}
       </p>
-      {#if kind === 'correct'}<label class="mt-4 block text-sm"
-          >{getMessage('memoryNewValue')}<textarea
+      {#if isCorrection}
+        <fieldset class="mt-4 text-sm" disabled={busy || !!input}>
+          <legend class="font-medium">{getMessage('memoryReviseKind')}</legend>
+          {#each revisionKinds as option (option)}<label class="mt-2 flex items-start gap-2"
+              ><input
+                type="radio"
+                name="memory-revise-kind"
+                value={option}
+                checked={kind === option}
+                onchange={() => {
+                  kind = option
+                  text = option === 'misrecorded' ? '' : record?.object_label || ''
+                }}
+              /><span
+                >{kindLabel(option)}<span class="block text-xs text-muted-foreground"
+                  >{kindHint(option)}</span
+                ></span
+              ></label
+            >{/each}
+        </fieldset>
+        <label class="mt-4 block text-sm"
+          >{getMessage(needsValue ? 'memoryNewValue' : 'memoryMisrecordedValue')}<textarea
             class={textareaClass('mt-2 min-h-24')}
             bind:value={text}
             disabled={busy || !!input}></textarea></label
-        >{/if}
+        >
+      {/if}
       <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
         {getMessage('memoryReviewHint')}
       </p>
@@ -291,7 +358,7 @@
           <button
             class={buttonClass('default', 'sm')}
             disabled={busy ||
-              (kind === 'correct' && (!text.trim() || text === record?.object_label))}
+              (needsValue && (!text.trim() || text === record?.object_label))}
             onclick={prepare}>{getMessage('memoryReviewChange')}</button
           >
         {/if}

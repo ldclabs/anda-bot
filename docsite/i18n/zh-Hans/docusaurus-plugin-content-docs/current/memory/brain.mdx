@@ -12,7 +12,7 @@ description: Anda Brain 的 Formation、Recall、Maintenance 长期记忆循环�
 
 `anda memory` 和 TUI `/memory` 不调用模型，只查看连接与处理状态。浏览器“记忆”工作区展示有来源的记录和对话活动，“探索关系”打开图谱。来源映射及摘要都匹配时可跳转原消息。搜索可能调用模型，不自动重试。
 
-请核对记录的“更正”“停用”“删除”预览后再确认。停用保留已归档的记录，删除清除预览中的原生集合。来源排除在重启后仍有效，处理 Notes 会清空。原聊天、文件、日志、备份和已交付的上下文仍保留。来源不完整或范围不受支持时，此入口会拒绝操作。
+请核对记录的“更正”“停用”“删除”预览后再确认。停用保留已归档的记录，删除清除预览中的原生集合。来源排除在重启后仍有效，处理 Notes 会清空。原聊天、文件、日志、备份和已交付的上下文仍保留。来源不完整或范围不受支持时，此入口会拒绝操作。更正时先选择是哪种修改：“是我说错了”取代你之前的说法；“情况变了”从现在起记录新值，旧值在它的时段内仍然成立；“你记错了”让 Brain 重读原始消息并修复这条记录。删除会报告擦除计划：已完成、部分完成（有存储面无法验证）或被法律保留阻止。
 
 输入框可为新对话选择记忆模式。CLI 使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off`。它们约束 Brain/Notes 自动读写及后台提交，不是聊天或服务商的无痕模式；受限模式也拒绝子任务、书签及 cron 变更。
 
@@ -77,7 +77,7 @@ model:
 
 ## 可选原生运行时
 
-通过 `brain.runtime_config` 指定可信 JSON/YAML，路径相对配置目录解析；`BRAIN_RUNTIME_CONFIG` 优先。重启后在首次加载 Space 前安装绑定。浏览器记忆待办及 TUI `/brain inbox`、`/brain status`、`/brain formation <id>` 保留真实调用者身份。读取不授予执行权限，回答重试须保留相同事件键和正文。Recall 收据只证明交付，Formation 接受不等于完成。`learning` 与 `mib` 独立；语义求值、utility、trust、自动学习均需显式原生配置与权限。现有 IM 发送接口不是自动动作适配器；MIB persistent 不宣称 normal/ungated 学习或完整计量。
+通过 `brain.runtime_config` 指定可信 JSON/YAML，路径相对配置目录解析；`BRAIN_RUNTIME_CONFIG` 优先。重启后在首次加载 Space 前安装绑定。浏览器记忆待办及 TUI `/brain inbox`、`/brain status`、`/brain formation <id>` 保留真实调用者身份。读取不授予执行权限，回答重试须保留相同事件键和正文。Recall 收据只证明交付，Formation 接受不等于完成。`learning` 与 `mib` 独立；语义求值、utility、trust、自动学习均需显式原生配置与权限。现有 IM 发送接口不是自动动作适配器；MIB persistent 不宣称 normal/ungated 学习或完整计量。每个 Formation 窗口都是带持久回执的 observe 意图，中断的提交会重放同一回执，不会把窗口整理两次。`recall_memory` 会先短暂等待本对话尚未处理完的窗口，并说明哪些仍在处理。`brain_attention` 还会返回你上次查看以来到期的承诺和已触发的 Watch；`brain_feedback` 把助手的自述记录为带归属的证据，而不是评分。
 
 ```yaml
 brain:

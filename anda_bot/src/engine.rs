@@ -713,6 +713,7 @@ impl Engines {
             brain::RuntimeOperation::Attention,
             brain::RuntimeOperation::Respond,
             brain::RuntimeOperation::Status,
+            brain::RuntimeOperation::Feedback,
         ] {
             engine_builder = engine_builder.register_tool(record_artifacts(Arc::new(
                 brain::RuntimeTool::new(brain_host.clone(), operation),

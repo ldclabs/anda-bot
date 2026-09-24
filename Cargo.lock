@@ -231,8 +231,6 @@ dependencies = [
 [[package]]
 name = "anda_brain"
 version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10bbdf69d14bac24989ffbfe82615e2867fab47e1caea4ff4b52d6a851b189f5"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -250,7 +248,7 @@ dependencies = [
  "futures",
  "http",
  "ic_auth_types",
- "ic_cose_types 0.11.0",
+ "ic_cose_types",
  "log",
  "mimalloc",
  "object_store",
@@ -286,14 +284,11 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0231f7ec48ca0656b42a89c7a1bad3694606f9f718accd3fac64ea113c43c34d"
+version = "0.14.0"
 dependencies = [
  "anda_db",
  "anda_db_schema",
  "anda_db_tfs",
- "anda_db_utils",
  "anda_kip",
  "async-trait",
  "chrono",
@@ -316,11 +311,8 @@ dependencies = [
 [[package]]
 name = "anda_core"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0428db1db925cfbf9f3874036a906c0cc1ec0ca659b07adaf1af2551e4fd848c"
 dependencies = [
  "anda_db_schema",
- "async-trait",
  "bytes",
  "candid",
  "cbor2",
@@ -329,7 +321,7 @@ dependencies = [
  "http",
  "ic-oss-types",
  "ic_auth_types",
- "ic_cose_types 0.11.0",
+ "ic_cose_types",
  "infer2",
  "object_store",
  "reqwest",
@@ -343,9 +335,7 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f189471a3324fae4946c3252ab556c71da5afd571453a5eda9a9d9ca40465e42"
+version = "0.14.0"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -371,9 +361,7 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecafa2d04b0d0a2fc9b6968467e68c438c2e7e7cfd60a5de0b29dcef1781ced6"
+version = "0.14.0"
 dependencies = [
  "cbor2",
  "dashmap",
@@ -387,21 +375,17 @@ dependencies = [
 
 [[package]]
 name = "anda_db_derive"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f690ab8a920b9c984e325c3e156c6dff88ddc37b293a4727025df2b0c9712cd"
+version = "0.14.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
 name = "anda_db_hnsw"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05305ddb3823739ea6edc6693895805d16f987a5529ab83228f20577586e0a39"
+version = "0.14.0"
 dependencies = [
  "cbor2",
  "croaring",
@@ -420,12 +404,10 @@ dependencies = [
 
 [[package]]
 name = "anda_db_schema"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e75e957b9c4c0027a03cac290b781e7b5d8b5d7f65153f8acc465e4cb4d0d4"
+version = "0.14.0"
 dependencies = [
  "anda_db_derive",
- "base64 0.22.1",
+ "base64 0.23.1",
  "cbor2",
  "half 2.7.1",
  "ic_auth_types",
@@ -436,9 +418,7 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15ec33129dd8467d625a5cd435ab78993d78b73bb24ef6477b36af5166026adb"
+version = "0.14.0"
 dependencies = [
  "cbor2",
  "dashmap",
@@ -453,9 +433,7 @@ dependencies = [
 
 [[package]]
 name = "anda_db_utils"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c23791bab7e8bf9c1212c5da5876b9976dc2ea567fbf8f729bb568228620642"
+version = "0.14.0"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -464,8 +442,6 @@ dependencies = [
 [[package]]
 name = "anda_engine"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6cc138e49621425ea534151439e6e8a1a4a77f6f4beb6611d8fde0e1dc6d978"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -487,7 +463,7 @@ dependencies = [
  "http",
  "ic_auth_types",
  "ic_auth_verifier",
- "ic_cose_types 0.11.0",
+ "ic_cose_types",
  "infer2",
  "libc",
  "log",
@@ -513,8 +489,6 @@ dependencies = [
 [[package]]
 name = "anda_engine_server"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3856f2d3482f7907f3ce18fdbc92a028a6a1b8b692e0444c1e69d784022b286d"
 dependencies = [
  "anda_core",
  "anda_engine",
@@ -524,9 +498,9 @@ dependencies = [
  "http",
  "ic_auth_types",
  "ic_auth_verifier",
- "ic_cose_types 0.11.0",
- "ic_tee_agent",
+ "ic_cose_types",
  "log",
+ "mime",
  "serde",
  "serde_json",
  "structured-logger",
@@ -537,9 +511,7 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ed7852201de0652b5dadf93d2e58ccc05b363387f1a9290abd77166d5a91b"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -553,14 +525,12 @@ dependencies = [
 
 [[package]]
 name = "anda_object_store"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be45efa56b38e2bceec67ac70bce8f5aa212c053bc08a83a05058413ca34e75b"
+version = "0.14.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "async-stream",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "cbor2",
  "chrono",
@@ -577,14 +547,11 @@ dependencies = [
 [[package]]
 name = "anda_web3_client"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6945e3cb8dda8e235c6df787312d9abc862910b320ebdc9c2a4ca03af9c7c78"
 dependencies = [
  "anda_core",
  "anda_engine",
  "candid",
  "cbor2",
- "futures",
  "hex",
  "http",
  "ic-agent",
@@ -592,11 +559,11 @@ dependencies = [
  "ic-secp256k1",
  "ic_auth_types",
  "ic_auth_verifier",
- "ic_cose 0.11.0",
- "ic_cose_types 0.11.0",
- "log",
+ "ic_cose",
+ "ic_cose_types",
  "reqwest",
  "serde",
+ "tokio",
  "zeroize",
 ]
 
@@ -1737,17 +1704,6 @@ dependencies = [
 
 [[package]]
 name = "cose2"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed0221649dd9e0d382cdef27e84471b90e8255b0dce2fff80269f01b64d1d73"
-dependencies = [
- "cbor2",
- "serde",
- "serde_bytes",
-]
-
-[[package]]
-name = "cose2"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f95dcfb785ad8a95f89b2264206696cb41642f821f5de89949cb767d98ed1aeb"
@@ -2868,12 +2824,12 @@ dependencies = [
 
 [[package]]
 name = "fraction"
-version = "0.15.4"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
+checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
 dependencies = [
- "lazy_static",
  "num",
+ "num-bigint",
 ]
 
 [[package]]
@@ -3802,24 +3758,6 @@ dependencies = [
 
 [[package]]
 name = "ic_cose"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9411eab51d4b125971987988b14472d38caea0de2e19e98547dea5c0a924c42"
-dependencies = [
- "async-trait",
- "candid",
- "futures",
- "ic-agent",
- "ic-vetkeys",
- "ic_auth_types",
- "ic_cose_types 0.10.6",
- "rand 0.10.3",
- "serde_bytes",
- "x25519-dalek",
-]
-
-[[package]]
-name = "ic_cose"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accf8b9875cc624b9a1384202421b8f8d7a9237eafca8a7baedd623ad27788ca"
@@ -3830,32 +3768,9 @@ dependencies = [
  "ic-agent",
  "ic-vetkeys",
  "ic_auth_types",
- "ic_cose_types 0.11.0",
+ "ic_cose_types",
  "rand 0.10.3",
  "serde_bytes",
- "x25519-dalek",
-]
-
-[[package]]
-name = "ic_cose_types"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1a36052932d9e8749184f0575eb4ebaecd77e1913799a60e3a1bceac4edfd26"
-dependencies = [
- "aes-gcm 0.11.1",
- "candid",
- "cbor2",
- "cose2 0.4.0",
- "ed25519-dalek 3.0.0",
- "hkdf 0.13.0",
- "hmac 0.13.0",
- "ic-cdk-management-canister",
- "icrc-ledger-types 0.2.0",
- "k256 0.14.0",
- "serde",
- "serde_bytes",
- "sha2 0.11.0",
- "sha3 0.12.0",
  "x25519-dalek",
 ]
 
@@ -3894,28 +3809,6 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "ic_tee_agent"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9aae9d0f4c659e5bd42241d6491ccf3b2bc70aea2ae40e9698dcda659f1149fd"
-dependencies = [
- "axum-core",
- "bytes",
- "candid",
- "cbor2",
- "http",
- "ic-agent",
- "ic_auth_types",
- "ic_auth_verifier",
- "ic_cose 0.10.6",
- "ic_cose_types 0.10.6",
- "mime",
- "serde",
- "serde_bytes",
- "serde_json",
 ]
 
 [[package]]
@@ -4411,9 +4304,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.49.9"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59ec8a241beed129f06114aa68007e905ca350e7baeb6e17a7631bb7978d91b2"
+checksum = "71160ed5f6dbe36a2d6be79f4ca03ee09a99d2866f340faed49458913449aefa"
 dependencies = [
  "ahash",
  "bytecount",
@@ -4422,7 +4315,6 @@ dependencies = [
  "fancy-regex 0.19.2",
  "fraction",
  "getrandom 0.3.4",
- "idna",
  "itoa",
  "jsonschema-regex",
  "jsonschema-value",
@@ -4440,25 +4332,27 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.49.9"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91994f45017ed5e66aa8e59b8415f4cb033a6380d7200387b7cf117595fbdf85"
+checksum = "48d2120d8466ffcdc1b3be4b88ff0e9191bf5b6b09b1b1af1eef9aff8f465ea3"
 dependencies = [
  "regex-syntax",
 ]
 
 [[package]]
 name = "jsonschema-value"
-version = "0.49.9"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec7637f83e510868ae6ed625f7ebfbbde4554ee8ce49854caa5126a8b9b9ecb"
+checksum = "3fbfa40a42415369d940b3848f3ce08099f1f1ac04d73e8580f4d652617c4f44"
 dependencies = [
  "ahash",
  "bytecount",
  "fraction",
+ "getrandom 0.3.4",
  "num-cmp",
  "num-traits",
  "serde_json",
+ "zmij",
 ]
 
 [[package]]
@@ -6464,9 +6358,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.49.9"
+version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6efa2154ea6f5ce0fdecdd2a8d18f2fa1a39a8fbba91564f555a592e4dce8278"
+checksum = "b06f6798be4fed305e74df8b1fb90cf59c6b8cc17aa3febeb1830c0c6b627b3e"
 dependencies = [
  "ahash",
  "fluent-uri",

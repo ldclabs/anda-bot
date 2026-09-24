@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "Confirmar corrección"
   },
+  "memoryReviseKind": {
+    "message": "¿Qué tipo de cambio es?"
+  },
+  "memoryKind_correct": {
+    "message": "Lo dije mal"
+  },
+  "memoryKindHint_correct": {
+    "message": "Mi afirmación anterior era incorrecta. El nuevo valor la sustituye para el mismo periodo."
+  },
+  "memoryKind_world_change": {
+    "message": "Las cosas cambiaron"
+  },
+  "memoryKindHint_world_change": {
+    "message": "Era cierto entonces. A partir de ahora es distinto."
+  },
+  "memoryKind_misrecorded": {
+    "message": "Lo registraste mal"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "Nunca dije esto. Brain vuelve a leer el mensaje original y repara el registro."
+  },
+  "memoryMisrecordedValue": {
+    "message": "Lo que dijiste en realidad (opcional)"
+  },
+  "memoryChangeFailed": {
+    "message": "No se pudo completar el cambio. Revisa el registro e inténtalo de nuevo."
+  },
+  "memoryErasure_completed": {
+    "message": "Borrado verificado en todas las superficies cubiertas."
+  },
+  "memoryErasure_partial": {
+    "message": "El borrado terminó, pero algunas superficies no se pudieron verificar."
+  },
+  "memoryErasure_blocked": {
+    "message": "El borrado está bloqueado por una retención legal."
+  },
+  "memoryErasure_pending": {
+    "message": "El borrado sigue en curso."
+  },
   "memoryReviewChange": {
     "message": "Revisar cambio"
   },

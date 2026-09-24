@@ -4,6 +4,22 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- **Memory Interface integration**: with the embedded host, each Formation window is staged under the Bot's own source identity and Formation context and sent as a KIP Memory Interface `observe` whose key names the conversation, window and attempt. The window row keeps its receipt, its state follows the receipt's phase, and an interrupted submission replays the same receipt instead of forming the window twice; a longer window after an interruption or a definite rejection moves to the next attempt. HTTP-only clients keep the direct Formation path.
+- **Recall barrier and session briefing**: `recall_memory` first waits up to 20 seconds for the conversation's own outstanding receipts, notes which are still processing or failed, and clears them only after a successful recall. A new session starts from the memory attention raised since the last one (host reads only, no model call; external IM senders never receive it).
+- **Memory attention and feedback tools**: `brain_attention` also returns due commitments and fired watches since the caller last looked, with a saved per-caller cursor, whether or not the inbox is configured. `brain_runtime_status` adds the Memory Interface descriptor. The new `brain_feedback` tool records the model's own report as attributed agent evidence; restricted memory modes and external IM users cannot use it.
+- **Three kinds of correction**: records offer **I said it wrong** (native supersession), **Things changed** (a new claim from now; temporal succession ends the old value) and **You recorded it wrong** (Memory Interface `revise` with `misrecorded`: recording repair from the original source, confirmed once processed). The browser change dialog asks which one applies, in all six languages.
+
+### Changed
+
+- **Deletion reports its erasure**: confirming a deletion runs a Memory Interface semantic `forget`, which also scrubs Brain's Formation and Recall transcripts that quoted the erased memory; the change keeps the ErasurePlan report (`completed`, `partial` or `blocked`). A deletion the native product path already confirmed is only reconciled.
+- **KIP 2.0 stack**: dependencies move to `anda_kip =0.14.0`, Nexus/DB 0.14 and Brain 0.12.1 on `cognitive-memory@2.0.0`, patched to sibling checkouts until those releases are published. Tests use a drafted option type instead of the removed `Preference` type.
+
+### Upgrade notes
+
+- A database written by the 2.1.0-draft releases (Brain 0.12.1 / Nexus 0.13.4) is not opened in place by this stack. Stop the daemon, back up the database, migrate it to a new database, and keep the old one read-only for rollback.
+
 ## [0.13.0] — Unreleased
 
 ### Added

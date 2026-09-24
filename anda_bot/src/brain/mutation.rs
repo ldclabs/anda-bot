@@ -39,6 +39,21 @@ pub struct ChangeView {
     pub resets_notes: bool,
     pub replacement_record: Option<String>,
     pub error: Option<String>,
+    /// The Memory Interface receipt a misrecording repair or a deletion's
+    /// erasure runs under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryChange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MemoryChange {
+    pub receipt_ref: String,
+    /// `recorded`, `processed`, `available` or `failed`.
+    pub phase: String,
+    /// A deletion's ErasurePlan report: `pending`, `partial`, `blocked` or
+    /// `completed`, with its plan reference and summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub erasure: Option<anda_kip::memory::binding::ForgetResult>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -54,8 +69,14 @@ struct StoredChange {
     input: ChangeRequest,
     input_digest: String,
     view: ChangeView,
-    native: anda_brain::product::ChangeReceipt,
+    /// The native product change. A misrecording has none: it is recording
+    /// repair through the Memory Interface `revise` intent.
+    #[serde(default)]
+    native: Option<anda_brain::product::ChangeReceipt>,
 }
+
+/// How long a misrecording preview stays confirmable.
+const MISRECORDED_PREVIEW_MS: u64 = 15 * 60 * 1000;
 
 fn confirmed_and_clean(record: &StoredChange) -> bool {
     record.view.state == "confirmed"
@@ -156,6 +177,47 @@ impl MutationService {
         if before.revision != input.expected_revision {
             return Err("revision_conflict".into());
         }
+        if input.kind == anda_brain::product::ChangeKind::Misrecorded {
+            // Recording repair re-reads the original source; the preview is
+            // the extraction the owner reports as never said.
+            if !before.allowed_actions.iter().any(|a| a == "misrecorded") {
+                return Err("unsupported_scope".into());
+            }
+            let view = ChangeView {
+                schema_version: 1,
+                operation_id: input.operation_id.clone(),
+                state: "prepared".into(),
+                preview_digest: anda_cognitive_nexus::content_digest(
+                    &json!({"kind":"misrecorded","bot_scope":"memory-change-v1-with-notes-reset","before":before,"report":input.new_value}),
+                )?,
+                expires_at: anda_engine::unix_ms() + MISRECORDED_PREVIEW_MS,
+                kind: input.kind.clone(),
+                targets: vec![before.id.clone()],
+                before: Some(before),
+                new_value: input.new_value.clone(),
+                affected_records: vec![],
+                excluded_source_count: 0,
+                resets_notes: true,
+                replacement_record: None,
+                error: None,
+                memory: None,
+            };
+            let record = StoredChange {
+                caller: caller.to_string(),
+                input,
+                input_digest: digest,
+                view: view.clone(),
+                native: None,
+            };
+            if !self
+                .journal
+                .create(&format!("changes/{key}"), &record)
+                .await?
+            {
+                return Err("idempotency_conflict".into());
+            }
+            return Ok(view);
+        }
         let native_input = anda_brain::product::ChangeInput {
             operation_id: input.operation_id.clone(),
             record_id: input.record_id.clone(),
@@ -215,13 +277,14 @@ impl MutationService {
             resets_notes: true,
             replacement_record: None,
             error: None,
+            memory: None,
         };
         let record = StoredChange {
             caller: caller.to_string(),
             input,
             input_digest: digest,
             view: view.clone(),
-            native,
+            native: Some(native),
         };
         if !self
             .journal
@@ -247,18 +310,30 @@ impl MutationService {
             .state
             .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
             .await?;
-        space.product_discard(caller, id.into()).await?;
-        if let Some(mut record) = self
+        let stored = self
             .journal
             .read::<StoredChange>(&format!("changes/{key}"))
-            .await?
+            .await?;
+        if let Some(record) = &stored
+            && record.native.is_none()
         {
+            // A misrecording has no native preview; one already sent is
+            // Brain's to finish.
+            if record.view.state != "prepared" {
+                return Err("revision_conflict".into());
+            }
+        } else {
+            space.product_discard(caller, id.into()).await?;
+        }
+        if let Some(mut record) = stored {
             record.view.state = "discarded".into();
             record.view.before = None;
             record.view.affected_records.clear();
             record.view.new_value = None;
             record.input.new_value = None;
-            record.native = space.product_change(caller, id).await?;
+            if record.native.is_some() {
+                record.native = Some(space.product_change(caller, id).await?);
+            }
             self.journal
                 .write(&format!("changes/{key}"), &record)
                 .await?;
@@ -337,6 +412,9 @@ impl MutationService {
             .state
             .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
             .await?;
+        let Some(prepared) = record.native.clone() else {
+            return self.commit_repair(caller, key, record).await;
+        };
         let current = space.product_change(caller, id).await?;
         // Recheck live sources only before native admission. They may already
         // be erased when reconciling a lost acknowledgement.
@@ -344,12 +422,24 @@ impl MutationService {
             Self::validate_sources(&space, &current, &mut self.sources.source_resolver(caller))
                 .await?;
         }
+        // A deletion is erased through the Memory Interface `forget`: the
+        // same native closure, plus Brain's transcripts, verified by its
+        // ErasurePlan. One the native product path already confirmed (an
+        // older receipt) is only reconciled.
+        if record.input.kind == anda_brain::product::ChangeKind::Delete
+            && current.state != "confirmed"
+        {
+            if current.state == "prepared" {
+                space.product_discard(caller, id.into()).await?;
+            }
+            return self.commit_erasure(caller, key, record).await;
+        }
         record.view.state = "committing".into();
         self.journal
             .write(&format!("changes/{key}"), &record)
             .await?;
         let (native, admission_error) = match space
-            .product_commit(caller, id.into(), record.native.preview_digest.clone())
+            .product_commit(caller, id.into(), prepared.preview_digest.clone())
             .await
         {
             Ok(native) => (native, None),
@@ -357,7 +447,7 @@ impl MutationService {
         };
         record.view.state = native.state.clone();
         record.view.replacement_record = native.replacement_record.clone();
-        record.native = native;
+        record.native = Some(native);
         if record.view.state == "confirmed" {
             // A native commit may persist its receipt and then fail while
             // returning it. Confirmation is only complete after Bot Notes are
@@ -398,6 +488,185 @@ impl MutationService {
         {
             return Err(error);
         }
+        Ok(record.view)
+    }
+
+    /// A misrecording (§57.8): the owner's report is staged and sent as a
+    /// `revise` with `change_kind: "misrecorded"`, under a key naming this
+    /// operation, so a retry replays it. Brain re-reads the original source
+    /// and repairs the extraction; it is confirmed once processed.
+    async fn commit_repair(
+        &self,
+        caller: Principal,
+        key: &str,
+        mut record: StoredChange,
+    ) -> Result<ChangeView, BoxError> {
+        use anda_kip::memory::binding::Operation;
+        let namespace = caller.to_string();
+        let operation = format!("anda-bot/change/{}", record.input.operation_id);
+        record.view.state = "committing".into();
+        self.journal
+            .write(&format!("changes/{key}"), &record)
+            .await?;
+        let before = record.view.before.as_ref().ok_or("revision_conflict")?;
+        let report = match &record.input.new_value {
+            Some(said) => format!(
+                "That memory is wrong: I never said \"{}\". What I said was: {said}",
+                before.text
+            ),
+            None => format!("That memory is wrong: I never said \"{}\".", before.text),
+        };
+        let host = &self.access.host;
+        let staged = host
+            .stage_memory_source(
+                &namespace,
+                anda_brain::memory_interface::StageSourceInput {
+                    messages: vec![anda_core::Message {
+                        role: "user".into(),
+                        content: vec![report.into()],
+                        ..Default::default()
+                    }],
+                    // Reported when the owner reviewed it, so a retry
+                    // stages the same bytes.
+                    observed_at: anda_engine::rfc3339_datetime(
+                        record
+                            .view
+                            .expires_at
+                            .saturating_sub(MISRECORDED_PREVIEW_MS),
+                    ),
+                    kind: Default::default(),
+                    order: None,
+                    idempotency_key: operation.clone(),
+                },
+                anda_brain::memory_interface::HostSource {
+                    identity: anda_brain::product::SourceIdentity {
+                        key: format!("anda-bot/change/{namespace}/{}", record.input.operation_id),
+                        parents: vec![],
+                    },
+                    context: None,
+                },
+            )
+            .await?;
+        let response = host
+            .memory(
+                &namespace,
+                true,
+                super::memory::request(
+                    Operation::Revise,
+                    Some(operation),
+                    json!({
+                        "source_ref": staged.source_ref,
+                        "target_ref": record.input.record_id,
+                        "change_kind": "misrecorded",
+                    }),
+                ),
+            )
+            .await?;
+        if let Some(error) = super::memory::failure(&response) {
+            record.view.state = "failed".into();
+            record.view.error = Some(error.to_string().chars().take(512).collect());
+        } else if let (Some(receipt), Some(progress)) = (&response.receipt, &response.progress) {
+            record.view.memory = Some(MemoryChange {
+                receipt_ref: receipt.receipt_ref.clone(),
+                phase: phase_name(progress.phase),
+                erasure: None,
+            });
+            record.view.state = match progress.phase {
+                anda_kip::memory::binding::Phase::Recorded => "committing".into(),
+                anda_kip::memory::binding::Phase::Failed => "failed".into(),
+                _ => "confirmed".into(),
+            };
+            record.view.error = progress
+                .reason
+                .clone()
+                .filter(|_| record.view.state == "failed");
+        }
+        self.finish_memory_change(key, record).await
+    }
+
+    /// A deletion through `forget` with `mode: "semantic"` under a key
+    /// naming this operation. `completed` and `partial` are both final: the
+    /// view keeps the ErasurePlan report, and `blocked` names a legal hold.
+    async fn commit_erasure(
+        &self,
+        caller: Principal,
+        key: &str,
+        mut record: StoredChange,
+    ) -> Result<ChangeView, BoxError> {
+        use anda_kip::memory::binding::{ForgetResult, ForgetStatus, Operation};
+        record.view.state = "committing".into();
+        self.journal
+            .write(&format!("changes/{key}"), &record)
+            .await?;
+        let response = self
+            .access
+            .host
+            .memory(
+                &caller.to_string(),
+                true,
+                super::memory::request(
+                    Operation::Forget,
+                    Some(format!("anda-bot/change/{}", record.input.operation_id)),
+                    json!({"target_ref": record.input.record_id, "mode": "semantic"}),
+                ),
+            )
+            .await?;
+        if let Some(error) = super::memory::failure(&response) {
+            record.view.state = "failed".into();
+            record.view.error = Some(error.to_string().chars().take(512).collect());
+            return self.finish_memory_change(key, record).await;
+        }
+        let erasure: ForgetResult =
+            serde_json::from_value(response.result.clone().ok_or("forget returned no result")?)?;
+        record.view.state = match erasure.status {
+            ForgetStatus::Completed | ForgetStatus::Partial => "confirmed",
+            ForgetStatus::Blocked => "blocked",
+            ForgetStatus::Pending => "committing",
+        }
+        .into();
+        record.view.error = (erasure.status == ForgetStatus::Blocked).then(|| "legal_hold".into());
+        record.view.memory = Some(MemoryChange {
+            receipt_ref: response
+                .receipt
+                .as_ref()
+                .map(|r| r.receipt_ref.clone())
+                .unwrap_or_default(),
+            phase: response
+                .progress
+                .as_ref()
+                .map(|p| phase_name(p.phase))
+                .unwrap_or_default(),
+            erasure: Some(erasure),
+        });
+        self.finish_memory_change(key, record).await
+    }
+
+    /// Saves a Memory Interface change; a confirmed one then resets Notes
+    /// and clears a deleted preview, as a native one does.
+    async fn finish_memory_change(
+        &self,
+        key: &str,
+        mut record: StoredChange,
+    ) -> Result<ChangeView, BoxError> {
+        if record.view.state == "confirmed" {
+            if let Err(error) = self.access.synchronize_locked().await {
+                log::debug!(
+                    "Memory change {}: Notes cleanup pending: {error}",
+                    record.input.operation_id
+                );
+                record.view.state = "cleanup_pending".into();
+                record.view.error = Some("notes_reset_pending".into());
+            } else {
+                record.view.error = None;
+                if record.input.kind == anda_brain::product::ChangeKind::Delete {
+                    record.view.before = None;
+                    record.view.affected_records.clear();
+                }
+            }
+        }
+        self.journal
+            .write(&format!("changes/{key}"), &record)
+            .await?;
         Ok(record.view)
     }
 
@@ -479,6 +748,13 @@ impl MutationService {
         }
         Ok(false)
     }
+}
+
+fn phase_name(phase: anda_kip::memory::binding::Phase) -> String {
+    serde_json::to_value(phase)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 fn key(caller: Principal, id: &str) -> Result<String, BoxError> {

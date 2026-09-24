@@ -86,12 +86,27 @@ export interface RecordPage {
   next_cursor: string | null
 }
 
+/** `correct`: the owner's claim was wrong. `world_change`: the world moved
+ * on. `misrecorded`: Brain recorded what was never said (recording repair). */
+export type ChangeKind = 'correct' | 'world_change' | 'misrecorded' | 'suppress' | 'delete'
+export const REVISION_KINDS = ['correct', 'world_change', 'misrecorded'] as const
 export interface ChangeInput {
   operation_id: string
   record_id: string
   expected_revision: string
-  kind: 'correct' | 'suppress' | 'delete'
+  kind: ChangeKind
   new_value: string | null
+}
+/** The Memory Interface receipt of a misrecording repair or a deletion. */
+export interface MemoryChange {
+  receipt_ref: string
+  phase: string
+  erasure?: {
+    status: 'pending' | 'partial' | 'blocked' | 'completed'
+    plan_ref: string
+    summary: string
+    coverage_ref: string
+  } | null
 }
 export interface ChangeView {
   schema_version: number
@@ -99,7 +114,7 @@ export interface ChangeView {
   state: string
   preview_digest: string
   expires_at: number
-  kind: 'correct' | 'suppress' | 'delete'
+  kind: ChangeKind
   before: MemoryRecord | null
   new_value: string | null
   targets: string[]
@@ -108,6 +123,7 @@ export interface ChangeView {
   resets_notes: boolean
   replacement_record: string | null
   error: string | null
+  memory?: MemoryChange | null
 }
 export interface SetupPreview {
   schema_version: number

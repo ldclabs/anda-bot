@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "تأكيد التصحيح"
   },
+  "memoryReviseKind": {
+    "message": "ما نوع هذا التغيير؟"
+  },
+  "memoryKind_correct": {
+    "message": "أخطأتُ في قولي"
+  },
+  "memoryKindHint_correct": {
+    "message": "كان قولي السابق خاطئًا. القيمة الجديدة تحل محله للفترة نفسها."
+  },
+  "memoryKind_world_change": {
+    "message": "تغيّر الوضع"
+  },
+  "memoryKindHint_world_change": {
+    "message": "كان صحيحًا حينها، ومن الآن فصاعدًا أصبح مختلفًا."
+  },
+  "memoryKind_misrecorded": {
+    "message": "سجّلتَه خطأً"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "لم أقل هذا قط. يعيد Brain قراءة الرسالة الأصلية ويصلح السجل."
+  },
+  "memoryMisrecordedValue": {
+    "message": "ما قلته فعلًا (اختياري)"
+  },
+  "memoryChangeFailed": {
+    "message": "تعذّر إكمال التغيير. راجع السجل وحاول مرة أخرى."
+  },
+  "memoryErasure_completed": {
+    "message": "تم التحقق من المحو على كل الأسطح المشمولة."
+  },
+  "memoryErasure_partial": {
+    "message": "اكتمل المحو، لكن تعذّر التحقق من بعض الأسطح."
+  },
+  "memoryErasure_blocked": {
+    "message": "المحو محظور بسبب حجز قانوني."
+  },
+  "memoryErasure_pending": {
+    "message": "المحو لا يزال قيد التنفيذ."
+  },
   "memoryReviewChange": {
     "message": "مراجعة التغيير"
   },

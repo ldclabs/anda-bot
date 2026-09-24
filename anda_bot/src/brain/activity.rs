@@ -826,6 +826,8 @@ mod tests {
             provenance: None,
             updated_at: None,
             failure_stage: None,
+            receipt_ref: None,
+            attempt: 0,
         }
     }
 

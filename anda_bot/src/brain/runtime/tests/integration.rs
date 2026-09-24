@@ -26,7 +26,7 @@ async fn memory_record_watch_is_recipient_scoped_and_retries_never_rearm() {
     let brain = create(Arc::new(InMemory::new()), &keys, Some(config.clone())).await;
     let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
     let space = brain.state.load_space("anda_bot", true).await.unwrap();
-    let result=command(&space,r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "Preference" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#,json!({})).await;
+    let result=command(&space,r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "ReleaseNoteStyle" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#,json!({})).await;
     let target = result["handles"]["a"].as_str().unwrap().to_string();
     assert!(
         host.watch_record(
@@ -146,7 +146,8 @@ async fn create(
     keys: &[Ed25519Key],
     config: Option<RuntimeConfig>,
 ) -> Brain {
-    Brain::new(
+    let configured = config.is_some();
+    let brain = Brain::new(
         store,
         BrainConfig {
             managers: keys.iter().map(Ed25519Key::pubkey).collect(),
@@ -156,7 +157,35 @@ async fn create(
         },
     )
     .await
-    .unwrap()
+    .unwrap();
+    if configured {
+        // The Profile has no preference type: an option is a Concept typed
+        // by its kind, drafted in the Space's own vocabulary (Spec §20.16).
+        // A restart over the same store finds it already defined.
+        let space = brain.state.load_space("anda_bot", true).await.unwrap();
+        let text = r#"DEFINE CONCEPT TYPE "ReleaseNoteStyle" {description: "How the owner likes release notes written"}"#;
+        let request = Request::single(text);
+        let response = space
+            .memory_runtime()
+            .unwrap()
+            .nexus()
+            .system_session()
+            .execute(
+                anda_kip::parse_kip(text).unwrap(),
+                &request,
+                &request.operations[0],
+            )
+            .await;
+        assert!(
+            response.status == anda_kip::TopLevelStatus::Succeeded
+                || response
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == "SchemaSymbolConflict"),
+            "{response:?}"
+        );
+    }
+    brain
 }
 async fn command(space: &anda_brain::space::Space, text: &str, parameters: Value) -> Value {
     let mut request = Request::single(text);
@@ -187,7 +216,7 @@ async fn fire(space: &anda_brain::space::Space) {
         .as_str()
         .unwrap()
         .to_string();
-    command(space, r#"MUTATE {CREATE CONCEPT ?p {TYPE "Preference" NAME "coordinate"} ENSURE PROPOSITION ?item (:target,"prefers",?p)}"#, json!({"target":target})).await;
+    command(space, r#"MUTATE {CREATE CONCEPT ?p {TYPE "ReleaseNoteStyle" NAME "coordinate"} ENSURE PROPOSITION ?item (:target,"prefers",?p)}"#, json!({"target":target})).await;
     let watch = command(space, r#"CREATE CONCEPT ?item {TYPE "Watch" SET ATTRIBUTES {watch_class:"delta",summary:"Bot retained reminder",status:"disarmed",condition:{element: :target}}}"#, json!({"target":target})).await["handles"]["item"].as_str().unwrap().to_string();
     space.attention().arm_watch(watch, 1).await.unwrap();
     command(
@@ -778,6 +807,8 @@ async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
         error: None,
         updated_at: None,
         failure_stage: None,
+        receipt_ref: None,
+        attempt: 0,
         provenance: Some(FormationProvenance {
             version: 1,
             policy_revision: Some("fixture-standard".into()),
@@ -825,7 +856,7 @@ async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
     journal.write(&key, &submission).await.unwrap();
     let created=command(&space,r#"MUTATE {
         CREATE CONCEPT ?owner {TYPE "Person" NAME "Owner" SET FIELDS {key: :owner}}
-        CREATE CONCEPT ?value {TYPE "Preference" NAME "Short release notes"}
+        CREATE CONCEPT ?value {TYPE "ReleaseNoteStyle" NAME "Short release notes"}
         CREATE EVIDENCE ?input {CLIENT KEY :key SET FIELDS {evidence_class:"user_statement",payload: :payload,observed_at:"2026-09-22T00:00:00.000Z"}}
         ASSERT ?claim (?owner,"prefers",?value) {by:?owner,mode:"stated",evidence:?input}
     }"#,json!({"owner":owner.to_string(),"key":format!("formation:conversation:{native}:1"),"payload":message})).await;
@@ -1018,9 +1049,9 @@ async fn memory_record_pages_resume_before_unreturned_large_source_quotes() {
     let mut expected = std::collections::BTreeSet::from([fixture.id.clone()]);
     for index in 0..24 {
         let created = command(&fixture.space, r#"MUTATE {
-            CREATE CONCEPT ?value {TYPE "Preference" NAME :name}
+            CREATE CONCEPT ?value {TYPE "ReleaseNoteStyle" NAME :name}
             ASSERT ?claim (:owner,"prefers",?value) {by: :owner,mode:"stated",evidence: :input}
-        }"#, json!({"owner":native.actor_id,"input":native.sources[0].evidence_id,"name":format!("Preference {index}")})).await;
+        }"#, json!({"owner":native.actor_id,"input":native.sources[0].evidence_id,"name":format!("Release note style {index}")})).await;
         expected.insert(created["handles"]["claim"].as_str().unwrap().to_string());
     }
     let mut cursor = None;
@@ -1140,7 +1171,7 @@ async fn memory_watch_pages_ignore_cancelled_history_and_bind_cursors_to_callers
     let brain = create(store.clone(), &keys, Some(config.clone())).await;
     let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
     let space = brain.state.load_space("anda_bot", true).await.unwrap();
-    let created = command(&space, r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "Preference" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#, json!({})).await;
+    let created = command(&space, r#"MUTATE {CREATE CONCEPT ?p {TYPE "Person" NAME "Owner"} CREATE CONCEPT ?v {TYPE "ReleaseNoteStyle" NAME "Brief release notes"} ASSERT ?a (?p,"prefers",?v) {by:?p,mode:"stated"}}"#, json!({})).await;
     let target = created["handles"]["a"].as_str().unwrap().to_string();
     let journal = Journal::new(store);
     for index in 0..54 {
@@ -1215,5 +1246,320 @@ async fn memory_watch_pages_ignore_cancelled_history_and_bind_cursors_to_callers
     );
     assert!(last.complete);
     assert!(last.next_cursor.is_none());
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
+    use crate::brain::{
+        FormationProvenance, FormationState, FormationSubmission, Journal, SourceMessageRef,
+    };
+    use anda_core::Message;
+    let keys = [
+        Ed25519Key::new([71; 32]),
+        Ed25519Key::new([72; 32]),
+        Ed25519Key::new([73; 32]),
+    ];
+    let config = runtime_config(&keys, None);
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let brain = create(store.clone(), &keys, Some(config.clone())).await;
+    let journal = Journal::new(store.clone());
+    let host = Host::new(brain.state.clone(), Some(&config))
+        .unwrap()
+        .with_journal(journal.clone());
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let client =
+        Client::new("http://127.0.0.1:0".into(), None).with_host(host.clone(), journal.clone());
+    let owner = keys[0].id().to_string();
+    let message = |text: &str| Message {
+        role: "user".into(),
+        content: vec![text.to_string().into()],
+        ..Default::default()
+    };
+    let window = |messages: &[Message]| FormationSubmission {
+        bot_conversation: 42,
+        window_start: 0,
+        window_end: messages.len(),
+        submitted_at: 1,
+        brain_conversation: None,
+        state: FormationState::Pending,
+        error: None,
+        updated_at: None,
+        failure_stage: None,
+        receipt_ref: None,
+        attempt: 0,
+        provenance: Some(FormationProvenance {
+            version: 1,
+            policy_revision: None,
+            caller: owner.clone(),
+            session: Some("session-1".into()),
+            source_identity: None,
+            source: "cli:fixture".into(),
+            reply_target: None,
+            thread: None,
+            external_user: false,
+            counterparty: None,
+            source_messages: messages
+                .iter()
+                .enumerate()
+                .map(|(index, message)| SourceMessageRef {
+                    conversation: "42".into(),
+                    index: index.to_string(),
+                    role: "user".into(),
+                    content_digest: anda_cognitive_nexus::content_digest(
+                        &serde_json::to_value(message).unwrap(),
+                    )
+                    .unwrap(),
+                    submitted_digest: None,
+                })
+                .collect(),
+            input_digest: None,
+        }),
+    };
+    let timestamp = Some("2026-09-22T00:00:00.000Z".to_string());
+    let submit = |messages: Vec<Message>| {
+        let client = client.clone();
+        let timestamp = timestamp.clone();
+        let submission = window(&messages);
+        async move {
+            client
+                .submit_formation_window(
+                    submission,
+                    anda_brain::types::FormationInputRef {
+                        messages: &messages,
+                        context: &None,
+                        timestamp: &timestamp,
+                    },
+                )
+                .await
+        }
+    };
+    let first = vec![message("I prefer short release notes")];
+    let accepted = submit(first.clone()).await.unwrap();
+    let receipt = accepted.receipt_ref.clone().expect("an observe receipt");
+    assert!(accepted.brain_conversation.is_some());
+    assert_eq!(accepted.attempt, 0);
+    // The test model cannot answer, so Formation stays pending: recorded.
+    assert_eq!(accepted.state, FormationState::Accepted);
+    let session = journal.memory_session(&owner, "42").await.unwrap();
+    assert_eq!(session.outstanding(), std::slice::from_ref(&receipt));
+
+    // Interrupted after intake: the row lost its receipt. The same key and
+    // bytes replay the same receipt instead of forming the window twice.
+    let key = "formation/42/0";
+    let mut row: FormationSubmission = journal.read(key).await.unwrap().unwrap();
+    row.receipt_ref = None;
+    row.brain_conversation = None;
+    row.state = FormationState::Unknown;
+    journal.write(key, &row).await.unwrap();
+    let replayed = submit(first.clone()).await.unwrap();
+    assert_eq!(replayed.receipt_ref, Some(receipt.clone()));
+    assert_eq!(replayed.brain_conversation, accepted.brain_conversation);
+    assert_eq!(replayed.attempt, 0);
+
+    // An interrupted shorter window, retried with more messages, is a new
+    // submission under the next attempt's key.
+    row.window_end = 1;
+    journal.write(key, &row).await.unwrap();
+    let longer = submit(vec![
+        message("I prefer short release notes"),
+        message("and bullet points"),
+    ])
+    .await
+    .unwrap();
+    assert_eq!(longer.attempt, 1);
+    assert_ne!(longer.receipt_ref, Some(receipt.clone()));
+
+    // Recall waits, bounded, on the conversation's own receipts and says
+    // which are still being processed.
+    let barrier = host
+        .memory_barrier(&journal, &owner, 42, std::time::Duration::from_millis(50))
+        .await
+        .unwrap();
+    assert_eq!(barrier.pending.len(), 2);
+    assert!(barrier.note().unwrap().contains("still being processed"));
+    assert!(
+        host.memory_barrier(&journal, &keys[1].id().to_string(), 42, Default::default())
+            .await
+            .unwrap()
+            .pending
+            .is_empty()
+    );
+
+    // Memory attention: a fired watch is delivered once, and the cursor
+    // survives a new journal over the same store.
+    fire(&space).await;
+    let mut items = Vec::new();
+    for _ in 0..20 {
+        space.attention().tick().await.unwrap();
+        let page = host.memory_attention(&owner).await.unwrap();
+        items = page["items"].as_array().cloned().unwrap_or_default();
+        if !items.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(items[0]["kind"], "watch_fired");
+    let restarted = Host::new(brain.state.clone(), Some(&config))
+        .unwrap()
+        .with_journal(Journal::new(store.clone()));
+    let again = restarted.memory_attention(&owner).await.unwrap();
+    assert!(again["items"].as_array().unwrap().is_empty());
+    // Another caller keeps its own cursor.
+    let other = restarted
+        .memory_attention(&keys[1].id().to_string())
+        .await
+        .unwrap();
+    assert!(!other["items"].as_array().unwrap().is_empty());
+
+    // The model's own report is attributed agent evidence, and the runtime
+    // status names the Memory Interface levels Brain advertises.
+    let ctx = anda_engine::engine::EngineBuilder::new()
+        .mock_ctx()
+        .base
+        .with_caller(keys[0].id());
+    let tool_result = |output: anda_core::ToolOutput<ToolResponse>| match output.output {
+        ToolResponse::Ok { result, .. } => result,
+        other => panic!("{other:?}"),
+    };
+    let feedback = tool_result(
+        RuntimeTool::new(host.clone(), RuntimeOperation::Feedback)
+            .call(
+                ctx.clone(),
+                json!({"statement":"My summary was too long","decision_ref":null,"attempt_ref":null}),
+                vec![],
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(feedback["status"], "succeeded", "{feedback}");
+    assert!(feedback["receipt"]["receipt_ref"].is_string());
+    let status = tool_result(
+        RuntimeTool::new(host.clone(), RuntimeOperation::Status)
+            .call(ctx, json!({}), vec![])
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        status["memory_interface"]["bundles"],
+        json!(["memory_basic"])
+    );
+
+    // A session's briefing is data with the attention it consumed.
+    assert!(
+        restarted
+            .session_briefing(&keys[2].id().to_string())
+            .await
+            .unwrap()
+            .unwrap()
+            .contains("watch_fired")
+    );
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_product_misrecordings_repair_and_deletions_report_their_erasure() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    // The engine stays alive: confirmed changes reset its Notes.
+    let MemoryProductFixture {
+        service,
+        space,
+        owner,
+        id,
+        engine: _engine,
+        ..
+    } = memory_product_fixture("Keep release notes short").await;
+    let before = service.record(owner, &id).await.unwrap();
+    for action in ["correct", "world_change", "misrecorded", "delete"] {
+        assert!(
+            before.allowed_actions.iter().any(|a| a == action),
+            "{action}: {:?}",
+            before.allowed_actions
+        );
+    }
+
+    // "You recorded it wrong" is recording repair through `revise`, never a
+    // correction: the preview has no native change, and the commit is a
+    // receipt Brain processes by re-reading the original source.
+    let report = ChangeRequest {
+        operation_id: "host-misrecorded".into(),
+        record_id: id.clone(),
+        expected_revision: before.revision.clone(),
+        kind: anda_brain::product::ChangeKind::Misrecorded,
+        new_value: Some("I asked for long release notes".into()),
+    };
+    let preview = service.prepare_change(owner, report.clone()).await.unwrap();
+    assert_eq!(preview.state, "prepared");
+    assert!(
+        space
+            .product_change(owner, &report.operation_id)
+            .await
+            .is_err()
+    );
+    let sent = service
+        .commit_change(
+            owner,
+            report.operation_id.clone(),
+            CommitRequest {
+                preview_digest: preview.preview_digest.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    // The test model cannot answer, so the repair stays recorded.
+    assert_eq!(sent.state, "committing", "{sent:?}");
+    let receipt = sent.memory.as_ref().unwrap().receipt_ref.clone();
+    assert_eq!(sent.memory.as_ref().unwrap().phase, "recorded");
+    // A retry replays the same receipt.
+    let again = service
+        .commit_change(
+            owner,
+            report.operation_id.clone(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.memory.unwrap().receipt_ref, receipt);
+
+    // A deletion runs as a semantic `forget` and keeps its ErasurePlan report.
+    let remove = ChangeRequest {
+        operation_id: "host-erase".into(),
+        record_id: id.clone(),
+        expected_revision: before.revision,
+        kind: anda_brain::product::ChangeKind::Delete,
+        new_value: None,
+    };
+    let preview = service.prepare_change(owner, remove.clone()).await.unwrap();
+    let erased = service
+        .commit_change(
+            owner,
+            remove.operation_id.clone(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(erased.state, "confirmed", "{erased:?}");
+    assert!(erased.before.is_none());
+    let erasure = erased.memory.unwrap().erasure.unwrap();
+    assert!(matches!(
+        erasure.status,
+        anda_kip::memory::binding::ForgetStatus::Completed
+            | anda_kip::memory::binding::ForgetStatus::Partial
+    ));
+    assert!(erasure.plan_ref.starts_with("plan-"));
+    assert!(service.record(owner, &id).await.is_err());
+    // The native preview was released, not committed a second time.
+    assert_eq!(
+        space
+            .product_change(owner, &remove.operation_id)
+            .await
+            .unwrap()
+            .state,
+        "discarded"
+    );
     space.close().await.unwrap();
 }

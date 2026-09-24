@@ -740,6 +740,8 @@ impl SessionRunner {
                     }),
                     updated_at: None,
                     failure_stage: None,
+                    receipt_ref: None,
+                    attempt: 0,
                 },
                 &messages,
                 &self.session.formation_context,

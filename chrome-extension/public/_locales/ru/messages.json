@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "Подтвердить исправление"
   },
+  "memoryReviseKind": {
+    "message": "Какое это изменение?"
+  },
+  "memoryKind_correct": {
+    "message": "Я ошибся"
+  },
+  "memoryKindHint_correct": {
+    "message": "Моё прежнее утверждение было неверным. Новое значение заменяет его за тот же период."
+  },
+  "memoryKind_world_change": {
+    "message": "Всё изменилось"
+  },
+  "memoryKindHint_world_change": {
+    "message": "Тогда это было верно. С этого момента всё иначе."
+  },
+  "memoryKind_misrecorded": {
+    "message": "Ты записал неверно"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "Я никогда этого не говорил. Brain перечитает исходное сообщение и исправит запись."
+  },
+  "memoryMisrecordedValue": {
+    "message": "Что вы на самом деле сказали (необязательно)"
+  },
+  "memoryChangeFailed": {
+    "message": "Не удалось выполнить изменение. Проверьте запись и повторите попытку."
+  },
+  "memoryErasure_completed": {
+    "message": "Удаление проверено на всех затронутых поверхностях."
+  },
+  "memoryErasure_partial": {
+    "message": "Удаление завершено, но некоторые поверхности проверить не удалось."
+  },
+  "memoryErasure_blocked": {
+    "message": "Удаление заблокировано юридическим удержанием."
+  },
+  "memoryErasure_pending": {
+    "message": "Удаление ещё выполняется."
+  },
   "memoryReviewChange": {
     "message": "Проверить изменение"
   },

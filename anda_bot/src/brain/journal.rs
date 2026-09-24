@@ -97,6 +97,13 @@ pub struct FormationSubmission {
     pub updated_at: Option<u64>,
     #[serde(default)]
     pub failure_stage: Option<FormationFailure>,
+    /// The Memory Interface receipt of this window's `observe`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    /// Which submission of the window the observe key names; it moves on
+    /// only after a definite rejection, so a retry replays, never re-forms.
+    #[serde(default)]
+    pub attempt: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -159,7 +166,7 @@ impl Journal {
         }
     }
 
-    fn formation_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(super) fn formation_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.formation_locks.lock();
         locks.retain(|_, lock| lock.strong_count() > 0);
         let lock = locks
@@ -256,6 +263,11 @@ impl Journal {
         );
         let lock = self.formation_lock(&key);
         let _guard = lock.lock().await;
+        if let (Some(host), Some(_)) = (client.embedded_host(), &submission.provenance) {
+            return self
+                .observe_formation(client, &host, &key, submission, input)
+                .await;
+        }
         let requested_window = submission.clone();
         if !self.create(&key, &submission).await? {
             submission = self
@@ -359,6 +371,110 @@ impl Journal {
         self.refresh_formation_unlocked(client, submission).await
     }
 
+    /// Submits a window through the Memory Interface: the window is staged
+    /// under the Bot's source identity and observed under a key naming the
+    /// window and its attempt, so a retry after an interruption replays the
+    /// same receipt instead of forming the window twice. Only a definite
+    /// rejection moves to the next attempt. A native Formation failure after
+    /// acceptance is Brain's to retry, as before.
+    async fn observe_formation(
+        &self,
+        client: &super::Client,
+        host: &super::Host,
+        key: &str,
+        requested: FormationSubmission,
+        input: anda_brain::types::FormationInputRef<'_>,
+    ) -> Result<FormationSubmission, BoxError> {
+        use anda_kip::KipErrorCode;
+        let mut submission = requested.clone();
+        if !self.create(key, &submission).await? {
+            let mut existing: FormationSubmission = self
+                .read(key)
+                .await?
+                .ok_or("formation journal disappeared")?;
+            if existing.state == FormationState::Suppressed {
+                return Ok(existing);
+            }
+            if existing.brain_conversation.is_some() {
+                self.refresh_formation_unlocked(client, &mut existing)
+                    .await?;
+                return Ok(existing);
+            }
+            let rejected =
+                existing.state == FormationState::Failed || existing.receipt_ref.is_some();
+            submission = FormationSubmission {
+                attempt: existing.attempt + u32::from(rejected),
+                state: FormationState::Pending,
+                ..requested
+            };
+            self.write(key, &submission).await?;
+        }
+        let mut replaced = false;
+        let outcome = loop {
+            match super::memory::observe_window(host, &submission, &input).await {
+                // The key was bound to other bytes (an interrupted, shorter
+                // window): this window is a new submission.
+                Err(error)
+                    if !replaced
+                        && error
+                            .downcast_ref::<anda_kip::KipError>()
+                            .is_some_and(|e| e.code == KipErrorCode::IdempotencyConflict) =>
+                {
+                    replaced = true;
+                    submission.attempt += 1;
+                    self.write(key, &submission).await?;
+                }
+                outcome => break outcome,
+            }
+        };
+        match outcome {
+            Ok((receipt_ref, state)) => {
+                submission.receipt_ref = Some(receipt_ref.clone());
+                submission.brain_conversation = state.brain_conversation;
+                apply_progress(&mut submission, &state.progress);
+                if state.progress.phase == anda_kip::memory::binding::Phase::Recorded
+                    && let Some(provenance) = &submission.provenance
+                    && let Err(error) = self
+                        .update_memory_session(
+                            &provenance.caller,
+                            &submission.bot_conversation.to_string(),
+                            |session| {
+                                Ok(session.record_receipt(
+                                    crate::config::ANDA_BOT_SPACE_ID,
+                                    &receipt_ref,
+                                )?)
+                            },
+                        )
+                        .await
+                {
+                    // The window row keeps the receipt; only recall's wait
+                    // on it is lost.
+                    log::warn!("formation {key}: receipt not kept for recall: {error}");
+                }
+            }
+            Err(error) => {
+                if matches!(
+                    error.downcast_ref::<anda_brain::product::SourceAdmissionError>(),
+                    Some(anda_brain::product::SourceAdmissionError::Suppressed)
+                ) {
+                    submission.state = FormationState::Suppressed;
+                    submission.error = None;
+                } else {
+                    submission.state = FormationState::Failed;
+                    submission.error = Some(error.to_string().chars().take(512).collect());
+                    submission.failure_stage = Some(FormationFailure::SubmissionRejected);
+                }
+            }
+        }
+        submission.updated_at = Some(anda_engine::unix_ms());
+        self.write(key, &submission).await?;
+        match submission.state {
+            FormationState::Suppressed => Ok(submission),
+            _ if submission.brain_conversation.is_some() => Ok(submission),
+            state => Err(format!("formation {key}: {state:?}").into()),
+        }
+    }
+
     async fn refresh_formation_unlocked(
         &self,
         client: &super::Client,
@@ -369,6 +485,26 @@ impl Journal {
             FormationState::Completed | FormationState::Failed | FormationState::Suppressed
         ) {
             return Ok(());
+        }
+        if let (Some(receipt), Some(host), Some(provenance)) = (
+            &submission.receipt_ref,
+            client.embedded_host(),
+            &submission.provenance,
+        ) {
+            let state = host.memory_receipt(&provenance.caller, receipt).await?;
+            submission.brain_conversation =
+                state.brain_conversation.or(submission.brain_conversation);
+            apply_progress(submission, &state.progress);
+            submission.updated_at = Some(anda_engine::unix_ms());
+            return self
+                .write(
+                    &format!(
+                        "formation/{}/{}",
+                        submission.bot_conversation, submission.window_start
+                    ),
+                    submission,
+                )
+                .await;
         }
         use anda_engine::memory::ConversationStatus;
         let id = submission
@@ -396,6 +532,36 @@ impl Journal {
         )
         .await
     }
+}
+
+/// A receipt's phase as the window's state: recorded is accepted, processed
+/// or available is completed, failed stays failed with its reason.
+fn apply_progress(
+    submission: &mut FormationSubmission,
+    progress: &anda_kip::memory::binding::Progress,
+) {
+    use anda_kip::memory::binding::Phase;
+    submission.state = match progress.phase {
+        Phase::Recorded => FormationState::Accepted,
+        Phase::Processed | Phase::Available => FormationState::Completed,
+        Phase::Failed => FormationState::Failed,
+    };
+    submission.error = (progress.phase == Phase::Failed).then(|| {
+        progress
+            .reason
+            .as_deref()
+            .unwrap_or("memory processing failed")
+            .chars()
+            .take(512)
+            .collect()
+    });
+    submission.failure_stage = (progress.phase == Phase::Failed).then(|| {
+        if submission.brain_conversation.is_some() {
+            FormationFailure::NativeFailed
+        } else {
+            FormationFailure::SubmissionRejected
+        }
+    });
 }
 
 /// Prepared by the host when the model emits tool calls. Only a unique match
@@ -466,6 +632,8 @@ mod tests {
             provenance: None,
             updated_at: None,
             failure_stage: None,
+            receipt_ref: None,
+            attempt: 0,
         }
     }
     #[tokio::test]

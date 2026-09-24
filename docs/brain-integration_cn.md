@@ -1,6 +1,6 @@
 # Brain 运行时集成
 
-Anda Bot 0.13 内嵌 Brain 0.12。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
+Anda Bot 0.13 内嵌基于 KIP 2.0（`cognitive-memory@2.0.0`）的 Brain 0.12.1，并通过它的 Memory Interface 绑定（`memory_basic`）接入：Formation 窗口是带持久回执的 observe 意图，recall 会等待本对话自己的回执，记忆 attention 有保存的游标。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
 
 ## 先使用日常记忆
 
@@ -8,9 +8,11 @@ Anda Bot 0.13 内嵌 Brain 0.12。不配置运行时时，普通 Formation、Rec
 
 告诉 Anda 一条稳定偏好，等后台整理后用 `/new` 开新对话询问。助手说“记住了”不等于保存收据。消息旁状态和 `/memory activity` 只证明对应对话的处理进度，Formation 完成不保证提取了期望的事实。接受结果未知时只对账，不重新发送。只有持久消息映射和内容摘要都匹配，来源引用才提供原消息导航。
 
-所有者可搜索、更正、停用或删除受支持的记录。搜索由用户显式发起，可能调用模型；完整保留 Recall 结果包、警告，默认结果包上限 4,096 token、规划输入上限 32,768 token，不自动重试，也不保证总金额上限。更正和移除先展示十分钟内有效、绑定修订的预览，再确认执行。更正保留旧声明并创建新声明；反向更正也是新的条件操作。失联后按原操作 ID 查询，不新建操作重发。
+所有者可搜索、更正、停用或删除受支持的记录。搜索由用户显式发起，可能调用模型；完整保留 Recall 结果包、警告，默认结果包上限 4,096 token、规划输入上限 32,768 token，不自动重试，也不保证总金额上限。更正和移除先展示绑定修订的预览（原生变更十分钟内有效，误记报告十五分钟），再确认执行。失联后按原操作 ID 查询，不新建操作重发。
 
-停用将预览中的声明、引用输入和已记录的派生项归档；删除则清除该有界原生集合。两者都会持久保存来源排除、拦截在途旧处理，并清空原生及 Bot Notes 和处理历史上下文。相关来源会话及其续接链不再自动贡献新记忆。其他独立记录、Bot 原聊天、文件、日志、备份、已交付模型的上下文及服务商副本仍保留。用于防重放的最小来源标识和摘要仍保留。来源缺口、受保护依赖、保留约束、超大派生集合会使操作被拒绝。直接用不含当前排除元数据的旧备份覆盖数据库，不在此保证内。
+更正时先选择是哪一种修改。**是我说错了**（`correct`）在同一时段内取代所有者自己的旧说法，反向更正也是新的条件操作。**情况变了**（`world_change`）从现在起写一条新声明，时序继承结束旧值，旧值在它的时段内仍然成立。**你记错了**（`misrecorded`）是记录修复，绝不当作更正：所有者的报告以 Memory Interface `revise`（`change_kind: "misrecorded"`）按该操作的键发送，Brain 重读原始来源并修复抽取结果；在 Brain 处理完之前变更保持 `committing`（重试会重放同一回执）。无法完成的修复或擦除显示为失败或被阻止，而不是一直等待。
+
+停用将预览中的声明、引用输入和已记录的派生项归档；删除以 Memory Interface `forget`（`mode: "semantic"`）执行：清除该有界原生集合，擦除 Brain 自己引用过这些内容的 Formation 与 Recall 记录，并把 ErasurePlan 报告（`completed`；有存储面无法验证时为 `partial`；被法律保留阻止时为 `blocked`）随确认后的变更保留。旧回执下已由原生产品路径确认的删除只做对账。两者都会持久保存来源排除、拦截在途旧处理，并清空原生及 Bot Notes 和处理历史上下文。相关来源会话及其续接链不再自动贡献新记忆。其他独立记录、Bot 原聊天、文件、日志、备份、已交付模型的上下文及服务商副本仍保留。用于防重放的最小来源标识和摘要仍保留。来源缺口、受保护依赖、保留约束、超大派生集合会使操作被拒绝。直接用不含当前排除元数据的旧备份覆盖数据库，不在此保证内。
 
 新会话可在浏览器输入框的“记忆模式”中选择，也可运行：
 
@@ -31,7 +33,7 @@ anda agent run --memory-mode off --prompt '只使用这个新对话的信息帮�
 
 普通和结构化 Recall 共用可复用、禁用自动重试的 HTTP 传输。失败响应可能发生在模型任务已接受之后，因此重新搜索必须显式发起。变更确认保留版本冲突、过期等具体错误；接受结果不明时，仍核对原生回执后才报告成功。
 
-源码构建使用 registry 的 Brain 0.12.1 与 Nexus 0.13.4，精确依赖图保存在 `Cargo.lock`。已注释的同级 Brain override 仅供选择性的本地联调使用；DB/KIP/Core/Engine 保持单一 registry 类型身份。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
+在 Brain、0.14 版 DB/KIP/Nexus 栈及配套 Engine 发布之前，源码构建通过 `[patch.crates-io]` 使用同级的 `anda-brain`、`anda-db`、`anda` 检出，`Cargo.lock` 中每个 crate 只有一个类型身份；这些版本发布后删除 patch。由 2.1.0 草案栈（Brain 0.12.1 / Nexus 0.13.4 发布版）写入的数据库不能被本栈原地打开，需先迁移到新库（见 Brain 的草案 Space 迁移），旧库保留只读以便回退。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
 
 ## 需要跨会话确认时，再设置待办
 
@@ -65,7 +67,7 @@ brain:
 
 浏览器 Brain 页面提供“记忆待办”。TUI 使用 `/brain inbox`、`/brain status`、`/brain next <cursor>`；回答用 `/brain answer <id> <event_key> <answer>`，陈述用 `/brain statement <id> <event_key> <statement>`，帮助为 `/brain help`。
 
-模型通过 `tools_select` 发现 `brain_attention`、`brain_respond`、`brain_runtime_status`。回答工具严格 schema 要求同时传 `answer` 和 `statement`，未使用的字段为 null，校验后转换成 Brain 原生请求。外部不可信 IM 用户不能使用这些工具。HTTP/WS 转发调用者自己的 bearer；Engine 工具从真实认证上下文映射显式配置的原生主体。匿名、local、public 模式不绕过运行时认证；用户队列及审计清单相互隔离。
+模型通过 `tools_select` 发现 `brain_attention`、`brain_respond`、`brain_runtime_status`、`brain_feedback`。无论是否配置待办，`brain_attention` 都会附带 `memory_attention`：调用者上次查看以来提起的到期承诺和已触发的 Watch，游标按调用者保存。`brain_runtime_status` 附带 Brain 声明的 Memory Interface 描述符。`brain_feedback` 把模型对某个决定或尝试的自述记录为带归属的 agent 证据（`feedback`），它不是评分、结果或已验证事实，受限记忆模式下不可用。回答工具严格 schema 要求同时传 `answer` 和 `statement`，未使用的字段为 null，校验后转换成 Brain 原生请求。外部不可信 IM 用户不能使用这些工具。HTTP/WS 转发调用者自己的 bearer；Engine 工具从真实认证上下文映射显式配置的原生主体。匿名、local、public 模式不绕过运行时认证；用户队列及审计清单相互隔离。
 
 分页读取不领取工作，`complete` 只表示分页结束。cursor 过期或失效时从首页刷新。回答 URL 使用返回的十六进制 `id`，不是 `wake/v1/...`。浏览器先保存事件键和正文再发送，丢失确认或重载后可原样重试；TUI 重试须保留相同事件键和正文。同键异文返回冲突。澄清回答不授予权限，自述不是独立 Outcome。
 
@@ -77,9 +79,11 @@ Brain HTTP KIP 使用应用参数：`command`，或带 `execution` 的 `operatio
 
 `recall_memory` 支持可空 `budget`，包含 Brain 固定 tokenizer、`max_tokens`、`context_tokens`。null 保持兼容。保留完整记忆包和不足状态，不通过 artifacts 或收据追加记忆。失败有明确错误标记，保留直接及嵌套计量，嵌套值不重复加总；缺失账单仍是不完整。
 
+`recall_memory` 召回前最多等待 20 秒，等本对话自己尚未完成的 Formation 回执（Memory Interface 处理屏障）。仍在处理或已失败的回执会在答案前以说明列出（预算结果包保持不变）；只有成功的召回已计入的回执才从本对话的会话中清除。新会话以所有者上次会话以来提起的记忆 attention 作为系统上下文中的数据段开始，外部 IM 发送者不会收到。这是不调用模型的 `attention` 读取：完整的 `resume` 召回需要查询并运行 Recall 模型，因此不会在每个会话自动执行。
+
 现有 DB 对象存储中的 `bot-brain/v1/` 宿主日志保留 Recall 交付身份、Brain conversation/receipt、Bot conversation/turn 及可明确对应的模型 tool-call ID。并行重复参数无法区分时不猜测关联。收据仅证明交付；普通检索不改变 utility、trust 或执行权限，legacy trace 不证明贡献。
 
-Formation 在发送前持久化窗口，接受后保留 Brain conversation ID。`/brain formation <id>` 查询该任务的 submitted/working/completed/failed 状态，不用全局 high-water mark 推断完成。明确拒绝保留退避重试；失联或中断导致接受情况未知时，阻止该窗口盲重发并保留对账材料。服务器没有提交幂等键，因此不宣称 Formation 恰好一次。
+Formation 在发送前持久化窗口。每个窗口先以 Bot 自己的产品来源身份（产品删除因此仍覆盖它）连同 Formation 上下文暂存为来源，再作为 Memory Interface `observe` 发送：幂等键包含对话、窗口和尝试序号，来源顺序流为该 Bot 对话。窗口记录保存回执及其启动的 Brain conversation，状态跟随回执阶段（recorded → accepted，processed/available → completed，failed → failed）。中断的提交按同一键重发并重放同一回执，不会把窗口整理两次；中断后变长的窗口或明确的拒绝进入下一个尝试序号的键。接受后的原生 Formation 失败仍由 Brain 重试。`/brain formation <id>` 仍查询指定的 Brain conversation，不用全局 high-water mark 推断完成。没有内嵌宿主（仅 HTTP 客户端）时沿用原来的直接 Formation 路径。
 
 ## 独立观察与可选校准
 

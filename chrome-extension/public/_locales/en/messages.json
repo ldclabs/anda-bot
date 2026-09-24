@@ -1337,6 +1337,45 @@
   "memoryConfirmCorrection": {
     "message": "Confirm correction"
   },
+  "memoryReviseKind": {
+    "message": "What kind of change is this?"
+  },
+  "memoryKind_correct": {
+    "message": "I said it wrong"
+  },
+  "memoryKindHint_correct": {
+    "message": "My earlier statement was wrong. The new value replaces it for the same time."
+  },
+  "memoryKind_world_change": {
+    "message": "Things changed"
+  },
+  "memoryKindHint_world_change": {
+    "message": "It was true then. From now on it is different."
+  },
+  "memoryKind_misrecorded": {
+    "message": "You recorded it wrong"
+  },
+  "memoryKindHint_misrecorded": {
+    "message": "I never said this. Brain re-reads the original message and repairs the record."
+  },
+  "memoryMisrecordedValue": {
+    "message": "What you actually said (optional)"
+  },
+  "memoryChangeFailed": {
+    "message": "The change could not be completed. Review the record and try again."
+  },
+  "memoryErasure_completed": {
+    "message": "Erasure verified on every covered surface."
+  },
+  "memoryErasure_partial": {
+    "message": "Erasure finished, but some surfaces could not be verified."
+  },
+  "memoryErasure_blocked": {
+    "message": "Erasure is blocked by a legal hold."
+  },
+  "memoryErasure_pending": {
+    "message": "Erasure is still in progress."
+  },
   "memoryReviewChange": {
     "message": "Review change"
   },

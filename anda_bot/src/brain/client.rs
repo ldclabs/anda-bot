@@ -464,7 +464,7 @@ impl Tool<BaseCtx> for Client {
     }
 
     fn description(&self) -> String {
-        "Recall information from the assistant's long-term memory (the Cognitive Nexus owned by $self). Use only for information that is not already present in the active conversation. Do not call for facts just mentioned, just submitted to formation, or otherwise available in current context; formation is asynchronous and fresh memories may take a minute or more to become searchable.".to_string()
+        "Recall information from the assistant's long-term memory (the Cognitive Nexus owned by $self). Use only for information that is not already present in the active conversation. Do not call for facts just mentioned or otherwise available in current context. Formation is asynchronous: recall first waits briefly for this conversation's earlier submitted windows and says when some are still being processed.".to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -551,12 +551,67 @@ impl Tool<BaseCtx> for Client {
         request: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
+        use anda_core::StateFeatures;
         if !crate::engine::MemoryPolicy::current(&ctx).may_read() {
             return Err("Memory recall is disabled for this conversation".into());
         }
+        // The processing barrier (MI §5): wait, bounded, for this
+        // conversation's own observed windows before recalling.
+        let namespace = ctx.caller().to_string();
+        let conversation = ctx
+            .get_state::<super::RecallTurn>()
+            .map(|turn| turn.0.lock().conversation)
+            .filter(|id| *id > 0);
+        let barrier = match (&self.host, &self.journal, conversation) {
+            (Some(host), Some(journal), Some(conversation)) => match host
+                .memory_barrier(
+                    journal,
+                    &namespace,
+                    conversation,
+                    super::memory::RECALL_BARRIER,
+                )
+                .await
+            {
+                Ok(barrier) => Some(barrier),
+                Err(error) => {
+                    log::warn!("recall barrier for conversation {conversation}: {error}");
+                    None
+                }
+            },
+            _ => None,
+        };
         let rt = self.recall((&request).into()).await?;
+        if rt.failed_reason.is_none()
+            && let (Some(journal), Some(conversation), Some(barrier)) =
+                (&self.journal, conversation, &barrier)
+            && !barrier.settled.is_empty()
+        {
+            let accounted: Vec<&str> = barrier
+                .settled
+                .iter()
+                .map(|p| p.receipt_ref.as_str())
+                .collect();
+            if let Err(error) = journal
+                .update_memory_session(&namespace, &conversation.to_string(), |session| {
+                    session.acknowledge_recall(&accounted);
+                    Ok(())
+                })
+                .await
+            {
+                log::warn!("recall barrier for conversation {conversation}: {error}");
+            }
+        }
+        let note = barrier
+            .as_ref()
+            .and_then(super::memory::Barrier::note)
+            .filter(|_| request.budget.is_none());
+        let with_note = |mut output: ToolOutput<String>| {
+            if let Some(note) = &note {
+                output.output = format!("Note: {note}\n\n{}", output.output);
+            }
+            output
+        };
         if let (Some(host), Some(journal)) = (&self.host, &self.journal) {
-            use anda_core::StateFeatures;
             let receipt = match rt.conversation {
                 Some(id) => host.recall_receipt(id).await,
                 None => Ok(None),
@@ -591,7 +646,7 @@ impl Tool<BaseCtx> for Client {
                 return Ok(output);
             }
         }
-        Ok(recall_tool_output(rt, request.budget.is_some()))
+        Ok(with_note(recall_tool_output(rt, request.budget.is_some())))
     }
 }
 

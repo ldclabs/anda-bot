@@ -176,7 +176,18 @@ async fn project(
             && record.storage_state == "active"
             && record.object.get("id").is_some()
         {
+            // The owner's claim was wrong, or the world moved on.
             allowed_actions.push("correct".into());
+            allowed_actions.push("world_change".into());
+        }
+        // Brain recorded what the source never said: recording repair
+        // re-reads the cited source (Memory Interface `revise`).
+        if record.stance == "support"
+            && record.status == "active"
+            && record.storage_state == "active"
+            && !record.sources.is_empty()
+        {
+            allowed_actions.push("misrecorded".into());
         }
     }
     Ok(Some(MemoryRecordView {

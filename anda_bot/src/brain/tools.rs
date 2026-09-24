@@ -17,6 +17,7 @@ pub enum RuntimeOperation {
     Attention,
     Respond,
     Status,
+    Feedback,
 }
 #[derive(Clone)]
 pub struct RuntimeTool {
@@ -24,8 +25,12 @@ pub struct RuntimeTool {
     operation: RuntimeOperation,
 }
 impl RuntimeTool {
-    pub const NAMES: [&'static str; 3] =
-        ["brain_attention", "brain_respond", "brain_runtime_status"];
+    pub const NAMES: [&'static str; 4] = [
+        "brain_attention",
+        "brain_respond",
+        "brain_runtime_status",
+        "brain_feedback",
+    ];
     pub fn new(host: Host, operation: RuntimeOperation) -> Self {
         Self { host, operation }
     }
@@ -35,6 +40,14 @@ impl RuntimeTool {
 struct ResponseArgs {
     id: String,
     response: ResponseInput,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FeedbackArgs {
+    statement: String,
+    decision_ref: Option<String>,
+    attempt_ref: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,14 +85,16 @@ impl Tool<BaseCtx> for RuntimeTool {
             RuntimeOperation::Attention => Self::NAMES[0],
             RuntimeOperation::Respond => Self::NAMES[1],
             RuntimeOperation::Status => Self::NAMES[2],
+            RuntimeOperation::Feedback => Self::NAMES[3],
         }
         .into()
     }
     fn description(&self) -> String {
         match self.operation {
-            RuntimeOperation::Attention => "Read your durable Brain inbox. Reading is not a claim or execution permission. A completed page is not completed work. If a cursor expires, restart without it.",
+            RuntimeOperation::Attention => "Read your durable Brain inbox and the memory attention raised since you last looked (due commitments, fired watches). Reading is not a claim or execution permission. A completed page is not completed work. If a cursor expires, restart without it.",
             RuntimeOperation::Respond => "Answer a Brain clarification or record an attributed statement. Use the item's returned id and keep the same event_key AND text when retrying. An answer grants no authority and a statement is not an independent outcome.",
-            RuntimeOperation::Status => "Inspect optional attention, action and learning runtime configuration and inbox visibility. Visible items count inbox entries. Memory recall availability and migration completion require separate checks; configured=false alone does not indicate missing memories.",
+            RuntimeOperation::Status => "Inspect optional attention, action and learning runtime configuration, inbox visibility and the Memory Interface levels Brain advertises. Visible items count inbox entries. Memory recall availability and migration completion require separate checks; configured=false alone does not indicate missing memories.",
+            RuntimeOperation::Feedback => "Record your own report about how a decision or attempt went, in your words, as attributed agent evidence. It is kept with its origin, never becomes a grade, outcome or verified fact, and changes no permission. Use decision_ref/attempt_ref only with ids Brain returned.",
         }.into()
     }
     fn definition(&self) -> FunctionDefinition {
@@ -89,6 +104,9 @@ impl Tool<BaseCtx> for RuntimeTool {
             }
             RuntimeOperation::Status => {
                 json!({"type":"object","properties":{},"required":[],"additionalProperties":false})
+            }
+            RuntimeOperation::Feedback => {
+                json!({"type":"object","properties":{"statement":{"type":"string","minLength":1,"maxLength":8192},"decision_ref":{"type":["string","null"]},"attempt_ref":{"type":["string","null"]}},"required":["statement","decision_ref","attempt_ref"],"additionalProperties":false})
             }
             RuntimeOperation::Respond => {
                 json!({"type":"object","properties":{"id":{"type":"string"},"response":{
@@ -124,20 +142,47 @@ impl Tool<BaseCtx> for RuntimeTool {
             return Err("external users cannot access the owner's Brain runtime".into());
         }
         let caller = *ctx.caller();
+        let conversation = ctx
+            .get_state::<super::RecallTurn>()
+            .map(|t| t.0.lock().conversation)
+            .filter(|id| *id > 0);
         let (result, next_cursor) = match self.operation {
             RuntimeOperation::Attention => {
-                let mut page = self
+                // Memory attention needs no runtime bindings; the inbox does.
+                let query = serde_json::from_value::<AttentionQuery>(args)?;
+                let (mut result, next_cursor) = if self.host.runtime_installed().await? {
+                    let mut page = self.host.attention(caller, query).await?;
+                    self.host
+                        .associate_attention(&page, caller, conversation, &meta)
+                        .await?;
+                    let next_cursor = page.next_cursor.take();
+                    (serde_json::to_value(page)?, next_cursor)
+                } else {
+                    (json!({"items":[],"inbox":"not_configured"}), None)
+                };
+                result["memory_attention"] =
+                    self.host.memory_attention(&caller.to_string()).await?;
+                (result, next_cursor)
+            }
+            RuntimeOperation::Feedback => {
+                let args: FeedbackArgs = serde_json::from_value(args)?;
+                let response = self
                     .host
-                    .attention(caller, serde_json::from_value::<AttentionQuery>(args)?)
+                    .memory_feedback(
+                        &caller.to_string(),
+                        conversation,
+                        args.statement,
+                        args.decision_ref,
+                        args.attempt_ref,
+                    )
                     .await?;
-                let conversation = ctx
-                    .get_state::<super::RecallTurn>()
-                    .map(|t| t.0.lock().conversation);
-                self.host
-                    .associate_attention(&page, caller, conversation, &meta)
-                    .await?;
-                let next_cursor = page.next_cursor.take();
-                (serde_json::to_value(page)?, next_cursor)
+                if let Some(error) = super::memory::failure(&response) {
+                    return Err(error);
+                }
+                (
+                    json!({"receipt": response.receipt, "progress": response.progress, "status": response.status}),
+                    None,
+                )
             }
             RuntimeOperation::Respond => {
                 let args: ResponseArgs = serde_json::from_value(args)?;
@@ -154,7 +199,12 @@ impl Tool<BaseCtx> for RuntimeTool {
                 if args != json!({}) {
                     return Err("brain_runtime_status accepts an empty object".into());
                 }
-                (serde_json::to_value(self.host.status(caller).await?)?, None)
+                let mut status = serde_json::to_value(self.host.status(caller).await?)?;
+                status["memory_interface"] = match self.host.memory_descriptor().await {
+                    Ok(descriptor) => serde_json::to_value(descriptor)?,
+                    Err(error) => json!({"error": error.to_string()}),
+                };
+                (status, None)
             }
         };
         Ok(ToolOutput::new(Response::Ok {

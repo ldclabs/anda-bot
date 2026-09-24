@@ -369,16 +369,17 @@ mod tests {
             .unwrap();
         let mut lock = SchemaLock::default();
         lock.packages
-            .insert("kip://profiles/cognitive-memory".into(), "2.1.0".into());
+            .insert("kip://profiles/cognitive-memory".into(), "2.0.0".into());
         lock.states.insert(
             "kip://profiles/cognitive-memory".into(),
             PackageState::Active,
         );
         nexus.activate_schema(DEFAULT_SPACE, lock).await.unwrap();
         let commands = [
+            r#"DEFINE CONCEPT TYPE "ColorScheme" {description: "A display color scheme"}"#,
             r#"MUTATE {
                 CREATE CONCEPT ?person { TYPE "Person" NAME "Graph Person" }
-                CREATE CONCEPT ?preference { TYPE "Preference" NAME "Dark mode" }
+                CREATE CONCEPT ?preference { TYPE "ColorScheme" NAME "Dark mode" }
                 ENSURE PROPOSITION ?p (?person, "prefers", ?preference)
             }"#,
             r#"FIND(?link, ?o) WHERE { ?node CONCEPT {name: "Graph Person"} ?link (?node, ?predicate, ?o) } LIMIT 180"#,
@@ -398,13 +399,13 @@ mod tests {
                 TopLevelStatus::Succeeded,
                 "{command}: {response:?}"
             );
-            if index > 0 {
+            if index > 1 {
                 let rows = response.first_result().unwrap().as_array().unwrap();
                 assert_eq!(rows.len(), 1);
                 let tuple = rows[0].as_array().unwrap();
                 assert_eq!(tuple.len(), 2);
-                let proposition = &tuple[if index == 1 { 0 } else { 1 }];
-                let concept = &tuple[if index == 1 { 1 } else { 0 }];
+                let proposition = &tuple[if index == 2 { 0 } else { 1 }];
+                let concept = &tuple[if index == 2 { 1 } else { 0 }];
                 assert_eq!(proposition["kind"], "proposition");
                 assert!(
                     proposition["predicate_ref"]

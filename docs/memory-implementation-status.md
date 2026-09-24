@@ -62,6 +62,26 @@
 
 2026-09-23 复核修复：原生收据确认但返回失败时，Bot 仍完成 Notes 对账与删除预览清理；未建立的变更草稿可重新预览或丢弃；来源跳转按指定会话加载原消息；搜索保留超限与结果未知的错误码。回归覆盖已确认原生变更的宿主恢复、HTTP/WS 搜索错误及跨独立会话的来源定位。本轮未重跑同级 Brain 0.12.1 的独立测试套件；Bot 使用当前本地 patch 完成全功能联调。
 
+## Memory Interface 接入（2026-09-25）
+
+依据：Brain 的 Memory Interface 开发计划 A1–A7。依赖升级到 KIP 2.0 栈（`anda_kip =0.14.0`、Nexus/DB 0.14、Brain 0.12.1），发布前以同级 `anda-brain`、`anda-db`、`anda` 的 path patch 构建；`cargo metadata` 确认每个 anda crate 只有一个包身份。实现署名：Claude（Anthropic）。
+
+| 项 | 实现 |
+| --- | --- |
+| A1 | 内嵌 Brain 的描述符（`memory_basic`）进入 `brain_runtime_status` 的 `memory_interface` 与产品概览能力 `memory_interface`；没有内嵌宿主的 HTTP 客户端沿用旧 Formation/Recall 路径 |
+| A2 | Formation 窗口以 Bot 产品来源身份和 Formation 上下文受信暂存（Brain `stage_host_memory_source`），再以 `observe` 发送；键 = 对话/窗口/尝试序号，SourceOrder 流 = Bot 对话；窗口记录保存 `receipt_ref`、`attempt` 与 Brain conversation，状态跟随回执阶段；中断后同键重放，变长窗口或明确拒绝换下一个尝试键 |
+| A3 | 每个 Bot 对话一个 `MemorySession`（`bot-brain/v1/memory-session/...`）保存未完成回执；`recall_memory` 召回前等待本对话回执最多 20 秒，未完成/失败的回执写入说明，成功召回后才确认；新会话以 attention 简报开始（外部 IM 发送者不注入） |
+| A4 | `brain_attention` 附带按调用者保存游标的 `memory_attention`（`commitment_due`、`watch_fired`），不依赖待办配置；条目不授予权限，不转 cron/goal，推送通道不在范围内 |
+| A5 | 更正三选一：`correct`（原生 supersession）、`world_change`（原生新断言 + 时序继承）、`misrecorded`（`revise` 记录修复，保持 `committing` 直到处理完）；删除走 `forget`（semantic），视图保留 ErasurePlan 报告；新增模型工具 `brain_feedback`（自述证据，外部 IM 与受限模式不可用）；浏览器更正对话框与六语言文案同步 |
+| A6 | 集成测试：窗口回执、中断后同键重放、变长窗口换尝试键、召回屏障、attention 游标跨 journal 重启与调用者隔离、会话简报、feedback 与状态描述符；误记修复的回执重放、删除的擦除报告与原生预览释放 |
+| A7 | `brain-integration(_cn).md`、本记录、README 对、docsite 页面、CHANGELOG |
+
+已知边界：
+- 会话简报只读 attention，不运行需要查询与 Recall 模型调用的 `resume`。
+- `/daemon/memory/v1/search` 不属于任何 Bot 对话，不带 `after` 屏障。
+- 由 2.1.0 草案栈写入的现有数据库不能被 0.14 栈原地打开；切换前须先迁移到新库并保留旧库只读（KIP 同步任务 §12，切换需所有者确认）。
+- 真实模型下误记修复与 Formation 的行为效果未在本仓库验证。
+
 ## 发行与回滚
 
 1. 原生合同合入/发布后，将 Bot 的 `anda_brain` registry 约束更新到实际发布版本，再移除临时 `[patch.crates-io]` 中的 Brain 路径项。
