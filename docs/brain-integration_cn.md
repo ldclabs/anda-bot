@@ -1,6 +1,6 @@
 # Brain 运行时集成
 
-Anda Bot 0.13 内嵌基于 KIP 2.0（`cognitive-memory@2.0.0`）的 Brain 0.12.1，并通过它的 Memory Interface 绑定（`memory_basic`）接入：Formation 窗口是带持久回执的 observe 意图，recall 会等待本对话自己的回执，记忆 attention 有保存的游标。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
+Anda Bot 0.13 内嵌基于 KIP 2.0（`cognitive-memory@2.0.0`）的 Brain 0.13，并通过它的 Memory Interface 绑定（`memory_basic`）接入：Formation 窗口是带持久回执的 observe 意图，recall 会等待本对话自己的回执，记忆 attention 有保存的游标。不配置运行时时，普通 Formation、Recall、Maintenance 继续工作。持久待办、独立观察、语义求值、utility、trust 和原生学习分别配置；编译、安装绑定、启用自动运行、机制测试与真实业务收益是不同状态。
 
 ## 先使用日常记忆
 
@@ -33,7 +33,7 @@ anda agent run --memory-mode off --prompt '只使用这个新对话的信息帮�
 
 普通和结构化 Recall 共用可复用、禁用自动重试的 HTTP 传输。失败响应可能发生在模型任务已接受之后，因此重新搜索必须显式发起。变更确认保留版本冲突、过期等具体错误；接受结果不明时，仍核对原生回执后才报告成功。
 
-在 Brain、0.14 版 DB/KIP/Nexus 栈及配套 Engine 发布之前，源码构建通过 `[patch.crates-io]` 使用同级的 `anda-brain`、`anda-db`、`anda` 检出，`Cargo.lock` 中每个 crate 只有一个类型身份；这些版本发布后删除 patch。由 2.1.0 草案栈（Brain 0.12.1 / Nexus 0.13.4 发布版）写入的数据库不能被本栈原地打开，需先迁移到新库（见 Brain 的草案 Space 迁移），旧库保留只读以便回退。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
+0.14 版 DB/KIP/Nexus 栈及配套的 Core/Engine 0.16 来自 crates.io；Brain 0.13 发布之前，`[patch.crates-io]` 从同级 `anda-brain` 检出构建它。`Cargo.lock` 中每个 crate 只有一个类型身份。0.12.0 的数据库是 KIP 1.x，首次启动时自动迁移。开发构建在 2.1.0 草案（Brain 0.12.1 / Nexus 0.13.4）下写入的数据库不能被原地打开，需先迁移到新库（见 Brain 的草案 Space 迁移），旧库保留只读以便回退。软件回滚不能简单覆盖旧数据库而丢失当前来源排除信息。
 
 ## 需要跨会话确认时，再设置待办
 

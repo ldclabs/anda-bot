@@ -64,7 +64,7 @@
 
 ## Memory Interface 接入（2026-09-25）
 
-依据：Brain 的 Memory Interface 开发计划 A1–A7。依赖升级到 KIP 2.0 栈（`anda_kip =0.14.0`、Nexus/DB 0.14、Brain 0.12.1），发布前以同级 `anda-brain`、`anda-db`、`anda` 的 path patch 构建；`cargo metadata` 确认每个 anda crate 只有一个包身份。实现署名：Claude（Anthropic）。
+依据：Brain 的 Memory Interface 开发计划 A1–A7。依赖升级到 KIP 2.0 栈（`anda_kip =0.14.0`、Nexus/DB 0.14、Core/Engine 0.16 来自 crates.io；Brain 0.13.0 发布前以同级 `anda-brain` 的 path patch 构建）；`cargo metadata` 确认每个 anda crate 只有一个包身份。实现署名：Claude（Anthropic）。
 
 | 项 | 实现 |
 | --- | --- |

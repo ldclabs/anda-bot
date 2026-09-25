@@ -61,11 +61,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The Cargo patch builds Brain from this commit (0.13.0). Remove this step
+      # and the patch once anda_brain 0.13.0 is on crates.io.
       - name: Checkout Brain source dependency
         uses: actions/checkout@v6
         with:
           repository: ldclabs/anda-brain
-          ref: ee6feb12ce784827b02b715959f66df36ee5381d
+          ref: 8f78dfe049c440bd8db8ea7b6f0b932ea83918bb
           path: .ci/anda-brain
           persist-credentials: false
 

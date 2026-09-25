@@ -105,7 +105,7 @@ Requirements:
 
 Or run Anda Bot from this repository with Rust 1.95 or newer:
 
-Source builds track the KIP 2.0 stack: Brain 0.12.1 with its Memory Interface binding, Nexus/DB/KIP 0.14 and the matching Core/Engine. Until those are published, `[patch.crates-io]` points at sibling `anda-brain`, `anda-db` and `anda` checkouts, keeping one DB/core type identity. A database written by the earlier 2.1.0-draft releases must be migrated to a new database before this build opens it; keep the old one read-only for rollback. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
+Source builds track the KIP 2.0 stack: Brain 0.13 with its Memory Interface binding, Nexus/DB/KIP 0.14 and the matching Core/Engine 0.16, keeping one DB/core type identity. Until Brain 0.13 is published, `[patch.crates-io]` points at the sibling `anda-brain` checkout. A database that a development build wrote under the 2.1.0 draft must be migrated to a new database before this build opens it; keep the old one read-only for rollback. Brain HTTP accepts `command` or `operations` application arguments (no `kip` field) and returns KIP 2.0 envelopes; ordinary Bot tool responses retain their existing `result`/`error` format.
 
 Development and test builds use basic optimization for dependencies to keep macOS unwind tables below the linker's 16 MiB limit. `anda_bot` itself remains unoptimized, with debug information and panic unwinding preserved. The first dependency build takes longer; subsequent builds reuse those artifacts.
 

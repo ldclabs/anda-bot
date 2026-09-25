@@ -1,6 +1,6 @@
 # Brain runtime integration
 
-Anda Bot 0.13 embeds Brain 0.12.1 on KIP 2.0 (`cognitive-memory@2.0.0`) and uses its Memory Interface binding (`memory_basic`): Formation windows are observed intents with durable receipts, recall waits on the conversation's own receipts, and memory attention has a saved cursor. The ordinary Formation/Recall/Maintenance loop works without a runtime configuration. Durable inbox actions, independent observations, semantic attention, utility, trust and learning are separately configured capabilities. Compilation, installed bindings, enabled automation, mechanism tests and measured business improvement are different states.
+Anda Bot 0.13 embeds Brain 0.13 on KIP 2.0 (`cognitive-memory@2.0.0`) and uses its Memory Interface binding (`memory_basic`): Formation windows are observed intents with durable receipts, recall waits on the conversation's own receipts, and memory attention has a saved cursor. The ordinary Formation/Recall/Maintenance loop works without a runtime configuration. Durable inbox actions, independent observations, semantic attention, utility, trust and learning are separately configured capabilities. Compilation, installed bindings, enabled automation, mechanism tests and measured business improvement are different states.
 
 ## Start with ordinary memory
 
@@ -33,7 +33,7 @@ Record pages stop before exceeding their response budget and return a cursor for
 
 Both ordinary and structured Recall share a reusable HTTP transport with automatic retries disabled. A failed response may follow accepted model work, so a new search is an explicit action. Change confirmation preserves revision/expiry errors; unresolved admissions are still checked against the native receipt before reporting success.
 
-Until Brain, the 0.14 DB/KIP/Nexus stack and the matching Engine are published, source builds patch the sibling `anda-brain`, `anda-db` and `anda` checkouts in `[patch.crates-io]`; `Cargo.lock` holds one type identity for each. Remove the patches once those releases exist. A database written by the 2.1.0-draft stack (Brain 0.12.1 / Nexus 0.13.4 releases) is not opened by this stack in place; migrate it to a new database first (see Brain's draft-Space migration) and keep the old one read-only for rollback. Do not restore a pre-change database as a software rollback without preserving current source exclusions.
+The DB/KIP/Nexus 0.14 stack and the matching Core/Engine 0.16 come from crates.io; until Brain 0.13 is published, `[patch.crates-io]` builds it from the sibling `anda-brain` checkout. `Cargo.lock` holds one type identity for each. A 0.12.0 database is KIP 1.x and migrates on first start. A database that a development build wrote under the 2.1.0 draft (Brain 0.12.1 / Nexus 0.13.4) is not opened in place; migrate it to a new database first (see Brain's draft-Space migration) and keep the old one read-only for rollback. Do not restore a pre-change database as a software rollback without preserving current source exclusions.
 
 ## Set up questions only when needed
 

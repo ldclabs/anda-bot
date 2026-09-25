@@ -57,10 +57,10 @@ The repository also contains:
 - The package uses Rust edition 2024 and workspace-managed dependencies.
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
-- Source builds track the KIP 2.0 stack (Brain 0.12.1 with its Memory Interface,
-  Nexus/DB/KIP 0.14). Until those releases exist, `[patch.crates-io]` points at
-  the sibling `anda-brain`, `anda-db` and `anda` checkouts. Keep a single DB/core
-  type identity and verify Cargo metadata before changing patches.
+- Source builds track the KIP 2.0 stack (Brain 0.13 with its Memory Interface,
+  Nexus/DB/KIP 0.14, Core/Engine 0.16). Until Brain 0.13 is published,
+  `[patch.crates-io]` points at the sibling `anda-brain` checkout. Keep a single
+  DB/core type identity and verify Cargo metadata before changing patches.
 - With the embedded host, Formation windows are Memory Interface `observe`
   intents keyed by conversation, window and attempt; keep that key stable so a
   retry replays its receipt, and keep recall's barrier bounded.

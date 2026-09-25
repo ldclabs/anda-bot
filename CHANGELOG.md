@@ -2,7 +2,7 @@
 
 All notable changes to Anda Bot.
 
-## [Unreleased]
+## [0.13.0] — 2026-09-25
 
 ### Added
 
@@ -10,20 +10,6 @@ All notable changes to Anda Bot.
 - **Recall barrier and session briefing**: `recall_memory` first waits up to 20 seconds for the conversation's own outstanding receipts, notes which are still processing or failed, and clears them only after a successful recall. A new session starts from the memory attention raised since the last one (host reads only, no model call; external IM senders never receive it).
 - **Memory attention and feedback tools**: `brain_attention` also returns due commitments and fired watches since the caller last looked, with a saved per-caller cursor, whether or not the inbox is configured. `brain_runtime_status` adds the Memory Interface descriptor. The new `brain_feedback` tool records the model's own report as attributed agent evidence; restricted memory modes and external IM users cannot use it.
 - **Three kinds of correction**: records offer **I said it wrong** (native supersession), **Things changed** (a new claim from now; temporal succession ends the old value) and **You recorded it wrong** (Memory Interface `revise` with `misrecorded`: recording repair from the original source, confirmed once processed). The browser change dialog asks which one applies, in all six languages.
-
-### Changed
-
-- **Deletion reports its erasure**: confirming a deletion runs a Memory Interface semantic `forget`, which also scrubs Brain's Formation and Recall transcripts that quoted the erased memory; the change keeps the ErasurePlan report (`completed`, `partial` or `blocked`). A deletion the native product path already confirmed is only reconciled.
-- **KIP 2.0 stack**: dependencies move to `anda_kip =0.14.0`, Nexus/DB 0.14 and Brain 0.12.1 on `cognitive-memory@2.0.0`, patched to sibling checkouts until those releases are published. Tests use a drafted option type instead of the removed `Preference` type.
-
-### Upgrade notes
-
-- A database written by the 2.1.0-draft releases (Brain 0.12.1 / Nexus 0.13.4) is not opened in place by this stack. Stop the daemon, back up the database, migrate it to a new database, and keep the old one read-only for rollback.
-
-## [0.13.0] — Unreleased
-
-### Added
-
 - **Configurable Brain runtime**: `brain.runtime_config` and the `BRAIN_RUNTIME_CONFIG` override load trusted runtime configuration before the first Space opens. Native attention, action, semantic, utility, trust, and learning bindings are validated at startup; ordinary Formation, Recall, and Maintenance remain available without this configuration. Added deployment examples and localized integration documentation.
 - **Durable attention inbox**: the browser Brain view now includes an Attention inbox, and the TUI adds `/brain inbox`, `/brain status`, pagination, clarification answers, and attributed statements. Models can select `brain_attention`, `brain_respond`, and `brain_runtime_status`. Access follows the authenticated caller's configured native principal, excludes untrusted external IM users, and preserves channel/thread routing. Browser responses persist locally before sending so retries reuse the same event key and text after a lost acknowledgement or reload.
 - **Recall budgets and persistent receipts**: `recall_memory` accepts an optional tokenizer, packet-token limit, and context-token limit. The host journal retains Recall delivery receipts and their conversation/turn associations, plus Formation submission windows and accepted Brain conversation IDs. `/brain formation <id>` reports the specific Formation conversation's progress; uncertain acceptance is retained for reconciliation instead of blindly resubmitting.
@@ -33,27 +19,31 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- **Deletion reports its erasure**: confirming a deletion runs a Memory Interface semantic `forget`, which also scrubs Brain's Formation and Recall transcripts that quoted the erased memory; the change keeps the ErasurePlan report (`completed`, `partial` or `blocked`). A deletion the native product path already confirmed is only reconciled.
 - **Brain adopts KIP 2.0**: HTTP requests use application arguments (`command` or `operations`, optional `execution`, and top-level `dry_run`) without a `kip` field; responses use KIP 2.0 envelopes and validate both overall and per-operation status. Graph batches declare independent execution explicitly. Ordinary Bot tools retain their existing `result`/`error` response format.
-- **Anda stack upgraded**: Core, Engine, Engine Server, and Web3 Client move to 0.16; AndaDB, its storage helpers, and KIP move to 0.13; Brain moves to 0.12; Cognitive Nexus requires 0.13.4; and COSE moves to 0.5.
-- **Release and build dependencies updated**: the `anda_bot` crate and lockfile now advertise 0.13.0, the minimum Rust version is 1.95, Brain uses its registry release by default, and Ratatui moves from the fork to a pinned upstream 0.30.2 revision. The sibling Brain source patch remains available as an opt-in override.
+- **Anda stack upgraded**: Core, Engine, Engine Server, and Web3 Client move to 0.16; AndaDB, its storage helpers, and KIP move to 0.14; Cognitive Nexus moves to 0.14 and Brain to 0.13 on `cognitive-memory@2.0.0`; and COSE moves to 0.5. Tests use a drafted option type instead of the removed `Preference` type.
+- **Release and build dependencies updated**: the `anda_bot` crate, lockfile, browser extension, docsite and website now advertise 0.13.0, the minimum Rust version is 1.95, Brain uses its registry release by default, `keyring` moves to 4.2.0 and `anydoc` to 0.2, and Ratatui moves from the fork to a pinned upstream 0.30.2 revision. The sibling Brain source patch remains available as an opt-in override.
 - **Browser extension modules simplified**: skills, bookmarks, quick prompts, voice sessions, recording, graph rendering, and browser actions now have focused modules and shared wire types. Both bookmark views use the same paging/folder state, and chat action/attachment presenters have dedicated coverage.
 - **Shared Rust runtime helpers consolidated**: locale detection, attachment path sanitization, launcher helpers, engine setup, and test infrastructure are shared. Optional streaming capabilities move into `StreamingChannel`, leaving the base channel interface focused on the operations used by the runtime.
 
 ### Fixed
 
 - **Chinese text in the TUI with upstream Ratatui**: inline scrollback now skips cells covered by a wide character before sending them to Crossterm, preventing trailing spaces from erasing Chinese text in messages and status output. Normal frame diffs retain their style-clearing and emoji handling.
-- **Legacy memory migration and startup readiness**: adopt Nexus 0.13.4 migration repairs and allow up to ten minutes for a newly spawned daemon to become ready while its KIP 1.x store migrates. An exited child still fails promptly instead of waiting for the timeout; original legacy task statuses and results remain available in `LegacyRecord`.
+- **Legacy memory migration and startup readiness**: adopt the Nexus migration repairs and allow up to ten minutes for a newly spawned daemon to become ready while its KIP 1.x store migrates. An exited child still fails promptly instead of waiting for the timeout; original legacy task statuses and results remain available in `LegacyRecord`.
 - **Recall failures and partial results**: failed recalls are marked as tool errors while preserving measured usage, and bounded Recall packets retain coverage and warning information. Small budgets may yield compact partial candidates; optional runtime status no longer implies that memories are missing when runtime bindings are unconfigured.
 - **Caller identity across Brain transports**: HTTP and WebSocket access retain the caller's bearer and Brain audience, subject, scope, and bounded expiry. Inbox queues and pending-response storage remain separated by caller instead of inheriting the global Bot identity.
 - **Workspace and approval context after switching channels**: TUI and browser requests keep live workspace, source, and language metadata synchronized, so native shell execution and approval prompts use the current request context.
 - **Brain graph reference rendering**: preserve canonical and foreign reference identities, distinguish literal endpoints from local Concepts, and use full schema/predicate references when loading or expanding the graph. Partial responses are tracked instead of being presented as a complete graph.
 - **Browser action dispatch**: action lookup uses a null-prototype table so names such as `constructor` cannot resolve to inherited object members; cancellation and settlement share one cleanup path.
 - **macOS development/test linking**: dependency packages use `opt-level = 1` to reduce compact-unwind table pressure against the linker's 16 MiB offset limit. `anda_bot` remains unoptimized, with debug information and panic unwinding preserved.
+- **Redundant copies of session ids**: `Xid` is `Copy` in Core 0.16.1, so session and thread ids are passed by value.
 
 ### Upgrade notes
 
 - Back up the memory database before the first KIP 2.0 startup. Migration runs before the gateway becomes ready and may take several minutes.
 - Re-export existing browser credentials with `anda browser token` and replace the token in extension settings to include the Brain audience. Custom Brain clients must adopt the KIP 2.0 application request and response formats above.
+- A 0.12.0 database is KIP 1.x and migrates automatically on first start; a copy of one written by Brain 0.11 (136 MB) opened in about three minutes.
+- Development builds of `main` between 0.12.0 and 0.13.0 may have written the database under the `cognitive-memory` 2.1.0 draft (Brain 0.12.1 / Nexus 0.13.4). This release does not open such a database in place: stop the daemon, back it up, rebuild it with Brain's `tools/migrate-draft-space`, and keep the old one read-only for rollback.
 
 ## [0.12.0] — 2026-08-08
 
