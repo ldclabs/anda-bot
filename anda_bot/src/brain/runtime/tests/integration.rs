@@ -146,12 +146,21 @@ async fn create(
     keys: &[Ed25519Key],
     config: Option<RuntimeConfig>,
 ) -> Brain {
+    create_with_models(store, keys, config, brain_models()).await
+}
+
+async fn create_with_models(
+    store: Arc<dyn ObjectStore>,
+    keys: &[Ed25519Key],
+    config: Option<RuntimeConfig>,
+    models: Arc<Models>,
+) -> Brain {
     let configured = config.is_some();
     let brain = Brain::new(
         store,
         BrainConfig {
             managers: keys.iter().map(Ed25519Key::pubkey).collect(),
-            models: brain_models(),
+            models,
             https_proxy: None,
             runtime_config: config,
         },
@@ -734,6 +743,13 @@ struct MemoryProductFixture {
 }
 
 async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
+    memory_product_fixture_with_models(text, brain_models()).await
+}
+
+async fn memory_product_fixture_with_models(
+    text: &str,
+    models: Arc<Models>,
+) -> MemoryProductFixture {
     use crate::brain::{
         FormationProvenance, FormationState, FormationSubmission, Journal, MemoryAccess,
         MemoryService, SourceMessageRef, activity::ActivityStore, mutation::MutationService,
@@ -768,7 +784,13 @@ async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
         Ed25519Key::new([93; 32]),
     ];
     let config = runtime_config(&keys, None);
-    let brain = create(Arc::new(InMemory::new()), &keys, Some(config.clone())).await;
+    let brain = create_with_models(
+        Arc::new(InMemory::new()),
+        &keys,
+        Some(config.clone()),
+        models,
+    )
+    .await;
     let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
     let space = brain.state.load_space("anda_bot", true).await.unwrap();
     let db = crate::test_support::memory_db("memory_product_host").await;
@@ -802,6 +824,7 @@ async fn memory_product_fixture(text: &str) -> MemoryProductFixture {
         window_start: 0,
         window_end: 1,
         submitted_at: anda_engine::unix_ms(),
+        observed_at: None,
         brain_conversation: None,
         state: FormationState::Pending,
         error: None,
@@ -1159,6 +1182,289 @@ async fn memory_change_reports_revision_conflict_and_stops_rereading_terminal_hi
 }
 
 #[tokio::test]
+async fn memory_changes_reject_expired_and_discarded_previews_without_admission() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    use anda_brain::product::ChangeKind;
+    for kind in [ChangeKind::Delete, ChangeKind::Misrecorded] {
+        let fixture = memory_product_fixture("Keep release notes short").await;
+        let before = fixture
+            .service
+            .record(fixture.owner, &fixture.id)
+            .await
+            .unwrap();
+        let id = "expired-change";
+        let preview = fixture
+            .service
+            .prepare_change(
+                fixture.owner,
+                ChangeRequest {
+                    operation_id: id.into(),
+                    record_id: fixture.id.clone(),
+                    expected_revision: before.revision,
+                    kind,
+                    new_value: None,
+                },
+            )
+            .await
+            .unwrap();
+        let key = anda_cognitive_nexus::content_digest(
+            &json!({"caller":fixture.owner.to_string(),"operation_id":id}),
+        )
+        .unwrap();
+        let path = format!("changes/{}", &key[7..]);
+        let mut stored: Value = fixture.journal.read(&path).await.unwrap().unwrap();
+        stored["view"]["expires_at"] = 0.into();
+        fixture.journal.write(&path, &stored).await.unwrap();
+
+        for expected_state in ["prepared", "discarded"] {
+            let error = fixture
+                .service
+                .commit_change(
+                    fixture.owner,
+                    id.into(),
+                    CommitRequest {
+                        preview_digest: preview.preview_digest.clone(),
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), "preview_expired");
+            let view = fixture.service.change(fixture.owner, id).await.unwrap();
+            assert_eq!(view.state, expected_state);
+            assert!(view.memory.is_none());
+            fixture
+                .service
+                .record(fixture.owner, &fixture.id)
+                .await
+                .unwrap();
+            fixture.mutations.recover().await.unwrap();
+        }
+        // A repeated discard stays harmless, and recovery has no stuck work.
+        fixture
+            .service
+            .discard_change(fixture.owner, id)
+            .await
+            .unwrap();
+        let reads = fixture.journal.read_count();
+        fixture.mutations.recover().await.unwrap();
+        assert_eq!(fixture.journal.read_count(), reads);
+        fixture.space.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn memory_changes_reject_revised_records_before_admission() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    use anda_brain::product::ChangeKind;
+    for kind in [ChangeKind::Delete, ChangeKind::Misrecorded] {
+        let fixture = memory_product_fixture("Keep release notes short").await;
+        let before = fixture
+            .service
+            .record(fixture.owner, &fixture.id)
+            .await
+            .unwrap();
+        let preview = fixture
+            .service
+            .prepare_change(
+                fixture.owner,
+                ChangeRequest {
+                    operation_id: "stale-change".into(),
+                    record_id: fixture.id.clone(),
+                    expected_revision: before.revision,
+                    kind,
+                    new_value: None,
+                },
+            )
+            .await
+            .unwrap();
+        command(
+            &fixture.space,
+            "TRANSITION :id TO \"retracted\"",
+            json!({"id":fixture.id}),
+        )
+        .await;
+        let error = fixture
+            .service
+            .commit_change(
+                fixture.owner,
+                "stale-change".into(),
+                CommitRequest {
+                    preview_digest: preview.preview_digest,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "revision_conflict");
+        let view = fixture
+            .service
+            .change(fixture.owner, "stale-change")
+            .await
+            .unwrap();
+        assert_eq!(view.state, "prepared");
+        assert!(view.memory.is_none());
+        fixture
+            .service
+            .discard_change(fixture.owner, "stale-change")
+            .await
+            .unwrap();
+        fixture.space.product_record(&fixture.id).await.unwrap();
+        fixture.space.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn memory_deletion_rejects_new_dependents_outside_its_preview() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    let fixture = memory_product_fixture("Keep release notes short").await;
+    let record = fixture.space.product_record(&fixture.id).await.unwrap();
+    let preview = fixture
+        .service
+        .prepare_change(
+            fixture.owner,
+            ChangeRequest {
+                operation_id: "changed-closure".into(),
+                record_id: fixture.id.clone(),
+                expected_revision: record.revision.to_string(),
+                kind: anda_brain::product::ChangeKind::Delete,
+                new_value: None,
+            },
+        )
+        .await
+        .unwrap();
+    let created = command(&fixture.space, r#"MUTATE {
+        CREATE CONCEPT ?other {TYPE "Person" NAME "Another speaker"}
+        ASSERT ?additional (:subject,"prefers",:object) {by:?other,mode:"stated",evidence: :input}
+    }"#, json!({"subject":record.subject["id"],"object":record.object["id"],"input":record.sources[0].evidence_id})).await;
+    let additional = created["handles"]["additional"].as_str().unwrap();
+    assert_eq!(
+        fixture
+            .space
+            .product_record(&fixture.id)
+            .await
+            .unwrap()
+            .revision,
+        record.revision
+    );
+    let error = fixture
+        .service
+        .commit_change(
+            fixture.owner,
+            "changed-closure".into(),
+            CommitRequest {
+                preview_digest: preview.preview_digest,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "revision_conflict");
+    fixture.space.product_record(&fixture.id).await.unwrap();
+    fixture.space.product_record(additional).await.unwrap();
+    assert_eq!(
+        fixture
+            .space
+            .product_change(fixture.owner, "changed-closure")
+            .await
+            .unwrap()
+            .state,
+        "prepared"
+    );
+    fixture.space.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
+    use crate::brain::mutation::{ChangeRequest, CommitRequest};
+    use anda_core::{AgentOutput, BoxPinFut, CompletionRequest};
+    use anda_engine::{
+        extension::note::{NoteArgs, NoteTool, load_notes},
+        model::{CompletionFeaturesDyn, Model},
+    };
+    #[derive(Debug)]
+    struct Done;
+    impl CompletionFeaturesDyn for Done {
+        fn model_name(&self) -> String {
+            "repair-test".into()
+        }
+        fn completion(
+            &self,
+            _request: CompletionRequest,
+        ) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            Box::pin(async {
+                Ok(AgentOutput {
+                    content: "done".into(),
+                    ..Default::default()
+                })
+            })
+        }
+    }
+    let models = Arc::new(Models::default());
+    models.set_model(Model::new(Arc::new(Done)));
+    let fixture = memory_product_fixture_with_models("Keep release notes short", models).await;
+    let ctx = fixture
+        .engine
+        .ctx_with(
+            fixture.owner,
+            crate::engine::AndaBot::NAME,
+            "",
+            RequestMeta::default(),
+        )
+        .unwrap();
+    let set_notes = || async {
+        NoteTool::new().call(ctx.child_base(NoteTool::NAME).unwrap(),
+            serde_json::from_value::<NoteArgs>(json!({"op":"set","items":[{"id":"preference","content":"Old, incorrect preference"}]})).unwrap(), vec![]).await.unwrap();
+    };
+    set_notes().await;
+    let before = fixture
+        .service
+        .record(fixture.owner, &fixture.id)
+        .await
+        .unwrap();
+    let epoch = fixture.space.product_epoch();
+    let preview = fixture
+        .service
+        .prepare_change(
+            fixture.owner,
+            ChangeRequest {
+                operation_id: "repair-notes".into(),
+                record_id: fixture.id.clone(),
+                expected_revision: before.revision,
+                kind: anda_brain::product::ChangeKind::Misrecorded,
+                new_value: None,
+            },
+        )
+        .await
+        .unwrap();
+    let commit = || {
+        fixture.service.commit_change(
+            fixture.owner,
+            "repair-notes".into(),
+            CommitRequest {
+                preview_digest: preview.preview_digest.clone(),
+            },
+        )
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let view = commit().await.unwrap();
+            if view.state == "confirmed" {
+                break;
+            }
+            assert_eq!(view.state, "committing", "{view:?}");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("recording repair completes");
+    assert_eq!(fixture.space.product_epoch(), epoch);
+    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
+    // A settled replay must not erase Notes written after the repair.
+    set_notes().await;
+    assert_eq!(commit().await.unwrap().state, "confirmed");
+    assert_eq!(load_notes(&ctx).await.unwrap().items.len(), 1);
+    fixture.space.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn memory_watch_pages_ignore_cancelled_history_and_bind_cursors_to_callers() {
     use crate::brain::{Journal, MemoryService, product::WatchQuery};
     let keys = [
@@ -1281,6 +1587,7 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
         window_start: 0,
         window_end: messages.len(),
         submitted_at: 1,
+        observed_at: None,
         brain_conversation: None,
         state: FormationState::Pending,
         error: None,
@@ -1317,10 +1624,13 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
         }),
     };
     let timestamp = Some("2026-09-22T00:00:00.000Z".to_string());
-    let submit = |messages: Vec<Message>| {
+    let submit = |messages: Vec<Message>, timestamp: String| {
         let client = client.clone();
-        let timestamp = timestamp.clone();
-        let submission = window(&messages);
+        let mut submission = window(&messages);
+        submission.submitted_at = chrono::DateTime::parse_from_rfc3339(&timestamp)
+            .unwrap()
+            .timestamp_millis() as u64;
+        let timestamp = Some(timestamp);
         async move {
             client
                 .submit_formation_window(
@@ -1335,7 +1645,9 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
         }
     };
     let first = vec![message("I prefer short release notes")];
-    let accepted = submit(first.clone()).await.unwrap();
+    let accepted = submit(first.clone(), timestamp.clone().unwrap())
+        .await
+        .unwrap();
     let receipt = accepted.receipt_ref.clone().expect("an observe receipt");
     assert!(accepted.brain_conversation.is_some());
     assert_eq!(accepted.attempt, 0);
@@ -1352,22 +1664,40 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
     row.brain_conversation = None;
     row.state = FormationState::Unknown;
     journal.write(key, &row).await.unwrap();
-    let replayed = submit(first.clone()).await.unwrap();
+    // The runner supplies a fresh wall-clock time on every retry. It must
+    // not change the staged bytes or provenance of this same attempt.
+    let replayed = submit(first.clone(), "2026-09-22T00:01:00.000Z".into())
+        .await
+        .unwrap();
     assert_eq!(replayed.receipt_ref, Some(receipt.clone()));
     assert_eq!(replayed.brain_conversation, accepted.brain_conversation);
     assert_eq!(replayed.attempt, 0);
+    assert_eq!(replayed.submitted_at, accepted.submitted_at);
+    assert_eq!(replayed.observed_at, accepted.observed_at);
+    assert_eq!(
+        replayed.provenance.as_ref().unwrap().input_digest,
+        accepted.provenance.as_ref().unwrap().input_digest
+    );
 
     // An interrupted shorter window, retried with more messages, is a new
     // submission under the next attempt's key.
     row.window_end = 1;
     journal.write(key, &row).await.unwrap();
-    let longer = submit(vec![
-        message("I prefer short release notes"),
-        message("and bullet points"),
-    ])
+    let longer = submit(
+        vec![
+            message("I prefer short release notes"),
+            message("and bullet points"),
+        ],
+        "2026-09-22T00:02:00.000Z".into(),
+    )
     .await
     .unwrap();
     assert_eq!(longer.attempt, 1);
+    assert!(longer.submitted_at > accepted.submitted_at);
+    assert_eq!(
+        longer.observed_at.as_deref(),
+        Some("2026-09-22T00:02:00.000Z")
+    );
     assert_ne!(longer.receipt_ref, Some(receipt.clone()));
 
     // Recall waits, bounded, on the conversation's own receipts and says

@@ -2,6 +2,13 @@
 
 All notable changes to Anda Bot.
 
+## [Unreleased]
+
+### Fixed
+
+- **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work. Completed recording repairs explicitly clear Bot Notes even when Brain's product epoch is unchanged.
+- **Formation replay timestamps**: observed windows retain their original source time and input digest across retries, so a fresh runner timestamp does not create a second Formation for unchanged messages.
+
 ## [0.13.0] — 2026-09-25
 
 ### Added

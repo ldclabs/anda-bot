@@ -59,29 +59,34 @@ impl MemoryAccess {
             .await?
             .unwrap_or(0);
         if saved != epoch {
-            let engine = self
-                .engine
-                .get()
-                .ok_or("Memory Notes controller is unavailable")?;
-            let ctx = engine.ctx_with(
-                self.owner,
-                crate::engine::AndaBot::NAME,
-                "",
-                RequestMeta::default(),
-            )?;
-            NoteTool::new()
-                .call(
-                    ctx.child_base(NoteTool::NAME)?,
-                    NoteArgs {
-                        op: Some("set".into()),
-                        items: Some(vec![]),
-                    },
-                    vec![],
-                )
-                .await?;
+            self.reset_notes_locked().await?;
             self.journal.write("notes-epoch/v1", &epoch).await?;
         }
         Ok(epoch)
+    }
+
+    /// Recording repairs change the Nexus without advancing the product
+    /// epoch, so their completion must explicitly clear Bot Notes too.
+    /// The caller holds `gate` across the change and this reset.
+    pub(super) async fn reset_notes_locked(&self) -> Result<(), BoxError> {
+        let engine = self.keep_engine_alive()?;
+        let ctx = engine.ctx_with(
+            self.owner,
+            crate::engine::AndaBot::NAME,
+            "",
+            RequestMeta::default(),
+        )?;
+        NoteTool::new()
+            .call(
+                ctx.child_base(NoteTool::NAME)?,
+                NoteArgs {
+                    op: Some("set".into()),
+                    items: Some(vec![]),
+                },
+                vec![],
+            )
+            .await?;
+        Ok(())
     }
     /// Read-only contexts must not perform a pending Notes migration themselves.
     pub async fn coherent_epoch_locked(&self) -> Result<u64, BoxError> {

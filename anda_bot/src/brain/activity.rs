@@ -820,6 +820,7 @@ mod tests {
             window_start: 0,
             window_end: 1,
             submitted_at: 1,
+            observed_at: None,
             brain_conversation: None,
             state: FormationState::Unknown,
             error: None,

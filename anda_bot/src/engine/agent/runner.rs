@@ -713,6 +713,7 @@ impl SessionRunner {
                     window_start: self.session.submit_formation_at.load(Ordering::SeqCst) as usize,
                     window_end: next_submit_formation_at,
                     submitted_at: now_ms,
+                    observed_at: None,
                     brain_conversation: None,
                     state: crate::brain::FormationState::Pending,
                     error: None,

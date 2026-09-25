@@ -88,6 +88,9 @@ pub struct FormationSubmission {
     pub window_start: usize,
     pub window_end: usize,
     pub submitted_at: u64,
+    /// The source time captured for this observe attempt, reused on replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<String>,
     pub brain_conversation: Option<u64>,
     pub state: FormationState,
     pub error: Option<String>,
@@ -386,7 +389,13 @@ impl Journal {
         input: anda_brain::types::FormationInputRef<'_>,
     ) -> Result<FormationSubmission, BoxError> {
         use anda_kip::KipErrorCode;
+        let requested_at = requested.submitted_at;
         let mut submission = requested.clone();
+        submission.observed_at = input
+            .timestamp
+            .clone()
+            .or_else(|| anda_engine::rfc3339_datetime(submission.submitted_at));
+        let requested_time = submission.observed_at.clone();
         if !self.create(key, &submission).await? {
             let mut existing: FormationSubmission = self
                 .read(key)
@@ -405,13 +414,36 @@ impl Journal {
             submission = FormationSubmission {
                 attempt: existing.attempt + u32::from(rejected),
                 state: FormationState::Pending,
+                submitted_at: if rejected {
+                    requested.submitted_at
+                } else {
+                    existing.submitted_at
+                },
+                observed_at: if rejected {
+                    requested_time.clone()
+                } else {
+                    existing
+                        .observed_at
+                        .or_else(|| anda_engine::rfc3339_datetime(existing.submitted_at))
+                },
                 ..requested
             };
-            self.write(key, &submission).await?;
         }
         let mut replaced = false;
         let outcome = loop {
-            match super::memory::observe_window(host, &submission, &input).await {
+            let timestamp = submission.observed_at.clone();
+            let replay_input = anda_brain::types::FormationInputRef {
+                messages: input.messages,
+                context: input.context,
+                timestamp: &timestamp,
+            };
+            if let Some(provenance) = &mut submission.provenance {
+                provenance.input_digest = Some(anda_cognitive_nexus::content_digest(
+                    &serde_json::to_value(&replay_input)?,
+                )?);
+            }
+            self.write(key, &submission).await?;
+            match super::memory::observe_window(host, &submission, &replay_input).await {
                 // The key was bound to other bytes (an interrupted, shorter
                 // window): this window is a new submission.
                 Err(error)
@@ -422,7 +454,8 @@ impl Journal {
                 {
                     replaced = true;
                     submission.attempt += 1;
-                    self.write(key, &submission).await?;
+                    submission.submitted_at = requested_at;
+                    submission.observed_at = requested_time.clone();
                 }
                 outcome => break outcome,
             }
@@ -626,6 +659,7 @@ mod tests {
             window_start: 0,
             window_end: 2,
             submitted_at: 1,
+            observed_at: None,
             brain_conversation: None,
             state: FormationState::Pending,
             error: None,
