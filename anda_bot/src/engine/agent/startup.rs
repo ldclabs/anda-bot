@@ -198,7 +198,7 @@ impl AndaBot {
         let session_request_meta = SessionRequestMeta::new(meta.clone());
         // A fresh id when the conversation has no thread: the zero default id
         // would collide across resumed conversations in the session map.
-        let sess_id = match conversation.thread.clone() {
+        let sess_id = match conversation.thread {
             Some(thread) => thread,
             None => Xid::new(),
         };
@@ -215,7 +215,7 @@ impl AndaBot {
             return Ok(());
         }
 
-        conversation.thread = Some(sess_id.clone());
+        conversation.thread = Some(sess_id);
         conversation.status = ConversationStatus::Working;
         conversation.updated_at = now_ms;
         self.persist_conversation_state(&conversation).await?;

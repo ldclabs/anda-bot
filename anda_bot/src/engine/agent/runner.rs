@@ -454,7 +454,7 @@ impl SessionRunner {
         ancestors.push(self.conversation._id);
         let mut child_conversation = Conversation {
             user: self.conversation.user,
-            thread: Some(self.session.id.clone()),
+            thread: Some(self.session.id),
             ancestors: Some(ancestors),
             period: now_ms / 3600 / 1000,
             created_at: now_ms,
@@ -1831,7 +1831,7 @@ mod tests {
             control: Default::default(),
             background_controls: Default::default(),
             memory_policy: Default::default(),
-            id: session_id.clone(),
+            id: session_id,
             caller: "caller".to_string(),
             workspace: "/tmp".to_string(),
             source_key: "test".to_string(),

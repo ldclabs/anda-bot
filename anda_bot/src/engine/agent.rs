@@ -381,7 +381,7 @@ impl AndaBot {
     }
 
     fn insert_session(&self, task: Arc<Session>) {
-        self.inner.sessions.write().insert(task.id.clone(), task);
+        self.inner.sessions.write().insert(task.id, task);
     }
 
     fn get_session(&self, key: &Xid) -> Option<Arc<Session>> {
@@ -875,7 +875,7 @@ impl Agent<AgentCtx> for AndaBot {
 
         let mut sess_id = current_conversation
             .as_ref()
-            .and_then(|conv| conv.thread.clone())
+            .and_then(|conv| conv.thread)
             .unwrap_or_else(Xid::new);
         let mut detached_existing_session = false;
         let mut detached_conversation_id = current_conversation_id.unwrap_or_default();
@@ -1145,7 +1145,7 @@ impl Agent<AgentCtx> for AndaBot {
 
             let mut conv = Conversation {
                 user: *caller,
-                thread: Some(sess_id.clone()),
+                thread: Some(sess_id),
                 messages: vec![],
                 ancestors,
                 resources: vec![],
