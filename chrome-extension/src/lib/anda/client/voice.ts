@@ -263,7 +263,7 @@ export function isAudioResource(resource: Resource): boolean {
   )
 }
 
-export async function playAudioArtifact(resource: Resource): Promise<void> {
+export async function playAudioArtifact(resource: Resource, signal?: AbortSignal): Promise<void> {
   if (!resource.blob) {
     throw new Error('Audio artifact is missing inline data.')
   }
@@ -276,12 +276,24 @@ export async function playAudioArtifact(resource: Resource): Promise<void> {
         return
       }
       settled = true
+      signal?.removeEventListener('abort', abort)
+      audio.onended = null
+      audio.onerror = null
       if (error) {
         reject(error instanceof Error ? error : new Error(String(error)))
       } else {
         resolve()
       }
     }
+    const abort = () => {
+      audio.pause()
+      settle(new DOMException('Speech stopped', 'AbortError'))
+    }
+    if (signal?.aborted) {
+      abort()
+      return
+    }
+    signal?.addEventListener('abort', abort, { once: true })
     audio.onended = () => settle()
     audio.onerror = () => settle(new Error(getMessage('audioPlaybackFailed')))
     void audio.play().catch(settle)

@@ -1,6 +1,6 @@
 # Anda Bot 桌面客户端技术方案
 
-调研日期：2026-09-26。状态：已交付本机可安装的 Electron 首版；实际范围、验证与后续项见[实施记录](desktop-client-implementation.md)。下文保留设计依据和完整演进路线，不表示所有路线项均已实现。
+调研及本次更新日期：2026-09-26。状态：已交付 Electron 首版，并继续实现协议、浏览器、终端、Git、音频自检与更新协调；实际范围与验证见[实施记录](desktop-client-implementation.md)，原后续规划见[第 10 节](#10-首版之后的实施范围与验收边界)，最新落地范围见[第 11 节](#11-后续工作台的落地状态)。下文保留设计依据和完整演进路线，不表示所有路线项均已实现。
 
 **确定采用 Electron + Svelte 5 + TypeScript，继续使用独立的 Rust Anda daemon。整个桌面 UI/UX 以 Codex 为主要参考，覆盖布局、导航、聊天、输入、审批、工作面板、设置和系统交互。** 本文是该决定下的实施方案，不再保留 Tauri 对照选型或回退路线。
 
@@ -8,7 +8,7 @@
 
 选型依据有两部分：本机 Codex 安装包已确认使用 Electron；用户在此前 anda-app 的 Tauri 开发中遇到较多细节及系统集成问题。后者是本项目已有实践反馈，不推导为对所有 Tauri 应用的评价。Anda 桌面优先保证完整的系统集成和交互质量，接受 Electron 的运行时分发成本。
 
-产品采用 Anda 自有品牌、内容和记忆能力；Codex 是整体交互参考。首版交付一个完整桌面工作台，先发布 macOS，Windows 从第一阶段参与开发与验收，Linux 后续支持。内嵌浏览器、交互终端和 Git 工作区能力沿用同一工作台设计，分阶段接入。
+产品采用 Anda 自有品牌、内容和记忆能力；Codex 是整体交互参考。当前首版已交付 macOS ARM64 聊天工作台；Windows 已有打包配置，尚未完成原生构建与实机验收，Linux 后续支持。内嵌浏览器、交互终端和 Git 工作区能力沿用同一工作台设计，分阶段接入。
 
 ## 1. 调研范围与结论依据
 
@@ -99,17 +99,17 @@ Codex 的 app-server-daemon README 将该管理流程标为实验性，并主要
 | 当前情况 | 桌面产品需要补的内容 |
 | --- | --- |
 | browser WS 使用 `{id, method, params}`，params 是位置参数，错误通常是字符串 | 稳定的版本、类型、结构化错误和能力声明；不能宣称当前线协议已是完整 JSON-RPC 2.0 |
-| `capabilities` 当前主要返回 transcription/tts 格式 | 新增协议与产品能力协商，明确不可用功能及原因 |
+| `capabilities` 已返回 transcription/tts 格式及基础 `desktop` 能力 | 继续增加事件、持久回执等独立能力声明，明确不可用功能及原因 |
 | 对话结果主要通过增量轮询获取，基础间隔 3 秒 | 对话变化、审批、完成状态及时推送，断线后以快照恢复 |
 | 普通 `agent_run` 会创建独立 session runner，但 WS 断线会取消尚在等待的 RPC task | 区分“RPC 未确认”和“任务已受理”；避免无条件重发产生第二次执行 |
 | source 与 conversation、session、compaction child 有不同生命周期 | 为桌面聊天提供稳定导航身份，不把一次 conversation ID 当永久聊天 ID |
-| 多个模块依赖 `chrome.storage`、`chrome.runtime`、全局 `andaClient` | 提取平台适配层和可注入客户端；不能把整个扩展目录直接搬进 WebView |
+| 已通过 `UiClient` / `ClientPlatform` 复用扩展主要 UI；浏览器执行器仍依赖 Chrome API | 保留平台边界，为 Electron 实现浏览器执行器；共享包提取按实际需要进行 |
 | 审批等待器当前在进程内；历史卡片可持久化 | 重连可以查询当前等待项；daemon 重启后不能仅凭历史 pending 卡恢复授权 |
 | 当前模型选择操作涉及运行时共享模型状态 | 首版明确为实例级设置，不在 UI 中暗示已有独立的每聊天模型配置 |
-| 已有配置写锁、备份和原子写入 | 多窗口编辑还需要 revision/hash 冲突检查；新管理入口显式限定 owner |
+| 已有配置写锁、备份、原子写入及 owner-only/revision 检查 | 新协议适配继续复用同一授权与条件写入合同，不另开绕过路径 |
 | 已有 daemon 自动更新及 launcher 安装机制 | 新桌面包必须明确安装和更新所有权，避免两个更新器替换同一运行时 |
 
-现有 `DaemonApi` 是好的提取起点，但并非所有 UI 都已依赖它。例如记忆产品客户端仍有自己的 HTTP/设置依赖，Dashboard 直接引入 side-panel singleton；这些需要逐项适配。
+首版已通过平台适配接入记忆、配置等原有独立 HTTP/设置路径，并替换共享视图的 side-panel singleton 依赖。后续协议演进继续复用这些入口，不要求先把所有 UI 改成同一种客户端抽象。
 
 ### 2.3 Chrome 扩展到桌面端的具体迁移映射
 
@@ -124,7 +124,7 @@ Codex 的 app-server-daemon README 将该管理流程标为实验性，并主要
 | [voice-session.svelte.ts](/Users/zensh/git/github.com/ldclabs/anda-bot/chrome-extension/src/lib/anda/client/voice-session.svelte.ts:1)、[service_worker.ts](/Users/zensh/git/github.com/ldclabs/anda-bot/chrome-extension/src/service_worker.ts:1) | 保留 daemon 转写/TTS 合同；扩展继续承担 Chrome 页面能力 | 浏览器页面音频、`chrome.tts`、tab/debugger 不能当桌面能力直接搬运 |
 | 现有 channel/poll-conversation/voice/workspace/resources 测试 | 作为共享客户端迁移的行为回归基础 | 补 Desktop adapter 和 Electron E2E；不只测试新桌面能启动 |
 
-迁移前按扩展当前功能建立“已复用、桌面适配、浏览器专属、待实现”清单。每项都对应现有入口或代码，桌面首版不得静默丢掉历史续接、审批、附件、书签、技能、记忆和配置等既有能力。TUI 只验证后端变化没有破坏既有合同，不承担这份功能清单的定义。
+后续迁移继续按扩展当前功能维护“已复用、桌面适配、浏览器专属、待实现”清单。每项都对应现有入口或代码，桌面不得静默丢掉历史续接、审批、附件、书签、技能、记忆和配置等既有能力。TUI 只验证后端变化没有破坏既有合同，不承担这份功能清单的定义。
 
 ## 3. 已确定的技术栈
 
@@ -250,7 +250,7 @@ Electron 提供这些 API，但各 OS 的行为仍需逐项验收；不假设框
 
 ### 4.5 目录与依赖边界
 
-以下为拟新增/迁移路径，按工作包创建：
+以下为目标目录示意，并非当前目录清单。首版共享源码仍在 `chrome-extension`，IPC 合同位于 `desktop/src/shared/contract.ts`；Main 先按实际职责拆分，后续按工作包演进：
 
 ```text
 desktop/
@@ -279,19 +279,19 @@ anda_bot/src/app_api/
   submissions.rs            提交回执及不确定结果对账
 ```
 
-`desktop` 与 `packages/*` 加入 pnpm workspace。本方案不新增 Tauri Rust 包；CLI/daemon 继续由现有 Cargo workspace 构建，Rust 新依赖仍在根 `Cargo.toml` 管理。初期 `app_api` 留在 `anda_bot` 包内，避免为了桌面将整个 Engine 改成 Node addon 或另拆大型库。
+`desktop` 已加入 pnpm workspace；`packages/*` 待实际提取共享包时加入。本方案不新增 Tauri Rust 包；CLI/daemon 继续由现有 Cargo workspace 构建，Rust 新依赖仍在根 `Cargo.toml` 管理。拟议 `app_api` 留在 `anda_bot` 包内，避免为了桌面将整个 Engine 改成 Node addon 或另拆大型库。
 
 ## 5. 应用协议的渐进演进
 
 ### 5.1 兼容策略
 
-原型阶段：实现 Desktop 版 `DaemonApi`，连接原有 WS，复用现有增量轮询和普通聊天流程。现有扩展继续工作。
+当前本地首版：已实现 Desktop 客户端适配，连接原有 WS，复用现有增量轮询和普通聊天流程。现有扩展继续工作。
 
-可发布版本：新增 **拟议端点 `/ws/app/v1`**，使用标准 JSON-RPC 2.0 envelope、命名参数、结构化错误。它与旧入口共用业务实现，不重写 Engine。老 endpoint 的方法名、位置参数和 `ToolResponse` wire format 保留。
+后续协议版本：新增 **拟议端点 `/ws/app/v1`**，使用标准 JSON-RPC 2.0 envelope、命名参数、结构化错误。它与旧入口共用业务实现，不重写 Engine。老 endpoint 的方法名、位置参数和 `ToolResponse` wire format 保留。
 
 优先把聊天受理、读取、订阅、审批与系统状态做成明确方法；技能、书签、记忆等已有 API 先通过受限适配复用，不一次性翻译所有工具。Desktop IPC 只暴露需要的业务方法及允许列表，不把任意 shell、任意 URL 或通用无约束 `tool_call` 暴露给页面。
 
-### 5.2 首版建议合同
+### 5.2 新应用协议的建议合同
 
 表中的新方法名是方案设计，不是仓库当前已实现的 API。
 
@@ -347,7 +347,7 @@ anda_bot/src/app_api/
 - 初版不需要持久化全部传输事件。断线后用快照、历史和提交回执恢复；如果保留小型内存 replay buffer，游标过期也走快照。
 - 同一 Main 为多个窗口维护一条连接，按窗口订阅分发；事件合并节流与长列表虚拟化一起验证。
 
-**消息变化推送不等于 token streaming。** 本次核实了 Anda runner 通过 `completion_iter` 驱动和保存状态，没有验证上游 Engine 的逐 token hook 合同。首版承诺及时反映已保存的消息/工具/审批变化。需要打字机输出时，先验证 Engine/provider 事件，再单独增加 `textDelta` 能力和稳定 item ID；最终落库内容覆盖临时 delta。
+**消息变化推送不等于 token streaming。** 本次核实了 Anda runner 通过 `completion_iter` 驱动和保存状态，没有验证上游 Engine 的逐 token hook 合同。事件协议首批覆盖已保存的消息/工具/审批变化。需要打字机输出时，先验证 Engine/provider 事件，再单独增加 `textDelta` 能力和稳定 item ID；最终落库内容覆盖临时 delta。
 
 ### 5.5 不确定提交与重复执行
 
@@ -357,7 +357,7 @@ WS request id 只用于关联一次连接中的响应，不能作为跨连接幂
 
 关键是消除“runner 已入队但回执未保存”的窗口：需要把稳定请求键带入持久输入/会话受理路径，或者用可恢复的提交 journal 先记录意图，再协调入队及结果关联。仅在 WS handler 外加缓存不能解决这个问题。对无法判定的崩溃窗口保留 `unknown`，查询和恢复不得再次无条件执行。
 
-该合同只保证重复提交控制，不宣称所有外部工具副作用都具有 exactly-once 语义。原型阶段尚未实现回执时，提交断线应显示“发送状态待确认”，读取会话核对，禁止自动重发。
+该合同只保证重复提交控制，不宣称所有外部工具副作用都具有 exactly-once 语义。当前首版只有 Main 本地提交 journal，尚无服务端持久回执；提交断线显示待确认状态，读取会话核对，禁止自动重发。
 
 ### 5.6 审批与取消
 
@@ -503,7 +503,7 @@ Codex 是整体参考对象，直接借鉴其以项目/聊天组织工作、围�
 - **凭证复用**：使用现有 identity 存储和 caller 映射。过渡原型可由 Main 执行已有 `anda browser token --json`，捕获输出到内存；该 token 当前带 `chrome_extension` 标识和宽 scope，不能视为已具桌面最小权限。
 - **正式凭证**：增加桌面专用签发入口和可执行的权限规则，使用短期凭证及续期；仅把 claim 改成 `desktop` 并不会自动实现权限隔离。私钥不出身份模块，bearer 不进日志、renderer 持久化、链接或进程参数。
 - **实例绑定**：Main 使用可信的本地安装路径和配置发现 daemon，验证握手中的实例/home 关联；端口占用不自动接管、不盲目杀进程。不得接受 renderer 任意指定服务 URL 并附上 owner token。
-- **管理授权**：新配置、生命周期、安装更新入口显式限定 local owner。现有配置 HTTP handler 使用通用认证检查，不能因桌面只有 owner 界面就假设所有网络入口天然 owner-only。
+- **管理授权**：现有配置 HTTP handler 已增加 owner 检查和 revision 冲突检查。后续配置、生命周期、安装更新入口继续显式限定 local owner，不能因桌面只有 owner 界面就假设所有网络入口天然 owner-only。
 - **WS 鉴权**：每个请求和持续订阅投递都遵守凭证期限与授权变化。浏览器来源请求校验允许的 Origin；本机 Main 连接可无 Origin，但仍需凭证。不能用 CORS 代替 WebSocket 鉴权。
 - **页面权限**：主窗口仅加载打包资源，限制 IPC command、导航和外链；Markdown/附件/工具输出视为不可信内容。远端页面或 HTML 预览使用无应用 IPC 的独立隔离表面。
 - **文件访问**：文件选择后使用受限句柄/资源 ID；Main/daemon 校验规范化路径和 workspace grant。大附件避免在 IPC 中反复复制 base64；新增流式传输前保持已验证的大小上限。
@@ -574,9 +574,9 @@ daemon 自带 updater 在桌面托管模式不安装或覆盖桌面 runtime；�
 
 ## 9. 实施顺序、交付物和验收
 
-### 9.1 工作包与阶段门槛
+### 9.1 原始工作包与阶段门槛
 
-Electron 已定案，P0 只验证工程和产品基础。先做一个可运行的聊天纵切面，再完善协议、页面和发行，不先构建大量空模块。macOS/Windows 从 P0 同时冒烟，macOS 先开放内测。
+以下保留实施前的完整计划及估算，用于对照覆盖范围，不是首版完成后的剩余工期。当前已经交付聊天、管理页面及 macOS 本地安装包；服务端协议可靠性、Windows 实测和正式发行仍有缺口，后续顺序以第 10 节为准。原计划要求 macOS/Windows 同时冒烟，目前只完成 macOS 验证。
 
 | 阶段 | 单工程师估算 | 交付物 | 退出条件 |
 | --- | --- | --- | --- |
@@ -586,9 +586,9 @@ Electron 已定案，P0 只验证工程和产品基础。先做一个可运行�
 | P3：Anda 能力及系统集成 | 7–10 人日 | Memory/Skills/Bookmarks/Automations、配置冲突处理、附件/音频、旧 launcher 迁移 | 核心功能不依赖 Chrome；系统集成矩阵在两平台有实测记录 |
 | P4：发行、升级与稳定性 | 6–9 人日 | 签名安装包、更新责任、维护态/排空或明确手动停止限制、失败恢复、性能基线 | 旧安装和新安装升级成功；Windows 完整验收；无隐式任务中断 |
 
-本版范围约 **30–46 人日**，加集成与修复余量建议按 **8–12 周**安排。估算包含比最初草案更完整的 UI/UX、自动化页面和系统集成，不包含证书申请/外部审核、上游逐 token API 大改、完整内嵌浏览器自动化、交互终端、Git worktree、远程主机或 Linux 产品化。这些功能保持同一设计方向，单独排期。
+原始整体估算为 **30–46 人日**，加集成与修复余量按 **8–12 周**安排。估算包含 UI/UX、自动化页面和系统集成，不包含证书申请/外部审核、上游逐 token API 大改、完整内嵌浏览器自动化、交互终端、Git worktree、远程主机或 Linux 产品化，不能用于推算当前剩余工作量。
 
-第一批变更建议依次提交：桌面骨架和构建配置 → 一条经 preload 的聊天链路 → 共享客户端提取 → 协议受理/恢复 → 完整 AppShell 与页面。每批都保留可运行状态，不一次性改动所有前后端模块。
+后续每批变更继续保留可运行、可安装状态；共享源码提取与新协议交付分别验收，避免为目录重组扩大一次变更的范围。
 
 ### 9.2 必须覆盖的合同与恢复场景
 
@@ -613,7 +613,7 @@ Electron 已定案，P0 只验证工程和产品基础。先做一个可运行�
 
 ### 9.4 检查命令与 CI
 
-以下桌面脚本为拟新增合同，尚不存在，也未执行：
+以下桌面脚本已存在于 `desktop/package.json`；首版已完成本机 check、test、Electron E2E、build 和 macOS 打包验证，具体结果及限制见[实施记录](desktop-client-implementation.md)。这不代表 Windows 或后续新增模块已通过检查。
 
 ```bash
 pnpm --dir desktop dev
@@ -635,3 +635,129 @@ pnpm --dir desktop package
 仅修改本技术方案，没有安装依赖、实现桌面客户端、修改 Cargo 文件或操作实际 daemon，也没有提交 Git commit。没有读取旧 anda-app 的代码；Tauri 实践反馈来自用户说明。
 
 本次执行文档差异、空白、链接/行号和结构检查。构建、运行时测试、桌面原型、完整 Codex UI 截图测量、OS 集成测试与性能测量尚未执行，属于后续实施交付；不能把方案中的目标和拟议接口当成已有能力。
+
+## 10. 首版之后的实施范围与验收边界
+
+### 10.1 当前基线与可交付范围
+
+本节保留首版交付后的规划，以 `codex/desktop-client` 的 `8f04cd7e` 为当时实现基线；最新落地情况见第 11 节。**服务端推送、可靠提交、内嵌浏览器、交互终端、Git/worktree 都可以继续开发，并在当前 macOS 上验证主要软件流程。** Windows 和音频也能继续补实现与测试，但最终平台/设备验收需要对应环境。当前“尚未完成”包含未开发功能和未做实测两类情况，不应全部解释为无法实现。
+
+| 后续项 | 当前已有基础 | 可以继续交付 | 验收边界 |
+| --- | --- | --- | --- |
+| 服务端推送与可靠提交 | 增量轮询、会话持久化、本地提交 journal | 事件订阅、快照恢复、服务端持久回执、重连对账；本机真实 daemon + mock model 集成测试 | 逐 token 输出需另查 Engine/provider 合同；外部工具副作用不承诺 exactly-once |
+| 内嵌浏览器 | Chrome 扩展 BrowserBridge、页面/输入工具合同 | 工作台浏览器标签页、导航、下载/上传、独立登录状态，再接 Agent 页面操作 | Chrome API 执行器需适配；第三方登录、验证码、站点兼容性另做实际验收 |
+| 交互终端 | 已有 Agent shell 执行与 workspace 授权 | PTY、多会话、输入/输出、调整大小、Ctrl-C、搜索/复制、退出管理 | 首批为桌面生命周期内的用户终端；跨应用退出保持会话需要 daemon 托管 |
+| Git 与 worktree | 项目目录、资源面板、系统 Git 可作为后端 | 状态/diff/log/分支；再加暂存、提交、worktree 创建及可恢复归档 | 先在临时仓库测试；远端鉴权、推送/合并和复杂冲突处理分别交付 |
+| Windows | NSIS 配置、Rust/launcher Windows 路径 | Windows 原生构建 CI、安装包、路径/进程/窗口适配及冒烟脚本 | 当前只有 macOS 环境；必须实际运行 Windows runner/设备，才能标记对应检查通过 |
+| 音频 | 复用录音、转写、TTS，已有麦克风用途声明和权限入口 | 设备状态、错误恢复、取消播放、测试音频夹具、录音/播放自检流程 | 真实收音、音质、蓝牙切换和回声需要硬件及用户参与；真实 provider 验证需可用配置 |
+| 正式签名与更新 | 本地 ad-hoc 包、托管 runtime 更新隔离 | 发布流水线、更新状态机、跨 IM/cron 排空与恢复 | Apple/Windows 签名身份、发行凭证与更新源配置由发布方提供 |
+
+现有 Chrome 扩展仍是功能基线。新增面板沿用 Codex 式工作台的焦点、标签、分屏与键盘交互；不会为了新增模块复制一套聊天、审批或配置实现。
+
+### 10.2 优先补齐服务端事件和提交回执
+
+这项可以从后端到桌面完整实现，本机具备验证条件，建议最先做。
+
+- **接入点**：`anda_bot/src/engine/agent.rs` 的 `persist_conversation_state` 是已核实的会话写入入口，runner 多处复用；事件在写入成功后发布。还要枚举创建会话、审批状态、取消/完成、compaction 等写路径，不能仅加一个 hook 就宣称覆盖全部变化。
+- **协议**：按第 5 节增加版本化应用端点、能力协商、caller 范围订阅和持久提交回执。Rust DTO 与 TS 类型从同一合同生成并校验；本批只覆盖新增合同，不重写已有工具 wire format。
+- **恢复**：协调快照和事件水位；有界队列溢出明确要求重同步；daemon instance 变化重新取快照。稳定 chat/source 与 compaction child 映射保持连续，事件不能串到其他 caller 或迟到覆盖另一聊天。
+- **受理**：把请求键带入持久受理路径，处理重复提交、ACK 丢失和重启；无法证明是否执行的记录保持 `unknown`，不自动补发。前端 journal 与服务端回执对账后再清理。
+- **兼容**：Desktop 优先订阅，旧 daemon 回退轮询；Chrome 扩展先保持原行为并运行回归，再通过同一客户端适配加入订阅。连接有效且支持事件时停止重复轮询。
+
+退出条件：隔离 home 中用真实 daemon 和确定性 mock model 复现“写入期间订阅、ACK 丢失、断线重连、队列溢出、daemon 重启、压缩续接、审批变化”，核对最终 UI 与持久状态一致且无重复受理；补授权/凭证过期测试。第 9.3 节的延迟目标需要实测记录，不能从取消轮询直接推定达标。
+
+逐 token 输出单独做合同验证：当前 `Session::on_completion` 接收完整 `AgentOutput`，这本身不证明存在逐 token 回调。验证上游能否提供稳定 delta、取消和工具边界后，决定是否增加 `textDelta`；该项不阻塞已保存消息的实时推送。
+
+### 10.3 浏览器分两批交付
+
+**第一批：用户可操作的浏览器面板。** Main 管理 `WebContentsView`，提供标签页、地址栏、前进/后退、刷新、页面查找、加载/失败状态、下载和文件选择。远端页面使用独立 session partition、无应用 preload、关闭 Node 集成，并限制权限、弹窗及外部协议。保存的是应用自己的浏览器会话，不自动导入 Chrome 的 cookies 或登录。原生视图需要专门处理布局坐标、遮挡、模态框、焦点、缩放和关闭后的资源释放。[WebContentsView](https://www.electronjs.org/docs/latest/api/web-contents-view)
+
+**第二批：Agent 操作该浏览器。** 保留 `anda_bot/src/engine/browser.rs` 的 BrowserBridge 会话路由和工具语义，给 Electron 增加执行适配器；逐项实现页面快照、可访问性/文本提取、截图、点击、输入、滚动、等待、上传及标签选择。扩展 service worker 的 `chrome.tabs` / `chrome.debugger` 调用不能原样搬用。Main 内部可使用 `webContents.debugger` 的 CDP 通道，但不开放公网调试端口，也不向 renderer 暴露任意 CDP 命令；处理 DevTools 打开或目标关闭导致的 detach。[Electron Debugger](https://www.electronjs.org/docs/latest/api/debugger)
+
+浏览器 session/tab 句柄绑定当前授权和聊天选择；Chrome 与 Electron session 同时存在时可明确选择目标，失联时不得悄悄切换到另一个浏览器。现有脚本执行能力如需迁移，应单独声明支持范围和审批边界。浏览器内容不能访问 owner token、应用 IPC 或用户终端。
+
+退出条件：用本地测试站覆盖跳转、iframe、动态 DOM、新窗口、上传/下载、取消、目标关闭和重连；打包版人工检查焦点、输入法、缩放及独立登录状态。真实网站登录、验证码、支付和 Chrome 扩展生态兼容不作为通用自动化承诺。
+
+### 10.4 交互终端先明确生命周期
+
+第一批采用 `@xterm/xterm` 渲染终端，Main 编排独立 PTY 宿主进程，使用 `node-pty` 执行用户 shell。这样可实现 macOS PTY 与 Windows ConPTY，并避免 renderer 获得 Node 权限；具体版本在实施时锁定，原生模块在目标平台按 Electron ABI 构建和打包验证。[node-pty](https://github.com/microsoft/node-pty)
+
+- 终端绑定已登记 workspace 和不可伪造的会话句柄，提供创建、输入、resize、输出订阅、关闭；限制缓冲大小并加入背压，持续大输出不能阻塞 Main。
+- 使用参数数组启动 shell，处理环境、Unicode 路径、中文输入、ANSI、全屏程序、Ctrl-C、退出码、拖入文件的转义及 renderer 重建后的重连。终端链接经过既有外链检查，输出中的控制序列不能自动写剪贴板或调用应用命令。
+- 关闭面板/隐藏窗口保留 PTY；用户退出应用时明确列出仍运行的终端，并提供取消退出或结束终端后退出。首批不承诺退出桌面后继续运行或跨重启恢复 shell。
+- 该终端由用户直接操作。Agent shell 继续走 daemon 现有审批、来源和 workspace 规则；不能让模型通过用户终端输入 IPC 绕开工具授权。终端只出现在受信任的应用页面，远端网页与不可信预览不能共用其执行入口。[xterm.js 集成安全说明](https://xtermjs.org/docs/guides/security/)
+
+退出条件：本机验证交互 shell、长输出、resize、信号、进程树清理、关闭/重开面板和宿主异常；Windows ConPTY 单列原生测试。以后若需要应用退出后保持终端，将 PTY 托管迁入 daemon 并新增 attach/detach、保留策略和权限合同；现有 `NativeRuntime` shell 执行并不等于已有持久 PTY 服务。
+
+### 10.5 Git 从查看变更推进到受控写入
+
+**第一批只读工作区面板**：通过 Main 的受限服务调用系统 Git，显示当前分支、状态、暂存/未暂存/未跟踪文件、文本 diff、提交历史及已有 worktree。使用稳定机器输出（例如 `status --porcelain=v2 -z`），处理含空格/换行的路径、二进制文件和大 diff；未安装 Git 时给出明确状态。文件监听只负责触发刷新，最终状态以 Git 查询为准。[Git status](https://git-scm.com/docs/git-status)
+
+**第二批写入与 worktree**：按用户动作暂存/取消暂存、提交、创建分支及 worktree；写入前核对预览对应的 HEAD/index/文件状态，变化后重新展示，按仓库串行化自身写操作并处理外部 index 锁。参数数组、路径边界和字面量 pathspec 避免路径被解释为选项或通配；不自动 discard/reset 用户工作。Git hooks、外部 diff/filter 可能执行代码，读取默认禁用外部 diff/textconv，提交时沿用仓库信任与明确执行边界。
+
+worktree 归档需要先形成可恢复快照，保存未提交修改和应保留的未跟踪文件，再清理工作目录；被忽略文件不能默认为已备份，嵌套仓库/子模块先拒绝自动归档并说明限制。恢复后核对内容；工作树只是目录和 Git 状态隔离，不是权限沙箱。Git 提供 worktree 管理命令，但应用级“归档/恢复”需要额外实现，不能把 `worktree remove` 当成归档。[Git worktree](https://git-scm.com/docs/git-worktree)
+
+退出条件：临时仓库覆盖 unborn/detached HEAD、重命名、冲突、部分暂存、外部并发修改、特殊路径及归档恢复。远端 fetch/push、凭证助手、签名提交和 merge/rebase UI 后续独立验收，不为完成本地面板自动操作用户远端仓库。
+
+### 10.6 Windows：可以补实现，需 Windows 环境给出验证结论
+
+可新增 desktop Windows CI，复用现有 Rust release workflow 的 Windows 依赖和固定 Brain 源码 checkout，在 Windows runner 上构建匹配的 `anda.exe`、Electron 应用和 NSIS。当前 `prepare-runtime.mjs` 根据宿主平台选择 binary 并执行 `--version`，应按目标平台原生构建；在 macOS 生成一个 `.exe` 文件不足以完成验收。GitHub 提供 Windows hosted runner，但编写 workflow 不等于已执行成功。[GitHub hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+
+需要补的内容包括 PowerShell/路径处理、中文和空格安装路径、daemon 子进程及 binary 锁、窗口标题栏与 Snap、AppUserModelID/通知/深链接、登录启动、卸载保留数据，以及未来 PTY 原生模块打包。CI 先覆盖 check/test、Rust 定向测试、构建和隔离数据的安装/卸载、启动/连接冒烟，上传日志与安装包；具备交互桌面条件后再运行 Electron GUI E2E。
+
+最终还需 Windows 设备或交互 VM 检查输入法、任务栏、通知、DPI/多显示器、休眠、系统重启和真实设备。当前环境不能代替这些测试。没有发布证书时可以产出开发测试包，正式签名验收保持未完成；已有 CLI/launcher Windows workflow 也不能充当新桌面的验收记录。
+
+### 10.7 音频：补软件自检，再做真实设备验收
+
+这不是重新开发语音链路：首版已复用扩展的 VoiceSession、转写和 TTS。可以继续实现设备选择/丢失提示、录音电平与时长、取消录音、播放队列与打断、provider 错误及重连恢复，并提供明确由用户启动的“录音—回放—转写—TTS”自检。
+
+自动化测试用合成音频和固定夹具验证录制格式、上传、转写响应、播放状态与取消，模拟拒绝权限、无设备、设备移除和 provider 失败；它们不证明麦克风实际录到了声音。macOS 应分别校验安装包的用途声明、签名 entitlements、系统权限和 Electron session 权限，拒绝后给出可操作的设置指引。[Electron 媒体权限 API](https://github.com/electron/electron/blob/main/docs/api/system-preferences.md)
+
+真实验收需要用户允许麦克风，并参与朗读/听回放；记录内置设备、有线/蓝牙耳机、默认设备切换、睡眠恢复、噪声/回声和延迟。可用的 provider 配置到位后再验证真实转写/TTS，不将 mock 测试等同模型效果。全双工通话、持续 VAD、系统音频采集是额外产品范围，不隐含在“语音消息可用”中。
+
+### 10.8 正式发行与建议执行顺序
+
+签名/公证和自动更新的代码、CI、故障恢复都可继续实现；公开发行需要发布方提供 Apple Developer ID/公证身份、Windows 签名方式及更新渠道凭证。按第 8.4 节完成所有权、跨 IM/cron 维护态、任务排空和恢复后才启用托管 runtime 自动安装；只有 `electron-updater` 依赖并不代表已有更新能力。证书未就绪时保持本地手动安装方式。
+
+建议按可独立验收的增量推进，持续提供可安装的 macOS 包：
+
+1. **R1 协议可靠性**：服务端推送、快照与持久回执，完成异常恢复及扩展回归。
+2. **R2 开发工作台基础**：Git 只读面板与用户 PTY 终端，分别验证后接入同一右侧工作区。
+3. **R3 浏览器**：先交付用户浏览器面板，再完成 BrowserBridge 的 Electron 执行器与 Agent 操作测试。
+4. **R4 工作区操作**：Git 写入、worktree 创建、可恢复归档；需要时再扩展持久终端。
+5. **平台与发行贯穿各批**：尽早补 Windows CI 和音频自检；具备 runner/设备/证书后完成对应实测、签名和升级验收，不把外部条件等待串行阻塞所有功能开发。
+
+当前优先推进 **R1，然后 R2**：先解决消息更新和提交恢复，再提供日常查看改动、运行命令的工作面板。每批完成后更新实施记录的“已实现 / 已自动化验证 / 已实机验证 / 待外部条件”状态；只将实际运行通过的检查写成通过。本次只更新方案和范围评估，尚未实现本节新增功能，也未运行新的 Windows、音频或运行时测试。
+
+
+## 11. 后续工作台的落地状态
+
+本轮桌面版本为 **0.13.1**，Rust runtime 仍报告 workspace 版本 0.13.0，通过能力协商区分新增协议。第 10 节的 R1–R4 主要软件能力已写入当前分支；验收记录以[实施记录](desktop-client-implementation.md)为准，Windows、真实音频和正式签名不能由 macOS 自动化结果替代。
+
+| 工作包 | 当前实现 | 保留的边界 |
+| --- | --- | --- |
+| R1 推送与提交可靠性 | `/ws/app/v1`、Rust→TS DTO、持久回执、重复请求控制、unknown 恢复、caller 状态通知、旧协议兼容 | 推送采用合并的失效提示和权威差量读取，不提供持久事件重放；导航仍是桌面本地元数据 |
+| R2 Git 和终端 | Git 状态/diff/log、独立 PTY、多终端、resize、查找、受控退出、输出背压 | 用户终端不作为模型绕过授权的命令通道；不跨桌面进程持久运行 |
+| R3 浏览器 | WebContentsView 标签、导航/查找、cookies、权限、上传/下载、BrowserBridge/CDP、共享页面操作函数 | 保留独立登录；不导入 Chrome profile、不支持完整 Chrome 插件生态；站点登录/验证码另行验收 |
+| R4 工作区写入 | 暂存/取消暂存、提交、创建 worktree、快照归档和恢复、写入前状态校验 | 只归档本应用创建的工作树；忽略文件、子模块及嵌套仓库需单独处理；远端 Git 与复杂合并 UI 后续扩展 |
+| 平台与音频 | Windows CI/NSIS 安装脚本、原生终端依赖、设备自检、合成音频 E2E、TTS 取消 | Windows runner 尚未运行；实际收音、听感、蓝牙和真实 provider 仍需设备验收 |
+| 更新与发行 | 签名发行配置、正确的 runtime 签名/哈希顺序、托管路径核验、维护租约、任务排空、恢复记录 | 本地包不启用公共 feed；公开签名/公证、渠道发布及真实跨版本升级需要发布凭证和环境 |
+
+### 11.1 对原方案的实现收敛
+
+应用协议沿用现有 Engine 业务入口，保留 legacy tool/RPC 方法，新增 JSON-RPC 2.0 的初始化、订阅、提交和回执读取。事件在持久化成功后发布，使用每个 caller 的有界合并通知；客户端在读取期间发生新变化时再次读取，重连重新获取权威状态。它实现的是状态同步，不承诺传输每一个中间事件。相关实现位于 `anda_bot/src/engine/app_protocol.rs`、`browser_ws.rs` 与 `desktop/src/main/daemon-client.ts`。
+
+提交回执使用 home 下的独立私有文件 journal，版本为 1；没有改变 Conversations/Brain collection schema。写入并同步受理意图后才开始执行；socket 断开不会取消已受理操作，重复键校验输入摘要。进程重启后，未完成记录成为 unknown，不能把它当成可自动重跑任务。回执控制重复受理，不改变外部工具副作用语义。
+
+浏览器按聊天绑定明确的桌面 session，并复用扩展的页面脚本；Electron 独立实现标签、CDP、下载、权限和窗口布局。用户终端位于独立 utility process，GUI 通过受限 IPC 使用 PTY，保留 daemon 原有 Agent shell 执行路径。Git 通过固定命令和参数数组执行，归档先保存快照，再清理桌面托管的 checkout。
+
+更新采用 owner-only 的短期维护租约，过期可自行恢复任务受理。cron 在 claim 前检查租约，不消耗尚未执行的到期任务；IM 明确回复维护提示并保留原 route/thread；活动会话及已受理任务完成后才停止托管 runtime。HTTP Engine/Brain/Memory 和 WS 工作入口也参与受理控制；已经受理的任务通过经过签名验证的原始 daemon 身份继续调用 Brain，不改变 caller 或使用用户令牌代理 Bot。停止前还检查 Brain formation/maintenance 状态。审批、桌面取消操作与聊天读取保留可用，以便等待中的任务完成。安装前持久化恢复记录；附着外部 runtime 时不替换或停止它。
+
+### 11.2 仍需外部条件的验收
+
+- Windows：执行新增 workflow，并在 Windows 设备/交互 VM 上确认安装、输入法、标题栏、通知、DPI/休眠及 ConPTY 行为。
+- 音频：用户授权麦克风、朗读和听回放；覆盖有线/蓝牙设备、切换和唤醒。合成音频测试只能证明软件链路。
+- 正式发行：提供 Apple/Windows 签名身份、公证与更新源配置；工作流默认只构建上传产物，不自动公开发布。
+- 逐 token：已核实当前 Engine 的 provider 适配层聚合 SSE 后交付完整结果。跨 provider 的 delta 合同需要上游 Engine 改动，保持为独立演进项，不伪装成现有状态推送的一部分。
+
+每次上述验收实际完成后更新实施记录；未执行的检查继续保持“未验证”。本地包的临时签名使用独立 entitlement，正式签名仍使用专门的发布配置。安装包 runtime 哈希在其签名之后计算，避免签名改变字节导致误判。

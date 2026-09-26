@@ -49,6 +49,8 @@ export interface ExtensionMessenger {
 export class VoiceSession {
   #daemon: DaemonApi
   #messenger: ExtensionMessenger
+  #speech?: AbortController
+  speaking = $state(false)
 
   capabilities = $state<VoiceCapabilities>({
     transcription: [],
@@ -104,14 +106,32 @@ export class VoiceSession {
    * spoke, or null when it was unavailable or playback failed.
    */
   async speak(text: string, preferredProvider: VoiceProvider): Promise<VoiceProvider | null> {
+    this.stopSpeaking()
     const chunks = splitVoiceTtsText(prepareVoiceTtsText(text), voiceTtsChunkChars)
     if (!chunks.length) {
       return null
     }
-    if (preferredProvider === 'anda') {
-      return (await this.#speakWithAndaTts(chunks)) ? 'anda' : null
+    const speech = new AbortController()
+    this.#speech = speech
+    this.speaking = true
+    try {
+      if (preferredProvider === 'anda')
+        return (await this.#speakWithAndaTts(chunks, speech.signal)) ? 'anda' : null
+      return (await this.#speakWithChromeTts(chunks, speech.signal)) ? 'chrome' : null
+    } finally {
+      if (this.#speech === speech) {
+        this.#speech = undefined
+        this.speaking = false
+      }
     }
-    return (await this.#speakWithChromeTts(chunks)) ? 'chrome' : null
+  }
+
+  stopSpeaking(): void {
+    if (!this.#speech) return
+    this.#speech.abort()
+    this.#speech = undefined
+    this.speaking = false
+    void this.#messenger.send('anda_chrome_tts_stop').catch(() => {})
   }
 
   async startSpeechRecognition(language: string): Promise<void> {
@@ -165,7 +185,7 @@ export class VoiceSession {
     return response.result || ({} as Result)
   }
 
-  async #speakWithChromeTts(chunks: string[]): Promise<boolean> {
+  async #speakWithChromeTts(chunks: string[], signal: AbortSignal): Promise<boolean> {
     if (!this.capabilities.chromeTts) {
       await this.refreshCapabilities().catch(() => undefined)
     }
@@ -174,6 +194,7 @@ export class VoiceSession {
     }
     try {
       for (const chunk of chunks) {
+        signal.throwIfAborted()
         await this.#messenger.send('anda_chrome_tts_speak', { text: chunk })
       }
       return true
@@ -183,7 +204,7 @@ export class VoiceSession {
     }
   }
 
-  async #speakWithAndaTts(chunks: string[]): Promise<boolean> {
+  async #speakWithAndaTts(chunks: string[], signal: AbortSignal): Promise<boolean> {
     if (this.capabilities.daemonTts.length === 0) {
       await this.refreshCapabilities().catch(() => undefined)
     }
@@ -195,17 +216,19 @@ export class VoiceSession {
       await playVoiceTtsPipeline(
         chunks,
         async (chunk, index) => {
+          signal.throwIfAborted()
           const result = await this.#daemon.toolCall<TtsToolOutput>('synthesize_speech', {
             text: chunk,
             artifact_name: `anda_chrome_voice_${Date.now()}_${index + 1}`
           })
           const artifact = result.artifacts?.find(isAudioResource)
+          signal.throwIfAborted()
           if (!artifact?.blob) {
             throw new Error('Anda TTS did not return playable audio.')
           }
           return artifact
         },
-        (artifact) => playAudioArtifact(artifact)
+        (artifact) => playAudioArtifact(artifact, signal)
       )
       return true
     } catch (_error) {

@@ -11,7 +11,9 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+  node-pty: true
 onlyBuiltDependencies:
+  - node-pty
   - electron
   - electron-winstaller
   - esbuild

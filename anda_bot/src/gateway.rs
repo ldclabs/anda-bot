@@ -49,9 +49,17 @@ pub async fn serve(
     let background_cancel_token = cancel_token.clone();
     let memory = engines.memory.clone();
     let memory_cancel_token = cancel_token.clone();
+    let brain_admission = engines.brain_admission_state();
     let app = Router::new()
         .merge(engines.into_router(cancel_token.clone()))
-        .merge(brain.into_router())
+        .merge(
+            brain
+                .into_router()
+                .layer(axum::middleware::from_fn_with_state(
+                    brain_admission,
+                    engine::brain_admission,
+                )),
+        )
         .layer(CompressionLayer::new());
 
     log::warn!(

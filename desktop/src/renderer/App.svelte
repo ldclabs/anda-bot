@@ -39,12 +39,18 @@
   import type { ChatAttachment, Conversation, RpcOutput, Resource } from '$lib/anda/client/types'
   import { label, type Label } from './labels'
   import Automations from './Automations.svelte'
+  import TerminalPanel from './TerminalPanel.svelte'
+  import GitPanel from './GitPanel.svelte'
+  import BrowserPanel from './BrowserPanel.svelte'
+  import AudioPanel from './AudioPanel.svelte'
+  import { wb } from './workbench-labels'
   let { client }: { client: DesktopClient } = $props()
   provideAndaClient(untrack(() => client))
   const t = (key: Label) => label(client.preferences.language, key)
   let pageVisible = $state(!document.hidden)
   let collapsed = $state(false)
   let rightOpen = $state(false)
+  let rightTab = $state('resources')
   let searchOpen = $state(false)
   let query = $state('')
   let searchBusy = $state(false)
@@ -66,7 +72,10 @@
   let resourceGeneration = 0
   const channel = $derived(client.activeChannel)
   const groups = $derived(channel?.messageGroups || [])
-  const messages = $derived(groups.flatMap((group) => group.messages))
+  const messages = $derived([
+    ...groups.flatMap((group) => group.messages),
+    ...(channel?.sideMessages || [])
+  ])
   const resources = $derived(messages.flatMap((message) => message.attachments || []))
   const submitting = $derived(client.sending || Boolean(channel?.sending))
   const working = $derived(
@@ -219,6 +228,7 @@
   async function showResource(attachment: ChatAttachment) {
     const generation = ++resourceGeneration
     rightOpen = true
+    rightTab = 'resources'
     previewText = ''
     previewError = ''
     if (previewUrl) URL.revokeObjectURL(previewUrl)
@@ -267,6 +277,7 @@
 <div
   class:sidebar-collapsed={collapsed}
   class:with-panel={rightOpen && client.view === 'chat'}
+  class:workbench-open={rightOpen && rightTab !== 'resources' && client.view === 'chat'}
   class="desktop-shell"
 >
   <aside class="sidebar">
@@ -512,7 +523,7 @@
               placeholder={t('prompt')}
               sending={submitting}
               {working}
-              stoppable={working && !client.readOnly}
+              stoppable={(working || client.voice.speaking) && !client.readOnly}
               onSend={send}
               onStop={() => client.stopActiveTask()}
               voiceEnabled={memoryMode === 'standard' && pageVisible}
@@ -559,8 +570,13 @@
         ><button class:active={settingsTab === 'config'} onclick={() => (settingsTab = 'config')}
           >{t('config')}</button
         >
+        <button class:active={settingsTab === 'audio'} onclick={() => (settingsTab = 'audio')}
+          >{wb(client.preferences.language, 'audio')}</button
+        >
       </div>
-      {#if settingsTab === 'config'}<div class="management-page">
+      {#if settingsTab === 'audio'}<AudioPanel {client} />{:else if settingsTab === 'config'}<div
+          class="management-page"
+        >
           <ConfigApp embedded />
         </div>{:else}<div class="settings-page">
           <h1>{t('general')}</h1>
@@ -642,30 +658,59 @@
   </section>
   {#if rightOpen && client.view === 'chat'}<aside class="resource-panel">
       <header>
-        <span>{t('resources')}</span><button class="icon-button" onclick={() => (rightOpen = false)}
+        <span
+          >{rightTab === 'resources'
+            ? t('resources')
+            : wb(client.preferences.language, rightTab as 'changes' | 'terminal' | 'browser')}</span
+        ><button class="icon-button" aria-label={t('close')} onclick={() => (rightOpen = false)}
           ><X size={16} /></button
         >
       </header>
-      {#if resources.length}<div class="resource-list">
-          {#each resources as resource}<button onclick={() => void showResource(resource)}
-              ><Paperclip size={14} /><span>{resource.name}</span></button
-            >{/each}
-        </div>{:else}<div class="resource-empty">
-          <Paperclip size={25} />
-          <p>{t('noResources')}</p>
-        </div>{/if}{#if selectedResource}<div class="resource-preview">
-          <h3>{selectedResource.name}</h3>
-          {#if previewError}<p>
-              {previewError}
-            </p>{:else if previewUrl && selectedResource.mime_type?.startsWith('image/')}<img
-              src={previewUrl}
-              alt={selectedResource.name}
-            />{:else if previewUrl && selectedResource.mime_type === 'application/pdf'}<iframe
-              title={selectedResource.name}
-              src={previewUrl}
-            ></iframe>{:else if previewUrl}<audio controls src={previewUrl}
-            ></audio>{:else}<pre>{previewText}</pre>{/if}
-        </div>{/if}
+      <nav class="workbench-tabs" aria-label="Workbench">
+        {#each ['resources', 'changes', 'terminal', 'browser'] as tab}<button
+            class:active={rightTab === tab}
+            onclick={() => (rightTab = tab)}
+            >{tab === 'resources'
+              ? t('resources')
+              : wb(client.preferences.language, tab as 'changes' | 'terminal' | 'browser')}</button
+          >{/each}
+      </nav>
+      {#if rightTab === 'browser'}
+        {#key client.activeSource}<BrowserPanel
+            source={client.activeSource}
+            language={client.preferences.language}
+          />{/key}
+      {:else if rightTab === 'terminal' || rightTab === 'changes'}
+        {#if client.workspace}{#key client.workspace}
+            {#if rightTab === 'terminal'}<TerminalPanel
+                workspace={client.workspace}
+                language={client.preferences.language}
+              />{:else}<GitPanel {client} workspace={client.workspace} />{/if}
+          {/key}{:else}<p class="workbench-empty">
+            {wb(client.preferences.language, 'chooseProject')}
+          </p>{/if}
+      {:else}
+        {#if resources.length}<div class="resource-list">
+            {#each resources as resource}<button onclick={() => void showResource(resource)}
+                ><Paperclip size={14} /><span>{resource.name}</span></button
+              >{/each}
+          </div>{:else}<div class="resource-empty">
+            <Paperclip size={25} />
+            <p>{t('noResources')}</p>
+          </div>{/if}{#if selectedResource}<div class="resource-preview">
+            <h3>{selectedResource.name}</h3>
+            {#if previewError}<p>
+                {previewError}
+              </p>{:else if previewUrl && selectedResource.mime_type?.startsWith('image/')}<img
+                src={previewUrl}
+                alt={selectedResource.name}
+              />{:else if previewUrl && selectedResource.mime_type === 'application/pdf'}<iframe
+                title={selectedResource.name}
+                src={previewUrl}
+              ></iframe>{:else if previewUrl}<audio controls src={previewUrl}
+              ></audio>{:else}<pre>{previewText}</pre>{/if}
+          </div>{/if}
+      {/if}
     </aside>{/if}
 </div>
 {#if searchOpen}<div

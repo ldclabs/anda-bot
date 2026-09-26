@@ -13,6 +13,7 @@ import { normalizeUiLanguage, setNativeMessages } from '$lib/i18n'
 import type { DaemonApi } from '$lib/anda/client/daemon'
 import type {
   ActionApiOutput,
+  AgentOutput,
   ChatAttachment,
   Resource,
   RpcOutput,
@@ -91,9 +92,12 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     reportError: (error) => this.fail(error)
   })
   private refreshTimer?: ReturnType<typeof setInterval>
+  private eventRevision = 0
+  private eventRefresh?: ReturnType<typeof setTimeout>
   private unsubscribe?: () => void
   private prefWrites: Promise<unknown> = Promise.resolve()
   private seenStatuses = new Map<string, string>()
+  private receiptRecovery: Promise<void> = Promise.resolve()
   private ephemeralWorkspace?: string
   private draftTimer?: ReturnType<typeof setTimeout>
   private drafts = new Map<string, { text: string; attachments: ChatAttachment[] }>()
@@ -179,9 +183,23 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       if (event.type === 'connection') {
         const was = this.authorized
         this.connection = event.value as DaemonView
+        this.eventRevision++
+        for (const channel of this.channels.values()) channel.wakePolling()
         if (this.authorized && !was) void this.refresh().catch((error) => this.fail(error))
+      } else if (event.type === 'update') {
+        this.systemMessage = { kind: 'info', text: String(event.value) }
+      } else if (event.type === 'state') {
+        this.eventRevision++
+        for (const channel of this.channels.values()) channel.wakePolling()
+        clearTimeout(this.eventRefresh)
+        this.eventRefresh = setTimeout(() => {
+          void this.refreshChannels()
+            .then(() => this.activeChannel?.syncChangedState())
+            .catch((error) => this.fail(error))
+        }, 80)
       } else if (event.type === 'submissions') {
         this.pending = event.value as PendingSubmission[]
+        if (this.ready) void this.restoreReceipts()
       } else if (event.type === 'navigate' && typeof event.value === 'string')
         void this.switchChannel(event.value)
       else if (event.type === 'menu') {
@@ -195,8 +213,10 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     else this.newChat()
     if (this.authorized) await this.refresh()
     this.ready = true
+    await this.restoreReceipts()
     this.refreshTimer = setInterval(() => {
-      if (this.authorized) void this.refreshChannels().catch(() => {})
+      if (this.authorized && !this.connection.liveEvents)
+        void this.refreshChannels().catch(() => {})
     }, 15_000)
   }
   private requestExtra(source = this.activeSource): Record<string, unknown> {
@@ -212,10 +232,40 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       ...(workspace ? { workspace } : {})
     }
   }
+  private restoreReceipts(): Promise<void> {
+    const recovery = this.receiptRecovery.catch(() => {}).then(() => this.consumeReceipts())
+    this.receiptRecovery = recovery
+    return recovery
+  }
+  private async consumeReceipts(): Promise<void> {
+    for (const pending of this.pending) {
+      if (!['completed', 'failed'].includes(pending.state)) continue
+      try {
+        const receipt = await window.anda.readSubmission(pending.id)
+        if (!receipt || !['completed', 'failed'].includes(receipt.state)) continue
+        const output =
+          receipt.state === 'failed'
+            ? { failed_reason: receipt.error || 'Submission failed' }
+            : (receipt.result as Partial<AgentOutput>)
+        await this.ensureChannel(pending.source).restoreSubmission(
+          pending.id,
+          output || {},
+          pending.time
+        )
+        await window.anda.acknowledgeSubmission(pending.id)
+        this.pending = this.pending.filter((p) => p.id !== pending.id)
+        if (this.systemMessage?.text.includes('SUBMISSION_UNKNOWN')) this.systemMessage = null
+      } catch (error) {
+        this.fail(error)
+      }
+    }
+  }
   private ensureChannel(source: string): Channel {
     let channel = this.channels.get(source)
     if (!channel) {
       channel = new Channel(source, {
+        stateRevision: () =>
+          this.authorized && this.connection.liveEvents ? this.eventRevision : undefined,
         activeChannel: () => (document.hidden ? null : this.activeSource),
         requestExtra: async () => this.requestExtra(source),
         rpc: (method, params) => this.rpc(method, params),
@@ -295,7 +345,14 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const entries = [...this.preferences.chats]
     let changed = false
     for (const [source, state] of Object.entries(states || {})) {
-      this.ensureChannel(source).setSourceState(state)
+      const channel = this.ensureChannel(source)
+      channel.setSourceState(state)
+      if (
+        this.connection.liveEvents &&
+        source !== this.activeSource &&
+        ['working', 'submitted'].includes(state.s || state.status || '')
+      )
+        void channel.syncChangedState().catch(() => {})
       if (!entries.some((c) => c.source === source)) {
         entries.push({
           source,
@@ -373,7 +430,13 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     }
   }
   async stopActiveTask(): Promise<void> {
-    ;(await this.activeChannel?.sendPrompt('/stop', []))?.close()
+    this.voice.stopSpeaking()
+    if (
+      this.sending ||
+      this.activeChannel?.sending ||
+      ['working', 'submitted', 'sending'].includes(this.activeChannel?.status || '')
+    )
+      (await this.activeChannel?.sendPrompt('/stop', []))?.close()
   }
   async respondAction(input: {
     actionId: string
@@ -472,6 +535,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     await window.anda.storageSet({ andaBookmarkJumpRequest: null, andaPromptDraftRequest: null })
   }
   dispose(): void {
+    this.voice.stopSpeaking()
+    clearTimeout(this.eventRefresh)
     clearTimeout(this.draftTimer)
     clearInterval(this.refreshTimer)
     this.unsubscribe?.()

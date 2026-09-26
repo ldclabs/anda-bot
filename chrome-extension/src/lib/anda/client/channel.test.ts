@@ -146,6 +146,67 @@ function createBackend(options: {
   return backend
 }
 
+it('restores a durable side reply once without replaying or rewinding the active conversation', async () => {
+  const backend = createBackend({
+    conversations: [conversation({ _id: 9, status: 'completed' })],
+    sourceState: { conv_id: 9, status: 'completed', timestamp: 1000 }
+  })
+  const channel = new Channel('browser:test', backend.api)
+  channel.setSourceState({ conv_id: 5, status: 'completed', timestamp: 1000 })
+  const output: Partial<AgentOutput> = {
+    conversation: 5,
+    chat_history: [{ role: 'assistant', content: [{ type: 'Text', text: 'Recovered side reply' }] }]
+  }
+  await channel.restoreSubmission('receipt-1', output, 1000)
+  await channel.restoreSubmission('receipt-1', output, 1000)
+  expect(channel.conversationId).toBe(9)
+  expect(channel.sideMessages.filter((m) => m.text === 'Recovered side reply')).toHaveLength(1)
+  expect(backend.rpcCalls.some((call) => call.method === 'agent_run')).toBe(false)
+  channel.destroy()
+})
+
+it('re-reads a snapshot invalidated while the first read was in flight', async () => {
+  const backend = createBackend({
+    conversations: [conversation({ status: 'completed' })],
+    sourceState: { conv_id: 5, status: 'completed', timestamp: 1000 }
+  })
+  let revision = 0
+  let firstRead = true
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const rpc = backend.api.rpc
+  backend.api.stateRevision = () => revision
+  backend.api.rpc = async <Result>(method: string, params: unknown[]): Promise<Result> => {
+    const result = await rpc<Result>(method, params)
+    if (firstRead && (params[0] as { args?: { type: string } })?.args?.type === 'GetConversation') {
+      firstRead = false
+      await barrier
+    }
+    return result
+  }
+  const channel = new Channel('browser:test', backend.api)
+  const initial = channel.init()
+  await vi.waitFor(() => expect(firstRead).toBe(false))
+  backend.conversations.set(
+    5,
+    conversation({
+      status: 'completed',
+      messages: [{ role: 'assistant', content: [{ type: 'Text', text: 'Fresh snapshot' }] }]
+    })
+  )
+  revision++
+  release()
+  await initial
+  await vi.waitFor(() =>
+    expect(
+      channel.messageGroups.flatMap((g) => g.messages).some((m) => m.text === 'Fresh snapshot')
+    ).toBe(true)
+  )
+  channel.destroy()
+})
+
 describe('mergePendingLocalMessages', () => {
   it('keeps a fresh optimistic duplicate instead of merging it into old history', () => {
     const group = messageGroup({

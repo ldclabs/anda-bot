@@ -5,6 +5,7 @@ import {
   normalizeCapabilityFormats,
   normalizeVoiceRecordingAudio,
   normalTextForSpeech,
+  playAudioArtifact,
   playVoiceTtsPipeline,
   prepareVoiceTtsText,
   splitVoiceTtsText,
@@ -15,6 +16,30 @@ import { chromeSpeechErrorMessage, preferredRecordingMimeType } from '../compose
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('stops audio and settles pending playback when speech is cancelled', async () => {
+  const paused = vi.fn()
+  const played = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal(
+    'Audio',
+    class {
+      onended: (() => void) | null = null
+      onerror: (() => void) | null = null
+      pause = paused
+      play = played
+    }
+  )
+  const controller = new AbortController()
+  const playback = playAudioArtifact(
+    { tags: [], name: 'test.wav', mime_type: 'audio/wav', blob: 'AAAA' },
+    controller.signal
+  )
+  const rejected = expect(playback).rejects.toMatchObject({ name: 'AbortError' })
+  controller.abort()
+  await rejected
+  expect(paused).toHaveBeenCalledOnce()
+  expect(played).toHaveBeenCalledOnce()
 })
 
 describe('normalizeCapabilityFormats', () => {

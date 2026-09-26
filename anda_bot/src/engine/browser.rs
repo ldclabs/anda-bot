@@ -28,7 +28,7 @@ use crate::util::{
         file_uri_for_path as file_url_for_path, is_file_uri,
         path_from_file_uri as path_from_file_url, user_path_string_for_path,
     },
-    request_meta::request_meta_extra_as,
+    request_meta::{keys, request_meta_extra_as},
 };
 
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
@@ -679,6 +679,19 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
 
         if args.action == BrowserAction::LaunchBrowser {
+            if preferred_session
+                .as_deref()
+                .is_some_and(|s| s.starts_with("browser:desktop:"))
+            {
+                let session = self
+                    .connected_session_or_launch(preferred_session, timeout_ms)
+                    .await?;
+                let result = self.run_browser_action(&session, args).await?;
+                return Ok(ToolOutput::new(Response::Ok {
+                    result: json!(result),
+                    next_cursor: None,
+                }));
+            }
             let launch = launch_browser(args.url.as_deref())?;
             let session = self
                 .bridge
@@ -732,6 +745,12 @@ impl ChromeBrowserTool {
         match self.bridge.connected_session(preferred_session.as_deref()) {
             Some(session) => Ok(session),
             None => {
+                if preferred_session
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("browser:desktop:"))
+                {
+                    return Err("The selected desktop browser is disconnected. Reconnect Anda Desktop before retrying.".into());
+                }
                 let _launch = launch_browser(None)?;
                 self.bridge
                     .wait_for_connected_session(preferred_session, timeout_ms)
@@ -1074,6 +1093,13 @@ fn device_scale_factor_schema() -> Value {
 }
 
 pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
+    if request_meta_extra_as::<String>(meta, "source").is_some_and(|s| s.starts_with("desktop:"))
+        && !request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
+        && let Some(session) = request_meta_extra_as::<String>(meta, "browser_session")
+            .filter(|s| s.starts_with("browser:desktop:"))
+    {
+        return normalize_session(session).ok();
+    }
     request_meta_extra_as::<String>(meta, "source")
         .filter(|source| source.starts_with("browser:"))
         .and_then(|source| normalize_session(source).ok())

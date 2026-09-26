@@ -48,7 +48,9 @@ This allows users to establish a natural feedback loop: state facts or preferenc
 
 The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. Build a local installer with `pnpm install --filter @anda/desktop...` followed by `pnpm --dir desktop package`. Installers appear in `desktop/release/` and include the Rust runtime. Existing `~/.anda` data is preserved; credentials stay in the Electron main process. See [desktop installation, development and validation](desktop/README.md).
 
-The local macOS build is ad-hoc signed and is not a notarized public release. Desktop updates are installed manually; Chrome browser automation still uses the extension. Config editing is owner-only and supports revision checks to reject stale saves. `anda validate-config` validates YAML from stdin without initializing a home or daemon.
+The desktop workbench includes server-pushed chat updates with durable submission receipts, an isolated embedded browser with agent tools, interactive terminals, Git changes/commits and recoverable worktrees, and an audio self-test page. Chrome automation remains available through the extension. Config editing is owner-only and rejects stale saves; `anda validate-config` validates YAML from stdin without initializing a home or daemon.
+
+Local macOS packages are ad-hoc signed and installed manually. Signed release builds can coordinate updates with the managed runtime, deferring cron jobs and draining active work before installation. Windows CI, NSIS and signing configuration are included; Windows device validation and public signing/notarization require their respective environments and credentials. See the [implementation and validation record](docs/desktop-client-implementation.md).
 
 ### CLI and tray launcher
 

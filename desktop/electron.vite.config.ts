@@ -4,7 +4,14 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin()] },
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: { index: resolve('src/main/index.ts'), 'pty-host': resolve('src/main/pty-host.ts') }
+      }
+    }
+  },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {

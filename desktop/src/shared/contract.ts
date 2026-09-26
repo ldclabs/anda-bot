@@ -1,3 +1,6 @@
+import type { GitRequest, TerminalRequest } from './workbench'
+import type { BrowserRequest, BrowserState } from './browser'
+import type { SubmissionReceipt } from './app-protocol'
 export type Theme = 'system' | 'light' | 'dark'
 export type ApprovalMode = 'request_approval' | 'on_risk' | 'full_access' | 'custom'
 export interface ChatEntry {
@@ -35,6 +38,8 @@ export interface DaemonView {
   error?: string
   version?: string
   desktopProtocol?: number
+  liveEvents?: boolean
+  runtimeOwnership?: 'managed' | 'external' | 'unknown'
 }
 export interface Bootstrap {
   daemon: DaemonView
@@ -48,13 +53,25 @@ export interface PendingSubmission {
   source: string
   prompt: string
   time: number
-  state: 'sending' | 'unknown'
+  state: 'sending' | 'unknown' | 'completed' | 'failed'
+  receipt?: boolean
 }
 export interface NativeEvent {
-  type: 'navigate' | 'connection' | 'menu' | 'update' | 'submissions'
+  type:
+    | 'navigate'
+    | 'connection'
+    | 'menu'
+    | 'update'
+    | 'submissions'
+    | 'state'
+    | 'terminal'
+    | 'browser'
   value?: unknown
 }
 export interface DesktopBridge {
+  browser(request: BrowserRequest): Promise<BrowserState>
+  git<Result>(request: GitRequest): Promise<Result>
+  terminal<Result>(request: TerminalRequest): Promise<Result>
   bootstrap(): Promise<Bootstrap>
   connect(): Promise<DaemonView>
   control(action: 'stop' | 'restart'): Promise<DaemonView>
@@ -71,6 +88,7 @@ export interface DesktopBridge {
   chooseBinary(): Promise<DaemonView>
   notify(source: string, title: string, body: string): Promise<void>
   acknowledgeSubmission(id: string): Promise<void>
+  readSubmission(id: string): Promise<SubmissionReceipt | null>
   openExternal(url: string): Promise<void>
   showLogs(): Promise<void>
   printHtml(html: string): Promise<void>

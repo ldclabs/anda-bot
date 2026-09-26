@@ -1,0 +1,98 @@
+name: Desktop
+on:
+  pull_request:
+    paths:
+      [
+        "desktop/**",
+        "chrome-extension/**",
+        "anda_bot/**",
+        "Cargo.*",
+        "pnpm-*",
+        ".github/workflows/desktop.yml",
+      ]
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: Build signed release artifacts in the protected desktop-release environment
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    environment: ${{ inputs.signed && 'desktop-release' || 'desktop-test' }}
+    env:
+      RUST_MIN_STACK: "16777216"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: ldclabs/anda-brain
+          ref: b5c0ee0788f52efba936e4422897601305968dff
+          path: .ci/anda-brain
+          persist-credentials: false
+      - name: Place Brain source dependency
+        shell: bash
+        run: mv .ci/anda-brain ../anda-brain
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.7.0"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: protoc@3.23.4
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type and contract checks
+        run: |
+          pnpm --dir desktop check
+          pnpm --dir desktop test
+          pnpm --dir chrome-extension check
+          pnpm --dir chrome-extension test
+          pnpm --dir chrome-extension i18n
+          cargo test -p anda_bot app_protocol --bin anda
+          cargo test -p anda_bot runtime_admission --bin anda
+      - name: Build and exercise Electron
+        run: |
+          pnpm --dir desktop build
+          pnpm --dir desktop test:e2e
+      - name: Build local installer
+        if: ${{ !inputs.signed }}
+        run: pnpm --dir desktop package
+      - name: Build signed artifacts
+        if: ${{ inputs.signed }}
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
+          ANDA_UPDATE_URL: ${{ vars.ANDA_UPDATE_URL }}
+        run: |
+          node scripts/prepare-runtime.mjs
+          pnpm exec electron-builder --config electron-builder.release.cjs --publish never
+      - name: Windows install and uninstall smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: desktop/scripts/windows-install-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-${{ runner.os }}
+          path: |
+            desktop/release/*.*
+            desktop/test-results/

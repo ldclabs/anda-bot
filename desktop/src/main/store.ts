@@ -15,6 +15,14 @@ export const defaultPreferences: Preferences = {
   drafts: {}
 }
 interface StoredState {
+  daemonStopped?: boolean
+  updateIntent?: {
+    previous: string
+    target: string
+    managed: boolean
+    wasRunning: boolean
+    startedAt: number
+  }
   preferences: Preferences
   storage: Record<string, unknown>
   pending: PendingSubmission[]
@@ -34,6 +42,8 @@ export class DesktopStore {
     try {
       const raw = JSON.parse(await readFile(this.path, 'utf8')) as Partial<StoredState>
       this.state = {
+        daemonStopped: raw.daemonStopped,
+        updateIntent: raw.updateIntent,
         preferences: { ...defaultPreferences, ...raw.preferences },
         storage: raw.storage || {},
         pending: (raw.pending || []).map((p) => ({ ...p, state: 'unknown' })),

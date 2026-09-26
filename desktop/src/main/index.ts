@@ -19,10 +19,15 @@ import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { GitService } from './git'
+import { TerminalService } from './terminal'
+import { BrowserService } from './browser'
+import { DesktopUpdater } from './updater'
 import type { Bootstrap, NativeEvent, Preferences } from '../shared/contract'
 import { DesktopStore } from './store'
 import { DaemonClient } from './daemon-client'
-import { externalUrl, navigationSource, rendererAssetPath } from './policy'
+import { appPermissionAllowed, externalUrl, navigationSource, rendererAssetPath } from './policy'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -38,7 +43,13 @@ protocol.registerSchemesAsPrivileged([
 ])
 app.setName('Anda')
 const homeArg = process.argv.find((arg) => arg.startsWith('--anda-home='))?.slice(12)
+const profileArg = process.argv.find((arg) => arg.startsWith('--anda-profile='))?.slice(15)
 const testMode = !app.isPackaged && process.env.ANDA_DESKTOP_TEST === '1'
+if (testMode) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream')
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream')
+}
+if (process.platform === 'win32') app.setAppUserModelId('org.ldclabs.anda.desktop')
 if (testMode && !process.env.ANDA_DESKTOP_USER_DATA)
   throw new Error('Desktop tests require an isolated profile')
 const home = resolve(
@@ -48,7 +59,8 @@ const home = resolve(
 )
 if (testMode && process.env.ANDA_DESKTOP_USER_DATA)
   app.setPath('userData', process.env.ANDA_DESKTOP_USER_DATA)
-else if (homeArg)
+else if (profileArg) app.setPath('userData', resolve(profileArg))
+else if (homeArg || process.env.ANDA_HOME)
   app.setPath(
     'userData',
     `${app.getPath('userData')}-${createHash('sha256').update(home).digest('hex').slice(0, 12)}`
@@ -63,6 +75,11 @@ let stateLoaded = false
 let boundsTimer: NodeJS.Timeout | undefined
 let store: DesktopStore
 let daemon: DaemonClient
+let git: GitService
+let terminals: TerminalService
+let browser: BrowserService
+let updater: DesktopUpdater
+let quitPrompt = false
 let pendingNavigation: string | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
 const notificationTimes = new Map<string, number>()
@@ -103,7 +120,30 @@ app.on('activate', () => {
 })
 app.on('before-quit', (event) => {
   if (quitting) return
+  if (terminals?.running) {
+    event.preventDefault()
+    if (quitPrompt) return
+    quitPrompt = true
+    void dialog
+      .showMessageBox({
+        type: 'warning',
+        message: `Close ${terminals.running} running terminal(s) and quit?`,
+        detail: 'Commands in these terminals will stop. Agent tasks in the daemon continue.',
+        buttons: ['Cancel', 'Close terminals and quit'],
+        cancelId: 0,
+        defaultId: 0
+      })
+      .then(async ({ response }) => {
+        quitPrompt = false
+        if (response === 1) {
+          await terminals.closeAll()
+          app.quit()
+        }
+      })
+    return
+  }
   quitting = true
+  browser?.destroy()
   clearTimeout(reconnectTimer)
   clearTimeout(boundsTimer)
   daemon?.disconnect()
@@ -195,6 +235,8 @@ function createWindow(): void {
     }
   })
   contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (webContents.id === contents.id && details.isMainFrame && permission === 'speaker-selection')
+      return callback(true)
     if (
       webContents.id !== contents.id ||
       permission !== 'media' ||
@@ -204,16 +246,16 @@ function createWindow(): void {
       details.mediaTypes.some((type) => type !== 'audio')
     )
       return callback(false)
-    if (process.platform === 'darwin')
+    if (testMode) callback(true)
+    else if (process.platform === 'darwin')
       void systemPreferences
         .askForMediaAccess('microphone')
         .then(callback)
         .catch(() => callback(false))
     else callback(true)
   })
-  contents.session.setPermissionCheckHandler(
-    (webContents, permission) =>
-      webContents?.id === contents.id && ['media', 'clipboard-sanitized-write'].includes(permission)
+  contents.session.setPermissionCheckHandler((webContents, permission, _origin, details) =>
+    appPermissionAllowed(contents.id, webContents?.id, permission, details)
   )
   contents.session.on('will-download', (_event, item) => {
     if (!/^blob:|^data:/.test(item.getURL())) item.cancel()
@@ -324,7 +366,7 @@ function validatePreferences(patch: Partial<Preferences>): void {
 }
 
 async function bootstrap(): Promise<Bootstrap> {
-  const state = await daemon.connect()
+  const state = daemon.manuallyStopped ? daemon.view : await daemon.connect()
   return {
     daemon: state,
     preferences: store.state.preferences,
@@ -357,6 +399,7 @@ async function setup(): Promise<void> {
   )
   daemon.on('change', (state) => {
     emit({ type: 'connection', value: state })
+    if (state.connected && state.liveEvents) void browser?.reconnect().catch(() => {})
     clearTimeout(reconnectTimer)
     if (!state.connected && !quitting && !daemon.manuallyStopped)
       reconnectTimer = setTimeout(() => {
@@ -364,6 +407,116 @@ async function setup(): Promise<void> {
       }, 10_000)
   })
   nativeTheme.themeSource = store.state.preferences.theme
+  daemon.on('state', (value) => emit({ type: 'state', value }))
+  daemon.on('submissions', (value) => emit({ type: 'submissions', value }))
+  const authorizeWorkspace = async (path: string): Promise<string> => {
+    if (typeof path !== 'string' || !path || path.length > 8192)
+      throw new Error('Choose a workspace first.')
+    const allowed = [
+      ...store.state.preferences.projects.map((p) => p.path),
+      ...store.state.preferences.chats.flatMap((c) => (c.workspace ? [c.workspace] : []))
+    ]
+    const resolved = await realpath(path)
+    const matches = await Promise.all(allowed.map((p) => realpath(p).catch(() => '')))
+    if (!matches.includes(resolved) || !(await stat(resolved)).isDirectory())
+      throw new Error('Select this folder as a project before using the workbench.')
+    return resolved
+  }
+  git = new GitService(join(app.getPath('userData'), 'workbench'), authorizeWorkspace)
+  terminals = new TerminalService(
+    authorizeWorkspace,
+    (value) => emit({ type: 'terminal', value }),
+    () => !updater?.installing
+  )
+  browser = new BrowserService(
+    () => window,
+    (value) => emit({ type: 'browser', value }),
+    (name) => daemon.registerBrowserSession(name),
+    home
+  )
+  updater = new DesktopUpdater(
+    daemon,
+    store,
+    () => terminals.running,
+    (value) => emit({ type: 'update', value })
+  )
+  void updater.recover().catch((error) => emit({ type: 'update', value: String(error) }))
+  handle('anda:browser', (request) => browser.request(request))
+  daemon.on('browser-action', async (message) => {
+    const command = message.params
+    try {
+      daemon.browserReply(
+        message.id,
+        command.session,
+        { ok: true, value: await browser.execute(command) },
+        message.connectionId
+      )
+    } catch (error) {
+      daemon.browserReply(
+        message.id,
+        command.session,
+        {
+          ok: false,
+          value: null,
+          error: error instanceof Error ? error.message : 'Browser action failed'
+        },
+        message.connectionId
+      )
+    }
+  })
+  handle('anda:terminal', (request) => terminals.request(request))
+  handle('anda:git', async (request) => {
+    if (request?.action === 'worktree-archive') {
+      if (terminals.uses(request.path))
+        throw new Error('Close this worktree’s terminals before archiving it.')
+      if (daemon.view.connected) {
+        const response = (await daemon.rpc('tool_call', [
+          { name: 'anda_bot_api', args: { type: 'ListSessions' } }
+        ])) as {
+          output: {
+            result: Array<{
+              workspace: string
+              conversation_id: number
+              has_goal: boolean
+              background_task_count: number
+            }>
+          }
+        }
+        if (!Array.isArray(response.output?.result))
+          throw new Error('Cannot verify active work. Try again after stopping the daemon.')
+        const target = await realpath(request.path)
+        for (const session of response.output.result) {
+          if ((await realpath(session.workspace).catch(() => '')) !== target) continue
+          if (session.has_goal || session.background_task_count)
+            throw new Error('Stop the active agent task in this worktree before archiving it.')
+          const conversation = (await daemon.rpc('tool_call', [
+            {
+              name: 'conversations_api',
+              args: { type: 'GetConversation', _id: session.conversation_id }
+            }
+          ])) as { output: { result?: { status?: string } } }
+          if (
+            !['idle', 'completed', 'cancelled', 'failed'].includes(
+              conversation.output?.result?.status || ''
+            )
+          )
+            throw new Error(
+              'An agent is still using this worktree. Finish or stop it before archiving.'
+            )
+        }
+      }
+      const result = await dialog.showMessageBox(window!, {
+        type: 'warning',
+        message: 'Archive this worktree?',
+        detail: `${request.path}\nAnda will save a Git snapshot before removing the checkout. Stop any agents or other applications using this folder first.`,
+        buttons: ['Cancel', 'Archive'],
+        defaultId: 0,
+        cancelId: 0
+      })
+      if (result.response !== 1) throw new Error('Archive cancelled')
+    }
+    return git.request(request)
+  })
   handle('anda:bootstrap', bootstrap)
   handle('anda:connect', () => daemon.connect())
   handle('anda:control', async (action) => {
@@ -383,6 +536,13 @@ async function setup(): Promise<void> {
   })
   handle('anda:rpc', async (method, params) => {
     try {
+      if (
+        method === 'agent_run' &&
+        daemon.view.liveEvents &&
+        params?.[0]?.meta?.source?.startsWith('desktop:')
+      ) {
+        params[0].meta.browser_session = await browser.registerSource(params[0].meta.source)
+      }
       return await daemon.rpc(method, params)
     } finally {
       if (method === 'agent_run') emit({ type: 'submissions', value: store.state.pending })
@@ -480,10 +640,12 @@ async function setup(): Promise<void> {
     })
     notification.show()
   })
+  handle('anda:submission:read', (id: string) => daemon.readSubmission(id))
   handle('anda:submission:acknowledge', async (id: string) => {
     if (typeof id !== 'string') throw new Error('Invalid submission')
     store.state.pending = store.state.pending.filter((p) => p.id !== id)
     await store.save()
+    emit({ type: 'submissions', value: store.state.pending })
   })
   handle('anda:external', (url: unknown) => shell.openExternal(externalUrl(url)))
   handle('anda:print', async (html: string) => {
@@ -515,11 +677,7 @@ async function setup(): Promise<void> {
     }
   })
   handle('anda:logs', () => shell.openPath(join(home, 'logs')))
-  handle(
-    'anda:update',
-    () =>
-      'This local build is updated by installing a new signed release. Your existing daemon installation is preserved.'
-  )
+  handle('anda:update', () => updater.check())
   const menu: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {

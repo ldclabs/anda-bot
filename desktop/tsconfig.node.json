@@ -7,7 +7,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node", "chrome-types"]
   },
   "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
 }

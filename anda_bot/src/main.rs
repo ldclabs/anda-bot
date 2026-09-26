@@ -24,6 +24,7 @@ mod logger;
 #[cfg(feature = "mib")]
 mod mib;
 mod provider_env;
+mod runtime_admission;
 #[cfg(test)]
 mod test_support;
 mod transcription;

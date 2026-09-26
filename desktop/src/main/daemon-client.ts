@@ -7,6 +7,7 @@ import { homedir } from 'node:os'
 import { randomUUID, createHash } from 'node:crypto'
 import { parse as parseYaml } from 'yaml'
 import WebSocket from 'ws'
+import type { AppInitialize, AppSubmit, SubmissionReceipt } from '../shared/app-protocol'
 import type { DaemonView } from '../shared/contract'
 import { loopbackBaseUrl, validateRpc } from './policy'
 import { DesktopStore } from './store'
@@ -25,8 +26,10 @@ export class DaemonClient extends EventEmitter {
   private socket: WebSocket | null = null
   private waiting = new Map<number, Waiting>()
   private sequence = 0
+  private connectionId = 0
   private connecting?: Promise<DaemonView>
   private heartbeat?: NodeJS.Timeout
+  private appTransport = false
   private credentialAt = 0
   private configWrites: Promise<unknown> = Promise.resolve()
   constructor(
@@ -36,6 +39,7 @@ export class DaemonClient extends EventEmitter {
     private mockUrl?: string
   ) {
     super()
+    this.manuallyStopped = Boolean(store.state.daemonStopped)
     this.view = {
       connected: false,
       home,
@@ -52,14 +56,40 @@ export class DaemonClient extends EventEmitter {
       '/opt/homebrew/bin/anda',
       '/usr/local/bin/anda'
     ]
+    const bundled = join(
+      this.resources,
+      'runtime',
+      process.platform === 'win32' ? 'anda.exe' : 'anda'
+    )
     for (const candidate of candidates) {
       if (!candidate) continue
       try {
         await access(candidate)
-        return candidate
-      } catch {
-        /* Try the next installation. */
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        throw error
       }
+      if (candidate === bundled) {
+        try {
+          const manifest = JSON.parse(
+            await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
+          )
+          if (
+            manifest.platform !== process.platform ||
+            manifest.arch !== process.arch ||
+            manifest.sha256 !==
+              createHash('sha256')
+                .update(await readFile(candidate))
+                .digest('hex')
+          )
+            throw new Error('mismatch')
+        } catch {
+          throw new Error(
+            'Bundled runtime verification failed. Reinstall a complete desktop package.'
+          )
+        }
+      }
+      return candidate
     }
     throw new Error('Anda runtime was not found. Choose an installed anda executable in Settings.')
   }
@@ -73,9 +103,11 @@ export class DaemonClient extends EventEmitter {
         windowsHide: true,
         env: {
           ...process.env,
-          ...(binary.startsWith(join(this.resources, 'runtime'))
-            ? { ANDA_DESKTOP_MANAGED_RUNTIME: '1' }
-            : {})
+          ANDA_DESKTOP_MANAGED_RUNTIME:
+            binary ===
+            join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
+              ? '1'
+              : undefined
         }
       })
       if (input !== undefined) {
@@ -93,6 +125,7 @@ export class DaemonClient extends EventEmitter {
   }
   connect(): Promise<DaemonView> {
     this.manuallyStopped = false
+    this.store.state.daemonStopped = false
     if (
       this.view.connected &&
       this.socket?.readyState === WebSocket.OPEN &&
@@ -110,6 +143,8 @@ export class DaemonClient extends EventEmitter {
     this.disconnect()
     try {
       await this.command([action])
+      this.store.state.daemonStopped = action === 'stop'
+      await this.store.save()
       if (action === 'restart') return this.connect()
       this.view.error = 'Anda daemon was stopped. Reconnect to start it again.'
       this.emit('change', this.view)
@@ -132,7 +167,9 @@ export class DaemonClient extends EventEmitter {
         }
         if (status.state === 'not_running') {
           await this.command(['start'])
-          this.view.managed = this.view.binary.startsWith(join(this.resources, 'runtime'))
+          this.view.managed =
+            this.view.binary ===
+            join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
         } else if (!['running', 'gateway_running', 'process_unresponsive'].includes(status.state))
           throw new Error(
             'The existing daemon is unresponsive. Restart it explicitly before reconnecting.'
@@ -145,47 +182,51 @@ export class DaemonClient extends EventEmitter {
         this.bearer = token.token
       }
       this.credentialAt = Date.now()
-      this.disconnect()
-      const ws = new WebSocket(`${this.view.baseUrl.replace(/^http/, 'ws')}/ws/engine/default`, {
-        headers: { Authorization: `Bearer ${this.bearer}` },
-        maxPayload: 40 * 1024 * 1024
-      })
-      this.socket = ws
-      ws.on('message', (data) => this.receive(data.toString()))
-      ws.on('close', () => {
-        if (this.socket !== ws) return
-        this.view.connected = false
-        this.failPending(new Error('WebSocket connection closed; write results may be unknown'))
-        this.emit('change', this.view)
-      })
-      ws.on('error', () => {
-        /* Handled by the connect promise or close event. */
-      })
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          ws.terminate()
-          reject(new Error('Local daemon connection timed out'))
-        }, 12_000)
-        ws.once('open', () => {
-          clearTimeout(timer)
-          resolve()
-        })
-        ws.once('error', () => {
-          clearTimeout(timer)
-          reject(new Error('Could not connect to the local Anda daemon'))
-        })
-      })
+      await this.openSocket(false)
       this.view.connected = true
       delete this.view.error
       await this.request('information', [])
       const capabilities = (await this.request('capabilities', [])) as {
-        desktop?: { protocol?: number; runtime_version?: string; managed_runtime?: boolean }
+        desktop?: {
+          protocol?: number
+          runtime_version?: string
+          managed_runtime?: boolean
+          runtime_path?: string
+          app_transport?: boolean
+        }
       }
       this.view.desktopProtocol = capabilities.desktop?.protocol || 0
       this.view.version = capabilities.desktop?.runtime_version
-      this.view.managed = capabilities.desktop?.managed_runtime || false
+      const runtimePath = capabilities.desktop?.runtime_path
+      const bundled = join(
+        this.resources,
+        'runtime',
+        process.platform === 'win32' ? 'anda.exe' : 'anda'
+      )
+      this.view.managed = Boolean(capabilities.desktop?.managed_runtime && runtimePath === bundled)
+      this.view.runtimeOwnership =
+        capabilities.desktop?.managed_runtime && !runtimePath
+          ? 'unknown'
+          : this.view.managed
+            ? 'managed'
+            : 'external'
+      if (capabilities.desktop?.app_transport) {
+        await this.openSocket(true)
+        const initialized = (await this.request('initialize', {})) as AppInitialize
+        if (
+          initialized.protocolVersion !== 1 ||
+          !initialized.capabilities.stateInvalidation ||
+          !initialized.capabilities.submissionReceipts
+        )
+          throw new Error('Unsupported desktop application protocol')
+        this.view.liveEvents = true
+        this.view.connected = true
+        await this.reconcileSubmissions()
+      }
       this.heartbeat = setInterval(() => {
-        void this.request('ping', []).catch(() => ws.terminate())
+        void this.request('ping', [])
+          .then(() => this.reconcileSubmissions())
+          .catch(() => this.socket?.terminate())
       }, 25_000)
       this.emit('change', this.view)
     } catch (error) {
@@ -195,16 +236,64 @@ export class DaemonClient extends EventEmitter {
     }
     return { ...this.view }
   }
-  private receive(raw: string): void {
+  private async openSocket(appTransport: boolean): Promise<void> {
+    this.disconnect()
+    this.appTransport = appTransport
+    const connectionId = ++this.connectionId
+    const ws = new WebSocket(
+      `${this.view.baseUrl.replace(/^http/, 'ws')}${appTransport ? '/ws/app/v1' : '/ws/engine/default'}`,
+      {
+        headers: { Authorization: `Bearer ${this.bearer}` },
+        maxPayload: 40 * 1024 * 1024
+      }
+    )
+    this.socket = ws
+    ws.on('message', (data) => {
+      if (this.socket === ws) this.receive(data.toString(), connectionId)
+    })
+    ws.on('close', () => {
+      if (this.socket !== ws) return
+      this.view.connected = false
+      this.failPending(new Error('WebSocket connection closed; write results may be unknown'))
+      this.emit('change', this.view)
+    })
+    ws.on('error', () => {
+      /* Handled by the connect promise or close event. */
+    })
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ws.terminate()
+        reject(new Error('Local daemon connection timed out'))
+      }, 12_000)
+      ws.once('open', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+      ws.once('error', () => {
+        clearTimeout(timer)
+        reject(new Error('Could not connect to the local Anda daemon'))
+      })
+    })
+  }
+  private receive(raw: string, connectionId: number): void {
     let message: {
       id?: number
       method?: string
+      params?: unknown
       result?: unknown
       error?: unknown
     }
     try {
       message = JSON.parse(raw)
     } catch {
+      return
+    }
+    if (message.method === 'state/changed' && this.appTransport) {
+      this.emit('state', message.params)
+      return
+    }
+    if (message.method === 'browser_action') {
+      this.emit('browser-action', { ...message, connectionId })
       return
     }
     if (message.method || typeof message.id !== 'number') return
@@ -214,11 +303,15 @@ export class DaemonClient extends EventEmitter {
     clearTimeout(waiter.timer)
     if (message.error != null)
       waiter.reject(
-        new Error(typeof message.error === 'string' ? message.error : JSON.stringify(message.error))
+        new Error(
+          typeof message.error === 'string'
+            ? message.error
+            : (message.error as { message?: string }).message || 'Daemon request failed'
+        )
       )
     else waiter.resolve(message.result)
   }
-  private request(method: string, params: unknown[]): Promise<unknown> {
+  private request(method: string, params: unknown): Promise<unknown> {
     const ws = this.socket
     if (!ws || ws.readyState !== WebSocket.OPEN)
       return Promise.reject(new Error('WebSocket is not connected'))
@@ -230,13 +323,16 @@ export class DaemonClient extends EventEmitter {
         reject(new Error('WebSocket request timed out; write results may be unknown'))
       }, timeout)
       this.waiting.set(id, { resolve, reject, timer })
-      ws.send(JSON.stringify({ id, method, params }), (error) => {
-        if (error) {
-          this.waiting.delete(id)
-          clearTimeout(timer)
-          reject(new Error('WebSocket send failed; write results may be unknown'))
+      ws.send(
+        JSON.stringify({ ...(this.appTransport ? { jsonrpc: '2.0' } : {}), id, method, params }),
+        (error) => {
+          if (error) {
+            this.waiting.delete(id)
+            clearTimeout(timer)
+            reject(new Error('WebSocket send failed; write results may be unknown'))
+          }
         }
-      })
+      )
     })
   }
   async rpc(method: string, params: unknown[]): Promise<unknown> {
@@ -266,18 +362,26 @@ export class DaemonClient extends EventEmitter {
       source,
       prompt: input.prompt.slice(0, 2000),
       time: Date.now(),
-      state: 'sending' as const
+      state: 'sending' as const,
+      receipt: this.appTransport
     }
     this.store.state.pending.push(submission)
     await this.store.save()
     try {
-      const result = await this.request(method, params)
+      const result = this.appTransport
+        ? this.receiptResult(
+            await this.request('chat/submit', {
+              requestId: submission.id,
+              input
+            } satisfies AppSubmit)
+          )
+        : await this.request(method, params)
       this.store.state.pending = this.store.state.pending.filter((p) => p.id !== submission.id)
       await this.store.save()
       return result
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error)
-      if (/WebSocket/.test(text)) {
+      if (/WebSocket|SUBMISSION_UNKNOWN|outcome unknown/.test(text)) {
         this.store.state.pending = this.store.state.pending.map((p) =>
           p.id === submission.id ? { ...p, state: 'unknown' } : p
         )
@@ -290,6 +394,89 @@ export class DaemonClient extends EventEmitter {
       await this.store.save()
       throw error
     }
+  }
+  private receiptResult(value: unknown): unknown {
+    const receipt = value as SubmissionReceipt
+    if (receipt.state === 'completed') return receipt.result
+    if (receipt.state === 'failed') throw new Error(receipt.error || 'Submission failed')
+    throw new Error(
+      '[SUBMISSION_UNKNOWN] The daemon cannot yet confirm this submission. Do not resend.'
+    )
+  }
+  async registerBrowserSession(session: string): Promise<void> {
+    if (this.manuallyStopped) throw new Error('The daemon is stopped')
+    await this.connect()
+    if (!this.view.liveEvents)
+      throw new Error(
+        'Restart the daemon with the current desktop runtime to use its browser tools.'
+      )
+    await this.request('browser_register', [{ session, title: 'Anda Desktop' }])
+  }
+  async maintenance(
+    action: 'begin' | 'renew' | 'release' | 'shutdown',
+    token?: string
+  ): Promise<{ token: string; ready: boolean }> {
+    const response = await fetch(`${this.view.baseUrl}/daemon/maintenance`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.bearer}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, token }),
+      signal: AbortSignal.timeout(15_000),
+      redirect: 'error'
+    })
+    if (!response.ok)
+      throw new Error(
+        `Runtime maintenance failed (${response.status}). Keep the current installation and retry later.`
+      )
+    return response.json()
+  }
+  async stopForUpdate(token: string): Promise<void> {
+    this.manuallyStopped = true
+    await this.maintenance('shutdown', token)
+    this.disconnect()
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const status = JSON.parse(await this.command(['status', '--json']))
+      if (status.state === 'not_running') return
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    throw new Error('Runtime did not stop. Installation was not started.')
+  }
+  browserReply(id: number, session: string, result: unknown, connectionId: number): void {
+    if (this.socket?.readyState === WebSocket.OPEN && connectionId === this.connectionId)
+      this.socket.send(
+        JSON.stringify({ ...(this.appTransport ? { jsonrpc: '2.0' } : {}), id, session, result })
+      )
+  }
+  private async reconcileSubmissions(): Promise<void> {
+    if (!this.appTransport) return
+    let changed = false
+    for (const pending of [...this.store.state.pending]) {
+      if (!pending.receipt || pending.state !== 'unknown') continue
+      const receipt = (await this.request('submission/read', {
+        source: pending.source,
+        requestId: pending.id
+      })) as SubmissionReceipt | null
+      if (receipt && ['completed', 'failed'].includes(receipt.state)) {
+        this.store.state.pending = this.store.state.pending.map((p) =>
+          p.id === pending.id ? { ...p, state: receipt.state as 'completed' | 'failed' } : p
+        )
+        changed = true
+      }
+    }
+    if (changed) {
+      await this.store.save()
+      this.emit('submissions', this.store.state.pending)
+      this.emit('state', { recovered: true })
+    }
+  }
+  async readSubmission(id: string): Promise<SubmissionReceipt | null> {
+    const pending = this.store.state.pending.find((p) => p.id === id && p.receipt)
+    if (!pending) throw new Error('No recorded submission with this ID')
+    if (this.manuallyStopped) throw new Error('Reconnect to read the submission receipt')
+    await this.connect()
+    return this.request('submission/read', {
+      source: pending.source,
+      requestId: pending.id
+    }) as Promise<SubmissionReceipt | null>
   }
   async config(
     method: 'GET' | 'PUT',
@@ -402,5 +589,6 @@ export class DaemonClient extends EventEmitter {
     ws?.close()
     this.failPending(new Error('WebSocket disconnected'))
     this.view.connected = false
+    this.view.liveEvents = false
   }
 }

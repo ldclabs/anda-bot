@@ -1,6 +1,7 @@
 import { resolve, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  appPermissionAllowed,
   externalUrl,
   loopbackBaseUrl,
   navigationSource,
@@ -8,6 +9,16 @@ import {
   rendererAssetPath
 } from '../src/main/policy'
 import { desktopMessages } from '../src/renderer/labels'
+
+it('permits application audio only in its own main frame, never camera or preview frames', () => {
+  expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: true, mediaType: 'audio' })).toBe(true)
+  expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: true, mediaType: 'video' })).toBe(false)
+  expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: false, mediaType: 'audio' })).toBe(
+    false
+  )
+  expect(appPermissionAllowed(1, 2, 'media', { isMainFrame: true, mediaType: 'audio' })).toBe(false)
+  expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: true })).toBe(false)
+})
 
 it('keeps all six desktop language dictionaries complete', () => {
   const keys = Object.keys(desktopMessages.en!).sort()

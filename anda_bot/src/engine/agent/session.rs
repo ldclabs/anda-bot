@@ -254,7 +254,9 @@ impl Session {
     // A live session is idle when its completion runner has no pending work
     // and no background tasks are running.
     pub(super) fn is_idle(&self) -> bool {
-        self.runner_idle.load(Ordering::SeqCst) && !self.has_running_background_tasks()
+        self.runner_idle.load(Ordering::SeqCst)
+            && !self.has_pending_inputs()
+            && !self.has_running_background_tasks()
     }
 
     pub(super) fn has_running_background_tasks(&self) -> bool {

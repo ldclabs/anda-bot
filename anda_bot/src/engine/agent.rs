@@ -84,6 +84,7 @@ pub struct AndaBot {
 }
 
 struct AndaBotInner {
+    admission: Arc<crate::runtime_admission::Admission>,
     memory_access: Option<Arc<brain::MemoryAccess>>,
     brain: brain::Client,
     models: Arc<Models>,
@@ -242,6 +243,7 @@ impl AndaBot {
 
         Self {
             inner: Arc::new(AndaBotInner {
+                admission: Arc::new(crate::runtime_admission::Admission::default()),
                 memory_access: None,
                 brain,
                 models,
@@ -271,6 +273,31 @@ impl AndaBot {
         self
     }
 
+    pub(crate) fn with_admission(
+        mut self,
+        admission: Arc<crate::runtime_admission::Admission>,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure admission before sharing")
+            .admission = admission;
+        self
+    }
+    pub(crate) fn admission(&self) -> Arc<crate::runtime_admission::Admission> {
+        self.inner.admission.clone()
+    }
+    pub(crate) async fn update_ready(&self) -> bool {
+        if self.inner.admission.status().active != 0 || self.has_busy_sessions() {
+            return false;
+        }
+        let Ok(brain) = self.inner.brain.brain_status().await else {
+            return false;
+        };
+        !brain.formation_processing
+            && !brain.maintenance_processing
+            && self.inner.admission.status().active == 0
+            && !self.has_busy_sessions()
+    }
+
     pub async fn status(&self) -> Result<AndaBotStatus, BoxError> {
         let conversations = self.inner.conversations.conversations_len() as u64;
         let bs = self.inner.brain.brain_status().await?;
@@ -283,6 +310,10 @@ impl AndaBot {
 
     pub(crate) fn action_runtime(&self) -> Arc<ActionRuntime> {
         self.inner.actions.clone()
+    }
+
+    pub(super) fn events(&self) -> Arc<super::app_protocol::AppEvents> {
+        self.inner.conversations.events.clone()
     }
 
     /// Builds a [`Session`], installs its context hooks (goal state, live
@@ -427,6 +458,9 @@ impl AndaBot {
                 tokio::time::sleep(IDLE_CHECK_INTERVAL).await;
                 if let Some(idle_ms) = tracker.observe(this.has_busy_sessions(), unix_ms()) {
                     for hook in this.inner.idle_hooks.iter() {
+                        let Ok(_permit) = this.inner.admission.enter() else {
+                            break;
+                        };
                         hook.on_idle(idle_ms).await;
                     }
                 }
@@ -476,6 +510,10 @@ impl AndaBot {
             .conversations
             .update_conversation(conversation._id, conversation.to_changes()?)
             .await?;
+        self.inner
+            .conversations
+            .events
+            .changed(&conversation.user.to_string());
         Ok(())
     }
 
@@ -713,6 +751,25 @@ impl Agent<AgentCtx> for AndaBot {
         if let PromptCommand::Invalid { reason } = &command {
             return Err(reason.clone().into());
         }
+        let _permit = if ctx
+            .base
+            .get_state::<crate::runtime_admission::AdmittedCron>()
+            .is_some()
+            || ctx.base.get_state::<SessionRequestMeta>().is_some()
+        {
+            None
+        } else {
+            Some(
+                if matches!(
+                    command,
+                    PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+                ) {
+                    self.inner.admission.enter_existing()
+                } else {
+                    self.inner.admission.enter()?
+                },
+            )
+        };
 
         let now_ms = unix_ms();
         use memory_policy::{MODE_KEY, MemoryMode, MemoryPolicy, POLICY_KEY};
@@ -951,6 +1008,7 @@ impl Agent<AgentCtx> for AndaBot {
                     if let Some(receipt) = &mut input.cron_receipt {
                         session.bind_cron_receipt(receipt);
                     }
+                    session.runner_idle.store(false, Ordering::SeqCst);
                     match session.sender.send(input).await {
                         Ok(_) => {
                             if control {
@@ -2326,6 +2384,33 @@ mod tests {
         assert!(cancelled.is_ok());
 
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+
+    #[tokio::test]
+    async fn desktop_maintenance_rejects_new_work_but_allows_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+        engine
+            .agent_run(caller, input_for_source("start", "cli:maintenance-control"))
+            .await
+            .unwrap();
+        let _lease = bot.admission().begin().unwrap();
+        let rejected = engine
+            .agent_run(
+                caller,
+                input_for_source("new work", "cli:maintenance-control"),
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("preparing an update"));
+        engine
+            .agent_run(
+                caller,
+                input_for_source("/cancel", "cli:maintenance-control"),
+            )
+            .await
+            .unwrap();
     }
 
     struct CronTestCompleter;

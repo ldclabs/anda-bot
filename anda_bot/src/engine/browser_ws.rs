@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     RuntimeModels,
+    app_protocol::{AppCapabilities, AppInitialize, AppSubmit, StateChanged, SubmissionRead},
     browser::{BrowserActionResult, BrowserBridge, BrowserCommand},
     shell_runtime::CliWorkspaceGrants,
 };
@@ -45,6 +46,10 @@ const SEC_WEBSOCKET_VERSION: &str = "sec-websocket-version";
 
 #[derive(Clone)]
 pub struct BrowserWebSocketState {
+    pub(super) admission: Arc<crate::runtime_admission::Admission>,
+    pub(super) events: Arc<super::app_protocol::AppEvents>,
+    pub(super) submissions: Arc<super::app_protocol::Submissions>,
+    pub(super) app_protocol: bool,
     pub(super) memory: super::memory_api::MemoryApiState,
     pub(super) auth_headers: HeaderMap,
     pub app: AppState,
@@ -65,6 +70,8 @@ pub struct BrowserVoiceCapabilities {
 
 #[derive(Debug, Deserialize)]
 struct BrowserWsIncoming {
+    #[serde(default)]
+    jsonrpc: Option<String>,
     #[serde(default)]
     id: Option<u64>,
     #[serde(default)]
@@ -101,6 +108,32 @@ struct BrowserWsRequest<'a> {
 struct BrowserWsConnection {
     id: u64,
     sender: mpsc::Sender<BrowserCommand>,
+}
+
+pub async fn app_websocket(
+    State(mut state): State<BrowserWebSocketState>,
+    request: Request<Body>,
+) -> Response {
+    if super::verify_trusted_user(&state.app, request.headers(), unix_ms())
+        != Ok(state.cli_workspaces.owner())
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            "Application transport requires the local owner",
+        )
+            .into_response();
+    }
+    // Desktop Main is the only client of this local privileged endpoint.
+    // Browser/extension clients retain their existing transport.
+    if request.headers().contains_key("origin") {
+        return (
+            StatusCode::FORBIDDEN,
+            "Desktop transport does not accept browser origins",
+        )
+            .into_response();
+    }
+    state.app_protocol = true;
+    browser_websocket(State(state), Path("default".into()), request).await
 }
 
 pub async fn browser_websocket(
@@ -184,9 +217,14 @@ async fn handle_browser_websocket(
     let (write_sender, mut write_receiver) = mpsc::channel::<String>(64);
     let request_tasks = CancellationToken::new();
     let writer_cancel = request_tasks.clone();
+    let writer_app = state.app.clone();
+    let writer_auth = state.auth_headers.clone();
 
     let writer = tokio::spawn(async move {
         while let Some(payload) = write_receiver.recv().await {
+            if super::verify_trusted_user(&writer_app, &writer_auth, unix_ms()) != Ok(caller) {
+                break;
+            }
             if socket_writer
                 .send(Message::Text(payload.into()))
                 .await
@@ -197,6 +235,44 @@ async fn handle_browser_websocket(
         }
         writer_cancel.cancel();
     });
+
+    // Register before processing requests. Snapshot reads after initialize are
+    // covered by this subscription; changes during a read cause another read.
+    // watch retains only the latest invalidation, bounding slow-client memory.
+    let event_forwarder = if state.app_protocol {
+        let mut events = state.events.subscribe(&caller.to_string());
+        let writer = write_sender.clone();
+        let auth = state.auth_headers.clone();
+        let app = state.app.clone();
+        let instance = state.events.instance.clone();
+        let cancel = request_tasks.clone();
+        Some(tokio::spawn(async move {
+            let mut expiry = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                let changed = tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    _ = expiry.tick() => false,
+                    result = events.changed() => { if result.is_err() { break; } true }
+                };
+                if super::verify_trusted_user(&app, &auth, unix_ms()) != Ok(caller) {
+                    cancel.cancel();
+                    break;
+                }
+                if changed {
+                    let revision = events.borrow_and_update().to_string();
+                    let message = json!({"jsonrpc":"2.0", "method":"state/changed", "params": StateChanged { instance_id: instance.clone(), revision }});
+                    if writer.try_send(message.to_string()).is_err() {
+                        // Reconnect forces a fresh snapshot; never silently
+                        // lose the final invalidation or block persistence.
+                        cancel.cancel();
+                        break;
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
 
     let action_write_sender = write_sender.clone();
     let action_cancel = request_tasks.clone();
@@ -283,6 +359,9 @@ async fn handle_browser_websocket(
 
     state.bridge.disconnect_ws_connection(connection_id);
     action_forwarder.abort();
+    if let Some(forwarder) = event_forwarder {
+        forwarder.abort();
+    }
     writer.abort();
     request_tasks.cancel();
     Ok(())
@@ -349,6 +428,7 @@ async fn handle_browser_ws_request(
                 write_sender,
                 id,
                 Err("invalid or expired credential".into()),
+                state.app_protocol,
             )
             .await;
         }
@@ -356,7 +436,53 @@ async fn handle_browser_ws_request(
     }
     // Each method is its own subsystem; see `crate::util::boxed`.
     use crate::util::boxed;
+    let method = incoming.method.as_deref().unwrap_or_default();
+    let _permit = if method.starts_with("memory_")
+        || method.starts_with("brain_")
+        || matches!(
+            method,
+            "set_model"
+                | "reload_models"
+                | "register_workspace"
+                | "auto_update_install_and_restart"
+        ) {
+        match state.admission.enter() {
+            Ok(permit) => Some(permit),
+            Err(error) => {
+                if let Some(id) = id {
+                    send_ws_result(write_sender, id, Err(error.into()), state.app_protocol).await;
+                }
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let result = match incoming.method.as_deref().unwrap_or_default() {
+        _ if state.app_protocol && incoming.jsonrpc.as_deref() != Some("2.0") => {
+            Err("jsonrpc must be 2.0".into())
+        }
+        "initialize" | "chat/subscribe" if state.app_protocol => Ok(json!(AppInitialize {
+            protocol_version: 1,
+            instance_id: state.events.instance.clone(),
+            capabilities: AppCapabilities {
+                state_invalidation: true,
+                submission_receipts: true
+            }
+        })),
+        "chat/submit" if state.app_protocol => {
+            boxed(handle_app_submit(incoming.params, state, caller, engine_id)).await
+        }
+        "submission/read" if state.app_protocol => {
+            match serde_json::from_value::<SubmissionRead>(incoming.params) {
+                Ok(args) => state
+                    .submissions
+                    .read(&caller.to_string(), &args.source, &args.request_id)
+                    .await
+                    .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string())),
+                Err(e) => Err(e.to_string()),
+            }
+        }
         "ping" => Ok(json!({ "ok": true })),
         "browser_register" => handle_browser_register(incoming.params, state, connection),
         "agent_run" => boxed(handle_agent_run(incoming.params, state, caller, engine_id)).await,
@@ -393,8 +519,49 @@ async fn handle_browser_ws_request(
     };
 
     if let Some(id) = id {
-        send_ws_result(write_sender, id, result).await;
+        send_ws_result(write_sender, id, result, state.app_protocol).await;
     }
+}
+
+async fn handle_app_submit(
+    params: Value,
+    state: &BrowserWebSocketState,
+    caller: Principal,
+    engine_id: Principal,
+) -> Result<Value, String> {
+    let args: AppSubmit = serde_json::from_value(params).map_err(|e| e.to_string())?;
+    let source = args
+        .input
+        .meta
+        .as_ref()
+        .and_then(|m| m.get_extra_as::<String>("source"))
+        .ok_or("Chat source is required")?;
+    if caller != state.cli_workspaces.owner()
+        || source.contains(":reply_target:")
+        || !args.input.name.is_empty()
+    {
+        return Err("Desktop submissions require the local owner and a local chat".into());
+    }
+    let input = serde_json::to_value(args.input).map_err(|e| e.to_string())?;
+    let request = json!([input]);
+    let service = state.clone();
+    let receipt = state
+        .submissions
+        .submit(
+            &caller.to_string(),
+            source,
+            args.request_id,
+            &input,
+            async move {
+                let result =
+                    crate::util::boxed(handle_agent_run(request, &service, caller, engine_id))
+                        .await;
+                service.events.changed(&caller.to_string());
+                result
+            },
+        )
+        .await?;
+    serde_json::to_value(receipt).map_err(|e| e.to_string())
 }
 
 fn handle_browser_register(
@@ -443,6 +610,14 @@ async fn handle_tool_call(
     engine_id: Principal,
 ) -> Result<Value, String> {
     let (input,): (ToolInput<Json>,) = params_from_value(params)?;
+    let _permit = if matches!(
+        input.name.as_str(),
+        "actions_api" | "conversations_api" | "resources_api"
+    ) {
+        None
+    } else {
+        Some(state.admission.enter().map_err(str::to_string)?)
+    };
     let engine = state
         .app
         .engines
@@ -869,9 +1044,12 @@ fn handle_capabilities(
     Ok(json!({
         "desktop": {
             "protocol": 1,
+            "app_transport": true,
+            "maintenance": true,
             "workspace_sources": true,
             "config_revision": true,
             "runtime_version": env!("CARGO_PKG_VERSION"),
+            "runtime_path": std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),
             "managed_runtime": std::env::var_os("ANDA_DESKTOP_MANAGED_RUNTIME")
                 .is_some_and(|value| value == "1"),
         },
@@ -986,10 +1164,20 @@ async fn send_ws_result(
     write_sender: &mpsc::Sender<String>,
     id: u64,
     result: Result<Value, String>,
+    app_protocol: bool,
 ) {
-    let payload = match result {
-        Ok(result) => json!({ "id": id, "result": result }),
-        Err(error) => json!({ "id": id, "error": error }),
+    let payload = if app_protocol {
+        match result {
+            Ok(result) => json!({"jsonrpc":"2.0", "id":id, "result":result}),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32000,"message":error}})
+            }
+        }
+    } else {
+        match result {
+            Ok(result) => json!({ "id": id, "result": result }),
+            Err(error) => json!({ "id": id, "error": error }),
+        }
     };
     let _ = write_sender.send(payload.to_string()).await;
 }
@@ -1344,6 +1532,10 @@ mod tests {
         let auto_updater = Arc::new(AutoUpdater::new(db, home.clone(), http));
 
         let state = BrowserWebSocketState {
+            admission: Arc::new(crate::runtime_admission::Admission::default()),
+            app_protocol: false,
+            events: Arc::new(super::super::app_protocol::AppEvents::default()),
+            submissions: super::super::app_protocol::Submissions::new(&home),
             memory: super::super::memory_api::MemoryApiState {
                 app: app.clone(),
                 owner: auth_key.id(),
@@ -1585,6 +1777,72 @@ mod tests {
         assert!(reply.is_text());
 
         ws.close(None).await.ok();
+    }
+
+    #[tokio::test]
+    async fn desktop_application_transport_pushes_owned_state_and_replays_receipts() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _, owner) = build_ws_state(dir.path().to_path_buf()).await;
+        let events = state.events.clone();
+        let authorization = state.auth_headers.get(AUTHORIZATION).unwrap().clone();
+        let app = axum::Router::new()
+            .route("/ws/app/v1", axum::routing::get(app_websocket))
+            .with_state(state);
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let mut request = format!("{}/ws/app/v1", ws_base(&base))
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(AUTHORIZATION, authorization);
+        let mut forbidden = request.clone();
+        forbidden
+            .headers_mut()
+            .insert("origin", "https://example.com".parse().unwrap());
+        assert!(tokio_tungstenite::connect_async(forbidden).await.is_err());
+        let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let input = json!({"name":"", "prompt":"receipt test", "meta":{"source":"desktop:test"}});
+        let requests = [
+            json!({"id":1,"jsonrpc":"2.0","method":"initialize","params":{}}),
+            json!({"id":2,"jsonrpc":"2.0","method":"chat/submit","params":{"requestId":"one","input":input}}),
+            json!({"id":3,"jsonrpc":"2.0","method":"chat/submit","params":{"requestId":"one","input":input}}),
+            json!({"id":4,"jsonrpc":"2.0","method":"submission/read","params":{"requestId":"one","source":"desktop:test"}}),
+        ];
+        let mut receipts = Vec::new();
+        for request in requests {
+            ws.send(Message::Text(request.to_string().into()))
+                .await
+                .unwrap();
+            loop {
+                let message = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                let response: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+                if response.get("id") == request.get("id") {
+                    assert_eq!(response["jsonrpc"], "2.0");
+                    assert!(response.get("error").is_none(), "{response}");
+                    if request["id"] != 1 {
+                        receipts.push(response["result"].clone());
+                    }
+                    break;
+                }
+            }
+        }
+        assert_eq!(receipts[0]["state"], "completed");
+        assert_eq!(receipts[0], receipts[1]);
+        assert_eq!(receipts[1], receipts[2]);
+        events.changed("another-caller");
+        events.changed(&owner.id().to_string());
+        let notification = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let notification: Value = serde_json::from_str(notification.to_text().unwrap()).unwrap();
+        assert_eq!(notification["method"], "state/changed");
+        assert_eq!(notification["params"]["instanceId"], events.instance);
+        ws.close(None).await.unwrap();
     }
 
     #[tokio::test]

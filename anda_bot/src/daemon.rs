@@ -400,7 +400,8 @@ impl Daemon {
             channel::build_channels(&self.cfg.channels, outer_http_client)?,
             self.channels_dir_path(),
         )
-        .await?;
+        .await?
+        .with_admission(cron_runtime.admission.clone());
         let channel_hook = channel_runtime.hook();
         let channel_sender = channel_runtime.sender();
 

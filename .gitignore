@@ -46,3 +46,4 @@ desktop/out/
 desktop/release/
 desktop/test-results/
 desktop/resources/runtime/
+desktop/resources/release-channel.json

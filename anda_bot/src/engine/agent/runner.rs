@@ -166,7 +166,10 @@ impl AndaBot {
                             match tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
                                 .await
                             {
-                                Ok(Some(input)) => pending_inputs.push(input),
+                                Ok(Some(input)) => {
+                                    session.runner_idle.store(false, Ordering::SeqCst);
+                                    pending_inputs.push(input);
+                                }
                                 Ok(None) => {
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                 }
@@ -378,7 +381,6 @@ impl SessionRunner {
         });
         mark_special_user_messages(&mut output.chat_history);
 
-        self.session.runner_idle.store(true, Ordering::SeqCst);
         self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.failed_reason = None;
         self.conversation.status = ConversationStatus::Idle;
@@ -784,6 +786,7 @@ impl SessionRunner {
     ) -> Result<bool, BoxError> {
         self.wait_for_input = false;
         if !inputs.is_empty() {
+            self.session.runner_idle.store(false, Ordering::SeqCst);
             self.session.active_at.store(unix_ms(), Ordering::SeqCst);
         }
 
@@ -997,6 +1000,9 @@ impl SessionRunner {
             }
             return Ok(true);
         };
+        // Completion hooks, history persistence and Formation submission are
+        // still part of the active turn, even if the model runner just ended.
+        self.session.runner_idle.store(false, Ordering::SeqCst);
         if let Ok(Some(res)) = &mut next_result {
             if self.runner.is_done() {
                 // Finalization moved history into the output. Apply action events to

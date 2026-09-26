@@ -153,6 +153,7 @@ pub struct ChannelRuntime {
 }
 
 struct ChannelRuntimeInner {
+    admission: Arc<crate::runtime_admission::Admission>,
     engine: Arc<EngineRef>,
     default_user: Principal,
     channel_users: HashMap<String, Principal>,
@@ -362,6 +363,7 @@ impl ChannelRuntime {
         }
 
         let inner = Arc::new(ChannelRuntimeInner {
+            admission: Arc::new(crate::runtime_admission::Admission::default()),
             engine,
             default_user,
             channel_users,
@@ -374,6 +376,16 @@ impl ChannelRuntime {
         });
 
         Ok(Self { rx, inner })
+    }
+
+    pub(crate) fn with_admission(
+        mut self,
+        admission: Arc<crate::runtime_admission::Admission>,
+    ) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure channel admission before sharing")
+            .admission = admission;
+        self
     }
 
     pub fn hook(&self) -> Arc<dyn CompletionHook> {
@@ -484,6 +496,17 @@ impl ChannelRuntimeInner {
     }
 
     async fn process_incoming_message(&self, mut message: ChannelMessage) {
+        let _permit = match self.admission.enter() {
+            Ok(permit) => permit,
+            Err(reason) => {
+                let reply = SendMessage::new(reason.to_string(), message.reply_target.clone())
+                    .in_thread(message.thread.clone());
+                if let Err(error) = self.try_send(message.channel.clone(), reply, None).await {
+                    log::warn!("Could not deliver maintenance response: {error}");
+                }
+                return;
+            }
+        };
         log::debug!(
             channel = message.channel,
             sender = message.sender,
@@ -587,6 +610,10 @@ impl ChannelRuntimeInner {
             }
             Err(err) => {
                 log::error!(name = "channel"; "failed to process message from channel {}: {err}", message.channel);
+                if self.admission.status().paused {
+                    let reply = SendMessage::new("Anda is preparing an update. This message was not accepted; please retry after maintenance.", message.reply_target.clone()).in_thread(message.thread.clone());
+                    let _ = self.try_send(message.channel.clone(), reply, None).await;
+                }
             }
         }
     }
@@ -1283,6 +1310,31 @@ mod tests {
 
     async fn test_runtime(channel: Arc<TestChannel>) -> ChannelRuntime {
         test_runtime_with_users(channel, Principal::management_canister(), HashMap::new()).await
+    }
+
+    #[tokio::test]
+    async fn desktop_maintenance_rejection_preserves_original_thread() {
+        let channel = Arc::new(TestChannel::new("test:maintenance", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let _lease = runtime.inner.admission.begin().unwrap();
+        runtime
+            .inner
+            .process_incoming_message(ChannelMessage {
+                channel: channel.id(),
+                sender: "external".into(),
+                reply_target: "room-7".into(),
+                thread: Some("thread-9".into()),
+                external_user: Some(true),
+                content: "work".into(),
+                ..Default::default()
+            })
+            .await;
+        let messages = channel.sent_messages.lock().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].recipient, "room-7");
+        assert_eq!(messages[0].thread.as_deref(), Some("thread-9"));
+        assert!(messages[0].content.contains("Retry"));
+        assert!(runtime.inner.channels_conversation.read().is_empty());
     }
 
     #[tokio::test]

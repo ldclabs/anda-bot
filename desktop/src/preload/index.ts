@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { DesktopBridge, NativeEvent } from '../shared/contract'
 
 const api: DesktopBridge = {
+  browser: (request) => ipcRenderer.invoke('anda:browser', request),
+  git: (request) => ipcRenderer.invoke('anda:git', request),
+  terminal: (request) => ipcRenderer.invoke('anda:terminal', request),
   bootstrap: () => ipcRenderer.invoke('anda:bootstrap'),
   connect: () => ipcRenderer.invoke('anda:connect'),
   control: (action) => ipcRenderer.invoke('anda:control', action),
@@ -15,6 +18,7 @@ const api: DesktopBridge = {
   chooseBinary: () => ipcRenderer.invoke('anda:binary'),
   notify: (source, title, body) => ipcRenderer.invoke('anda:notify', source, title, body),
   acknowledgeSubmission: (id) => ipcRenderer.invoke('anda:submission:acknowledge', id),
+  readSubmission: (id) => ipcRenderer.invoke('anda:submission:read', id),
   openExternal: (url) => ipcRenderer.invoke('anda:external', url),
   showLogs: () => ipcRenderer.invoke('anda:logs'),
   printHtml: (html) => ipcRenderer.invoke('anda:print', html),

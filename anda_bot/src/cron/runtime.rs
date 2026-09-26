@@ -40,6 +40,7 @@ const MAX_CONCURRENT_JOBS: usize = 8;
 
 #[derive(Clone)]
 pub struct CronRuntime {
+    pub admission: Arc<crate::runtime_admission::Admission>,
     pub store: CronStore,
     engine: Arc<EngineRef>,
 }
@@ -47,6 +48,7 @@ pub struct CronRuntime {
 impl CronRuntime {
     pub async fn connect(engine: Arc<EngineRef>, db: Arc<AndaDB>) -> Result<Self, BoxError> {
         Ok(Self {
+            admission: Arc::new(crate::runtime_admission::Admission::default()),
             store: CronStore::connect(db).await?,
             engine,
         })
@@ -69,6 +71,9 @@ impl CronRuntime {
             if cancel.is_cancelled() {
                 break;
             }
+            let Ok(permit) = self.admission.enter() else {
+                break;
+            };
             let Some((job, run)) = self.store.claim_job(job._id, unix_ms()).await? else {
                 continue;
             };
@@ -77,6 +82,7 @@ impl CronRuntime {
             let engine = engine.clone();
             let cancel = cancel.clone();
             in_flight.spawn(async move {
+                let _permit = permit;
                 let id = job._id;
                 this.process_due_job(engine, job, run, cancel).await;
                 id
@@ -186,6 +192,7 @@ impl CronRuntime {
     ) -> Result<CronJobResult, BoxError> {
         let name = engine.default_agent();
         let ctx = engine.ctx_with(caller, &name, &name, meta)?;
+        ctx.base.set_state(crate::runtime_admission::AdmittedCron);
         let context_cancel = ctx.base.cancellation_token();
         let cancel_on_drop = context_cancel.clone().drop_guard();
         install_workspace_grant(&ctx.base, job, caller);
@@ -751,6 +758,43 @@ mod tests {
             .unwrap();
         tokio::time::sleep(Duration::from_millis(at.saturating_sub(unix_ms()) + 5)).await;
         job
+    }
+
+    #[tokio::test]
+    async fn desktop_maintenance_defers_cron_without_claiming_or_losing_due_job() {
+        let runtime = test_runtime().await;
+        let engine = test_engine().await;
+        let job = insert_due_agent(&runtime).await;
+        let lease = runtime.admission.begin().unwrap();
+        let mut running = HashSet::new();
+        let mut tasks = JoinSet::new();
+        let cancel = CancellationToken::new();
+        assert_eq!(
+            runtime
+                .process_due_jobs_once(engine.clone(), &mut tasks, &mut running, &cancel)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            runtime
+                .store
+                .due_jobs(unix_ms(), 8, &running)
+                .await
+                .unwrap()[0]
+                ._id,
+            job._id
+        );
+        runtime.admission.renew(&lease, true).unwrap();
+        assert_eq!(
+            runtime
+                .process_due_jobs_once(engine, &mut tasks, &mut running, &cancel)
+                .await
+                .unwrap(),
+            1
+        );
+        while tasks.join_next().await.is_some() {}
+        assert_eq!(runtime.admission.status().active, 0);
     }
 
     #[tokio::test]

@@ -48,7 +48,9 @@ Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积
 
 桌面端与 Chrome 扩展共享聊天、记忆、技能、书签和配置组件。运行 `pnpm install --filter @anda/desktop...`，再运行 `pnpm --dir desktop package`，即可构建本机安装包。产物位于 `desktop/release/`，包含 Rust runtime，保留已有 `~/.anda` 数据，凭证只由 Electron 主进程持有。详见[桌面安装、开发和验证说明](desktop/README.md)。
 
-当前 macOS 本地构建采用临时签名，尚未进行公开发布所需的公证；桌面更新通过手动安装新包完成，Chrome 浏览器自动化继续使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置。`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
+桌面工作台支持服务端推送和持久提交回执、独立内嵌浏览器与 Agent 操作、交互终端、Git 改动/提交及可恢复工作树，并提供音频自检页。Chrome 浏览器自动化仍可使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置；`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
+
+macOS 本地包采用临时签名和手动安装。正式签名发行版可以协调托管 runtime 更新，延后 cron 调度并等待活动任务完成后安装。已提供 Windows CI、NSIS 和签名配置；Windows 实机验收及公开签名/公证仍需要对应环境和凭证。详见[实施与验证记录](docs/desktop-client-implementation.md)。
 
 ### CLI 与托盘启动器
 

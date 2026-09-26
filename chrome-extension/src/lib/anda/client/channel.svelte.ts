@@ -59,6 +59,8 @@ interface PollTick {
 }
 
 export interface API {
+  /** Present only while a caller-scoped invalidation subscription is live. */
+  stateRevision?(): number | undefined
   activeChannel(): string | null
   requestExtra(): Promise<Record<string, unknown>>
   rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result>
@@ -86,6 +88,7 @@ export class Channel extends EventTarget {
   #sendEpoch: number = 0
   #pollWake: (() => void) | null = null
   #pollSubscribers = new Set<PollSubscriber>()
+  #recoveredSubmissions = new Set<string>()
   #api: API
 
   constructor(source: string, api: API) {
@@ -190,9 +193,10 @@ export class Channel extends EventTarget {
     this.#syncAt = nowMs
     this.#syncing = true
     const epoch = this.#sendEpoch
+    const revision = this.#api.stateRevision?.()
     try {
       const state =
-        (nowMs - this.#sourceStateAt < 60000 ? this.#sourceState : undefined) ??
+        (!options.force && nowMs - this.#sourceStateAt < 60000 ? this.#sourceState : undefined) ??
         (
           await this.toolCall<RpcOutput<SourceState>>({
             name: 'conversations_api',
@@ -227,8 +231,20 @@ export class Channel extends EventTarget {
       this.#syncAt = 0
       this.#api.updateStatus('restore failed', { kind: 'error', text: errorToMessage(error) })
     } finally {
-      if (epoch === this.#sendEpoch) this.#syncing = false
+      if (epoch === this.#sendEpoch) {
+        this.#syncing = false
+        const latest = this.#api.stateRevision?.()
+        if (latest !== undefined && latest !== revision) void this.init({ force: true })
+      }
     }
+  }
+
+  async syncChangedState(): Promise<void> {
+    if (this.#pollingConversation) {
+      this.wakePolling()
+      return
+    }
+    await this.init({ force: true })
   }
 
   async sendPrompt(
@@ -443,6 +459,7 @@ export class Channel extends EventTarget {
     // sleeping, so a cycle would otherwise spin into an unbounded request loop.
     const polled = new Set<number>([conversation._id])
     while (this.#pollingConversation === conversation._id && epoch === this.#sendEpoch) {
+      const revision = this.#api.stateRevision?.()
       const tick = await this.pollConversationOnce(conversation, epoch, polled)
       if (tick.next) {
         // Ownership can change while a tick is in flight (a /new cleared the
@@ -464,8 +481,13 @@ export class Channel extends EventTarget {
       if (!tick.continue) {
         break
       }
+      if (revision !== this.#api.stateRevision?.()) continue
       const ms =
-        this.#api.activeChannel() === this.source ? pollingIntervalMs : pollingIntervalMs * 10
+        revision !== undefined
+          ? Infinity
+          : this.#api.activeChannel() === this.source
+            ? pollingIntervalMs
+            : pollingIntervalMs * 10
       await this.pollIdle(ms)
     }
 
@@ -576,13 +598,36 @@ export class Channel extends EventTarget {
         }
         resolve()
       }
-      const timer = setTimeout(finish, ms)
+      const timer = Number.isFinite(ms) ? setTimeout(finish, ms) : undefined
       this.#pollWake = finish
     })
   }
 
   wakePolling(): void {
     this.#pollWake?.()
+  }
+
+  /** Deliver a durable response after its original transport was lost. */
+  async restoreSubmission(
+    id: string,
+    output: Partial<AgentOutput>,
+    timestamp: number
+  ): Promise<void> {
+    if (this.#recoveredSubmissions.has(id)) return
+    // The source may have advanced (/new or compaction) while a side request
+    // ran. Restore its current state rather than navigating to a stale ID.
+    await this.init({ force: true })
+    if (output.failed_reason) this.appendSystemMessage(output.failed_reason)
+    else if (output.chat_history?.length) {
+      const messages = output.chat_history.flatMap((message, index) =>
+        normalizeMessages(message, { conversation: 0, index, fallbackTimestamp: timestamp })
+      )
+      this.#sideMessages = [
+        ...this.#sideMessages,
+        ...messages.map((message, index) => ({ ...message, id: `recovered-${id}-${index}` }))
+      ]
+    }
+    this.#recoveredSubmissions.add(id)
   }
 
   applyActionResponse(output: ActionApiOutput): void {

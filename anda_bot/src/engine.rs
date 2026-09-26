@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 mod action;
 mod agent;
+mod app_protocol;
 mod bookmark;
 mod browser;
 mod browser_ws;
@@ -95,6 +96,7 @@ const ACTIVE_MODEL_LABEL: &str = "";
 
 pub struct Engines {
     state: AppState,
+    brain_admission_auth: AppState,
     mcp_oauth_flows: McpOAuthFlows,
     bot: Arc<AndaBot>,
     brain: brain::Client,
@@ -576,6 +578,7 @@ impl Engines {
                 transcription_manager.clone(),
                 active_im_channels,
             )
+            .with_admission(cron_runtime.admission.clone())
             .with_memory_access(memory_access.clone()),
         );
         let image_understanding_agent = Arc::new(
@@ -797,8 +800,12 @@ impl Engines {
             extra_info: Arc::new(BTreeMap::new()),
             ed25519_pubkeys: Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
         };
+        let mut brain_admission_auth = state.clone();
+        brain_admission_auth.default_engine = cfg.id_key.id();
+        brain_admission_auth.ed25519_pubkeys = Arc::new(vec![cfg.id_key.pubkey().into()]);
         Ok(Self {
             state,
+            brain_admission_auth,
             mcp_oauth_flows,
             bot,
             brain: brain_client,
@@ -811,6 +818,12 @@ impl Engines {
             cli_workspaces,
             home_dir: cfg.home_dir,
         })
+    }
+
+    pub(crate) fn brain_admission_state(
+        &self,
+    ) -> (Arc<crate::runtime_admission::Admission>, AppState) {
+        (self.bot.admission(), self.brain_admission_auth.clone())
     }
 
     pub fn into_router(self, cancel_token: CancellationToken) -> Router<()> {
@@ -832,6 +845,10 @@ impl Engines {
             cli_workspaces: self.cli_workspaces.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
+            admission: self.bot.admission(),
+            app_protocol: false,
+            events: self.bot.events(),
+            submissions: app_protocol::Submissions::new(&self.home_dir),
             memory: memory_state.clone(),
             auth_headers: HeaderMap::new(),
             app: self.state.clone(),
@@ -844,6 +861,7 @@ impl Engines {
             cli_workspaces: self.cli_workspaces.clone(),
         };
         let browser_ws_router = Router::new()
+            .route("/ws/app/v1", routing::get(browser_ws::app_websocket))
             .route("/ws/engine/{*id}", routing::get(browser_websocket))
             .with_state(browser_ws_state);
         let auto_update_router = Router::new()
@@ -856,6 +874,7 @@ impl Engines {
             .with_state(auto_update_route_state);
         let daemon_control_router = Router::new()
             .route("/daemon/status", routing::get(get_status))
+            .route("/daemon/maintenance", routing::post(daemon_maintenance))
             .route(
                 "/daemon/config",
                 routing::get(get_daemon_config).put(update_daemon_config),
@@ -880,15 +899,60 @@ impl Engines {
 
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
-            .route("/engine/{*id}", routing::post(anda_engine))
+            .route(
+                "/engine/{*id}",
+                routing::post(anda_engine).layer(axum::middleware::from_fn_with_state(
+                    self.bot.admission(),
+                    engine_admission,
+                )),
+            )
             .with_state(self.state)
             .merge(browser_ws_router)
-            .merge(memory_state.into_router())
+            .merge(
+                memory_state
+                    .into_router()
+                    .layer(axum::middleware::from_fn_with_state(
+                        self.bot.admission(),
+                        engine_admission,
+                    )),
+            )
             .merge(auto_update_router)
             .merge(daemon_control_router)
             .merge(mcp_oauth_router);
         app
     }
+}
+
+pub(crate) async fn engine_admission(
+    State(admission): State<Arc<crate::runtime_admission::Admission>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let _permit = match admission.enter() {
+        Ok(permit) => permit,
+        Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+    };
+    next.run(request).await
+}
+
+pub(crate) async fn brain_admission(
+    State((admission, service_auth)): State<(Arc<crate::runtime_admission::Admission>, AppState)>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // Verification does not replace or rewrite the bearer. Brain still sees
+    // the original caller; owner/browser requests never become Bot requests.
+    let internal = verify_trusted_user(&service_auth, request.headers(), unix_ms())
+        == Ok(service_auth.default_engine);
+    let _permit = if internal {
+        admission.enter_existing()
+    } else {
+        match admission.enter() {
+            Ok(permit) => permit,
+            Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+        }
+    };
+    next.run(request).await
 }
 
 async fn auto_update_status(
@@ -934,6 +998,47 @@ async fn daemon_shutdown(
 
     state.cancel_token.cancel();
     AxumJson(json!({ "status": "shutting_down" })).into_response()
+}
+
+#[derive(Deserialize)]
+struct MaintenanceRequest {
+    action: String,
+    token: Option<String>,
+}
+
+async fn daemon_maintenance(
+    State(state): State<DaemonControlRouteState>,
+    headers: HeaderMap,
+    AxumJson(request): AxumJson<MaintenanceRequest>,
+) -> axum::response::Response {
+    if verify_trusted_user(&state.app, &headers, unix_ms()) != Ok(state.cli_workspaces.owner()) {
+        return (
+            StatusCode::FORBIDDEN,
+            "Only the local owner may coordinate updates",
+        )
+            .into_response();
+    }
+    let gate = state.bot.admission();
+    let mut token = request.token.clone();
+    let result = match request.action.as_str() {
+        "begin" => gate.begin().map(|value| {
+            token = Some(value);
+        }),
+        "renew" | "shutdown" => gate.renew(token.as_deref().unwrap_or_default(), false),
+        "release" => gate.renew(token.as_deref().unwrap_or_default(), true),
+        _ => Err("Unknown maintenance operation"),
+    };
+    if let Err(error) = result {
+        return (StatusCode::CONFLICT, error).into_response();
+    }
+    let ready = state.bot.update_ready().await;
+    if request.action == "shutdown" {
+        if !ready {
+            return (StatusCode::CONFLICT, "Runtime still has active work").into_response();
+        }
+        state.cancel_token.cancel();
+    }
+    AxumJson(json!({ "token":token, "ready":ready, "admission":gate.status() })).into_response()
 }
 
 async fn register_cli_workspace(
@@ -1542,6 +1647,65 @@ model:
             format!("Bearer {token}").parse().unwrap(),
         );
         headers
+    }
+
+    #[tokio::test]
+    async fn desktop_maintenance_preserves_internal_brain_identity() {
+        let service = Ed25519Key::new([81; 32]);
+        let owner = Ed25519Key::new([82; 32]);
+        let mut auth = minimal_app(vec![service.pubkey().into()]);
+        auth.default_engine = service.id();
+        let gate = Arc::new(crate::runtime_admission::Admission::default());
+        let _lease = gate.begin().unwrap();
+        let mut claims =
+            crate::identity::expiring_claims(Duration::from_secs(3650 * 24 * 60 * 60)).unwrap();
+        claims.audience = Some("*".into());
+        claims.extra.insert(iana::CWTClaimScope, "*");
+        let token = format!("Bearer {}", service.sign_cwt(claims).unwrap());
+        let expected = token.clone();
+        let counter = gate.clone();
+        let app = Router::new()
+            .route(
+                "/",
+                routing::get(move |headers: HeaderMap| {
+                    let expected = expected.clone();
+                    let counter = counter.clone();
+                    async move {
+                        assert_eq!(
+                            headers
+                                .get(axum::http::header::AUTHORIZATION)
+                                .unwrap()
+                                .to_str()
+                                .unwrap(),
+                            expected
+                        );
+                        assert_eq!(counter.status().active, 1);
+                        "original service caller"
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                (gate.clone(), auth),
+                brain_admission,
+            ));
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let client = reqwest::Client::new();
+        let rejected = client
+            .get(&url)
+            .headers(authed_headers(&owner))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status().as_u16(), 503);
+        let accepted = client
+            .get(&url)
+            .header(axum::http::header::AUTHORIZATION, token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(accepted.status().as_u16(), 200);
+        assert_eq!(accepted.text().await.unwrap(), "original service caller");
+        assert_eq!(gate.status().active, 0);
     }
 
     fn dead_proxy_http() -> reqwest::Client {

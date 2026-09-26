@@ -11,7 +11,7 @@ afterEach(async () => {
   for (const f of cleanup.splice(0).reverse()) await f()
 })
 
-async function fixture(dropSubmission = false) {
+async function fixture(dropSubmission = false, appTransport = false) {
   const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-test-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const store = new DesktopStore(join(directory, 'desktop.json'))
@@ -26,13 +26,18 @@ async function fixture(dropSubmission = false) {
       })
   )
   let submissions = 0
+  const receipts = new Map<string, unknown>()
   const authorization: string[] = []
   server.on('connection', (ws, request) => {
     authorization.push(request.headers.authorization || '')
     expect(request.url).not.toContain('token')
     ws.on('message', (data) => {
       const message = JSON.parse(data.toString())
-      if (message.method === 'agent_run') {
+      if (message.method === 'chat/submit') {
+        expect(message.jsonrpc).toBe('2.0')
+        receipts.set(message.params.requestId, { state: 'completed', result: { conversation: 7 } })
+      }
+      if (['agent_run', 'chat/submit'].includes(message.method)) {
         submissions++
         if (dropSubmission) {
           ws.terminate()
@@ -43,7 +48,22 @@ async function fixture(dropSubmission = false) {
         ws.send(
           JSON.stringify({
             id: message.id,
-            result: message.method === 'agent_run' ? { conversation: 7 } : {}
+            result:
+              message.method === 'initialize'
+                ? {
+                    protocolVersion: 1,
+                    instanceId: 'fixture',
+                    capabilities: { stateInvalidation: true, submissionReceipts: true }
+                  }
+                : message.method === 'capabilities'
+                  ? { desktop: { app_transport: appTransport } }
+                  : message.method === 'chat/submit'
+                    ? receipts.get(message.params.requestId)
+                    : message.method === 'submission/read'
+                      ? receipts.get(message.params.requestId) || null
+                      : message.method === 'agent_run'
+                        ? { conversation: 7 }
+                        : {}
           })
         )
       if (message.params?.[0]?.prompt?.startsWith('/side ')) setTimeout(reply, 50)
@@ -59,11 +79,51 @@ async function fixture(dropSubmission = false) {
     store,
     directory,
     authorization,
-    submissions: () => submissions
+    submissions: () => submissions,
+    notify: () => {
+      for (const ws of server.clients)
+        ws.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'state/changed',
+            params: { instanceId: 'test', revision: '1' }
+          })
+        )
+    }
   }
 }
 
 describe('daemon transport and recovery', () => {
+  it('uses negotiated application transport and forwards caller state invalidation', async () => {
+    const f = await fixture(false, true)
+    expect(f.client.view.liveEvents).toBe(true)
+    const event = new Promise((resolve) => f.client.once('state', resolve))
+    f.notify()
+    expect(await event).toMatchObject({ revision: '1' })
+    expect(
+      await f.client.rpc('agent_run', [
+        { name: '', prompt: 'hello', meta: { source: 'desktop:one' } }
+      ])
+    ).toEqual({ conversation: 7 })
+    expect(f.submissions()).toBe(1)
+    expect(f.store.state.pending).toEqual([])
+  })
+  it('reconciles an ACK lost after server acceptance without resubmitting', async () => {
+    const f = await fixture(true, true)
+    await expect(
+      f.client.rpc('agent_run', [{ name: '', prompt: 'hello', meta: { source: 'desktop:one' } }])
+    ).rejects.toThrow('SUBMISSION_UNKNOWN')
+    expect(f.store.state.pending).toHaveLength(1)
+    await f.client.connect()
+    expect(f.store.state.pending[0]?.state).toBe('completed')
+    expect((await f.client.readSubmission(f.store.state.pending[0]!.id))?.result).toEqual({
+      conversation: 7
+    })
+    const restored = new DesktopStore(join(f.directory, 'desktop.json'))
+    await restored.load()
+    expect(restored.state.pending[0]?.id).toBe(f.store.state.pending[0]?.id)
+    expect(f.submissions()).toBe(1)
+  })
   it('allows a new foreground message while a side request is awaiting its reply', async () => {
     const f = await fixture()
     const side = f.client.rpc('agent_run', [

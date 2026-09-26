@@ -115,6 +115,7 @@ pub struct AgentInfo {
 
 /// A tool for conversation API
 pub struct ConversationsTool {
+    pub events: Arc<super::app_protocol::AppEvents>,
     memory_host: Option<crate::brain::Host>,
     pub conversations: Conversations,
     // The collection `conversations` wraps. anda_engine keeps its own handle
@@ -154,6 +155,7 @@ impl ConversationsTool {
         // this returns the very handle it holds rather than a second instance.
         let store = db.open_collection(name, async |_| Ok(())).await?;
         Ok(Self {
+            events: Arc::new(super::app_protocol::AppEvents::default()),
             memory_host: None,
             conversations,
             store,
@@ -275,6 +277,7 @@ impl ConversationsTool {
         source: String,
         state: SourceState,
     ) -> Result<(), BoxError> {
+        let conversation_id = state.conv_id;
         let _guard = self.extension_save_lock.lock().await;
         let fv = {
             let mut map = self.source_conversation.write();
@@ -284,6 +287,9 @@ impl ConversationsTool {
         self.store
             .save_extension("source_conversation".to_string(), fv)
             .await?;
+        if let Ok(conversation) = self.conversations.get_conversation(conversation_id).await {
+            self.events.changed(&conversation.user.to_string());
+        }
         Ok(())
     }
 
@@ -309,6 +315,7 @@ impl ConversationsTool {
         self.store
             .save_extension("source_conversation".to_string(), fv)
             .await?;
+        self.events.changed(&caller.to_string());
         Ok(removed)
     }
 
