@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Daemon stack overflow during agent turns**: browser WebSocket requests, nested agent runs, system-instruction building (memory sync, Brain reads and the session briefing) and side commands are polled behind type-erased future boxes, so the optimizer cannot merge them into one oversized poll frame. A browser turn that opened a session briefing aborted a development build's daemon on the default 2 MiB worker stack (about 2.0 MiB along that path); with the matching Brain fix the same path uses about 137 KiB in the release build and about 1.05 MiB in a development build.
 - **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work. Completed recording repairs explicitly clear Bot Notes even when Brain's product epoch is unchanged.
 - **Formation replay timestamps**: observed windows retain their original source time and input digest across retries, so a fresh runner timestamp does not create a second Formation for unchanged messages.
 

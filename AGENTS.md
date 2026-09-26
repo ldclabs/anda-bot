@@ -73,8 +73,11 @@ The repository also contains:
   the global Bot identity or expose independent outcomes as a model tool.
 - `learning` and `mib` are separate optional features. Compiling either does not
   enable automatic learning or complete MIB cost accounting.
-- Keep `RUST_MIN_STACK=16777216` on Rust test commands: embedded Brain schema
-  paths can exceed Rust's default debug test-thread stack.
+- Keep `RUST_MIN_STACK=16777216` on Rust test commands: unoptimized async
+  frames of the embedded Brain can exceed Rust's default debug test-thread stack.
+  Release code must fit the 2 MiB default worker stack: keep the
+  `crate::util::boxed` inlining barriers where a subsystem is entered (WebSocket
+  methods, nested agent runs, system-instruction building, side commands).
 - The executable entrypoint is `anda_bot/src/main.rs`; daemon lifecycle is in
   `anda_bot/src/daemon.rs`; config parsing lives under `anda_bot/src/config/`.
 - Engine-facing behavior is mostly under `anda_bot/src/engine/`; IM channel

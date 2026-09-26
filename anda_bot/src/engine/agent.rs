@@ -819,15 +819,14 @@ impl Agent<AgentCtx> for AndaBot {
             } else {
                 None
             };
-            return self
-                .run_side_command(
-                    &ctx,
-                    instructions,
-                    prompt.clone(),
-                    resources,
-                    side_conversation_id,
-                )
-                .await;
+            return crate::util::boxed(self.run_side_command(
+                &ctx,
+                instructions,
+                prompt.clone(),
+                resources,
+                side_conversation_id,
+            ))
+            .await;
         }
 
         let RequestState {

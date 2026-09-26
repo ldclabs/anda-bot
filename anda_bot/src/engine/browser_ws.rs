@@ -318,14 +318,14 @@ async fn handle_browser_ws_text(
         tokio::spawn(async move {
             tokio::select! {
                 _ = cancel.cancelled() => {}
-                _ = handle_browser_ws_request(
+                _ = crate::util::boxed(handle_browser_ws_request(
                     incoming,
                     &state,
                     caller,
                     engine_id,
                     &connection,
                     &write_sender,
-                ) => {}
+                )) => {}
             }
         });
     } else {
@@ -354,24 +354,28 @@ async fn handle_browser_ws_request(
         }
         return;
     }
+    // Each method is its own subsystem; see `crate::util::boxed`.
+    use crate::util::boxed;
     let result = match incoming.method.as_deref().unwrap_or_default() {
         "ping" => Ok(json!({ "ok": true })),
         "browser_register" => handle_browser_register(incoming.params, state, connection),
-        "agent_run" => handle_agent_run(incoming.params, state, caller, engine_id).await,
-        "tool_call" => handle_tool_call(incoming.params, state, caller, engine_id).await,
-        "brain_status" => handle_brain_status(state).await,
-        method if method.starts_with("memory_") => Ok(state
-            .memory
-            .websocket_dispatch(&state.auth_headers, method, incoming.params)
-            .await),
-        "brain_kip_readonly" => handle_brain_kip_readonly(incoming.params, state).await,
+        "agent_run" => boxed(handle_agent_run(incoming.params, state, caller, engine_id)).await,
+        "tool_call" => boxed(handle_tool_call(incoming.params, state, caller, engine_id)).await,
+        "brain_status" => boxed(handle_brain_status(state)).await,
+        method if method.starts_with("memory_") => Ok(boxed(state.memory.websocket_dispatch(
+            &state.auth_headers,
+            method,
+            incoming.params,
+        ))
+        .await),
+        "brain_kip_readonly" => boxed(handle_brain_kip_readonly(incoming.params, state)).await,
         "brain_attention" | "brain_respond" | "brain_runtime_status" => {
-            handle_brain_runtime(
+            boxed(handle_brain_runtime(
                 incoming.method.as_deref().unwrap_or_default(),
                 incoming.params,
                 state,
                 caller,
-            )
+            ))
             .await
         }
         "information" => handle_information(state, engine_id),
