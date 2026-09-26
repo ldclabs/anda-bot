@@ -119,6 +119,8 @@
     submitKeyMode = 'enter',
     incomingAttachment = null,
     incomingDraft = null,
+    initialDraft,
+    onDraftChange,
     skillsRevision = 0
   }: {
     disabled?: boolean
@@ -148,11 +150,17 @@
     onApprovalModeChange?: (mode: ApprovalMode) => Promise<void> | void
     incomingAttachment?: ChatAttachment | null
     incomingDraft?: PromptDraftRequest | null
+    initialDraft?: ComposerSubmitPayload
+    onDraftChange?: (draft: ComposerSubmitPayload) => void
     skillsRevision?: number
   } = $props()
 
-  let text = $state('')
-  let attachments = $state<ChatAttachment[]>([])
+  let text = $state(untrack(() => initialDraft?.text || ''))
+  let attachments = $state<ChatAttachment[]>(untrack(() => initialDraft?.attachments || []))
+  $effect(() => {
+    const draft = { text, attachments }
+    untrack(() => onDraftChange?.(draft))
+  })
   let attachmentError = $state('')
   let stopPending = $state(false)
   let preparingAttachments = $state(false)

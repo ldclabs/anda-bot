@@ -11,6 +11,8 @@
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import { provideAndaClient } from '$lib/anda/client/context'
+  provideAndaClient(andaClient)
   import {
     type ApprovalMode,
     type ChatAttachment,

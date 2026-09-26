@@ -72,6 +72,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Validate config YAML from stdin without creating a home or starting services.
+    ValidateConfig,
     /// Serve the isolated MIB evaluation adapter (never starts the daemon).
     #[cfg(feature = "mib")]
     Mib(mib::MibCommand),
@@ -198,6 +200,21 @@ async fn run() -> Result<(), BoxError> {
         return Err("--full-access can only be used with the interactive `anda` CLI".into());
     }
 
+    if matches!(command, Some(Commands::ValidateConfig)) {
+        use tokio::io::AsyncReadExt;
+        let mut contents = Vec::new();
+        tokio::io::stdin()
+            .take(2 * 1024 * 1024 + 1)
+            .read_to_end(&mut contents)
+            .await?;
+        if contents.len() > 2 * 1024 * 1024 {
+            return Err("configuration exceeds 2 MiB".into());
+        }
+        config::Config::from_contents(std::str::from_utf8(&contents)?)?;
+        println!("{{\"valid\":true}}");
+        return Ok(());
+    }
+
     // Memory guide/status are read-only and must never initialize a home,
     // credentials, logging or a daemon as a side effect of inspection.
     if let Some(Commands::Memory(cmd)) = command.as_ref() {
@@ -264,6 +281,9 @@ async fn run() -> Result<(), BoxError> {
     }
 
     match command {
+        Some(Commands::ValidateConfig) => {
+            unreachable!("validation dispatches before initialization")
+        }
         Some(Commands::Memory(_)) => unreachable!("memory dispatches before daemon initialization"),
         #[cfg(feature = "mib")]
         Some(Commands::Mib(_)) => unreachable!("MIB dispatches before daemon initialization"),

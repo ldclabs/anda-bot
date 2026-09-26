@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import { storeClientState } from '$lib/anda/client/platform'
+  import { useAndaClient } from '$lib/anda/client/context'
+  const andaClient = useAndaClient()
   import type { BookmarkedMessage } from '$lib/anda/client/types'
   import {
     BookmarkBrowser,
@@ -124,7 +126,7 @@
       return
     }
     // The panel reads this on open and scrolls to the bookmarked message.
-    void chrome.storage.local.set({
+    void storeClientState({
       [bookmarkJumpRequestStorageKey]: createBookmarkJumpRequest(bookmark)
     })
     await openAndaSidePanel()

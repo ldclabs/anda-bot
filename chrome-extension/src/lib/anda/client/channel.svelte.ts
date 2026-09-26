@@ -178,12 +178,12 @@ export class Channel extends EventTarget {
     this.#sourceStateAt = Date.now()
   }
 
-  async init(): Promise<void> {
+  async init(options: { force?: boolean } = {}): Promise<void> {
     if (this.#syncing) {
       return
     }
     const nowMs = Date.now()
-    if (nowMs - this.#syncAt < 60000) {
+    if (!options.force && nowMs - this.#syncAt < 60000) {
       return
     }
 

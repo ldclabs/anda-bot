@@ -95,6 +95,7 @@
   let draft = $state<JsonObject>(normalizeConfigDraft({}))
   let source = $state('')
   let configPath = $state('')
+  let configRevision = $state<string | undefined>()
   let activeSection = $state<SectionId>('runtime')
   let loading = $state(true)
   let saving = $state(false)
@@ -129,6 +130,7 @@
     draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
     source = response.content
     configPath = response.path
+    configRevision = response.revision
     dirty = false
     loading = false
   }
@@ -265,14 +267,16 @@
     errorMessage = ''
     statusMessage = ''
     try {
-      const response = await new DaemonConfigApi(settings).save(content)
+      const response = await new DaemonConfigApi(settings).save(content, configRevision)
       configPath = response.path
+      configRevision = response.revision
       if (version === editVersion) {
         draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
         source = response.content
         dirty = false
       }
       statusMessage = getMessage('configSaved')
+      if (response.models_error) errorMessage = response.models_error
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {

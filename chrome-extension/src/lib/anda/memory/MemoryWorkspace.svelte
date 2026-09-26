@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { storeClientState } from '$lib/anda/client/platform'
   const loadBrainApp = () => import('../../../BrainApp.svelte')
   import { createBookmarkJumpRequest, bookmarkJumpRequestStorageKey } from '../bookmark-jump'
   import { openAndaSidePanel } from '../dashboard/side-panel'
@@ -203,7 +204,7 @@
     const conversation = Number(source.conversation)
     if (!Number.isSafeInteger(conversation)) return
     try {
-      await chrome.storage.local.set({
+      await storeClientState({
         [bookmarkJumpRequestStorageKey]: createBookmarkJumpRequest({
           message_id: `m-${source.conversation}-${source.index}`,
           conversation,

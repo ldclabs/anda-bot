@@ -1,0 +1,20 @@
+{
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "allowJs": true,
+    "checkJs": true,
+    "isolatedModules": true,
+    "paths": {
+      "$lib/*": ["../chrome-extension/src/lib/*"],
+      "$extension/*": ["../chrome-extension/src/*"]
+    },
+    "types": ["chrome-types", "node"]
+  },
+  "include": ["src/renderer/**/*", "src/shared/**/*", "../chrome-extension/src/vite-env.d.ts"]
+}

@@ -52,6 +52,7 @@ pub struct AutoUpdater {
     home_dir: PathBuf,
     http: reqwest::Client,
     lock: Arc<Mutex<()>>,
+    desktop_managed: bool,
 }
 
 impl AutoUpdater {
@@ -61,14 +62,29 @@ impl AutoUpdater {
             home_dir,
             http,
             lock: Arc::new(Mutex::new(())),
+            desktop_managed: std::env::var_os("ANDA_DESKTOP_MANAGED_RUNTIME")
+                .is_some_and(|value| value == "1"),
         }
     }
 
     pub fn state(&self) -> AutoUpdateState {
+        if self.desktop_managed {
+            return self.desktop_update_state();
+        }
         read_state(self.db.as_ref())
     }
 
+    fn desktop_update_state(&self) -> AutoUpdateState {
+        AutoUpdateState {
+            error: Some("Updates are managed by Anda Desktop.".to_string()),
+            ..AutoUpdateState::default()
+        }
+    }
+
     pub async fn check_if_due(&self) -> AutoUpdateState {
+        if self.desktop_managed {
+            return self.desktop_update_state();
+        }
         let _guard = self.lock.lock().await;
         match self.run_check(false).await {
             Ok(state) => state,
@@ -77,6 +93,9 @@ impl AutoUpdater {
     }
 
     pub async fn check_now(&self) -> AutoUpdateState {
+        if self.desktop_managed {
+            return self.desktop_update_state();
+        }
         let _guard = self.lock.lock().await;
         match self.run_check(true).await {
             Ok(state) => state,
@@ -86,6 +105,12 @@ impl AutoUpdater {
 
     #[cfg(unix)]
     pub async fn install_and_restart(&self) -> Result<AutoUpdateState, BoxError> {
+        if self.desktop_managed {
+            return Err(
+                "This runtime is managed by Anda Desktop. Update the desktop application instead."
+                    .into(),
+            );
+        }
         let _guard = self.lock.lock().await;
         match self.run_install_and_restart().await {
             Ok(state) => Ok(state),
@@ -495,6 +520,26 @@ mod tests {
             .build()
             .unwrap();
         AutoUpdater::new(db, std::env::temp_dir(), http)
+    }
+
+    #[tokio::test]
+    async fn desktop_managed_runtime_does_not_stage_or_install_updates() {
+        let mut updater = test_updater().await;
+        updater.desktop_managed = true;
+        let state = updater.check_now().await;
+        assert_eq!(state.status, AutoUpdateStatus::Idle);
+        assert!(state.last_checked_ms.is_none());
+        assert!(state.error.as_deref().unwrap().contains("Desktop"));
+        assert!(read_state(updater.db.as_ref()).error.is_none());
+        #[cfg(unix)]
+        assert!(
+            updater
+                .install_and_restart()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Desktop")
+        );
     }
 
     #[test]

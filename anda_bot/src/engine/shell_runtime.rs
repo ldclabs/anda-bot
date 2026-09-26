@@ -89,6 +89,13 @@ fn cli_workspace_request(meta: &RequestMeta) -> Result<Option<(PathBuf, PathBuf)
     let Some(source) = meta.get_extra_as::<String>(keys::SOURCE) else {
         return Ok(None);
     };
+    // Desktop chats have stable opaque sources so several chats can share a
+    // project. The owner and out-of-band registration checks below still apply.
+    if source.starts_with("desktop:") {
+        return Ok(meta
+            .get_extra_as::<PathBuf>(keys::WORKSPACE)
+            .map(|workspace| (workspace.clone(), workspace)));
+    }
     let source_workspace = match source.strip_prefix("cli:") {
         Some(path) if Path::new(path).is_absolute() => path,
         Some(path) => match path.strip_prefix("voice:") {
@@ -113,6 +120,12 @@ impl CliWorkspaceGrants {
         let Some((source, workspace)) = cli_workspace_request(meta)? else {
             return Ok(None);
         };
+        if meta
+            .get_extra_as::<bool>(keys::EXTERNAL_USER)
+            .unwrap_or(false)
+        {
+            return Err("External IM users cannot use a registered local workspace".into());
+        }
         if *caller != self.owner {
             return Err("only the local owner may use a registered CLI workspace".into());
         }
@@ -508,6 +521,46 @@ mod tests {
         let second_project = second_project.canonicalize().unwrap();
         assert_eq!(second_output.workspace.as_deref(), second_project.to_str());
         assert_same_directory(second_output.stdout.as_deref(), &second_project);
+    }
+
+    #[tokio::test]
+    async fn desktop_workspace_requires_owner_and_explicit_registration() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("desktop-project");
+        tokio::fs::create_dir_all(&project).await.unwrap();
+        let owner = Principal::management_canister();
+        let grants = CliWorkspaceGrants::new(owner);
+        let mut meta = cli_meta(&project);
+        meta.extra
+            .insert(keys::SOURCE.to_string(), json!("desktop:chat-1"));
+        assert!(
+            grants
+                .authorize_cron_workspace(&owner, &meta)
+                .await
+                .is_err()
+        );
+        grants.register(&project).await.unwrap();
+        assert_eq!(
+            grants
+                .authorize_cron_workspace(&owner, &meta)
+                .await
+                .unwrap(),
+            Some(project.canonicalize().unwrap())
+        );
+        assert!(
+            grants
+                .authorize_cron_workspace(&Principal::anonymous(), &meta)
+                .await
+                .is_err()
+        );
+        meta.extra
+            .insert(keys::EXTERNAL_USER.to_string(), json!(true));
+        assert!(
+            grants
+                .authorize_cron_workspace(&owner, &meta)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

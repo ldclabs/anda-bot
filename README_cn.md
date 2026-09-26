@@ -4,7 +4,7 @@
 
 > Born of panda. Awakened as Anda.
 
-Anda Bot 是一个基于 Rust 编写、开源、运行在本地终端的 AI 智能体。它具备长期记忆、长程推理、本地工具调用、Subagents 协同调度等能力，并能在与用户的协作中持续学习与成长。
+Anda Bot 是一个基于 Rust 编写、开源、本地运行的 AI 智能体，提供 Chrome 扩展、Electron 桌面客户端和 CLI/TUI 入口。它具备长期记忆、长程推理、本地工具调用、Subagents 协同调度等能力，并能在与用户的协作中持续学习与成长。
 
 其核心差异在于背后的记忆引擎 [Anda Brain](https://github.com/ldclabs/anda-brain)。Anda Brain 会将对话转化为一个持续生长的认知图谱（Cognitive Nexus），包含用户、项目、偏好、事件、关系、决策以及不断演变的事实。这意味着 Anda Bot 不仅仅是检索历史文本，而是能够自主提炼有价值的知识、构建上下文、建立关联，并将有用的历史背景带入未来的对话中。
 
@@ -43,6 +43,14 @@ Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积
 这为用户提供了一种自然且具有连续性的互动体验：只需告知智能体需要跨会话保留的偏好、项目背景或决策依据，在事实变化时进行纠正，或在需要时直接询问智能体“你还记得什么”。若用户的工作偏好发生演变，系统会记录并学习这种演进过程，而不是简单地覆盖历史或给出矛盾的回复。
 
 ## 快速开始
+
+### Electron 桌面客户端
+
+桌面端与 Chrome 扩展共享聊天、记忆、技能、书签和配置组件。运行 `pnpm install --filter @anda/desktop...`，再运行 `pnpm --dir desktop package`，即可构建本机安装包。产物位于 `desktop/release/`，包含 Rust runtime，保留已有 `~/.anda` 数据，凭证只由 Electron 主进程持有。详见[桌面安装、开发和验证说明](desktop/README.md)。
+
+当前 macOS 本地构建采用临时签名，尚未进行公开发布所需的公证；桌面更新通过手动安装新包完成，Chrome 浏览器自动化继续使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置。`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
+
+### CLI 与托盘启动器
 
 安装最新发布版：
 

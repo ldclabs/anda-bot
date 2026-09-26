@@ -1,3 +1,4 @@
+import { getClientPlatform } from '../client/platform'
 import type { BrainGraphSettings } from '../brain/api'
 import { normalizeSettings } from '$lib/service-worker/settings'
 
@@ -359,6 +360,11 @@ export class MemoryApi {
     body?: unknown
   ): Promise<Envelope<T>> {
     if (this.settings.spaceId !== 'anda_bot') throw new Error('unsupported_memory_space')
+    const native = getClientPlatform()
+    if (native) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      return native.rpc<Envelope<T>>(method, params)
+    }
     if (!this.settings.token) throw new Error('unauthorized')
     const extension = typeof chrome !== 'undefined' && chrome.runtime?.sendMessage
     if (extension) {

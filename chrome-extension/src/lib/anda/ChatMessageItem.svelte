@@ -5,7 +5,9 @@
 <script lang="ts">
   import type { Activity } from './memory/api'
   import { memoryActivityLabel } from './memory/labels'
-  import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import { getClientPlatform } from '$lib/anda/client/platform'
+  import { useAndaClient } from '$lib/anda/client/context'
+  const andaClient = useAndaClient()
   import type {
     ChatAction,
     ChatActionChoice,
@@ -200,8 +202,9 @@
   }
 
   function printMessage() {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
+    const native = getClientPlatform()
+    const printWindow = native?.printHtml ? null : window.open('', '_blank')
+    if (!printWindow && !native?.printHtml) return
 
     const roleLabel = isUser
       ? 'User'
@@ -213,7 +216,7 @@
             ? 'Tool'
             : 'Assistant'
     const attachmentsHtml = printableAttachmentHtml()
-    const doc = printWindow.document
+    const doc = printWindow?.document || document.implementation.createHTMLDocument('Print')
     doc.title = `${escapeHtml(roleLabel)} message`
 
     // 注入打印样式
@@ -245,13 +248,18 @@
 
     doc.body.appendChild(container)
 
+    if (native?.printHtml) {
+      void native.printHtml('<!doctype html>' + doc.documentElement.outerHTML)
+      return
+    }
+
     // 打印并自动关闭
     // printWindow.addEventListener('afterprint', () => {
     //   printWindow.close()
     // })
 
     // 确保内容加载完成后触发打印
-    printWindow.requestAnimationFrame(() => {
+    printWindow?.requestAnimationFrame(() => {
       printWindow.focus()
       printWindow.print()
     })
@@ -478,7 +486,7 @@
     downloadingAttachmentIds = new Set([...downloadingAttachmentIds, attachment.id])
     try {
       const filename = safeDownloadName(attachment.name)
-      if (url.startsWith('blob:') || !chrome.downloads?.download) {
+      if (url.startsWith('blob:') || typeof chrome === 'undefined' || !chrome.downloads?.download) {
         downloadWithAnchor(url, filename)
         return
       }
@@ -752,7 +760,7 @@
                     <button
                       type="button"
                       class={buttonClass('default', 'xs', 'chat-action-approve')}
-                      disabled={respondingActionIds.has(action.id)}
+                      disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                       onclick={() => respondApprovalAction(action, true)}
                     >
                       {#if respondingActionIds.has(action.id)}
@@ -765,7 +773,7 @@
                     <button
                       type="button"
                       class={buttonClass('outline', 'xs', 'chat-action-deny')}
-                      disabled={respondingActionIds.has(action.id)}
+                      disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                       onclick={() => respondApprovalAction(action, false)}
                     >
                       <CircleX class="size-3" />
@@ -794,7 +802,7 @@
                                 value={choiceInputValue(action, choice.id)}
                                 placeholder={choiceInputPlaceholder(choice)}
                                 aria-label={choice.label}
-                                disabled={respondingActionIds.has(action.id)}
+                                disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                                 rows="3"
                                 oninput={(event) =>
                                   setChoiceInputValue(
@@ -809,7 +817,7 @@
                                 value={choiceInputValue(action, choice.id)}
                                 placeholder={choiceInputPlaceholder(choice)}
                                 aria-label={choice.label}
-                                disabled={respondingActionIds.has(action.id)}
+                                disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                                 oninput={(event) =>
                                   setChoiceInputValue(
                                     action,
@@ -847,7 +855,7 @@
                               'sm',
                               'chat-action-choice-button h-auto min-w-0 justify-start whitespace-normal px-2 py-1.5 text-left'
                             )}
-                            disabled={respondingActionIds.has(action.id)}
+                            disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                             onclick={() => selectChoiceAction(action, choice.id)}
                           >
                             <span class="min-w-0">

@@ -4,7 +4,7 @@
 
 > Born of panda. Awakened as Anda.
 
-Anda Bot is an open-source Rust AI agent that runs in your terminal, remembers across sessions, and can work on long-horizon goals. It is built to remember, reason, use tools on your computer, coordinate subagents, and continuously improve through collaboration.
+Anda Bot is an open-source Rust AI agent with a Chrome extension, an Electron desktop client, and CLI/TUI access. It runs locally, remembers across sessions, and can work on long-horizon goals. It is built to remember, reason, use tools on your computer, coordinate subagents, and continuously improve through collaboration.
 
 Its primary differentiator is [Anda Brain](https://github.com/ldclabs/anda-brain), the memory engine powering the agent. Brain turns conversations into a living Cognitive Nexus: a graph of people, projects, preferences, events, decisions, and changing facts. Instead of simply searching raw chat logs, Anda Bot can autonomously distill useful knowledge, construct context, identify relationships, and carry historical context forward into future sessions.
 
@@ -43,6 +43,14 @@ Anda Brain is designed for agents that need memory to grow instead of merely acc
 This allows users to establish a natural feedback loop: state facts or preferences that should persist across sessions, correct the agent when things change, or query what the agent remembers. If a workflow preference evolves over time, the system learns the transition rather than blindly overwriting past knowledge.
 
 ## Quick Start
+
+### Electron desktop client
+
+The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. Build a local installer with `pnpm install --filter @anda/desktop...` followed by `pnpm --dir desktop package`. Installers appear in `desktop/release/` and include the Rust runtime. Existing `~/.anda` data is preserved; credentials stay in the Electron main process. See [desktop installation, development and validation](desktop/README.md).
+
+The local macOS build is ad-hoc signed and is not a notarized public release. Desktop updates are installed manually; Chrome browser automation still uses the extension. Config editing is owner-only and supports revision checks to reject stale saves. `anda validate-config` validates YAML from stdin without initializing a home or daemon.
+
+### CLI and tray launcher
 
 Install the latest release:
 

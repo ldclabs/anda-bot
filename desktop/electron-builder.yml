@@ -1,0 +1,41 @@
+appId: org.ldclabs.anda.desktop
+productName: Anda
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+asar: true
+electronDist: node_modules/electron/dist
+extraResources:
+  - from: resources/runtime
+    to: runtime
+  - from: ../anda_bot/assets/logo-tray.png
+    to: logo-tray.png
+  - from: ../anda_bot/assets/config.yaml
+    to: config-template.yaml
+mac:
+  identity: '-'
+  icon: ../anda_bot/assets/logo.icns
+  category: public.app-category.productivity
+  target: [dmg, zip]
+  hardenedRuntime: true
+  extendInfo:
+    NSMicrophoneUsageDescription: Anda uses the microphone only when you record a voice message.
+    NSAppleEventsUsageDescription: Anda opens files and folders you choose.
+win:
+  icon: ../anda_bot/assets/logo.png
+  target: [nsis]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+linux:
+  icon: ../anda_bot/assets/logo.png
+  target: [AppImage]
+protocols:
+  - name: Anda chat
+    schemes: [anda]
+artifactName: Anda-${version}-${os}-${arch}.${ext}

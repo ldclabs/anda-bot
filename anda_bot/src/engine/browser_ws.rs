@@ -867,6 +867,14 @@ fn handle_capabilities(
     };
 
     Ok(json!({
+        "desktop": {
+            "protocol": 1,
+            "workspace_sources": true,
+            "config_revision": true,
+            "runtime_version": env!("CARGO_PKG_VERSION"),
+            "managed_runtime": std::env::var_os("ANDA_DESKTOP_MANAGED_RUNTIME")
+                .is_some_and(|value| value == "1"),
+        },
         "transcription": if has_tool(TranscriptionManager::NAME) {
             state.voice_capabilities.transcription.clone()
         } else {

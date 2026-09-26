@@ -1,3 +1,4 @@
+import { getClientPlatform } from '../client/platform'
 import {
   defaultSettings,
   normalizeSettings,
@@ -255,6 +256,8 @@ export class BrainApi {
       return null
     }
 
+    const native = getClientPlatform()
+    if (native) return native.rpc<T>(method, params)
     const chromeApi = getBrainChromeApi()
     if (!chromeApi?.runtime?.sendMessage) {
       return null
@@ -308,6 +311,8 @@ export class BrainApi {
 }
 
 export async function loadBrainGraphSettings(): Promise<BrainGraphSettings> {
+  const native = getClientPlatform()
+  if (native) return { ...(await native.settings()), spaceId: ANDA_BOT_SPACE_ID }
   const chromeApi = getBrainChromeApi()
   if (chromeApi?.storage?.local) {
     const [settings, saved] = await Promise.all([
@@ -328,6 +333,8 @@ export async function loadBrainGraphSettings(): Promise<BrainGraphSettings> {
 }
 
 export async function saveBrainGraphSettings(settings: BrainGraphSettings): Promise<void> {
+  const native = getClientPlatform()
+  if (native) return native.saveSettings(settings)
   const normalized = {
     ...normalizeSettings(settings),
     brainSpaceId: normalizeSpaceId(settings.spaceId)

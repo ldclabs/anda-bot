@@ -1,3 +1,4 @@
+import { getClientPlatform } from '../client/platform'
 /**
  * Opening the Anda side panel from a dashboard tab.
  *
@@ -8,6 +9,8 @@
  * panel page opens as an ordinary tab if none of them work.
  */
 export async function openAndaSidePanel(): Promise<void> {
+  const native = getClientPlatform()
+  if (native) return native.openChat()
   if (chrome.sidePanel?.open) {
     try {
       const tab = await chrome.tabs.getCurrent()

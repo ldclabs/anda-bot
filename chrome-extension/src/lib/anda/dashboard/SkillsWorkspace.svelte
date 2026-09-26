@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import { storeClientState } from '$lib/anda/client/platform'
+  import { useAndaClient } from '$lib/anda/client/context'
+  const andaClient = useAndaClient()
   import type {
     ManagedSkill,
     ManagedSkillDetail,
@@ -314,7 +316,7 @@
     optimizing = true
     error = ''
     try {
-      await chrome.storage.local.set({
+      await storeClientState({
         [promptDraftRequestStorageKey]: createPromptDraftRequest(
           skillOptimizationPrompt(detail, optimizeGoal)
         )

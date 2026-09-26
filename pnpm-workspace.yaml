@@ -2,12 +2,17 @@ packages:
   - docsite
   - website
   - chrome-extension
+  - desktop
 allowBuilds:
+  electron: true
+  electron-winstaller: true
   '@swc/core': true
   core-js: true
   esbuild: true
   sharp: true
   workerd: true
 onlyBuiltDependencies:
+  - electron
+  - electron-winstaller
   - esbuild
   - '@tailwindcss/oxide'

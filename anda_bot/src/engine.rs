@@ -175,6 +175,7 @@ struct RegisterCliWorkspaceRequest {
 struct DaemonConfigResponse {
     path: String,
     content: String,
+    revision: String,
     config: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     models: Option<DaemonModelsResponse>,
@@ -185,6 +186,8 @@ struct DaemonConfigResponse {
 #[derive(Deserialize)]
 struct DaemonConfigUpdateRequest {
     content: String,
+    #[serde(default)]
+    expected_revision: Option<String>,
 }
 
 impl RuntimeModels {
@@ -975,8 +978,16 @@ async fn get_daemon_config(
     State(state): State<DaemonControlRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    let caller = match verify_trusted_user(&state.app, &headers, unix_ms()) {
+        Ok(caller) => caller,
+        Err(response) => return response.into_response(),
+    };
+    if caller != state.cli_workspaces.owner() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Only the local owner may manage daemon configuration",
+        )
+            .into_response();
     }
 
     let content = match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
@@ -1001,8 +1012,16 @@ async fn update_daemon_config(
     headers: HeaderMap,
     AxumJson(request): AxumJson<DaemonConfigUpdateRequest>,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    let caller = match verify_trusted_user(&state.app, &headers, unix_ms()) {
+        Ok(caller) => caller,
+        Err(response) => return response.into_response(),
+    };
+    if caller != state.cli_workspaces.owner() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Only the local owner may manage daemon configuration",
+        )
+            .into_response();
     }
 
     let content = normalize_config_file_content(request.content);
@@ -1019,6 +1038,26 @@ async fn update_daemon_config(
     }
 
     let _write_guard = state.config_write_lock.lock().await;
+
+    if let Some(expected) = &request.expected_revision {
+        let current =
+            match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
+                Ok(content) => content,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    config::Config::default_template().to_string()
+                }
+                Err(err) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+                }
+            };
+        if expected != &daemon_config_revision(&current) {
+            return (
+                StatusCode::CONFLICT,
+                "Configuration changed since it was loaded. Reload before saving.",
+            )
+                .into_response();
+        }
+    }
 
     match daemon_config_needs_backup(&state.runtime_models.config_path, content.as_bytes()).await {
         Ok(true) => {
@@ -1108,11 +1147,19 @@ fn daemon_config_response(
     let config = serde_json::to_value(config)?;
     Ok(DaemonConfigResponse {
         path: path.to_string_lossy().to_string(),
+        revision: daemon_config_revision(&content),
         content,
         config,
         models: None,
         models_error: None,
     })
+}
+
+fn daemon_config_revision(content: &str) -> String {
+    base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        Sha3_384::digest(content.as_bytes()),
+    )
 }
 
 fn normalize_config_file_content(mut content: String) -> String {
@@ -1688,6 +1735,21 @@ model:
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = get_daemon_config(State(state.clone()), authed_headers(&other_key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let resp = update_daemon_config(
+            State(state.clone()),
+            authed_headers(&other_key),
+            AxumJson(DaemonConfigUpdateRequest {
+                content: VALID_CONFIG_YAML.to_string(),
+                expected_revision: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         let resp = get_daemon_config(State(state.clone()), authed_headers(&key))
             .await
             .into_response();
@@ -1699,11 +1761,30 @@ model:
             authed_headers(&key),
             AxumJson(DaemonConfigUpdateRequest {
                 content: VALID_CONFIG_YAML.to_string(),
+                expected_revision: Some(daemon_config_revision(VALID_CONFIG_YAML)),
             }),
         )
         .await
         .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
+
+        // A stale desktop/extension editor must not overwrite another client's edit.
+        let original = tokio::fs::read_to_string(&config_path).await.unwrap();
+        let resp = update_daemon_config(
+            State(state.clone()),
+            authed_headers(&key),
+            AxumJson(DaemonConfigUpdateRequest {
+                content: VALID_CONFIG_YAML.to_string(),
+                expected_revision: Some("stale-revision".to_string()),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            tokio::fs::read_to_string(&config_path).await.unwrap(),
+            original
+        );
 
         // Reloading models from the on-disk config succeeds.
         let resp = reload_daemon_models(State(state.clone()), authed_headers(&key))

@@ -148,3 +148,11 @@ function applyDocumentDirection(): void {
     document.documentElement.dir = dir
   }
 }
+
+/** Installs bundled translations for a native host without emulating Chrome APIs. */
+export function setNativeMessages(language: UiLanguage, messages: LocaleMessages): void {
+  overrideLanguage = language
+  overrideMessages = messages
+  if (typeof document !== 'undefined') document.documentElement.lang = language.replace('_', '-')
+  applyDocumentDirection()
+}

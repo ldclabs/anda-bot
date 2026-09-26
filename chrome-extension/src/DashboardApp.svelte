@@ -5,6 +5,8 @@
     skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte')
   }
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
+  import { provideAndaClient } from '$lib/anda/client/context'
+  provideAndaClient(andaClient)
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass, nativeSelectClass } from '$lib/anda/ui'
   import { getMessage } from '$lib/i18n'

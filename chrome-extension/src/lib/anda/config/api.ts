@@ -1,3 +1,4 @@
+import { getClientPlatform } from '../client/platform'
 import { getMessage } from '$lib/i18n'
 import {
   connectionKey,
@@ -21,6 +22,8 @@ export type Json =
 export interface DaemonConfigResponse {
   path: string
   content: string
+  revision?: string
+  models_error?: string
   config: Json
 }
 
@@ -46,7 +49,7 @@ export class DaemonConfigApi {
     return this.request<DaemonConfigResponse>('/daemon/config', { method: 'GET' })
   }
 
-  async save(content: string): Promise<DaemonConfigResponse> {
+  async save(content: string, expectedRevision?: string): Promise<DaemonConfigResponse> {
     if (
       getConfigChromeApi()?.storage?.local &&
       connectionKey(await loadConfigSettings()) !== connectionKey(this.settings)
@@ -58,11 +61,18 @@ export class DaemonConfigApi {
     }
     return this.request<DaemonConfigResponse>('/daemon/config', {
       method: 'PUT',
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, expected_revision: expectedRevision })
     })
   }
 
   private async request<T>(path: string, init: RequestInit): Promise<T> {
+    const native = getClientPlatform()
+    if (native)
+      return native.config<T>(
+        init.method === 'PUT' ? 'PUT' : 'GET',
+        init.body ? JSON.parse(String(init.body)).content : undefined,
+        init.body ? JSON.parse(String(init.body)).expected_revision : undefined
+      )
     if (!this.settings.token) {
       throw new Error('missing bearer token')
     }
@@ -94,6 +104,8 @@ export class DaemonConfigApi {
 }
 
 export async function loadConfigSettings(): Promise<SettingsState> {
+  const native = getClientPlatform()
+  if (native) return native.settings()
   const chromeApi = getConfigChromeApi()
   if (chromeApi?.storage?.local) {
     return loadSettingsFromStorage(chromeApi.storage.local)
@@ -103,6 +115,8 @@ export async function loadConfigSettings(): Promise<SettingsState> {
 }
 
 export async function saveConfigSettings(settings: SettingsState): Promise<void> {
+  const native = getClientPlatform()
+  if (native) return native.saveSettings(settings)
   const normalized = normalizeSettings(settings)
   const chromeApi = getConfigChromeApi()
   if (chromeApi?.storage?.local) {
