@@ -84,4 +84,4 @@ brain:
   runtime_config: brain-runtime.yaml
 ```
 
-Re-export older browser tokens with `anda browser token` and update the extension settings: runtime requests now retain the original user identity and require the Brain audience.
+Older browser tokens keep working without a re-export: runtime requests retain the original user identity, and the embedded Brain accepts a token that names no audience while still verifying its signature and expiry.

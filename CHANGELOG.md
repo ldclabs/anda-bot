@@ -6,6 +6,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Browser tokens from earlier versions**: tokens exported before Brain audience support keep working without a re-export. The embedded Brain accepts a trusted user's token that names no audience as addressed to its one Space, and still verifies its signature, expiry, subject and scope.
 - **Daemon stack overflow during agent turns**: browser WebSocket requests, nested agent runs, system-instruction building (memory sync, Brain reads and the session briefing) and side commands are polled behind type-erased future boxes, so the optimizer cannot merge them into one oversized poll frame. A browser turn that opened a session briefing aborted a development build's daemon on the default 2 MiB worker stack (about 2.0 MiB along that path); with the matching Brain fix the same path uses about 137 KiB in the release build and about 1.05 MiB in a development build.
 - **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work. Completed recording repairs explicitly clear Bot Notes even when Brain's product epoch is unchanged.
 - **Formation replay timestamps**: observed windows retain their original source time and input digest across retries, so a fresh runner timestamp does not create a second Formation for unchanged messages.
@@ -49,7 +50,7 @@ All notable changes to Anda Bot.
 ### Upgrade notes
 
 - Back up the memory database before the first KIP 2.0 startup. Migration runs before the gateway becomes ready and may take several minutes.
-- Re-export existing browser credentials with `anda browser token` and replace the token in extension settings to include the Brain audience. Custom Brain clients must adopt the KIP 2.0 application request and response formats above.
+- Browser credentials exported by earlier versions keep working without a re-export: the embedded Brain accepts a trusted user's token that names no audience as addressed to its one Space, still verifying signature, expiry, subject and scope. Custom Brain clients must adopt the KIP 2.0 application request and response formats above.
 - A 0.12.0 database is KIP 1.x and migrates automatically on first start; a copy of one written by Brain 0.11 (136 MB) opened in about three minutes.
 - Development builds of `main` between 0.12.0 and 0.13.0 may have written the database under the `cognitive-memory` 2.1.0 draft (Brain 0.12.1 / Nexus 0.13.4). This release does not open such a database in place: stop the daemon, back it up, rebuild it with Brain's `tools/migrate-draft-space`, and keep the old one read-only for rollback.
 

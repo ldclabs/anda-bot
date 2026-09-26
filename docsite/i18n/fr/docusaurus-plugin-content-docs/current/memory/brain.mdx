@@ -84,4 +84,4 @@ brain:
   runtime_config: brain-runtime.yaml
 ```
 
-Réexportez les anciens jetons avec `anda browser token` puis mettez à jour l’extension : les requêtes conservent l’identité d’origine et exigent l’audience Brain.
+Les anciens jetons restent valables sans réexportation : les requêtes conservent l’identité d’origine et le Brain intégré accepte un jeton sans audience, tout en vérifiant sa signature et son expiration.

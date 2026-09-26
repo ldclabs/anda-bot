@@ -84,4 +84,4 @@ brain:
   runtime_config: brain-runtime.yaml
 ```
 
-Vuelve a exportar los tokens antiguos con `anda browser token` y actualiza la extensión: las solicitudes conservan la identidad original y requieren la audiencia de Brain.
+Los tokens antiguos siguen funcionando sin volver a exportarlos: las solicitudes conservan la identidad original y el Brain integrado acepta un token sin audiencia, verificando igualmente su firma y su caducidad.

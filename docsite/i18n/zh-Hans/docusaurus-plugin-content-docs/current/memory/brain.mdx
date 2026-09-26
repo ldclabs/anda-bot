@@ -84,4 +84,4 @@ brain:
   runtime_config: brain-runtime.yaml
 ```
 
-旧浏览器令牌需要用 `anda browser token` 重新导出并更新扩展设置：运行时请求保留原用户身份，令牌必须包含 Brain audience。
+旧浏览器令牌无需重新导出即可继续使用：运行时请求保留原用户身份，内嵌 Brain 接受未指定 audience 的令牌，并照常校验签名和有效期。

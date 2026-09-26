@@ -65,7 +65,7 @@ The existing Brain background lifecycle discovers persistent work, runs one owne
 
 ## Inbox and identities
 
-Existing browser tokens exported before Brain audience support must be re-exported with `anda browser token` and replaced in the extension settings. New tokens target `anda_bot`; their subject, scope and bounded expiry are retained.
+Browser tokens exported before Brain audience support keep working: the embedded Brain accepts a trusted user's token that names no audience as addressed to its one Space, and still verifies its signature, expiry, subject and scope. New tokens target `anda_bot` explicitly; re-exporting with `anda browser token` is optional.
 
 Open **Attention inbox** in the browser Brain view. Use `/brain inbox`, `/brain status` or `/brain next <cursor>` in the TUI. `/brain answer <id> <event_key> <answer>` sends a clarification; `/brain statement <id> <event_key> <statement>` records an attributed statement. Use `/brain help` for the command forms.
 

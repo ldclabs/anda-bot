@@ -65,7 +65,7 @@ brain:
 
 ## 待办与身份
 
-旧版导出的浏览器令牌缺少 Brain audience，需要运行 `anda browser token` 重新导出并更新扩展设置。新令牌限定 `anda_bot`，保留原有 subject、scope 和有效期上限。
+旧版导出的浏览器令牌没有 audience，仍可继续使用：内嵌 Brain 把受信用户签发、未指定 audience 的令牌视为发给它唯一的 Space，并照常校验签名、有效期、subject 和 scope。新令牌明确限定 `anda_bot`；用 `anda browser token` 重新导出不是必需的。
 
 浏览器 Brain 页面提供“记忆待办”。TUI 使用 `/brain inbox`、`/brain status`、`/brain next <cursor>`；回答用 `/brain answer <id> <event_key> <answer>`，陈述用 `/brain statement <id> <event_key> <statement>`，帮助为 `/brain help`。
 

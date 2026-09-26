@@ -31,9 +31,9 @@ anda_object_store = "0.14"
 anda_db = { version = "0.14", features = ["full"] }
 anda_db_tfs = { version = "0.14", features = ["full"] }
 anda_db_utils = { version = "0.14" }
-anda_brain = { version = "0.13.0" }
-anda_kip = "=0.14.0"
-anda_cognitive_nexus = "0.14.0"
+anda_brain = { version = "0.13" }
+anda_kip = "0.14"
+anda_cognitive_nexus = "0.14"
 anydoc = "0.2"
 base64 = "0.23"
 cpal = { version = "0.18" }

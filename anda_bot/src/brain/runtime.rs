@@ -71,7 +71,12 @@ impl Brain {
             config::APP_NAME.to_string(),
             config::APP_VERSION.to_string(),
             0,
-        );
+        )
+        // Browser tokens exported before 0.13 name no audience. This Brain
+        // serves the Bot's one Space to the Bot's own trusted users, so they
+        // keep working without a re-export; signature, expiry, subject and
+        // scope are still verified.
+        .with_audience_free_cwt();
 
         if let Some(runtime_config) = cfg.runtime_config {
             app_state = app_state.with_runtime_config(runtime_config, resolve_secret)?;
@@ -241,6 +246,54 @@ mod tests {
         // The space was created on first load and the router registers the
         // public API routes without panicking.
         let _router = brain.into_router();
+    }
+
+    #[tokio::test]
+    async fn embedded_brain_accepts_browser_tokens_exported_before_audiences() {
+        let owner = Ed25519Key::new([23; 32]);
+        let brain = Brain::new(
+            Arc::new(InMemory::new()),
+            BrainConfig {
+                managers: vec![owner.pubkey()],
+                https_proxy: None,
+                models: brain_models(),
+                runtime_config: None,
+            },
+        )
+        .await
+        .unwrap();
+        // A pre-0.13 `anda browser token`: signed by a trusted user, no audience.
+        let legacy = |key: &Ed25519Key| {
+            let mut claims =
+                crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap();
+            claims
+                .extra
+                .insert(crate::identity::iana::CWTClaimScope, "*");
+            key.sign_cwt(claims).unwrap()
+        };
+        let now_ms = anda_engine::unix_ms();
+        let auth = brain
+            .state
+            .check_auth(
+                &legacy(&owner),
+                config::ANDA_BOT_SPACE_ID,
+                anda_brain::types::TokenScope::Read,
+                now_ms,
+            )
+            .unwrap();
+        assert_eq!(auth.user, owner.id());
+        // The signature is still what admits it.
+        assert!(
+            brain
+                .state
+                .check_auth(
+                    &legacy(&Ed25519Key::new([24; 32])),
+                    config::ANDA_BOT_SPACE_ID,
+                    anda_brain::types::TokenScope::Read,
+                    now_ms,
+                )
+                .is_err()
+        );
     }
 
     #[tokio::test]

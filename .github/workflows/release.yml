@@ -61,13 +61,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # The Cargo patch builds Brain from this commit (0.13.0). Remove this step
-      # and the patch once anda_brain 0.13.0 is on crates.io.
+      # The Cargo patch builds Brain from this commit, which adds
+      # `AppState::with_audience_free_cwt` after 0.13.0. Remove this step and
+      # the patch once a Brain release with it is on crates.io.
       - name: Checkout Brain source dependency
         uses: actions/checkout@v6
         with:
           repository: ldclabs/anda-brain
-          ref: 8f78dfe049c440bd8db8ea7b6f0b932ea83918bb
+          ref: b5c0ee0788f52efba936e4422897601305968dff
           path: .ci/anda-brain
           persist-credentials: false
 
