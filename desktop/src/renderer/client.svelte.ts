@@ -1,5 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity'
-import { Channel } from '$lib/anda/client/channel.svelte'
+import { Channel, type AgentSubmission } from '$lib/anda/client/channel.svelte'
 import { SkillsApi } from '$lib/anda/client/skills'
 import { BookmarksApi } from '$lib/anda/client/bookmarks.svelte'
 import { QuickPrompts } from '$lib/anda/client/quick-prompts.svelte'
@@ -13,6 +13,7 @@ import { normalizeUiLanguage, setNativeMessages } from '$lib/i18n'
 import type { DaemonApi } from '$lib/anda/client/daemon'
 import type {
   ActionApiOutput,
+  AgentInput,
   AgentOutput,
   ChatAttachment,
   Resource,
@@ -98,6 +99,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   private prefWrites: Promise<unknown> = Promise.resolve()
   private seenStatuses = new Map<string, string>()
   private receiptRecovery: Promise<void> = Promise.resolve()
+  private activeSubmissions = new Set<string>()
   private ephemeralWorkspace?: string
   private draftTimer?: ReturnType<typeof setTimeout>
   private drafts = new Map<string, { text: string; attachments: ChatAttachment[] }>()
@@ -239,6 +241,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   }
   private async consumeReceipts(): Promise<void> {
     for (const pending of this.pending) {
+      if (this.activeSubmissions.has(pending.id)) continue
       if (!['completed', 'failed'].includes(pending.state)) continue
       try {
         const receipt = await window.anda.readSubmission(pending.id)
@@ -260,6 +263,31 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       }
     }
   }
+  private async submit(input: AgentInput): Promise<AgentSubmission> {
+    const id = crypto.randomUUID()
+    this.activeSubmissions.add(id)
+    const release = () => {
+      this.activeSubmissions.delete(id)
+      void this.restoreReceipts()
+    }
+    try {
+      const output = await window.anda.rpc<AgentOutput>('agent_run', [$state.snapshot(input)], id)
+      return {
+        id,
+        output,
+        finish: async (applied) => {
+          try {
+            if (applied) await window.anda.acknowledgeSubmission(id)
+          } finally {
+            release()
+          }
+        }
+      }
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
   private ensureChannel(source: string): Channel {
     let channel = this.channels.get(source)
     if (!channel) {
@@ -268,6 +296,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
           this.authorized && this.connection.liveEvents ? this.eventRevision : undefined,
         activeChannel: () => (document.hidden ? null : this.activeSource),
         requestExtra: async () => this.requestExtra(source),
+        agentRun: (input) => this.submit(input),
         rpc: (method, params) => this.rpc(method, params),
         updateStatus: (status, message) => {
           const previous = this.seenStatuses.get(source)

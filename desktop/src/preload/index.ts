@@ -8,7 +8,8 @@ const api: DesktopBridge = {
   bootstrap: () => ipcRenderer.invoke('anda:bootstrap'),
   connect: () => ipcRenderer.invoke('anda:connect'),
   control: (action) => ipcRenderer.invoke('anda:control', action),
-  rpc: (method, params) => ipcRenderer.invoke('anda:rpc', method, params),
+  rpc: (method, params, submissionId) =>
+    ipcRenderer.invoke('anda:rpc', method, params, submissionId),
   config: (method, content, revision) =>
     ipcRenderer.invoke('anda:config', method, content, revision),
   preferences: (patch) => ipcRenderer.invoke('anda:preferences', patch),

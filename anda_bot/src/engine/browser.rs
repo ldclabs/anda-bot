@@ -60,6 +60,14 @@ pub struct BrowserSession {
     pub title: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct BrowserRegisterArgs {
+    pub session: String,
+    pub tab_id: Option<i64>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+}
+
 #[derive(Debug)]
 struct PendingBrowserRequest {
     session: String,
@@ -356,27 +364,30 @@ impl BrowserBridge {
         &self,
         connection_id: u64,
         sender: mpsc::Sender<BrowserCommand>,
-        session: String,
-        tab_id: Option<i64>,
-        url: Option<String>,
-        title: Option<String>,
+        args: BrowserRegisterArgs,
+        multiplexed: bool,
     ) -> Result<BrowserSession, BoxError> {
-        let session = normalize_session(session)?;
+        let session = normalize_session(args.session)?;
         let now = unix_ms();
         let mut connections = self.connections.write();
         let connected_at = connections
             .get(&session)
             .filter(|connection| connection.connection_id == connection_id)
             .map_or(now, |connection| connection.session.connected_at);
-        connections
-            .retain(|key, connection| connection.connection_id != connection_id || key == &session);
+        // Extension sockets replace their one session. The owner-only desktop
+        // transport shares a socket across independently routed chat browsers.
+        if !multiplexed {
+            connections.retain(|key, connection| {
+                connection.connection_id != connection_id || key == &session
+            });
+        }
         let info = BrowserSession {
             session: session.clone(),
             connected_at,
             last_seen_at: now,
-            tab_id,
-            url: normalize_optional_string(url),
-            title: normalize_optional_string(title),
+            tab_id: args.tab_id,
+            url: normalize_optional_string(args.url),
+            title: normalize_optional_string(args.title),
         };
         connections.insert(
             session,
@@ -1824,10 +1835,13 @@ mod tests {
             .register_ws_session(
                 connection_id,
                 sender,
-                "chrome:tab:1".to_string(),
-                Some(1),
-                Some("https://example.com".to_string()),
-                Some("Example".to_string()),
+                BrowserRegisterArgs {
+                    session: "chrome:tab:1".to_string(),
+                    tab_id: Some(1),
+                    url: Some("https://example.com".to_string()),
+                    title: Some("Example".to_string()),
+                },
+                false,
             )
             .unwrap();
 
@@ -2129,10 +2143,12 @@ mod tests {
             .register_ws_session(
                 connection_id,
                 sender,
-                "chrome:tab:1".to_string(),
-                Some(1),
-                None,
-                None,
+                BrowserRegisterArgs {
+                    session: "chrome:tab:1".to_string(),
+                    tab_id: Some(1),
+                    ..Default::default()
+                },
+                false,
             )
             .unwrap();
         let tool = ChromeBrowserTool::tabs(bridge.clone())
@@ -2295,10 +2311,13 @@ mod tests {
             .register_ws_session(
                 connection_id,
                 sender,
-                "chrome:tab:1".to_string(),
-                Some(1),
-                Some("https://example.com".to_string()),
-                Some("Example".to_string()),
+                BrowserRegisterArgs {
+                    session: "chrome:tab:1".to_string(),
+                    tab_id: Some(1),
+                    url: Some("https://example.com".to_string()),
+                    title: Some("Example".to_string()),
+                },
+                false,
             )
             .unwrap();
 
@@ -2586,7 +2605,15 @@ mod tests {
         let bridge = Arc::new(BrowserBridge::new());
         let (id, tx, mut rx) = bridge.open_ws_connection();
         bridge
-            .register_ws_session(id, tx, "session".into(), None, None, None)
+            .register_ws_session(
+                id,
+                tx,
+                BrowserRegisterArgs {
+                    session: "session".into(),
+                    ..Default::default()
+                },
+                false,
+            )
             .unwrap();
         for cancel in [true, false] {
             let worker_bridge = bridge.clone();
@@ -2620,7 +2647,15 @@ mod tests {
         let bridge = BrowserBridge::new();
         let (id, tx, _rx) = bridge.open_ws_connection();
         bridge
-            .register_ws_session(id, tx.clone(), "session".into(), None, None, None)
+            .register_ws_session(
+                id,
+                tx.clone(),
+                BrowserRegisterArgs {
+                    session: "session".into(),
+                    ..Default::default()
+                },
+                false,
+            )
             .unwrap();
         for request_id in 0..32 {
             tx.try_send(BrowserCommand {
@@ -2646,7 +2681,15 @@ mod tests {
         let bridge = Arc::new(BrowserBridge::new());
         let (old, tx, mut rx) = bridge.open_ws_connection();
         bridge
-            .register_ws_session(old, tx, "session".into(), None, None, None)
+            .register_ws_session(
+                old,
+                tx,
+                BrowserRegisterArgs {
+                    session: "session".into(),
+                    ..Default::default()
+                },
+                false,
+            )
             .unwrap();
         let worker = bridge.clone();
         let task =
@@ -2654,7 +2697,15 @@ mod tests {
         rx.recv().await.unwrap();
         let (new, tx, _rx) = bridge.open_ws_connection();
         bridge
-            .register_ws_session(new, tx, "session".into(), None, None, None)
+            .register_ws_session(
+                new,
+                tx,
+                BrowserRegisterArgs {
+                    session: "session".into(),
+                    ..Default::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(task.await.unwrap().is_err());
         bridge.disconnect_ws_connection(old);

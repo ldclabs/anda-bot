@@ -146,6 +146,38 @@ function createBackend(options: {
   return backend
 }
 
+it('acknowledges a side reply only after applying it and deduplicates receipt recovery', async () => {
+  const backend = createBackend({})
+  const channel = new Channel('browser:test', backend.api)
+  const output = {
+    chat_history: [{ role: 'assistant', content: [{ type: 'Text', text: 'Delivered side reply' }] }]
+  } as AgentOutput
+  const finish = vi.fn(async (applied: boolean) => {
+    expect(applied).toBe(true)
+    expect(channel.sideMessages.some((m) => m.text === 'Delivered side reply')).toBe(true)
+  })
+  backend.api.agentRun = async () => ({ id: 'receipt-delivered', output, finish })
+  await channel.sendPrompt('/side inspect', [])
+  expect(finish).toHaveBeenCalledOnce()
+  await channel.restoreSubmission('receipt-delivered', output, 1000)
+  expect(channel.sideMessages.filter((m) => m.text === 'Delivered side reply')).toHaveLength(1)
+  channel.destroy()
+})
+
+it('leaves a receipt recoverable when applying the response fails', async () => {
+  const backend = createBackend({})
+  const channel = new Channel('browser:test', backend.api)
+  const finish = vi.fn(async () => {})
+  backend.api.agentRun = async () => ({
+    id: 'receipt-unapplied',
+    output: { conversation: 99 } as AgentOutput,
+    finish
+  })
+  await channel.sendPrompt('hello', [])
+  expect(finish).toHaveBeenCalledWith(false)
+  channel.destroy()
+})
+
 it('restores a durable side reply once without replaying or rewinding the active conversation', async () => {
   const backend = createBackend({
     conversations: [conversation({ _id: 9, status: 'completed' })],

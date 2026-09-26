@@ -335,8 +335,15 @@ export class DaemonClient extends EventEmitter {
       )
     })
   }
-  async rpc(method: string, params: unknown[]): Promise<unknown> {
+  async rpc(method: string, params: unknown[], submissionId?: string): Promise<unknown> {
     validateRpc(method, params)
+    if (
+      submissionId !== undefined &&
+      (typeof submissionId !== 'string' ||
+        !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(submissionId) ||
+        this.store.state.pending.some((p) => p.id === submissionId))
+    )
+      throw new Error('Invalid or pending submission ID')
     if (this.manuallyStopped)
       throw new Error('The daemon is stopped. Reconnect explicitly to start it.')
     if (!this.view.connected || Date.now() - this.credentialAt > 20 * 3600_000) await this.connect()
@@ -358,7 +365,7 @@ export class DaemonClient extends EventEmitter {
         'A previous submission is unconfirmed. Review the conversation before sending again.'
       )
     const submission = {
-      id: randomUUID(),
+      id: submissionId || randomUUID(),
       source,
       prompt: input.prompt.slice(0, 2000),
       time: Date.now(),
@@ -368,18 +375,32 @@ export class DaemonClient extends EventEmitter {
     this.store.state.pending.push(submission)
     await this.store.save()
     try {
-      const result = this.appTransport
-        ? this.receiptResult(
-            await this.request('chat/submit', {
-              requestId: submission.id,
-              input
-            } satisfies AppSubmit)
+      if (submission.receipt) {
+        const receipt = (await this.request('chat/submit', {
+          requestId: submission.id,
+          input
+        } satisfies AppSubmit)) as SubmissionReceipt
+        if (receipt.state === 'completed' || receipt.state === 'failed') {
+          this.store.state.pending = this.store.state.pending.map((p) =>
+            p.id === submission.id ? { ...p, state: receipt.state as 'completed' | 'failed' } : p
           )
-        : await this.request(method, params)
+          // Main surviving a renderer reload is not proof that the UI received
+          // the result. Keep its durable reference until the renderer ACKs it.
+          await this.store.save()
+        }
+        return this.receiptResult(receipt)
+      }
+      const result = await this.request(method, params)
       this.store.state.pending = this.store.state.pending.filter((p) => p.id !== submission.id)
       await this.store.save()
       return result
     } catch (error) {
+      if (
+        this.store.state.pending.some(
+          (p) => p.id === submission.id && ['completed', 'failed'].includes(p.state)
+        )
+      )
+        throw error
       const text = error instanceof Error ? error.message : String(error)
       if (/WebSocket|SUBMISSION_UNKNOWN|outcome unknown/.test(text)) {
         this.store.state.pending = this.store.state.pending.map((p) =>
@@ -477,6 +498,12 @@ export class DaemonClient extends EventEmitter {
       source: pending.source,
       requestId: pending.id
     }) as Promise<SubmissionReceipt | null>
+  }
+  async acknowledgeSubmission(id: string): Promise<void> {
+    if (typeof id !== 'string') throw new Error('Invalid submission')
+    this.store.state.pending = this.store.state.pending.filter((p) => p.id !== id)
+    await this.store.save()
+    this.emit('submissions', this.store.state.pending)
   }
   async config(
     method: 'GET' | 'PUT',

@@ -54,15 +54,33 @@
   onMount(() => {
     void load()
   })
-  function edit(job?: Job) {
-    editId = job?._id || null
-    name = job?.name || ''
-    prompt = job?.job || ''
-    kind = job?.job_kind || 'agent'
-    scheduleKind = job?.schedule_kind || 'every'
-    schedule = job?.schedule || '1d'
-    timezone = job?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone
-    editing = true
+  async function edit(job?: Job) {
+    if (busy) return
+    busy = true
+    error = ''
+    try {
+      // List responses contain previews, not the complete task payload.
+      const full = job
+        ? (
+            await client.toolCall<RpcOutput<{ job: Job }>>('manage_cron_job', {
+              id: job._id,
+              action: 'get'
+            })
+          ).output.result.job
+        : undefined
+      editId = full?._id || null
+      name = full?.name || ''
+      prompt = full?.job || ''
+      kind = full?.job_kind || 'agent'
+      scheduleKind = full?.schedule_kind || 'every'
+      schedule = full?.schedule || '1d'
+      timezone = full?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone
+      editing = true
+    } catch (e) {
+      error = String(e)
+    } finally {
+      busy = false
+    }
   }
   async function save() {
     busy = true

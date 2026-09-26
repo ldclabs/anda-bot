@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     RuntimeModels,
     app_protocol::{AppCapabilities, AppInitialize, AppSubmit, StateChanged, SubmissionRead},
-    browser::{BrowserActionResult, BrowserBridge, BrowserCommand},
+    browser::{BrowserActionResult, BrowserBridge, BrowserCommand, BrowserRegisterArgs},
     shell_runtime::CliWorkspaceGrants,
 };
 use crate::brain;
@@ -84,17 +84,6 @@ struct BrowserWsIncoming {
     error: Option<String>,
     #[serde(default)]
     session: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BrowserRegisterArgs {
-    session: String,
-    #[serde(default)]
-    tab_id: Option<i64>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -575,10 +564,8 @@ fn handle_browser_register(
         .register_ws_session(
             connection.id,
             connection.sender.clone(),
-            args.session,
-            args.tab_id,
-            args.url,
-            args.title,
+            args,
+            state.app_protocol,
         )
         .map_err(|err| err.to_string())?;
     Ok(json!({ "registered": true, "session": session }))
@@ -1843,6 +1830,61 @@ mod tests {
         assert_eq!(notification["method"], "state/changed");
         assert_eq!(notification["params"]["instanceId"], events.instance);
         ws.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn desktop_browser_registration_preserves_other_chats_and_pending_actions() {
+        for app_protocol in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut state, _, _) = build_ws_state(dir.path().to_path_buf()).await;
+            state.app_protocol = app_protocol;
+            let (id, sender, mut commands) = state.bridge.open_ws_connection();
+            let connection = BrowserWsConnection { id, sender };
+            let first = "browser:desktop:first";
+            let second = "browser:desktop:second";
+            handle_browser_register(json!([{ "session": first }]), &state, &connection).unwrap();
+            let bridge = state.bridge.clone();
+            let task = tokio::spawn(async move {
+                bridge
+                    .run_action(
+                        first.into(),
+                        serde_json::from_value(json!({
+                            "action": "snapshot", "timeout_ms": 1000
+                        }))
+                        .unwrap(),
+                    )
+                    .await
+            });
+            let command = commands.recv().await.unwrap();
+            handle_browser_register(json!([{ "session": second }]), &state, &connection).unwrap();
+            assert_eq!(
+                state.bridge.connected_session(Some(first)).is_some(),
+                app_protocol
+            );
+            assert!(state.bridge.connected_session(Some(second)).is_some());
+            if app_protocol {
+                state
+                    .bridge
+                    .complete(
+                        first.into(),
+                        command.request_id,
+                        BrowserActionResult {
+                            ok: true,
+                            value: json!({ "title": "First chat" }),
+                            error: None,
+                            error_code: None,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(task.await.unwrap().unwrap().value["title"], "First chat");
+            } else {
+                assert!(task.await.unwrap().is_err());
+            }
+            state.bridge.disconnect_ws_connection(id);
+            assert!(state.bridge.connected_session(Some(first)).is_none());
+            assert!(state.bridge.connected_session(Some(second)).is_none());
+        }
     }
 
     #[tokio::test]

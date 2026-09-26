@@ -534,7 +534,7 @@ async function setup(): Promise<void> {
     clearTimeout(reconnectTimer)
     return daemon.control(action)
   })
-  handle('anda:rpc', async (method, params) => {
+  handle('anda:rpc', async (method, params, submissionId) => {
     try {
       if (
         method === 'agent_run' &&
@@ -543,7 +543,7 @@ async function setup(): Promise<void> {
       ) {
         params[0].meta.browser_session = await browser.registerSource(params[0].meta.source)
       }
-      return await daemon.rpc(method, params)
+      return await daemon.rpc(method, params, submissionId)
     } finally {
       if (method === 'agent_run') emit({ type: 'submissions', value: store.state.pending })
     }
@@ -641,12 +641,7 @@ async function setup(): Promise<void> {
     notification.show()
   })
   handle('anda:submission:read', (id: string) => daemon.readSubmission(id))
-  handle('anda:submission:acknowledge', async (id: string) => {
-    if (typeof id !== 'string') throw new Error('Invalid submission')
-    store.state.pending = store.state.pending.filter((p) => p.id !== id)
-    await store.save()
-    emit({ type: 'submissions', value: store.state.pending })
-  })
+  handle('anda:submission:acknowledge', (id: string) => daemon.acknowledgeSubmission(id))
   handle('anda:external', (url: unknown) => shell.openExternal(externalUrl(url)))
   handle('anda:print', async (html: string) => {
     if (typeof html !== 'string' || Buffer.byteLength(html) > 4 * 1024 * 1024)

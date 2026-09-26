@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { DaemonClient } from '../src/main/daemon-client'
 import { DesktopStore } from '../src/main/store'
@@ -11,7 +12,7 @@ afterEach(async () => {
   for (const f of cleanup.splice(0).reverse()) await f()
 })
 
-async function fixture(dropSubmission = false, appTransport = false) {
+async function fixture(dropSubmission = false, appTransport = false, failSubmission = false) {
   const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-test-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const store = new DesktopStore(join(directory, 'desktop.json'))
@@ -35,7 +36,12 @@ async function fixture(dropSubmission = false, appTransport = false) {
       const message = JSON.parse(data.toString())
       if (message.method === 'chat/submit') {
         expect(message.jsonrpc).toBe('2.0')
-        receipts.set(message.params.requestId, { state: 'completed', result: { conversation: 7 } })
+        receipts.set(
+          message.params.requestId,
+          failSubmission
+            ? { state: 'failed', error: 'Task rejected' }
+            : { state: 'completed', result: { conversation: 7 } }
+        )
       }
       if (['agent_run', 'chat/submit'].includes(message.method)) {
         submissions++
@@ -106,6 +112,33 @@ describe('daemon transport and recovery', () => {
       ])
     ).toEqual({ conversation: 7 })
     expect(f.submissions()).toBe(1)
+    expect(f.store.state.pending).toMatchObject([{ state: 'completed', receipt: true }])
+    const id = f.store.state.pending[0]!.id
+    const restored = new DesktopStore(join(f.directory, 'desktop.json'))
+    await restored.load()
+    expect(restored.state.pending[0]?.id).toBe(id)
+    expect((await f.client.readSubmission(id))?.result).toEqual({ conversation: 7 })
+    await f.client.acknowledgeSubmission(id)
+    expect(f.store.state.pending).toEqual([])
+    await restored.load()
+    expect(restored.state.pending).toEqual([])
+  })
+  it('retains a failed receipt until the renderer acknowledges its error', async () => {
+    const f = await fixture(false, true, true)
+    const id = randomUUID()
+    await expect(
+      f.client.rpc(
+        'agent_run',
+        [{ name: '', prompt: 'hello', meta: { source: 'desktop:one' } }],
+        id
+      )
+    ).rejects.toThrow('Task rejected')
+    expect(f.store.state.pending).toMatchObject([{ id, state: 'failed' }])
+    expect(await f.client.readSubmission(id)).toMatchObject({
+      state: 'failed',
+      error: 'Task rejected'
+    })
+    await f.client.acknowledgeSubmission(id)
     expect(f.store.state.pending).toEqual([])
   })
   it('reconciles an ACK lost after server acceptance without resubmitting', async () => {

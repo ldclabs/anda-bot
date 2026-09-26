@@ -58,11 +58,19 @@ interface PollTick {
   next?: Conversation
 }
 
+export interface AgentSubmission {
+  output: AgentOutput
+  id?: string
+  /** Release the delivery after the channel has applied (or deliberately discarded) it. */
+  finish?(applied: boolean): Promise<void>
+}
+
 export interface API {
   /** Present only while a caller-scoped invalidation subscription is live. */
   stateRevision?(): number | undefined
   activeChannel(): string | null
   requestExtra(): Promise<Record<string, unknown>>
+  agentRun?(input: AgentInput): Promise<AgentSubmission>
   rpc<Result>(method: string, tupleArgs: unknown[]): Promise<Result>
   updateStatus(status: string, message: { kind: 'info' | 'error'; text: string } | null): void
 }
@@ -274,6 +282,8 @@ export class Channel extends EventTarget {
     const bareNew = command?.kind === 'new' && !command.prompt && attachments.length === 0
     const localMessageIds: string[] = []
     let delivered = false
+    let submission: AgentSubmission | null = null
+    let applied = false
 
     try {
       const poller = new PollConversation()
@@ -343,7 +353,7 @@ export class Channel extends EventTarget {
       const previousConversationId = this.#conversation?._id
       const previousMessageCount = this.#conversation?.messages?.length || 0
       const isRequestStale = () => sendEpoch !== this.#sendEpoch
-      const output = await this.agentRun(
+      submission = await this.agentRun(
         {
           name: '',
           prompt,
@@ -352,8 +362,10 @@ export class Channel extends EventTarget {
         },
         isRequestStale
       )
+      const output = submission?.output
       delivered = Boolean(output)
       if (!output || isRequestStale()) {
+        applied = Boolean(output)
         poller.finish()
         return poller
       }
@@ -401,6 +413,7 @@ export class Channel extends EventTarget {
         poller.finish()
       }
 
+      applied = true
       return poller
     } catch (error) {
       this.#api.updateStatus('request failed', { kind: 'error', text: errorToMessage(error) })
@@ -415,6 +428,12 @@ export class Channel extends EventTarget {
     } finally {
       if (ownsSendingFlag && sendEpoch === this.#sendEpoch) {
         this.#sending = false
+      }
+      if (applied && submission?.id) this.#recoveredSubmissions.add(submission.id)
+      try {
+        await submission?.finish?.(applied)
+      } catch (error) {
+        this.#api.updateStatus('receipt failed', { kind: 'error', text: errorToMessage(error) })
       }
     }
   }
@@ -841,13 +860,17 @@ export class Channel extends EventTarget {
     return true
   }
 
-  private async agentRun(input: AgentInput, isStale?: () => boolean): Promise<AgentOutput | null> {
+  private async agentRun(
+    input: AgentInput,
+    isStale?: () => boolean
+  ): Promise<AgentSubmission | null> {
     const meta = await this.requestMeta()
     if (isStale?.()) {
       return null
     }
     input.meta = { ...input.meta, ...meta }
-    return this.#api.rpc<AgentOutput>('agent_run', [input])
+    if (this.#api.agentRun) return this.#api.agentRun(input)
+    return { output: await this.#api.rpc<AgentOutput>('agent_run', [input]) }
   }
 
   private async toolCall<Result>(input: ToolInput): Promise<ToolOutput<Result>> {

@@ -75,7 +75,7 @@ export interface DesktopBridge {
   bootstrap(): Promise<Bootstrap>
   connect(): Promise<DaemonView>
   control(action: 'stop' | 'restart'): Promise<DaemonView>
-  rpc<Result>(method: string, params: unknown[]): Promise<Result>
+  rpc<Result>(method: string, params: unknown[], submissionId?: string): Promise<Result>
   config<Result>(
     method: 'GET' | 'PUT',
     content?: string,

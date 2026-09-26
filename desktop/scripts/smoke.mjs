@@ -31,6 +31,18 @@ await writeFile(join(project, 'smoke.txt'), 'A local Git fixture\n')
 const browserConnections = new Map()
 const submissionReceipts = new Map()
 let recoveryExecutions = 0
+let reloadExecutions = 0
+let finishReloadReply
+let automationReads = 0
+let updatedAutomation
+const automation = {
+  _id: 1,
+  name: 'Long automation',
+  job: 'Keep the complete scheduled prompt. '.repeat(30),
+  job_kind: 'agent',
+  schedule_kind: 'every',
+  schedule: '1d'
+}
 const browserWaiting = new Map()
 let browserRequestId = 100000
 function browserAction(source, args) {
@@ -93,6 +105,36 @@ wsServer.on('connection', (ws, request) => {
     }
     if (method === 'browser_register') browserConnections.set(params[0].session, { ws })
     const input = params?.[0] || {}
+    if (submissionId && ['/side Reload check', '/side Direct check'].includes(input.prompt)) {
+      const reloading = input.prompt === '/side Reload check'
+      const reply = () => {
+        const receipt = {
+          state: 'completed',
+          source: input.meta.source,
+          requestId: submissionId,
+          result: {
+            chat_history: [
+              {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'Text',
+                    text: reloading ? 'Side reply after renderer reload' : 'Direct side reply'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        submissionReceipts.set(submissionId, receipt)
+        ws.send(JSON.stringify({ id, result: receipt }))
+      }
+      if (reloading) {
+        reloadExecutions++
+        finishReloadReply = reply
+      } else reply()
+      return
+    }
     let result =
       method === 'initialize'
         ? {
@@ -211,7 +253,15 @@ wsServer.on('connection', (ws, request) => {
         return
       }
       let value = []
-      if (input.name === 'conversations_api') {
+      if (input.name === 'list_cron_jobs') {
+        value = [{ ...automation, job: automation.job.slice(0, 512) + '…' }]
+      } else if (input.name === 'manage_cron_job' && input.args.action === 'get') {
+        automationReads++
+        value = { action: 'get', job: automation }
+      } else if (input.name === 'update_cron_job') {
+        updatedAutomation = input.args
+        value = { ...automation, ...input.args }
+      } else if (input.name === 'conversations_api') {
         const args = input.args
         if (args.type === 'ListSourceState') value = sources
         else if (args.type === 'GetSourceState') value = sources[input.meta?.source] || { c: 0 }
@@ -327,6 +377,22 @@ try {
   await page.getByText('Recovered side response', { exact: true }).waitFor({ timeout: 35000 })
   await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(recoveryExecutions, 1)
+  await editor.fill('/side Direct check')
+  await editor.press('Enter')
+  await page.getByText('Direct side reply', { exact: true }).waitFor()
+  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
+  assert.equal(await page.getByText('Direct side reply', { exact: true }).count(), 1)
+  await editor.fill('/side Reload check')
+  await editor.press('Enter')
+  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 1)
+  await page.reload()
+  await page.getByText('No external model was called.', { exact: false }).first().waitFor()
+  assert.ok(finishReloadReply)
+  finishReloadReply()
+  await page.getByText('Side reply after renderer reload', { exact: true }).waitFor()
+  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
+  assert.equal(reloadExecutions, 1)
+  assert.equal(await page.getByText('Side reply after renderer reload', { exact: true }).count(), 1)
   await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
   await page.getByRole('heading', { name: 'General', exact: true }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '03-settings.png') })
@@ -354,6 +420,16 @@ try {
   await page.waitForTimeout(500)
   await page.locator('.sidebar-navigation').getByText('Automations', { exact: true }).click()
   await page.getByRole('heading', { name: 'Automations', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Long automation', exact: true }).click()
+  const automationEditor = page.getByRole('dialog')
+  await automationEditor.waitFor()
+  assert.equal(await automationEditor.locator('textarea').inputValue(), automation.job)
+  await automationEditor.getByLabel('Name', { exact: true }).fill('Renamed automation')
+  await automationEditor.getByRole('button', { name: 'Save', exact: true }).click()
+  await automationEditor.waitFor({ state: 'hidden' })
+  assert.equal(automationReads, 1)
+  assert.equal(updatedAutomation.name, 'Renamed automation')
+  assert.equal(updatedAutomation.job, automation.job)
   await app.evaluate(({ dialog }, path) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] })
   }, project)
@@ -509,7 +585,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: Electron IPC/WS, receipt-backed chat, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: Electron IPC/WS, receipt-backed chat including renderer reload, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {
