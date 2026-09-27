@@ -792,9 +792,12 @@ fn failed_private_file_publication_preserves_io_error_and_cleans_temp_file() {
     let destination = dir.path().join("occupied");
     std::fs::create_dir(&destination).unwrap();
     std::fs::write(destination.join("keep"), "existing data").unwrap();
-    let expected = std::fs::rename(destination.join("keep"), &destination)
-        .unwrap_err()
-        .kind();
+    // Publication renames a sibling temporary file; renaming the child onto
+    // its own parent would take Linux's ancestor check (ENOTEMPTY) instead.
+    let sibling = dir.path().join("sibling");
+    std::fs::write(&sibling, "").unwrap();
+    let expected = std::fs::rename(&sibling, &destination).unwrap_err().kind();
+    std::fs::remove_file(&sibling).unwrap();
     let err = write_ed25519_secret_file_blocking(&destination, &SECRET, true).unwrap_err();
     assert_eq!(
         err.downcast_ref::<std::io::Error>().unwrap().kind(),

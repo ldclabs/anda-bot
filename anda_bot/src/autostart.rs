@@ -603,9 +603,12 @@ mod linux_tests {
         let home = absolute_home(relative).unwrap();
         assert_eq!(home, dir.path().canonicalize().unwrap());
         assert!(home.is_absolute());
+        // The unit escapes the path (Windows paths contain backslashes).
         assert!(
-            linux_systemd_service(Path::new("/bin/anda"), &home)
-                .contains(&home.to_string_lossy().to_string())
+            linux_systemd_service(Path::new("/bin/anda"), &home).contains(&format!(
+                "--home {} daemon",
+                systemd_quote_arg(&home.to_string_lossy())
+            ))
         );
     }
 
