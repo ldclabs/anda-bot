@@ -58,9 +58,10 @@ The repository also contains:
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
 - Source builds track the KIP 2.0 stack (Brain 0.13 with its Memory Interface,
-  Nexus/DB/KIP 0.14, Core/Engine 0.16). Until Brain 0.13 is published,
-  `[patch.crates-io]` points at the sibling `anda-brain` checkout. Keep a single
-  DB/core type identity and verify Cargo metadata before changing patches.
+  Nexus/DB/KIP 0.14, Core/Engine 0.16). Brain 0.13.2 and the shared stack resolve
+  from crates.io by default; commented `[patch.crates-io]` entries support
+  sibling-checkout development. Keep a single DB/core type identity and verify
+  Cargo metadata before changing patches.
 - With the embedded host, Formation windows are Memory Interface `observe`
   intents keyed by conversation, window and attempt; keep that key stable so a
   retry replays its receipt, and keep recall's barrier bounded.

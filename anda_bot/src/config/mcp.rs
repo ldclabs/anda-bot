@@ -320,6 +320,13 @@ impl McpServerSettings {
             exclude: self.exclude.clone(),
             lifecycle: self.lifecycle.unwrap_or_default(),
             tasks: self.tasks.clone(),
+            limits: Default::default(),
+            timeouts: Default::default(),
+            concurrency: Default::default(),
+            required: false,
+            startup: Default::default(),
+            elicitation: false,
+            resources: false,
         })
     }
 }
@@ -452,6 +459,9 @@ impl McpStdioSettings {
                     ))
                 })
                 .collect::<Result<_, BoxError>>()?,
+            // Preserve Bot's existing stdio environment inheritance; `env`
+            // contains overrides, not a complete child environment.
+            inherit_env: true,
             cwd,
         })
     }
@@ -1044,6 +1054,7 @@ mod tests {
                 assert_eq!(stdio.command, "npx");
                 assert_eq!(stdio.args[2], "/tmp/anda-home/project-a");
                 assert_eq!(stdio.env.get("TOKEN").map(String::as_str), Some("token-1"));
+                assert!(stdio.inherit_env);
                 assert_eq!(stdio.cwd.as_deref(), Some(workspace.as_path()));
             }
             _ => panic!("expected stdio transport"),

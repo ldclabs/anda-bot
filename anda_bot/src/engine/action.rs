@@ -1,6 +1,5 @@
 use anda_core::{
     BoxError, FunctionDefinition, Message, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
-    Usage,
 };
 use anda_engine::{
     context::BaseCtx,
@@ -743,13 +742,7 @@ impl Tool<BaseCtx> for AskUserChoiceTool {
             return Err("user choice actions require an active session".into());
         };
         let output = action_session.request_choice(&ctx, args).await?;
-        Ok(ToolOutput {
-            output,
-            artifacts: Vec::new(),
-            usage: Usage::default(),
-            tools_usage: HashMap::new(),
-            is_error: None,
-        })
+        Ok(ToolOutput::new(output))
     }
 }
 

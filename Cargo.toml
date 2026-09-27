@@ -19,7 +19,7 @@ rust-version = "1.95"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-ts-rs = { version = "12.0.1", features = ["serde-json-impl"] }
+ts-rs = { version = "12.0", features = ["serde-json-impl"] }
 async-trait = "0.1"
 # Default features already cover http1/json/matched-path/query/tokio; only
 # http2 is additive.
@@ -92,7 +92,7 @@ log = { version = "0.4", features = ["kv_serde"] }
 clap = { version = "4.6", features = ["derive", "env"] }
 tower-http = { version = "0.7", features = ["compression-gzip", "cors"] }
 markdown = "1"
-mimalloc = { version = "0.1", features = ["v3"] }
+mimalloc = { version = "0.1" }
 rand = "0.10"
 prost = { version = "0.14", default-features = false, features = ["derive"] }
 libc = "0.2"
@@ -111,12 +111,10 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Brain 0.13.0 (Memory Interface, DB/KIP 0.14) comes from the sibling checkout
-# until it is published; then delete this line and run `cargo update -p
-# anda_brain`. The commented lines patch the rest of the shared stack from
-# sibling checkouts for development; keep one DB/KIP/Core type identity (verify
-# with `cargo metadata`).
-anda_brain = { path = "../anda-brain/anda_brain" }
+# Brain 0.13.2 (Memory Interface, DB/KIP 0.14) is published on crates.io.
+# The commented lines patch the shared stack from sibling checkouts for
+# development; keep one DB/KIP/Core type identity (verify with `cargo metadata`).
+# anda_brain = { path = "../anda-brain/anda_brain" }
 # anda_core = { path = "../anda/anda_core" }
 # anda_engine = { path = "../anda/anda_engine" }
 # anda_engine_server = { path = "../anda/anda_engine_server" }

@@ -4,12 +4,24 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Brain 0.13.2 from crates.io**: the embedded Brain moves to 0.13.2 on Cognitive Nexus 0.14.2, AndaDB 0.14.1 and Core/Engine 0.16.2; the sibling-checkout patch is commented out. Formation and Maintenance read a bounded index of saved notes (ids and short excerpts) instead of every note, and a note store that cannot be read fails the pass, which is retried. The Recall tokenizer identity is `o200k_base@tiktoken-rs-0.12` and `recall_memory`'s schema follows it; budgets that name the earlier `o200k_base@tiktoken-rs-0.12.0` are still accepted.
+- **MCP servers use Engine 0.16.2's bounds**: tool catalogs, descriptions and results are size-limited (32 KiB of text per result), connection setup, requests and whole calls have deadlines (90 s, 180 s and 10 minutes), and calls to one server run one at a time. Bot does not expose these settings yet. Stdio servers still inherit the daemon's environment, with `env` entries as overrides.
+
 ### Fixed
 
+- **Memory fixes from Brain 0.13.1–0.13.2**: a Formation window that fails every attempt no longer blocks later windows (after three failed rounds spanning 30 minutes it is cancelled and its receipt reports the failure); memories in a task or context scope stay recallable after Maintenance archives, tombstones or merges the scope's handle; concurrent recalls no longer wait for each other; attention reconciles an idle memory every 15 minutes instead of every minute, so it stays evicted; and the Formation vocabulary cap holds when tool calls run concurrently.
+- **Memory search after a restart**: Nexus 0.14.0 opened the Concept collection without its index setup whenever the database was reopened, so Concepts written after the first restart were indexed with the default tokenizer and a word inside a Chinese name was not searchable. Concepts written from now on are indexed with the Chinese word segmenter again.
 - **Browser tokens from earlier versions**: tokens exported before Brain audience support keep working without a re-export. The embedded Brain accepts a trusted user's token that names no audience as addressed to its one Space, and still verifies its signature, expiry, subject and scope.
 - **Daemon stack overflow during agent turns**: browser WebSocket requests, nested agent runs, system-instruction building (memory sync, Brain reads and the session briefing) and side commands are polled behind type-erased future boxes, so the optimizer cannot merge them into one oversized poll frame. A browser turn that opened a session briefing aborted a development build's daemon on the default 2 MiB worker stack (about 2.0 MiB along that path); with the matching Brain fix the same path uses about 137 KiB in the release build and about 1.05 MiB in a development build.
 - **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work. Completed recording repairs explicitly clear Bot Notes even when Brain's product epoch is unchanged.
 - **Formation replay timestamps**: observed windows retain their original source time and input digest across retries, so a fresh runner timestamp does not create a second Formation for unchanged messages.
+
+### Upgrade notes
+
+- The first start after this update upgrades the memory database's Nexus collection schemas and builds two indexes over the stored rows. Let it finish; do not stop the daemon while it starts. Afterwards do not run Anda Bot 0.13.0 on that database: its Nexus keeps the newer schema without maintaining those indexes.
+- Search index entries are not rebuilt. A Concept written by an earlier version after a restart keeps its earlier terms, so a word inside its Chinese name may not match until the Concept is updated.
 
 ## [0.13.0] — 2026-09-25
 

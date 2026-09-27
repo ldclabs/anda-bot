@@ -231,7 +231,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.13.0"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d6ad5dbbdf6c9a200bbd1787fd39ed4b00dafec3f67b525efad38c79bdf0d96"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -284,9 +286,9 @@ dependencies = [
 
 [[package]]
 name = "anda_cognitive_nexus"
-version = "0.14.0"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2561651057fe8d2d881bb53b865cae1e9546f881143f4b0913e8a60361dc5903"
+checksum = "5f40b6f45bd740161c1eae989c030ca279951deee6f0e69351cf1aed8ce2f1a0"
 dependencies = [
  "anda_db",
  "anda_db_schema",
@@ -312,9 +314,9 @@ dependencies = [
 
 [[package]]
 name = "anda_core"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ec1733d15f56995a6c68f8abce7bfaf836a00f1d7ea0ee66dd59531da0fea2e"
+checksum = "922237c496cfcce3bbf77af3dac35ac960504419170cd4ab54b5dcb74dab0f98"
 dependencies = [
  "anda_db_schema",
  "bytes",
@@ -339,9 +341,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29e74d870f137fcab9dcfdf6652c29bcef08961d0a38b526141bc2efe3cf8498"
+checksum = "1620c42ed7047b5f28080d35e9502015feadf2a79ccabc39d69d76ca70aa4fba"
 dependencies = [
  "anda_db_btree",
  "anda_db_hnsw",
@@ -367,9 +369,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_btree"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d093176ed16636990f7ccc01abea3a0880a6af48a754d0b12aa72ea59bbb473"
+checksum = "fe796249bf0993b397f5213215743cabc838ea856fee6df874826905efb4006d"
 dependencies = [
  "cbor2",
  "dashmap",
@@ -432,9 +434,9 @@ dependencies = [
 
 [[package]]
 name = "anda_db_tfs"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "982dcfda219e4a787238a7fbdb2d61b62260060f3d9105eddc22026feb87f32c"
+checksum = "922a46ccda8e97c0b9942b0d0d7b3e6a4fdd9a3e1b3123f27fbe9758ee9a5214"
 dependencies = [
  "cbor2",
  "dashmap",
@@ -459,9 +461,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ce2b2d5d2a60844bb762d117c1ee92503d45c185fff0622fbffc1d72c4b7c0"
+checksum = "a0bc84f5876b65a2dee6e2f8a3989129837eddc98c356c563d3cec67c9b72a03"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -499,7 +501,10 @@ dependencies = [
  "serde-saphyr",
  "serde_bytes",
  "serde_json",
+ "sha2 0.10.9",
+ "sse-stream",
  "structured-logger",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "unicode-segmentation",
@@ -1325,9 +1330,9 @@ dependencies = [
 
 [[package]]
 name = "candid"
-version = "0.10.36"
+version = "0.10.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "688dc9917e4fd15d7656d46f9dbf45ca0151ca13158875894b40e22c27681d86"
+checksum = "a4dda5edb2bfa2d7703219ba0fd6ec712343fcd03867b76b87405feaa9aae7a0"
 dependencies = [
  "anyhow",
  "binrw",
@@ -1348,9 +1353,9 @@ dependencies = [
 
 [[package]]
 name = "candid_derive"
-version = "0.10.36"
+version = "0.10.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b33ea2fcb595b01cc1188d51c8fcf0455220779f6fd5f9b88e280d8c602baa1"
+checksum = "45e094bb111b7a9b70174aaa66f80f1a6751a2e66d2a99eef797c8ab6d0933d3"
 dependencies = [
  "lazy_static",
  "proc-macro2",
@@ -1399,9 +1404,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "207aedd8d29a0eb804986bc99eed0d43719fec84a9b7f9c8b70cf83b97cffcc1"
+checksum = "f360145194ee8e21db5ee7f3fcd4fe52210864c75c985dae33218202c8bbe040"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2643,17 +2648,6 @@ checksum = "b95f7c0680e4142284cf8b22c14a476e87d61b004a3a0861872b32ef7ead40a2"
 dependencies = [
  "bit-set 0.5.3",
  "regex",
-]
-
-[[package]]
-name = "fancy-regex"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
-dependencies = [
- "bit-set 0.8.0",
- "regex-automata",
- "regex-syntax",
 ]
 
 [[package]]
@@ -4498,12 +4492,11 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.44"
+version = "0.1.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "667f4fec20f29dfc6bc7357c582d91796c169ad7e2fce709468aefeb2c099870"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
 dependencies = [
  "cc",
- "libc",
 ]
 
 [[package]]
@@ -4718,9 +4711,9 @@ checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
 
 [[package]]
 name = "mimalloc"
-version = "0.1.48"
+version = "0.1.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1ee66a4b64c74f4ef288bcbb9192ad9c3feaad75193129ac8509af543894fd8"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -5526,9 +5519,9 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pdf-inspector"
-version = "1.24.0"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e22dc125a533d212c847c8c85e4fcb7358f4384869ef76b2b8721f039b1b633a"
+checksum = "4c7bbb3b63dec43a1c849508e0da95833af6185649f121e41fc3cbd2d3b2e639"
 dependencies = [
  "env_logger",
  "include_dir",
@@ -6488,9 +6481,9 @@ dependencies = [
 
 [[package]]
 name = "rust-i18n"
-version = "4.2.2"
+version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c43fd69c20da13756643a5bf51ae799965465c78e05c57a1242a736aaa56527"
+checksum = "68abb338402a175bc93faba6a7d7f7e57adc48bc607b93ec86a57447f9edf6fb"
 dependencies = [
  "globwalk",
  "regex",
@@ -6501,9 +6494,9 @@ dependencies = [
 
 [[package]]
 name = "rust-i18n-macro"
-version = "4.2.2"
+version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "086ec8a9eaa6afda33919b9bc1661c1f4e017c40e99bbd33ca98f6e1cb6ca91f"
+checksum = "746fe7815ad5d74ff5012fc653c4d1a208878536cc2d5d81f5d58a2f35f53272"
 dependencies = [
  "glob",
  "proc-macro2",
@@ -6516,12 +6509,13 @@ dependencies = [
 
 [[package]]
 name = "rust-i18n-support"
-version = "4.2.2"
+version = "4.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac02dcb9a01ec145d0a5534ea9554a966050ca250b346bb2a9ab0fcdafab5979"
+checksum = "65d8776635f9d13887dc2eb41da7ea624e7e401ecc7da6e82eb7ff29339b252a"
 dependencies = [
  "arc-swap",
  "base62",
+ "foldhash 0.2.0",
  "globwalk",
  "itertools 0.11.0",
  "normpath",
@@ -7807,15 +7801,14 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027853bbf8c7763b77c5c595f1c271c7d536ced7d6f83452911b944621e57fc2"
+checksum = "2aeff724640cfe13037336ddf35befdffd2909cbdb65cf041cc8a4cf8c584cfa"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bstr",
- "fancy-regex 0.17.0",
- "lazy_static",
+ "fancy-regex 0.19.2",
  "regex",
  "rustc-hash",
 ]
@@ -9152,18 +9145,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.58"
+version = "0.8.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c17e8fafad82b542ff3717217ecdc736231b59e387768c9630123b4ce4d2db44"
+checksum = "6df92bf3d9227be3d53173901ddbffac2babc27ae50f397776ffd6dc33f800cb"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.58"
+version = "0.8.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "595f56e044df4f46a0c9a626f65c3d99eb8488f7e8a8baa12dd76326d9710bf2"
+checksum = "ac4f328cf2f05d084e496c3e9c3f33ed0a183656a16e1fcec4d464d8373aec82"
 dependencies = [
  "proc-macro2",
  "quote",

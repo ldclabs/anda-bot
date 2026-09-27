@@ -68,11 +68,10 @@ fn recall_tool_output(output: AgentOutput, budgeted: bool) -> ToolOutput<String>
         None => output.content,
     };
     ToolOutput {
-        output: content,
         is_error,
         usage: output.usage,
         tools_usage: output.tools_usage,
-        artifacts: Vec::new(),
+        ..ToolOutput::new(content)
     }
 }
 

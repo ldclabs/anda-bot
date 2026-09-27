@@ -103,7 +103,7 @@ launcher 会将该目录传给 daemon 命令，并保留在登录自启和重启
 
 也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
 
-源码构建跟随 KIP 2.0 栈：带 Memory Interface 绑定的 Brain 0.13、Nexus/DB/KIP 0.14 及配套的 Core/Engine 0.16，保持单一 DB/core 类型身份。Brain 0.13 发布之前，`[patch.crates-io]` 指向同级的 `anda-brain` 检出。开发构建在 2.1.0 草案下写入的数据库须先迁移到新库，本构建才能打开；旧库保留只读以便回退。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
+源码构建跟随 KIP 2.0 栈：带 Memory Interface 绑定的 Brain 0.13、Nexus/DB/KIP 0.14 及配套的 Core/Engine 0.16，保持单一 DB/core 类型身份。Brain 0.13.2 及共享栈默认从 crates.io 解析；`[patch.crates-io]` 中的注释项供同级检出开发使用。开发构建在 2.1.0 草案下写入的数据库须先迁移到新库，本构建才能打开；旧库保留只读以便回退。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
 
 开发和测试构建对依赖包启用基础优化，将 macOS 展开表控制在链接器的 16 MiB 限制以内。`anda_bot` 自身仍不启用优化，并保留调试信息和 panic 展开。首次编译依赖会稍慢，后续构建会复用这些产物。
 

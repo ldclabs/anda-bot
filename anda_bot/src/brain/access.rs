@@ -82,6 +82,7 @@ impl MemoryAccess {
                 NoteArgs {
                     op: Some("set".into()),
                     items: Some(vec![]),
+                    ..Default::default()
                 },
                 vec![],
             )
